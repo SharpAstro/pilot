@@ -169,7 +169,19 @@ public sealed class Watchtower(
             // Kept in memory all the same; a restarted node then tells those cards once more.
         }
     }
-    private string? _job;
+    private string? _jobId;
+
+    // The one record of which row is the role's watchtower: set here, published on NodeState so the messenger reads the same one.
+    private string? _job
+    {
+        get => _jobId;
+        set
+        {
+            _jobId = value;
+            state.CurrentWatchtower = value;
+        }
+    }
+
     private DateTimeOffset? _startedAt;
     private DateTimeOffset _nextTry = DateTimeOffset.MinValue;
     private DateTimeOffset? _resumedAfter;
@@ -280,6 +292,15 @@ public sealed class Watchtower(
         var rows = state.Sessions().Where(IsWatchtower).ToList();
         if (rows.FirstOrDefault(r => r.Id == _job) is { } own)
         {
+            if (!Live(own) || _stopped.Contains(own.Id) || _replaced.Contains(own.Id))
+            {
+                // The record never points at an ended or ending session while another watchtower row of this node is live.
+                if (rows.Where(r => r.Id != own.Id && r.Kind == SessionKind.Background && Live(r) && !_stopped.Contains(r.Id) && !_replaced.Contains(r.Id))
+                        .OrderByDescending(r => r.StartedAt).FirstOrDefault() is { } live)
+                {
+                    return live;
+                }
+            }
             return own;
         }
         // The session the node started has vanished from the list: an older ended one is never adopted in its place (pilot #542,
@@ -662,6 +683,13 @@ public sealed class Watchtower(
                     TellAllOpen();
                 }
             }
+            if (row is not null && Live(row) && _job is not null && row.Id != _job && !StartInFlight())
+            {
+                // The recorded row ended or is being stopped and another one is live: the role moves to the live one.
+                await Error.WriteLineAsync($"watchtower: the role moved to session {row.Id} from {_job}: the recorded one is no longer live");
+                _job = row.Id;
+                TellAllOpen();
+            }
             // Every look: a watchtower of this node but the current, renamed or not, is stopped.
             await StopOthersAsync(row?.Id, cancellationToken);
 
@@ -791,14 +819,25 @@ public sealed class Watchtower(
     }
 
     /// <summary><c>restart-watchtower</c>: a fresh watchtower in place of the one running, if any.</summary>
-    public async Task<string?> RestartAsync(string why, CancellationToken cancellationToken)
+    public async Task<string?> RestartAsync(string why, CancellationToken cancellationToken) =>
+        (await RestartWithWayAsync(why, cancellationToken)).Error;
+
+    /// <summary>The words a restart that joined a start in progress says, instead of starting a second watchtower.</summary>
+    public const string JoinedWay = "joined the watchtower start already in progress; nothing new was started";
+
+    /// <summary><see cref="RestartAsync"/> with how it went: a restart asked while a start is in flight joins it (<see cref="JoinedWay"/>) and launches nothing.</summary>
+    public async Task<(string? Error, string? Way)> RestartWithWayAsync(string why, CancellationToken cancellationToken)
     {
         await _one.WaitAsync(cancellationToken);
         try
         {
+            if (StartInFlight())
+            {
+                return (null, JoinedWay);
+            }
             var row = Current();
             ClearFailures();
-            return await StartAsync(why, cancellationToken, row is not null && Live(row) ? row : null) ? null : "the watchtower did not start; its card says why";
+            return await StartAsync(why, cancellationToken, row is not null && Live(row) ? row : null) ? (null, null) : ("the watchtower did not start; its card says why", null);
         }
         finally
         {
@@ -862,6 +901,79 @@ public sealed class Watchtower(
         {
             return false;
         }
+        // Single flight across processes: an old and a new node overlapping an update must not both start one (#782). A lock held
+        // means a start is in progress, which this caller joins.
+        FileStream? gate = null;
+        try
+        {
+            Directory.CreateDirectory(options.DataFolder);
+            gate = new FileStream(StartLockFile, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1);
+        }
+        catch (IOException) when (File.Exists(StartLockFile))
+        {
+            await Error.WriteLineAsync("watchtower: a start is already in progress in another process, joined it");
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // No lock to be had (a folder that cannot be written): the in-process gate still holds.
+        }
+        try
+        {
+            if (JoinStartFromOtherProcess(replacing))
+            {
+                return true;
+            }
+            return await StartLockedAsync(why, cancellationToken, replacing);
+        }
+        finally
+        {
+            gate?.Dispose();
+        }
+    }
+
+    /// <summary>Held by the one start in progress, in the node's data folder (<see cref="StartAsync"/>).</summary>
+    public string StartLockFile => Path.Combine(options.DataFolder, "watchtower-start.lock");
+
+    /// <summary>
+    /// Whether a start is in flight: this node started one inside <see cref="ShowUpGrace"/> whose session has not been listed yet.
+    /// A second start in that window is the doubled watchtower of #782.
+    /// </summary>
+    private bool StartInFlight() =>
+        _startedAt is { } started && _job is { } job && time.GetUtcNow() - started is { } age && age >= TimeSpan.Zero && age < ShowUpGrace && state.Sessions().All(s => s.Id != job);
+
+    /// <summary>
+    /// Re-reads the generations file under the start lock: a start another process recorded inside <see cref="ShowUpGrace"/>, not yet
+    /// listed or still live, is adopted as this node's own instead of being doubled.
+    /// </summary>
+    private bool JoinStartFromOtherProcess(SessionRow? replacing)
+    {
+        var now = time.GetUtcNow();
+        lock (_generationsLock)
+        {
+            _generations ??= LoadGenerations();
+            var added = LoadGenerations().Where(d => _generations.All(g => g.Job != d.Job)).ToList();
+            if (added.Count > 0)
+            {
+                _generations = [.. _generations.Concat(added).OrderBy(g => g.StartedAt)];
+            }
+            // Any start inside the grace that is not this node's own current one, nor one it replaced, and has not ended: a start
+            // another process made (its record may have been read in by an earlier look, so not only the ones added just now).
+            // Only starts a node recorded (they carry a reason), not a row seen by name.
+            var recent = _generations.Where(g => g.Why is not null && now - g.StartedAt is { } age && age >= TimeSpan.Zero && age < ShowUpGrace && g.Job != _job && g.Job != replacing?.Id && !_replaced.Contains(g.Job) && g.EndedAt is null
+                && (state.Sessions().FirstOrDefault(s => s.Id == g.Job) is not { } row || Live(row))).OrderByDescending(g => g.StartedAt).FirstOrDefault();
+            if (recent is null)
+            {
+                return false;
+            }
+            _job = recent.Job;
+            _startedAt = recent.StartedAt;
+            return true;
+        }
+    }
+
+    private async Task<bool> StartLockedAsync(string why, CancellationToken cancellationToken, SessionRow? replacing)
+    {
         if (replacing is not null)
         {
             // Never taken as current again, ended or not. An idle one is ended now, through the node's end-session path (stop confirmed,
@@ -875,6 +987,7 @@ public sealed class Watchtower(
         }
 
         var folder = options.WatchtowerFolder;
+        var attemptedAt = time.GetUtcNow();
         string fingerprint;
         HashSet<string> alreadyTold;
         try
@@ -885,7 +998,7 @@ public sealed class Watchtower(
             {
                 alreadyTold = [.. Tells().Keys];
             }
-            var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower), options.Machine, alreadyTold, StaleSection.Read(state, time.GetUtcNow(), Models.Stale));
+            var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower), options.Machine, alreadyTold, StaleSection.Read(state, time.GetUtcNow(), Models.Stale), state.StandingOrders());
             fingerprint = BriefFingerprint();
             _job = await launcher.StartAsync(new WorkerStart(Name, folder, null, brief, Model: Models.Model(RoleModels.Watchtower), Effort: Models.Effort(RoleModels.Watchtower), RemoteControl: true,
                 // A background session's AskUserQuestion blocks until someone answers it in claude agents, and a say to the chat is read only between tool calls: it asks in an ask block instead.
@@ -894,7 +1007,20 @@ public sealed class Watchtower(
         }
         catch (Exception ex) when (ex is FlightException or IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
-            _nextTry = time.GetUtcNow() + RetryAfter;
+            // The launcher threw, but the session may have come up before it did: a live watchtower row begun since this attempt is
+            // adopted, never answered with a second start.
+            var attempted = time.GetUtcNow();
+            if (state.Sessions().Where(r => r.Kind == SessionKind.Background && IsWatchtower(r) && Live(r) && r.StartedAt >= attemptedAt && !_replaced.Contains(r.Id))
+                    .OrderByDescending(r => r.StartedAt).FirstOrDefault() is { } came)
+            {
+                _job = came.Id;
+                _startedAt = attempted;
+                RememberStart(came.Id, why);
+                RecordBrief(BriefFingerprint());
+                await Error.WriteLineAsync($"watchtower: the launcher failed ({ex.Message}) but session {came.Id} came up, adopted");
+                return true;
+            }
+            _nextTry = attempted + RetryAfter;
             _job = null;
             _startedAt = null;
             if (NoteFailure(ex.Message))

@@ -2062,7 +2062,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 var candidates = ownerRow.Role == SessionRole.Worker
                     ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray()
                     : sessions;
-                if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates) is { } replacement)
+                if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates, state.CurrentWatchtower) is { } replacement)
                 {
                     target = replacement.Id;
                     handed = $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; what it shows so far is passed on to you.\n";
@@ -2162,7 +2162,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             var candidates = ownerRow.Role == SessionRole.Worker
                 ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray()
                 : sessions;
-            if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates) is { } replacement)
+            if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates, state.CurrentWatchtower) is { } replacement)
             {
                 target = replacement.Id;
                 replacedTo = replacement.Id;
