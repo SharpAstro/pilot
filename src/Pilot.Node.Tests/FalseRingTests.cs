@@ -1,5 +1,6 @@
 using Pilot.Contracts;
 using Pilot.Node.Flights;
+using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
 
@@ -128,5 +129,152 @@ public sealed class FalseRingTests : ReviewTestsBase
         result.Ok.ShouldBeTrue(result.Error);
         F(flight.Code).State.ShouldBe(FlightState.Landed);
         Open().ShouldNotContain(c => c.Bin == CardBin.Ring);
+    }
+
+    // Rules 2, 3 and 4 (#799): a leg card is for a cause still open, and one that needs the person.
+
+    private readonly ManualTime _watchTime = new(DateTimeOffset.UtcNow);
+
+    /// <summary>A watch on the node's state, its says delivered and its commands run by the real commander.</summary>
+    private LegWatch Watch(List<CommandRequest>? said = null) =>
+        new(_state, (command, token) =>
+        {
+            if (command.Verb != Verbs.Say)
+            {
+                return _legs.RunAsync(command, token);
+            }
+            said?.Add(command);
+            return Task.FromResult(_state.Complete(command, null));
+        }, _watchTime) { Pilot = "pilot" };
+
+    /// <summary>A leg started by the node, with a commit made and its step ticked: its work is done, its finish not said.</summary>
+    private async Task<(FlightRow Flight, LegRow Leg)> FlyingLeg(string issue, bool commit = true)
+    {
+        var flight = await NewFlight(issue, "render");
+        (await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, "render"), "controller")).Error.ShouldBeNull();
+        await Started(_legs, flight.Code);
+        if (commit)
+        {
+            File.WriteAllText(Path.Combine(flight.Worktree, $"render-{Guid.NewGuid():N}.txt"), "work\n");
+            Git(flight.Worktree, "add", ".");
+            Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "render work");
+        }
+        var leg = _state.Legs(flight.Code).Single(l => l.Name == "render");
+        (await Run(Verbs.Check, Verbs.LegTarget(flight.Code, "render"), leg.Worker!, "1")).Ok.ShouldBeTrue();
+        return (flight, _state.Legs(flight.Code).Single(l => l.Name == "render"));
+    }
+
+    private void WorkerIs(LegRow leg, SessionState state, string? waitingFor = null) =>
+        _state.PutSession(new SessionRow
+        {
+            Id = leg.WorkerJob!, SessionId = leg.WorkerJob + "-0000-4000-8000-000000000000", Name = leg.Worker!, Kind = SessionKind.Background, Cwd = "/work",
+            Role = SessionRole.Worker, Flight = leg.Flight, Leg = leg.Name, ContextTokens = 1000, ContextWindow = 200_000, State = state, WaitingFor = waitingFor,
+            LastResponseAt = _watchTime.GetUtcNow(), StartedAt = _watchTime.GetUtcNow(),
+        });
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ALegOfALandedFlightWhoseWorkerIdlesRaisesNoCardAndLandingClosedItsOpenOnes_c3651()
+    {
+        var (flight, leg) = await FlyingLeg("3651", commit: false);
+        var subject = Verbs.LegTarget(flight.Code, leg.Name);
+        // A leg card open before the landing: the landing closes it, naming itself.
+        var stale = _state.RaiseCard(CardBin.Ring, LegWatch.Idle, subject, $"{flight.Code}/{leg.Name}'s worker has been idle 8 min");
+        // Nothing of its own in the plane (its work went in through another PR), so the landing is the person's plain land.
+        (await Run(Verbs.Land, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        F(flight.Code).State.ShouldBe(FlightState.Landed);
+        _state.Cards().Single(c => c.Id == stale.Id).Outcome.ShouldNotBeNull().ShouldContain("landed");
+        WorkerIs(leg, SessionState.Idle);
+        var watch = Watch();
+
+        // The leg is still flying in the row, and its worker idles: nothing a person could act on.
+        foreach (var _ in Enumerable.Range(0, 6))
+        {
+            _watchTime.Advance(TimeSpan.FromMinutes(4));
+            await watch.LookAsync(Ct);
+        }
+
+        Open().ShouldBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Kind is LegWatch.Idle && c.Id != stale.Id);
+        // Not a leg card by any other raiser either: the node refuses a ring for a leg of a landed flight.
+        _state.RaiseCard(CardBin.Ring, "leg-failed", subject, "late").State.ShouldBe(CardState.Closed);
+        Open().ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AWorkerWaitingOnlyOnTheNodesCheckWhileItsLegRechecksRaisesNoCard_c17099()
+    {
+        var (flight, leg) = await FlyingLeg("17099");
+        _state.PutLeg(leg with { Recheck = new LegRecheck { Check = "dotnet test", Since = _watchTime.GetUtcNow() } });
+        WorkerIs(leg, SessionState.Waiting, "the node's check to pass; the work is committed and pushed");
+        var watch = Watch();
+
+        foreach (var _ in Enumerable.Range(0, 3))
+        {
+            _watchTime.Advance(TimeSpan.FromMinutes(5));
+            await watch.LookAsync(Ct);
+        }
+
+        Open().ShouldNotContain(c => c.Kind == LegWatch.Waiting);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegWatch.Waiting);
+        // The running check finishes the leg: nothing here finished it, nor failed it.
+        _state.Legs(flight.Code).Single(l => l.Name == "render").State.ShouldBe(LegState.Flying);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AWorkerSayingItsWorkIsCommittedAndDoneIsFinishedByTheNodeNotRung_c17099()
+    {
+        var (flight, leg) = await FlyingLeg("17098");
+        WorkerIs(leg, SessionState.Waiting, "nothing: the work is committed and the leg is done");
+        var watch = Watch();
+
+        await watch.LookAsync(Ct);
+
+        Open().ShouldNotContain(c => c.Kind == LegWatch.Waiting);
+        _state.Legs(flight.Code).Single(l => l.Name == "render").State.ShouldBe(LegState.Done);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AWorkerWithARealQuestionForThePersonStillRings_c17099()
+    {
+        var (_, leg) = await FlyingLeg("17097");
+        WorkerIs(leg, SessionState.Waiting, "Should I delete the old render path, or keep it behind a flag?");
+
+        await Watch().LookAsync(Ct);
+
+        var card = Open().Single(c => c.Kind == LegWatch.Waiting);
+        card.Bin.ShouldBe(CardBin.Ring);
+        card.Title.ShouldContain("Should I delete the old render path");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ALegRetiredOnTheControllersWordEndsRetiredWithNoCardAndNoChoices_c3623()
+    {
+        var (flight, leg) = await FlyingLeg("3623");
+
+        var result = await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "render"), leg.Worker!, "retired", "the controller told me to stop: the work moved to another flight");
+
+        result.Ok.ShouldBeTrue(result.Error);
+        var ended = _state.Legs(flight.Code).Single(l => l.Name == "render");
+        ended.State.ShouldBe(LegState.Done);
+        ended.Report.ShouldNotBeNull().ShouldStartWith("retired:");
+        _state.Cards().ShouldNotContain(c => c.Kind == "leg-failed");
+        Open().ShouldNotContain(c => c.Subject.StartsWith(Verbs.LegTarget(flight.Code, "render"), StringComparison.Ordinal));
+        Open().SelectMany(c => c.Choices).ShouldNotContain(c => c.Verb == Verbs.GoAround || c.Args.Contains("accepted"));
+        _state.Cards().Single(c => c.Kind == LegCommander.RetiredKind).Bin.ShouldBe(CardBin.Handled);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARetiredFinishNeedsAReasonAndAFlyingLeg_c3623()
+    {
+        var (flight, leg) = await FlyingLeg("3624");
+
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "render"), leg.Worker!, "retired")).Ok.ShouldBeFalse();
+        _state.Legs(flight.Code).Single(l => l.Name == "render").State.ShouldBe(LegState.Flying);
     }
 }

@@ -30,6 +30,17 @@ public sealed partial class NodeState
                 return open;
             }
             var now = _time.GetUtcNow();
+            // A landed flight (a folded or moved one lands too) has nothing left to ring about: a leg or worker card for it is a card
+            // about a cause already settled (#799 rule 2, row c3651). It is not stored or published; the caller gets the card it would
+            // have raised, closed. Said nowhere else: a Handled line per look of the watch would only be noise.
+            if (bin != CardBin.Handled && LegFlightOf(subject) is { } landedCode && _flights.TryGetValue(landedCode, out var landed) && landed.State == FlightState.Landed)
+            {
+                return new CardRow
+                {
+                    Id = "c0", Bin = CardBin.Handled, Kind = kind, Subject = subject, Title = title, Detail = detail, Choices = [], At = now,
+                    State = CardState.Closed, Outcome = $"{landedCode} landed already", ClosedBy = "node", ClosedAt = now,
+                };
+            }
             var number = _cards.Count == 0 ? 1 : _cards.Keys.Max(k => int.TryParse(k.AsSpan(1), out var n) ? n : 0) + 1;
             // One PR, one merge card: a pr-ready card replaces an older open merge card of the same subject, however it got there.
             if (bin != CardBin.Handled && kind == LegCommander.PrReady)
@@ -64,6 +75,17 @@ public sealed partial class NodeState
             Publish(new CardAddedEvent { Seq = _seq + 1, At = now, Card = card });
             return card;
         }
+    }
+
+    /// <summary>The flight code of a subject naming a leg or anything under one (<c>flight/&lt;code&gt;/&lt;leg&gt;</c>); null for a flight's own subject or any other.</summary>
+    private static string? LegFlightOf(string subject)
+    {
+        if (!subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+        var parts = subject[Verbs.FlightTargetPrefix.Length..].Split('/');
+        return parts.Length >= 2 && parts[0].Length > 0 ? parts[0] : null;
     }
 
     /// <summary>Closes an open card with what became of it; false when it is not open (closed already, or no such card).</summary>
