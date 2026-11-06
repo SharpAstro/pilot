@@ -773,7 +773,7 @@ public sealed class SessionTracker : BackgroundService
             else
             {
                 _justEnded.Remove(id);
-                if (SessionMessenger.ReplacedBy(row, all) is null)
+                if (SessionMessenger.ReplacedBy(row, all, _state.CurrentWatchtower) is null)
                 {
                     _confirmedEnded[id] = 0;
                     DropJobs?.Invoke([row.Id, row.SessionId, .. row.EarlierSessionIds ?? []], "its worker ended");

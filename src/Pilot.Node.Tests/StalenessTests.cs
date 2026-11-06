@@ -115,6 +115,43 @@ public class StalenessTests
     }
 
     [Fact]
+    public void ALegPastTheGoAroundLimitIsStaleWithItsLegStaleCardsTableAsItsCause()
+    {
+        var leg = Leg("DIR178", started: Now - TimeSpan.FromHours(1)) with { GoArounds = StaleLegs.MostGoArounds + 1 };
+        var card = Card("c4", "flight/DIR178/main", LegWatch.LegStale, CardBin.Handled, TimeSpan.FromMinutes(5), CardState.Closed) with
+        {
+            Detail = "job | started | duration | result | failed\nj9 | 2026-11-05 19:10 | 4 m | failed | ParserTests.Parses (the flight's)",
+        };
+        var item = Read([Flight(age: TimeSpan.FromHours(2))], [leg], [card]).Stale.ShouldHaveSingleItem();
+        (item.Kind, item.Subject).ShouldBe((StaleKind.Leg, "DIR178/main"));
+        item.Cause.ShouldContain($"go-around {StaleLegs.MostGoArounds + 1}");
+        item.Cause.ShouldContain("card c4");
+        item.Cause.ShouldContain("ParserTests.Parses (the flight's)");
+    }
+
+    [Fact]
+    public void ALegFlyingPastSixHoursIsStaleWithATableBuiltFromItsCheckJobsBeforeAnyCard()
+    {
+        var check = Job("j7", "DIR178", "main", JobState.Failed, TimeSpan.FromHours(7)) with
+        {
+            Kind = JobKind.Check, EndedAt = Now - TimeSpan.FromHours(7) + TimeSpan.FromMinutes(3), FirstTestFailed = "ParserTests.Parses",
+        };
+        var item = Read([Flight(age: TimeSpan.FromHours(8))], [Leg("DIR178", started: Now - TimeSpan.FromHours(5))], jobs: [check])
+            .Stale.Single(i => i.Kind == StaleKind.Leg);
+        item.AgeText.ShouldBe("7 h", "the leg's first start is its earliest check job when that is older than its start");
+        item.Cause.ShouldContain("flying 7 h");
+        item.Cause.ShouldContain("j7");
+        item.Cause.ShouldContain("ParserTests.Parses (the flight's)");
+    }
+
+    [Fact]
+    public void ALegUnderBothStaleLimitsIsNotAStaleLeg()
+    {
+        var leg = Leg("DIR178", started: Now - TimeSpan.FromHours(5)) with { GoArounds = StaleLegs.MostGoArounds };
+        Read([Flight(age: TimeSpan.FromHours(5))], [leg]).Stale.ShouldNotContain(i => i.Kind == StaleKind.Leg);
+    }
+
+    [Fact]
     public void ARingingCardPastItsBoundIsStaleButAHandledOneIsNot()
     {
         var reading = Read(cards: [Card("c1", "flight/DIR178", age: TimeSpan.FromHours(5)), Card("c2", "node", bin: CardBin.Handled, age: TimeSpan.FromHours(9))]);

@@ -67,6 +67,8 @@ public sealed partial class LegCommander
         switch (outcome)
         {
             case "done":
+                // The failed tests the check passed over as not this flight's, with their issues, for the leg's report.
+                string? notOurs = null;
                 // A leg's work is its commits: a worker that ends with files not committed would leave them to the plane.
                 if (await planes.UncommittedAsync(flight.Worktree, cancellationToken) is { } dirty)
                 {
@@ -86,7 +88,13 @@ public sealed partial class LegCommander
                     using (Calling(flight.Code, "being brought up to date"))
                     {
                         var seenLeg = leg;
-                        await OffLockAsync(null, () => FetchAndMergeBaseAsync(flight, cancellationToken));
+                        // The base is merged at most once per go-around (#752): a later attempt of the same round skips it.
+                        // A merge that conflicted was undone and refused, so it is not the round's: the next attempt tries again.
+                        if (!_baseMerged.ContainsKey(RoundKey(flight, leg)))
+                        {
+                            await OffLockAsync(null, () => FetchAndMergeBaseAsync(flight, cancellationToken));
+                            _baseMerged[RoundKey(flight, seenLeg)] = 0;
+                        }
                         leg = UnchangedFinishing(flight.Code, seenLeg) is { } current
                             ? current
                             : throw new FlightException($"{flight.Code}/{seenLeg.Name} changed while it was brought up to date: nothing was recorded, look again and finish again");
@@ -95,6 +103,11 @@ public sealed partial class LegCommander
                 {
                     var (checkedFlight, checkedLeg, run, late) = await RerunCheckAsync(flight, leg, cancellationToken);
                     (flight, leg) = (checkedFlight, checkedLeg);
+                    // A check that failed only on tests the flight's change does not touch passes, with them named (#752).
+                    if (run is { Passed: false } && leg.Check is { } ranCheck)
+                    {
+                        (run, notOurs) = await UnrelatedAsync(flight, leg, ranCheck, run, cancellationToken);
+                    }
                     // A run is there only when a check ran, so the check is too.
                     if (run is { Passed: false } && leg.Check is { } check)
                     {
@@ -105,9 +118,10 @@ public sealed partial class LegCommander
                         }
                         var sibling = SiblingRestoreFailure.In(run.Tail, flight.Worktree);
                         var head = sibling is null ? "" : sibling.Text + "\n\n";
+                        var pushNote = await PushEarlyAsync(flight, cancellationToken);
                         state.PutLeg(leg with
                         {
-                            Report = $"{head}check `{check}` failed ({run.ExitCode}):\n{run.Tail}",
+                            Report = $"{head}check `{check}` failed ({run.ExitCode}):\n{run.Tail}{pushNote}",
                             Recheck = late ? leg.Recheck! with { Outcome = LegRecheck.FailedOutcome(check, run.ExitCode, run.Tail) } : null,
                         });
                         throw new FlightException($"{head}{flight.Code}/{leg.Name}'s check `{check}` failed ({run.ExitCode}); it stays flying. Last of its output:\n{run.Tail}");
@@ -128,7 +142,8 @@ public sealed partial class LegCommander
                         throw new FlightException($"{flight.Code}/{leg.Name} changed while GitHub was being asked: nothing was recorded, look again and finish again");
                     }
                 }
-                await RecordDoneAsync(flight, leg, report.Length > 0 ? report : leg.Report, push: true, cancellationToken);
+                var said = report.Length > 0 ? report : leg.Report;
+                await RecordDoneAsync(flight, leg, notOurs is null ? said : string.IsNullOrWhiteSpace(said) ? notOurs : $"{said}\n{notOurs}", push: true, cancellationToken);
                 break;
             case "failed":
                 // The worker reports the NU line verbatim (its brief says to); the node holds the leg when the package is being published.
@@ -142,11 +157,18 @@ public sealed partial class LegCommander
                 {
                     throw new FlightException($"{stale.Text}\nThen finish again; if it still fails, report it again and the node will take it as a failure.");
                 }
-                // A worker that fails a leg whose work is done and pushed has only lost its way at the end: the node finishes it.
+                // A worker that fails a leg whose work is done and pushed has only lost its way at the end: the node finishes it. This is
+                // decided on the plane as the worker left it: the early push below would put every plane at origin/<branch> first.
                 var (selfFinished, notWhy) = await TrySelfFinishAsync(flight, leg, report, cancellationToken);
                 if (selfFinished)
                 {
                     break;
+                }
+                // The work reaches the PR early: a failed finish pushes the plane's commits too (#752). Its outcome is no change.
+                var failedPushNote = await PushEarlyAsync(flight, cancellationToken);
+                if (failedPushNote.Length > 0)
+                {
+                    report = report.Length > 0 ? report + failedPushNote : failedPushNote.Trim();
                 }
                 // The attempt may have recorded on the leg (a corrected check): the failure keeps that.
                 leg = state.Legs(flight.Code).FirstOrDefault(l => l.Name == leg.Name) ?? leg;
@@ -194,6 +216,35 @@ public sealed partial class LegCommander
                 DropQueuedJobsOf(job, "its worker ended");
                 await StopQuietly(job, cancellationToken);
             }
+        }
+    }
+
+    // The (flight, leg, go-around) rounds whose base merge has run.
+    private readonly ConcurrentDictionary<string, byte> _baseMerged = new(StringComparer.Ordinal);
+
+    private static string RoundKey(FlightRow flight, LegRow leg) => $"{flight.Code}/{leg.Name}/{leg.GoArounds}";
+
+    /// <summary>
+    /// Pushes the plane's branch plain after disarming auto-merge, off the lock, so CI and the PR see the work of a finish attempt
+    /// whose check failed. No PR is opened and no review started. Returns a note for the leg's report when the push failed
+    /// (empty otherwise); a failed push never changes the outcome. A plane with no commits past its base has nothing to bring, so
+    /// nothing is pushed.
+    /// </summary>
+    private async Task<string> PushEarlyAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var ahead = await OffLockAsync(null, () => git.RunAsync(["rev-list", "--count", $"{flight.Base}..HEAD"], flight.Worktree, cancellationToken));
+            if (ahead.Ok && ahead.Output.Trim() == "0")
+            {
+                return "";
+            }
+            await OffLockAsync(flight, () => PushAsync(flight, cancellationToken, brought: true, early: true));
+            return "";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return $"\nThe branch was not pushed early: {ex.Message}";
         }
     }
 
