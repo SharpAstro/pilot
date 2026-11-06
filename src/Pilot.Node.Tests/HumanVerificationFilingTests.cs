@@ -47,7 +47,7 @@ public sealed class HumanVerificationFilingTests : ReviewTestsBase
         body.ShouldContain($"PR: #{F(flight.Code).PullRequest}");
         body.ShouldContain("**Do:** open the Flights page and two-finger drag the canvas.");
         body.ShouldContain("**Done when:** it pans smoothly and never jumps back.");
-        _github.MilestoneIssuesOf.Values.Single().ShouldAllBe(i => i.Milestone == LegCommander.HumanVerificationMilestone);
+        _github.MilestoneIssuesOf.Values.Single().Values.ShouldAllBe(i => i.Milestone == LegCommander.HumanVerificationMilestone);
 
         F(flight.Code).HumanChecks.ShouldNotBeNull().Select(c => c.Title).ShouldBe(["Pan the canvas with a touchpad", "Plug in the camera"]);
         var card = Open().Single(c => c.Kind == LegCommander.HumanVerificationKind);
@@ -72,7 +72,7 @@ public sealed class HumanVerificationFilingTests : ReviewTestsBase
         (await Verdict(flight, "pass", $"## Human verification\n{Pan}")).Error.ShouldBeNull();
 
         _github.MilestonesMade.Select(m => m.Title).ShouldBe([LegCommander.HumanVerificationMilestone]);
-        _github.MilestonesOf.Values.Single().ShouldContain(m => m.Title == LegCommander.HumanVerificationMilestone);
+        _github.MilestonesOf.Values.Single().Values.ShouldContain(m => m.Title == LegCommander.HumanVerificationMilestone);
     }
 
     [Fact]
@@ -106,7 +106,7 @@ public sealed class HumanVerificationFilingTests : ReviewTestsBase
         (await Verdict(flight, "pass", $"Fixed.\n\n## Human verification\n- pan the canvas  with a touchpad\n  Do: again.\n  Done when: again.\n\n{Camera}")).Error.ShouldBeNull();
 
         _github.IssuesCreated.Count.ShouldBe(2);
-        _github.IssuesCreated[1].Title.ShouldContain("Plug in the camera");
+        _github.IssuesCreated.ToArray()[1].Title.ShouldContain("Plug in the camera");
         F(flight.Code).HumanChecks.ShouldNotBeNull().Length.ShouldBe(2);
         var card = Open().Single(c => c.Kind == LegCommander.HumanVerificationKind);
         card.Detail.ShouldNotBeNull().ShouldContain("Pan the canvas");
