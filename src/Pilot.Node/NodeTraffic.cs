@@ -27,6 +27,39 @@ namespace Pilot.Node;
 /// </remarks>
 public sealed class NodeTraffic
 {
+    /// <summary>A process start that waited longer than this for <see cref="Process.Start(ProcessStartInfo)"/> (its lock) is logged.</summary>
+    public static readonly TimeSpan SlowStart = TimeSpan.FromSeconds(1);
+
+    /// <summary>Where a slow start is written (the node's log, set by the node); nowhere by default.</summary>
+    public TextWriter Log { get; set; } = TextWriter.Null;
+
+    /// <summary>The call that starts a process; a test swaps it for a slow or instant one.</summary>
+    public Func<ProcessStartInfo, Process?> Starter { get; init; } = Process.Start;
+
+    /// <summary>
+    /// Starts a child of kind <paramref name="tool"/> (<c>git</c>, <c>gh</c> or <c>claude</c>) and logs <c>timing: process start
+    /// &lt;tool&gt; waited &lt;n&gt; ms</c> when the start took over <see cref="SlowStart"/>: Process.Start takes a lock that
+    /// every start in the process queues on, so a long wait is the node starving itself, not the tool being slow.
+    /// </summary>
+    public Process StartProcess(string tool, ProcessStartInfo start)
+    {
+        var began = Time.GetUtcNow();
+        var process = Starter(start) ?? throw new InvalidOperationException($"{tool} did not start");
+        var waited = Time.GetUtcNow() - began;
+        if (waited > SlowStart)
+        {
+            try
+            {
+                Log.WriteLine($"timing: process start {tool} waited {(long)waited.TotalMilliseconds} ms");
+                Log.Flush();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+        return process;
+    }
+
     /// <summary>The node's one counter: the static git and gh helpers cannot take it from the container, so they add here.</summary>
     public static NodeTraffic Shared { get; } = new();
 
@@ -229,7 +262,7 @@ public sealed class NodeTraffic
     /// </summary>
     public (Process Process, Child Counted) Start(string tool, ProcessStartInfo start, bool canUseNetwork = true)
     {
-        var process = Process.Start(start) ?? throw new InvalidOperationException($"{tool} did not start");
+        var process = StartProcess(tool, start);
         if (canUseNetwork && tool == "git")
         {
             Interlocked.Increment(ref _networkGitRuns);

@@ -21,6 +21,7 @@ public static partial class NodeApp
         var logWriter = new LogWriter(log);
         builder.Logging.AddProvider(new FileLoggerProvider(log));
         DetachedShell.Error = logWriter;
+        NodeTraffic.Shared.Log = logWriter;
         builder.Services.AddSingleton(log);
         builder.Services.AddSingleton(logWriter);
         // First, so its start line leads and its stop line (hosts stop in reverse) closes the log of this run.
@@ -342,6 +343,7 @@ public static partial class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());
         builder.Services.AddSingleton<SendLog>();
         builder.Services.AddSingleton(services => new SendTimings(services.GetRequiredService<TimeProvider>(), logWriter));
+        builder.Services.AddSingleton(services => new CommandTimings(services.GetRequiredService<TimeProvider>(), logWriter));
         builder.Services.AddSingleton(services => new WatchtowerChat(services.GetRequiredService<Watchtower>(), services.GetRequiredService<TranscriptBook>(), services.GetRequiredService<SendLog>()));
         builder.Services.AddSingleton(services => new Compactor(services.GetRequiredService<NodeState>(), services.GetRequiredService<Watchtower>(),
             services.GetRequiredService<NodeCommands>().RunAsync, services.GetRequiredService<TimeProvider>())
