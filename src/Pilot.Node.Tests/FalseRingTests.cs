@@ -168,7 +168,7 @@ public sealed class FalseRingTests : ReviewTestsBase
         _state.PutSession(new SessionRow
         {
             Id = leg.WorkerJob!, SessionId = leg.WorkerJob + "-0000-4000-8000-000000000000", Name = leg.Worker!, Kind = SessionKind.Background, Cwd = "/work",
-            Role = SessionRole.Worker, Flight = leg.Flight, Leg = leg.Name, ContextTokens = 1000, ContextWindow = 200_000, State = state, WaitingFor = waitingFor,
+            Role = SessionRole.Worker, Flight = leg.Flight, Leg = leg.Name, ContextTokens = 1000, ContextWindow = 200_000, State = state, WaitingFor = waitingFor, SpendWeighted = 0,
             LastResponseAt = _watchTime.GetUtcNow(), StartedAt = _watchTime.GetUtcNow(),
         });
 
@@ -195,7 +195,7 @@ public sealed class FalseRingTests : ReviewTestsBase
         }
 
         Open().ShouldBeEmpty();
-        _state.Cards().ShouldNotContain(c => c.Kind is LegWatch.Idle && c.Id != stale.Id);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegWatch.Idle && c.Id != stale.Id);
         // Not a leg card by any other raiser either: the node refuses a ring for a leg of a landed flight.
         _state.RaiseCard(CardBin.Ring, "leg-failed", subject, "late").State.ShouldBe(CardState.Closed);
         Open().ShouldBeEmpty();
