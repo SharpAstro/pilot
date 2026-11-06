@@ -150,13 +150,17 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
         return card is not null ? (null, $"idle, card {card.Id} open") : (null, null);
     }
 
-    /// <summary>The Idle sessions that wait on a person or a job and so hold no slot, as <c>label (note)</c>, for the status line.</summary>
+    /// <summary>
+    /// The Idle Opus sessions that wait on a person or a job and so hold no slot, as <c>label (note)</c>, for the status line. Only Opus ones are
+    /// listed: the line says "not counted" against the Opus cap, and a Sonnet or Haiku session never counted, so naming it would explain nothing.
+    /// </summary>
     private string[] WaitingOnPerson()
     {
         var jobs = state.Jobs();
         var cards = state.Cards(openOnly: true);
         var legs = state.Legs();
-        return [.. state.Sessions().Where(s => !s.Archived && s.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Planner && s.State == SessionState.Idle)
+        return [.. state.Sessions().Where(s => !s.Archived && s.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Planner && s.State == SessionState.Idle
+                && Admission.IsOpus(s.Model))
             .Select(s => (Row: s, Pending: Pending(s, jobs, cards, legs))).Where(p => p.Pending.Holds is null && p.Pending.Waiting is not null)
             .Select(p => $"{p.Row.Name} ({p.Pending.Waiting})")];
     }
