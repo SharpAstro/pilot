@@ -78,7 +78,8 @@ public sealed partial class LegCommander
                 }
                 // The go-around's push comes next when it is the last leg. The plane is brought up to date with its base first, so the
                 // check below runs on what is pushed; a conflict is undone and refused, the leg left flying for its worker to resolve.
-                var pushes = flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null
+                // A review that passed at an earlier head asks the same once the leg's commits moved the plane past it (a review-notes leg).
+                var pushes = await ReviewBehindPlaneAsync(flight, cancellationToken)
                     && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name);
                 if (pushes)
                 {
@@ -364,6 +365,7 @@ public sealed partial class LegCommander
             leg = leg with { Recheck = new LegRecheck { Check = check, Since = since } };
             state.PutLeg(leg);
             seen = leg;
+            HoldForLeg(flight.Code, leg.Name, $"the {leg.Name} leg's check is rerunning since {since.ToLocalTime():HH:mm}");
             try
             {
                 run = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken, flight.Code, leg.Name));
@@ -378,11 +380,13 @@ public sealed partial class LegCommander
             }
             catch (Exception ex)
             {
+                HoldForLeg(flight.Code, leg.Name);
                 EndRecheck(flight.Code, seen.Name, call.Refused || time.GetUtcNow() - since > ReplyDeadline()
                     ? LegRecheck.ThrewOutcome(check, ex.Message) : null);
                 throw;
             }
             late = call.Refused || time.GetUtcNow() - since > ReplyDeadline();
+            HoldForLeg(flight.Code, leg.Name);
         }
         if (UnchangedFinishing(flight.Code, seen) is not { } still)
         {
@@ -402,7 +406,13 @@ public sealed partial class LegCommander
         // The leg-end mark's leak guard counts from here, not from when the finish began: the leg's own check can outlast it (#564).
         RefreshLegEndChecking(flight.Code);
         state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} done");
-        if (flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null && state.Legs(flight.Code).All(l => l.State == LegState.Done))
+        // A leg of a holding flight that ends with nothing past the reviewed head leaves the hold as the watchtower's own.
+        var behind = await ReviewBehindPlaneAsync(flight, cancellationToken);
+        if (!behind)
+        {
+            HoldForWatchtower(flight.Code, leg.Name);
+        }
+        if (behind && state.Legs(flight.Code).All(l => l.State == LegState.Done))
         {
             if (push)
             {
@@ -544,7 +554,7 @@ public sealed partial class LegCommander
         {
             return (false, $"The node did not finish it itself, though its plane matched origin/{flight.Branch} at {CommitRefs.Short(head)}: its check `{leg.Check}` failed ({run.ExitCode}). Last of its output:\n{run.Tail}", true);
         }
-        var pushes = flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null
+        var pushes = await ReviewBehindPlaneAsync(flight, cancellationToken)
             && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name);
         if (pushes)
         {
