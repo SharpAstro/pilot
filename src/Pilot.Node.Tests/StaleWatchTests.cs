@@ -374,8 +374,9 @@ public sealed class StaleWatchTests
     public void TheRefreshReadsOnlyInAirFlights()
     {
         Fly(TimeSpan.FromHours(2));
-        _state.PutFlight(Row() with { Code = "DIR179", Branch = "flight/dir179", State = FlightState.Landed });
-        _state.PutFlight(Row() with { Code = "DIR180", Branch = "flight/dir180", FoldedInto = "DIR178" });
+        var flying = Row();
+        _state.PutFlight(flying with { Code = "DIR179", Branch = "flight/dir179", State = FlightState.Landed });
+        _state.PutFlight(flying with { Code = "DIR180", Branch = "flight/dir180", FoldedInto = "DIR178" });
 
         _watch.RefreshLastMoves();
 
