@@ -67,6 +67,7 @@ public sealed class LegTickingPassTests : LegCommanderTestsBase
         ContextTokens = 50_000,
         ContextWindow = 200_000,
         State = state,
+        SpendWeighted = 0,
         LastResponseAt = _clock.GetUtcNow() - quietFor,
         StartedAt = _clock.GetUtcNow() - quietFor - TimeSpan.FromMinutes(10),
     };
