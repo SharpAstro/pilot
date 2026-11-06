@@ -127,6 +127,7 @@ public static partial class Briefs
         text.AppendLine(MachineLoadRule(run));
         // PIL319: a check naming a solution that sits in src/ could never pass from the plane's root.
         text.AppendLine(CheckWhereRule);
+        text.AppendLine(CheckScopeRule);
         text.AppendLine("The node widens each `dotnet test --filter` in a check with `|Category=Invariant`, so the repo's guard tests run with it and the check need not list them; a check with no filtered dotnet test runs none, so give a leg that changes code a filtered test step.");
         if (CiShape.Of(flight.Worktree) is { } ci)
         {

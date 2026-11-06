@@ -230,7 +230,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                     return (first.Way, first.SessionId, first.Route, true);
                 }
             }
-            var replacedBy = command.Who == Flights.LegWatch.Who ? ReplacedBy(row, rows) : null;
+            var replacedBy = command.Who == Flights.LegWatch.Who ? ReplacedBy(row, rows, state.CurrentWatchtower) : null;
             if (replacedBy is { } newer && Choose(row) == SayWays.Resumed)
             {
                 // The node's own words go to a role's current session only (#542): this one was replaced, and resuming it would
@@ -332,7 +332,19 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         who is { Length: > 0 } && Find(rows, who) is { } sender && sender.Id != recipient.Id ? sender.Id : null;
 
     /// <summary>The live session that replaced <paramref name="row"/>: a background one of the same name and role, started later, that is not an earlier copy of it. Null when none.</summary>
-    internal static SessionRow? ReplacedBy(SessionRow row, SessionRow[] rows) =>
+    internal static SessionRow? ReplacedBy(SessionRow row, SessionRow[] rows, string? watchtower = null)
+    {
+        if (row.Kind == SessionKind.Background && row.Role == SessionRole.Watchtower && watchtower is { Length: > 0 }
+            && rows.FirstOrDefault(r => r.Id == watchtower && r.Role == SessionRole.Watchtower) is { } current
+            && current.State is SessionState.Working or SessionState.Waiting or SessionState.Idle)
+        {
+            // The watchtower role has one record: the keeper's. A row is replaced by it, never by a newer row the node is ending.
+            return current.Id == row.Id ? null : current;
+        }
+        return ReplacedByNewest(row, rows);
+    }
+
+    private static SessionRow? ReplacedByNewest(SessionRow row, SessionRow[] rows) =>
         row.Kind != SessionKind.Background ? null
         : rows.Where(r => r.Id != row.Id && r.Kind == SessionKind.Background && r.Name == row.Name && r.Role == row.Role && r.StartedAt > row.StartedAt
                 && r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle

@@ -292,7 +292,7 @@ an answer that is not coming.
 
 | Command | What it does |
 | --- | --- |
-| `plan-leg flight/<code> name=… goal=… done-when=… [check=…] [ci-differs=…] [budget=…] [model=…] [effort=…] [item=…]…` | A leg at the end of the order, or a planned one replaced. A `check` running `dotnet build`/`dotnet test` without the `-c` the repo's `.github/workflows` build with (Release, in SharpAstro repos) is refused, naming the workflow, unless `ci-differs` says why it cannot match CI; the reason is kept in the Done-when. |
+| `plan-leg flight/<code> name=… goal=… done-when=… [check=…] [ci-differs=…] [whole-suite=…] [budget=…] [model=…] [effort=…] [item=…]…` | A leg at the end of the order, or a planned one replaced. A `check` running `dotnet build`/`dotnet test` without the `-c` the repo's `.github/workflows` build with (Release, in SharpAstro repos) is refused, naming the workflow, unless `ci-differs` says why it cannot match CI; the reason is kept in the Done-when. A `check` running `dotnet test` with no `--filter` (the whole suite, which is CI's on the PR) is refused, with a filter suggested from `git diff <base>...HEAD`, unless `whole-suite` says why; that reason is kept in the Done-when too. |
 | `remove-leg flight/<code>/<leg> [why…]` | Takes a planned leg out of the flight; refused, with the leg's state, for one flying, done or failed. |
 | `start-leg flight/<code>/<leg>` | Its worker: `claude --bg -w <plane> -n <name> --permission-mode auto` from the repo's main checkout (a plane git made is not a trusted folder of its own; `-w` enters it under the repo's trust). |
 | `validate-leg flight/<code>/<leg> go\|no-go [report…]` | A validator's answer: go starts the leg's worker; no-go keeps the leg planned and rings. |
@@ -682,7 +682,7 @@ pilot flight disconnect <code> <other> [--anyway]   # undoes a connect (this nod
 pilot flight pr <code> [title…]                # pushes the plane, opens its PR (body: the legs, Closes #<issue>)
 pilot flight merge <code> <head> [--method squash|rebase|merge]   # or --squash, --rebase, --merge
 pilot flight land <code>
-pilot leg plan <code> <name> --goal … --done-when … [--check …] [--ci-differs …] [--budget …] [--model …] [--effort …] [--item …]…
+pilot leg plan <code> <name> --goal … --done-when … [--check …] [--ci-differs …] [--whole-suite …] [--budget …] [--model …] [--effort …] [--item …]…
 pilot leg remove <code> <leg> [why…]           # takes a planned leg out of the flight
 pilot leg start <code> <leg>
 pilot leg validate go|no-go [report…]          # a leg's validator, from its plane (--leg <code>/<leg> elsewhere)
@@ -1089,12 +1089,24 @@ Control on if it had it.
 pilot tell <text…>                             # to the watchtower, whichever session it is now
 pilot tell --card <id> <text…>                 # the same, about a card: its whole context goes ahead of your words
 pilot watchtower restart [why…]                # a fresh one, briefed from the node's state
+pilot order <text…>                            # a standing order the node keeps; prints its id (o1)
+pilot orders                                   # the orders that stand now, with their ids
+pilot order done <id>                          # retire one
 pilot ring <subject> <title> [--detail …]      # a card that needs the controller
 pilot flag <subject> <title> [--detail …]      # a card for them, no push
 pilot handled <subject> <line>                 # a Handled line
 ```
 
 `pilot-node --no-watchtower` keeps none.
+
+**Standing orders** (#782) are what the controller tells the watchtower that must outlast it: a hold on a flight or repo, a
+scope rule. The node keeps each as a note with an id (`order node <text>`, kept like any note, so it survives a node restart),
+and every fresh watchtower's brief lists the live ones under `## Standing orders`, ahead of `## Where things stand`, with a line
+telling it to record any such order with `pilot order` and to read them before acting. `pilot order done <id>` retires one
+(`order-done node <id>`); a retired order is gone from the next brief, and its id is never reused. The watchtower and the person
+may both use the three commands (a flight's own planner, worker or reviewer may not: they read repo and PR content), and the MCP tools follow (`order`, `order_done`, `orders`). Orders are not part of the brief's
+fingerprint, so giving one never replaces the live watchtower. The wire adds the optional `Id` and `RetiredAt` to a note and the
+verbs `order`, `order-done` and `orders`; an older client ignores both and shows a retired order as its own note, and an older node answers "knows no verb order". An order whose text starts with the word "done" is quoted (`pilot order "done with TIA2000"`), or it is read as retiring an id. The brief lists each order with who gave it, capped at 500 characters one, 20 and 4000 in all.
 
 **`tell card/<id> <words…>`** (`pilot tell --card <id> <words…>`, #400) says to the watchtower, as the person's message, the
 card's whole context and then the words, so it can act without looking anything up. The node refuses an unknown or closed card.

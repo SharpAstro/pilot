@@ -85,7 +85,7 @@ public sealed partial class LegCommander
         }
         catch (FlightException ex)
         {
-            state.RaiseCard(CardBin.Ring, LayFailedKind, Verbs.FlightTarget(flight.Code),
+            state.RaiseCard(CardBin.ForYou, LayFailedKind, Verbs.FlightTarget(flight.Code),
                 $"{flight.Code} could not be laid on {flight.Base}", ex.Message);
             throw new FlightException($"{flight.Code} does not rebase onto {flight.Base} and could not be laid on it: {ex.Message}");
         }
