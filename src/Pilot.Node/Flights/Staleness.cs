@@ -21,6 +21,9 @@ public sealed record StaleBounds
     /// <summary>How many holding-timeout cards a flight may have raised before its hold counts as repeated.</summary>
     public int Holds { get; init; } = NodeSettings.DefaultStaleHolds;
 
+    /// <summary>Hours a flight may be held on a flight of a node that cannot be asked (#753).</summary>
+    public int UnreachableHours { get; init; } = NodeSettings.DefaultStaleUnreachableHours;
+
     /// <summary>The value of one of <see cref="NodeSettings.StaleKeys"/>; 0 for another key.</summary>
     public int Value(string key) => key switch
     {
@@ -29,6 +32,7 @@ public sealed record StaleBounds
         NodeSettings.StaleRecheckHoursKey => RecheckHours,
         NodeSettings.StaleCardHoursKey => CardHours,
         NodeSettings.StaleHoldsKey => Holds,
+        NodeSettings.StaleUnreachableHoursKey => UnreachableHours,
         _ => 0,
     };
 }
@@ -41,6 +45,9 @@ public enum StaleKind
     Leg,
     Card,
     Hold,
+
+    /// <summary>A flight held on a flight of a node that cannot be asked (#753).</summary>
+    Unreachable,
 }
 
 /// <summary>One stale (or nearing) thing: what it is, how long, what it waits on now, the one action that moves it, and what happened since it last moved.</summary>
@@ -162,6 +169,22 @@ public static class Staleness
                 {
                     nearing.Add(item);
                 }
+            }
+
+            // A hold on a flight of a node that has not answered for more than the bound (#753): it names the node and says how long,
+            // and the way out is the disconnect.
+            foreach (var peer in flight.PeerConnections.Where(c => c.UnreachableSince is not null).OrderBy(c => c.UnreachableSince))
+            {
+                var off = now - peer.UnreachableSince!.Value;
+                var disconnect = $"disconnect {flight.Code} from {peer.Code} (pilot flight disconnect {flight.Code} {peer.Code}), or bring {peer.Node} back onto the LAN";
+                Add(new StaleItem
+                {
+                    Kind = StaleKind.Unreachable, Subject = flight.Code, Flight = flight.Code, Age = off, AgeText = Say(off),
+                    WaitsOn = $"{peer.Code} on {peer.Node}, which has not been on the LAN since {Local(peer.UnreachableSince.Value, zone)}", Action = disconnect,
+                    Timeline = Timeline(), Cause = $"{peer.Node} has been unreachable for {Say(off)}, so {flight.Code} is held on {peer.Code}",
+                    Bound = Hours(bounds.UnreachableHours),
+                }, TimeSpan.FromHours(bounds.UnreachableHours));
+                break;
             }
 
             // A leg rechecking too long.
@@ -359,6 +382,7 @@ public static class StaleSection
             StaleKind.Leg => "rechecking",
             StaleKind.Card => "ringing",
             StaleKind.Hold => "holding",
+            StaleKind.Unreachable => "held on an unreachable node",
             _ => "open",
         };
         var summary = item.Summary.ReplaceLineEndings(" ").Replace('"', '\'');

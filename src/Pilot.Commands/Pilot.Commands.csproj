@@ -26,6 +26,18 @@
     <PackageReference Include="LAN.Lib" />
   </ItemGroup>
 
+  <!-- The PNG encoder for `pilot gui overlaps` (a screenshot the inspector sends as raw RGBA becomes the card's image). The Codecs clone's
+       source when it is there, as Console.Lib and Pilot.Gui take it, so one build of the assembly is in the graph; else the package. -->
+  <PropertyGroup>
+    <UseLocalSharpAstroPng Condition="'$(UseLocalSharpAstroPng)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)Codecs\src\SharpAstro.Png\SharpAstro.Png.csproj')">true</UseLocalSharpAstroPng>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalSharpAstroPng)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)Codecs\src\SharpAstro.Png\SharpAstro.Png.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalSharpAstroPng)' != 'true'">
+    <PackageReference Include="SharpAstro.Png" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="Pilot.Node.Tests" />
     <InternalsVisibleTo Include="Pilot.Gui.Tests" />

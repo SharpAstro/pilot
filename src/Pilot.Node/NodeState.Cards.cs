@@ -19,8 +19,9 @@ public sealed partial class NodeState
     /// that card, not a second one: one event, one card. A Handled card is born closed, a line and nothing to answer.
     /// </summary>
     /// <param name="link">The page the card is about (a flight's PR), opened from the card.</param>
+    /// <param name="attachment">The id of the image the node keeps for the card, with <paramref name="attachmentExt"/> its extension.</param>
     /// <param name="askedBy">The assistant's session an ask card is about (<see cref="CardKinds.AssistantAsk"/>), and <paramref name="why"/> the message it acted on.</param>
-    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null, string? summary = null)
+    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null, string? summary = null, string? attachment = null, string? attachmentExt = null)
     {
         lock (_gate)
         {
@@ -59,6 +60,8 @@ public sealed partial class NodeState
                 Link = link,
                 AskedBy = askedBy,
                 Why = why,
+                Attachment = attachment,
+                AttachmentExt = attachment is null ? null : attachmentExt,
                 At = now,
                 State = bin == CardBin.Handled ? CardState.Closed : CardState.Open,
                 Outcome = bin == CardBin.Handled ? "handled" : null,

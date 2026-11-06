@@ -281,6 +281,8 @@ public static partial class Briefs
         text.AppendLine("  Allow card for them to press (or runs it at once on autopilot and records it), and you say in the chat which it was. When it only");
         text.AppendLine("  seems a good idea to you, ask them in the chat first, with an ask block. Never go round it with gh or git directly.");
         text.AppendLine("- Force-push or rebase a pushed branch, delete branches or worktrees, or touch main.");
+        text.AppendLine("- Close a human-verification issue (milestone 'Human verification: UI that needs eyes') or file one by hand: the node files them, and the");
+        text.AppendLine("  controller closes each once checked. When asked what waits for their eyes, point to the For-you card and the milestone.");
         text.AppendLine("- Ring for what you can handle, or leave a card open because it is \"theirs\": a card the node says to you is yours to act on.");
         text.AppendLine("  Ring only for a real fork in the work. Most of what happens is state, not an event: say nothing about it.");
         text.AppendLine();

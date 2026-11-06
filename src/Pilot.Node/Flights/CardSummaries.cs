@@ -139,6 +139,8 @@ public static partial class CardSummaries
             LegCommander.SpendAlertKind => "A leg has spent a large share of the 7-day window before its next round. The round still starts; stop the flight by hand if it should not.",
             LegCommander.GoAroundCapKind => "A leg has gone around as many times as the cap allows, whatever the reasons, and the node and the watchtower send it round no more. Go around sends one more; Accept takes the leg as it stands.",
             LegCommander.ReviewNotesKind => $"The review of {what} passed with notes that do not block the merge. The merge waits while the watchtower fixes the small ones in the plane; nothing for you to do.",
+            LegCommander.HumanVerificationKind => $"The review of {what} noted checks only a person can make, and the node filed each as an issue in the repo's human-verification milestone. Check each by hand and close its issue; dismiss this once read.",
+            LegCommander.HumanVerificationRefusedKind => $"GitHub refused some of {what}'s human checks, so they are not filed; the verdict stands. The detail names them; file them by hand.",
             LegCommander.HoldingClearedKind => "The watchtower or the person cleared a flight held in a holding pattern to land: its merge is no longer held, and autopilot merges it as for any passed review.",
             LegCommander.PrReadyRestoredKind => "A flight's review had passed but no merge card was open (the node restarted between the verdict and the card), so the node raised its PR-ready card again. Nothing to do.",
             LegCommander.HoldingTimeoutKind => $"{what} has circled in a holding pattern for 30 minutes without the watchtower clearing it, or the watchtower is not live. Merge as it is lands it at the reviewed head; Wait keeps it holding and asks again later.",
@@ -165,6 +167,7 @@ public static partial class CardSummaries
             BenchRun.CardKind => "A benchmark ended and its tables are on the card, per ref. Read them, then dismiss it; nothing is waiting on you.",
             JobRunner.BenchBusyKind => "A queued benchmark has waited over half an hour for a quiet CPU. The card names what holds it; cancel the job or let it keep waiting.",
             JobRunner.UntoldKind => "A job ended but its owner's session refused to be told. Tell the owner yourself.",
+            JobRunner.UnansweredKind => "A job's owner was told twice how it ended and sat idle both times. Look at its session; it may have lost the message.",
             LockWait.QueuedKind => "A command that waited for a lock has run or was refused. Nothing to do; the title says which.",
             PackageWatch.LateKind => "A package a leg waits for is late on nuget.org. The card's choice says what to do about it.",
             PilotMd.TooLongKind => "A repo's PILOT.md is over the line limit and was not quoted into briefs. Shorten it to its rules.",
@@ -207,6 +210,14 @@ public static partial class CardSummaries
         var example = first.Length > 0 ? $", for example: {first}" : "";
         return $"The review of {code} passed with {notes.Count} small {(notes.Count == 1 ? "note" : "notes")} that {(notes.Count == 1 ? "does" : "do")} not block the merge{example}. The merge waits while the watchtower fixes them in the plane; nothing for you to do.";
     }
+
+    /// <summary>The sentence of the card that names the issues filed for a flight's human checks: what they are and that the controller checks each by hand and closes it.</summary>
+    public static string HumanVerification(string code, int count) =>
+        $"The review of {code} noted {count} {(count == 1 ? "check" : "checks")} only a person can make, filed as {(count == 1 ? "an issue" : "issues")} in the repo's human-verification milestone. Check each by hand and close its issue; dismiss this once read.";
+
+    /// <summary>The sentence of the card for human checks GitHub refused to take: the verdict stands and the rest is by hand.</summary>
+    public static string HumanVerificationRefused(string code, int count) =>
+        $"GitHub refused {count} of {code}'s human {(count == 1 ? "check" : "checks")}, so {(count == 1 ? "it is" : "they are")} not filed; the review's verdict stands. The detail names {(count == 1 ? "it" : "them")}; file {(count == 1 ? "it" : "them")} by hand.";
 
     private static string Fallback(string title, IReadOnlyList<CardChoice> choices)
     {

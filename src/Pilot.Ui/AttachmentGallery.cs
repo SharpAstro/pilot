@@ -54,9 +54,27 @@ internal sealed class AttachmentGallery
     // A copy with no id is an image the node holds nothing of (a link out): it has no picture to fetch.
     private bool IsFailed(AttachmentRef copy) => copy.Id.Length == 0 || Failed?.Invoke(copy) == true;
 
-    public void Open(AttachmentRef copy) => Viewing = copy;
+    /// <summary>True when the open copy was opened from a card: the cards panel draws the viewer, and the page beside it does not draw a second.</summary>
+    public bool InPanel { get; private set; }
 
-    public void Close() => Viewing = null;
+    public void Open(AttachmentRef copy)
+    {
+        Viewing = copy;
+        InPanel = false;
+    }
+
+    /// <summary>Opens <paramref name="copy"/> in the viewer the cards panel draws (<see cref="Over"/> with <c>panel</c>).</summary>
+    public void OpenInPanel(AttachmentRef copy)
+    {
+        Viewing = copy;
+        InPanel = true;
+    }
+
+    public void Close()
+    {
+        Viewing = null;
+        InPanel = false;
+    }
 
     /// <summary>Escape shuts the viewer; true when it was open.</summary>
     public bool HandleKey(InputKey key)
@@ -79,22 +97,7 @@ internal sealed class AttachmentGallery
         var thumbs = new List<Layout.Node>();
         for (var i = 0; i < copies.Count; i++)
         {
-            var copy = copies[i];
-            if (copy.Id.Length > 0)
-            {
-                _known[copy.Id] = copy;
-            }
-            var picked = copy;
-            var thumb = Layout.Builder.VStack(
-                    (IsFailed(copy)
-                        ? Layout.Builder.Text(copy.Ext.ToUpperInvariant(), 14f, Dim, trim: TextTrim.End)
-                        : Layout.Builder.Fill(ThumbWidth, ThumbHeight, ThumbKey + copy.Id)).WFixed(ThumbWidth).HFixed(ThumbHeight).Bg(Well).BgHover(WellHover)
-                        .Follows(new HitResult.ButtonHit($"attachment:{owner}:{(copy.Id.Length > 0 ? copy.Id : $"#{i}")}"), _ => Open(picked)),
-                    Layout.Builder.Text(copy.Title, 11f, Dim, trim: TextTrim.End).RowH(16f))
-                .WithGap(2f)
-                .WFixed(ThumbWidth)
-                .HAuto();
-            thumbs.Add(thumb);
+            thumbs.Add(Thumb(owner, copies[i], i, Open));
         }
         return Layout.Builder.VStack(
                 Layout.Builder.Text("Attachments", 11f, Faint).RowH(18f),
@@ -104,10 +107,39 @@ internal sealed class AttachmentGallery
             .HAuto();
     }
 
-    /// <summary><paramref name="page"/> with the open copy full size over it; a click anywhere on it, or Escape, shuts it.</summary>
-    public Layout.Node Over(Layout.Node page)
+    private Layout.Node Thumb(string owner, AttachmentRef copy, int index, Action<AttachmentRef> open)
     {
-        if (Viewing is not { } copy)
+        if (copy.Id.Length > 0)
+        {
+            _known[copy.Id] = copy;
+        }
+        return Layout.Builder.VStack(
+                (IsFailed(copy)
+                    ? Layout.Builder.Text(copy.Ext.ToUpperInvariant(), 14f, Dim, trim: TextTrim.End)
+                    : Layout.Builder.Fill(ThumbWidth, ThumbHeight, ThumbKey + copy.Id)).WFixed(ThumbWidth).HFixed(ThumbHeight).Bg(Well).BgHover(WellHover)
+                    .Follows(new HitResult.ButtonHit($"attachment:{owner}:{(copy.Id.Length > 0 ? copy.Id : $"#{index}")}"), _ => open(copy)),
+                Layout.Builder.Text(copy.Title, 11f, Dim, trim: TextTrim.End).RowH(16f))
+            .WithGap(2f)
+            .WFixed(ThumbWidth)
+            .HAuto();
+    }
+
+    /// <summary>
+    /// One thumbnail on its own, with no section heading, for a card: a click opens the viewer over the cards panel (<see cref="OpenInPanel"/>).
+    /// A copy the host cannot show (the node no longer holds it, or it did not decode) is said so in words beside the box, never a bare extension.
+    /// </summary>
+    public Layout.Node Single(string owner, AttachmentRef copy, Func<string, Layout.Node> words)
+    {
+        var thumb = Thumb(owner, copy, 0, OpenInPanel);
+        return IsFailed(copy)
+            ? Layout.Builder.HStack(thumb, words($"No preview: the node no longer has this image, or it could not be read ({copy.Ext.ToUpperInvariant()})")).WithGap(8f).WStar().HAuto()
+            : thumb;
+    }
+
+    /// <summary><paramref name="page"/> with the open copy full size over it; a click anywhere on it, or Escape, shuts it.</summary>
+    public Layout.Node Over(Layout.Node page, bool panel = false)
+    {
+        if (Viewing is not { } copy || InPanel != panel)
         {
             return page;
         }

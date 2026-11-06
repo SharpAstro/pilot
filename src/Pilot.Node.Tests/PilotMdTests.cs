@@ -172,6 +172,49 @@ public sealed class PilotMdTests : IDisposable
         read.Text.ShouldNotBeNull().Split('\n').Length.ShouldBeLessThanOrEqualTo(PilotMd.MaxLines);
     }
 
+    /// <summary>The repo's PILOT.md, found by walking up from the test's directory to the one holding src/Pilot.slnx.</summary>
+    private static string RepoPilotMd()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "src", "Pilot.slnx")))
+        {
+            dir = dir.Parent;
+        }
+        dir.ShouldNotBeNull("no src/Pilot.slnx above the test's directory");
+        return File.ReadAllText(Path.Combine(dir.FullName, PilotMd.FileName));
+    }
+
+    [Fact]
+    [Trait("Category", "Invariant")]
+    public void ThePilotMdHasAHumanVerificationSectionNamingTheMilestoneAndTheLabelWithoutEmDashes()
+    {
+        var text = RepoPilotMd();
+        var start = text.IndexOf("\n## Human verification\n", StringComparison.Ordinal);
+        start.ShouldBeGreaterThan(-1, "PILOT.md has no '## Human verification' section");
+        var rest = text[(start + 1)..];
+        var end = rest.IndexOf("\n## ", 3, StringComparison.Ordinal);
+        var section = end < 0 ? rest : rest[..end];
+
+        section.ShouldContain(LegCommander.HumanVerificationMilestone);
+        section.ShouldContain("pilot: human verification");
+        section.ShouldContain("## Human verification");
+        section.Split('\n').Length.ShouldBeLessThan(15, "the page is quoted whole into every brief: keep the section short");
+        // The rest of the page quotes flags (--filter, --for-file), so the double hyphen is checked in this section's prose only.
+        section.ShouldNotContain("--");
+        text.ShouldNotContain("—");
+    }
+
+    [Fact]
+    public void TheWatchtowerBriefLeavesHumanVerificationIssuesToTheController()
+    {
+        var brief = Briefs.Watchtower("wt", [], [], [], "pilot");
+
+        brief.ShouldContain("Close a human-verification issue");
+        brief.ShouldContain(LegCommander.HumanVerificationMilestone);
+        brief.ShouldContain("controller closes each once checked");
+        brief.Length.ShouldBeLessThan(Briefs.MaxWatchtowerBrief);
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task APilotMdOfExactlyTheLimitIsQuoted()

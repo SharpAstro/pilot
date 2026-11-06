@@ -53,6 +53,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(MachineProcess))]
 [JsonSerializable(typeof(JobRow))]
 [JsonSerializable(typeof(ReviewRound))]
+[JsonSerializable(typeof(HumanCheck))]
 [JsonSerializable(typeof(MergeRow))]
 [JsonSerializable(typeof(PrReviewRow))]
 [JsonSerializable(typeof(IdeaRow))]

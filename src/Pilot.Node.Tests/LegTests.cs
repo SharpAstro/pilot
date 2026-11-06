@@ -322,8 +322,15 @@ internal sealed class FakeGitHub : IGitHub
             ? [.. list.Where(i => i.Milestone == milestone && !_hidden.Contains(i.Number)).OrderByDescending(i => i.Number).Select(Labelled)]
             : []);
 
+    /// <summary>When set, CreateIssueInMilestoneAsync fails with it, as gh does when it refuses.</summary>
+    public string? CreateIssueInMilestoneFails { get; set; }
+
     public Task<MilestoneIssue> CreateIssueInMilestoneAsync(string repoPath, string title, string? body, string milestone, CancellationToken cancellationToken)
     {
+        if (CreateIssueInMilestoneFails is { } why)
+        {
+            throw new FlightException(why);
+        }
         IssuesCreated.Add((repoPath, title, body));
         var made = AddIssue(repoPath, title, milestone, body: body ?? "");
         if (HideCreatedFromLists)
@@ -460,6 +467,11 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     public Recorded<(int Number, string Head, string Method)> Merged { get; } = [];
+
+    /// <summary>Issue numbers GitHub says are closed (#753).</summary>
+    public HashSet<int> IssuesClosedOnGitHub { get; } = [];
+
+    public Task<bool?> IssueClosedAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<bool?>(IssuesClosedOnGitHub.Contains(number));
 
     /// <summary>When set, reading the PR of a branch fails with it, as a gh that could not reach GitHub.</summary>
     public string? PrFails { get; set; }

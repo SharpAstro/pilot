@@ -122,8 +122,22 @@ public sealed record FlightRow
     /// </summary>
     public string? GitHubLabel { get; init; }
 
+    /// <summary>
+    /// The human checks the node has filed as issues for this flight, oldest first: a reviewer that restates one in a later round files nothing
+    /// again. Optional and additive, so the wire version does not move; null before the first is filed.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public HumanCheck[]? HumanChecks { get; init; }
+
     /// <summary>The issue's GitHub Priority field as of the node's last start of the flight; null when unset or not read.</summary>
     public IssuePriority? IssuePriority { get; init; }
+
+    /// <summary>
+    /// Whether the flight's issue carries the <c>pilot: human verification</c> label as of the node's last start of the flight: its briefs then
+    /// say how to note checks only a person can make. Optional and additive, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool HumanVerification { get; init; }
 
     /// <summary>Whether the issue's repo has the Priority field (and the token can read it): where it does, it alone says priority and the <c>pilot: priority</c> label is ignored.</summary>
     public bool HasPriorityField { get; init; }
@@ -483,6 +497,25 @@ public sealed record PeerConnection
     /// PIL294</c>); null while its answer is that the flight has not landed.
     /// </summary>
     public string? Note { get; init; }
+
+    /// <summary>The waited-for flight's branch, so GitHub can be asked when its node cannot be (#753); null in a wait recorded before it was known.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Branch { get; init; }
+
+    /// <summary>The waited-for flight's PR number, when its node last said it had one (#753).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? PullRequest { get; init; }
+
+    /// <summary>The waited-for flight's issue number, when its node last said it had one (#753).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Issue { get; init; }
+
+    /// <summary>
+    /// When the node of the waited-for flight was first found unreachable, kept on later failing looks and cleared when it answers (#753);
+    /// null while it answers.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? UnreachableSince { get; init; }
 }
 
 /// <summary>An issue folded into a flight, and the flight it came from.</summary>
