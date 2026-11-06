@@ -40,6 +40,12 @@ public sealed record MergeQueueState(string State, string Head, bool Queued, int
 /// </summary>
 public sealed record ChecksSummary(string Status, int Done, int Total, string? FailedName = null, string? FailedLink = null);
 
+/// <summary>
+/// A failed GitHub Actions run, read for what it said: its id and page, the jobs that failed, and the log of those jobs
+/// (<c>gh run view --log-failed</c>, its tail when long), which <see cref="FailureSignature"/> reads the failed tests from.
+/// </summary>
+public sealed record FailedRun(long Id, string Url, string[] FailedJobs, string Log);
+
 /// <summary>The one word for where a PR's merge stands on GitHub, as <see cref="MergeState.Kind"/>.</summary>
 public static class MergeKinds
 {
@@ -249,6 +255,14 @@ public interface IGitHub
     /// <summary>Runs PR <paramref name="number"/>'s failed workflow runs again (<c>gh run rerun --failed</c>); how many runs it asked for.</summary>
     /// <exception cref="FlightException">The PR has no failed run, or gh could not rerun one.</exception>
     Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The failed workflow run behind PR <paramref name="number"/>: its own checks' (the first failed run whose log can be read), or with
+    /// <paramref name="mergeGroup"/> the merge queue's run for it (the <c>merge_group</c> run whose branch is the PR's queue entry).
+    /// Read before a failed run is run again, which replaces the failed jobs' logs. Null when there is none or GitHub would not say: a
+    /// read that fails is no failure to look at, and never an exception that stops a look.
+    /// </summary>
+    Task<FailedRun?> FailedRunAsync(string repoPath, int number, bool mergeGroup, CancellationToken cancellationToken) => Task.FromResult<FailedRun?>(null);
 
     /// <summary>Where PR <paramref name="number"/> stands in its base's merge queue; null when its base has none, or GitHub would not say.</summary>
     Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken);
