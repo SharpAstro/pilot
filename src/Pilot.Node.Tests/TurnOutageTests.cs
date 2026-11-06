@@ -24,7 +24,7 @@ public sealed class TurnOutageTests
     public TurnOutageTests()
     {
         _state = new NodeState(new InMemoryJournal(), _time);
-        _outage = new TurnOutage(_state, _time);
+        _outage = new TurnOutage(_state);
         _watch = new LegWatch(_state, (c, _) => Task.FromResult(_state.Complete(c, null)), _time)
         {
             Pilot = "pilot",

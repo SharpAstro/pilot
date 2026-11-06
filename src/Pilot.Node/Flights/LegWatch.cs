@@ -123,7 +123,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     public StartGate? Gate { get; set; }
 
     /// <summary>Whether sessions are taking turns at all (PIL791): while an outage is open the first-turn ladders neither restart nor ring per session. The node shares its one; a test gets its own.</summary>
-    public TurnOutage Outage { get => _outage ??= new TurnOutage(state, time); set => _outage = value; }
+    public TurnOutage Outage { get => _outage ??= new TurnOutage(state); set => _outage = value; }
     private TurnOutage? _outage;
 
     // By worker job: the response it had when it was compacted for a full context; by leg subject: the worker job the leg was sent round from for one.

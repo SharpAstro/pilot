@@ -9,7 +9,7 @@ namespace Pilot.Node.Flights;
 /// ends when any session shows a turn later than the outage began (<see cref="Look"/>). While it is open the first-turn ladders
 /// neither restart nor ring per session; the window it covered is kept in <see cref="LastWindow"/> for what redoes the work.
 /// </summary>
-public sealed class TurnOutage(NodeState state, TimeProvider time)
+public sealed class TurnOutage(NodeState state)
 {
     /// <summary>The kind of the one card an outage raises.</summary>
     public const string CardKind = "turns-outage";

@@ -368,7 +368,7 @@ public static partial class NodeApp
             AccountFile = ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root),
             Outage = services.GetRequiredService<TurnOutage>(),
         });
-        builder.Services.AddSingleton(services => new TurnOutage(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton(services => new TurnOutage(services.GetRequiredService<NodeState>()));
         builder.Services.AddHostedService(services => services.GetRequiredService<UsageReader>());
     }
 
