@@ -39,7 +39,8 @@ public sealed class CardScreenshotTests
         var card = node.State.Cards().ShouldHaveSingleItem();
         (card.Attachment, card.AttachmentExt).ShouldBe((id, "png"));
         var (status, type, bytes) = await node.Client.GetAttachmentAsync(card.Attachment!, Ct);
-        (status, type, bytes).ShouldBe((HttpStatusCode.OK, "image/png", Png));
+        (status, type).ShouldBe((HttpStatusCode.OK, "image/png"));
+        bytes.ShouldBe(Png);
     }
 
     [Fact]
