@@ -16,7 +16,7 @@ public sealed partial class LegCommander
     public const string OnHoldKind = "flight-on-hold";
 
     /// <summary>The verbs a held flight still takes: the hold's own, and a running session's reports.</summary>
-    private static bool TakenOnHold(string verb) =>
+    internal static bool TakenOnHold(string verb) =>
         verb is Verbs.Hold or Verbs.Unhold or Verbs.FinishLeg or Verbs.WaitLeg or Verbs.Check or Verbs.AddArtifact;
 
     /// <summary>The words that refuse a step on a flight on the owner's hold; null when it is not held. The one predicate every gate asks.</summary>

@@ -28,6 +28,14 @@ public sealed partial class NodeState
             {
                 return open;
             }
+            if (bin != CardBin.Handled && OnHoldOf(subject) is { } onHold)
+            {
+                // The owner's hold (#771): the card says so, and offers no choice the gate would refuse.
+                var said = FlightWaiting.OnHoldText(onHold)!;
+                title = $"{title} ({said})";
+                detail = $"The flight is {said}. The node takes no step for it until it is released (pilot flight unhold {onHold.Code}); the choices that would are not offered.{(detail is { Length: > 0 } ? " " + detail : "")}";
+                choices = [.. (choices ?? []).Where(c => Pilot.Node.Flights.LegCommander.TakenOnHold(c.Verb) || !c.Target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal))];
+            }
             var now = _time.GetUtcNow();
             var number = _cards.Count == 0 ? 1 : _cards.Keys.Max(k => int.TryParse(k.AsSpan(1), out var n) ? n : 0) + 1;
             // One PR, one merge card: a pr-ready card replaces an older open merge card of the same subject, however it got there.
@@ -61,6 +69,17 @@ public sealed partial class NodeState
             Publish(new CardAddedEvent { Seq = _seq + 1, At = now, Card = card });
             return card;
         }
+    }
+
+    /// <summary>The flight on the owner's hold that a card's subject (<c>flight/&lt;code&gt;</c> or <c>flight/&lt;code&gt;/&lt;leg&gt;</c>) is about; null when it is about none, or the flight is not held.</summary>
+    private FlightRow? OnHoldOf(string subject)
+    {
+        if (!subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+        var code = subject[Verbs.FlightTargetPrefix.Length..].Split('/')[0];
+        return _flights.Values.FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase) && f.OnHold is not null);
     }
 
     /// <summary>Closes an open card with what became of it; false when it is not open (closed already, or no such card).</summary>

@@ -1,3 +1,4 @@
+using Pilot.Commands;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Shouldly;
@@ -186,4 +187,46 @@ public sealed class FlightHoldTests : ReviewTestsBase
         F(flight.Code).PullRequest.ShouldBeNull();
         F(flight.Code).Review.ShouldBeNull();
     }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AHeldFlightIsSaidOnHoldAheadOfEveryOtherStageInStatusMarkdownSummaryDigestAndTheWatchtowerBrief()
+    {
+        var flight = await NewFlight("7", "parser");
+        (await Hold(flight)).Error.ShouldBeNull();
+        var onHold = $"on hold by me: {Why}";
+
+        PilotCommand.Status(_state.Snapshot()).ShouldContain(onHold);
+        StatusMarkdown.Build(_state.Snapshot()).ShouldContain(onHold);
+        SummaryRecords.Fleet(_state, DateTimeOffset.UtcNow).ShouldNotBeNull().ShouldContain(onHold);
+        SummaryRecords.Flight(_state, flight.Code, DateTimeOffset.UtcNow).ShouldNotBeNull().ShouldContain(onHold);
+        new Digest(_state, TimeProvider.System).Compose(DateTimeOffset.UtcNow.AddHours(-1), DateTimeOffset.UtcNow.AddMinutes(1)).Detail.ShouldContain(onHold);
+        var brief = Briefs.Watchtower("watchtower", _state.Flights(), _state.Legs(), _state.Cards(), "pilot");
+        brief.ShouldContain(onHold);
+        brief.ShouldContain("is the owner's: do nothing about it");
+        Briefs.FlightStatus(F(flight.Code), _state.Legs()).ShouldContain(onHold);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AHeldFlightIsNotStaleForBeingStillAndACardAboutItSaysSoAndOffersNoChoiceTheGateRefuses()
+    {
+        var flight = await NewFlight("8", "parser");
+        (await Hold(flight)).Error.ShouldBeNull();
+        var target = Verbs.FlightTarget(flight.Code);
+
+        // Open since the epoch, it would be stale; on hold it is parked on purpose.
+        Staleness.Read([F(flight.Code) with { CreatedAt = DateTimeOffset.UnixEpoch }], [], [], [], null, DateTimeOffset.UtcNow, new StaleBounds())
+            .Stale.ShouldBeEmpty();
+
+        var card = _state.RaiseCard(CardBin.Ring, "test-ask", target, "something to decide", "words", [
+            new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = target },
+            new CardChoice { Label = "Release", Verb = Verbs.Unhold, Target = target },
+        ]);
+        card.Title.ShouldContain(on(flight));
+        card.Detail.ShouldNotBeNull().ShouldContain("unhold");
+        card.Choices.Select(c => c.Label).ShouldBe(["Release"]);
+    }
+
+    private string on(FlightRow flight) => FlightWaiting.OnHoldText(F(flight.Code))!;
 }
