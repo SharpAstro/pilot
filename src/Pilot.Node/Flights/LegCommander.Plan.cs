@@ -182,6 +182,8 @@ public sealed partial class LegCommander
 
         var why = string.Join(' ', command.Args ?? []).Trim();
         state.RemoveLeg(flight.Code, leg.Name);
+        // A hold that named the leg waits on it no more: it is the watchtower's again (or the node's, with none running).
+        HoldForWatchtower(flight.Code, leg.Name);
         // The legs after it close up the order, so a plan's numbered list and the next order Plan takes stay contiguous.
         var order = 0;
         foreach (var kept in state.Legs(flight.Code))
