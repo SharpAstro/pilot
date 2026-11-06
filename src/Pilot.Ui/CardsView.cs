@@ -274,6 +274,16 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// </summary>
     public Func<Task<string?>>? OnCleanUp { get; set; }
 
+    /// <summary>How long an open card may ring before its row says its age in words (#736); the node's default for its card bound, 2 h.</summary>
+    public TimeSpan StaleCardAfter { get; set; } = TimeSpan.FromHours(2);
+
+    /// <summary>The moment a card's age is read against; a test sets it.</summary>
+    public Func<DateTimeOffset> Clock { get; set; } = () => DateTimeOffset.UtcNow;
+
+    /// <summary><c>stale 5 h</c> for an open card older than <see cref="StaleCardAfter"/>, else null.</summary>
+    internal string? StaleMark(CardRow card) =>
+        card.State == CardState.Open && card.Bin != CardBin.Handled && Clock() - card.At is var age && age >= StaleCardAfter ? $"stale {Waited.Say(age)}" : null;
+
     /// <summary>The key of the foot's Clean up press, for a test or a dump.</summary>
     internal const string CleanUpKey = "cards:cleanup";
 
@@ -360,6 +370,18 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         return Layout.Builder.HStack([.. found.Select(link => Layout.Builder.Text(link.FlightCode is { } code ? $"{link.Text} → {code}" : link.Text + Followable.Away, 11f, Link)
                 .BgHover(CardHover).Follows(new HitResult.ButtonHit($"{key}:idea:{link.Text}"), _ => OnIdeaLink?.Invoke(link)).Pad(0f, 1f).WAuto())]).WithGap(10f).RowH(18f);
+    }
+
+    /// <summary>The commits a card's text names (<see cref="CardRow.Commits"/>) as a row of links, each opening its commit page (Copy URL on the right-click menu); null when it names none.</summary>
+    private Layout.Node? CommitLinkRow(CardRow card, string key)
+    {
+        if (card.Commits.Count == 0)
+        {
+            return null;
+        }
+        return Layout.Builder.HStack([.. card.Commits.Select(commit => _links.OnLink(
+                Layout.Builder.Text(commit.Key + Followable.Away, 11f, Link).BgHover(CardHover)
+                    .Follows(new HitResult.ButtonHit($"{key}:commit:{commit.Key}"), _ => OnOpen?.Invoke(commit.Value)).Pad(0f, 1f).WAuto(), commit.Value))]).WithGap(10f).RowH(18f);
     }
 
     /// <summary>Whether the Handled list is open under In play; a click on its line flips it.</summary>
@@ -604,6 +626,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             {
                 var line = Layout.Builder.Text(screen.NodeOf(card) is { } node ? $"{node.Name} · {Titled(card)}" : Titled(card), 12f, Dim).Selectable().RowH(20f);
                 blocks.Add(line);
+                if (CommitLinkRow(card, $"handled:{card.Id}") is { } handledCommits)
+                {
+                    blocks.Add(handledCommits);
+                }
                 if (IdeaLinkRow($"{card.Title}\n{card.Detail}", $"handled:{card.Id}") is { } handledLinks)
                 {
                     blocks.Add(handledLinks);
@@ -742,9 +768,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             return LegLink(card, about, shown[..at] + about + shown[(at + bare.Length)..] + " ", size).WAuto();
             };
         };
+        var head = Layout.Builder.Text($"{(merged ? "merged" : card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).Selectable();
         var lines = new List<Layout.Node>
         {
-            Layout.Builder.Text($"{(merged ? "merged" : card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).Selectable().RowH(16f),
+            // The stale age (#736) is a word of its own beside the head, so the head says the same whatever the clock reads.
+            StaleMark(card) is { } staleMark
+                ? Layout.Builder.HStack(head.WAuto(), Layout.Builder.Text($"· {staleMark}", 10f, accent).Selectable().WAuto()).WithGap(4f).RowH(16f)
+                : head.RowH(16f),
             // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
             // session's link is its button, Answer in the browser, so its title is no second one.
@@ -783,6 +813,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap, LineChars), detail,
                     detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
             }
+        }
+        if (CommitLinkRow(card, $"card:{card.Id}") is { } commitLinks)
+        {
+            lines.Add(commitLinks);
         }
         if (IdeaLinkRow($"{card.Title}\n{card.Detail}", $"card:{card.Id}") is { } ideaLinks)
         {

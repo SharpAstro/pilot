@@ -162,6 +162,10 @@ public static class WatchtowerAsks
     public const string CleanUp =
         "Clean up, at the person's request: close or dismiss cards that need nothing now (their session, leg, flight or PR is already gone or done), " +
         "stop sessions past their purpose with `session end` and a reason, and reply with one line per thing you did. Answer no person-only card.";
+
+    /// <summary>The flight's <b>Ask the watchtower</b> (#736): why a stale flight is not moving and what moves it, answered on the flight with a For-you card.</summary>
+    public static string WhyNotMoving(string code, string summary) =>
+        $"Flight {code} has gone stale: {summary} Why is this not moving, and what moves it? Answer on the flight with a For-you card about it.";
 }
 
 /// <summary>The verbs and targets the node knows.</summary>
@@ -360,6 +364,9 @@ public static class Verbs
 
     /// <summary>The leading argument of <c>run</c> that asks for the node to itself (a benchmark, <see cref="JobKind.Bench"/>).</summary>
     public const string AloneArg = "--alone";
+
+    /// <summary>The leading argument of <c>run</c> (before <see cref="AloneArg"/>) that ends the job at its first failed test.</summary>
+    public const string FailFastArg = "--fail-fast";
 
     /// <summary>
     /// <c>cancel-job job/&lt;id&gt;</c>: stops a running job; its owner is told, as of any job's end. With <see cref="ForceArg"/> it

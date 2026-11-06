@@ -35,7 +35,7 @@ public sealed partial class GhCli
             ["run", "list", "--commit", commit, "--limit", "30", "--json", "databaseId,workflowName,status,conclusion,url,event,updatedAt"], repoPath, cancellationToken);
         if (exit != 0)
         {
-            throw new FlightException($"gh could not list the workflow runs of {commit[..Math.Min(8, commit.Length)]}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+            throw new FlightException($"gh could not list the workflow runs of {CommitRefs.Short(commit)}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
         using var doc = JsonDocument.Parse(output);
         return [.. doc.RootElement.EnumerateArray()

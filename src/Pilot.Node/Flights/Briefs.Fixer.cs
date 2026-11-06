@@ -17,7 +17,7 @@ public static partial class Briefs
         var title = review.Title is { Length: > 0 } t ? $": {t}" : "";
         text.AppendLine($"You fix PR {pr}{title} ({review.Url}).");
         text.AppendLine();
-        var shortHead = review.Head[..Math.Min(8, review.Head.Length)];
+        var shortHead = CommitRefs.Short(review.Head);
         if (review.FixDetached == true)
         {
             text.AppendLine($"Work in this folder ({review.FixWorktree}), a worktree detached at the head of the PR's branch `{branch}` (the branch is checked out in another worktree, so it cannot be checked out here).");
@@ -76,6 +76,8 @@ public static partial class Briefs
         {
             text.AppendLine("Build and run the tests the way the repo's CI does, and have both pass before you push.");
         }
+        text.AppendLine("A check run (a leg's check, run through `pilot run`) stops at its first failed test: the node ends the job and names that test, so the queue is free for the next job.");
+        text.AppendLine("The node knows it for a check only when it is handed over whole, as the leg's check reads; `pilot run --fail-fast -- <command>` stops any run that way.");
         text.AppendLine();
         text.AppendLine("## Rules");
         text.AppendLine($"- Bring the base in by merging `origin/{review.Base}` into the branch (`git fetch origin` then `git merge origin/{review.Base}`); never rebase it.");

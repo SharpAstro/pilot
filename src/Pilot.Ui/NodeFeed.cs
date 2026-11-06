@@ -119,6 +119,8 @@ internal sealed class NodeFeed : IAsyncDisposable
             JobsRunning = view.Jobs.Count(j => j.State == JobState.Running),
             JobsQueued = view.Jobs.Count(j => j.State == JobState.Queued),
             JobHolder = JobQueue.HolderLine(view.Jobs, now),
+            JobFailing = view.Jobs.Where(j => j.State == JobState.Running && j.FailuresSoFar() is not null).OrderBy(j => j.StartedAt)
+                .Select(j => $"{j.Id} running · {j.FailuresSoFar()}").FirstOrDefault(),
             LegWait = view.Legs.Where(l => l.State == LegState.Flying && l.Wait is not null).Select(l => FlightWaiting.WaitText(l.Wait!)).FirstOrDefault(),
             Rings = view.Cards.Count(c => c.State == CardState.Open && c.Bin == CardBin.Ring),
         };
