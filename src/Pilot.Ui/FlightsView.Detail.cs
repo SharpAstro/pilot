@@ -241,6 +241,11 @@ internal sealed partial class FlightsView<TSurface>
         page.AddRange(RefusalOf(line));
         page.AddRange(AskRefusalOf(line));
         page.AddRange(WhyRow(line));
+        if (line.ActivityText is { } activity)
+        {
+            // How long ago the flight really moved: here only, so a table row stays clean.
+            page.Add(Prose(activity, 12f, Dim));
+        }
         if (line.StaleSummary is { } staleSummary)
         {
             // What went stale (the timeline and the one-line cause) and the priority raise the node made for it (#736): wrapped, never cut.
