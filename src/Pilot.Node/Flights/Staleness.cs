@@ -187,8 +187,33 @@ public static class Staleness
                 break;
             }
 
-            // A leg rechecking too long.
-            foreach (var leg in mine.Where(l => l is { State: LegState.Flying, Recheck: { Outcome: null } }))
+            // A leg past the go-around or flying limits (#752): the leg-stale card's table of check runs is its cause, so the digest
+            // and the brief show why without the job logs. Read from the card, or built without logs while no card is raised yet.
+            var goneStale = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var leg in mine.Where(l => l.State == LegState.Flying))
+            {
+                var checks = jobs.Where(j => j.Kind == JobKind.Check
+                    && string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase)).ToArray();
+                if (StaleLegs.Why(leg, checks, now) is not { } why)
+                {
+                    continue;
+                }
+                goneStale.Add(leg.Name);
+                var subject = $"{flight.Code}/{leg.Name}";
+                var card = cards.FirstOrDefault(c => c.Kind == LegWatch.LegStale && c.Subject == $"{Verbs.FlightTarget(flight.Code)}/{leg.Name}");
+                var table = card?.Detail ?? (checks.Length == 0 ? "no check has run for this leg yet" : StaleLegs.Table(checks, null, leg.Check ?? "", readLogs: false));
+                var first = checks.Select(j => (DateTimeOffset?)j.StartedAt).Append(leg.StartedAt).Min() ?? flight.CreatedAt;
+                var legAge = now - first;
+                stale.Add(new StaleItem
+                {
+                    Kind = StaleKind.Leg, Subject = subject, Flight = flight.Code, Age = legAge, AgeText = Say(legAge), WaitsOn = waits, Action = action,
+                    Timeline = Timeline(), Cause = $"{subject} is stale: {why}{(card is null ? "" : $" (card {card.Id})")}. Its check runs:\n{table}",
+                    Bound = $"{StaleLegs.MostGoArounds.ToString(CultureInfo.InvariantCulture)} go-arounds or {Say(StaleLegs.MostFlying)}",
+                });
+            }
+
+            // A leg rechecking too long (a leg already stale above is listed once, with its check runs).
+            foreach (var leg in mine.Where(l => l is { State: LegState.Flying, Recheck: { Outcome: null } } && !goneStale.Contains(l.Name)))
             {
                 var age = now - leg.Recheck!.Since;
                 var (legWaits, legAction) = RecheckWaits(flight, leg, jobs);
