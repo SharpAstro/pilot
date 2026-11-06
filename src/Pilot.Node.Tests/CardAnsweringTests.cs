@@ -268,11 +268,12 @@ public sealed class CardAnsweringTests : IDisposable
         gui.Ok.ShouldBeTrue(gui.Error);
         gui.Made.ShouldBe($"already on its way, started by cli at {Local(underway.Answering!.At)}");
         node.Workers.Started.ShouldNotContain(w => w.Brief.Contains("keeping both sides' work"), "a press that joins runs nothing");
-        node.GitHub.DraftCalls.Count(d => d == (63, true)).ShouldBe(1);
         open.SetResult();
         var done = await cli;
 
         done.Ok.ShouldBeTrue(done.Error);
+        // The PR went back to draft once, for the first press: the one that joined sent nothing (the fake records a call as it ends).
+        node.GitHub.DraftCalls.Count(d => d == (63, true)).ShouldBe(1);
         node.State.Legs("TIA1").Single().State.ShouldBe(LegState.Flying);
         node.Workers.Started.Count(w => w.Brief.Contains("keeping both sides' work")).ShouldBe(1);
         var closed = node.State.Cards().Single(c => c.Id == conflicts.Id);
@@ -334,8 +335,9 @@ public sealed class CardAnsweringTests : IDisposable
         {
             changes = [.. events.OfType<CardChangedEvent>().Where(e => e.Card.Id == ready.Id)];
         }
-        // It said so on the stream while it ran, what it waited on, and then said it was over.
-        var marked = changes.Select(e => e.Card.Answering).Where(a => a is not null).ShouldHaveSingleItem()!;
+        // It said so on the stream while it ran, what it waited on, and then said it was over. The merge's own card changes while it
+        // ran carry the one mark too, so what the stream holds is one answer, however many events say it.
+        var marked = changes.Select(e => e.Card.Answering).Where(a => a is not null).Distinct().ShouldHaveSingleItem()!;
         (marked.Choice, marked.By, marked.Waiting).ShouldBe(("Merge", "gui", "TIA1 is being sent round"));
         changes.Last().Card.Answering.ShouldBeNull();
         open.SetResult();
