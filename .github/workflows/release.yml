@@ -111,6 +111,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
+          # Only the release zips: an unfiltered download takes every artifact the run made into dist/.
+          pattern: pilot-*
           path: dist
           merge-multiple: true
       - name: Create the release

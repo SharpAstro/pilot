@@ -921,7 +921,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             var job = _queue[i];
             var why = i > 0 && ranks[i] is { } rank
-                ? JobOrder.WhyHere(job, rank, JobOrder.IsLifted(job, JobOrder.BaseRankOf(job, flights, admission), now), ranks.Take(i).OfType<int>())
+                ? JobOrder.WhyHere(job, rank, JobOrder.LevelsLifted(job, JobOrder.BaseRankOf(job, flights, admission), now), JobOrder.Waited(job, now), ranks.Take(i).OfType<int>())
                 : null;
             var place = why is null ? "" : $" ({why})";
             _queue[i] = job with
