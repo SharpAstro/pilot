@@ -247,21 +247,25 @@ public sealed class LegTickingPassTests : LegCommanderTestsBase
     {
         await FlyingAsync(commit: true);
         WorkerEnded();
+        // Left failing throughout: the ticker is asked for once and never again, so the start is never retried.
         _workers.Fail = new InvalidOperationException("claude refused to start");
 
         await _watch.LookAsync(Ct);
-        await Until(() => _state.Cards(openOnly: true).Any(c => c.Kind == LegCommander.StartFailedKind));
-        _workers.Fail = null;
+        await Task.Delay(100, Ct);
 
-        // Past the show-up grace the ordinary ladder would take the leg back and ring worker-idle on top of start-failed.
-        foreach (var _ in Enumerable.Range(0, 4))
+        // Past the show-up grace the ordinary ladder takes the leg back: two nudges, then its one worker-idle ring. The watch's start
+        // has no command waiting on it, so no start-failed card is raised on top of it.
+        foreach (var _ in Enumerable.Range(0, 5))
         {
             _clock.Advance(TimeSpan.FromMinutes(10));
             await _watch.LookAsync(Ct);
         }
 
-        _state.Cards(openOnly: true).Count(c => c.Bin == CardBin.Ring).ShouldBe(1);
-        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegWatch.Idle);
+        var rings = _state.Cards(openOnly: true).Where(c => c.Bin == CardBin.Ring).ToList();
+        rings.Single().Kind.ShouldBe(LegWatch.Idle);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.StartFailedKind);
+        _said.Count.ShouldBe(2);
+        L("parser").TickerJob.ShouldBeNull();
         _workers.Started.ShouldNotContain(w => w.Name == Ticker);
     }
 

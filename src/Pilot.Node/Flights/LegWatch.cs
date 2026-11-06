@@ -552,10 +552,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         // Asked for already: given the show-up grace to appear on the leg, then the ordinary ladder takes it back.
         if (_tickerTried.TryGetValue(workerJob, out var tried))
         {
-            // A start that failed has rung start-failed (with the go-around as its choice): the ordinary ladder going on would ring
-            // worker-idle for the same leg once the grace passed. The one ring stands until the person answers it.
-            return now - tried < ShowUpGrace
-                || state.Cards(openOnly: true).Any(c => c.Kind == LegCommander.StartFailedKind && string.Equals(c.Subject, Subject(leg), StringComparison.Ordinal));
+            // A ticker start that fails is rung once, and by the ladder only: the watch's start has no command waiting on it, so
+            // Launching raises no start-failed card of its own, and once the grace passes the ladder's worker-idle ring is the only one.
+            return now - tried < ShowUpGrace;
         }
         string? head;
         try
