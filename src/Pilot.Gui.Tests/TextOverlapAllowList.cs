@@ -29,6 +29,8 @@ internal static class TextOverlapAllowList
     // translucent rows over the map's labels (SharpAstro/DIR.Lib#182, closed), is fixed by the opaque PaletteColors.Backing of DIR.Lib 11.43, which
     // FlightMapLayerPalette now sets. What is left is a different fault of the same menu, found when PIL790 took DIR.Lib 11.45 and dropped the DIR.Lib#182 entry.
     // Both entries below cite pilot's own #790 (this flight), not a DIR.Lib issue: the menu's fold or scroll is pilot's to build.
+    // #790 closes when this flight merges, so the entries want the number of a follow-up issue for the LAYERS menu (a flight session cannot file one;
+    // the controller does): change PilotFlightPilIssue to that number then. The entries stay until the menu scrolls or folds.
     private const int PilotFlightPilIssue = 790;
 
     public static readonly IReadOnlyList<AllowedTextFault> Entries =

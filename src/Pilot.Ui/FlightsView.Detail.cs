@@ -293,8 +293,8 @@ internal sealed partial class FlightsView<TSurface>
         // The gutters are each scrolled stack's own padding, not the outer stack's: DIR.Lib 11.44 keeps a scrolled stack's scrollbar column free of
         // its rows, but lays the rows out at the narrower width after measuring them at the full one, so wrapped text came out taller than its
         // row and ran into the next. A trailing padding as wide as the bar needs no reserve, so the rows are measured and laid out at one width.
-// The outer stack has no side padding, so the scrollbar column sits at the page's edge and the text keeps the same gutter as before
-// (looked at in a capture at 420 and 1300 wide: the bar at the edge, no text under it).
+        // The outer stack has no side padding, so the scrollbar column sits at the page's edge and the text keeps the same gutter as before
+        // (looked at in a capture at 420 and 1300 wide: the bar at the edge, no text under it).
         var sticky = Layout.Builder.VStack([.. page]).WithScroll(_flightHeadScroll).Pad(Gutter, 0f).WStar().HStarUpToContent();
         return Layout.Builder.VStack(
                 sticky,
