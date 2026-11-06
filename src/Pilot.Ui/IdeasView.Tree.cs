@@ -212,8 +212,8 @@ internal sealed partial class IdeasView<TSurface>
     }
 
     // One of the two panes: its rows, scrolled by its own controller, inside the page's gutters. The gutters are the scrolled stack's own
-    // padding (as in the flight page), so the scrollbar column DIR.Lib 11.44 reserves is already padding and the rows keep the width they were measured at.
-    // Looked at in a CPU capture at 420 and 1300 wide with long titles and bodies: the bar sits at the page's edge, the gutter is as before.
+    // padding (as in the flight page), so the scrollbar column the stack reserves is already padding and the rows keep the width they were
+    // measured at. The scrollbar sits at the page's edge.
     private Layout.Node Pane(List<Layout.Node> rows, ListScrollController scroll) =>
         Layout.Builder.VStack(Layout.Builder.VStack([.. rows]).WithGap(RowGap).WithScroll(scroll).Pad(Gutter, 0f).Stretch().HStar()).Pad(0f, 8f).Stretch();
 

@@ -290,11 +290,10 @@ internal sealed partial class FlightsView<TSurface>
         // What stays above the scroll (the head, the buttons, the notes) takes what it needs and no more, and scrolls itself where the room
         // is short (a header that wrapped onto many lines, a leg's long name on a button): it had no scroll, so its end lay past the window's
         // foot and the legs' scroll was left none. The legs' scroll keeps a floor of its own.
-        // The gutters are each scrolled stack's own padding, not the outer stack's: DIR.Lib 11.44 keeps a scrolled stack's scrollbar column free of
-        // its rows, but lays the rows out at the narrower width after measuring them at the full one, so wrapped text came out taller than its
-        // row and ran into the next. A trailing padding as wide as the bar needs no reserve, so the rows are measured and laid out at one width.
-        // The outer stack has no side padding, so the scrollbar column sits at the page's edge and the text keeps the same gutter as before
-        // (looked at in a capture at 420 and 1300 wide: the bar at the edge, no text under it).
+        // The gutters are each scrolled stack's own padding, not the outer stack's. A scrolled stack keeps its scrollbar column free of its rows
+        // but may measure them at the full width and lay them out at the narrower one, so wrapped text comes out taller than its row and runs into
+        // the next. A trailing padding as wide as the bar needs no reserve, so the rows are measured and laid out at one width. The outer stack
+        // has no side padding, so the scrollbar column sits at the page's edge and the text keeps its gutter.
         var sticky = Layout.Builder.VStack([.. page]).WithScroll(_flightHeadScroll).Pad(Gutter, 0f).WStar().HStarUpToContent();
         return Layout.Builder.VStack(
                 sticky,

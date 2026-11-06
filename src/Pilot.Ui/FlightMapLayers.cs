@@ -185,8 +185,8 @@ internal static class FlightMapLayerPalette
         OffInk: p.Dim,
         DisabledInk: p.Faint)
     {
-        // An opaque backing under the whole panel (DIR.Lib 11.43, #182): the map's labels panning beneath the menu are not drawn
-        // through its rows when the idle fade dims them.
+        // An opaque backing under the whole panel: the map's labels panning beneath the menu are not drawn through its rows
+        // when the idle fade dims them.
         Backing = p.MenuBg,
     };
 

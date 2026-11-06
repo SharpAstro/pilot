@@ -23,14 +23,13 @@ internal sealed record AllowedTextFault(string Case, string Fault, string Reason
 /// <summary>The faults the sweep finds today and lets pass, each with its reason and issue: the list is the sweep's to-do.</summary>
 internal static class TextOverlapAllowList
 {
-    // The first run of the widened sweep found 42 failing cases, 300 fault lines, in 13 causes. PIL740's fix-faults leg fixed 12 in the views (a long title
-    // wraps, the PR title column gives up its floor, a long identifier in an idea breaks at its humps, the priority line wraps, and a window shorter than
-    // 480 units scrolls the Flights, Jobs, Chat and Sessions pages, the flight page's head scrolling itself where it is long). The last, the LAYERS menu's
-    // translucent rows over the map's labels (SharpAstro/DIR.Lib#182, closed), is fixed by the opaque PaletteColors.Backing of DIR.Lib 11.43, which
-    // FlightMapLayerPalette now sets. What is left is a different fault of the same menu, found when PIL790 took DIR.Lib 11.45 and dropped the DIR.Lib#182 entry.
-    // Both entries below cite pilot's own #790 (this flight), not a DIR.Lib issue: the menu's fold or scroll is pilot's to build.
-    // #790 closes when this flight merges, so the entries want the number of a follow-up issue for the LAYERS menu (a flight session cannot file one;
-    // the controller does): change PilotFlightPilIssue to that number then. The entries stay until the menu scrolls or folds.
+    // The views fix the sweep's faults (a long title wraps, the PR title column gives up its floor, a long identifier in an idea breaks at its humps,
+    // the priority line wraps, and a window shorter than 480 units scrolls the Flights, Jobs, Chat and Sessions pages, the flight page's head scrolling
+    // itself where it is long). One fault is left: the LAYERS menu is taller than the map body in a short window. The menu's translucent rows over the
+    // map's labels (DIR.Lib#182) are not a fault any more: FlightMapLayerPalette sets PaletteColors.Backing, an opaque panel behind them.
+    // The fold or scroll that fixes what is left is pilot's to build, so the entries cite a pilot issue, not a DIR.Lib one. They cite #790, which
+    // closes when its flight merges: point PilotFlightPilIssue at the LAYERS menu's own issue once one is filed. The entries go when the menu
+    // scrolls or folds.
     private const int PilotFlightPilIssue = 790;
 
     public static readonly IReadOnlyList<AllowedTextFault> Entries =
