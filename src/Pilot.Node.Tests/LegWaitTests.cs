@@ -42,6 +42,12 @@ public sealed class LegWaitTests : IDisposable
         flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct).GetAwaiter().GetResult().Ok.ShouldBeTrue();
         Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Parse", "done-when=It parses").GetAwaiter().GetResult().Ok.ShouldBeTrue();
         Leg(Verbs.StartLeg, "flight/TIA1/parser").GetAwaiter().GetResult().Ok.ShouldBeTrue();
+        // The worker is launched after the command answers; a loaded machine records it much later.
+        var clock = Stopwatch.StartNew();
+        while (_legs.Starting("TIA1") && clock.Elapsed < TimeSpan.FromSeconds(120))
+        {
+            Thread.Sleep(10);
+        }
     }
 
     private string Repo => Path.Combine(_root, "tianwen");
