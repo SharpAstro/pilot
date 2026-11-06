@@ -122,8 +122,22 @@ public sealed record FlightRow
     /// </summary>
     public string? GitHubLabel { get; init; }
 
+    /// <summary>
+    /// The human checks the node has filed as issues for this flight, oldest first: a reviewer that restates one in a later round files nothing
+    /// again. Optional and additive, so the wire version does not move; null before the first is filed.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public HumanCheck[]? HumanChecks { get; init; }
+
     /// <summary>The issue's GitHub Priority field as of the node's last start of the flight; null when unset or not read.</summary>
     public IssuePriority? IssuePriority { get; init; }
+
+    /// <summary>
+    /// Whether the flight's issue carries the <c>pilot: human verification</c> label as of the node's last start of the flight: its briefs then
+    /// say how to note checks only a person can make. Optional and additive, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool HumanVerification { get; init; }
 
     /// <summary>Whether the issue's repo has the Priority field (and the token can read it): where it does, it alone says priority and the <c>pilot: priority</c> label is ignored.</summary>
     public bool HasPriorityField { get; init; }
@@ -251,6 +265,40 @@ public sealed record FlightRow
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public FlightHolding? Holding { get; init; }
+
+    /// <summary>
+    /// What the node says went stale about the flight (#736): the timeline since it last moved and the one-line cause, kept
+    /// until it moves or its cause changes. Null while nothing is stale. Optional, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StaleSummary { get; init; }
+
+    /// <summary>What the stale summary was made for (the kind and what it waited on), so it is refreshed only when this changes.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StaleCause { get; init; }
+
+    /// <summary>When the flight was first read as stale for the cause in <see cref="StaleCause"/>.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? StaleSince { get; init; }
+
+    /// <summary>The priority raises the node made (or could not make) for stale bounds, oldest first; one per bound. Null before the first.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public FlightStaleRaise[]? StaleRaises { get; init; }
+}
+
+/// <summary>One priority raise for a stale bound (<see cref="FlightRow.StaleRaises"/>).</summary>
+public sealed record FlightStaleRaise
+{
+    /// <summary>The bound it was for: <c>flight</c>, <c>pullrequest</c>, <c>leg</c>, <c>card</c> or <c>hold</c>.</summary>
+    public required string Bound { get; init; }
+
+    /// <summary>The level it was raised to; null when the raise could not be made.</summary>
+    public IssuePriority? Level { get; init; }
+
+    public required DateTimeOffset At { get; init; }
+
+    /// <summary>What it says: <c>raised to high: open 19 h</c>, or why it could not be raised.</summary>
+    public required string Note { get; init; }
 }
 
 /// <summary>A flight's holding pattern (<see cref="FlightRow.Holding"/>): why the merge is held, since when, and who put it there.</summary>
@@ -425,6 +473,25 @@ public sealed record PeerConnection
     /// PIL294</c>); null while its answer is that the flight has not landed.
     /// </summary>
     public string? Note { get; init; }
+
+    /// <summary>The waited-for flight's branch, so GitHub can be asked when its node cannot be (#753); null in a wait recorded before it was known.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Branch { get; init; }
+
+    /// <summary>The waited-for flight's PR number, when its node last said it had one (#753).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? PullRequest { get; init; }
+
+    /// <summary>The waited-for flight's issue number, when its node last said it had one (#753).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Issue { get; init; }
+
+    /// <summary>
+    /// When the node of the waited-for flight was first found unreachable, kept on later failing looks and cleared when it answers (#753);
+    /// null while it answers.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? UnreachableSince { get; init; }
 }
 
 /// <summary>An issue folded into a flight, and the flight it came from.</summary>

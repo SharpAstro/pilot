@@ -41,12 +41,22 @@ internal sealed record JobLine
     /// <summary>Whether it is running with its process tree frozen.</summary>
     public bool Paused => Row.State == JobState.Running && Row.PausedAt is not null;
 
+    /// <summary>The failures the node read in a still running job's output (<c>1 failed so far (X)</c>); null when it has none or ended.</summary>
+    public string? Failing => Row.State == JobState.Running ? Row.FailuresSoFar() : null;
+
     /// <summary>Whether it may still be cancelled: running or queued.</summary>
     public bool Live => Row.State is JobState.Running or JobState.Queued;
 
     /// <summary>The line as a dump writes it.</summary>
-    public string ToDumpLine() =>
-        (Node is { } node ? $"{node.Name} | " : "") + string.Join(" | ", Id, Command, For, StateDetail is null ? State : $"{State} ({StateDetail})", Started, Took.Length == 0 ? "-" : Took) + (Untold ? " | owner not told" : "");
+    public string ToDumpLine()
+    {
+        var shown = Failing is { } failing ? $"{State} · {failing}" : State;
+        if (StateDetail is { } detail)
+        {
+            shown = $"{shown} ({detail})";
+        }
+        return (Node is { } node ? $"{node.Name} | " : "") + string.Join(" | ", Id, Command, For, shown, Started, Took.Length == 0 ? "-" : Took) + (Untold ? " | owner not told" : "");
+    }
 
     /// <summary>The jobs in drawing order: running, then queued in the order they wait, then the ended, last ended first.</summary>
     public static IReadOnlyList<JobLine> Build(IEnumerable<JobRow> jobs, DateTimeOffset now) => Order(jobs.Select(j => From(j, now)));
@@ -362,6 +372,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         Palette.Use(Night);
         BeginFrame();
         Table.PageWidth = Scale.ToDesignX(bounds.Width);
+        NoteHeight(bounds);
         RenderLayout(Tree(screen), bounds);
     }
 
@@ -550,7 +561,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         {
             parts.Add(Details(selected));
         }
-        var page = Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch();
+        var page = WhenShort(Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch());
         page = WithSelection(page);
         page = About?.Over(page) ?? page;
         return _menu.IsOpen ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg)) : page;
@@ -646,12 +657,14 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var cells = new List<Layout.Node>
         {
             Top(Layout.Builder.Text(line.Id, 15f, ended ? Dim : Bright).Selectable()),
-            Top(Layout.Builder.Text(line.Command, 14f, ended ? Dim : Body).Selectable()),
+            Top(Layout.Builder.Text(line.Command, 14f, ended ? Dim : Body).Selectable().Whole(line.Command)),
             Top(Layout.Builder.Text(line.For, 13f, Dim).Selectable()),
             Layout.Builder.VStack(
                 DoingOf(line) is { } doing
                     ? Layout.Builder.Text(doing, 14f, Queued).Selectable().RowH(22f)
-                    : Layout.Builder.Text(line.Untold ? $"{line.State} · owner not told" : line.State, 14f, line.Untold ? Queued : color).Selectable().RowH(22f),
+                    : line.Failing is { } failing
+                        ? Layout.Builder.Text($"{line.State} · {failing}", 14f, Failed).Selectable().RowH(22f)
+                        : Layout.Builder.Text(line.Untold ? $"{line.State} · owner not told" : line.State, 14f, line.Untold ? Queued : color).Selectable().RowH(22f),
                 // The state column can be narrower than the stuck line: it ends in an ellipsis and says the whole of it on hover.
                 (stuck is null ? Layout.Builder.Text(line.StateDetail ?? "", 11f, Dim).Selectable() : Layout.Builder.Text(stuck, 11f, Queued).Selectable().WithTooltip(stuck)).RowH(18f)),
             Top(Layout.Builder.Text(line.Started, 13f, Dim).Selectable()),
@@ -691,6 +704,11 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             Fact("log", job.LogPath, Dim),
             Fact("timeout", JobLine.Duration(job.Timeout), Dim),
         };
+        // Which shell ran it (a bash line on Windows is Git Bash, not WSL): the node says so on the row, and the log opens with the same line.
+        if (job.Shell is { Length: > 0 } shell)
+        {
+            facts.Insert(2, Fact("shell", shell, Dim, whole: true));
+        }
         if (job.State == JobState.Queued && job.Step is { } waits)
         {
             facts.Add(Fact("waits", waits, Queued));
@@ -702,6 +720,10 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         if (job.Error is { } error)
         {
             facts.Add(Fact("why", error, Failed));
+        }
+        if (job.FailuresSoFar() is { } failures)
+        {
+            facts.Add(Fact("failures", job.State == JobState.Running ? failures : failures.Replace(" so far", ""), Failed));
         }
 
         var buttons = new List<Layout.Node>();
@@ -856,10 +878,10 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     private static string Size(long bytes) =>
         bytes >= 1024 * 1024 ? $"{bytes / (1024.0 * 1024.0):0.0} MB" : bytes >= 1024 ? $"{bytes / 1024} KB" : $"{bytes} bytes";
 
-    private static Layout.Node Fact(string label, string text, RGBAColor32 color) =>
+    private static Layout.Node Fact(string label, string text, RGBAColor32 color, bool whole = false) =>
         Layout.Builder.HStack(
                 Layout.Builder.Text(label, 12f, Faint).Selectable().WFixed(FactLabel),
-                Layout.Builder.Text(text, 12f, color).Selectable().WStar())
+                (whole ? Layout.Builder.Text(text, 12f, color).Selectable().Whole(text).WStar() : Layout.Builder.Text(text, 12f, color).Selectable().WStar()))
             .RowH(20f);
 
     private static Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);

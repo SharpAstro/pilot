@@ -107,8 +107,8 @@ public static partial class PilotCommand
 
         // Who a command is from: the Claude session running this host when it may be one, else the host; a leg's worker
         // or a flight's reviewer when the plane says so, as they are named already.
-        Task<int> Send(NodeClient client, string verb, string target, string[] args, string sender, CancellationToken ct, string? why = null) =>
-            SendAsync(client, hereSocket, verb, target, args, sender, bySession && sender == who, byAgent, why, cwd, sessionId, output, requestId, deadline, ct);
+        Task<int> Send(NodeClient client, string verb, string target, string[] args, string sender, CancellationToken ct, string? why = null, string? attachment = null) =>
+            SendAsync(client, hereSocket, verb, target, args, sender, bySession && sender == who, byAgent, why, cwd, sessionId, output, requestId, deadline, ct, attachment);
 
         // What an assistant says it acted on, for the commands that are the person's alone (merge, land, a setting, setup, an
         // update) and a card's answer or dismissal: the node keeps it in the black box and on the card it raises (autopilot off)

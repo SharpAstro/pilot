@@ -321,7 +321,7 @@ internal sealed partial class IdeasView<TSurface>
     ];
 
     // A word this long may not fit a narrow line and Markdown does not break one (a bare URL, a path): it is broken after its
-    // separators with a space, as WrappedProse breaks the other pages' long words. Code (fenced or in backticks) and links are left whole.
+    // separators (and a piece with none at its humps) with a space, as WrappedProse breaks the other pages' long words. Code (fenced or in backticks) and links are left whole.
     private const int LongWord = 24;
 
     internal static string Soften(string markdown)
@@ -344,16 +344,8 @@ internal sealed partial class IdeasView<TSurface>
             {
                 return word;
             }
-            var text = new System.Text.StringBuilder();
-            for (var i = 0; i < word.Length; i++)
-            {
-                text.Append(word[i]);
-                if (word[i] is ',' or '+' or '/' or '\\' or '.' or ':' or '_' or '-' && i + 1 < word.Length)
-                {
-                    text.Append(' ');
-                }
-            }
-            return text.ToString();
+            // After its separators, and a piece still past a line (an identifier with none) at its humps, as WrappedProse breaks it.
+            return string.Join(' ', WrappedProse.Break(word));
         }
     }
 

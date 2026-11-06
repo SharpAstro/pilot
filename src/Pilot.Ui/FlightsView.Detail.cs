@@ -9,6 +9,10 @@ namespace Pilot.Ui;
 internal sealed partial class FlightsView<TSurface>
 {
     private readonly ListScrollController _detailScroll = new() { Mode = ScrollBarMode.Interactive };
+    private readonly ListScrollController _flightHeadScroll = new() { Mode = ScrollBarMode.Interactive };
+
+    /// <summary>The least room the open flight's scrolled part (facts, legs) keeps when what stands above it is long.</summary>
+    private const float ScrolledMinHeight = 120f;
     private string? _openCode;
 
     /// <summary>The attachments the open page shows and the viewer that opens one; the chrome shares one with the Sessions page.</summary>
@@ -69,15 +73,15 @@ internal sealed partial class FlightsView<TSurface>
     private string? _pinned;
     private bool _selectPinned;
 
-    /// <summary>What the Back pill and Escape do: the chrome's Back, which returns to wherever the page was opened from. Null (a host with no history) closes it.</summary>
-    public Action? OnBack { get; set; }
+    /// <summary>What the "← Flights" pill and Escape do: go up one level to the Flights page, recorded as a move (not through history). Null closes the page.</summary>
+    public Action? OnUp { get; set; }
 
-    /// <summary>Leaves the page the way Back does: through <see cref="OnBack"/>, or by closing it where there is none.</summary>
-    public void GoBack()
+    /// <summary>Goes up to the Flights page: through <see cref="OnUp"/>, or by closing it where there is none.</summary>
+    public void GoUp()
     {
-        if (OnBack is { } back)
+        if (OnUp is { } up)
         {
-            back();
+            up();
         }
         else
         {
@@ -134,7 +138,7 @@ internal sealed partial class FlightsView<TSurface>
         var color = StateColor(line);
         var head = new List<Layout.Node>
         {
-            Pill("← Back", "flight:back", GoBack),
+            Pill("← Flights", "flight:back", GoUp).WithTooltip("Up to the Flights page (Escape)"),
             Layout.Builder.Text(line.Code, 16f, Bright).WAuto().Selectable(),
             WrappedProse.Of(line.Title, 14f, Body, selectable: true).WAuto(),
         };
@@ -179,11 +183,15 @@ internal sealed partial class FlightsView<TSurface>
         }
         if (line.PriorityMark is not null)
         {
-            facts.Add(Layout.Builder.Text($"{line.ShownPriority}: skips the Opus cap and the repo hold", 12f, Held).WAuto().Selectable());
+            facts.Add(WrappedProse.Of($"{line.ShownPriority}: skips the Opus cap and the repo hold", 12f, Held, selectable: true).WAuto());
         }
         else if (line.LevelMark is { } quiet)
         {
-            facts.Add(Layout.Builder.Text($"priority {quiet}: queues after the urgent and high flights", 12f, Dim).WAuto().Selectable());
+            facts.Add(WrappedProse.Of($"priority {quiet}: queues after the urgent and high flights", 12f, Dim, selectable: true).WAuto());
+        }
+        if (AskButton(line) is { } ask)
+        {
+            buttons.Add(ask);
         }
         var marks = FlightMarks.From(flight);
         if (marks.Line is { } markLine)
@@ -231,7 +239,17 @@ internal sealed partial class FlightsView<TSurface>
         }
         // What the node said to the last of them, when it refused, and a why asked for, sit under the buttons they were asked by.
         page.AddRange(RefusalOf(line));
+        page.AddRange(AskRefusalOf(line));
         page.AddRange(WhyRow(line));
+        if (line.StaleSummary is { } staleSummary)
+        {
+            // What went stale (the timeline and the one-line cause) and the priority raise the node made for it (#736): wrapped, never cut.
+            page.Add(Prose($"stale: {staleSummary}", 12f, Held));
+            if (line.StaleRaise is { } raise)
+            {
+                page.Add(Prose(raise, 12f, Held));
+            }
+        }
         if (line.StaleMark is { } stale)
         {
             // Wrapped, never cut: it says why the buttons above are dead.
@@ -269,9 +287,13 @@ internal sealed partial class FlightsView<TSurface>
             scrolled.Add(attachments);
         }
         scrolled.AddRange(legs);
+        // What stays above the scroll (the head, the buttons, the notes) takes what it needs and no more, and scrolls itself where the room
+        // is short (a header that wrapped onto many lines, a leg's long name on a button): it had no scroll, so its end lay past the window's
+        // foot and the legs' scroll was left none. The legs' scroll keeps a floor of its own.
+        var sticky = Layout.Builder.VStack([.. page]).WithScroll(_flightHeadScroll).WStar().HStarUpToContent();
         return Layout.Builder.VStack(
-                [.. page,
-                Layout.Builder.VStack([.. scrolled]).WithGap(10f).WithScroll(_detailScroll).Stretch()])
+                sticky,
+                Layout.Builder.VStack([.. scrolled]).WithGap(10f).WithScroll(_detailScroll).WStar().HStar(1f, ScrolledMinHeight))
             .Pad(Gutter, 8f)
             .Stretch();
     }

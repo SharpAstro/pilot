@@ -96,6 +96,10 @@ internal sealed partial class FlightsView<TSurface>
     // The map takes the pointer and the keys only while it is what the page shows, with no menu, wizard or flight page over it.
     private bool MapLive => MapShown && _mapBodySeen is not null && !IsDetailOpen && !Wizard.IsOpen && !_menu.IsOpen;
 
+    // An overlay over the canvas (the About card, the gallery viewer) takes a plain left press itself, so it never starts a pan.
+    // The chrome adds the rail's More menu, which the view does not know.
+    private bool OverlayOpen => About is { IsOpen: true } || Gallery.Viewing is not null;
+
     // Whether Space is held (a left drag then moves the map); cleared by its release, or when the map goes away.
     private bool _space;
 
@@ -133,8 +137,9 @@ internal sealed partial class FlightsView<TSurface>
 
     /// <summary>
     /// The map's pointer input, which the window gives the page ahead of the router (a middle press over a target would be its
-    /// click's otherwise): a pinch zooms about its point, a middle-button drag or a left drag with Space held moves the map, and
-    /// Space's release is noted. A plain left press is left alone, so a click still picks what is under it. True for what it took.
+    /// click's otherwise): a pinch zooms about its point, a middle-button drag, a left drag with Space held, or a left drag that starts on empty canvas
+    /// moves the map, and Space's release is noted. A left press on a row (or the pill, the layers menu or a continent's name) is left alone,
+    /// so a click picks what is under it and a drag from a row never pans. True for what it took.
     /// </summary>
     internal bool HandleMapPointer(InputEvent evt)
     {
@@ -152,7 +157,7 @@ internal sealed partial class FlightsView<TSurface>
                 }
                 return true;
             case InputEvent.MouseDown down when MapLive && _mapBody is { } body && body.Contains(down.X, down.Y)
-                && (down.Button == MouseButton.Middle || (down.Button == MouseButton.Left && _space)):
+                && (down.Button == MouseButton.Middle || (down.Button == MouseButton.Left && (_space || (!OverlayOpen && IsEmptyCanvas(body, down.X, down.Y))))):
                 _panButton = down.Button;
                 var (vx, vy) = ToView(body, down.X, down.Y);
                 _vp.BeginPan(vx, vy);
@@ -173,6 +178,7 @@ internal sealed partial class FlightsView<TSurface>
                 return false;
         }
     }
+
 
     // The keys the map takes while it is shown. Ctrl+0 and Ctrl+1 are also the Ideas and Home pages' chords: the chrome offers them
     // here first (see PilotChrome.HandleInput), and they are the map's only while it is shown. Ctrl+= arrives as Plus (the
@@ -213,12 +219,12 @@ internal sealed partial class FlightsView<TSurface>
         var step = (key.Modifiers & InputModifier.Shift) != 0 ? ArrowStepBig : ArrowStep;
         switch (key.Key)
         {
-            // As the wheel: Up shows more of the top, Left more of the left.
+            // Up, Down, Home and End move the selection through the rows as drawn; the view follows it.
             case InputKey.Up:
-                _vp.PanBy(0f, step);
-                break;
             case InputKey.Down:
-                _vp.PanBy(0f, -step);
+            case InputKey.Home:
+            case InputKey.End:
+                MoveSelection(key.Key);
                 break;
             case InputKey.Left:
                 _vp.PanBy(step, 0f);
@@ -235,6 +241,7 @@ internal sealed partial class FlightsView<TSurface>
         Changed?.Invoke();
         return true;
     }
+
 
     private const float PillWidth = 56f;
     private const float PillHeight = 26f;
@@ -464,6 +471,24 @@ internal sealed partial class FlightsView<TSurface>
                         .Clickable(new HitResult.ButtonHit($"map:{c.Key}"), _ => ListCursor.MoveTo(at)),
                     null, _vp.ViewX(c.X), _vp.ViewY(c.Y), 0f, false);
             }
+        }
+        // One band per row, under every other target of the row (and of the rows' own gates, airports, signs and planes), so a click
+        // anywhere in the row's band picks the flight and the circles, the sign and the plane keep their own double-click and tip.
+        foreach (var route in _map.Routes)
+        {
+            if (IndexOf(screen, route) is not (>= 0 and var at))
+            {
+                continue;
+            }
+            var line = screen.Lines[at];
+            var (bx, by, bw, bh) = _map.RowBand(route);
+            var bandWidth = bw * _vp.Scale;
+            var bandHeight = bh * _vp.Scale;
+            yield return Layout.Builder.Anchored(
+                Layout.Builder.Spacer().WFixed(bandWidth).HFixed(bandHeight)
+                    .Clickable(new HitResult.ButtonHit($"map:{line.Code}:row"), _ => ListCursor.MoveTo(at))
+                    .WithContextMenu(pt => OpenMenu(line, at, pt)),
+                null, _vp.ViewX(bx), _vp.ViewY(by), 0f, false);
         }
         foreach (var route in _map.Routes)
         {

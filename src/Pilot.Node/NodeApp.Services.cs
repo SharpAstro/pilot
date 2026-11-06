@@ -71,6 +71,17 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => new RemovalQueue(RemovalQueue.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         // First: tried once at the start, before any service touches the paths it holds.
         builder.Services.AddHostedService(services => new RemovalQueueStart(services.GetRequiredService<RemovalQueue>(), services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddHostedService(services => new DiskSweep(
+            Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs"), Path.GetTempPath(),
+            services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
+        {
+            ScratchDays = () => services.GetRequiredService<RoleModels>().ScratchDays,
+            DiskAlertGb = () => services.GetRequiredService<RoleModels>().DiskAlertGb,
+            Planes = services.GetRequiredService<Planes>(),
+            GitHub = services.GetService<IGitHub>(),
+            Queue = services.GetRequiredService<RemovalQueue>(),
+            Repos = () => [.. services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path)],
+        });
         builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>(), services.GetRequiredService<RemovalQueue>()));
         builder.Services.AddSingleton<StopGate>();
         builder.Services.AddSingleton(new Attachments(options.DataFolder));
@@ -90,7 +101,12 @@ public static partial class NodeApp
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PackageWatch>());
         // A flight connected to a flight another node flies is held until that node says it landed.
-        builder.Services.AddHostedService(services => new PeerConnectionWatch(services.GetRequiredService<FlightCommander>(), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
+        builder.Services.AddHostedService(services =>
+        {
+            var commander = services.GetRequiredService<FlightCommander>();
+            commander.Error = logWriter;
+            return new PeerConnectionWatch(commander, services.GetRequiredService<TimeProvider>()) { Error = logWriter };
+        });
     }
 
     /// <summary>The flight commander, with what it reaches: the trackers, the fleet, the ledger.</summary>
@@ -297,6 +313,7 @@ public static partial class NodeApp
                 RestartWorker = legs.RestartWorkerAsync,
                 RestartValidator = legs.RestartValidatorAsync,
                 StopSession = legs.StopSessionAsync,
+                TellEndedJobs = (owners, ct) => services.GetRequiredService<JobRunner>().TellUntoldOf(owners, ct),
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<LegWatch>());
@@ -380,6 +397,8 @@ public static partial class NodeApp
                     }
                     return owners;
                 },
+                // The repos' drive, else the Claude profile's (one and the same on most machines).
+                DiskPath = () => options.RepoRoots.FirstOrDefault(Directory.Exists) ?? services.GetRequiredService<SessionTrackerOptions>().Profile.Root,
                 Logger = services.GetService<ILogger<MachineSampler>>(),
             };
         });
@@ -422,7 +441,9 @@ public static partial class NodeApp
                 MaxRunning = Math.Max(1, nodeOptions.MaxJobs),
                 MinFreeMemory = (long)(Math.Max(0, nodeOptions.JobMemoryGigabytes) * (1L << 30)),
                 Priority = nodeOptions.JobPriority,
+                PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? false,
                 EndedForGood = id => services.GetRequiredService<SessionTracker>().IsEndedForGood(id),
+                Lifetime = services.GetService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<JobRunner>());
@@ -474,13 +495,26 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => new Summaries(services.GetRequiredService<NodeState>(), services.GetRequiredService<ISummaryModel>(), services.GetRequiredService<TimeProvider>())
         {
             Machine = options.Machine,
+            Bounds = () => services.GetRequiredService<RoleModels>().Stale,
             // What a card the call proposes as resolved is checked against.
             GitHub = services.GetRequiredService<IGitHub>(),
             // The nodes this user's grants reach, the same a create-flight in maintenance may route to.
             Fleet = services.GetRequiredService<FlightCommander>().Fleet,
         });
-        builder.Services.AddSingleton<Digest>();
+        builder.Services.AddSingleton(services => new Digest(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
+        {
+            Bounds = () => services.GetRequiredService<RoleModels>().Stale,
+        });
         builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());
+        builder.Services.AddSingleton(services => new StaleWatch(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
+        {
+            Bounds = () => services.GetRequiredService<RoleModels>().Stale,
+            Trackers = () => services.GetRequiredService<FlightCommander>().Trackers,
+            TellEndedJobs = (owners, ct) => services.GetRequiredService<JobRunner>().TellUntoldOf(owners, ct),
+            Say = async (id, text, ct) =>
+                (await services.GetRequiredService<NodeCommands>().RunAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = LegWatch.Who }, ct)).Ok,
+        });
+        builder.Services.AddHostedService(services => services.GetRequiredService<StaleWatch>());
     }
 
     /// <summary>Releases of pilot itself.</summary>

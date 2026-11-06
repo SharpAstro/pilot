@@ -402,7 +402,7 @@ public sealed class AutopilotTests
         var card = Ask(node);
 
         // The PR's head is not the one the assistant reviewed: the merge says so, and the ask stays for another try.
-        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Allow"))).Error.ShouldNotBeNull().ShouldContain("not the def56789 you reviewed");
+        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Allow"))).Error.ShouldNotBeNull().ShouldContain("reviewed def56789");
 
         node.GitHub.Merged.ShouldBeEmpty();
         Ask(node).Id.ShouldBe(card.Id);

@@ -152,7 +152,7 @@ internal sealed class PilotChrome<TSurface>
         Ideas = new IdeasView<TSurface>(renderer) { Gallery = sessions.Gallery };
         PullRequests = new PullRequestsView<TSurface>(renderer);
         Spend = new SpendView<TSurface>(renderer);
-        Cards = new CardsView<TSurface>(renderer);
+        Cards = new CardsView<TSurface>(renderer) { Gallery = sessions.Gallery };
         Chat = new ChatView<TSurface>(renderer);
         // A card's in-app link (the watchtower card's Fleet link) opens that page, in either host.
         Cards.OnGoTo = link => { if (link == InAppLinks.Fleet) { Show(PilotPage.Fleet); } };
@@ -296,9 +296,23 @@ internal sealed class PilotChrome<TSurface>
         // A transcript or a flight's page opened from inside a page (Enter, a click on a row) is a move too.
         sessions.Transcript.Opening = RecordOpening;
         Flights.Opening = RecordOpening;
-        // The per-view Back pills and Escape are the window's Back: where there is no place to go back to, the view closes itself.
-        sessions.Transcript.OnBack = BackOrClose(sessions.Transcript.Close);
-        Flights.OnBack = BackOrClose(Flights.CloseDetail);
+        // A transcript goes up, not back: to the Sessions page as it was left, with its session selected. A move, so the rail's back returns here.
+        sessions.Transcript.OnUp = () => Navigate(() =>
+        {
+            var line = sessions.Transcript.Line;
+            Switch(PilotPage.Sessions, _show);
+            sessions.Transcript.Close();
+            if (line is not null)
+            {
+                sessions.Pin(line);
+            }
+        });
+        // The flight's page goes up, not back: to the Flights page as it was left, with the flight selected. A move, so the rail's back returns here.
+        Flights.OnUp = () => Navigate(() =>
+        {
+            Switch(PilotPage.Flights, _show);
+            Flights.CloseDetail();
+        });
         Nav = new NavControls<TSurface>(renderer)
         {
             CanGoBack = () => CanGoBack,
@@ -455,6 +469,30 @@ internal sealed class PilotChrome<TSurface>
         Switch(page, _show);
     });
 
+    /// <summary>
+    /// Shows the page called <paramref name="name"/> (<see cref="PilotPageNames"/>), as <see cref="Show"/> does. False, with
+    /// <paramref name="refusal"/> saying what was asked and the names that exist, for a name no page has; nothing is shown then.
+    /// What a tool outside the process sends to take the window to a page.
+    /// </summary>
+    public bool TryShow(string? name, out string? refusal)
+    {
+        if (!PilotPageNames.TryParse(name, out var page))
+        {
+            refusal = PilotPageNames.Refusal(name);
+            return false;
+        }
+
+        Show(page);
+        refusal = null;
+        return true;
+    }
+
+    /// <summary>
+    /// The text faults of the page shown, from the nodes its widget painted in the last frame (<see cref="PageFaults"/>, which runs the
+    /// one <see cref="TextOverlap"/>): its name, the window's size, the page's and the DPI beside them.
+    /// </summary>
+    public PageFaults Faults() => PageFaults.Of(PilotPageNames.Of(Page), TextCheck.Window, [.. PageViewOf(Page).GetCapturedLayout()], DpiScale);
+
     // The page shown without a record: where the host keeps the page itself, the host's say, and the chrome's own page follows.
     private void Switch(PilotPage page, Action<PilotPage>? show)
     {
@@ -565,14 +603,6 @@ internal sealed class PilotChrome<TSurface>
         return true;
     }
 
-    private Action BackOrClose(Action close) => () =>
-    {
-        if (!Back())
-        {
-            close();
-        }
-    };
-
     /// <summary>
     /// The window's own keys and buttons, ahead of what is painted and of a focused field: Alt+Left and the mouse's back
     /// button go <see cref="Back"/>, Alt+Right and its forward button go <see cref="Forward"/>. The button acts as it goes down;
@@ -580,6 +610,12 @@ internal sealed class PilotChrome<TSurface>
     /// </summary>
     public bool HandleInput(InputEvent evt)
     {
+        // A card's image open over the panel is shut by Escape wherever the page is: the page's own views only close what a page opened.
+        if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && Gallery.InPanel && Gallery.HandleKey(InputKey.Escape))
+        {
+            return true;
+        }
+
         // Shift+Enter in the chat's box is a new line: ahead of the router, which would take the Enter as a send.
         if (evt is InputEvent.KeyDown { Key: InputKey.Enter } && Chat.HandleNewLine(evt))
         {
@@ -594,7 +630,10 @@ internal sealed class PilotChrome<TSurface>
 
         // The Flights map's own zoom and pan: a pinch, a middle or Space drag, and Ctrl+0 / Ctrl+1 (the Ideas and Home chords,
         // which the map has only while it is shown), ahead of the router and of the page chords.
+        // A press while the rail's More menu is open belongs to the menu (a left press on empty canvas would pan otherwise).
+        var moreOpen = More.Menu.IsOpen && evt is InputEvent.MouseDown { Button: MouseButton.Left };
         if (Page == PilotPage.Flights
+            && !moreOpen
             && (Flights.HandleMapPointer(evt) || evt is InputEvent.KeyDown { Key: InputKey.D0 or InputKey.D1, Modifiers: InputModifier.Ctrl } chord && Flights.HandleMapKey(chord)))
         {
             return true;

@@ -712,6 +712,13 @@ if (feed is not null && client is not null && clients is not null)
         Note($"pilot-gui: {action.Label}: {refused ?? "done"}");
         return refused;
     }, "a Flights action");
+    // A stale flight's Ask the watchtower (#736): the flight, its stale summary and why it is not moving, told as the person's request.
+    chrome.Flights.OnAskWatchtower = async (code, summary) =>
+    {
+        var refused = await ChatCommands.TellAsync(client, WatchtowerAsks.WhyNotMoving(code, summary), GuiSay.Who, cts.Token);
+        Note($"pilot-gui: tell watchtower (why is {code} not moving): {refused ?? "told"}");
+        return refused;
+    };
     chrome.Flights.OnOpen = location => OpenAway(location, () => chrome.Flights.Say($"could not open {location}"));
     // The Summary cards on Home and on a flight's page: Summarise is a verb on the node the summary is of, and the card shows
     // it running until the node answers. The row it then shows is the node's own, from the stream, never this answer's.
@@ -1175,6 +1182,41 @@ using var inspector = DebugInspector.Attach(loop, new DebugInspectorOptions
             widget.CollectPaintedRegions(regions);
         }
         return regions;
+    },
+    // The text faults of the page shown, found by the one TextOverlap check (PageFaults), as flat values: faults is a JSON array a tool parses.
+    AppState = state =>
+    {
+        var shown = chrome.Faults();
+        state.Set("page", shown.Page);
+        state.Set("pages", string.Join(", ", Pilot.Ui.PilotPageNames.Names));
+        state.Set("window", shown.WindowText);
+        // So a tool that sizes the window can put it back (pilot gui overlaps): maximised again, or its own size.
+        state.Set("maximized", window.IsMaximized);
+        state.Set("pageSize", shown.PageSizeText);
+        state.Set("dpi", shown.Dpi);
+        state.Set("faultCount", shown.Count);
+        state.Set("faults", shown.FaultsJson());
+    },
+    // The arranged nodes of everything the window painted: the rail, the page and the panel beside it.
+    GetLayout = () =>
+    {
+        var nodes = new List<DIR.Lib.Layout.ArrangedNode<float>>();
+        foreach (var widget in chrome.Widgets)
+        {
+            widget.CollectPaintedNodes(nodes);
+        }
+        return nodes;
+    },
+    // "page" takes the window to a page by name ({"page":"settings"}); an unknown name is refused with the names that exist.
+    SignalFactories = new Dictionary<string, Action<System.Text.Json.JsonElement>>
+    {
+        ["page"] = args =>
+        {
+            if (!chrome.TryShow(args.OptString("page") ?? args.OptString("name"), out var refusal))
+            {
+                throw new ArgumentException(refusal);
+            }
+        },
     },
 });
 #endif

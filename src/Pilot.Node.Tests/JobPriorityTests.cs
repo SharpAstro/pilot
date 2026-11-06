@@ -10,7 +10,8 @@ namespace Pilot.Node.Tests;
 
 /// <summary>#629: a job and a check run below normal by default, and so does a process they start; Idle gives idle; Normal changes nothing.</summary>
 [Collection(JobsCollection.Name)]
-public sealed class JobPriorityTests : JobTestsBase
+[Trait("Category", "Slow")] // each case starts pwsh twice at below-normal priority: over the limit whenever other flights load the machine
+public sealed partial class JobPriorityTests : JobTestsBase
 {
     // The line prints its own priority and that of a child it starts, as parent=<x> and child=<x>.
     private static string Probe => OperatingSystem.IsWindows()
@@ -71,7 +72,7 @@ public sealed class JobPriorityTests : JobTestsBase
     {
         _jobs.Priority = priority;
 
-        var run = await new JobCheckRunner(_jobs).RunAsync(Probe, _root, Ct, "TIA1", "parser").WaitAsync(TimeSpan.FromSeconds(60), Ct);
+        var run = await new JobCheckRunner(_jobs).RunAsync(Probe, _root, Ct, "TIA1", "parser").WaitAsync(WaitCeiling, Ct);
 
         run.Passed.ShouldBeTrue(run.Tail);
         ShouldRunAt(run.Tail, priority);
@@ -107,7 +108,8 @@ public sealed class JobPriorityTests : JobTestsBase
             SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
         });
         var id = runner.Run(new CommandRequest { Verb = Verbs.Run, Target = "session/a1b2c3d4", Args = [node.Folder, "0", Probe], Who = "se1-tia1-parser" }).Made!;
-        for (var i = 0; i < 600; i++)
+        var clock = Stopwatch.StartNew();
+        while (clock.Elapsed < WaitCeiling)
         {
             if (node.State.Jobs().Single(j => j.Id == id) is { EndedAt: not null } job)
             {
@@ -115,9 +117,10 @@ public sealed class JobPriorityTests : JobTestsBase
             }
             await Task.Delay(100, Ct);
         }
-        throw new TimeoutException($"job {id} did not end");
+        throw new TimeoutException($"job {id} did not end within {WaitCeiling}");
     }
 
+    // Starts a node of its own and runs a job at Idle priority, which a busy machine starves: it took 19 to 23 s under load.
     [Fact]
     public async Task SettingJobPriorityOnTheNodeChangesTheNextJobAndNormalRestoresNormal()
     {

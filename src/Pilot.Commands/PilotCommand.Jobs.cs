@@ -7,7 +7,7 @@ namespace Pilot.Commands;
 
 public static partial class PilotCommand
 {
-    /// <summary>A job in a line: <c>j3  running  dotnet test  (se1-tia1-parser, 4m)</c>, its step or how it ended after.</summary>
+    /// <summary>A job in a line: <c>j3  running  dotnet test  (se1-tia1-parser, 4m)  [pwsh]</c>, the shell that ran it, then its step or how it ended.</summary>
     internal static string JobLine(JobRow job)
     {
         var state = job.State.ToString().ToLowerInvariant();
@@ -19,15 +19,15 @@ public static partial class PilotCommand
         {
             state = $"paused since {pausedAt.ToLocalTime():HH:mm}";
         }
-        var end = job.Error is { } error ? $": {error}" : "";
+        var end = job.Error is { } error ? $": {error}" : job.State == JobState.Running && job.FailuresSoFar() is { } failing ? $" · {failing}" : "";
         var took = (job.EndedAt ?? DateTimeOffset.UtcNow) - job.StartedAt;
         var told = job.EndedAt is not null && job.Owner is not null && !job.Told ? ", owner not told" : "";
-        return $"{job.Id}  {state}{end}  {job.Command}  ({job.OwnerName ?? "terminal"}, {(int)took.TotalMinutes}m{told}){(job.Step is { } step ? $"  · {step}" : "")}";
+        return $"{job.Id}  {state}{end}  {job.Command}  ({job.OwnerName ?? "terminal"}, {(int)took.TotalMinutes}m{told}){(job.Shell is { Length: > 0 } shell ? $"  [{shell}]" : "")}{(job.Step is { } step ? $"  · {step}" : "")}";
     }
 
     /// <summary>A merge queue entry in a line: <c>TIA61  #63  tianwen  1  abc1234  checks  · merging when checks pass</c>: flight, PR, repo, place, head, state, then why.</summary>
     internal static string MergeLine(MergeRow merge) =>
-        $"{merge.Flight}  {(merge.Pr is { } pr ? $"#{pr}" : "no PR")}  {merge.Repo}  {(merge.Place is { } place ? place.ToString(CultureInfo.InvariantCulture) : "-")}  {merge.Head[..Math.Min(8, merge.Head.Length)]}  {merge.State.ToString().ToLowerInvariant()}{(merge.Why is { } why ? $"  · {why}" : "")}";
+        $"{merge.Flight}  {(merge.Pr is { } pr ? $"#{pr}" : "no PR")}  {merge.Repo}  {(merge.Place is { } place ? place.ToString(CultureInfo.InvariantCulture) : "-")}  {merge.Head[..Math.Min(9, merge.Head.Length)]}  {merge.State.ToString().ToLowerInvariant()}{(merge.Why is { } why ? $"  · {why}" : "")}";
 
     /// <summary>A duration as people write it: <c>90m</c>, <c>2h</c>, <c>45s</c>.</summary>
     internal static bool TryDuration(string text, out TimeSpan span)
@@ -64,11 +64,12 @@ public static partial class PilotCommand
             // run, jobs, job: a long run handed to the node, which wakes the session that handed it over
             var runTimeout = new Option<string?>("--timeout") { Description = "How long it may run: 90m, 2h, 45s; 2h by default, 8h at most" };
             var runAlone = new Option<bool>("--alone") { Description = "Run with the node to itself (a benchmark): waits for no other job and a quiet CPU, and holds every other job and new leg until it ends" };
+            var runFailFast = new Option<bool>("--fail-fast") { Description = "End the job at its first failed test, so a run whose first failure is all you need frees the queue (a check does this by itself)" };
             var runWords = new Argument<string[]>("command") { Description = "The command, after --: pilot run -- dotnet test", Arity = ArgumentArity.OneOrMore };
             var runCommand = Action(new Command("run", "Hand a long run to the node as a job, then end your turn: the node wakes this session with how it ended")
                 {
                     Arguments = { runWords },
-                    Options = { runTimeout, runAlone },
+                    Options = { runTimeout, runAlone, runFailFast },
                 },
                 async (p, client, ct) =>
                 {
@@ -84,7 +85,7 @@ public static partial class PilotCommand
                     {
                         Verb = Verbs.Run,
                         Target = target,
-                        Args = [.. p.GetValue(runAlone) ? new[] { Verbs.AloneArg } : [], cwd, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
+                        Args = [.. p.GetValue(runFailFast) ? new[] { Verbs.FailFastArg } : [], .. p.GetValue(runAlone) ? new[] { Verbs.AloneArg } : [], cwd, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
                         Who = owner?.Name ?? who,
                         Agent = byAgent,
                         RequestId = requestId,
@@ -172,6 +173,10 @@ public static partial class PilotCommand
                 if (JobQueue.HolderLine(all, DateTimeOffset.UtcNow) is { } holder)
                 {
                     await output.WriteLineAsync(holder);
+                }
+                if (JobQueue.SlotsLine(all) is { } slots)
+                {
+                    await output.WriteLineAsync(slots);
                 }
                 return 0;
             });

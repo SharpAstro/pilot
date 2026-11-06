@@ -38,6 +38,12 @@ public sealed record JobRow
     /// <summary>What it is doing now (its last line of output), or what it came to once it ended.</summary>
     public string? Step { get; init; }
 
+    /// <summary>The node's job slots (how many jobs may run at once), as last said on a queued row; null on any other row and from an older node.</summary>
+    public int? Slots { get; init; }
+
+    /// <summary>Whether a queued job waits on a sibling hold, a running job's build of a clone it shares; null elsewhere and from an older node.</summary>
+    public bool? WaitsOnSibling { get; init; }
+
     /// <summary>Why it failed (its exit code, a timeout); null unless it did.</summary>
     public string? Error { get; init; }
 
@@ -58,6 +64,14 @@ public sealed record JobRow
 
     /// <summary>When that process started: a pid alone can be another process's after a reboot, so it only counts while this matches.</summary>
     public DateTimeOffset? ProcessStartedAt { get; init; }
+
+    /// <summary>
+    /// The shell that ran its line, set when it starts: <c>pwsh</c> on Windows, <c>git-bash &lt;path&gt;</c> for a line whose head is
+    /// <c>bash</c> or <c>sh</c> there (never WSL's launcher), the wrapper's shell on Linux (<c>/bin/bash</c>, else <c>/bin/sh</c>). The same
+    /// text is the first line of its log (<c>shell: …</c>). Null while it waits, and on a row from before the node said it; optional, so
+    /// the wire version stays.
+    /// </summary>
+    public string? Shell { get; init; }
 
     /// <summary>The script file the job runs, on Windows (the node deletes it once the job has ended); null on Linux, where the wrapper is a command line.</summary>
     public string? ScriptPath { get; init; }
@@ -97,6 +111,47 @@ public sealed record JobRow
 
     /// <summary>Whether its owner was told how it ended: false until the node said it, so a wake that failed shows.</summary>
     public bool Told { get; init; }
+
+    /// <summary>How many failed tests the node has read in the job's output so far (each test once). Zero on a row from before this.</summary>
+    public int TestsFailed { get; init; }
+
+    /// <summary>The first failed test, as <c>Class.Method</c>; null while none failed.</summary>
+    public string? FirstTestFailed { get; init; }
+
+    /// <summary>How many build errors the node has read in the job's output so far, kept apart from failed tests.</summary>
+    public int BuildErrors { get; init; }
+
+    /// <summary>The first build error, as <c>CS0234 in File.cs</c>; null while there is none.</summary>
+    public string? FirstBuildError { get; init; }
+
+    /// <summary>Whether the owner was told the job's first failure while it ran, so a node restart does not tell it again.</summary>
+    public bool FailureTold { get; init; }
+
+    /// <summary>Whether the node ends the job's whole tree at the first failed test it reads: a check, a run handed over with <c>--fail-fast</c>, a reviewer's or fixer's check run.</summary>
+    public bool FailFast { get; init; }
+
+    /// <summary>
+    /// The failures read so far in a line: <c>1 failed so far (BranchShapeTests.ARebase)</c>, <c>2 errors so far (CS0234 in A.cs)</c>,
+    /// or both; null while there are none.
+    /// </summary>
+    public string? FailuresSoFar()
+    {
+        if (TestsFailed == 0 && BuildErrors == 0)
+        {
+            return null;
+        }
+        var parts = new List<string>(2);
+        if (TestsFailed > 0)
+        {
+            parts.Add($"{TestsFailed} failed");
+        }
+        if (BuildErrors > 0)
+        {
+            parts.Add($"{BuildErrors} {(BuildErrors == 1 ? "error" : "errors")}");
+        }
+        var first = TestsFailed > 0 ? FirstTestFailed : FirstBuildError;
+        return $"{string.Join(", ", parts)} so far" + (first is null ? "" : $" ({first})");
+    }
 }
 
 /// <summary>The end of a job's output, as the Background tasks page shows it: the whole is in <see cref="JobRow.LogPath"/>.</summary>

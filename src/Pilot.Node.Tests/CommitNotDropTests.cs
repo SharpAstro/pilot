@@ -10,6 +10,7 @@ namespace Pilot.Node.Tests;
 /// someone verified that"). No text the node says to a worker or the person tells them to drop files, and the cards that used to
 /// (a worker stopped with files, a refused finish or landing) say commit.
 /// </summary>
+[Trait("Category", InvariantTraitTests.Invariant)]
 public sealed partial class CommitNotDropTests
 {
     [GeneratedRegex(@"\bor drop\b|\bdrop them\b", RegexOptions.IgnoreCase)]

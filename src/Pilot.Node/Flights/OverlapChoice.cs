@@ -45,6 +45,62 @@ public static class OverlapChoice
         return new OverlapJudgement(pick, shared);
     }
 
+    /// <summary>A one-way overlap rings when more files than this are shared: that many files in common is more than a passing touch.</summary>
+    public const int RingMoreThanShared = 3;
+
+    /// <summary>The added plus removed lines, in one file, that make it hot: both flights changing it by this much or more rings.</summary>
+    public const int HotLines = 100;
+
+    /// <summary>
+    /// Whether a path is a test file: a directory segment named <c>tests</c> or <c>test</c> or ending in <c>.Tests</c> or <c>.Test</c>,
+    /// or a file stem ending in <c>Tests</c> or <c>Test</c> or starting with <c>test_</c>. Pure.
+    /// </summary>
+    public static bool IsTestFile(string path)
+    {
+        var parts = path.Trim().Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+        {
+            return false;
+        }
+        const StringComparison Ci = StringComparison.OrdinalIgnoreCase;
+        foreach (var dir in parts[..^1])
+        {
+            if (dir.Equals("tests", Ci) || dir.Equals("test", Ci) || dir.EndsWith(".Tests", Ci) || dir.EndsWith(".Test", Ci))
+            {
+                return true;
+            }
+        }
+        var stem = Path.GetFileNameWithoutExtension(parts[^1]);
+        return stem.EndsWith("Tests", Ci) || stem.EndsWith("Test", Ci) || stem.StartsWith("test_", Ci);
+    }
+
+    /// <summary>
+    /// Whether a one-way overlap is big enough to ring: more than <see cref="RingMoreThanShared"/> shared files, or a shared non-test file
+    /// that both sides change by <see cref="HotLines"/> or more lines (added plus removed). A file missing from a line map counts 0. Pure.
+    /// </summary>
+    public static bool Rings(IReadOnlyCollection<string> shared, IReadOnlyDictionary<string, int>? mineLines, IReadOnlyDictionary<string, int>? theirLines)
+    {
+        if (shared.Count > RingMoreThanShared)
+        {
+            return true;
+        }
+        var mine = Lines(mineLines);
+        var theirs = Lines(theirLines);
+        return shared.Select(s => s.Trim().Replace('\\', '/')).Any(f => !IsTestFile(f)
+            && mine.GetValueOrDefault(f) >= HotLines && theirs.GetValueOrDefault(f) >= HotLines);
+    }
+
+    private static Dictionary<string, int> Lines(IReadOnlyDictionary<string, int>? map)
+    {
+        var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (path, n) in map ?? new Dictionary<string, int>())
+        {
+            var key = path.Trim().Replace('\\', '/');
+            result[key] = result.GetValueOrDefault(key) + n;
+        }
+        return result;
+    }
+
     /// <summary>The paths as git lists them: forward slashes, no leading <c>./</c>, each once.</summary>
     public static IReadOnlyList<string> Normalise(IEnumerable<string> paths) =>
         [.. paths.Select(p => p.Trim().Replace('\\', '/')).Select(p => p.StartsWith("./", StringComparison.Ordinal) ? p[2..] : p)

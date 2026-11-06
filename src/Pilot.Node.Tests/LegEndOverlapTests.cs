@@ -20,6 +20,13 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
         _legs.Models = new RoleModels(null);
     }
 
+    /// <summary>Lines that make a file hot on a side (OverlapChoice.HotLines is 100).</summary>
+    private const string Hot = "*120";
+
+    /// <summary>A file spec: a path, or <c>path*N</c> to write N lines (default 1).</summary>
+    private static (string File, int Lines) Spec(string spec) =>
+        spec.Split('*') is [var file, var n] ? (file, int.Parse(n)) : (spec, 1);
+
     /// <summary>Flight TIA1 with its leg "parser" flying and one commit in the plane changing <paramref name="files"/>; a bare origin to fetch from.</summary>
     private async Task<FlightRow> FlyingAsync(params string[] files)
     {
@@ -32,9 +39,12 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
         await FlightWithTwoLegs();
         (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
         var flight = _state.Flights().Single();
-        foreach (var file in files)
+        foreach (var spec in files)
         {
-            File.WriteAllText(Path.Combine(flight.Worktree, file), "class X {}\n");
+            var (file, lines) = Spec(spec);
+            var path = Path.Combine(flight.Worktree, file);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, string.Concat(Enumerable.Repeat("class X {}\n", lines)));
             Git(flight.Worktree, "add", file);
         }
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "The parser");
@@ -48,9 +58,12 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
         var tia1 = _state.Flights().Single(f => f.Code == "TIA1");
         var plane = Path.Combine(_root, "other-" + code);
         Git(Repo, "worktree", "add", "-q", "-b", branch, plane, "main");
-        foreach (var file in files)
+        foreach (var spec in files)
         {
-            File.WriteAllText(Path.Combine(plane, file), code + "\n");
+            var (file, lines) = Spec(spec);
+            var path = Path.Combine(plane, file);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, string.Concat(Enumerable.Repeat(code + "\n", lines)));
             Git(plane, "add", file);
         }
         Git(plane, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", code);
@@ -81,8 +94,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     [Fact]
     public async Task AFinishedLegThatChangedAFileAnotherFlightChangesRingsOneOverlapCardAndHoldsTheNextLeg()
     {
-        await FlyingAsync("parser.cs", "shared.cs");
-        OtherFlight("TIA2", "shared.cs", "elsewhere.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot);
+        OtherFlight("TIA2", "shared.cs" + Hot, "elsewhere.cs");
         // The planner named only the parser; shared.cs was not foreseen.
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
 
@@ -107,8 +120,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     [Fact]
     public async Task ConnectOnALegEndCardConnectsTheFlightHoldsTheNextLegAndStartsNoPlanner()
     {
-        await FlyingAsync("parser.cs", "shared.cs");
-        OtherFlight("TIA2", "shared.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot);
+        OtherFlight("TIA2", "shared.cs" + Hot);
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
         await FinishParserAsync();
         var started = _workers.Started.Count;
@@ -129,8 +142,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     [Fact]
     public async Task ParallelOnALegEndCardStartsNoPlannerLetsTheNextLegStartAndIsNotAskedAgainForANewSharedFile()
     {
-        await FlyingAsync("parser.cs", "shared.cs");
-        OtherFlight("TIA2", "shared.cs", "fresh.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot);
+        OtherFlight("TIA2", "shared.cs" + Hot, "fresh.cs");
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
         await FinishParserAsync();
 
@@ -194,8 +207,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     [Fact]
     public async Task AMutualOverlapIsAnsweredParallelByTheNodeOnBothSidesWithOneHandledCardAndNoRing()
     {
-        await FlyingAsync("parser.cs", "shared.cs");
-        OtherFlight("TIA2", "shared.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot);
+        OtherFlight("TIA2", "shared.cs" + Hot);
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
         PendingOnTheOthersCard("parser", "shared.cs");
 
@@ -223,8 +236,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     [Fact]
     public async Task AMutualOverlapWhereTheOthersRowCameFromAPlannerAskRestartsItsPlanner()
     {
-        await FlyingAsync("parser.cs", "shared.cs");
-        OtherFlight("TIA2", "shared.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot);
+        OtherFlight("TIA2", "shared.cs" + Hot);
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
         PendingOnTheOthersCard(null, "shared.cs");
 
@@ -234,19 +247,16 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
         _state.Flights().Single(f => f.Code == "TIA1").Overlaps.Single().Answer.ShouldBe(OverlapAnswer.Separate);
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.OverlapKind);
         _state.Cards().ShouldContain(c => c.Kind == LegCommander.OverlapParallelKind);
-        // The planner is launched in the background: give the start a moment to be recorded.
-        for (var i = 0; i < 100 && !_workers.Started.Any(w => w.Name == "du1-tia2-plan"); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
+        // The planner is launched in the background: wait for its start to be recorded.
+        await Eventually.Holds(() => _workers.Started.Any(w => w.Name == "du1-tia2-plan"), Ct);
         _workers.Started.Select(w => w.Name).ShouldContain(n => n.Contains("tia2") && n.Contains("plan"));
     }
 
     [Fact]
     public async Task AOneWayOverlapStillRingsWithConnectAndParallelWhenTheOthersPendingRowNamesAnotherFlight()
     {
-        await FlyingAsync("parser.cs", "shared.cs");
-        OtherFlight("TIA2", "shared.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot);
+        OtherFlight("TIA2", "shared.cs" + Hot);
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
         var tia2 = _state.Flights().Single(f => f.Code == "TIA2");
         _state.PutFlight(tia2 with { Overlaps = [new OverlapRow { Other = "TIA9", Files = ["x.cs"], Pick = Verbs.OverlapPickConnect, Why = "asked", Answer = OverlapAnswer.Pending, At = DateTimeOffset.UtcNow }] });
@@ -261,8 +271,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     [Fact]
     public async Task AnUnansweredPairStillRingsForANewSharedFile()
     {
-        await FlyingAsync("parser.cs", "shared.cs");
-        OtherFlight("TIA2", "shared.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot);
+        OtherFlight("TIA2", "shared.cs" + Hot);
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
 
         await _legs.CheckOverlapAsync("TIA1", "parser", Ct);
@@ -275,8 +285,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     [Fact]
     public async Task AConnectedPairStillHoldsTheNextLegAndRingsForANewFile()
     {
-        await FlyingAsync("parser.cs", "shared.cs");
-        OtherFlight("TIA2", "shared.cs", "fresh.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot);
+        OtherFlight("TIA2", "shared.cs" + Hot, "fresh.cs");
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
         await FinishParserAsync();
         (await Leg(Verbs.ConnectOverlap, "flight/TIA1", "TIA2")).Ok.ShouldBeTrue();
@@ -296,12 +306,12 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     [Fact]
     public async Task WithOneOtherAnsweredParallelAndOneNotOnlyTheUnansweredRings()
     {
-        await FlyingAsync("parser.cs", "shared.cs", "other.cs");
-        OtherFlight("TIA2", "shared.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot, "other.cs" + Hot);
+        OtherFlight("TIA2", "shared.cs" + Hot);
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
         await FinishParserAsync();
         (await Leg(Verbs.Separate, "flight/TIA1", "TIA2")).Ok.ShouldBeTrue();
-        OtherFlight("TIA3", "other.cs");
+        OtherFlight("TIA3", "other.cs" + Hot);
 
         await _legs.CheckOverlapAsync("TIA1", "render", Ct);
 
@@ -325,7 +335,7 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     [Fact]
     public async Task AnUnforeseenOverlapWithAFlightlessOpenPrIsAnsweredParallelByTheNodeWithAHandledNoteAndNoRing()
     {
-        await FlyingAsync("parser.cs", "shared.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot);
         FlightlessPr(77, "shared.cs", "elsewhere.cs");
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
 
@@ -345,8 +355,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     [Fact]
     public async Task AFlightOverlapStillRingsWithConnectAndParallelWhileThePrOverlapIsAnsweredByTheNode()
     {
-        await FlyingAsync("parser.cs", "shared.cs", "pr.cs");
-        OtherFlight("TIA2", "shared.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot, "pr.cs");
+        OtherFlight("TIA2", "shared.cs" + Hot);
         FlightlessPr(78, "pr.cs");
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
 
@@ -364,7 +374,7 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     [Fact]
     public async Task ANewFileSharedWithAPrAnsweredByTheNodeRingsNothingAndIsUnionedOnTheRow()
     {
-        await FlyingAsync("parser.cs", "shared.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot);
         FlightlessPr(79, "shared.cs", "fresh.cs");
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
         await _legs.CheckOverlapAsync("TIA1", "parser", Ct);
@@ -383,10 +393,64 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     }
 
     [Fact]
+    public async Task ASmallOneWayOverlapOnOneTestFileIsPlannedInParallelByTheNodeWithAHandledNoteAndNoRing()
+    {
+        await FlyingAsync("parser.cs", "src/Foo.Tests/FooTests.cs" + Hot);
+        OtherFlight("TIA2", "src/Foo.Tests/FooTests.cs" + Hot);
+        (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
+
+        await FinishParserAsync();
+
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.OverlapKind);
+        var tia1 = _state.Flights().Single(f => f.Code == "TIA1");
+        var row = tia1.Overlaps.Single();
+        (row.Other, row.Answer, row.AfterLeg).ShouldBe(("TIA2", OverlapAnswer.Separate, "parser"));
+        row.Files.ShouldBe(["src/Foo.Tests/FooTests.cs"]);
+        var note = _state.Cards().Single(c => c.Kind == LegCommander.OverlapParallelKind);
+        note.Bin.ShouldBe(CardBin.Handled);
+        note.Title.ShouldContain("TIA2");
+        note.Title.ShouldContain("FooTests.cs");
+        // The other side is never touched, and the next leg is free.
+        _state.Flights().Single(f => f.Code == "TIA2").Overlaps.ShouldBeEmpty();
+        _workers.Started.Select(w => w.Name).ShouldContain("du1-tia1-render-validator");
+    }
+
+    [Fact]
+    public async Task AOneWayOverlapOnFourSharedFilesRingsWithConnectAndParallel()
+    {
+        string[] shared = ["a.cs", "b.cs", "c.cs", "d.cs"];
+        await FlyingAsync(["parser.cs", .. shared]);
+        OtherFlight("TIA2", shared);
+        (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
+
+        await FinishParserAsync();
+
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.OverlapKind);
+        card.Choices.Select(c => c.Verb).ShouldBe([Verbs.ConnectOverlap, Verbs.Separate]);
+        _state.Flights().Single(f => f.Code == "TIA1").Overlaps.Single().Answer.ShouldBe(OverlapAnswer.Pending);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.OverlapParallelKind);
+        L("render").State.ShouldBe(LegState.Planned);
+    }
+
+    [Fact]
+    public async Task AOneWayOverlapOnASourceFileBothFlightsChangeByAHundredLinesRingsWithConnectAndParallel()
+    {
+        await FlyingAsync("parser.cs", "src/Hot.cs*100");
+        OtherFlight("TIA2", "src/Hot.cs*100");
+        (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
+
+        await FinishParserAsync();
+
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.OverlapKind);
+        card.Choices.Select(c => c.Verb).ShouldBe([Verbs.ConnectOverlap, Verbs.Separate]);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.OverlapParallelKind);
+    }
+
+    [Fact]
     public async Task ABaseMergePushRunsTheCheck()
     {
-        await FlyingAsync("parser.cs", "shared.cs");
-        OtherFlight("TIA2", "shared.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot);
+        OtherFlight("TIA2", "shared.cs" + Hot);
         File.WriteAllText(Path.Combine(Repo, "newer.cs"), "class Z {}\n");
         Git(Repo, "add", "newer.cs");
         Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "main moves");
@@ -405,8 +469,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     [Fact]
     public async Task AFinishedLegThatStayedToItsPlannedFilesRingsNothing()
     {
-        await FlyingAsync("parser.cs", "shared.cs");
-        OtherFlight("TIA2", "shared.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot);
+        OtherFlight("TIA2", "shared.cs" + Hot);
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs", "shared.cs")).Ok.ShouldBeTrue();
 
         await FinishParserAsync();
@@ -420,8 +484,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     [Fact]
     public async Task ASweepWhileTheLegEndCheckIsParkedStartsNothingOfTheFlight()
     {
-        await FlyingAsync("parser.cs", "shared.cs");
-        OtherFlight("TIA2", "shared.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot);
+        OtherFlight("TIA2", "shared.cs" + Hot);
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
         await Leg(Verbs.Check, "flight/TIA1/parser", "1");
         await Leg(Verbs.Check, "flight/TIA1/parser", "2");
@@ -434,7 +498,7 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
             await release.Task;
         };
         var finishing = Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed");
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await reached.Task.WaitAsync(Eventually.Cap, Ct);
 
         // The leg is done and the check is parked on GitHub: the sweep must not start the next leg's validator.
         L("parser").State.ShouldBe(LegState.Done);
@@ -451,8 +515,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     [Fact]
     public async Task ALegCheckThatOutlastsTheMarkLifeStillHoldsTheSweepOffWhileTheRingIsParked()
     {
-        await FlyingAsync("parser.cs", "shared.cs");
-        OtherFlight("TIA2", "shared.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot);
+        OtherFlight("TIA2", "shared.cs" + Hot);
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
         await Leg(Verbs.Check, "flight/TIA1/parser", "1");
         await Leg(Verbs.Check, "flight/TIA1/parser", "2");
@@ -473,10 +537,10 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
             await release.Task;
         };
         var finishing = Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed");
-        await checking.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await checking.Task.WaitAsync(Eventually.Cap, Ct);
         _clock.Advance(LegCommander.LegEndMarkLife + TimeSpan.FromMinutes(1));
         checkDone.SetResult();
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await reached.Task.WaitAsync(Eventually.Cap, Ct);
 
         // Recorded done after the mark's life had passed since the finish began: the sweep still starts nothing.
         L("parser").State.ShouldBe(LegState.Done);
@@ -493,8 +557,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     [Fact]
     public async Task ARefusedFinishDoesNotClearTheMarkOfTheFinishWhoseRingIsParked()
     {
-        await FlyingAsync("parser.cs", "shared.cs");
-        OtherFlight("TIA2", "shared.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot);
+        OtherFlight("TIA2", "shared.cs" + Hot);
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
         await Leg(Verbs.Check, "flight/TIA1/parser", "1");
         await Leg(Verbs.Check, "flight/TIA1/parser", "2");
@@ -507,7 +571,7 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
             await release.Task;
         };
         var finishing = Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed");
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await reached.Task.WaitAsync(Eventually.Cap, Ct);
 
         // A second finish of the done leg is refused; it must not take away the first one's hold.
         (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "again")).Ok.ShouldBeFalse();
@@ -523,7 +587,7 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     [Fact]
     public async Task AFinishWhoseCheckThrowsLeavesNoMarkSoTheNextLegStartsAtOnce()
     {
-        await FlyingAsync("parser.cs", "shared.cs");
+        await FlyingAsync("parser.cs", "shared.cs" + Hot);
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
         await Leg(Verbs.Check, "flight/TIA1/parser", "1");
         await Leg(Verbs.Check, "flight/TIA1/parser", "2");

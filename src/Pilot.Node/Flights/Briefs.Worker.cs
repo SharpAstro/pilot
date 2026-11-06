@@ -95,6 +95,15 @@ public static partial class Briefs
             }
         }
 
+        if (flight.HumanVerification)
+        {
+            text.AppendLine();
+            text.AppendLine("## Human verification");
+            text.AppendLine("This flight's issue carries the `pilot: human verification` label. A check only a person can make (it cannot be settled by a");
+            text.AppendLine("test or a CPU-rendered capture: hardware, a live window, how it feels) is named in your report, under a `## Human verification`");
+            text.AppendLine("heading, one list item each: a short title, then a `Do:` line (exactly what to do) and a `Done when:` line (what to look");
+            text.AppendLine("for). The reviewer carries them over and the node files each as an issue for the controller. They never fail a leg.");
+        }
         text.AppendLine();
         // A view that only passed its tests shipped wrong to the eye (pilot's tooltips, 2026-10-25): where the org keeps a UI
         // checklist beside its clones, a leg is told to work by it and to show a capture.
@@ -140,6 +149,7 @@ public static partial class Briefs
             + " a quick build of one project) you run yourself, as usual."); 
         text.AppendLine("  A test suite or any other long run goes through `" + run + " run --`, and you read what the node says when it ends (the failures and the totals),"
             + " never the full log, so a suite's output cannot fill your context.");
+        text.AppendLine("  A run goes on to its end unless you hand it over as `" + run + " run --fail-fast -- <command>`, which the node ends at its first failed test; use it when the first failure is all you need.");
         text.AppendLine(WaitRule(run));
         text.AppendLine(ReportRule(run));
         // Claude Code isolates a -w session in its worktree and refuses a command it cannot prove stays inside: a git in a
@@ -147,10 +157,12 @@ public static partial class Briefs
         // (TIA1781's cross-structure, SE1 2026-10-25).
         text.AppendLine("- This session is held to the plane, and Claude Code refuses a command it cannot read as staying inside it.");
         text.AppendLine($"  Give `{run} run --` the command itself (`{run} run -- dotnet test ...`); the node runs it in its own shell, so");
-        text.AppendLine("  never wrap it in `pwsh` or `bash -c`, which is refused: several steps are a job each, one after the other. Run");
+        text.AppendLine("  never wrap it in `pwsh` or `bash -c`, which the plane's sandbox refuses: several steps are a job each, one after the other. Run");
         text.AppendLine($"  git plainly, one command or a few joined by `&&`, never inside a loop: tick steps as `{run} check 1 && {run} check 2`.");
+        text.AppendLine("  " + JobShellRule);
         text.Append(BranchHistoryRule);
         text.AppendLine();
+        text.AppendLine(InvariantRule);
         text.AppendLine("## When you stop");
         text.AppendLine("End your turn with a short report: what you did, how you checked it (the Done-when, rerun), and anything");
         text.AppendLine("left. Start it with DONE when every step is done and the Done-when holds, or BLOCKED: and why.");

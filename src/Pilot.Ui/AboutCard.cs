@@ -24,7 +24,7 @@ internal sealed class AboutCard
         ("Enter, double-click", "a session's transcript"),
         ("Right-click", "a row's menu"),
         ("Up, Down", "the selection, or a wizard's highlight"),
-        ("Escape", "back: out of a transcript or a flight's page, a wizard step, a menu"),
+        ("Escape", "up a level: from a transcript or a flight's page to its list; also out of a wizard step or a menu"),
         ("Alt+Left, Alt+Right", "back and forward through the places the window has been (the mouse's back and forward buttons too)"),
     ];
 

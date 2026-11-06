@@ -45,6 +45,7 @@ internal sealed partial class FlightsView<TSurface>
         BeginFrame();
         _mapBodySeen = null;
         PageWidth = Table.PageWidth = Scale.ToDesignX(bounds.Width);
+        NoteHeight(bounds);
         var arranged = RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
         {
             DrawCanvas(fill, rect);
@@ -87,6 +88,25 @@ internal sealed partial class FlightsView<TSurface>
             if (kept is not null && screen.Lines.ToList().FindIndex(l => l.Code == kept) is >= 0 and var moved)
             {
                 ListCursor.Open(ListId, moved, screen.Lines.Count);
+            }
+        }
+        // A refresh that reorders the flights keeps the selection on the same flight, found by node and code, not on the same index.
+        // (A clicked title's sort above has already moved the cursor by code, against the order it replaced.)
+        if (!(!GridShown && !CanvasShown && Table.Sort is not null) && !_selectPinned && screen.Lines.Count > 0 && Selected >= 0 && Selected < _screen.Lines.Count)
+        {
+            var (keptNode, keptCode) = (_screen.Lines[Selected].Node?.Key ?? "", _screen.Lines[Selected].Code);
+            var at = -1;
+            for (var i = 0; i < screen.Lines.Count; i++)
+            {
+                if (screen.Lines[i].Code == keptCode && (screen.Lines[i].Node?.Key ?? "") == keptNode)
+                {
+                    at = i;
+                    break;
+                }
+            }
+            if (at >= 0 && at != Selected)
+            {
+                ListCursor.Open(ListId, at, screen.Lines.Count);
             }
         }
         if (screen.Lines.Count == 0)
@@ -150,7 +170,7 @@ internal sealed partial class FlightsView<TSurface>
         }
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && IsDetailOpen)
         {
-            GoBack();
+            GoUp();
             return true;
         }
         // The wheel over the map pans it (Ctrl+wheel is left to zoom); the layer menu's own list took it first where it was over it.
@@ -194,7 +214,7 @@ internal sealed partial class FlightsView<TSurface>
             // Wrapped, never cut: a refusal's reason is what the person came to read.
             parts.Add(Prose(said, 11f, Dim).Pad(Gutter, 4f).Bg(HeaderBg).WStar().HAuto());
         }
-        var page = Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch();
+        var page = WhenShort(Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch());
         // After the page's text and before the menus over it: where the selection is drawn.
         page = WithSelection(page);
         page = About?.Over(page, NightOrNull) ?? page;
@@ -249,7 +269,8 @@ internal sealed partial class FlightsView<TSurface>
             var isPaused = job.State == JobState.Running && job.PausedAt is not null;
             var color = isPaused ? Held : job.State switch { JobState.Running => Flying, JobState.Queued => Held, JobState.Succeeded => Landed, _ => Failed };
             var waiting = job.State == JobState.Queued && job.Step is { } step ? $" ({step})" : "";
-            legs.Add(DetailLine($"job {job.Id} {(isPaused ? "paused" : job.State.ToString().ToLowerInvariant())}{waiting}: {job.Command}", color));
+            var failing = job.State == JobState.Running && job.FailuresSoFar() is { } so ? $" · {so}" : "";
+            legs.Add(DetailLine($"job {job.Id} {(isPaused ? "paused" : job.State.ToString().ToLowerInvariant())}{waiting}{failing}: {job.Command}", failing.Length > 0 ? Failed : color));
         }
 
         var artifacts = new List<Layout.Node> { Label("artifacts").RowH(20f) };

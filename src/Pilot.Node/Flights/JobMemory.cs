@@ -70,7 +70,32 @@ public sealed record JobKey(string Repo, string ToolVerb, string Target, string 
         return key ?? new JobKey(RepoOf(cwd), "", "", "");
     }
 
-    private static JobKey KeyOf(string tool, List<string> words, string folder)
+    /// <summary>
+    /// Each work segment of a command (a <c>cd</c> only moves the folder it is run in): its tool, verb, flag words and the folder it
+    /// runs in, so a reader can tell which segments build (PIL724).
+    /// </summary>
+    internal static IEnumerable<(string Tool, string Verb, IReadOnlyList<string> Flags, string Folder)> Steps(string command, string cwd)
+    {
+        var folder = cwd;
+        foreach (var words in Segments(command))
+        {
+            var tool = ToolName(words[0]);
+            if (tool is "cd" or "set-location" or "pushd" or "sl")
+            {
+                if (words.Skip(1).FirstOrDefault(w => !w.StartsWith('-')) is { } to)
+                {
+                    folder = Resolve(folder, to);
+                }
+                continue;
+            }
+            var rest = words.Skip(1).ToList();
+            yield return (tool, rest.FirstOrDefault(w => !w.StartsWith('-')) ?? "", rest.Where(w => w.StartsWith('-')).ToList(), folder);
+        }
+    }
+
+    internal static bool IsPlumbing(string tool) => Plumbing.Contains(tool);
+
+    internal static JobKey KeyOf(string tool, List<string> words, string folder)
     {
         var rest = words.Skip(1).ToList();
         var verb = rest.FirstOrDefault(w => !w.StartsWith('-')) ?? "";
@@ -152,7 +177,7 @@ public sealed record JobKey(string Repo, string ToolVerb, string Target, string 
         }
     }
 
-    private static string Resolve(string folder, string path) => Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(folder, path));
+    internal static string Resolve(string folder, string path) => Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(folder, path));
 
     private static string Relative(string repo, string path)
     {
@@ -187,7 +212,7 @@ public sealed record JobKey(string Repo, string ToolVerb, string Target, string 
 
     private static string Normal(string path) => path.TrimEnd('\\', '/').Replace('\\', '/').ToLowerInvariant();
 
-    private static string ToolName(string word) => Path.GetFileNameWithoutExtension(word.Replace('\\', '/')).ToLowerInvariant();
+    internal static string ToolName(string word) => Path.GetFileNameWithoutExtension(word.Replace('\\', '/')).ToLowerInvariant();
 
     /// <summary>The command's words, split into the commands it chains with <c>&amp;&amp;</c>, <c>||</c>, <c>;</c> and <c>|</c>; quotes group, redirections go.</summary>
     internal static List<List<string>> Segments(string command)

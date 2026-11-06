@@ -983,10 +983,10 @@ public sealed class ChatTests
 
             var arranged = Layout.Engine.Arrange(chat.Tree(), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
             var box = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextEditor }).Bounds;
-            // Two scrolls: the feed above and, under it, the card's own.
+            // Two scrolls: the feed above and, under it, the card's own (and, on a window shorter than WhenShort's, the header's, above them).
             var scrolls = arranged.Where(a => a.Node.Scroll is not null).Select(a => a.Bounds).OrderBy(b => b.Y).ToList();
-            scrolls.Count.ShouldBe(2);
-            var (feed, card) = (scrolls[0], scrolls[1]);
+            scrolls.Count.ShouldBe(height == 400 ? 3 : 2);
+            var (feed, card) = (scrolls[^2], scrolls[^1]);
 
             // The feed keeps room to read in, and the card (and so everything in it) ends above the box.
             if (height == 400)

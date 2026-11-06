@@ -66,6 +66,17 @@ public sealed partial class GhCli
         return doc.RootElement.TryGetProperty("title", out var title) ? title.GetString() : null;
     }
 
+    public async Task<bool?> IssueClosedAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (exit, output, _) = await RunAsync(["issue", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "state"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            return null;
+        }
+        using var doc = JsonDocument.Parse(output);
+        return doc.RootElement.TryGetProperty("state", out var state) && state.GetString() is { } text ? string.Equals(text, "CLOSED", StringComparison.OrdinalIgnoreCase) : null;
+    }
+
     public async Task SetPilotLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
     {
         var (color, description) = PilotMarks.LabelStyle(label);

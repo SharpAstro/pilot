@@ -90,7 +90,7 @@ public sealed partial class FlightCommander
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"#{number} merged on GitHub without the new leg", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, "not-landed");
         state.RaiseCard(CardBin.Ring, MergedUnderLegKind, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}'s PR #{number} merged without the new leg",
-            $"{why}. GitHub merged #{number} at {mergedHead[..Math.Min(8, mergedHead.Length)]} before the merge could be taken back, so it holds none of the new leg's work: that goes to a new PR from the merged base, which opens when the legs are done (the base merged in, pushed, reviewed as any PR). {flight.Code} stays flying and is not landed.",
+            $"{why}. GitHub merged #{number} at {CommitRefs.Short(mergedHead)} before the merge could be taken back, so it holds none of the new leg's work: that goes to a new PR from the merged base, which opens when the legs are done (the base merged in, pushed, reviewed as any PR). {flight.Code} stays flying and is not landed.",
             link: flight.PullRequestUrl);
         return marked;
     }
@@ -193,11 +193,11 @@ public sealed partial class FlightCommander
             {
                 if (await planes.UncommittedAsync(flight.Worktree, cancellationToken) is { } dirty)
                 {
-                    throw new FlightException($"{flight.Code} merged at {mergedHead[..Math.Min(8, mergedHead.Length)]}, but its plane holds {dirty}: commit and land {(dirty.StartsWith("1 ", StringComparison.Ordinal) ? "it" : "them")} in a PR of their own, then land the flight");
+                    throw new FlightException($"{flight.Code} merged at {CommitRefs.Short(mergedHead)}, but its plane holds {dirty}: commit and land {(dirty.StartsWith("1 ", StringComparison.Ordinal) ? "it" : "them")} in a PR of their own, then land the flight");
                 }
                 if (await planes.PastAsync(flight.Worktree, mergedHead, cancellationToken) is { Count: > 0 } past)
                 {
-                    throw new FlightException($"{flight.Code} merged at {mergedHead[..Math.Min(8, mergedHead.Length)]}, but its plane holds {past.Count} commit{(past.Count == 1 ? "" : "s")} past it: {string.Join("; ", past)}. Land {(past.Count == 1 ? "it" : "them")} in a PR of {(past.Count == 1 ? "its" : "their")} own, then land the flight");
+                    throw new FlightException($"{flight.Code} merged at {CommitRefs.Short(mergedHead)}, but its plane holds {past.Count} commit{(past.Count == 1 ? "" : "s")} past it: {string.Join("; ", past)}. Land {(past.Count == 1 ? "it" : "them")} in a PR of {(past.Count == 1 ? "its" : "their")} own, then land the flight");
                 }
             }
             else if (await planes.UnlandedAsync(flight.Worktree, mainRef, cancellationToken) is { Count: > 0 } loose)

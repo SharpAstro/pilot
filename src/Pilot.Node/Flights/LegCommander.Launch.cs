@@ -355,7 +355,8 @@ public sealed partial class LegCommander
                 // Where the repo has the field it is the only source; the label counts only where there is none.
                 Slots.SetIssuePriority(flight.Code, !read.HasField && hasLabel);
                 var hasField = read.HasField;
-                state.UpdateFlight(flight.Code, f => f.HasPriorityField == hasField && f.IssuePriority == level ? f : f with { HasPriorityField = hasField, IssuePriority = level });
+                var human = labels.Contains(PilotMarks.HumanVerification, StringComparer.OrdinalIgnoreCase);
+                state.UpdateFlight(flight.Code, f => f.HasPriorityField == hasField && f.IssuePriority == level && f.HumanVerification == human ? f : f with { HasPriorityField = hasField, IssuePriority = level, HumanVerification = human });
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

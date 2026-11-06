@@ -56,7 +56,7 @@ public sealed partial class PrReviews
         var subject = Verbs.PrTarget(pr.Repo, pr.Number);
         var inline = anchored.Count(f => f.Inline);
         var detail = new System.Text.StringBuilder();
-        detail.Append($"{(review.Author is { } by ? $"By {by}, r" : "R")}eviewed at {review.Head[..Math.Min(8, review.Head.Length)]}.\n");
+        detail.Append($"{(review.Author is { } by ? $"By {by}, r" : "R")}eviewed at {CommitRefs.Short(review.Head)}.\n");
         var posts = Event(verdict, review.Author, login);
         detail.Append($"Verdict {verdict}; posts as {posts}{(login is { Length: > 0 } ? $" under {login}" : "")}, {Plural(inline, "inline comment")}");
         detail.Append(anchored.Length > inline ? $" and {anchored.Length - inline} in its body, their lines not in the diff.\n" : ".\n");
