@@ -358,7 +358,8 @@ public sealed class FlightMapLayersTests
         var (renderer, view) = Map(1280, 240);
         using var _ = renderer;
 
-        // A window so short the engine cuts the panel to fit: the rect noted is still the panel's own.
+        // A window so short that the page scrolls (it is laid out 480 units tall, WhenShort): the painted region is the panel cut at the scroll's
+        // viewport, and the rect noted is still the panel's own, as arranged: the same place and width, and at least as tall.
         Render(view, 1280, 240);
 
         var panel = PanelRegion(view);
@@ -366,7 +367,7 @@ public sealed class FlightMapLayersTests
         noted.X.ShouldBe(panel.X, 0.5f);
         noted.Y.ShouldBe(panel.Y, 0.5f);
         noted.Width.ShouldBe(panel.Width, 0.5f);
-        noted.Height.ShouldBe(panel.Height, 0.5f);
+        noted.Height.ShouldBeGreaterThanOrEqualTo(panel.Height - 0.5f);
     }
 
     [Fact]

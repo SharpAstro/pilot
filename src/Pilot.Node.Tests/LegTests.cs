@@ -494,28 +494,29 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, a merge is answered with this GitHub text: "already in the queue" counts as queued, anything else refuses.</summary>
     public string? MergeAnswers { get; set; }
 
-    /// <summary>When set, MergeAsync refuses only <see cref="MergeRefusesMethod"/> with it, as GitHub does a rebase of a branch with merges in it; other methods merge.</summary>
-    public string? MergeRefusesWith { get; set; }
+    /// <summary>One GitHub text per merge call, in order (empty: that call merges); a call past the end merges.</summary>
+    public Queue<string> MergeScript { get; } = new();
 
-    /// <summary>The method <see cref="MergeRefusesWith"/> applies to.</summary>
-    public string MergeRefusesMethod { get; set; } = "rebase";
+    /// <summary>What AllowedMergeMethodsAsync answers; all three by default.</summary>
+    public AllowedMergeMethods? AllowedMethods { get; set; } = new(true, true, true);
 
-    /// <summary>The methods AllowedMergeMethodsAsync answers, as GitHub's repo settings allow them.</summary>
-    public List<string> AllowedMergeMethods { get; set; } = ["squash", "merge", "rebase"];
-
-    public Task<IReadOnlyList<string>> AllowedMergeMethodsAsync(string repoPath, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<string>>([.. AllowedMergeMethods]);
+    public Task<AllowedMergeMethods?> AllowedMergeMethodsAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(AllowedMethods);
 
     public async Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
         await Called(nameof(MergeAsync));
-        if (MergeRefusesWith is not null && string.Equals(method, MergeRefusesMethod, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new FlightException(MergeRefusesWith);
-        }
         if (MergeAnswers is not null)
         {
-            return GhCli.AlreadyQueued(MergeAnswers) ? true : throw new FlightException(MergeAnswers);
+            var answer = Pilot.Node.Flights.MergeAnswers.Classify(1, "", MergeAnswers);
+            return answer.Kind == MergeAnswerKind.Done ? true : throw new MergeRefusedException(answer.Kind, answer.Message, MergeAnswers);
+        }
+        lock (MergeScript)
+        {
+            if (MergeScript.Count > 0 && MergeScript.Dequeue() is { Length: > 0 } scripted)
+            {
+                var answer = Pilot.Node.Flights.MergeAnswers.Classify(1, "", scripted);
+                return answer.Kind == MergeAnswerKind.Done ? Queues : throw new MergeRefusedException(answer.Kind, answer.Message, scripted);
+            }
         }
         if (MergeRefuses is not null)
         {
@@ -1113,7 +1114,7 @@ public abstract class LegCommanderTestsBase : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private protected static string Git(string cwd, params string[] args)
@@ -2089,7 +2090,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         _state.PutFlight(_state.Flights().Single() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow } });
         (await Leg(Verbs.Merge, "flight/TIA1", "abc1234")).Error.ShouldBe("flight/tia1 has no PR");
         _github.Pr = new PullRequest(63, "OPEN", "def5678aaaabbbbccccdddd", "https://github.com/x/tianwen/pull/63");
-        (await Leg(Verbs.Merge, "flight/TIA1", "abc1234")).Error.ShouldNotBeNull().ShouldContain("not the abc1234 you reviewed");
+        (await Leg(Verbs.Merge, "flight/TIA1", "abc1234")).Error.ShouldNotBeNull().ShouldContain("reviewed abc1234");
         (await Leg(Verbs.Merge, "flight/TIA1", "def56")).Error.ShouldNotBeNull().ShouldContain("7 characters");
 
         // A commit in the plane past the PR's head would be left behind by the merge: refused until it is pushed.

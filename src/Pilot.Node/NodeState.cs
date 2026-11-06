@@ -75,7 +75,14 @@ public sealed partial class NodeState
         // worker (it was left waiting on the answer), so what the journal holds is never read as running.
         foreach (var key in _legs.Where(l => l.Value.Recheck is { Outcome: null }).Select(l => l.Key).ToList())
         {
-            _legs[key] = _legs[key] with { Recheck = _legs[key].Recheck! with { Outcome = LegRecheck.RestartedOutcome(_legs[key].Recheck!.Check) } };
+            var check = _legs[key].Recheck!.Check;
+            // A check job still queued carries over the restart (the job runner puts it back in its place): say so, not that the rerun was lost.
+            // One running with a process to follow carried over too, unless a crash ended it (then the next finish runs it afresh).
+            var open = _jobs.Values.Where(j => j is { Kind: JobKind.Check, EndedAt: null } && j.Flight == key.Flight && j.Leg == key.Name).ToList();
+            var outcome = open.Any(j => j.State == JobState.Queued) ? LegRecheck.CarriedOutcome(check)
+                : open.Any(j => j is { State: JobState.Running, Pid: not null, ProcessStartedAt: not null }) ? LegRecheck.RunningCarriedOutcome(check)
+                : LegRecheck.RestartedOutcome(check);
+            _legs[key] = _legs[key] with { Recheck = _legs[key].Recheck! with { Outcome = outcome } };
         }
 
         journal.SnapshotOutcome += OnSnapshotOutcome;

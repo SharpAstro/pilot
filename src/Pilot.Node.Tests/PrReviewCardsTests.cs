@@ -38,7 +38,7 @@ public sealed class PrReviewCardsTests : PrFixTestsBase
 
         var card = _state.Cards().Where(c => c.Kind == PrReviews.DesignKind).ShouldHaveSingleItem();
         card.State.ShouldBe(CardState.Closed);
-        card.Outcome.ShouldBe($"the head moved past {row.Head[..8]} to {head[..8]}");
+        card.Outcome.ShouldBe($"the head moved past {row.Head[..9]} to {head[..9]}");
 
         var restarted = Restarted(out var state);
         await restarted.SweepAsync(Ct);
