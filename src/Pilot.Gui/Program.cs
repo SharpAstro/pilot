@@ -234,7 +234,8 @@ if (gate is null)
 
 var Title = remoteEndpoint is null ? "pilot v2 · sessions" : $"pilot v2 · {remoteEndpoint}";
 // Who the app is, for the taskbar grouping, the process name and a power-inhibit reason. The version is the GUI assembly's
-// informational version (null lets SDL fill it from the entry assembly). clickThroughOnFocus (true) and keepDisplayAwake
+// informational version, read by reflection and passed whole with its "+<sha>" source-revision suffix (null lets SDL fill it
+// from the entry assembly). clickThroughOnFocus (true) and keepDisplayAwake
 // (false) are left at their defaults: the first click on an unfocused window presses what it lands on, and an idle GUI
 // lets the display sleep.
 var appVersion = typeof(GuiOptions).Assembly
