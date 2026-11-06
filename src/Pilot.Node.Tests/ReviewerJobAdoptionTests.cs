@@ -26,11 +26,11 @@ public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
         return jobs;
     }
 
-    private SessionRow Session(string id, string name, DateTimeOffset started, SessionState sessionState = SessionState.Idle, string? flight = null)
+    private SessionRow Session(string id, string name, DateTimeOffset started, SessionState sessionState = SessionState.Idle, string? flight = null, SessionRole role = SessionRole.Reviewer)
     {
         var row = new SessionRow
         {
-            Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = _root, Role = SessionRole.Reviewer,
+            Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = _root, Role = role,
             Flight = flight, ContextTokens = 0, ContextWindow = 200_000, State = sessionState, SpendWeighted = 0, StartedAt = started,
         };
         _state.PutSession(row);
@@ -39,6 +39,9 @@ public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
 
     private string Queue(JobRunner jobs, string target, string command, string? cwd = null) =>
         jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = target, Args = [cwd ?? Path.GetTempPath(), "0", command], Who = "test" }).Made.ShouldNotBeNull();
+
+    private static CommandRequest RunAs(SessionRow session, string cwd, string command) =>
+        new() { Verb = Verbs.Run, Target = Verbs.SessionTarget(session.Id), Args = [cwd, "0", command], Who = "test" };
 
     private async Task<JobRow> Until(string id, Func<JobRow, bool> condition, int seconds = 4)
     {
@@ -57,7 +60,7 @@ public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
     private async Task Release(JobRunner jobs, string holder)
     {
         jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(holder), Who = "test" });
-        await Until(holder, j => j.State == JobState.Cancelled);
+        await Until(holder, j => j.State is not (JobState.Queued or JobState.Running), seconds: 60);
         foreach (var left in _state.Jobs().Where(j => j.State is JobState.Queued or JobState.Running))
         {
             jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(left.Id), Who = "test" });
@@ -112,7 +115,7 @@ public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
         await Release(jobs, holder);
     }
 
-    private async Task<(JobRunner Jobs, string Holder, string Old, string Queued, SessionRow Old1, SessionRow New)> Predecessor(string command, string cwd)
+    private async Task<(JobRunner Jobs, string Holder, string Queued, SessionRow? Replacement)> Predecessor(string command, string cwd, bool replaced = true)
     {
         var jobs = StartJobs();
         var before = Session("old00001", "du1-x-review", DateTimeOffset.UtcNow.AddMinutes(-10), SessionState.Ended);
@@ -120,23 +123,58 @@ public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
         await Until(holder, j => j.State == JobState.Running);
         var queued = Queue(jobs, Verbs.SessionTarget(before.Id), command, cwd);
         await Until(queued, j => j.State == JobState.Queued && j.Step is not null);
-        var after = Session("new00001", "du1-x-review", DateTimeOffset.UtcNow);
-        return (jobs, holder, before.Id, queued, before, after);
+        var after = replaced ? Session("new00001", "du1-x-review", DateTimeOffset.UtcNow) : null;
+        return (jobs, holder, queued, after);
     }
 
     [Fact]
     public async Task ARunFromTheReplacementAdoptsThePredecessorsQueuedJobAndQueuesNoNewRow()
     {
         var cwd = Path.GetTempPath();
-        var (jobs, holder, _, queued, _, replacement) = await Predecessor("echo build", cwd);
+        var (jobs, holder, queued, after) = await Predecessor("echo build", cwd);
+        var replacement = after.ShouldNotBeNull();
         var rows = _state.Jobs().Length;
 
-        var result = jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = Verbs.SessionTarget(replacement.Id), Args = [cwd, "0", "echo build"], Who = "test" });
+        var result = jobs.Run(RunAs(replacement, cwd, "echo build"));
 
         result.Made.ShouldBe(queued);
         _state.Jobs().Length.ShouldBe(rows);
-        _state.Jobs().Single(j => j.Id == queued).ShouldSatisfyAllConditions(j => j.Owner.ShouldBe(replacement.Id), j => j.OwnerName.ShouldBe(replacement.Name));
+        // The dispatcher's own copy takes the new owner, so the passes that rewrite the waiting row keep it.
+        await Until(queued, j => j.Owner == replacement.Id);
+        jobs.Pump();
+        jobs.Pump();
+        await Task.Delay(200, Ct);
+        _state.Jobs().Single(j => j.Id == queued).ShouldSatisfyAllConditions(
+            j => j.State.ShouldBe(JobState.Queued), j => j.Step.ShouldNotBeNull(), j => j.Owner.ShouldBe(replacement.Id), j => j.OwnerName.ShouldBe(replacement.Name));
+
+        // The start puts the row from that copy too: the ended row, built from the running one, still names the replacement.
+        jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(holder), Who = "test" });
+        var ended = await Until(queued, j => j.State is not (JobState.Queued or JobState.Running), seconds: 30);
+        ended.ShouldSatisfyAllConditions(j => j.State.ShouldBe(JobState.Succeeded), j => j.Owner.ShouldBe(replacement.Id), j => j.OwnerName.ShouldBe(replacement.Name));
         await Release(jobs, holder);
+    }
+
+    [Fact]
+    public async Task AnAdoptionThatReachesTheDispatcherBeforeItsHandOverIsAppliedWhenTheJobArrives()
+    {
+        // A runner that is not started has no dispatcher loop, so the test drives the signals in that order itself (as JobTests does for a cancel).
+        var idle = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n2.sock"), Path.Combine(_root, "data2")), TimeProvider.System)
+        {
+            FreeMemory = () => null,
+            Say = (command, _) => Task.FromResult(_state.Complete(command, null)),
+        };
+        var late = new JobRow
+        {
+            Id = "late1", Command = "echo late", Cwd = _root, Owner = "old", OwnerName = "old-name", State = JobState.Queued, Kind = JobKind.Run,
+            LogPath = Path.Combine(_root, "late1.log"), Timeout = JobRunner.DefaultTimeout, StartedAt = DateTimeOffset.UtcNow,
+        };
+        _state.PutJob(late);
+
+        idle.Dispatch(new JobRunner.Adopted("late1", "new", "new-name", null, null));
+        idle.Dispatch(new JobRunner.HandedOver(late));
+
+        var ended = await Until("late1", j => j.State is not (JobState.Queued or JobState.Running), seconds: 30);
+        ended.ShouldSatisfyAllConditions(j => j.Owner.ShouldBe("new"), j => j.OwnerName.ShouldBe("new-name"));
     }
 
     [Fact]
@@ -148,10 +186,29 @@ public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
         await Until(running, j => j.State == JobState.Running);
         var after = Session("new00002", "du1-y-review", DateTimeOffset.UtcNow);
 
-        var result = jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = Verbs.SessionTarget(after.Id), Args = [Path.GetTempPath(), "0", "sleep 60; echo slept"], Who = "test" });
+        var result = jobs.Run(RunAs(after, Path.GetTempPath(), "sleep 60; echo slept"));
 
         result.Made.ShouldBe(running);
         _state.Jobs().Single(j => j.Id == running).Owner.ShouldBe(after.Id);
+        jobs.Pump();
+        await Task.Delay(200, Ct);
+        _state.Jobs().Single(j => j.Id == running).ShouldSatisfyAllConditions(j => j.State.ShouldBe(JobState.Running), j => j.Owner.ShouldBe(after.Id));
+        await Release(jobs, running);
+    }
+
+    [Fact]
+    public async Task AReplacementWorkerDoesNotAdoptARunningJobStartedBeforeItsEdits()
+    {
+        var jobs = StartJobs();
+        var before = Session("old00003", "du1-w-leg", DateTimeOffset.UtcNow.AddMinutes(-10), SessionState.Ended, role: SessionRole.Worker);
+        var running = Queue(jobs, Verbs.SessionTarget(before.Id), "sleep 60; echo slept");
+        await Until(running, j => j.State == JobState.Running);
+        var after = Session("new00003", "du1-w-leg", DateTimeOffset.UtcNow, role: SessionRole.Worker);
+
+        var result = jobs.Run(RunAs(after, Path.GetTempPath(), "sleep 60; echo slept"));
+
+        result.Made.ShouldNotBe(running);
+        _state.Jobs().Single(j => j.Id == running).Owner.ShouldBe(before.Id);
         await Release(jobs, running);
     }
 
@@ -159,11 +216,12 @@ public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
     public async Task ADifferentCommandOrFolderQueuesANewJob()
     {
         var cwd = Path.GetTempPath();
-        var (jobs, holder, _, queued, _, replacement) = await Predecessor("echo build", cwd);
+        var (jobs, holder, queued, after) = await Predecessor("echo build", cwd);
+        var replacement = after.ShouldNotBeNull();
         var other = Directory.CreateDirectory(Path.Combine(_root, "elsewhere")).FullName;
 
-        var command = jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = Verbs.SessionTarget(replacement.Id), Args = [cwd, "0", "echo tests"], Who = "test" });
-        var folder = jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = Verbs.SessionTarget(replacement.Id), Args = [other, "0", "echo build"], Who = "test" });
+        var command = jobs.Run(RunAs(replacement, cwd, "echo tests"));
+        var folder = jobs.Run(RunAs(replacement, other, "echo build"));
 
         command.Made.ShouldNotBe(queued);
         folder.Made.ShouldNotBe(queued);
@@ -172,18 +230,43 @@ public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
     }
 
     [Fact]
-    public async Task APredecessorThatWasNotReplacedKeepsItsJobAndANamesakeOfAnotherRoleAdoptsNothing()
+    public async Task ASessionOfAnotherNameAdoptsNothing()
     {
         var cwd = Path.GetTempPath();
-        var (jobs, holder, _, queued, _, replacement) = await Predecessor("echo build", cwd);
-        // Another session under another name is no replacement of the old reviewer.
+        var (jobs, holder, queued, _) = await Predecessor("echo build", cwd);
         var stranger = Session("odd00001", "du1-z-review", DateTimeOffset.UtcNow);
 
-        var result = jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = Verbs.SessionTarget(stranger.Id), Args = [cwd, "0", "echo build"], Who = "test" });
+        jobs.Run(RunAs(stranger, cwd, "echo build")).Made.ShouldNotBe(queued);
 
-        result.Made.ShouldNotBe(queued);
         _state.Jobs().Single(j => j.Id == queued).Owner.ShouldBe("old00001");
-        replacement.Id.ShouldNotBe(stranger.Id);
+        await Release(jobs, holder);
+    }
+
+    [Fact]
+    public async Task ANamesakeOfAnotherRoleAdoptsNothing()
+    {
+        var cwd = Path.GetTempPath();
+        var (jobs, holder, queued, _) = await Predecessor("echo build", cwd, replaced: false);
+        // Same name and newer, but a worker: SessionMessenger.ReplacedBy wants the same role too.
+        var namesake = Session("odd00002", "du1-x-review", DateTimeOffset.UtcNow, role: SessionRole.Worker);
+
+        jobs.Run(RunAs(namesake, cwd, "echo build")).Made.ShouldNotBe(queued);
+
+        _state.Jobs().Single(j => j.Id == queued).Owner.ShouldBe("old00001");
+        await Release(jobs, holder);
+    }
+
+    [Fact]
+    public async Task APredecessorWithNoReplacementKeepsItsJob()
+    {
+        var cwd = Path.GetTempPath();
+        var (jobs, holder, queued, _) = await Predecessor("echo build", cwd, replaced: false);
+        // Same name and role, but started before the predecessor: no replacement of it.
+        var earlier = Session("odd00003", "du1-x-review", DateTimeOffset.UtcNow.AddMinutes(-20), SessionState.Ended);
+
+        jobs.Run(RunAs(earlier, cwd, "echo build")).Made.ShouldNotBe(queued);
+
+        _state.Jobs().Single(j => j.Id == queued).Owner.ShouldBe("old00001");
         await Release(jobs, holder);
     }
 }
