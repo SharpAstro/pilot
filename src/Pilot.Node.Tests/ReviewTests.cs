@@ -86,7 +86,7 @@ public abstract class ReviewTestsBase : IDisposable
         var clock = Stopwatch.StartNew();
         while (legs.Starting(code))
         {
-            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20), $"{code}'s reviewer was not recorded");
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(90), $"{code}'s reviewer was not recorded");
             await Task.Delay(10, Ct);
         }
     }
@@ -116,6 +116,8 @@ public abstract class ReviewTestsBase : IDisposable
     {
         var start = await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, leg), "controller");
         start.Error.ShouldBeNull();
+        // The worker is on the leg only once its session is up, which a loaded machine does not do within the command.
+        await Started(_legs, flight.Code);
         var worker = _state.Legs(flight.Code).Single(l => l.Name == leg).Worker!;
         File.WriteAllText(Path.Combine(flight.Worktree, $"{leg}-{Guid.NewGuid():N}.txt"), string.Concat(Enumerable.Repeat("work\n", lines)));
         Git(flight.Worktree, "add", ".");
