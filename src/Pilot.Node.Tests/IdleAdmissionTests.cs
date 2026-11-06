@@ -215,7 +215,9 @@ public sealed class IdleAdmissionTests : LegCommanderTestsBase
         _state.PutSession(_state.Sessions().Single(s => s.Name == "du1-idle-aaaaaaa1") with { Model = "claude-sonnet-5-5" });
         Put("du1-idle-aaaaaaa2", SessionState.Idle);
         _state.RaiseCard(CardBin.ForYou, CardKinds.AssistantAsk, "flight/OTHER", "asks", askedBy: "du1-idle-aaaaaaa1");
-        var opusCard = _state.RaiseCard(CardBin.ForYou, CardKinds.AssistantAsk, "flight/OTHER", "asks too", askedBy: "du1-idle-aaaaaaa2");
+        // A card of the same kind about the same subject is the one already open, so the second asks about another subject.
+        var opusCard = _state.RaiseCard(CardBin.ForYou, CardKinds.AssistantAsk, "flight/ELSE", "asks too", askedBy: "du1-idle-aaaaaaa2");
+        opusCard.AskedBy.ShouldBe("du1-idle-aaaaaaa2");
 
         _legs.Slots.PublishState();
 
