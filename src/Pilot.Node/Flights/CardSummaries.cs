@@ -203,6 +203,18 @@ public static partial class CardSummaries
     }
 
     /// <summary>
+    /// The sentence of a merged flight whose own commits missed the merge: which one (the first by subject), and that a PR with them
+    /// lands the flight. Never main's commits or merges of main, which are not the flight's work.
+    /// </summary>
+    public static string LeftOut(string code, int number, IReadOnlyList<string> commits)
+    {
+        var first = commits.Count > 0 ? commits[0] : "";
+        var more = commits.Count > 1 ? $" and {commits.Count - 1} more" : "";
+        var text = $"PR #{number} merged without {code}'s last work: {first}{more}. A PR with {(commits.Count == 1 ? "it" : "them")} brings it in, and the flight lands when that merges.";
+        return text.Length <= 240 ? text : text[..237] + "...";
+    }
+
+    /// <summary>
     /// The sentence of a review that passed with notes that do not block: what they are (how many, and the first in its own words)
     /// and that nothing is asked of the person. No word of how the node sends a leg round.
     /// </summary>
