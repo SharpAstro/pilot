@@ -111,7 +111,7 @@ public sealed class SettingsTests : IDisposable
     [InlineData("machine", "DESKTOP", "machine takes two letters and a number, as in DE1")]
     [InlineData("update-channel", "nightly", "update-channel takes stable or beta")]
     [InlineData("max-jobs", "0", "max-jobs takes a number, 1 to 64")]
-    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, job-priority, job-plane-output, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, max-go-arounds, scratch-days, disk-alert-gb, stale-flight-hours, stale-pr-hours, stale-recheck-hours, stale-card-hours, stale-holds, stale-unreachable-hours, watchtower-range, worker-range, planner-range, reviewer-range, worker-ladder")]
+    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, job-priority, job-plane-output, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, max-go-arounds, scratch-days, disk-alert-gb, stale-flight-hours, stale-pr-hours, stale-recheck-hours, stale-card-hours, stale-holds, stale-unreachable-hours, bench-subscription, bench-resource-group, bench-region, bench-vm-size, bench-image, bench-spot-price, bench-monthly-cap, bench-auth, bench-sp-app-id, bench-sp-tenant, bench-sp-secret, watchtower-range,worker-range, planner-range, reviewer-range, worker-ladder")]
     // Invariant: the "colour" case spells out every key, so a filtered check that adds a setting runs it too.
     [Trait("Category", InvariantTraitTests.Invariant)]
     public void ASettingRefusesWhatItDoesNotTake(string key, string value, string error)
@@ -537,6 +537,230 @@ public sealed class SettingsTests : IDisposable
         rows.Length.ShouldBe(RoleModels.Roles.Count);
         rows.ShouldAllBe(r => !r.Choices.Contains("none"));
         rows.ShouldAllBe(r => r.Detail.Contains("a bare model leaves the effort to Claude Code"));
+    }
+
+    private const string Guid1 = "11111111-2222-3333-4444-555555555555";
+    private const string Guid2 = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+    /// <summary>Each bench-cloud key (#823) takes its value, stored as the setting reads it back.</summary>
+    [Theory]
+    [InlineData("bench-subscription", Guid1, Guid1)]
+    [InlineData("bench-subscription", "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE", Guid2)]
+    [InlineData("bench-resource-group", "pilot-bench_rg.(1)", "pilot-bench_rg.(1)")]
+    [InlineData("bench-region", "WestEurope", "westeurope")]
+    [InlineData("bench-region", "eastus2", "eastus2")]
+    [InlineData("bench-vm-size", "Standard_F8s_v2", "Standard_F8s_v2")]
+    [InlineData("bench-vm-size", "Standard_NC6s_v3", "Standard_NC6s_v3")]
+    [InlineData("bench-vm-size", "Standard_B2ms", "Standard_B2ms")]
+    [InlineData("bench-image", "Canonical:ubuntu-24_04-lts:server:latest", "Canonical:ubuntu-24_04-lts:server:latest")]
+    [InlineData("bench-image", "Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:22.04.202401010", "Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:22.04.202401010")]
+    [InlineData("bench-spot-price", "0.30", "0.3")]
+    [InlineData("bench-spot-price", "1", "1")]
+    [InlineData("bench-monthly-cap", "50", "50")]
+    [InlineData("bench-monthly-cap", "12.5", "12.5")]
+    [InlineData("bench-auth", "az-login", "az-login")]
+    [InlineData("bench-auth", "Service-Principal", "service-principal")]
+    [InlineData("bench-sp-app-id", Guid1, Guid1)]
+    [InlineData("bench-sp-tenant", Guid2, Guid2)]
+    [InlineData("bench-sp-tenant", "Contoso.OnMicrosoft.com", "contoso.onmicrosoft.com")]
+    [InlineData("bench-sp-secret", "s3cr3t~value.1", "s3cr3t~value.1")]
+    public void ABenchCloudKeyTakesItsValueAndReadsItBack(string key, string value, string stored)
+    {
+        var (settings, error) = NodeSettings.With(new NodeSettings(), key, [value]);
+
+        error.ShouldBeNull();
+        settings.ShouldNotBeNull().Get(key).ShouldBe([stored]);
+        // default (or nothing) takes it out again.
+        NodeSettings.With(settings, key, ["default"]).Settings.ShouldNotBeNull().Get(key).ShouldBeNull();
+        NodeSettings.With(settings, key, []).Settings.ShouldNotBeNull().Get(key).ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("bench-subscription", "not-a-guid")]
+    [InlineData("bench-subscription", "my subscription")]
+    [InlineData("bench-resource-group", "bad group!")]
+    [InlineData("bench-resource-group", "ends-with-a-period.")]
+    [InlineData("bench-region", "West Europe")]
+    [InlineData("bench-region", "we")]
+    [InlineData("bench-region", "1europe")]
+    [InlineData("bench-vm-size", "F8s_v2")]
+    [InlineData("bench-vm-size", "Standard_")]
+    [InlineData("bench-vm-size", "Standard_8s")]
+    [InlineData("bench-vm-size", "Standard_F8s v2")]
+    [InlineData("bench-image", "ubuntu")]
+    [InlineData("bench-image", "Canonical:ubuntu:server")]
+    [InlineData("bench-image", "Canonical::server:latest")]
+    [InlineData("bench-spot-price", "0")]
+    [InlineData("bench-spot-price", "-0.3")]
+    [InlineData("bench-spot-price", "free")]
+    [InlineData("bench-spot-price", "NaN")]
+    [InlineData("bench-spot-price", "5000")]
+    [InlineData("bench-monthly-cap", "0")]
+    [InlineData("bench-monthly-cap", "-50")]
+    [InlineData("bench-monthly-cap", "Infinity")]
+    [InlineData("bench-monthly-cap", "lots")]
+    [InlineData("bench-auth", "password")]
+    [InlineData("bench-auth", "sp")]
+    [InlineData("bench-sp-app-id", "abc")]
+    [InlineData("bench-sp-tenant", "not a tenant")]
+    [InlineData("bench-sp-tenant", "-bad.example.com")]
+    public void ABenchCloudKeyRefusesWhatItDoesNotTake(string key, string value)
+    {
+        var (settings, error) = NodeSettings.With(new NodeSettings(), key, [value]);
+
+        settings.ShouldBeNull();
+        error.ShouldNotBeNull().ShouldStartWith($"{key} takes ");
+    }
+
+    [Fact]
+    public void AResourceGroupNameTakesNinetyCharactersAtMost()
+    {
+        NodeSettings.With(new NodeSettings(), "bench-resource-group", [new string('r', 90)]).Error.ShouldBeNull();
+        NodeSettings.With(new NodeSettings(), "bench-resource-group", [new string('r', 91)]).Error.ShouldNotBeNull().ShouldStartWith("bench-resource-group takes ");
+    }
+
+    [Fact]
+    public void TheBenchCloudSecretTakesOneWordAndNothingElse()
+    {
+        NodeSettings.With(new NodeSettings(), "bench-sp-secret", ["two", "words"]).Error.ShouldBe("bench-sp-secret takes the service principal's secret, one word");
+        NodeSettings.With(new NodeSettings(), "bench-subscription", [Guid1, Guid2]).Error.ShouldNotBeNull().ShouldStartWith("bench-subscription takes ");
+    }
+
+    [Fact]
+    public void TheBenchCloudKeysSurviveTheFileAndAreListedAfterTheStaleKeys()
+    {
+        var file = Path.Combine(_root, NodeSettings.FileName);
+        var settings = new NodeSettings();
+        foreach (var (key, value) in new[]
+        {
+            ("bench-subscription", Guid1), ("bench-resource-group", "pilot-bench"), ("bench-region", "northeurope"), ("bench-vm-size", "Standard_F16s_v2"),
+            ("bench-image", "Canonical:ubuntu-24_04-lts:server:24.04.202601010"), ("bench-spot-price", "0.42"), ("bench-monthly-cap", "75"), ("bench-auth", "service-principal"),
+            ("bench-sp-app-id", Guid2), ("bench-sp-tenant", "contoso.onmicrosoft.com"), ("bench-sp-secret", "s3cr3t"),
+        })
+        {
+            settings = NodeSettings.With(settings, key, [value]).Settings.ShouldNotBeNull();
+        }
+        settings.Write(file);
+
+        var read = NodeSettings.Read(file);
+
+        foreach (var key in NodeSettings.BenchKeys)
+        {
+            read.Get(key).ShouldBe(settings.Get(key), key);
+            read.Get(key).ShouldNotBeNull(key);
+        }
+        (read.BenchSpotPrice, read.BenchMonthlyCap).ShouldBe((0.42, 75d));
+        // Prices are numbers in the file, not strings: a person editing it reads and writes them as numbers.
+        File.ReadAllText(file).ShouldContain("\"bench-spot-price\": 0.42");
+        NodeSettings.Keys.SkipWhile(k => k != NodeSettings.StaleUnreachableHoursKey).Skip(1).Take(NodeSettings.BenchKeys.Count).ShouldBe(NodeSettings.BenchKeys);
+        // The secret is a key like any other to the file, and the one the settings output never shows.
+        NodeSettings.BenchKeys.Where(NodeSettings.IsSecret).ShouldBe(["bench-sp-secret"]);
+    }
+
+    [Fact]
+    public void CloudBenchesAreOffUntilASubscriptionAndAResourceGroupAreBothSet()
+    {
+        var none = new NodeSettings();
+        var (off, why) = none.BenchCloudOrWhy();
+        off.ShouldBeNull();
+        why.ShouldBe("cloud benches are off: bench-subscription and bench-resource-group are not set, so a bench runs on this machine");
+
+        var onlySubscription = NodeSettings.With(none, "bench-subscription", [Guid1]).Settings!;
+        onlySubscription.BenchCloudOrWhy().ShouldBe((null, "cloud benches are off: bench-resource-group is not set, so a bench runs on this machine"));
+        var onlyGroup = NodeSettings.With(none, "bench-resource-group", ["pilot-bench"]).Settings!;
+        onlyGroup.BenchCloudOrWhy().ShouldBe((null, "cloud benches are off: bench-subscription is not set, so a bench runs on this machine"));
+        // Region, size, image, price and the cap alone never turn it on.
+        NodeSettings.With(none, "bench-vm-size", ["Standard_F4s_v2"]).Settings!.BenchCloudOrWhy().Cloud.ShouldBeNull();
+    }
+
+    [Fact]
+    public void WithASubscriptionAndAResourceGroupTheCloudTakesTheDefaultsForTheRest()
+    {
+        var settings = NodeSettings.With(NodeSettings.With(new NodeSettings(), "bench-subscription", [Guid1]).Settings!, "bench-resource-group", ["pilot-bench"]).Settings!;
+
+        var (cloud, why) = settings.BenchCloudOrWhy();
+
+        why.ShouldBeNull();
+        cloud.ShouldNotBeNull().ShouldSatisfyAllConditions(
+            c => c.Subscription.ShouldBe(Guid1),
+            c => c.ResourceGroup.ShouldBe("pilot-bench"),
+            c => c.Region.ShouldBe("westeurope"),
+            c => c.VmSize.ShouldBe("Standard_F8s_v2"),
+            c => c.Image.ShouldBe("Canonical:ubuntu-24_04-lts:server:latest"),
+            c => c.SpotPricePerHour.ShouldBe(0.30),
+            c => c.MonthlyCap.ShouldBe(50),
+            c => c.ServicePrincipal.ShouldBeFalse(),
+            c => c.Secret.ShouldBeNull());
+
+        var chosen = NodeSettings.With(NodeSettings.With(NodeSettings.With(settings, "bench-region", ["uksouth"]).Settings!, "bench-vm-size", ["Standard_D8s_v5"]).Settings!, "bench-monthly-cap", ["10"]).Settings!;
+        chosen.BenchCloudOrWhy().Cloud.ShouldNotBeNull().ShouldSatisfyAllConditions(c => c.Region.ShouldBe("uksouth"), c => c.VmSize.ShouldBe("Standard_D8s_v5"), c => c.MonthlyCap.ShouldBe(10));
+    }
+
+    [Fact]
+    public void AServicePrincipalNeedsItsAppIdItsTenantAndItsSecretBeforeCloudBenchesTurnOn()
+    {
+        var settings = NodeSettings.With(NodeSettings.With(new NodeSettings(), "bench-subscription", [Guid1]).Settings!, "bench-resource-group", ["pilot-bench"]).Settings!;
+        settings = NodeSettings.With(settings, "bench-auth", ["service-principal"]).Settings!;
+
+        settings.BenchCloudOrWhy().ShouldBe((null, "cloud benches are off: bench-auth is service-principal but bench-sp-app-id, bench-sp-tenant, bench-sp-secret are not set, so a bench runs on this machine"));
+        settings = NodeSettings.With(settings, "bench-sp-app-id", [Guid2]).Settings!;
+        settings = NodeSettings.With(settings, "bench-sp-tenant", [Guid1]).Settings!;
+        settings.BenchCloudOrWhy().Why.ShouldBe("cloud benches are off: bench-auth is service-principal but bench-sp-secret is not set, so a bench runs on this machine");
+        settings = NodeSettings.With(settings, "bench-sp-secret", ["s3cr3t"]).Settings!;
+
+        var cloud = settings.BenchCloudOrWhy().Cloud.ShouldNotBeNull();
+        (cloud.ServicePrincipal, cloud.AppId, cloud.Tenant, cloud.Secret).ShouldBe((true, Guid2, Guid1, "s3cr3t"));
+        // The cloud's own text never carries the secret.
+        cloud.ToString().ShouldNotContain("s3cr3t");
+        cloud.ToString().ShouldContain("Secret = set");
+        // az-login ignores a saved service principal.
+        var azLogin = NodeSettings.With(settings, "bench-auth", ["default"]).Settings!.BenchCloudOrWhy().Cloud.ShouldNotBeNull();
+        (azLogin.ServicePrincipal, azLogin.AppId, azLogin.Secret).ShouldBe((false, null, null));
+    }
+
+    /// <summary>The bench-cloud keys are live (#823): saved, answered with whether they turn cloud benches on, never restarting the node, and the secret shown as set.</summary>
+    [Fact]
+    public async Task TheBenchCloudKeysAreInForceAtOnceAndTheSecretShowsOnlyAsSet()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        async Task<CommandResult> Set(params string[] args) => (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = args, Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        async Task<SettingsPage> Page() => (await node.Client.GetSettingsAsync(Ct)).Response!;
+
+        // Nothing saved: the rows show the defaults, and the subscription and group none, which is off.
+        var before = (await Page()).Settings.ToDictionary(s => s.Key);
+        (before["bench-region"].Value, before["bench-region"].Source, before["bench-region"].Saved).ShouldBe(("westeurope", SettingSources.Default, null));
+        (before["bench-vm-size"].Value, before["bench-spot-price"].Value, before["bench-monthly-cap"].Value, before["bench-auth"].Value).ShouldBe(("Standard_F8s_v2", "0.3", "50", "az-login"));
+        (before["bench-subscription"].Value, before["bench-resource-group"].Value, before["bench-sp-secret"].Value).ShouldBe(("", "", ""));
+
+        var subscription = await Set("bench-subscription", Guid1);
+        subscription.Ok.ShouldBeTrue(subscription.Error);
+        subscription.Way.ShouldBe($"bench-subscription saved as {Guid1}, and in force now; cloud benches are off: bench-resource-group is not set, so a bench runs on this machine");
+        (subscription.Setting!.Saved, subscription.Setting.Value, subscription.Setting.Pending).ShouldBe((Guid1, Guid1, false));
+        var group = await Set("bench-resource-group", "pilot-bench");
+        group.Way.ShouldBe("bench-resource-group saved as pilot-bench, and in force now; cloud benches are on");
+        (await Set("bench-region", "northeurope")).Setting!.ShouldSatisfyAllConditions(r => r.Value.ShouldBe("northeurope"), r => r.Source.ShouldBe(SettingSources.File));
+
+        // A refusal says why and changes nothing.
+        var refused = await Set("bench-spot-price", "free");
+        refused.Ok.ShouldBeFalse();
+        refused.Error.ShouldBe("bench-spot-price takes the most to pay per VM hour in USD, above 0 and up to 1000, as in 0.30");
+
+        // The secret: saved in the settings file, shown as set, and never in an answer, a row or a help text.
+        const string Secret = "s3cr3t-never-shown";
+        var secret = await Set("bench-sp-secret", Secret);
+        secret.Ok.ShouldBeTrue(secret.Error);
+        secret.Way.ShouldBe("bench-sp-secret saved as set, and in force now; cloud benches are on");
+        (secret.Setting!.Saved, secret.Setting.Value, secret.Setting.Pending).ShouldBe(("set", "set", false));
+        var page = await Page();
+        page.Settings.Single(s => s.Key == "bench-sp-secret").ShouldSatisfyAllConditions(r => r.Saved.ShouldBe("set"), r => r.Value.ShouldBe("set"));
+        page.Settings.ShouldAllBe(r => !$"{r.Label}|{r.Detail}|{r.Value}|{r.Saved}|{string.Join(',', r.Choices)}".Contains(Secret, StringComparison.Ordinal));
+        System.Text.Json.JsonSerializer.Serialize(secret, PilotJsonContext.Default.CommandResult).ShouldNotContain(Secret);
+        NodeSettings.Read(page.File).BenchSpSecret.ShouldBe(Secret);
+
+        // default takes it out again: the row reads unset.
+        var cleared = await Set("bench-sp-secret", "default");
+        cleared.Way.ShouldBe("bench-sp-secret saved as the default, and in force now; cloud benches are on");
+        (cleared.Setting!.Saved, cleared.Setting.Value).ShouldBe((null, ""));
     }
 
     [Fact]

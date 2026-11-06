@@ -73,6 +73,45 @@ public sealed record NodeSettings
     public const string StaleUnreachableHoursKey = "stale-unreachable-hours";
     public const int DefaultStaleUnreachableHours = 1;
 
+    // Where a bench may run in Azure (#823). A subscription and a resource group both set turn cloud benches on; every other key has a
+    // default, and nothing here is secret but the service principal's secret, which is shown as set or not, never as itself.
+    public const string BenchSubscriptionKey = "bench-subscription";
+    public const string BenchResourceGroupKey = "bench-resource-group";
+    public const string BenchRegionKey = "bench-region";
+    public const string BenchVmSizeKey = "bench-vm-size";
+    public const string BenchImageKey = "bench-image";
+    /// <summary>The most to pay for a spot VM per hour, in USD (<see cref="BenchSpotPrice"/>); the VM is evicted past it.</summary>
+    public const string BenchSpotPriceKey = "bench-spot-price";
+    /// <summary>The most the node's cloud benches may cost in a calendar month, in USD (<see cref="BenchMonthlyCap"/>).</summary>
+    public const string BenchMonthlyCapKey = "bench-monthly-cap";
+    public const string BenchAuthKey = "bench-auth";
+    public const string BenchSpAppIdKey = "bench-sp-app-id";
+    public const string BenchSpTenantKey = "bench-sp-tenant";
+    public const string BenchSpSecretKey = "bench-sp-secret";
+
+    /// <summary>Sign in with the machine's own <c>az login</c>: what <see cref="BenchAuthKey"/> means unless set.</summary>
+    public const string AuthAzLogin = "az-login";
+    /// <summary>Sign in as a service principal, from the app id, tenant and secret settings.</summary>
+    public const string AuthServicePrincipal = "service-principal";
+
+    // What a bench-cloud key takes when the file leaves it out, once cloud benches are on. A fixed size, image and region are what make two
+    // bench runs compare; the price and the cap are what a runaway cannot pass.
+    public const string DefaultBenchRegion = "westeurope";
+    public const string DefaultBenchVmSize = "Standard_F8s_v2";
+    public const string DefaultBenchImage = "Canonical:ubuntu-24_04-lts:server:latest";
+    public const double DefaultBenchSpotPrice = 0.30;
+    public const double DefaultBenchMonthlyCap = 50;
+
+    /// <summary>The bench-cloud keys (#823), in the order the Settings page shows them.</summary>
+    public static IReadOnlyList<string> BenchKeys { get; } =
+        [BenchSubscriptionKey, BenchResourceGroupKey, BenchRegionKey, BenchVmSizeKey, BenchImageKey, BenchSpotPriceKey, BenchMonthlyCapKey, BenchAuthKey, BenchSpAppIdKey, BenchSpTenantKey, BenchSpSecretKey];
+
+    /// <summary>Whether <paramref name="key"/> is a bench-cloud key.</summary>
+    public static bool IsBenchKey(string key) => BenchKeys.Contains(key);
+
+    /// <summary>Whether <paramref name="key"/> holds a secret: shown by the settings output as set or not, never as itself.</summary>
+    public static bool IsSecret(string key) => key is ShortcutTokenKey or BenchSpSecretKey;
+
     /// <summary>The five staleness bounds' keys (#736).</summary>
     public static IReadOnlyList<string> StaleKeys { get; } = [StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey];
 
@@ -127,7 +166,7 @@ public sealed record NodeSettings
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
         [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
-         .. RoleModels.Roles.Select(RoleModels.RangeKey), WorkerLadderKey];
+         .. BenchKeys, .. RoleModels.Roles.Select(RoleModels.RangeKey), WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
     public static bool IsRoleKey(string key) => RoleModels.Roles.Any(r => key == RoleModels.RangeKey(r));
@@ -163,6 +202,45 @@ public sealed record NodeSettings
 
     /// <summary>The Shortcut API token (<see cref="ShortcutTokenKey"/>) that reads a story's title; the <c>SHORTCUT_API_TOKEN</c> variable wins over it. Never shown by the settings output beyond set or not.</summary>
     public string? ShortcutToken { get; init; }
+
+    /// <summary>The Azure subscription a cloud bench's VM is made in (<see cref="BenchSubscriptionKey"/>), a GUID; with <see cref="BenchResourceGroup"/> it turns cloud benches on, and left out they are off.</summary>
+    public string? BenchSubscription { get; init; }
+
+    /// <summary>The resource group a cloud bench's VM is made in (<see cref="BenchResourceGroupKey"/>); left out, cloud benches are off.</summary>
+    public string? BenchResourceGroup { get; init; }
+
+    /// <summary>The Azure region of the VM (<see cref="BenchRegionKey"/>), as <c>az account list-locations</c> names it; <see cref="DefaultBenchRegion"/> unless set.</summary>
+    public string? BenchRegion { get; init; }
+
+    /// <summary>The VM size (<see cref="BenchVmSizeKey"/>), an Azure SKU; <see cref="DefaultBenchVmSize"/> unless set. Fixed, so two bench runs compare.</summary>
+    public string? BenchVmSize { get; init; }
+
+    /// <summary>The VM's image (<see cref="BenchImageKey"/>), a marketplace URN <c>publisher:offer:sku:version</c>; <see cref="DefaultBenchImage"/> unless set.</summary>
+    public string? BenchImage { get; init; }
+
+    /// <summary>The most to pay per VM hour, in USD (<see cref="BenchSpotPriceKey"/>); <see cref="DefaultBenchSpotPrice"/> unless set.</summary>
+    public double? BenchSpotPrice { get; init; }
+
+    /// <summary>The most cloud benches may cost in a calendar month, in USD (<see cref="BenchMonthlyCapKey"/>); <see cref="DefaultBenchMonthlyCap"/> unless set.</summary>
+    public double? BenchMonthlyCap { get; init; }
+
+    /// <summary>How the node signs in to Azure (<see cref="BenchAuthKey"/>): <see cref="AuthAzLogin"/> (the default) or <see cref="AuthServicePrincipal"/>.</summary>
+    public string? BenchAuth { get; init; }
+
+    /// <summary>The service principal's application (client) id (<see cref="BenchSpAppIdKey"/>), used when <see cref="BenchAuth"/> is <see cref="AuthServicePrincipal"/>.</summary>
+    public string? BenchSpAppId { get; init; }
+
+    /// <summary>The service principal's tenant (<see cref="BenchSpTenantKey"/>), a GUID or a domain.</summary>
+    public string? BenchSpTenant { get; init; }
+
+    /// <summary>The service principal's secret (<see cref="BenchSpSecretKey"/>). It lives in the node's settings file and nowhere else; the settings output shows only that it is set.</summary>
+    public string? BenchSpSecret { get; init; }
+
+    /// <summary>
+    /// Where a bench may run in Azure as these settings say it, defaults filled in, or why it may not: no subscription or no resource group
+    /// (cloud benches are off, every bench stays on the node's machine), or a service principal that is missing a part.
+    /// </summary>
+    public (BenchCloud? Cloud, string? Why) BenchCloudOrWhy() => BenchCloud.From(this);
 
     public int? LanPort { get; init; }
 
@@ -372,6 +450,8 @@ public sealed record NodeSettings
                     DiskAlertGbKey => JsonValue.Create(DiskAlertGb),
                     StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => JsonValue.Create(StaleValue(key)),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
+                    BenchSpotPriceKey => JsonValue.Create(BenchSpotPrice),
+                    BenchMonthlyCapKey => JsonValue.Create(BenchMonthlyCap),
                     JobPriorityKey => JsonValue.Create(Pilot.Node.Flights.JobPriorities.Name(JobPriority!.Value)),
                     RepoRootsKey or PriorityReposKey or RepoTrackersKey or NoAutoMergeReposKey or SubTaskReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
                     _ => JsonValue.Create(values[0]),
@@ -412,6 +492,17 @@ public sealed record NodeSettings
         JobPlaneOutputKey => JobPlaneOutput is { } planeOutput ? [planeOutput ? "on" : "off"] : null,
         LanPortKey => LanPort is { } port ? [port.ToString(CultureInfo.InvariantCulture)] : null,
         ShortcutTokenKey => ShortcutToken is { } token ? [token] : null,
+        BenchSubscriptionKey => BenchSubscription is { } subscription ? [subscription] : null,
+        BenchResourceGroupKey => BenchResourceGroup is { } group ? [group] : null,
+        BenchRegionKey => BenchRegion is { } region ? [region] : null,
+        BenchVmSizeKey => BenchVmSize is { } size ? [size] : null,
+        BenchImageKey => BenchImage is { } image ? [image] : null,
+        BenchSpotPriceKey => BenchSpotPrice is { } spot ? [spot.ToString(CultureInfo.InvariantCulture)] : null,
+        BenchMonthlyCapKey => BenchMonthlyCap is { } monthly ? [monthly.ToString(CultureInfo.InvariantCulture)] : null,
+        BenchAuthKey => BenchAuth is { } auth ? [auth] : null,
+        BenchSpAppIdKey => BenchSpAppId is { } appId ? [appId] : null,
+        BenchSpTenantKey => BenchSpTenant is { } tenant ? [tenant] : null,
+        BenchSpSecretKey => BenchSpSecret is { } spSecret ? [spSecret] : null,
         MachineKey => Machine is { } machine ? [machine] : null,
         RepoRootsKey => RepoRoots,
         UpdatePolicyKey => UpdatePolicy is { } policy ? [policy.Name()] : null,
@@ -538,6 +629,91 @@ public sealed record NodeSettings
                 return clear
                     ? (settings with { ShortcutToken = null }, null)
                     : One() is { } secret ? (settings with { ShortcutToken = secret }, null) : (null, "shortcut-token takes the API token, one word");
+            case BenchSubscriptionKey:
+                if (clear)
+                {
+                    return (settings with { BenchSubscription = null }, null);
+                }
+                return Guid.TryParseExact(One(), "D", out var subscription)
+                    ? (settings with { BenchSubscription = subscription.ToString("D") }, null)
+                    : (null, "bench-subscription takes the Azure subscription id, a GUID (az account show --query id)");
+            case BenchResourceGroupKey:
+                if (clear)
+                {
+                    return (settings with { BenchResourceGroup = null }, null);
+                }
+                return IsResourceGroupName(One())
+                    ? (settings with { BenchResourceGroup = One() }, null)
+                    : (null, "bench-resource-group takes an Azure resource group name: 1 to 90 letters, digits, underscores, hyphens, periods or parentheses, not ending in a period");
+            case BenchRegionKey:
+                if (clear)
+                {
+                    return (settings with { BenchRegion = null }, null);
+                }
+                return One()?.ToLowerInvariant() is { } region && IsRegionName(region)
+                    ? (settings with { BenchRegion = region }, null)
+                    : (null, "bench-region takes an Azure region as az names it (az account list-locations), such as westeurope or eastus2");
+            case BenchVmSizeKey:
+                if (clear)
+                {
+                    return (settings with { BenchVmSize = null }, null);
+                }
+                return IsVmSize(One())
+                    ? (settings with { BenchVmSize = One() }, null)
+                    : (null, "bench-vm-size takes an Azure VM size (a SKU), such as Standard_F8s_v2");
+            case BenchImageKey:
+                if (clear)
+                {
+                    return (settings with { BenchImage = null }, null);
+                }
+                return IsImageUrn(One())
+                    ? (settings with { BenchImage = One() }, null)
+                    : (null, "bench-image takes a marketplace image URN, publisher:offer:sku:version, as in Canonical:ubuntu-24_04-lts:server:latest");
+            case BenchSpotPriceKey:
+                if (clear)
+                {
+                    return (settings with { BenchSpotPrice = null }, null);
+                }
+                return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var spotPrice) && spotPrice is > 0 and <= 1000
+                    ? (settings with { BenchSpotPrice = spotPrice }, null)
+                    : (null, "bench-spot-price takes the most to pay per VM hour in USD, above 0 and up to 1000, as in 0.30");
+            case BenchMonthlyCapKey:
+                if (clear)
+                {
+                    return (settings with { BenchMonthlyCap = null }, null);
+                }
+                return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var monthlyCap) && monthlyCap is > 0 and <= 1_000_000
+                    ? (settings with { BenchMonthlyCap = monthlyCap }, null)
+                    : (null, "bench-monthly-cap takes the most cloud benches may cost in a month in USD, above 0, as in 50");
+            case BenchAuthKey:
+                if (clear)
+                {
+                    return (settings with { BenchAuth = null }, null);
+                }
+                return One()?.ToLowerInvariant() is AuthAzLogin or AuthServicePrincipal
+                    ? (settings with { BenchAuth = One()!.ToLowerInvariant() }, null)
+                    : (null, $"bench-auth takes {AuthAzLogin} (the machine's az login) or {AuthServicePrincipal} (bench-sp-app-id, bench-sp-tenant and bench-sp-secret)");
+            case BenchSpAppIdKey:
+                if (clear)
+                {
+                    return (settings with { BenchSpAppId = null }, null);
+                }
+                return Guid.TryParseExact(One(), "D", out var appId)
+                    ? (settings with { BenchSpAppId = appId.ToString("D") }, null)
+                    : (null, "bench-sp-app-id takes the service principal's application (client) id, a GUID");
+            case BenchSpTenantKey:
+                if (clear)
+                {
+                    return (settings with { BenchSpTenant = null }, null);
+                }
+                return Guid.TryParseExact(One(), "D", out var tenantId)
+                    ? (settings with { BenchSpTenant = tenantId.ToString("D") }, null)
+                    : IsDomainName(One()) ? (settings with { BenchSpTenant = One()!.ToLowerInvariant() }, null)
+                    : (null, "bench-sp-tenant takes the tenant id (a GUID) or its domain, as in contoso.onmicrosoft.com");
+            case BenchSpSecretKey:
+                return clear
+                    ? (settings with { BenchSpSecret = null }, null)
+                    : One() is { } spSecret ? (settings with { BenchSpSecret = spSecret }, null) : (null, "bench-sp-secret takes the service principal's secret, one word");
             case LanPortKey:
                 if (clear)
                 {
@@ -791,6 +967,35 @@ public sealed record NodeSettings
                 return (null, $"there is no setting {key}; there are {string.Join(", ", Keys)}");
         }
     }
+
+    // An Azure resource group's name: 1 to 90 of letters, digits, underscores, hyphens, periods and parentheses, never ending in a period.
+    private static bool IsResourceGroupName(string? text) =>
+        text is { Length: >= 1 and <= 90 } && text[^1] != '.' && text.All(c => char.IsLetterOrDigit(c) || c is '_' or '-' or '.' or '(' or ')');
+
+    // A region as az names it (az account list-locations): lower-case letters and digits, as westeurope, eastus2, uksouth.
+    private static bool IsRegionName(string text) =>
+        text is { Length: >= 3 and <= 30 } && char.IsAsciiLetterLower(text[0]) && text.All(c => char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c));
+
+    // An Azure VM size (a SKU): Standard_ and then one or more parts of letters and digits, as Standard_F8s_v2 or Standard_NC6s_v3. The
+    // first part after the prefix starts with a letter (the family).
+    private static bool IsVmSize(string? text)
+    {
+        if (text is null || !text.StartsWith("Standard_", StringComparison.Ordinal))
+        {
+            return false;
+        }
+        var parts = text["Standard_".Length..].Split('_');
+        return parts.Length > 0 && char.IsAsciiLetter(parts[0].FirstOrDefault()) && parts.All(p => p.Length > 0 && p.All(char.IsAsciiLetterOrDigit));
+    }
+
+    // A marketplace image URN: publisher:offer:sku:version, four non-empty parts of letters, digits, dots, hyphens and underscores.
+    private static bool IsImageUrn(string? text) =>
+        text?.Split(':') is { Length: 4 } parts && parts.All(p => p.Length > 0 && p.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_'));
+
+    // A tenant's domain: dotted labels of letters, digits and hyphens, none starting or ending with a hyphen.
+    private static bool IsDomainName(string? text) =>
+        text is { Length: >= 3 and <= 253 } && text.Split('.') is { Length: >= 2 } labels
+        && labels.All(l => l.Length is >= 1 and <= 63 && l[0] != '-' && l[^1] != '-' && l.All(c => char.IsAsciiLetterOrDigit(c) || c == '-'));
 
     // A repo as the lists name it: its folder's name. A path (what the page's free entry sends for a clone the picker does not
     // list) must be a folder on this machine, and stands for its name; a bare name is taken as it is.

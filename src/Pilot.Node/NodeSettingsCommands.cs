@@ -63,7 +63,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         {
             return state.Complete(command, $"{options.SettingsFile} could not be written: {ex.Message}");
         }
-        var value = updated.Get(key) is { } values ? (key == NodeSettings.ShortcutTokenKey ? "set" : string.Join(' ', values)) : "the default";
+        var value = updated.Get(key) is { } values ? (NodeSettings.IsSecret(key) ? "set" : string.Join(' ', values)) : "the default";
         if (options.CommandLineKeys?.Contains(key) == true)
         {
             return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, but this node's command line gives it, and wins: take it off the command line (pilot-node autostart install) for the setting to count");
@@ -74,6 +74,12 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         {
             roles.Apply(updated);
             return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now");
+        }
+        // A bench reads these when it is handed over, from the file: in force at once, and the answer says whether they turn cloud benches on.
+        if (NodeSettings.IsBenchKey(key))
+        {
+            var (cloud, why) = updated.BenchCloudOrWhy();
+            return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now; {(cloud is null ? why : "cloud benches are on")}");
         }
         if (!Live(key) && Running(key) == (updated.Get(key) is { } now ? Join(key, now) : Default(key)))
         {
@@ -200,9 +206,9 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     private SettingRow Row(string key, NodeSettings saved)
     {
         var running = Running(key);
-        var file = saved.Get(key) is { } values ? (key == NodeSettings.ShortcutTokenKey ? "set" : Join(key, values)) : null;
+        var file = saved.Get(key) is { } values ? (NodeSettings.IsSecret(key) ? "set" : Join(key, values)) : null;
         var pinned = options.CommandLineKeys?.Contains(key) == true;
-        var started = options.Saved?.Get(key) is { } before ? (key == NodeSettings.ShortcutTokenKey ? "set" : Join(key, before)) : null;
+        var started = options.Saved?.Get(key) is { } before ? (NodeSettings.IsSecret(key) ? "set" : Join(key, before)) : null;
         var (label, detail, choices) = Describe(key);
         var role = RoleOf(key);
         var (deviations, fleetValue) = role is not null && slots is not null ? slots.DeviationsOf(role) : ([], null);
@@ -239,6 +245,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.WorkerLadderKey => roles.WorkerLadder ? "on" : "off",
         // Never the token itself: present or absent.
         NodeSettings.ShortcutTokenKey => roles.ShortcutToken is { Length: > 0 } ? "set" : "",
+        NodeSettings.BenchSpSecretKey => NodeSettings.Read(options.SettingsFile).BenchSpSecret is { Length: > 0 } ? "set" : "",
+        _ when NodeSettings.IsBenchKey(key) => NodeSettings.Read(options.SettingsFile).Get(key) is { } benchValue ? string.Join(' ', benchValue) : Default(key),
         NodeSettings.LanPortKey => options.LanPort.ToString(CultureInfo.InvariantCulture),
         NodeSettings.MachineKey => options.Machine,
         NodeSettings.RepoRootsKey => Join(key, options.RepoRoots),
@@ -275,7 +283,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     /// method, the start limits, the priority repos, the job limits, maintenance and whether fleet flights are accepted.</summary>
     private static bool Live(string key) => NodeSettings.IsRoleKey(key)
         || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey
-            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.JobPriorityKey or NodeSettings.JobPlaneOutputKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DiskAlertGbKey || NodeSettings.StaleKeys.Contains(key);
+            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.JobPriorityKey or NodeSettings.JobPlaneOutputKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DiskAlertGbKey || NodeSettings.StaleKeys.Contains(key) || NodeSettings.IsBenchKey(key);
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
     private static string Join(string key, IReadOnlyList<string> values) => string.Join(key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey ? '\n' : ' ', values);
@@ -293,6 +301,14 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.MergeBatchKey => "off",
         NodeSettings.WorkerLadderKey => "on",
         NodeSettings.ShortcutTokenKey => "",
+        NodeSettings.BenchRegionKey => NodeSettings.DefaultBenchRegion,
+        NodeSettings.BenchVmSizeKey => NodeSettings.DefaultBenchVmSize,
+        NodeSettings.BenchImageKey => NodeSettings.DefaultBenchImage,
+        NodeSettings.BenchSpotPriceKey => NodeSettings.DefaultBenchSpotPrice.ToString(CultureInfo.InvariantCulture),
+        NodeSettings.BenchMonthlyCapKey => NodeSettings.DefaultBenchMonthlyCap.ToString(CultureInfo.InvariantCulture),
+        NodeSettings.BenchAuthKey => NodeSettings.AuthAzLogin,
+        // The subscription, resource group and the service principal's parts have no default: unset means cloud benches are off.
+        _ when NodeSettings.IsBenchKey(key) => "",
         NodeSettings.LanPortKey => NodeWire.DefaultLanPort.ToString(CultureInfo.InvariantCulture),
         NodeSettings.MachineKey => (MachinePrefixes.Normalise(Environment.GetEnvironmentVariable("PILOT_MACHINE")) ?? MachinePrefixes.FromName(Environment.MachineName)),
         NodeSettings.RepoRootsKey => "",
@@ -335,7 +351,18 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.MergeBatchKey => ("Merge batches", "While on, a repo's merge queue entries that are ready (review passed at their head, checks green, nothing GitHub would refuse) are merged into one batch branch (pilot/batch/repo-machine-start-n: its base plus each PR, plain git), its CI run once on a draft PR from it, and landed together on green by a plain push of the base to the batch head. Only where the node may push the base: entries merged by merge, a base with no merge queue and no branch protection or rules (a queue repo batches by its own ruleset's group size). A red or conflicting batch, or one whose CI never starts, falls back to one entry at a time. A batch forms only from merges that overlap (asked while another merge of the repo is under way); an armed or autopilot merge is asked one at a time and merges alone. Off by default", ["on", "off"]),
         NodeSettings.WorkerLadderKey => ("Worker ladder", "While on, a leg redone steps its fresh worker up by attempt: attempts 1 and 2 on the leg's model and effort, attempt 3 on opus, attempt 4 on opus at xhigh, never below the leg's plan nor past the worker range's max; off keeps the leg's model", ["on", "off"]),
         NodeSettings.ShortcutTokenKey => ("Shortcut token", "The Shortcut API token that reads a story's title when a flight is made on one (sc-N); the SHORTCUT_API_TOKEN variable wins over it. Only whether it is set is shown", []),
-        NodeSettings.LanPortKey => ("LAN port", "The TCP port other machines reach this node on", []),
+        NodeSettings.BenchSubscriptionKey => ("Bench subscription", "The Azure subscription id (a GUID) a cloud bench's spot VM is made in. With the resource group it turns cloud benches on; left out, every bench runs on this machine as before. pilot bench --local keeps one local", []),
+        NodeSettings.BenchResourceGroupKey => ("Bench resource group", "The Azure resource group a cloud bench's VM and its disks are made in, and deleted from again. With the subscription it turns cloud benches on", []),
+        NodeSettings.BenchRegionKey => ("Bench region", "The Azure region of the bench VM, as az account list-locations names it. Fixed, so two bench runs compare", ["westeurope", "northeurope", "uksouth", "eastus2"]),
+        NodeSettings.BenchVmSizeKey => ("Bench VM size", "The Azure VM size of the bench VM, a compute-optimised one with a fixed clock for steady numbers. Fixed, so two bench runs compare", ["Standard_F8s_v2", "Standard_F16s_v2", "Standard_D8s_v5"]),
+        NodeSettings.BenchImageKey => ("Bench image", "The marketplace image of the bench VM, a URN publisher:offer:sku:version (Ubuntu by default). Name a version instead of latest to pin it", []),
+        NodeSettings.BenchSpotPriceKey => ("Bench spot price", "The most to pay per VM hour, in USD. A spot VM is evicted when the market passes it, and the bench is queued again once", ["0.15", "0.30", "0.50"]),
+        NodeSettings.BenchMonthlyCapKey => ("Bench monthly cap", "The most cloud benches may cost in a calendar month, in USD. A bench that would pass it stays on this machine and says why", ["25", "50", "100"]),
+        NodeSettings.BenchAuthKey => ("Bench Azure sign-in", "How the node signs in to Azure: az-login uses this machine's own az login (nothing is stored), service-principal uses the app id, tenant and secret below", [NodeSettings.AuthAzLogin, NodeSettings.AuthServicePrincipal]),
+        NodeSettings.BenchSpAppIdKey => ("Bench service principal app id", "The service principal's application (client) id, a GUID; used when the sign-in is service-principal", []),
+        NodeSettings.BenchSpTenantKey => ("Bench service principal tenant", "The service principal's tenant, a GUID or its domain; used when the sign-in is service-principal", []),
+        NodeSettings.BenchSpSecretKey => ("Bench service principal secret", "The service principal's secret, kept only in this node's settings file. Only whether it is set is shown", []),
+        NodeSettings.LanPortKey => ("LAN port","The TCP port other machines reach this node on", []),
         NodeSettings.MachineKey => ("Machine prefix", "Two letters and a number, at the front of this machine's session names (DE1-watchtower)", []),
         NodeSettings.RepoRootsKey => ("Repo roots", "Folders of git clones the new-flight wizard offers, beside the flights' own repos", []),
         NodeSettings.UpdatePolicyKey => ("Updates", "auto installs a newer pilot at once (jobs carry on under the new node); ask raises a card; off does not look", [.. UpdatePolicies.Names]),
