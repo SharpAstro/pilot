@@ -152,6 +152,7 @@ public sealed class CiBudgetTests : ReviewTestsBase
         var capped = F(flight.Code).Ci.ShouldNotBeNull();
         capped.CappedWhy.ShouldNotBeNull().ShouldContain("4.8 runner-hours");
         var card = CapCards().ShouldHaveSingleItem();
+        card.Kind.ShouldBe(CiBudgets.CapKind);
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Title.ShouldContain("4.8 runner-hours");
         card.Title.ShouldContain("2 runs, 1 failed");
