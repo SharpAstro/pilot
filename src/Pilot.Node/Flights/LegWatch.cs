@@ -345,6 +345,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     {
         foreach (var leg in state.Legs().Where(l => l.State == LegState.Flying))
         {
+            // A held flight is parked on purpose, not stale (#771): its leg's card waits for the release, as Staleness skips it.
+            if (OnHold(leg.Flight))
+            {
+                continue;
+            }
             var subject = Subject(leg);
             if (state.Cards().Any(c => c.Kind == LegStale && c.Subject == subject))
             {

@@ -232,6 +232,11 @@ public sealed partial class LegCommander
     /// </summary>
     private async Task<string> PushEarlyAsync(FlightRow flight, CancellationToken cancellationToken)
     {
+        // A finish is let through on the owner's hold (#771), so a running worker can report; its push is an outward step, and is not taken.
+        if (IsOnHold(flight.Code))
+        {
+            return $"\nThe branch was not pushed early: {flight.Code} is on hold.";
+        }
         try
         {
             var ahead = await OffLockAsync(null, () => git.RunAsync(["rev-list", "--count", $"{flight.Base}..HEAD"], flight.Worktree, cancellationToken));
