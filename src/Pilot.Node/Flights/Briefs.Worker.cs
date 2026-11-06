@@ -125,7 +125,17 @@ public static partial class Briefs
         text.AppendLine("The node tracks this leg; tell it as you go, from this folder (it knows your leg by the folder):");
         if (leg.Checklist.Length > 0)
         {
-            text.AppendLine($"- Tick each step as you finish it: `{run} check <step number>`.");
+            // Why Sonnet workers committed and ended with nothing ticked (PIL804, read from the 2026-11-06 transcripts of the PIL797,
+            // PIL798, PIL799 and PIL795 planes; the named ids c14a7ff4, 32c1f3c3, fe0a9148 and b360b5a3 are commit shas, not sessions):
+            // they did not run out of context (75k to 90k tokens at the end, well under the window) and did not end right after the
+            // commit. They committed, queued the build or the tests through `pilot run`, then ended the turn with "I'll tick the steps
+            // and finish once both pass", so ticking sat behind a verification that only a later wake would reach, and a worker stopped
+            // or replaced meanwhile left the commit with no step ticked (PIL797's summary-model leg: its go-around brief began "ended
+            // after committing 32c1f3c3 but ticked no steps"). The rule is therefore: tick a step the moment its work is committed.
+            text.AppendLine($"- Tick each step as soon as its work is committed, before you start the next: `{run} check <step number>`.");
+            text.AppendLine("  Never leave ticking to the end, and never to after a build or test run you have queued: waiting for a job ends your turn,");
+            text.AppendLine("  and a worker that ends with commits and no ticks is sent round again. A step ticked early and found wrong is fixed in a");
+            text.AppendLine("  further commit; one not ticked is not seen by the node.");
         }
         text.AppendLine($"- Something to look at (a screenshot, a capture, a page): `{run} artifact <path or URL> <title>`.");
         text.AppendLine($"  {AttachmentRule(run)}");
@@ -166,6 +176,11 @@ public static partial class Briefs
         text.AppendLine("## When you stop");
         text.AppendLine("End your turn with a short report: what you did, how you checked it (the Done-when, rerun), and anything");
         text.AppendLine("left. Start it with DONE when every step is done and the Done-when holds, or BLOCKED: and why.");
+        if (leg.Checklist.Length > 0)
+        {
+            text.AppendLine($"Before you end a turn with DONE, every step is ticked and you have run `{run} leg finish done \"<report>\"`: a DONE report");
+            text.AppendLine("without them is not a finished leg. Commits with no step ticked and no finish mean the leg is still open.");
+        }
         return text.ToString();
     }
 }
