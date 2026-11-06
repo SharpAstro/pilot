@@ -12,9 +12,25 @@ public static partial class Briefs
     /// conversation, so a fresh one picks up where the last left off (#36).
     /// </summary>
     /// <param name="model">The model the watchtower runs on, when the node chose one (#114): said, so a lighter model rings for a judgement rather than makes it.</param>
-    public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot, string? model = null, string? machine = null, IReadOnlySet<string>? alreadyTold = null, IReadOnlyList<StaleItem>? stale = null)
+    public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot, string? model = null, string? machine = null, IReadOnlySet<string>? alreadyTold = null, IReadOnlyList<StaleItem>? stale = null, IReadOnlyList<NodeNote>? orders = null)
     {
         var text = new StringBuilder(WatchtowerTemplate(name, pilot, model, machine));
+        // Before everything that changes: an order the controller gave an earlier watchtower (a hold, a scope rule) outlives it (#782).
+        // Not part of the fingerprint: adding an order must never replace the live watchtower.
+        text.AppendLine("## Standing orders");
+        text.AppendLine("Read these before acting: they are the controller's, kept by the node, and bind you as they bound the watchtower before you.");
+        var standing = orders?.Where(o => o.Id is { Length: > 0 } && o.RetiredAt is null).ToList() ?? [];
+        if (standing.Count == 0)
+        {
+            text.AppendLine("None stand now.");
+        }
+        foreach (var order in standing)
+        {
+            text.AppendLine($"- {order.Id}: {order.Text.ReplaceLineEndings(" ")}");
+        }
+        text.AppendLine($"When the controller gives you an order that should outlast your session (a hold on a flight or repo, a scope rule), record it with `{pilot} order \"<their words>\"`;");
+        text.AppendLine($"`{pilot} orders` lists them, and `{pilot} order done <id>` retires one when they lift it. Never retire one on your own say-so.");
+        text.AppendLine();
         if (stale is { Count: > 0 })
         {
             text.AppendLine($"## {StaleSection.Heading}");
