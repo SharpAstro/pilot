@@ -10,10 +10,24 @@ public sealed partial class PrReviews
     /// <summary>The label of the design card's Answer choice.</summary>
     public const string AnswerLabel = "Answer in your own words";
 
-    /// <summary>Each design question in full with its path:line, and each option with its consequence.</summary>
+    /// <summary>
+    /// Each design question in full with its path:line, and each option with its consequence and what it misses of the criteria
+    /// (<c>- reword the doc: misses: the AC that the code follows the documented ladder</c>), so the ring says which criterion each option fails.
+    /// </summary>
     private static string DesignDetail(IReadOnlyList<DesignQuestion> questions) =>
         string.Join('\n', questions.Select(q => $"{q.Finding.Path}:{q.Finding.Line} {q.Question}"
-            + string.Concat(q.RecommendedFirst.Select(o => $"\n- {o.Text}{(o.Consequence.Length > 0 ? $": {o.Consequence}" : "")}{(o.Recommended ? " (recommended)" : "")}"))));
+            + string.Concat(q.RecommendedFirst.Select(o => $"\n- {o.Text}{DesignOptionWords(o)}{(o.Recommended ? " (recommended)" : "")}"))));
+
+    // The words after an option's text: its consequence, then what it misses; the colon the text takes comes first, a semicolon joins the two.
+    private static string DesignOptionWords(DesignOption option)
+    {
+        var consequence = option.Consequence.Length > 0 ? $": {option.Consequence}" : "";
+        if (option.Misses is not { } misses)
+        {
+            return consequence;
+        }
+        return $"{(consequence.Length > 0 ? consequence.TrimEnd('.', ';', ' ') + "; " : ": ")}misses: {misses}";
+    }
 
     /// <summary>
     /// The design card's choices: one per option, the recommended first, each a <c>review fix</c> whose args are the option's words

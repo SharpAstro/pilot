@@ -10,14 +10,19 @@ public sealed partial class PrReviews
     /// question rings instead and starts none, and an untracked repo gets nothing. A fixer already on is never joined by a second.
     /// A fixer that could not start is a For-you card, not a failed post.
     /// </summary>
+    /// <remarks>
+    /// A question of design whose every question has exactly one option that reaches the criteria (the reviewer's <c>misses: none</c>) does
+    /// not ring: the node takes that option, as <see cref="DecideDesignAsync"/> says. It rings only when no option reaches them, two or more
+    /// do, or the reviewer did not say what the options miss.
+    /// </remarks>
     private async Task FixAfterPostAsync(PrRef pr, CancellationToken cancellationToken)
     {
         if (Of(pr) is not { Fixer: null } review)
         {
             return;
         }
-        // A flight's PR has its own legs to make changes, but a question of design is the person's: it rings here, and the answer
-        // sends the flight's last leg round (review fix).
+        // A flight's PR has its own legs to make changes, but a question of design the criteria do not settle is the person's: it
+        // rings here, and the answer sends the flight's last leg round (review fix).
         var flight = FlightOf(pr);
         var subject = Verbs.PrTarget(pr.Repo, pr.Number);
         var asksDesign = review.Findings.Any(IsDesign);
@@ -25,26 +30,34 @@ public sealed partial class PrReviews
         {
             return;
         }
+        var questions = asksDesign ? review.Findings.Select(DesignQuestion.Parse).OfType<DesignQuestion>().ToList() : [];
+        var decided = DesignQuestion.Decide(questions);
         if (flight is null && TrackedClone(pr) is null)
         {
             // Nobody can fix it here, and the post's Handled line says only that it went out: the owner is rung with the findings.
-            RaiseNoFixer(pr, review, subject, $"{pr.Repo} is not a repo the node tracks, so it makes no changes there");
+            RaiseNoFixer(pr, review, subject, $"{pr.Repo} is not a repo the node tracks, so it makes no changes there"
+                + (decided is null ? "" : $". The only option of its design question that reaches the criteria is: {decided.Answer}"));
             return;
         }
         if (asksDesign)
         {
-            var questions = review.Findings.Select(DesignQuestion.Parse).OfType<DesignQuestion>().ToList();
+            if (decided is not null)
+            {
+                await DecideDesignAsync(pr, review, flight, subject, decided, cancellationToken);
+                return;
+            }
             var design = DesignDetail(questions);
             var asked = questions.Count == 1 ? $": {Clean(questions[0].Question, 80)}" : "";
             var choices = DesignChoices(subject, questions);
+            var rings = DesignRings(questions);
             if (flight is not null)
             {
                 RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr} ({flight.Code}'s PR): the review asks a question of design{asked}",
-                    $"{design}\nNo fixer started: {flight.Code}'s own legs make changes. review fix {pr} <answer> sends its last leg round with the answer, as the card's Answer does.",
+                    $"{design}{rings}\nNo fixer started: {flight.Code}'s own legs make changes. review fix {pr} <answer> sends its last leg round with the answer, as the card's Answer does.",
                     choices);
                 return;
             }
-            RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design{asked}", $"{design}\nNo fixer started: this is the author's to decide. An option or Answer in your own words posts the answer on the PR and starts the fixer.",
+            RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design{asked}", $"{design}{rings}\nNo fixer started: this is the author's to decide. An option or Answer in your own words posts the answer on the PR and starts the fixer.",
                 choices);
             return;
         }
@@ -74,6 +87,59 @@ public sealed partial class PrReviews
             RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start: {LegCommander.OneLine(ex.Message)}", ex.Message,
                 [new CardChoice { Label = $"Start the fixer on {pr} again", Verb = Verbs.FixPr, Target = subject }]);
         }
+    }
+
+    /// <summary>The name the node answers under when it takes the option that reaches the criteria.</summary>
+    public const string NodeDecides = "the pilot node";
+
+    /// <summary>
+    /// The criteria settled a design question, so the node takes the option that reaches them (the PR's issue ACs, its description, the repo
+    /// docs it touches) and goes on as an answered question does: the answer is stored, a flight's last leg goes round with it or the fixer
+    /// starts on a PR no flight owns, and the decision is recorded and posted (<see cref="DesignDecisionMirror"/>) with the options' misses
+    /// as its reason. No design card rings. Where a fixer may not start by itself (a PR that is someone else's and Fix it was not chosen on,
+    /// the cap on rounds) the card for that reason says the decided answer, and the design card does not ring either. A start the node
+    /// could not make is a For-you card whose choice makes it again with the stored answer.
+    /// </summary>
+    private async Task DecideDesignAsync(PrRef pr, PrReviewRow review, FlightRow? flight, string subject, DesignDecided decided, CancellationToken cancellationToken)
+    {
+        var said = $"The review's design question has exactly one option that reaches the criteria, so the node takes it: {decided.Answer}\n{decided.Reason}";
+        if (flight is null)
+        {
+            var rounds = review.FixRound ?? 0;
+            if (rounds >= MaxFixRounds)
+            {
+                RaiseOnce(pr, review, CardBin.Ring, FixCappedKind, subject, $"{pr}: still asking for changes after {rounds} rounds of fixes",
+                    $"{rounds} fixers have pushed and the review still asks for changes, so no fourth starts: this is yours.\n{said}\n{(review.Report ?? "").Trim()}\n{string.Join('\n', review.Findings.Select(f => f.ToString()))}");
+                return;
+            }
+            if (rounds == 0 && !Own(review, await github.LoginAsync(cancellationToken)))
+            {
+                // The answer is the choice's own words, as a design option's button carries its: Fix it posts it and starts the fixer.
+                RaiseOnce(pr, review, CardBin.ForYou, FixOfferKind, subject, $"{pr}: the review asked for changes, and it is {review.Author ?? "someone else"}'s PR",
+                    $"{said}\n{(review.Report ?? "").Trim()}\nFix it starts a session on the PR's branch that makes them, with that answer.",
+                    [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject, Args = [decided.Answer] }]);
+                return;
+            }
+        }
+        try
+        {
+            await ActOnAnswerAsync(pr, review, decided.Answer, NodeDecides, null, false, null, cancellationToken, decision: decided);
+        }
+        catch (FlightException ex)
+        {
+            // The answer stays stored (DesignAnswer): the choice starts the fixer or sends the leg round with it, without asking again.
+            var what = flight is null ? $"the fixer could not start on {pr}" : $"{flight.Code}'s last leg could not be sent round for {pr}";
+            RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, subject, $"{pr}: {what}: {LegCommander.OneLine(ex.Message)}", $"{said}\n{ex.Message}",
+                [new CardChoice { Label = flight is null ? $"Start the fixer on {pr} again" : $"Send {flight.Code}'s last leg round on {pr} again", Verb = Verbs.FixPr, Target = subject }]);
+        }
+    }
+
+    /// <summary>Why a design question rings in words, one line each for the questions whose options the reviewer judged against the criteria; empty when none did.</summary>
+    private static string DesignRings(IReadOnlyList<DesignQuestion> questions)
+    {
+        var why = questions.Where(q => q.WhyRings is not null)
+            .Select(q => questions.Count == 1 ? q.WhyRings! : $"{q.Finding.Path}:{q.Finding.Line} {q.WhyRings}").ToList();
+        return why.Count == 0 ? "" : $"\nIt rings because {string.Join("; ", why)}.";
     }
 
     /// <summary>The Ring card of a review that asks for changes while no fixer works on the PR: the report, the findings and why none runs (pilot #527).</summary>
@@ -173,9 +239,10 @@ public sealed partial class PrReviews
     /// Acts on the answer to a review's design question, whether the card's Answer gave it or the PR's conversation did: the answer
     /// is stored as DesignAnswer, then a flight's last leg goes round with it, or the fixer starts on a PR no flight owns. The words
     /// the person gave (<paramref name="postWords"/>) are posted on the PR once the act was not refused; an answer that is already a
-    /// comment there posts nothing.
+    /// comment there posts nothing. An answer the node took itself (<paramref name="decision"/>, the option that reaches the criteria) is
+    /// recorded as the node's decision and posted by <see cref="DesignDecisionMirror"/>, once the act was not refused, as a person's is.
     /// </summary>
-    private async Task<string> ActOnAnswerAsync(PrRef pr, PrReviewRow review, string given, string? who, string? personsWord, bool autopilot, string? postWords, CancellationToken cancellationToken, CommandRequest? command = null)
+    private async Task<string> ActOnAnswerAsync(PrRef pr, PrReviewRow review, string given, string? who, string? personsWord, bool autopilot, string? postWords, CancellationToken cancellationToken, CommandRequest? command = null, DesignDecided? decision = null)
     {
         review = review with { DesignAnswer = given };
         // Stored as soon as it is known: a fixer held for an Opus slot starts later from the stored row, and must find it.
@@ -201,6 +268,10 @@ public sealed partial class PrReviews
             if (command is not null)
             {
                 await RecordDesignAsync(pr, flight, review, command, given, postWords ?? "", cancellationToken);
+            }
+            else if (decision is not null)
+            {
+                await RecordDesignAsync(pr, flight, review, given, who, DecisionByKinds.Node, decision.Reason, cancellationToken);
             }
             SettleDesign(pr.Repo, pr.Number, $"answered by {who}: {flight.Code}'s last leg went round with it", review.Url, $"{flight.Code}'s last leg was sent round with the answer");
             return $"sent {flight.Code}'s last leg round with the answer to {pr}'s question of design";
@@ -246,23 +317,39 @@ public sealed partial class PrReviews
             // Recorded once the start was not refused, so a retry does not record the answer twice.
             await RecordDesignAsync(pr, null, review, command, given, postWords ?? "", cancellationToken);
         }
+        else if (decision is not null)
+        {
+            await RecordDesignAsync(pr, null, review, given, who, DecisionByKinds.Node, decision.Reason, cancellationToken);
+        }
         return fixerStart;
     }
 
     // A question of design answered, once: the findings asked, the options the design card offered (its choices that are not the free
     // Answer), the option picked or the free text, and the words as the reason. On a flight's PR the flight is the subject.
-    private async Task RecordDesignAsync(PrRef pr, FlightRow? flight, PrReviewRow review, CommandRequest command, string? given, string words, CancellationToken cancellationToken)
+    private Task RecordDesignAsync(PrRef pr, FlightRow? flight, PrReviewRow review, CommandRequest command, string? given, string words, CancellationToken cancellationToken)
     {
         var target = Verbs.PrTarget(pr.Repo, pr.Number);
         var options = state.Cards().Where(c => c.Kind == DesignKind && c.Subject == target)
             .SelectMany(c => c.Choices).Where(c => c.AsksFor is null).Select(c => c.Label).Distinct().ToArray();
-        var answer = (given ?? "").Trim();
         var byKind = command.Autopilot ? DecisionByKinds.Autopilot
             : command.PersonsWord is not null || Standing.Of(command, state, "").Kind == StandingKind.Person ? DecisionByKinds.Person
             : DecisionByKinds.Node;
+        return PostDesignDecisionAsync(pr, flight, review, given, command.Who, byKind, words.Length > 0 ? words : "the author's answer on the PR", options, cancellationToken);
+    }
+
+    // The same record with no command behind it: the node took the option that reaches the criteria, so nothing was pressed or typed.
+    // With no design card to read the options off, they are the reviewer's own, each question's options by their choice.
+    private Task RecordDesignAsync(PrRef pr, FlightRow? flight, PrReviewRow review, string? given, string? by, string byKind, string reason, CancellationToken cancellationToken) =>
+        PostDesignDecisionAsync(pr, flight, review, given, by, byKind, reason,
+            DesignQuestion.OptionLabels(review.Findings.Select(DesignQuestion.Parse).OfType<DesignQuestion>()), cancellationToken);
+
+    private async Task PostDesignDecisionAsync(PrRef pr, FlightRow? flight, PrReviewRow review, string? given, string? by, string byKind, string reason, string[] options, CancellationToken cancellationToken)
+    {
+        var target = Verbs.PrTarget(pr.Repo, pr.Number);
+        var answer = (given ?? "").Trim();
         var decision = state.RecordDecision(flight is null ? target : Verbs.FlightTarget(flight.Code), DecisionKinds.Design,
             string.Join('\n', review.Findings.Where(IsDesign).Select(f => f.ToString())), options, answer.Length > 0 ? answer : "answered",
-            command.Who, byKind, words.Length > 0 ? words : "the author's answer on the PR");
+            by ?? "", byKind, reason);
         // Off the state lock; a comment that cannot be posted is a card, never a failed answer.
         await new DesignDecisionMirror(state, github).PostAsync(decision, pr, flight, TrackedClone(pr) ?? review.ClonePath, cancellationToken);
     }

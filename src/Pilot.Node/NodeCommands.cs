@@ -652,8 +652,9 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             state.ReopenCard(card.Id);
             return state.Complete(command, $"{choice.Label} was refused: {result.Error}");
         }
-        // One decision per answer: a design answer is recorded by the review fix it runs, which knows the question and the options.
-        if (choice.Verb != Verbs.FixPr || card.Kind != PrReviews.DesignKind)
+        // One decision per answer: a design answer is recorded by the review fix it runs, which knows the question and the options. A
+        // fix offer that carries the answer the node decided on (its Fix it has args) is that answer's too.
+        if (choice.Verb != Verbs.FixPr || card.Kind != PrReviews.DesignKind && !(card.Kind == PrReviews.FixOfferKind && choice.Args is { Length: > 0 }))
         {
             // A Fix it off the design card (a fix offer, a fixer to start again) answers no question of design: it is the card's own choice.
             var kind = choice.Verb == Verbs.FixPr ? DecisionKinds.Card : DecisionSources.KindOf(choice.Verb, choice.Args) ?? DecisionKinds.Card;
