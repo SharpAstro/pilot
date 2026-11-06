@@ -276,6 +276,42 @@ public sealed class StaleWatchTests
     }
 
     [Fact]
+    public async Task ALastEventTenHoursAgoIsTheLastMoveWhateverStaleSaysAndAFlightThatIsNotStaleCarriesOneToo()
+    {
+        Fly(TimeSpan.FromHours(30));
+        _state.PutFlight(Row() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "r", StartedAt = Start - TimeSpan.FromHours(11), FinishedAt = Start - TimeSpan.FromHours(10) } });
+
+        await _watch.TickAsync(Ct);
+
+        Row().StaleSince.ShouldBe(Start);
+        Row().LastMovedAt.ShouldBe(Start - TimeSpan.FromHours(10));
+        Row().LastMove.ShouldBe("review passed");
+
+        // A flight that is not stale at all carries its last move too.
+        _state.PutFlight(Row() with { Code = "DIR179", Branch = "flight/dir179", CreatedAt = Start - TimeSpan.FromMinutes(20), Review = null, StaleCause = null, StaleSince = null, StaleSummary = null, LastMovedAt = null, LastMove = null });
+        await _watch.TickAsync(Ct);
+        var fresh = _state.Flights().Single(f => f.Code == "DIR179");
+        fresh.StaleCause.ShouldBeNull();
+        fresh.LastMovedAt.ShouldBe(Start - TimeSpan.FromMinutes(20));
+        fresh.LastMove.ShouldBe("flight created");
+    }
+
+    [Fact]
+    public async Task TheLastMoveMovesForwardWhenALegFinishes()
+    {
+        Fly(TimeSpan.FromHours(2));
+        await _watch.TickAsync(Ct);
+        Row().LastMovedAt.ShouldBe(Start - TimeSpan.FromHours(2));
+
+        _clock.Now += TimeSpan.FromMinutes(30);
+        _state.PutLeg(new LegRow { Flight = "DIR178", Name = "main", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done, FinishedAt = _clock.Now });
+        await _watch.TickAsync(Ct);
+
+        Row().LastMovedAt.ShouldBe(_clock.Now);
+        Row().LastMove.ShouldBe("leg main done");
+    }
+
+    [Fact]
     public async Task TheDigestLineSaysTheRaise()
     {
         Fly(TimeSpan.FromHours(19));

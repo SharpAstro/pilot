@@ -267,4 +267,51 @@ public class StalenessTests
         Read([Flight(age: TimeSpan.FromHours(13))], [Leg("DIR178", state: LegState.Done)], [Card("c7", "flight/DIR178", age: TimeSpan.FromMinutes(10))])
             .Stale.Single().WaitsOn.ShouldContain("a ringing card (c7");
     }
+
+    [Fact]
+    public void TheLastMoveIsTheLastRealEventWhateverTheFlightsAge()
+    {
+        var review = new ReviewRow
+        {
+            State = ReviewState.Passed, Reviewer = "DE1-DIR178-review", StartedAt = Now - TimeSpan.FromHours(11), FinishedAt = Now - TimeSpan.FromHours(10),
+        };
+        var flight = Flight(age: TimeSpan.FromHours(30), review: review);
+
+        var last = Staleness.LastMove(flight, [Leg("DIR178", state: LegState.Done) with { StartedAt = Now - TimeSpan.FromHours(20) }], [], null, TimeZoneInfo.Utc).ShouldNotBeNull();
+
+        last.At.ShouldBe(Now - TimeSpan.FromHours(10));
+        last.Text.ShouldBe("review passed");
+    }
+
+    [Fact]
+    public void ACardAnsweredByAPersonIsAMoveButOneTheNodeClosedIsNot()
+    {
+        var answered = Card("c1", "flight/DIR178", state: CardState.Closed) with { ClosedAt = Now - TimeSpan.FromHours(2), ClosedBy = "sebastian" };
+        var swept = Card("c2", "flight/DIR178", state: CardState.Closed) with { ClosedAt = Now - TimeSpan.FromHours(1), ClosedBy = "node" };
+        var flight = Flight(age: TimeSpan.FromHours(30));
+
+        var last = Staleness.LastMove(flight, [], [answered, swept], null, TimeZoneInfo.Utc).ShouldNotBeNull();
+
+        last.At.ShouldBe(Now - TimeSpan.FromHours(2));
+        last.Text.ShouldBe("card c1 answered");
+    }
+
+    [Fact]
+    public void ALandedFlightHasNoLastMove()
+    {
+        Staleness.LastMove(Flight(state: FlightState.Landed), [], [], null, TimeZoneInfo.Utc).ShouldBeNull();
+    }
+
+    [Fact]
+    public void AStaleLineSaysHowLongTheFlightHasNotMoved()
+    {
+        var review = new ReviewRow
+        {
+            State = ReviewState.Passed, Reviewer = "DE1-DIR178-review", StartedAt = Now - TimeSpan.FromHours(11), FinishedAt = Now - TimeSpan.FromHours(10),
+        };
+        var item = Read([Flight(age: TimeSpan.FromHours(30), review: review)], [Leg("DIR178", state: LegState.Done)]).Stale.ShouldHaveSingleItem();
+
+        item.Idle.ShouldBe(TimeSpan.FromHours(10));
+        StaleSection.Line(item).ShouldContain("no progress for 10 h, waiting on ");
+    }
 }

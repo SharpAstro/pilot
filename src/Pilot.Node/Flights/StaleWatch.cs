@@ -77,6 +77,9 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         {
             await ActAsync(item, cancellationToken);
         }
+        var legs = state.Legs();
+        var cards = state.Cards();
+        var pullRequests = state.PullRequests();
         foreach (var flight in state.Flights())
         {
             if (flight is not { State: not FlightState.Landed, FoldedInto: null, MovedTo: null })
@@ -85,6 +88,8 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
                 Attach(flight.Code, null, now);
                 continue;
             }
+            // Every in-air flight carries its last real activity, stale or not, read the same way the stale items read it.
+            RecordLastMove(flight, Staleness.LastMove(flight, legs, cards, pullRequests, time.LocalTimeZone));
             var mine = reading.Stale.Where(i => i.Flight == flight.Code).ToList();
             if (mine.Count > 0)
             {
@@ -92,6 +97,16 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
             }
             Attach(flight.Code, mine.FirstOrDefault(), now);
         }
+    }
+
+    // The row is rewritten only when the last move or its words changed, so a quiet flight causes no churn on the wire.
+    private void RecordLastMove(FlightRow flight, (DateTimeOffset At, string Text)? last)
+    {
+        if (last is not { } move || (flight.LastMovedAt == move.At && flight.LastMove == move.Text))
+        {
+            return;
+        }
+        state.UpdateFlight(flight.Code, f => f.LastMovedAt == move.At && f.LastMove == move.Text ? f : f with { LastMovedAt = move.At, LastMove = move.Text });
     }
 
     // A reminder about a card is closed once that card is: its choices would answer a card that is no longer asked.
