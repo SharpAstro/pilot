@@ -12,6 +12,22 @@ namespace Pilot.Gui.Tests;
 public sealed class TmpDiagTests
 {
     private readonly List<string> Out = [];
+    [Fact]
+    public void Repro()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var pixels = new PixelMeasureContext<RgbaImage>(vessel, SessionsCapture.FontPath, 1f);
+        var scroll = new ListScrollController { Mode = ScrollBarMode.Interactive };
+        Layout.Node Row(int r) => Layout.Builder.WrapH(Enumerable.Range(0, 40).Select(i => (Layout.Node)Layout.Builder.Text(new string('a', 3 + ((i * 7 + r * 3) % 7)), 12f)).ToArray());
+        Layout.Node Page() => Layout.Builder.VStack(Layout.Builder.VStack(Enumerable.Range(0, 60).Select(Row).ToArray()).WStar().HStar().WithScroll(scroll)).Stretch();
+        var window = new Rect<float>(0, 0, 700, 400);
+        Layout.Engine.Arrange(Page(), window, pixels);
+        var max1 = scroll.MaxOffset;
+        scroll.AtomOffset = (int)max1;
+        Layout.Engine.Arrange(Page(), window, pixels);
+        Assert.Fail($"max after first render {max1}, offset set to {(int)max1}, after the next arrange offset={scroll.Offset} max={scroll.MaxOffset}");
+    }
+
     [Theory]
     [InlineData(1300f, 1.5f)]
     [InlineData(1300f, 1f)]
