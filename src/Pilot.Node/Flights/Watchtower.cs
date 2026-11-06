@@ -40,7 +40,8 @@ namespace Pilot.Node.Flights;
 /// each one a cold read of the brief. Now an ended row whose job record reads a finished turn (<see cref="Sessions.ClaudeJobRecord.TurnFinished"/>)
 /// with nothing untold is left ended: the next card resumes it in place while its cache is warm and a fresh one starts only
 /// when it is cold or past <see cref="ResumeBelow"/>, and a chat resumes it through the messenger. Such an end is no churn
-/// (<see cref="Health"/>) and the ledger says it ended by design. One that ended with no finished turn (a crash, or no record)
+/// (<see cref="Health"/>). The session ledger still records it as Finished; only the row's <c>EndedBecause</c> text carries the
+/// by-design wording ("Claude Code ended the job after its turn finished"). One that ended with no finished turn (a crash, or no record)
 /// is started again as before.
 /// </para>
 /// </remarks>

@@ -680,8 +680,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             var holding = flight.Holding!;
             var key = $"{flight.Code} {holding.Since.UtcTicks}";
             var subject = Verbs.FlightTarget(flight.Code);
-            // A hold a leg makes the fixes of is covered by that leg's own watch while it flies (or waits to be started): no timeout rings for it.
-            if (holding.By is { Length: > 0 } by && by != "node" && state.Legs(flight.Code).Any(l => l.Name == by && l.State is LegState.Flying or LegState.Planned))
+            // A hold a leg makes the fixes of is covered by that leg's own watch while it flies: no timeout rings for it. A leg still Planned is
+            // given HoldingBound to be started, and a hold it never started (nothing flies it) rings like any other hold.
+            var holder = holding.By is { Length: > 0 } by && by != "node" ? state.Legs(flight.Code).FirstOrDefault(l => l.Name == by && l.State is LegState.Flying or LegState.Planned) : null;
+            if (holder is { State: LegState.Flying } || (holder is not null && now - holding.Since < HoldingBound))
             {
                 continue;
             }
@@ -707,7 +709,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             _holdingRung[key] = now;
-            var why = live ? $"the watchtower has not cleared it in {(int)HoldingBound.TotalMinutes} minutes" : "there is no live watchtower to clear it";
+            var why = holder is not null ? $"its {holder.Name} leg was planned and never started in {(int)HoldingBound.TotalMinutes} minutes"
+                : live ? $"the watchtower has not cleared it in {(int)HoldingBound.TotalMinutes} minutes" : "there is no live watchtower to clear it";
             var card = state.RaiseCard(CardBin.Ring, LegCommander.HoldingTimeoutKind, subject, $"{flight.Code}'s PR #{flight.PullRequest} is still holding: {why}",
                 $"{holding.Reason}. Merge as it is lands the PR at the reviewed head, notes and all; Wait keeps holding and asks again in {(int)HoldingBound.TotalMinutes} minutes.",
                 link: flight.PullRequestUrl,

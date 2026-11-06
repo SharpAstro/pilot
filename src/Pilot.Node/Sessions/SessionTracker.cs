@@ -827,6 +827,7 @@ public sealed class SessionTracker : BackgroundService
         _stopped.Remove(id);
         _given.Remove(id);
         _listedNames.Remove(id);
+        _jobRecords.Remove(id);
         _transcripts.Remove(sessionId);
         foreach (var copy in _rowOf.Where(c => c.Value == id).Select(c => c.Key).ToList())
         {

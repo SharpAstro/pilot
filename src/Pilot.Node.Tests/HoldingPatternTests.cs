@@ -488,8 +488,8 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         F(flight.Code).Holding.ShouldNotBeNull().By.ShouldBe(LegCommander.ReviewNotesLeg);
         F(flight.Code).Holding!.Reason.ShouldBe($"the {LegCommander.ReviewNotesLeg} leg is making the review's fixes");
 
-        // The leg is started (as the node's sweep would); its worker finds nothing to change and ends: the hold is nobody's now.
-        (await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), "controller", "anyway")).Error.ShouldBeNull();
+        // The leg is started by the node's own sweep (no controller command); its worker finds nothing to change and ends: the hold is nobody's now.
+        await _legs.AdvanceFlightAsync(flight.Code, Ct);
         await Started(_legs, flight.Code);
         var leg = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
         var worker = leg.Worker.ShouldNotBeNull();
@@ -625,6 +625,33 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await ChecksWithEndedWatchtower(clock).LookAsync(Ct);
         F(flight.Code).Holding.ShouldNotBeNull().By.ShouldBe(LegCommander.ReviewNotesLeg);
         _github.IssueComments.ShouldBeEmpty();
+        _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AReviewNotesLegPlannedAndNeverStartedStillRingsPastTheHoldingBound()
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("36", Notes);
+        // The leg is Planned and nothing starts it (the sweep is not run): the hold names it.
+        F(flight.Code).Holding.ShouldNotBeNull().By.ShouldBe(LegCommander.ReviewNotesLeg);
+        _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg).State.ShouldBe(LegState.Planned);
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        var checks = TimedChecks(clock, live: true);
+
+        // Inside the bound the leg is given the time to be started: no ring.
+        clock.Advance(TimeSpan.FromMinutes(29));
+        await checks.LookAsync(Ct);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+
+        // Past it the hold rings, saying the leg was never started, though the leg still reads Planned.
+        clock.Advance(TimeSpan.FromMinutes(2));
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+        var ring = Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind);
+        ring.Title.ShouldContain($"{LegCommander.ReviewNotesLeg} leg was planned and never started");
         _github.Merged.ShouldBeEmpty();
     }
 
