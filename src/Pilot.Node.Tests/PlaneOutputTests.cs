@@ -352,8 +352,8 @@ public sealed class PlaneOutputTests : JobTestsBase
 
         // Landing a plane removes its folder, and with it everything the build wrote.
         Directory.Delete(plane, recursive: true);
-        Directory.EnumerateFiles(org, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(org, f).Replace(Path.DirectorySeparatorChar, '/')).Order()
-            .ShouldBe(["lib/Lib.cs", "lib/lib.csproj"], customMessage: "nothing of the per-plane build remains once the plane is gone");
+        string.Join("|", Directory.EnumerateFiles(org, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(org, f).Replace(Path.DirectorySeparatorChar, '/')).Order())
+            .ShouldBe("lib/Lib.cs|lib/lib.csproj", "nothing of the per-plane build remains once the plane is gone");
     }
 
     /// <summary>Two real builds at once of two planes that share the lib clone: each writes lib's obj and bin under its own plane, and nothing under the clone.</summary>
@@ -379,7 +379,7 @@ public sealed class PlaneOutputTests : JobTestsBase
         {
             Directory.Delete(plane, recursive: true);
         }
-        Directory.EnumerateFiles(org, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(org, f).Replace(Path.DirectorySeparatorChar, '/')).Order()
-            .ShouldBe(["lib/Lib.cs", "lib/lib.csproj"], customMessage: "nothing of the per-plane build remains once the planes are gone");
+        string.Join("|", Directory.EnumerateFiles(org, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(org, f).Replace(Path.DirectorySeparatorChar, '/')).Order())
+            .ShouldBe("lib/Lib.cs|lib/lib.csproj", "nothing of the per-plane build remains once the planes are gone");
     }
 }
