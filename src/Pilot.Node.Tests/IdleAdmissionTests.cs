@@ -101,7 +101,7 @@ public sealed class IdleAdmissionTests : LegCommanderTestsBase
         Put("du1-idle-aaaaaaa1", SessionState.Idle);
         _state.PutJob(new JobRow
         {
-            Id = "j13", Command = "dotnet test", Cwd = "/elsewhere", Owner = "aaaaaaa1", State = JobState.Done, LogPath = "/tmp/j13.log",
+            Id = "j13", Command = "dotnet test", Cwd = "/elsewhere", Owner = "aaaaaaa1", State = JobState.Succeeded, LogPath = "/tmp/j13.log",
             Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow, Told = false,
         });
 
