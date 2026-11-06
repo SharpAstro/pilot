@@ -67,6 +67,8 @@ public sealed partial class LegCommander
         switch (outcome)
         {
             case "done":
+                // The failed tests the check passed over as not this flight's, with their issues, for the leg's report.
+                string? notOurs = null;
                 // A leg's work is its commits: a worker that ends with files not committed would leave them to the plane.
                 if (await planes.UncommittedAsync(flight.Worktree, cancellationToken) is { } dirty)
                 {
@@ -94,6 +96,11 @@ public sealed partial class LegCommander
                 {
                     var (checkedFlight, checkedLeg, run, late) = await RerunCheckAsync(flight, leg, cancellationToken);
                     (flight, leg) = (checkedFlight, checkedLeg);
+                    // A check that failed only on tests the flight's change does not touch passes, with them named (#752).
+                    if (run is { Passed: false } && leg.Check is { } ranCheck)
+                    {
+                        (run, notOurs) = await UnrelatedAsync(flight, leg, ranCheck, run, cancellationToken);
+                    }
                     // A run is there only when a check ran, so the check is too.
                     if (run is { Passed: false } && leg.Check is { } check)
                     {
@@ -127,7 +134,8 @@ public sealed partial class LegCommander
                         throw new FlightException($"{flight.Code}/{leg.Name} changed while GitHub was being asked: nothing was recorded, look again and finish again");
                     }
                 }
-                await RecordDoneAsync(flight, leg, report.Length > 0 ? report : leg.Report, push: true, cancellationToken);
+                var said = report.Length > 0 ? report : leg.Report;
+                await RecordDoneAsync(flight, leg, notOurs is null ? said : string.IsNullOrWhiteSpace(said) ? notOurs : $"{said}\n{notOurs}", push: true, cancellationToken);
                 break;
             case "failed":
                 // The worker reports the NU line verbatim (its brief says to); the node holds the leg when the package is being published.
