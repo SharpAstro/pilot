@@ -565,6 +565,26 @@ public sealed class FleetTests
         Described(Summary("laptop", "ada@example.org")).ShouldNotContain("holds the queue");
     }
 
+    [Theory]
+    [InlineData(1280)]
+    [InlineData(1900)]
+    public void ANodeRowSaysAJobHasFailedSoFarInRedAndNothingOverlaps(int width)
+    {
+        const string Said = "j14 running · 1 failed so far (BranchShapeTests.ARebaseThatConflictsIsLaidAsOneCommit)";
+        var summary = Summary("laptop", "ada@example.org") with { JobFailing = Said };
+        var line = FleetLine.From("node.sock", here: true, canCommand: true, null, summary);
+        using var renderer = new RgbaImageRenderer((uint)width, 400);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Show(PilotPage.Fleet);
+
+        var arranged = Layout.Engine.Arrange(chrome.Fleet.Tree(new FleetScreen([line], Live.At)), new Rect<float>(0, 0, width, 400), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+
+        line.ToDumpLine().ShouldContain(Said);
+        var leaf = arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Where(t => t.Value == Said).ShouldHaveSingleItem();
+        leaf.Color.Equals(Palette.Current.Failed).ShouldBeTrue();
+        TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
+    }
+
     /// <summary>An unreachable node's status line (last heard, retrying) reads in full: its leaf is as wide as the text, at a narrow and a wide window.</summary>
     [Theory]
     [InlineData(900)]

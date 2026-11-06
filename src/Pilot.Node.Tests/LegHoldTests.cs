@@ -47,6 +47,9 @@ public abstract class LegHoldTestsBase : IDisposable
         _legs = new LegCommander(_state, _workers, _checks, _github, git, new Planes(git), _flights, options, _time)
         {
             Releases = new PackageReleases(git, _feed, _time),
+            // Readying a plane runs real git; on a busy machine it passes the default 15 s, the command answers early and the next
+            // command meets "is being started already". These tests wait for the start itself.
+            StartReadyWithin = TimeSpan.FromMinutes(5),
         };
         _watch = new PackageWatch(_state, _flights, _feed, _github, _time, _legs);
     }
