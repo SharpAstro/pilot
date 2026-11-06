@@ -126,6 +126,14 @@ public sealed record LegRow
 
     public DateTimeOffset? StartedAt { get; init; }
 
+    /// <summary>
+    /// The plane's HEAD (a commit sha) when its current worker started, on the first start and again on each go-around; null before a
+    /// worker starts or when HEAD could not be read. The node compares it with the plane's HEAD later to tell whether the worker
+    /// committed anything, as a worker that commits and ends with no step ticked is finished by the node's ticking pass (PIL804).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StartHead { get; init; }
+
     public DateTimeOffset? FinishedAt { get; init; }
 }
 

@@ -162,11 +162,14 @@ public sealed partial class LegCommander
         // A fresh worker steps up the ladder by attempt (PIL402). Only a fresh session does: a nudge, Resume or wake keeps the
         // model its session started with, as a changed model would drop the session's prompt cache.
         var (attemptModel, attemptEffort) = Models.WorkerFor(leg.Model, leg.Effort, leg.GoArounds + 1);
+        // The plane's HEAD as the worker starts, read off the lock with the plane in place; null when it cannot be read.
+        string? startHead = null;
         Launching(LegsKey(flight.Code), $"{worker}, on {flight.Code}/{leg.Name}", target,
             new CardChoice { Label = $"Start {leg.Name}'s worker again", Verb = Verbs.StartLeg, Target = target },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
+                startHead = await PlaneHeadAsync(flight, CancellationToken.None);
                 await WarnSiblingsBehindAsync(flight, leg, CancellationToken.None);
                 Briefs.PlaneState? plane = null;
                 if (resumed is not null)
@@ -188,7 +191,7 @@ public sealed partial class LegCommander
                 }
                 // A flight in a holding pattern waits on this leg now: the hold says so, and its watch covers the wait.
                 HoldForLeg(flight.Code, leg.Name);
-                state.PutLeg(now with { State = LegState.Flying, AttemptModel = attemptModel, AttemptEffort = attemptEffort, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), Report = resumed, Wait = null, Queued = null });
+                state.PutLeg(now with { State = LegState.Flying, AttemptModel = attemptModel, AttemptEffort = attemptEffort, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), StartHead = startHead, Report = resumed, Wait = null, Queued = null });
                 state.CloseCardsAbout(target, $"{flight.Code}/{leg.Name} started", NoGoKind, ValidatingKind);
                 // A ring that this step could not be taken by itself is moot once it is.
                 state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}/{leg.Name} started", NextStepKind);
