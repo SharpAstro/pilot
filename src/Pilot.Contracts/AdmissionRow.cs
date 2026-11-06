@@ -25,6 +25,9 @@ public sealed record AdmissionRow
     /// <summary>Why peers were not counted (<c>peers not counted: ...</c>); null when every peer was read or there is none.</summary>
     public string? PeersNotCounted { get; init; }
 
+    /// <summary>Idle sessions left out of the count because they wait on a person or a job, as <c>label (idle, card c12 open)</c>. Optional: absent from an older node.</summary>
+    public string[] WaitingOnPerson { get; init; } = [];
+
     /// <summary>The line the clients show: <c>Opus 2/3</c>, or <c>Opus 2 (no cap)</c>, with <c>, peers not counted</c> when so.</summary>
     public string Line() =>
         (OpusCap > 0 ? $"Opus {OpusCount}/{OpusCap}" : $"Opus {OpusCount} (no cap)") + (PeersNotCounted is null ? "" : ", peers not counted");
