@@ -122,8 +122,22 @@ public sealed record FlightRow
     /// </summary>
     public string? GitHubLabel { get; init; }
 
+    /// <summary>
+    /// The human checks the node has filed as issues for this flight, oldest first: a reviewer that restates one in a later round files nothing
+    /// again. Optional and additive, so the wire version does not move; null before the first is filed.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public HumanCheck[]? HumanChecks { get; init; }
+
     /// <summary>The issue's GitHub Priority field as of the node's last start of the flight; null when unset or not read.</summary>
     public IssuePriority? IssuePriority { get; init; }
+
+    /// <summary>
+    /// Whether the flight's issue carries the <c>pilot: human verification</c> label as of the node's last start of the flight: its briefs then
+    /// say how to note checks only a person can make. Optional and additive, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool HumanVerification { get; init; }
 
     /// <summary>Whether the issue's repo has the Priority field (and the token can read it): where it does, it alone says priority and the <c>pilot: priority</c> label is ignored.</summary>
     public bool HasPriorityField { get; init; }

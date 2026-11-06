@@ -319,8 +319,15 @@ internal sealed class FakeGitHub : IGitHub
             ? [.. list.Where(i => i.Milestone == milestone && !_hidden.Contains(i.Number)).OrderByDescending(i => i.Number).Select(Labelled)]
             : []);
 
+    /// <summary>When set, CreateIssueInMilestoneAsync fails with it, as gh does when it refuses.</summary>
+    public string? CreateIssueInMilestoneFails { get; set; }
+
     public Task<MilestoneIssue> CreateIssueInMilestoneAsync(string repoPath, string title, string? body, string milestone, CancellationToken cancellationToken)
     {
+        if (CreateIssueInMilestoneFails is { } why)
+        {
+            throw new FlightException(why);
+        }
         IssuesCreated.Add((repoPath, title, body));
         var made = AddIssue(repoPath, title, milestone, body: body ?? "");
         if (HideCreatedFromLists)
