@@ -152,9 +152,40 @@ public sealed class StaleRowTests
         view.Render(screen, bounds);
         PageButtonFeedbackTests.Words(view.Tree(screen)).ShouldContain("last activity 25 m ago");
 
-        // A stale flight's page says it in its mark instead, and a landed one says nothing.
-        Line().ActivityText.ShouldBeNull();
+        // A landed flight says nothing.
         Line(stale: false, state: FlightState.Landed).ActivityText.ShouldBeNull();
+    }
+
+    [Fact]
+    public void AStaleFlightsPageSaysHowLongItHasBeenStillAndItsLastMove()
+    {
+        var time = Now.AddHours(-10).ToLocalTime().ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+        Line().ActivityText.ShouldBe($"no progress for 10 h · last: review passed {time}");
+
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        var view = NewView(renderer, out _);
+        var screen = Screen();
+        view.OpenDetail("TIA1611");
+        view.Render(screen, new RectF32(0, 0, 1600, 900));
+        PageButtonFeedbackTests.Words(view.Tree(screen)).ShouldContain($"no progress for 10 h · last: review passed {time}");
+
+        // A landed flight keeps no stale words, whatever is left on its row.
+        Line(state: FlightState.Landed).ActivityText.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData(25 * 60, "25 m")]
+    [InlineData(10 * 3600 + 59 * 60, "10 h")]
+    [InlineData(2 * 86400 + 23 * 3600 + 30 * 60, "2 d 23 h")]
+    public void TheMarkSaysTheAgeInTheNodesWordsWhichIsNotSessionLinesAgo(int seconds, string expected)
+    {
+        var idle = TimeSpan.FromSeconds(seconds);
+        var row = Flight() with { LastMovedAt = Now - idle };
+
+        FlightLine.Build([row], [], Now, []).Single().StaleWorkMark.ShouldBe($"stale · no progress for {expected} · raised to high");
+        // The same words as the node's digest line (Staleness.Say is Waited.Coarse), and not what SessionLine.Ago would print.
+        Waited.Coarse(idle).ShouldBe(expected);
+        SessionLine.Ago(idle).ShouldNotBe(expected);
     }
 
     [Fact]
@@ -279,7 +310,12 @@ public sealed class StaleRowTests
         {
             ("before", Flight() with { LastMovedAt = null, LastMove = null, Title = LongTitle }),
             ("after", Flight() with { Title = LongTitle }),
-            ("after-days", Flight() with { Title = LongTitle, LastMovedAt = Now.AddHours(-71) }),
+            // The longest mark there is: days, and a raise to urgent.
+            ("after-days", Flight() with
+            {
+                Title = LongTitle, LastMovedAt = Now.AddHours(-71),
+                StaleRaises = [new FlightStaleRaise { Bound = "flight", Level = IssuePriority.Urgent, At = Live.At.AddHours(12), Note = "raised to urgent: open 19 h" }],
+            }),
         })
         {
             foreach (var width in new[] { 700, 1400 })

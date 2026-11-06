@@ -46,14 +46,29 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         _ => IssuePriority.High,
     };
 
+    /// <summary>
+    /// How often every in-air flight's last move is read between ticks. A pure read of what the node holds that writes only when a
+    /// move changed, so a row's last move (and the age the UI counts from it) is never as old as a whole <see cref="Every"/>.
+    /// </summary>
+    public TimeSpan MovesEvery { get; init; } = TimeSpan.FromSeconds(20);
+
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
+        var nextTick = time.GetUtcNow() + Every;
         while (!stopping.IsCancellationRequested)
         {
             try
             {
-                await Task.Delay(Every, time, stopping);
-                await TickAsync(stopping);
+                await Task.Delay(MovesEvery < Every ? MovesEvery : Every, time, stopping);
+                if (time.GetUtcNow() >= nextTick)
+                {
+                    await TickAsync(stopping);
+                    nextTick = time.GetUtcNow() + Every;
+                }
+                else
+                {
+                    RefreshLastMoves();
+                }
             }
             catch (OperationCanceledException) when (stopping.IsCancellationRequested)
             {
@@ -96,6 +111,18 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
                 await RaiseAsync(flight, mine, now, cancellationToken);
             }
             Attach(flight.Code, mine.FirstOrDefault(), now);
+        }
+    }
+
+    /// <summary>Reads every in-air flight's last move now, without the rest of a tick (no action, no raise, no summary).</summary>
+    public void RefreshLastMoves()
+    {
+        var legs = state.Legs();
+        var cards = state.Cards();
+        var pullRequests = state.PullRequests();
+        foreach (var flight in state.Flights())
+        {
+            RecordLastMove(flight, Staleness.LastMove(flight, legs, cards, pullRequests, time.LocalTimeZone));
         }
     }
 

@@ -269,6 +269,10 @@ public static class Staleness
     private static DateTimeOffset? OpenSince(FlightRow flight, PullRequestRow? pr, List<CardRow> cards) =>
         pr?.CreatedAt ?? cards.Where(c => c.Kind == LegCommander.PrReady).Select(c => (DateTimeOffset?)c.At).Min();
 
+    // Who closes a card that no one answered: the node (a sweep, a replacement) and GitHub (the PR was merged or closed there).
+    private const string ClosedByNode = "node";
+    private const string ClosedByGitHub = "github";
+
     private sealed record Event(DateTimeOffset At, string Text);
 
     /// <summary>
@@ -290,7 +294,11 @@ public static class Staleness
     }
 
     // The flight's happenings, and the last one that moved it (a leg start or finish, a card answered, a review verdict, the PR opening, its
-    // creation). A leg's recheck finishing and a push are not moves here: no row holds the time of either (a recheck keeps only when it began).
+    // creation). A push and a check finishing are deliberately not moves here:
+    //  - no row holds the time of a push (the PR's UpdatedAt also moves on a comment, a label or a bot, so it would hide a still flight);
+    //  - a check finishing says nothing about progress: a leg whose check fails again and again finishes a check every time, and that
+    //    loop is the stale case (#752), not a flight that moves. A check that passes ends its leg, and the leg's finish is the move;
+    //  - a leg's recheck finishing is the same (a recheck keeps only when it began).
     private static (List<Event> Events, Event LastMove) Events(FlightRow flight, List<LegRow> legs, List<CardRow> cards, PullRequestsRow? pullRequests, TimeZoneInfo zone)
     {
         var created = new Event(flight.CreatedAt, "flight created");
@@ -329,8 +337,9 @@ public static class Staleness
         {
             events.Add(new Event(holding.Since, $"hold began: {holding.Reason}"));
         }
-        // A card a person or a session answered counts as a move; one the node closed on its own, or a handled record, does not.
-        foreach (var card in cards.Where(c => c is { State: CardState.Closed, ClosedAt: not null } && c.Bin != CardBin.Handled && c.ClosedBy != "node"))
+        // A card a person or a session answered counts as a move; one the node closed on its own, one GitHub closed (a PR merged or
+        // closed there: nobody answered it), or a handled record, does not.
+        foreach (var card in cards.Where(c => c is { State: CardState.Closed, ClosedAt: not null } && c.Bin != CardBin.Handled && c.ClosedBy is not (ClosedByNode or ClosedByGitHub)))
         {
             Move(card.ClosedAt!.Value, $"card {card.Id} answered");
         }
