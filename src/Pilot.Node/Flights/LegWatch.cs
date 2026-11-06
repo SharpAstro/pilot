@@ -122,6 +122,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>What holds a compaction while the 5-hour window is spent: the node's one gate; null in a test with none.</summary>
     public StartGate? Gate { get; set; }
 
+    /// <summary>Whether sessions are taking turns at all (PIL791): while an outage is open the first-turn ladders neither restart nor ring per session. The node shares its one; a test gets its own.</summary>
+    public TurnOutage Outage { get => _outage ??= new TurnOutage(state, time); set => _outage = value; }
+    private TurnOutage? _outage;
+
     // By worker job: the response it had when it was compacted for a full context; by leg subject: the worker job the leg was sent round from for one.
     private readonly Dictionary<string, DateTimeOffset?> _compactedFull = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _replacedFull = new(StringComparer.Ordinal);
@@ -168,6 +172,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         var now = time.GetUtcNow();
         var sessions = state.Sessions();
         _ladderLooked.Clear();
+        Outage.Look(sessions, now);
         await LookAtReviewsAsync(sessions, now, cancellationToken);
         await LookAtValidatorsAsync(sessions, now, cancellationToken);
         LookAtStrays(sessions, now);
@@ -813,6 +818,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             {
                 return (true, null);
             }
+            Outage.Observe(key, now);
+            if (Outage.IsOpen)
+            {
+                return (true, null);
+            }
             _firstTurns[key] = (2, job, now);
             return (row is not null, $"the {what} of {name} took no first turn and was stopped, and a fresh one did not appear in {Ago(now, acted.At)}");
         }
@@ -820,6 +830,12 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         if (since is not { } at || now - at <= FirstTurnGrace)
         {
             return (has && acted.Seen >= 2 && row is not null && NoTurnYet(row), null);
+        }
+        Outage.Observe(key, now);
+        if (Outage.IsOpen)
+        {
+            // Nothing is taking turns: stopping and restarting this one would change nothing, so it waits with the rest.
+            return (true, null);
         }
         var took = $"{name}'s {what} (job {job}) took no first turn in {Ago(now, at)}";
         if (!has)
@@ -891,6 +907,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 : planner is null && started is { } known ? known.At : null;
             if (neverSince is { } since && now - since > FirstTurnGrace)
             {
+                Outage.Observe(subject, now);
+                if (Outage.IsOpen)
+                {
+                    continue;
+                }
                 var seen = _noFirstTurn.GetValueOrDefault(subject);
                 var job = planner?.Id ?? started?.Job ?? "unknown";
                 var took = $"{flight.Code}'s planner (job {job}) took no first turn in {Ago(now, since)}";

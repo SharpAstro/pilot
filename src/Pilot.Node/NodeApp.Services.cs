@@ -306,6 +306,7 @@ public static partial class NodeApp
                 Models = services.GetRequiredService<RoleModels>(),
                 Ledger = services.GetRequiredService<SessionLedger>(),
                 Gate = services.GetRequiredService<StartGate>(),
+                Outage = services.GetRequiredService<TurnOutage>(),
                 Error = logWriter,
                 StartedPlanner = legs.StartedPlanner,
                 RestartPlanner = legs.RestartPlannerAsync,
@@ -365,7 +366,9 @@ public static partial class NodeApp
             services.GetRequiredService<TimeProvider>())
         {
             AccountFile = ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root),
+            Outage = services.GetRequiredService<TurnOutage>(),
         });
+        builder.Services.AddSingleton(services => new TurnOutage(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddHostedService(services => services.GetRequiredService<UsageReader>());
     }
 
