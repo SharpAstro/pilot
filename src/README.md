@@ -811,9 +811,10 @@ branch before any worker goes in, and lands one that is already gone.
 
 A benchmark is only worth its numbers when nothing else runs beside it. `pilot run --alone -- <command>` queues one
 exclusive job (kind `bench`): it goes ahead of the other queued jobs, waits until no other job runs and the machine's
-CPU is near idle (15 % or less, `JobRunner.BenchQuietCpu`), and then **holds everything else**: no other job, no check
-and no new leg worker or reviewer starts while it runs (their steps say `a benchmark (<id>) holds the node`), and the
-queue and admission pick up again when it ends. One bench job runs at a time.
+CPU is near idle (15 % or less, `JobRunner.BenchQuietCpu`), and then **holds the other jobs**: no other job or check
+starts while it runs (their steps say `a benchmark (<id>) holds the node`), and the queue picks up again when it ends.
+A benchmark, queued or running, never holds a leg start: new leg workers, planners, reviewers and PR fixers start as
+admission allows. One bench job runs at a time.
 
 `pilot bench <repo> (--ref <ref> | --baseline <ref> --candidate <ref>) [--fetch <cmd>] [--pr <n>] [--timeout 2h] -- <command...>`
 is that job made for a repo. The node updates the repo from origin, checks each ref out in a short-path **detached
