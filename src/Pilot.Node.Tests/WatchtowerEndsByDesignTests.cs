@@ -136,6 +136,11 @@ public sealed class WatchtowerEndsByDesignTests : IDisposable
         await StartedRepliedAndEnded(new ClaudeJobRecord("failed", "crashed", _time.GetUtcNow()));
         await _tower.LookAsync(Ct);
 
+        // A failed job goes the existing way: counted as a failed start, tried again after the retry time, never left ended.
+        _workers.Started.Count.ShouldBe(1);
+        _time.Advance(_tower.RetryAfter + TimeSpan.FromSeconds(1));
+        await _tower.LookAsync(Ct);
+
         _workers.Started.Count.ShouldBe(2);
     }
 
@@ -237,7 +242,8 @@ public sealed class WatchtowerEndsByDesignTests : IDisposable
         health.TypicalLifetimeAfterReply.ShouldBe(TimeSpan.FromSeconds(60));
         var card = Open().Single(c => c.Kind == CardKinds.WatchtowerChurning);
         card.Title.ShouldBe("The watchtower keeps ending");
-        _tower.Generations().ShouldAllBe(g => g.AfterFinishedTurn == false);
+        // The ones that ended (the last look started a fourth, still running) were not after a finished turn.
+        _tower.Generations().Where(g => g.EndedAt is not null).ShouldAllBe(g => g.AfterFinishedTurn == false);
     }
 
     [Fact]
