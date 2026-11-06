@@ -41,6 +41,12 @@ public sealed partial class NodeState
                     State = CardState.Closed, Outcome = $"{landedCode} landed already", ClosedBy = "node", ClosedAt = now,
                 };
             }
+            // A ring is for what the person must act on, so it carries a choice to press (#799 rule 5): one with none (Dismiss is on every
+            // card, so it is no choice) is a For-you card, read when the person next looks, not a ring that interrupts for nothing.
+            if (bin == CardBin.Ring && (choices is null || choices.Count == 0))
+            {
+                bin = CardBin.ForYou;
+            }
             var number = _cards.Count == 0 ? 1 : _cards.Keys.Max(k => int.TryParse(k.AsSpan(1), out var n) ? n : 0) + 1;
             // One PR, one merge card: a pr-ready card replaces an older open merge card of the same subject, however it got there.
             if (bin != CardBin.Handled && kind == LegCommander.PrReady)

@@ -184,6 +184,10 @@ public sealed class CardKindTests
     /// and offers at least one choice that does something: a verb of <see cref="Verbs"/> that its raising files really offer (so a card
     /// whose choices were all dropped, or never written, fails here). Dismissing alone is no choice: every card has it. A kind with no
     /// verb to press is a For-you card or a Handled line, not a Ring.
+    /// This is the static half: it reads the source, so it guards against drift and proves nothing about a card at runtime. The runtime
+    /// half is <c>NodeState.RaiseCard</c> itself, which files a Ring with no choice as For you whatever its raiser wrote
+    /// (<c>FalseRingTests.ARingRaisedWithNoChoiceIsAForYouCardNotARing_Catalogue</c>, and the closed-PR autopilot refusal, the one kind
+    /// that raises a Ring with no choice in a case, <c>AnAutopilotMergeRefusedOnAClosedPrIsAForYouCardWithNothingToPress_c17100</c>).
     /// </summary>
     [Fact]
     public void EveryRingKindNamesTheFactItIsCheckedAgainstAndAChoiceThePersonCanUsefullyPress()

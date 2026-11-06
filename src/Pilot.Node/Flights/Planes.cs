@@ -678,8 +678,9 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
     }
 
     /// <summary>
-    /// Whether the plane's HEAD holds exactly the tree of <paramref name="commit"/> (a merge commit, however the PR was merged:
-    /// squash, rebase or merge commit all leave one tree behind), each resolved with <c>rev-parse '&lt;sha&gt;^{tree}'</c>. The commit
+    /// Whether <paramref name="commit"/> (a merge commit, however the PR was merged: squash, rebase or merge commit all leave one tree
+    /// behind) holds the plane's HEAD: the two trees equal (each resolved with <c>rev-parse '&lt;sha&gt;^{tree}'</c>), or, when main
+    /// moved since the plane last took it, every file the plane changed the same in the commit. The commit
     /// is fetched first when the plane lacks it. True or false when both trees were read; else null and <c>Said</c> is
     /// why they could not be (the card says it).
     /// </summary>
@@ -699,7 +700,35 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
             return (null, $"the merge commit {CommitRefs.Short(commit)} could not be read here");
         }
         var plane = await git.RunAsync(["rev-parse", "HEAD^{tree}"], worktree, cancellationToken);
-        return plane.Ok ? (string.Equals(merged.Output.Trim(), plane.Output.Trim(), StringComparison.OrdinalIgnoreCase), null) : (null, "its plane's tree could not be read");
+        if (!plane.Ok)
+        {
+            return (null, "its plane's tree could not be read");
+        }
+        if (string.Equals(merged.Output.Trim(), plane.Output.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return (true, null);
+        }
+        // The trees differ. When main moved after the plane last took it, the squash holds the plane's work and main's too, so equal
+        // trees are too strict: the merge holds the plane's work when every file the plane changed since the merge's parent (its
+        // merge-base with the plane) reads the same in the merge. A file main changed as well differs, so that stays a "no".
+        var parent = await git.RunAsync(["rev-parse", $"{commit}^"], worktree, cancellationToken);
+        if (!parent.Ok)
+        {
+            return (false, null);
+        }
+        var mergeBase = await git.RunAsync(["merge-base", "HEAD", parent.Output.Trim()], worktree, cancellationToken);
+        if (!mergeBase.Ok)
+        {
+            return (false, null);
+        }
+        var mine = await git.RunAsync(["diff", "--name-only", "--no-renames", mergeBase.Output.Trim(), "HEAD"], worktree, cancellationToken);
+        var apart = await git.RunAsync(["diff", "--name-only", "--no-renames", "HEAD", commit], worktree, cancellationToken);
+        if (!mine.Ok || !apart.Ok)
+        {
+            return (null, "the plane's changes could not be compared with the merge's");
+        }
+        var changed = mine.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet(StringComparer.Ordinal);
+        return (!apart.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(changed.Contains), null);
     }
 
     /// <summary>Whether the plane holds changes not committed, in a line, or null when it is clean (or gone).</summary>

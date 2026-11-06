@@ -360,4 +360,104 @@ public sealed class FalseRingTests : ReviewTestsBase
 
         _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.PlannedKind).Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.StartLeg);
     }
+
+    // The review's not-blocking notes (#799), each pinned.
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AWorkerRetiringItsOwnLegMustNameWhoseWordStoppedIt_c3623()
+    {
+        var (flight, leg) = await FlyingLeg("3625");
+
+        // A reason that names no one is a worker ending its own leg with no check: refused, the leg flies on.
+        var refused = await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "render"), leg.Worker!, "retired", "I do not feel like finishing");
+
+        refused.Ok.ShouldBeFalse();
+        refused.Error.ShouldNotBeNull().ShouldContain("whose word");
+        _state.Legs(flight.Code).Single(l => l.Name == "render").State.ShouldBe(LegState.Flying);
+        // The controller retiring it needs no such words: it is their word.
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "render"), "controller", "retired", "moved to another flight")).Ok.ShouldBeTrue();
+        _state.Legs(flight.Code).Single(l => l.Name == "render").State.ShouldBe(LegState.Done);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AMergeOnAMainThatMovedAfterThePlaneLastTookItStillHoldsThePlanesWork_TIA2000()
+    {
+        var (flight, _) = await Passed("2003");
+        LegNotDone(flight);
+        // Main moved (a file the plane never touched) after the plane's last take of it: the squash holds the plane's work and main's.
+        MainMoves();
+        Git(flight.Worktree, "fetch", "-q", "origin");
+        var tree = Git(flight.Worktree, "merge-tree", "--write-tree", "HEAD", "origin/main");
+        var merge = Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit-tree", tree, "-p", "origin/main", "-m", "squash of the flight");
+        tree.ShouldNotBe(Git(flight.Worktree, "rev-parse", "HEAD^{tree}"));
+        _github.Pr = _github.Pr! with { State = "MERGED", MergeCommit = merge };
+
+        await Checks().LookAsync(Ct);
+
+        F(flight.Code).State.ShouldBe(FlightState.Landed);
+        Open().ShouldNotContain(c => c.Kind == FlightCommander.MergedUnderLegKind);
+        _state.Legs(flight.Code).Single(l => l.Name == "render").State.ShouldBe(LegState.Done);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnAutopilotMergeRefusedOnAClosedPrIsAForYouCardWithNothingToPress_c17100()
+    {
+        var (flight, _) = await Passed("2039");
+        _github.Checks = ChoiceStatus.Passing;
+        AutopilotOn();
+        // The PR was closed without a merge between the look and the autopilot's merge: there is nothing to merge.
+        _github.OnCall = call =>
+        {
+            if (call == nameof(IGitHub.PullRequestAsync) && _state.Merges().Any(m => m.Open) && _github.Pr is { State: "OPEN" } open)
+            {
+                _github.Pr = open with { State = "CLOSED" };
+            }
+            return Task.CompletedTask;
+        };
+
+        await Checks().LookAsync(Ct);
+
+        F(flight.Code).State.ShouldNotBe(FlightState.Landed);
+        var card = _state.Cards().Single(c => c.Kind == PrChecks.AutopilotMergeRefused);
+        card.Choices.ShouldBeEmpty();
+        card.Bin.ShouldBe(CardBin.ForYou);
+    }
+
+    [Fact]
+    public void ARingRaisedWithNoChoiceIsAForYouCardNotARing_Catalogue()
+    {
+        var bare = _state.RaiseCard(CardBin.Ring, "some-kind", Verbs.FlightTarget("TIA9"), "TIA9 needs nothing pressed", null, []);
+        var pressable = _state.RaiseCard(CardBin.Ring, "other-kind", Verbs.FlightTarget("TIA9"), "TIA9 needs a press", null,
+            [new CardChoice { Label = "Land TIA9", Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA9") }]);
+
+        bare.Bin.ShouldBe(CardBin.ForYou);
+        pressable.Bin.ShouldBe(CardBin.Ring);
+    }
+
+    [Theory]
+    [InlineData(false, null, false)]
+    [InlineData(true, null, true)]
+    [InlineData(true, "waiting for the node's check", true)]
+    [InlineData(true, "Should I keep the flag?", false)]
+    [InlineData(false, "Should I keep the flag? Everything is committed.", false)]
+    [InlineData(false, "the work is committed and the leg is done", true)]
+    [InlineData(false, "Waiting for your answer, I committed a draft", false)]
+    public void WaitsOnNodeIsNarrow(bool rechecking, string? waitingFor, bool expected)
+    {
+        var leg = new LegRow
+        {
+            Flight = "TIA9", Name = "render", Order = 1, Goal = "Draw", DoneWhen = "It draws", State = LegState.Flying,
+            Recheck = rechecking ? new LegRecheck { Check = "dotnet test", Since = DateTimeOffset.UtcNow } : null,
+        };
+        var worker = new SessionRow
+        {
+            Id = "j1", SessionId = "j1-0000-4000-8000-000000000000", Name = "w", Kind = SessionKind.Background, Cwd = "/work", Role = SessionRole.Worker,
+            ContextTokens = 1, ContextWindow = 2, State = SessionState.Waiting, WaitingFor = waitingFor, SpendWeighted = 0, LastResponseAt = DateTimeOffset.UtcNow, StartedAt = DateTimeOffset.UtcNow,
+        };
+
+        LegWatch.WaitsOnNode(leg, worker).ShouldBe(expected);
+    }
 }

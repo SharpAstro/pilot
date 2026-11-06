@@ -376,7 +376,7 @@ public sealed partial class FlightCommander
 
     /// <summary>
     /// Whether the merge of <paramref name="flight"/>'s PR holds everything the plane holds (#799 rule 1): the plane clean and its
-    /// HEAD's tree equal to the merge commit's. Ancestry is no test: a squash or a rebase leaves none. <c>Unread</c> says why when the
+    /// HEAD's tree equal to the merge commit's, or every file the plane changed the same in it when main moved on. Ancestry is no test: a squash or a rebase leaves none. <c>Unread</c> says why when the
     /// trees could not be compared (GitHub named no merge commit, or it cannot be fetched): that is not "no".
     /// </summary>
     private async Task<(bool Holds, string? Unread)> MergeHoldsPlaneAsync(FlightRow flight, CancellationToken cancellationToken)

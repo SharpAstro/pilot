@@ -1214,7 +1214,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     [
         "waiting for the node", "waiting on the node", "waits on the node", "waits for the node", "node's check", "node to finish", "node finishes",
         "node reruns", "node is rerunning", "check to pass", "check passes", "check is running", "check to finish",
-        "committed", "work is done", "leg is done", "work is finished", "leg is finished", "all done", "nothing left to do", "ready to finish",
+        "work is committed", "work committed", "all committed", "everything is committed", "changes are committed", "work is done", "leg is done", "work is finished", "leg is finished", "all done", "nothing left to do", "ready to finish",
     ];
 
     /// <summary>
@@ -1222,8 +1222,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// waits for holds no question (no question mark) and says the work is committed, finished or done, or that it waits on the node or its check.
     /// </summary>
     internal static bool WaitsOnNode(LegRow leg, SessionRow worker) =>
-        leg.Recheck is not null
-        || worker.WaitingFor is { Length: > 0 } says && !says.Contains('?') && NodePhrases.Any(p => says.Contains(p, StringComparison.OrdinalIgnoreCase));
+        // A question mark is a question to the person, whatever the leg's check is doing: that worker waits on them.
+        worker.WaitingFor?.Contains('?') != true
+        && (leg.Recheck is not null
+            || worker.WaitingFor is { Length: > 0 } says && NodePhrases.Any(p => says.Contains(p, StringComparison.OrdinalIgnoreCase)));
 
     // By worker job: the workers whose leg the node tried to finish for them once already; a second look at one still waiting rings.
     private readonly HashSet<string> _finishTried = new(StringComparer.Ordinal);

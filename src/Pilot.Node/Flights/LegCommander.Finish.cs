@@ -73,6 +73,12 @@ public sealed partial class LegCommander
                 throw new FlightException($"retiring {flight.Code}/{leg.Name} needs a report saying whose word stopped it and why");
             }
             var why = command.Why?.Trim() is { Length: > 0 } given ? given : report;
+            // Gated as accepted is, in the one way a check can: the leg's own worker may retire it only on a word it names, the controller's or
+            // the owner's (or the person's), so a worker cannot end its own leg done with no check by calling it retired.
+            if (string.Equals(command.Who, leg.Worker, StringComparison.Ordinal) && !RetiredWords.Any(w => why.Contains(w, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new FlightException($"retiring {flight.Code}/{leg.Name} must name whose word stopped it (the controller's, the owner's or the person's): say who told you to stop, and why");
+            }
             var retired = $"{RetiredOutcome}: {why}";
             await RecordDoneAsync(flight, leg with { Recheck = null }, retired, push: false, cancellationToken);
             state.RaiseCard(CardBin.Handled, RetiredKind, Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} retired",
@@ -223,6 +229,9 @@ public sealed partial class LegCommander
 
     /// <summary>The outcome of finish-leg for a leg stopped on the controller's or the owner's word: done in the row, its report starting with this.</summary>
     public const string RetiredOutcome = "retired";
+
+    /// <summary>The words by which a worker's retire names whose word stopped the leg: the controller, the owner or the person (any case).</summary>
+    internal static readonly string[] RetiredWords = ["controller", "owner", "person"];
 
     /// <summary>The Handled line a retired leg leaves in place of a card.</summary>
     public const string RetiredKind = "leg-retired";
