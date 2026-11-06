@@ -89,7 +89,7 @@ public sealed class IdleAdmissionTests : LegCommanderTestsBase
 
         await QueueLeg();
 
-        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-tia1-one");
+        _workers.Started.ShouldHaveSingleItem($"queued: {_state.Legs("TIA1").Single().Queued}").Name.ShouldBe("du1-tia1-one");
         _legs.Slots.PublishState();
         _state.Admission().ShouldNotBeNull().WaitingOnPerson.ShouldHaveSingleItem().ShouldBe("du1-idle-aaaaaaa1 (idle, job j12 running)");
     }
@@ -120,7 +120,7 @@ public sealed class IdleAdmissionTests : LegCommanderTestsBase
 
         await QueueLeg();
 
-        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-tia1-one");
+        _workers.Started.ShouldHaveSingleItem($"queued: {_state.Legs("TIA1").Single().Queued}").Name.ShouldBe("du1-tia1-one");
         _legs.Slots.PublishState();
         var admission = _state.Admission().ShouldNotBeNull();
         admission.WaitingOnPerson.ShouldHaveSingleItem().ShouldBe($"du1-idle-aaaaaaa1 (idle, card {card.Id} open)");
