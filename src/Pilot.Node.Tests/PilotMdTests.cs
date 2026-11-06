@@ -211,7 +211,7 @@ public sealed class PilotMdTests : IDisposable
 
         brief.ShouldContain("Close a human-verification issue");
         brief.ShouldContain(LegCommander.HumanVerificationMilestone);
-        brief.ShouldContain("the controller closes each once checked");
+        brief.ShouldContain("controller closes each once checked");
         brief.Length.ShouldBeLessThan(Briefs.MaxWatchtowerBrief);
     }
 
