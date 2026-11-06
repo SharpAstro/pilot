@@ -469,6 +469,30 @@ internal sealed class PilotChrome<TSurface>
         Switch(page, _show);
     });
 
+    /// <summary>
+    /// Shows the page called <paramref name="name"/> (<see cref="PilotPageNames"/>), as <see cref="Show"/> does. False, with
+    /// <paramref name="refusal"/> saying what was asked and the names that exist, for a name no page has; nothing is shown then.
+    /// What a tool outside the process sends to take the window to a page.
+    /// </summary>
+    public bool TryShow(string? name, out string? refusal)
+    {
+        if (!PilotPageNames.TryParse(name, out var page))
+        {
+            refusal = PilotPageNames.Refusal(name);
+            return false;
+        }
+
+        Show(page);
+        refusal = null;
+        return true;
+    }
+
+    /// <summary>
+    /// The text faults of the page shown, from the nodes its widget painted in the last frame (<see cref="PageFaults"/>, which runs the
+    /// one <see cref="TextOverlap"/>): its name, the window's size, the page's and the DPI beside them.
+    /// </summary>
+    public PageFaults Faults() => PageFaults.Of(PilotPageNames.Of(Page), TextCheck.Window, [.. PageViewOf(Page).GetCapturedLayout()], DpiScale);
+
     // The page shown without a record: where the host keeps the page itself, the host's say, and the chrome's own page follows.
     private void Switch(PilotPage page, Action<PilotPage>? show)
     {
