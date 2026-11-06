@@ -27,9 +27,9 @@ public sealed class RestartTests
             ? $"while (-not (Test-Path -LiteralPath '{gate}')) {{ Start-Sleep -Milliseconds 100 }}; echo 'finished'; exit {exit}"
             : $"while [ ! -e '{gate}' ]; do sleep 0.1; done; echo 'finished'; exit {exit}";
 
-    private static async Task<NodeHarness> StartAsync(string? folder = null)
+    private static async Task<NodeHarness> StartAsync(string? folder = null, Func<IServiceProvider, Task>? beforeStart = null)
     {
-        var node = await NodeHarness.StartAsync(Ct, folder: folder);
+        var node = await NodeHarness.StartAsync(Ct, folder: folder, beforeStart: beforeStart);
         node.Agents.Json = Listing;
         for (var i = 0; i < 200 && !node.State.Sessions().Any(s => s.Id == Owner); i++)
         {
@@ -182,8 +182,8 @@ public sealed class RestartTests
         Deliveries(second).ShouldBe(1, Why(second, id));
     }
 
-    [Fact]
-    public async Task AJobThatDiedWhileNoNodeRanWithoutAnExitFileIsFailedOnRestart()
+    /// <summary>A job the first node started and then stopped over, killed while no node ran and with no exit file: its data folder and its id.</summary>
+    private static async Task<(string Folder, string Id)> JobThatDiedWhileNoNodeRanAsync()
     {
         var first = await StartAsync();
         var id = Run(first, Sleeping(60, 0));
@@ -194,11 +194,43 @@ public sealed class RestartTests
         {
             await Task.Delay(50, Ct);
         }
+        return (first.Folder, id);
+    }
 
-        await using var second = await StartAsync(first.Folder);
+    [Fact]
+    public async Task AJobThatDiedWhileNoNodeRanWithoutAnExitFileIsFailedOnRestart()
+    {
+        var (folder, id) = await JobThatDiedWhileNoNodeRanAsync();
+
+        await using var second = await StartAsync(folder);
         var ended = await Until(second, id, j => j.EndedAt is not null && j.Told);
 
         (ended.State, ended.Error).ShouldBe((JobState.Failed, "ended while the node was down, no exit recorded"), Why(second, id));
+        Deliveries(second).ShouldBe(1, Why(second, id));
+    }
+
+    // The test above, with the order its Windows run took (pilot #810) made certain instead of left to the runner. A started host runs
+    // each BackgroundService's ExecuteAsync on the thread pool (.NET 10's BackgroundService.StartAsync wraps it in Task.Run), so the
+    // job runner's recovery of the dead job races the session tracker's first polls. The test node polls every 100 ms and its
+    // listing shows nothing until the test sets it after the start; the first empty poll ends the owner's restored row, the second
+    // holds that end ("ended for good"), and a recovery that reaches its tell after that marks the job told "owner-ended" with
+    // no say (JobRunner.TellAsync, the EndedForGood branch). Here the tracker looks twice before the host starts, so the recovery
+    // always comes after: the restarted node judges the owner before it has seen one fresh listing, and the owner is not told.
+    [Fact]
+    public async Task AJobThatDiedWhileNoNodeRanIsToldToItsOwnerWhateverTheTrackerSawBeforeTheRecovery()
+    {
+        var (folder, id) = await JobThatDiedWhileNoNodeRanAsync();
+
+        await using var second = await StartAsync(folder, beforeStart: async services =>
+        {
+            var tracker = services.GetRequiredService<Pilot.Node.Sessions.SessionTracker>();
+            await tracker.PollAsync(Ct);
+            await tracker.PollAsync(Ct);
+        });
+        var ended = await Until(second, id, j => j.EndedAt is not null && j.Told);
+
+        (ended.State, ended.Error).ShouldBe((JobState.Failed, "ended while the node was down, no exit recorded"), Why(second, id));
+        new[] { SayWays.Relayed, SayWays.Resumed }.ShouldContain(ended.ToldWay ?? "none", Why(second, id));
         Deliveries(second).ShouldBe(1, Why(second, id));
     }
 
@@ -292,79 +324,6 @@ public sealed class RestartTests
         (ended.State, ended.Error).ShouldBe((JobState.Failed, "ended while the node was down, no exit recorded"), Why(second, "j99"));
         second.App.Services.GetRequiredService<JobRunner>().IsRunning("j99").ShouldBeFalse();
         Alive(Environment.ProcessId).ShouldBeTrue();
-    }
-
-    // PROBE (temporary, removed before the commit): what the tell decision of a restarted node rests on.
-    private static string Diagnose(NodeHarness node, string id)
-    {
-        var owner = node.State.Sessions().FirstOrDefault(s => s.Id == Owner);
-        var tracker = node.App.Services.GetRequiredService<Pilot.Node.Sessions.SessionTracker>();
-        var ledger = node.App.Services.GetRequiredService<Pilot.Node.Sessions.SessionLedger>();
-        string[] ids = owner is null ? [Owner] : [Owner, owner.SessionId];
-        var entry = ledger.Find(ids);
-        var logs = Path.Combine(node.Options.DataFolder, "logs");
-        var lines = Directory.Exists(logs)
-            ? Directory.GetFiles(logs).SelectMany(f => ReadShared(f).Split('\n')).Where(l => l.Contains("job tell") || l.Contains("say:") || l.Contains("stop:")).ToArray()
-            : [];
-        return $"{Why(node, id)}\n  owner row: {(owner is null ? "NONE" : $"{owner.State} role={owner.Role} flight={owner.Flight} leg={owner.Leg} endedBecause={owner.EndedBecause}")}"
-            + $"\n  tracker.IsEndedForGood={tracker.IsEndedForGood(Owner)}; ledger entry: {(entry is null ? "none" : $"{entry.StartReason} endReason={entry.EndReason} endedAt={entry.EndedAt}")}"
-            + $"\n  cards: {string.Join(" | ", node.State.Cards().Select(c => $"{c.Kind}:{c.Title}"))}"
-            + $"\n  log: {string.Join("\n       ", lines)}";
-    }
-
-    private static async Task<(string Folder, string Id, JobRow Running)> DiedWhileDownAsync()
-    {
-        var first = await StartAsync();
-        var id = Run(first, Sleeping(60, 0));
-        var running = await Until(first, id, j => j.State == JobState.Running);
-        await first.StopKeepingFolderAsync();
-        KillProcess(running.Pid!.Value);
-        for (var i = 0; i < 100 && Alive(running.Pid.Value); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
-        return (first.Folder, id, running);
-    }
-
-    private static async Task<string> WaitToldAsync(NodeHarness node, string id, int seconds)
-    {
-        for (var i = 0; i < seconds * 20 && !(node.State.Jobs().FirstOrDefault(j => j.Id == id) is { Told: true }); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
-        return Diagnose(node, id);
-    }
-
-    [Fact]
-    public async Task ProbeA_FirstListingHeldThenReleasedEmpty()
-    {
-        var (folder, id, _) = await DiedWhileDownAsync();
-        await using var second = await NodeHarness.StartAsync(Ct, folder: folder, holdFirstListing: true);
-        var before = Diagnose(second, id);
-        second.Agents.ReleaseFirstListing();
-        var after = await WaitToldAsync(second, id, 10);
-        Assert.Fail($"PROBE A\nbefore release: {before}\nafter release (listing empty): {after}");
-    }
-
-    [Fact]
-    public async Task ProbeB_ListingNeverSet()
-    {
-        var (folder, id, _) = await DiedWhileDownAsync();
-        await using var second = await NodeHarness.StartAsync(Ct, folder: folder);
-        var after = await WaitToldAsync(second, id, 10);
-        Assert.Fail($"PROBE B (listing stays empty)\n{after}");
-    }
-
-    [Fact]
-    public async Task ProbeC_FirstListingHeldThenReleasedWithTheOwner()
-    {
-        var (folder, id, _) = await DiedWhileDownAsync();
-        await using var second = await NodeHarness.StartAsync(Ct, folder: folder, holdFirstListing: true);
-        var before = Diagnose(second, id);
-        second.Agents.Json = Listing;
-        second.Agents.ReleaseFirstListing();
-        var after = await WaitToldAsync(second, id, 10);
-        Assert.Fail($"PROBE C\nbefore release: {before}\nafter release (owner listed): {after}");
     }
 
     // The log is open for writing in the job's process while it runs.
