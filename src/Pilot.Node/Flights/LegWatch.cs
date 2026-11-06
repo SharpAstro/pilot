@@ -107,6 +107,15 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>As <see cref="RestartWorker"/>, for the leg's validator.</summary>
     public Func<string, string, CancellationToken, Task> RestartValidator { get; set; } = (_, _, _) => Task.CompletedTask;
 
+    /// <summary>
+    /// The plane's HEAD for a flight (by code), read off the lock; the node sets it. Null when it cannot be read, which keeps the ticking
+    /// pass off: a leg whose HEAD is unknown rings as it always did.
+    /// </summary>
+    public Func<string, CancellationToken, Task<string?>> PlaneHead { get; set; } = (_, _) => Task.FromResult<string?>(null);
+
+    /// <summary>Starts a leg's ticking pass (flight code, leg name; PIL804): the node sets it. Throws when the start is refused.</summary>
+    public Func<string, string, CancellationToken, Task> StartTicker { get; set; } = (_, _, _) => Task.CompletedTask;
+
     /// <summary>Stops a session by its job (claude stop); the node sets it.</summary>
     public Func<string, CancellationToken, Task> StopSession { get; set; } = (_, _) => Task.CompletedTask;
 
@@ -193,6 +202,14 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             }
             var subject = Verbs.LegTarget(leg.Flight, leg.Name);
             var worker = sessions.FirstOrDefault(s => s.Id == leg.WorkerJob);
+            // A leg in its ticking pass is its ticker's: the worker ended, and the ticker ticks what its commits cover and finishes.
+            // An idle worker is left alive while its ticker works, on purpose: it costs nothing idle, ticks are idempotent should it be
+            // woken, and the finish (StopWorkerAfterFinishAsync) or a go-around (StopTickerAsync) stops both sessions.
+            if (leg.TickerJob is not null)
+            {
+                await LookAtTickerAsync(leg, sessions, now);
+                continue;
+            }
             // A worker that shows no first turn is stopped and started once more, before any ring or nudge.
             var (turned, twice) = await FirstTurnLadderAsync(subject, leg.WorkerJob!, worker, leg.StartedAt ?? now, "worker", NeverTurned, subject, Name(leg), now,
                 token => RestartWorker(leg.Flight, leg.Name, token), cancellationToken);
@@ -329,7 +346,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 continue;
             }
             state.PutLeg(leg with { Recheck = null });
-            if (leg.WorkerJob is not { } job)
+            // The ticker's finish is the one being told of when it is the leg's active session (its worker ended).
+            if ((leg.TickerJob ?? leg.WorkerJob) is not { } job)
             {
                 continue;
             }
@@ -477,8 +495,20 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             return;
         }
         var job = leg.WorkerJob!;
+        // A worker that ended with commits made and steps unticked gets the ticking pass, not a nudge or a go-around (PIL804).
+        var tickingTried = false;
+        if (worker.State == SessionState.Ended || worker.Gone)
+        {
+            tickingTried = true;
+            if (await TickingPassAsync(leg, now, cancellationToken))
+            {
+                return;
+            }
+        }
         // A worker whose context is near full is never nudged: a nudge is a turn it has no room for. It is compacted once, then
-        // the leg goes round with a fresh worker (pilot #578).
+        // the leg goes round with a fresh worker (pilot #578). This holds when it has commits too, on purpose: a worker that ran out of
+        // room is almost always mid-task, so work remains that a ticker (which only ticks what commits cover) cannot do, and the fresh
+        // worker's brief carries the commits so far. An ended worker is the ticking pass's, above, before this.
         if (cause == IdleCause.Full)
         {
             await FullAsync(leg, worker, since, now, cancellationToken);
@@ -487,6 +517,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         var nudges = _nudges.GetValueOrDefault(job);
         if (nudges >= MaxNudges)
         {
+            // Idle past its nudges where it would ring: with commits made and steps unticked, its ticker is started instead.
+            if (!tickingTried && await TickingPassAsync(leg, now, cancellationToken))
+            {
+                return;
+            }
             // A worker that answered its nudges and went idle again is waiting on something the node cannot see (a job it
             // handed to another node), not deaf: said so. The leg's report is said only when it is this go-around's own, not
             // the go-around's reason (TIA1241's domain-instruments, SE1 2026-10-25: rung as nudged to no avail while it
@@ -518,6 +553,109 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             Ring(leg, Idle, $"{Name(leg)}'s worker has been idle {Ago(now, since)} with {Steps(leg)}, and could not be nudged: {Clip(result.Error ?? "no reason given")}", $"{RoomLead(worker)}the node tried to nudge it: {result.Error}", worker);
         }
+    }
+
+    // By worker job: when the ticking pass was asked for, once, so a worker's ticker is started a single time even when its start
+    // is refused or fails (the start's own card says so); and by ticker job: when the watch first saw it, and which stalls rang.
+    private readonly Dictionary<string, DateTimeOffset> _tickerTried = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTimeOffset> _tickerSeen = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _tickerRung = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The ticking pass (PIL804): a worker that ended, or sat idle past its nudges, with steps unticked and commits made since the leg's
+    /// <see cref="LegRow.StartHead"/> is not nudged or rung for; its ticker is started, once, and the leg is left to it. True when the
+    /// leg is the pass's (started now, or being started); false when it is not (no commits, no recorded start, nothing unticked, the
+    /// plane unreadable, or a start given up), and the ordinary ladder goes on. The plane's HEAD is read through <see cref="PlaneHead"/>,
+    /// off any lock.
+    /// </summary>
+    private async Task<bool> TickingPassAsync(LegRow leg, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (leg.TickerJob is not null || leg.WorkerJob is not { } workerJob || leg.StartHead is not { Length: > 0 } startHead || leg.Checklist.All(i => i.Done))
+        {
+            return false;
+        }
+        // Asked for already: given the show-up grace to appear on the leg, then the ordinary ladder takes it back.
+        if (_tickerTried.TryGetValue(workerJob, out var tried))
+        {
+            // A ticker start that fails is rung once, and by the ladder only: the watch's start has no command waiting on it, so
+            // Launching raises no start-failed card of its own, and once the grace passes the ladder's worker-idle ring is the only one.
+            return now - tried < ShowUpGrace;
+        }
+        string? head;
+        try
+        {
+            head = await PlaneHead(leg.Flight, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            head = null;
+        }
+        if (head is not { Length: > 0 } || string.Equals(head, startHead, StringComparison.Ordinal))
+        {
+            return false;
+        }
+        _tickerTried[workerJob] = now;
+        try
+        {
+            await StartTicker(leg.Flight, leg.Name, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await Error.WriteLineAsync($"leg watch: the ticking pass of {Name(leg)} was not started: {ex.Message}");
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// A leg in its ticking pass is left alone while its ticker works. A ticker that stops without finishing the leg (it never showed up
+    /// or took no turn, ended, failed, or sat idle past <see cref="IdleGrace"/> with the leg still flying) rings worker-idle once, saying
+    /// so; it is not started again. A ticker idle on a finish whose check is rerunning is waiting, as a worker is.
+    /// </summary>
+    private async Task LookAtTickerAsync(LegRow leg, SessionRow[] sessions, DateTimeOffset now)
+    {
+        var job = leg.TickerJob!;
+        if (!_tickerSeen.TryGetValue(job, out var seen))
+        {
+            _tickerSeen[job] = seen = now;
+        }
+        var row = sessions.FirstOrDefault(s => s.Id == job);
+        var since = row is null ? seen : row.LastResponseAt ?? row.StartedAt;
+        if (_wokenAt.TryGetValue(job, out var woken) && woken > since)
+        {
+            since = woken;
+        }
+        // Idle on a finish whose check is rerunning, or on a job of the leg: its end wakes it.
+        var waiting = leg.Recheck is { Outcome: null }
+            || state.Jobs().Any(j => j.State is JobState.Running or JobState.Queued
+                && string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase));
+        var ticker = $"{Name(leg)}'s ticker";
+        string? why = row switch
+        {
+            null when now - seen > ShowUpGrace => "its session never showed up",
+            null => null,
+            { State: SessionState.Failed } => "its session failed",
+            { State: SessionState.Ended } or { Gone: true } => "its session ended",
+            _ when NoTurnYet(row) => now - row.StartedAt > FirstTurnGrace ? "it never took a turn" : null,
+            { State: SessionState.Working or SessionState.Waiting } => null,
+            _ when waiting => null,
+            _ => now - since >= IdleGrace ? $"it went idle {Ago(now, since)} ago" : null,
+        };
+        if (why is null || !_tickerRung.Add(job))
+        {
+            return;
+        }
+        // The session is stopped, as a ticker that took no turn or went idle would linger holding the plane's folder open.
+        if (row is { Gone: false } && row.State is not (SessionState.Ended or SessionState.Failed))
+        {
+            await StopSession(job, CancellationToken.None);
+        }
+        var subject = Subject(leg);
+        var around = Models.RedoLabel(leg, "its ticker stopped without finishing it");
+        // Needs someone: the worker's commits were not ticked and finished by the ticking pass, which is run once, and what covers the steps is the controller's to say.
+        state.RaiseCard(CardBin.Ring, Idle, subject, $"{ticker} stopped without finishing the leg: {why}",
+            $"the worker ended with commits made and {Steps(leg)}, so the node started its ticking pass instead of sending the leg round; {why}, and the node starts no second ticker",
+            [new CardChoice { Label = around, Verb = Verbs.GoAround, Target = subject, Args = [$"the last worker ended with steps unticked and its ticker stopped without finishing: {why}"] }],
+            summary: $"The ticking pass of {Name(leg)} stopped with the leg unfinished: {why}. {around} starts a fresh worker.");
     }
 
     /// <summary>Tells the owners given their ended, untold jobs (JobRunner.TellUntoldOf); whether any was told. The node sets it.</summary>

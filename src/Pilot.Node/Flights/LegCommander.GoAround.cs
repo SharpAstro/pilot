@@ -135,6 +135,9 @@ public sealed partial class LegCommander
             DropQueuedJobsOf(job, "its worker went around");
             await StopQuietly(job, cancellationToken);
         }
+        // A ticker of the ticking pass (PIL804) goes with the worker it was started for: left running, it could tick or finish the new
+        // worker's leg. TickerJob is cleared as it is stopped, so a go-around whose start then fails does not leave the leg pointing at it.
+        leg = await StopTickerAsync(leg, "its worker went around", cancellationToken);
         // Counted apart when it answers the review, as that is the count the watchtower is capped by.
         var by = command.PersonsWord is not null ? "the person" : command.Who ?? "unknown";
         var next = leg with { GoArounds = leg.GoArounds + 1, GoAroundReasons = [.. leg.GoAroundReasons, new GoAroundReason { Why = why, By = by, At = time.GetUtcNow() }], ReviewGoArounds = leg.ReviewGoArounds + (leg.State == LegState.Done && !forConflict ? 1 : 0) };
@@ -145,11 +148,14 @@ public sealed partial class LegCommander
         var target = Verbs.LegTarget(flight.Code, leg.Name);
         var legs = state.Legs(flight.Code);
         var (attemptModel, attemptEffort) = Models.WorkerFor(leg.Model, leg.Effort, next.GoArounds + 1);
+        // The plane's HEAD as this go-around's worker starts, read off the lock with the plane in place; null when it cannot be read.
+        string? startHead = null;
         Launching(LegsKey(flight.Code), $"{worker}, going around {flight.Code}/{leg.Name}", target,
             new CardChoice { Label = Models.RedoLabel(leg, "did not start"), Verb = Verbs.GoAround, Target = target, Args = [why] },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
+                startHead = await PlaneHeadAsync(flight, CancellationToken.None);
                 var commits = await git.RunAsync(["log", "--oneline", $"{flight.Base}..HEAD"], flight.Worktree, CancellationToken.None);
                 var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
                 var brief = Briefs.For(flight, next, legs, why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket, machine: options.Machine, update: UpdateInstruction, pilotMd: await PilotMdOfAsync(flight));
@@ -162,7 +168,7 @@ public sealed partial class LegCommander
                 {
                     return $"{flight.Code}/{leg.Name} changed while {worker} was being started";
                 }
-                state.PutLeg(next with { State = LegState.Flying, AttemptModel = attemptModel, AttemptEffort = attemptEffort, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), FinishedAt = null, Report = $"go-around: {why}", Wait = null });
+                state.PutLeg(next with { State = LegState.Flying, AttemptModel = attemptModel, AttemptEffort = attemptEffort, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), StartHead = startHead, TickerJob = null, FinishedAt = null, Report = $"go-around: {why}", Wait = null });
                 // Every card about the leg was about its last worker: failed, stopped, idle, waiting.
                 state.CloseCardsAbout(target, $"went around: {why}");
                 state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around for it", ReviewChanges, ReviewLoopKind, MergeFailed, PrReady);

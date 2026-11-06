@@ -83,7 +83,7 @@ public sealed partial class LegCommander
             await RecordDoneAsync(flight, leg with { Recheck = null }, retired, push: false, cancellationToken);
             state.RaiseCard(CardBin.Handled, RetiredKind, Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} retired",
                 $"stopped on the word of the controller or the owner, not failed: {why}. The flight goes on with its next leg.");
-            await StopWorkerAfterFinishAsync(leg, command, cancellationToken);
+            await StopWorkerAfterFinishAsync(flight, leg, command, cancellationToken);
             return;
         }
         if (leg.State != LegState.Flying)
@@ -224,7 +224,7 @@ public sealed partial class LegCommander
                 throw new FlightException("finish-leg takes done or failed, then a report");
         }
 
-        await StopWorkerAfterFinishAsync(leg, command, cancellationToken);
+        await StopWorkerAfterFinishAsync(flight, leg, command, cancellationToken);
     }
 
     /// <summary>The outcome of finish-leg for a leg stopped on the controller's or the owner's word: done in the row, its report starting with this.</summary>
@@ -239,11 +239,14 @@ public sealed partial class LegCommander
     // A finished leg's worker is done with: the next leg, or a go-around, gets a fresh one. One that finished its own
     // leg (pilot leg finish, from its plane) is given a while to end its turn and say its report, then stopped all
     // the same: an idle background session lingers for good otherwise, holding its plane's folder open (PIL9997's).
-    private async Task StopWorkerAfterFinishAsync(LegRow leg, CommandRequest command, CancellationToken cancellationToken)
+    // The ticking pass (PIL804) finishes the leg for a worker that ended: its own session is stopped after the same grace, and
+    // so is the ended worker's. A ticker's done raises no ring, and the leg's open cards close with it (RecordDoneAsync).
+    private async Task StopWorkerAfterFinishAsync(FlightRow flight, LegRow leg, CommandRequest command, CancellationToken cancellationToken)
     {
-        if (leg.WorkerJob is { } job)
+        var tickerFinished = leg.TickerJob is not null && string.Equals(command.Who, TickerName(flight, leg), StringComparison.Ordinal);
+        foreach (var job in new[] { leg.WorkerJob, leg.TickerJob }.Where(j => j is not null).Select(j => j!).Distinct(StringComparer.Ordinal))
         {
-            if (string.Equals(command.Who, leg.Worker, StringComparison.Ordinal))
+            if (string.Equals(command.Who, leg.Worker, StringComparison.Ordinal) || tickerFinished)
             {
                 _ = Task.Run(async () =>
                 {

@@ -85,6 +85,7 @@ internal static class CardKindCatalog
         new("leg-retired", "Handled", [LegFinish], "FalseRingTests.ALegRetiredOnTheControllersWordEndsRetiredWithNoCardAndNoChoices_c3623"),
         new("leg-no-go", "Ring", [LegStart], "CardSummaryRaiserTests.TheNoGoSummaryNamesTheChoicesTheCardOffers", "the validator's report says the tree is not as the leg's brief assumes", [nameof(Verbs.StartLeg), nameof(Verbs.RemoveLeg), nameof(Verbs.PlanFlight)]),
         new("leg-validating", "Handled", [LegStart], "ValidatorTests.ALaterLegStartsAValidatorOnTheWorkerModelAtLowEffortAndNoWorker"),
+        new("leg-ticker-started", "Handled", [LegStart], "LegTickingPassTests.An_ended_worker_with_commits_and_nothing_ticked_gets_a_ticker_that_finishes_the_leg_with_no_ring"),
         new("leg-removed", "Handled", [LegPlan], "LegTests.APlannedLegIsRemovedTheLegsAfterItKeepTheirOrderAndAHandledCardSaysWhy"),
         new("leg-holding", "Handled", ["Flights/LegCommander.Hold.cs"], "LegHoldTests.AWorkerFailingOnAPackageASiblingIsPublishingHoldsItsLegWithNoRingAndItsWorkerStopped"),
         new("start-failed", "Ring", ["Flights/LegCommander.Launch.cs"], "LockFreeStartTests.AStartThatFailsAfterTheAnswerClearsItsReservationAndSaysSoOnACard", "the start the node tried was refused or never answered, and nothing retries it by itself", [nameof(Verbs.StartLeg), nameof(Verbs.GoAround), nameof(Verbs.PlanFlight)], ChoiceFiles: [LegStart, "Flights/LegCommander.GoAround.cs", LegPlanners, LegReview]),
