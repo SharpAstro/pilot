@@ -518,9 +518,7 @@ public sealed partial class LegCommander
         {
             throw new FlightException("the plane's changed files could not be read");
         }
-        return [.. changed.Output.Split('
-').Concat(added.Ok ? added.Output.Split('
-') : []).Select(l => l.Trim()).Where(l => l.Length > 0).Distinct(StringComparer.Ordinal)];
+        return [.. changed.Output.Split('\n').Concat(added.Ok ? added.Output.Split('\n') : []).Select(l => l.Trim()).Where(l => l.Length > 0).Distinct(StringComparer.Ordinal)];
     }
 
     /// <summary>
