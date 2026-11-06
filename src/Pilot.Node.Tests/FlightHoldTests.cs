@@ -55,12 +55,13 @@ public sealed class FlightHoldTests : ReviewTestsBase
         var held = F(flight.Code).OnHold.ShouldNotBeNull();
         (held.By, held.Reason).ShouldBe(("me", Why));
         FlightWaiting.OnHoldText(F(flight.Code)).ShouldBe($"on hold by me: {Why}");
+        HeldCards().Last().Kind.ShouldBe(LegCommander.OnHoldKind);
         HeldCards().Last().Title.ShouldContain("on hold");
 
         (await Hold(flight, "me", "a newer reason")).Error.ShouldBeNull();
         var again = F(flight.Code).OnHold.ShouldNotBeNull();
         (again.Reason, again.Since).ShouldBe(("a newer reason", held.Since));
-        HeldCards().Last().Title.ShouldContain("a newer reason");
+        HeldCards().ShouldContain(c => c.Title.Contains("a newer reason"));
     }
 
     [Fact]
