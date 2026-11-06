@@ -104,11 +104,15 @@ public sealed class BranchShapeTests : ReviewTestsBase
         _github.Pr = _github.Pr! with { Head = Git(plane, "rev-parse", "HEAD") };
 
         var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", reviewed);
+        await Started(_legs, flight.Code);
 
         merge.Error.ShouldNotBeNull().ShouldContain("newer than the review: 1 commit (Add N)");
         merge.Error.ShouldContain(CommitRefs.Short(reviewed));
         _github.Merged.ShouldBeEmpty();
-        F(flight.Code).Review!.ReviewedHead.ShouldBe(reviewed);
+        // Not repinned: the old pass is not relabelled with the new head. A new review of the new head starts instead (pilot #742),
+        // so the row is a fresh Reviewing one whose head is the head it reads, never a Passed one carried over.
+        F(flight.Code).Review!.State.ShouldNotBe(ReviewState.Passed);
+        F(flight.Code).Review!.ReviewedHead.ShouldBe(_github.Pr!.Head);
     }
 
     [Fact]

@@ -87,7 +87,8 @@ public sealed partial class LegCommander
         catch (FlightException ex)
         {
             // Not mergeable as it is (conflicting, behind its base) is the update's: the entry stays while the node brings it up to date.
-            if (!Conflicts(ex.Message) && !Behind(ex.Message))
+            // A head that moved is dropped by the command's end, which says what comes next (HeadMovedAsync) once git has looked.
+            if (!Conflicts(ex.Message) && !Behind(ex.Message) && !HeadMoved(ex.Message))
             {
                 DropMerge(asked.Code, ex.Message);
             }
@@ -373,6 +374,48 @@ public sealed partial class LegCommander
             }
         }
         return pr;
+    }
+
+    private const string HeadMovedMarker = "look again before it lands";
+
+    /// <summary>True for the head-moved refusal of <see cref="RepinMovedHeadAsync"/> (a PR head past the reviewed one, in words).</summary>
+    private static bool HeadMoved(string error) => error.EndsWith(HeadMovedMarker, StringComparison.Ordinal) && error.Contains("head is ", StringComparison.Ordinal);
+
+    /// <summary>
+    /// A merge refused because the PR's head moved past the reviewed head: when the head has commits of its own past it (not only
+    /// the base), the merge row is dropped saying a review of the new head starts and the merge is offered again once it passes, and
+    /// that review is started the way the sweep starts an unread-head review. Returns the error the command answers. Outside the lock.
+    /// </summary>
+    private async Task<string> HeadMovedAsync(CommandRequest command, string error, CancellationToken cancellationToken)
+    {
+        var flight = FlightOf(command.Target);
+        var reviewed = flight.Review?.ReviewedHead;
+        var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+        var own = true;
+        if (reviewed is { Length: > 0 } && pr is not null && Directory.Exists(flight.Worktree))
+        {
+            await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
+            var count = await git.RunAsync(["rev-list", "--first-parent", "--no-merges", "--count", $"{reviewed}..{pr.Head}"], flight.Worktree, cancellationToken);
+            own = !(count.Ok && count.Output.Trim() == "0");
+        }
+        if (!own || reviewed is not { Length: > 0 } || pr is null)
+        {
+            DropMerge(flight.Code, error);
+            return error;
+        }
+        // The unread-head review reads the plane: a head pushed from outside it leaves the plane at the reviewed head, and the start
+        // would quietly do nothing, so that case says so instead of promising a review.
+        var plane = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken);
+        if (plane.Ok && string.Equals(plane.Output.Trim(), reviewed, StringComparison.OrdinalIgnoreCase))
+        {
+            var outside = $"the head moved to {CommitRefs.Short(pr.Head)} past the reviewed {CommitRefs.Short(reviewed)} from outside the plane, which still holds the reviewed head: no review starts until the plane has the new head";
+            DropMerge(flight.Code, outside);
+            return $"{error}; {outside}";
+        }
+        var reason = $"the head moved to {CommitRefs.Short(pr.Head)} past the reviewed {CommitRefs.Short(reviewed)}: a review of it starts, and the merge is offered again once it passes";
+        DropMerge(flight.Code, reason);
+        var started = await RunAsync(new CommandRequest { Verb = Verbs.StartReview, Target = Verbs.FlightTarget(flight.Code), Args = [UnreadHeadArg], Who = "node" }, cancellationToken);
+        return started.Ok ? $"{error}; {reason}" : $"{error}; {reason}, but the review did not start: {started.Error ?? "no reason given"}";
     }
 
     /// <summary>A moved head in words (<see cref="HeadWords"/>, shas after them); the plain form when the plane cannot say.</summary>
