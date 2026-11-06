@@ -167,6 +167,7 @@ public static partial class CardSummaries
             BenchRun.CardKind => "A benchmark ended and its tables are on the card, per ref. Read them, then dismiss it; nothing is waiting on you.",
             JobRunner.BenchBusyKind => "A queued benchmark has waited over half an hour for a quiet CPU. The card names what holds it; cancel the job or let it keep waiting.",
             JobRunner.UntoldKind => "A job ended but its owner's session refused to be told. Tell the owner yourself.",
+            JobRunner.UnansweredKind => "A job's owner was told twice how it ended and sat idle both times. Look at its session; it may have lost the message.",
             LockWait.QueuedKind => "A command that waited for a lock has run or was refused. Nothing to do; the title says which.",
             PackageWatch.LateKind => "A package a leg waits for is late on nuget.org. The card's choice says what to do about it.",
             PilotMd.TooLongKind => "A repo's PILOT.md is over the line limit and was not quoted into briefs. Shorten it to its rules.",

@@ -418,6 +418,12 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             since = woken;
         }
+        // A worker the job runner just retold (#756: it sat idle on a job's end) has been spoken to: the silence is counted from that
+        // tell, so the retell and this watch's nudge never both fire for the same silence.
+        if (state.Jobs().Where(j => j.RetoldAt is { } at && at > since && (j.Owner == worker.Id || j.Owner == worker.SessionId)).Select(j => j.RetoldAt).Max() is { } retold)
+        {
+            since = retold;
+        }
         // A worker idle while a job of its own runs or waits its turn is waiting, as it was told to: the job wakes it, so it
         // is not stalled. Its own by row, or by name: a worker Claude Code continued as a copy is a row of its own, while
         // the job it handed over is still the first row's (TIA1739's j13 rang c205 to c207 as stalls, 2026-10-23).
