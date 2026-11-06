@@ -161,7 +161,7 @@ public sealed partial class LegCommander
                 {
                     return $"{flight.Code}/{leg.Name} changed while {worker} was being started";
                 }
-                state.PutLeg(next with { State = LegState.Flying, AttemptModel = attemptModel, AttemptEffort = attemptEffort, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), StartHead = startHead, FinishedAt = null, Report = $"go-around: {why}", Wait = null });
+                state.PutLeg(next with { State = LegState.Flying, AttemptModel = attemptModel, AttemptEffort = attemptEffort, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), StartHead = startHead, TickerJob = null, FinishedAt = null, Report = $"go-around: {why}", Wait = null });
                 // Every card about the leg was about its last worker: failed, stopped, idle, waiting.
                 state.CloseCardsAbout(target, $"went around: {why}");
                 state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around for it", ReviewChanges, ReviewLoopKind, MergeFailed, PrReady);

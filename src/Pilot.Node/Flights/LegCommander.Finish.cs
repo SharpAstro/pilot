@@ -178,9 +178,12 @@ public sealed partial class LegCommander
         // A finished leg's worker is done with: the next leg, or a go-around, gets a fresh one. One that finished its own
         // leg (pilot leg finish, from its plane) is given a while to end its turn and say its report, then stopped all
         // the same: an idle background session lingers for good otherwise, holding its plane's folder open (PIL9997's).
-        if (leg.WorkerJob is { } job)
+        // The ticking pass (PIL804) finishes the leg for a worker that ended: its own session is stopped after the same grace, and
+        // so is the ended worker's. A ticker's done raises no ring, and the leg's open cards close with it (RecordDoneAsync).
+        var tickerFinished = leg.TickerJob is not null && string.Equals(command.Who, TickerName(flight, leg), StringComparison.Ordinal);
+        foreach (var job in new[] { leg.WorkerJob, leg.TickerJob }.Where(j => j is not null).Select(j => j!).Distinct(StringComparer.Ordinal))
         {
-            if (string.Equals(command.Who, leg.Worker, StringComparison.Ordinal))
+            if (string.Equals(command.Who, leg.Worker, StringComparison.Ordinal) || tickerFinished)
             {
                 _ = Task.Run(async () =>
                 {

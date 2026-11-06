@@ -134,6 +134,15 @@ public sealed record LegRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? StartHead { get; init; }
 
+    /// <summary>
+    /// The background job of the ticking pass the node started for its current worker, which ended (or sat idle past its nudges) with
+    /// steps unticked and commits since <see cref="StartHead"/>; null before one starts. Set once per worker, so a second ticker is never
+    /// started for the same worker; a new worker (first start, go-around, restart) clears it. Its session is named
+    /// <c>&lt;machine&gt;-&lt;flight&gt;-&lt;leg&gt;-ticker</c> in lower case (PIL804).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TickerJob { get; init; }
+
     public DateTimeOffset? FinishedAt { get; init; }
 }
 
