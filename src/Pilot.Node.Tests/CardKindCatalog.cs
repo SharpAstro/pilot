@@ -41,6 +41,7 @@ internal static class CardKindCatalog
     private const string PrReviewsFixer = "Flights/PrReviews.Fixer.cs";
     private const string PrReviewsFixerRounds = "Flights/PrReviews.FixerRounds.cs";
     private const string PrReviewsQueue = "Flights/PrReviews.Queue.cs";
+    private const string PrReviewsLand = "Flights/PrReviews.Land.cs";
     private const string PrReviewsStart = "Flights/PrReviews.Start.cs";
     private const string PrReviewsStatus = "Flights/PrReviews.Status.cs";
     private const string PrReviewsSweep = "Flights/PrReviews.Sweep.cs";
@@ -150,9 +151,9 @@ internal static class CardKindCatalog
         new("pr-review-restarted", "Handled", [PrReviewsSweep], "PrReviewTests.AReviewingRowWhoseSessionIsGoneAfterARestartIsStartedAfreshAtTheFirstSweepOnce"),
         new("pr-review-lost", "ForYou", [PrReviewsSweep], "PrReviewTests.AReviewLostInARestartThatCannotStartAgainTakesItsStatusAndLabelBackAndRaisesACardWithReviewAgain"),
         new("pr-review-posted", "Handled", [PrReviewsVerdicts], "PrReviewTests.PostsItselfOnAnOpenPr"),
-        new("pr-review-queued", "Handled", [PrReviewsQueue], "PrReviewTests.ACleanCommentOnOnesOwnPrQueuesItAtTheReviewedHeadOnceAndSaysSo"),
+        new("pr-review-queued", "Handled", [PrReviewsQueue, PrReviewsLand], "PrReviewTests.ACleanCommentOnOnesOwnPrQueuesItAtTheReviewedHeadOnceAndSaysSo"),
         new("pr-review-merge", "ForYou", [PrReviewsQueue], "PrReviewTests.ABaseWithoutAMergeQueueRaisesTheMergeCard"),
-        new("pr-review-queue-refused", "ForYou", [PrReviewsQueue], SourcePinned),
+        new("pr-review-queue-refused", "ForYou", [PrReviewsQueue, PrReviewsLand], SourcePinned),
         new("pr-review-design", "Ring", [PrReviewsFixer], "PrFixTests.ADesignQuestionRingsAndStartsNoFixer"),
         new("pr-review-design-settled", "Handled", [PrReviewsFixerRounds], "DesignSettledTests.AMergedPrDowngradesItsRingingDesignCardToANoticeNamingIt"),
         new("pr-review-no-fixer", "Ring", [PrReviewsFixer], "PrRecheckTests.ARecheckOfAChangesReviewWithNoFixerRingsTheOwnerOnceAndADismissalSticksUntilTheHeadMoves"),

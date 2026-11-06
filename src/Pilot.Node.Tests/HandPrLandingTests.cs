@@ -15,7 +15,7 @@ namespace Pilot.Node.Tests;
 [Trait("Category", "Slow")]
 public sealed class HandPrLandingTests : PrReviewTestsBase
 {
-    private static RoleModels OnAutopilot(string? method = null) =>
+    private static RoleModels OnAutopilot(string method = "squash") =>
         new(new NodeSettings { Autopilot = true, MergeMethod = method });
 
     [Fact]
