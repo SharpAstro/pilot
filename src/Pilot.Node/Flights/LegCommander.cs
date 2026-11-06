@@ -298,7 +298,7 @@ public sealed partial class LegCommander(
         error ??= notStarted;
 
         // The legs' sub-tasks in the work item follow the verb, outside the lock: the tracker takes as long as it takes, and a refusal is logged, never the verb's.
-        if (error is null && (command.Verb is Verbs.PlanLeg or Verbs.RemoveLeg || command.Verb == Verbs.FinishLeg && (command.Args ?? []).FirstOrDefault() is "done" or "accepted" or "verified"
+        if (error is null && (command.Verb is Verbs.PlanLeg or Verbs.RemoveLeg || command.Verb == Verbs.FinishLeg && (command.Args ?? []).FirstOrDefault() is "done" or "accepted" or "verified" or RetiredOutcome
             || command.Verb == Verbs.FinishLeg && (command.Args ?? []).FirstOrDefault() is "failed" && LegOf(command.Target).Leg.State == LegState.Done))
         {
             await SyncSubTasksAsync(CodeOf(command.Target), removedSubTask, command.Verb == Verbs.FinishLeg ? LegOf(command.Target).Leg.Name : null, cancellationToken);
@@ -323,7 +323,7 @@ public sealed partial class LegCommander(
         // its PR (which starts its review), after this lock is let go. Off, a card offers it, so a flight never just sits.
         // A worker's "failed" that the node finished as done (its plane matched its pushed branch and its check passed) goes on too.
         if (error is null && command.Verb == Verbs.FinishLeg
-            && ((command.Args ?? []).FirstOrDefault() is "done" or "accepted" or "verified" or PushedWithLease or MergedWithOrigin
+            && ((command.Args ?? []).FirstOrDefault() is "done" or "accepted" or "verified" or RetiredOutcome or PushedWithLease or MergedWithOrigin
                 || ((command.Args ?? []).FirstOrDefault() is "failed" && LegOf(command.Target).Leg.State == LegState.Done)))
         {
             // The overlap check of what the plane changed, before the flight goes on: a card it rings holds the next leg through Due().

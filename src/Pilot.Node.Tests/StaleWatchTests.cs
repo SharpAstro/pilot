@@ -180,18 +180,29 @@ public sealed class StaleWatchTests
     }
 
     [Fact]
-    public async Task AReminderClosesOnceTheCardItRemindsOfIsAnswered()
+    public async Task ARungAgainCardClosesWithItsAnswerAndLeavesNoReminderBehind()
     {
         Fly(TimeSpan.FromHours(1));
         var card = _state.RaiseCard(CardBin.Ring, "x", Verbs.FlightTarget("DIR178"), "question");
         _clock.Now += TimeSpan.FromHours(1.5);
         await _watch.TickAsync(Ct);
-        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == StaleWatch.ReminderKind);
+        _state.Cards(openOnly: true).Single(c => c.Id == card.Id).RungAgainAt.ShouldNotBeNull();
 
         _state.CloseCard(card.Id, "answered", "person");
         await _watch.TickAsync(Ct);
 
-        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == StaleWatch.ReminderKind);
+        _state.Cards(openOnly: true).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AReminderLeftOpenByAnEarlierNodeIsClosedAtTheFirstTick()
+    {
+        Fly(TimeSpan.FromHours(1));
+        var old = _state.RaiseCard(CardBin.ForYou, "stale-card-reminder", Verbs.CardTarget("c99"), "Still ringing after 2 h: question");
+
+        await _watch.TickAsync(Ct);
+
+        _state.Cards().Single(c => c.Id == old.Id).State.ShouldBe(CardState.Closed);
     }
 
     [Fact]
@@ -248,8 +259,9 @@ public sealed class StaleWatchTests
         await _watch.TickAsync(Ct);
         await _watch.TickAsync(Ct);
 
-        _state.Cards().Count(c => c.Kind == StaleWatch.ReminderKind).ShouldBe(1);
-        _state.Cards().ShouldContain(c => c.Kind == StaleWatch.ActedKind && c.Title.Contains(card.Id));
+        _state.Cards().Count(c => c.Kind == "x").ShouldBe(1);
+        _state.Cards().Single(c => c.Id == card.Id).RungAgainAt.ShouldBe(_clock.Now);
+        _state.Cards().Count(c => c.Kind == StaleWatch.ActedKind && c.Title.Contains(card.Id)).ShouldBe(1);
     }
 
     [Fact]

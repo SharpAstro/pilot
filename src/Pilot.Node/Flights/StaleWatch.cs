@@ -13,7 +13,10 @@ namespace Pilot.Node.Flights;
 public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundService
 {
     public const string ActedKind = "stale-acted";
-    public const string ReminderKind = "stale-card-reminder";
+
+    // The kind of the card an earlier node raised about an unanswered card. Nothing raises it now (the card itself rings again, #799 rule 5);
+    // one still open in a store from before is closed at the first tick, as its card is no longer asked of anyone through it.
+    private const string LegacyReminderKind = "stale-card-reminder";
 
     /// <summary>How often it reads.</summary>
     public TimeSpan Every { get; init; } = TimeSpan.FromMinutes(5);
@@ -101,7 +104,10 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         var now = time.GetUtcNow();
         var reading = Staleness.Read(state.Flights(), state.Legs(), state.Cards(), state.Jobs(), state.PullRequests(), now, Bounds(), time.LocalTimeZone);
 
-        CloseOrphanReminders();
+        foreach (var legacy in state.Cards(openOnly: true).Where(c => c.Kind == LegacyReminderKind))
+        {
+            state.CloseCard(legacy.Id, "the card itself is rung again now", "node");
+        }
         foreach (var item in reading.Nearing)
         {
             await ActAsync(item, cancellationToken);
@@ -150,21 +156,6 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         state.UpdateFlight(flight.Code, f => f.LastMovedAt == move.At && f.LastMove == move.Text ? f : f with { LastMovedAt = move.At, LastMove = move.Text });
     }
 
-    // A reminder about a card is closed once that card is: its choices would answer a card that is no longer asked.
-    private void CloseOrphanReminders()
-    {
-        var open = state.Cards(openOnly: true);
-        var openIds = open.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
-        foreach (var reminder in open.Where(c => c.Kind == ReminderKind))
-        {
-            var target = reminder.Subject.StartsWith(Verbs.CardTargetPrefix, StringComparison.Ordinal) ? reminder.Subject[Verbs.CardTargetPrefix.Length..] : null;
-            if (target is null || !openIds.Contains(target))
-            {
-                state.CloseCard(reminder.Id, $"card {target} is closed", "node");
-            }
-        }
-    }
-
     // Half a bound: the node's own action where one exists, once per item and per kind of action.
     private async Task ActAsync(StaleItem item, CancellationToken cancellationToken)
     {
@@ -173,7 +164,8 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         {
             if (state.Cards(openOnly: true).FirstOrDefault(c => c.Id == item.Subject) is { } card && _acted.TryAdd($"card:{card.Id}", 0))
             {
-                state.RaiseCard(CardBin.ForYou, ReminderKind, Verbs.CardTarget(card.Id), $"Still ringing after {item.AgeText}: {card.Title}", $"Card {card.Id} has had no answer. {item.Action}.", card.Choices);
+                // The card itself rings again, in place: a second card about the first would be a meta-card to answer on top of it (#799 rule 5).
+                state.RingAgain(card.Id);
                 state.RaiseCard(CardBin.Handled, ActedKind, subject, $"{item.Subject} has rung {item.AgeText} unanswered; the node rang it again");
             }
             return;

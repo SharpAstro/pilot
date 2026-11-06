@@ -135,6 +135,9 @@ public static partial class Briefs
         text.AppendLine($"- When you cannot go on: `{run} leg finish failed \"<why>\"`. Fail only for what stops the Done-when; something");
         // A leg failed over a nicety the Done-when never asked for rings the person and costs a fresh worker (PIL277, 2026-10-26).
         text.AppendLine("  else you could not do (a permission refused, an image not attached, a nice-to-have) goes in the report of a done leg.");
+        // A leg stopped on the controller's or the owner's word is not a failure: failed rings a go-around and an accept choice (#799 rule 4, c3623).
+        text.AppendLine($"- When the controller or the owner told you to stop the leg: `{run} leg finish retired \"<whose word, and why>\"`, never `failed`.");
+        text.AppendLine("  Retired ends the leg with no card and the flight goes on with its next leg; failed rings the person for a leg that broke.");
         // A restore that cannot find a sibling's package is the sibling's publish not done yet, not this leg's fault: the node
         // holds the leg for it and flies it again once nuget.org serves the package. A worker that works around it (a local
         // feed, a pin moved back) would ship a build that is not what CI restores.

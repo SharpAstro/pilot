@@ -26,6 +26,7 @@ public sealed partial class NodeState
                     return;
                 }
                 Publish(new FlightChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = flight });
+                RefreshPlannedCard(known, flight);
             }
             else
             {
@@ -51,8 +52,27 @@ public sealed partial class NodeState
             if (!Same(known, changed))
             {
                 Publish(new FlightChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = changed });
+                RefreshPlannedCard(known, changed);
             }
             return changed;
+        }
+    }
+
+    /// <summary>
+    /// A planned card of a held flight offers no Start (#799 rule 6: the node would refuse it); the moment the hold comes or lifts, the
+    /// card's choice and waiting line follow the flight's state, in place. Under the lock, after the flight's change was published.
+    /// </summary>
+    private void RefreshPlannedCard(FlightRow before, FlightRow after)
+    {
+        if (before.State == after.State
+            || _legs.Values.Where(l => l.Flight == after.Code && l.State == LegState.Planned).OrderBy(l => l.Order).FirstOrDefault() is not { } first)
+        {
+            return;
+        }
+        foreach (var card in _cards.Values.Where(c => c.State == CardState.Open && c.Kind == LegCommander.PlannedKind && c.Subject == Verbs.FlightTarget(after.Code)).ToList())
+        {
+            var choices = LegCommander.PlannedChoices(after, first);
+            UpdateCard(card.Id, card.Title, LegCommander.PlannedDetail(card.Detail, after), choices, card.Link, summary: CardSummaries.For(LegCommander.PlannedKind, card.Subject, card.Title, choices));
         }
     }
 
