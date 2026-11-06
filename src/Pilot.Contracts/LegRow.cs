@@ -126,6 +126,23 @@ public sealed record LegRow
 
     public DateTimeOffset? StartedAt { get; init; }
 
+    /// <summary>
+    /// The plane's HEAD (a commit sha) when its current worker started, on the first start and again on each go-around; null before a
+    /// worker starts or when HEAD could not be read. The node compares it with the plane's HEAD later to tell whether the worker
+    /// committed anything, as a worker that commits and ends with no step ticked is finished by the node's ticking pass (PIL804).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StartHead { get; init; }
+
+    /// <summary>
+    /// The background job of the ticking pass the node started for its current worker, which ended (or sat idle past its nudges) with
+    /// steps unticked and commits since <see cref="StartHead"/>; null before one starts. Set once per worker, so a second ticker is never
+    /// started for the same worker; a new worker (first start, go-around, restart) clears it. Its session is named
+    /// <c>&lt;machine&gt;-&lt;flight&gt;-&lt;leg&gt;-ticker</c> in lower case (PIL804).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TickerJob { get; init; }
+
     public DateTimeOffset? FinishedAt { get; init; }
 }
 
