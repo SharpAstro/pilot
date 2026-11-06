@@ -79,6 +79,14 @@ public sealed partial class LegCommander
         _calling.TryGetValue(code, out var busy) && busy.What == what && time.GetUtcNow() - busy.At < StuckAfter;
 
     /// <summary>
+    /// What the flight whose card <paramref name="target"/> names (<c>flight/&lt;code&gt;</c> or <c>flight/&lt;code&gt;/&lt;leg&gt;</c>) has calls out for, in words
+    /// (<c>being sent round</c>, <c>being merged</c>), with <c>&lt;code&gt; is</c> before it; null when none is out, or the target names no flight. A card
+    /// answered meanwhile says what it waits on with it (#792).
+    /// </summary>
+    internal string? CallingOn(string target) =>
+        CodeOf(target) is { Length: > 0 } code && _calling.TryGetValue(code, out var busy) && time.GetUtcNow() - busy.At < StuckAfter ? $"{code} is {busy.What}" : null;
+
+    /// <summary>
     /// Takes the lock and the flight, as <see cref="Calling"/> does, for a call of the node's own (a rebase, a send back for changes):
     /// where a person's command is refused while the flight has calls out, this waits for them, without the lock.
     /// </summary>

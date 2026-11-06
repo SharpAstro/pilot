@@ -74,8 +74,34 @@ public sealed record CardRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? AttachmentExt { get; init; }
 
+    /// <summary>
+    /// The answer to this card that is underway (#792): which choice was pressed, by whom, when, and what it waits on. Set while an open
+    /// card's choice runs or waits its turn (a go-around queued behind other node work, a merge in its gh calls), so every client shows the
+    /// card as answered in progress instead of offering its buttons again, and a second press of the same choice joins it. Cleared when
+    /// the answer ends: the card closes with its outcome, or opens again when the answer is refused or cut off. Null when none is underway.
+    /// Optional, so it does not raise <see cref="NodeWire.Version"/>: an older client ignores it and keeps the buttons, and a press of one is joined all the same.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public CardAnswering? Answering { get; init; }
+
     /// <summary>How many characters of a sha the node and its clients show: the node's CommitRefs and the pages cut to this.</summary>
     public const int ShortShaLength = 9;
+}
+
+/// <summary>An answer to a card that has been taken and is not done yet (<see cref="CardRow.Answering"/>).</summary>
+public sealed record CardAnswering
+{
+    /// <summary>The label of the choice that was pressed: <c>Resolve the conflict</c>.</summary>
+    public required string Choice { get; init; }
+
+    /// <summary>Who pressed it: a client, a session's name, or <c>cli</c>.</summary>
+    public required string By { get; init; }
+
+    /// <summary>When the answer was taken.</summary>
+    public required DateTimeOffset At { get; init; }
+
+    /// <summary>What the answer waits on, in a few words (<c>flight PIL777 being sent round</c>), where the node can tell; null when it simply runs.</summary>
+    public string? Waiting { get; init; }
 }
 
 /// <summary>A card's button: what it says, and the command it runs.</summary>

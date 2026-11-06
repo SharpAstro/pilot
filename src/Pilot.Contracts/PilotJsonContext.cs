@@ -44,6 +44,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(LegRecheck))]
 [JsonSerializable(typeof(LegRow))]
 [JsonSerializable(typeof(CardRow))]
+[JsonSerializable(typeof(CardAnswering))]
 [JsonSerializable(typeof(UsageRow))]
 [JsonSerializable(typeof(AccountRow))]
 [JsonSerializable(typeof(AdmissionRow))]
