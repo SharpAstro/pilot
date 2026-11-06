@@ -173,6 +173,7 @@ public abstract class PrRecheckTestsBase : IDisposable
             (await _legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct)).Error.ShouldBeNull();
         await Run(Verbs.PlanLeg, Verbs.FlightTarget(flight.Code), "controller", "name=parser", "goal=Do it", "done-when=It is done", "item=The step");
         await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, "parser"), "controller");
+        await Launched(() => _state.Legs(flight.Code).Single().Worker is not null, "the worker was not recorded");
         var worker = _state.Legs(flight.Code).Single().Worker!;
         File.WriteAllText(Path.Combine(flight.Worktree, readme is null ? "parser.txt" : "README.md"), readme ?? "work\n");
         PrOrigins.Git(flight.Worktree, "add", ".");
@@ -180,6 +181,7 @@ public abstract class PrRecheckTestsBase : IDisposable
         await Run(Verbs.Check, Verbs.LegTarget(flight.Code, "parser"), worker, "1");
         await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), worker, "done", "did it");
         await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        await Launched(() => _state.Flights().Single().Review is not null, "the reviewer was not recorded");
 
         // The fake opens a PR of its own number; this one is PR 7 of acme/widget, at the head the plane pushed.
         var head = PrOrigins.Git(flight.Worktree, "rev-parse", "HEAD");
@@ -189,6 +191,17 @@ public abstract class PrRecheckTestsBase : IDisposable
         await Run(Verbs.Review, "flight/" + flight.Code, _state.Flights().Single().Review!.Reviewer, "pass", "fine");
         _github.Labels[7] = [PilotMarks.Recheck];
         return _state.Flights().Single();
+    }
+
+    /// <summary>A session the node launches after the command answers is recorded later than that, on a loaded machine much later.</summary>
+    private static async Task Launched(Func<bool> recorded, string what)
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        while (!recorded())
+        {
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(120), what);
+            await Task.Delay(10, Ct);
+        }
     }
 
     private protected static string Short(string sha) => sha[..9];
