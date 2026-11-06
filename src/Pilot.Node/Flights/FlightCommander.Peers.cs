@@ -249,7 +249,7 @@ public sealed partial class FlightCommander
                 return (null, true);
             }
             // The wait now points at the survivor, so what GitHub is asked about is the survivor's branch, PR and issue, never the folded one's.
-            var survivor = read.Flights.FirstOrDefault(f => string.Equals(f.Code, into, StringComparison.OrdinalIgnoreCase));
+            var survivor = read.Flights!.FirstOrDefault(f => string.Equals(f.Code, into, StringComparison.OrdinalIgnoreCase));
             return (wait with
             {
                 Code = into, Note = null,
