@@ -254,7 +254,6 @@ public sealed class FakeGitHubTests
         [nameof(FakeGitHub.Runs)] = "seeded by a test: the workflow runs of each commit, only read by a call",
         [nameof(FakeGitHub.MergeOf)] = "seeded by a test: the merge state of each PR, only read by a call",
         [nameof(FakeGitHub.Origins)] = "seeded by a test: where each repo clones from, only read by a call",
-        [nameof(FakeGitHub.AllowedMethods)] = "a setting a test sets: the merge methods the repo allows, only read by a call",
     };
 
     [Fact]
