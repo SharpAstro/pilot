@@ -242,7 +242,7 @@ public sealed class ConnectTests : OverlapTestsBase
 
         var unknown = WaitOn("SE9");
         unknown.Note.ShouldBe("SE9 is not a node this one holds a grant for");
-        unknown.Note.ShouldNotContain("LAN");
+        unknown.Note.ShouldNotBeNull().ShouldNotContain("LAN");
         unknown.UnreachableSince.ShouldBeNull();
         FlightWaiting.For(F("TIA2")).ShouldContain("SE900 on SE9 (SE9 is not a node this one holds a grant for)");
         log.ToString().ShouldNotContain("SE9");
@@ -269,7 +269,7 @@ public sealed class ConnectTests : OverlapTestsBase
 
         var wait = F("TIA2").PeerConnections.ShouldHaveSingleItem();
         wait.Note.ShouldBe("SE9 was not among the nodes reached");
-        wait.Note.ShouldNotContain("LAN");
+        wait.Note.ShouldNotBeNull().ShouldNotContain("LAN");
         wait.UnreachableSince.ShouldBeNull();
         F("TIA2").State.ShouldBe(FlightState.Held);
         log.ToString().ShouldBeEmpty();
