@@ -25,7 +25,7 @@ internal static class CardKindCatalog
     private const string LegPlanners = "Flights/LegCommander.Planners.cs";
     private const string LegReview = "Flights/LegCommander.Review.cs";
     private const string HumanVerification = "Flights/LegCommander.HumanVerification.cs";
-    private const string LegMerge ="Flights/LegCommander.Merge.cs";
+    private const string LegMerge = "Flights/LegCommander.Merge.cs";
     private const string LegChecksAndConflicts = "Flights/LegCommander.ChecksAndConflicts.cs";
     private const string Lay = "Flights/LegCommander.Lay.cs";
     private const string Shape = "Flights/LegCommander.Shape.cs";

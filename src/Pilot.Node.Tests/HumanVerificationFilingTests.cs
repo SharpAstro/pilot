@@ -187,4 +187,12 @@ public sealed class HumanVerificationFilingTests : ReviewTestsBase
         item.DoneWhen.ShouldBe("it pans.");
         LegCommander.ReadHumanItem("1. Just a title").ShouldBe(new LegCommander.HumanItem("Just a title", "", ""));
     }
+
+    [Fact]
+    public void BoldAndBulletedDoAndDoneWhenLinesAreStillRead()
+    {
+        var item = LegCommander.ReadHumanItem("- Pan the canvas\n  - **Do:** open it\n  - **Done when:** it pans.");
+
+        item.ShouldBe(new LegCommander.HumanItem("Pan the canvas", "open it", "it pans."));
+    }
 }

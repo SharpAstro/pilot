@@ -28,7 +28,8 @@ public sealed partial class LegCommander
     /// <summary>Reads a kept item (<see cref="ReviewFindings.HumanVerification"/>): the first line is the title, then a <c>Do:</c> and a <c>Done when:</c> line.</summary>
     internal static HumanItem ReadHumanItem(string item)
     {
-        var lines = item.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToArray();
+        // A leading bullet and bold markers are dropped, so `- Do: …` and `**Do:** …` read as `Do: …`.
+        var lines = item.Split('\n').Select(l => BulletMarker().Replace(l.Trim().Replace("**", ""), "").Trim()).Where(l => l.Length > 0).ToArray();
         var title = lines.Length > 0 ? BulletMarker().Replace(lines[0], "").Trim() : "";
         string? doText = null, doneWhen = null;
         var into = 0;
@@ -116,7 +117,7 @@ public sealed partial class LegCommander
                 Record(flight.Code, f => f with { HumanChecks = [.. f.HumanChecks ?? [], new HumanCheck(made.Number, item.Title)] });
             }
         }
-        catch (Exception ex) when (ex is FlightException or InvalidOperationException or IOException)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             var left = fresh.Count - filed.Count;
             state.RaiseCard(CardBin.Handled, HumanVerificationRefusedKind, subject,
