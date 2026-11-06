@@ -183,7 +183,12 @@ internal static class FlightMapLayerPalette
         KeyChipBg: p.HeaderBg,
         OnInk: p.Bright,
         OffInk: p.Dim,
-        DisabledInk: p.Faint);
+        DisabledInk: p.Faint)
+    {
+        // An opaque backing under the whole panel: the map's labels panning beneath the menu are not drawn through its rows
+        // when the idle fade dims them.
+        Backing = p.MenuBg,
+    };
 
     public static string RowAction(FlightMapLayer layer) => RowPrefix + layer.Id;
 
