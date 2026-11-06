@@ -95,7 +95,7 @@ public sealed class EndedSessionJobsTests : IDisposable
         await Until(holder, j => j.State == JobState.Cancelled);
         foreach (var left in _state.Jobs().Where(j => j.State is JobState.Queued or JobState.Running))
         {
-            await Until(left.Id, j => j.State is not (JobState.Queued or JobState.Running), seconds: 60);
+            await Until(left.Id, j => j.State is not (JobState.Queued or JobState.Running));
         }
     }
 
