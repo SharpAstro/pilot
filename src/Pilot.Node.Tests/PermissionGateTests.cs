@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.DependencyInjection;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Pilot.Node.Tests.Sessions;
@@ -9,9 +10,9 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// The node answers a node-started session's permission prompt itself when the call only acts inside that session's own plane
-/// (entering it, reading or editing a file under it); every other call is left to the person. And when the hook was missed, a worker
-/// still seen waiting on such a call is sent round once with a brief that avoids the prompt, then rings.
+/// The node answers a plane's worker's permission prompt itself when the call only acts inside that plane (entering it, reading or
+/// editing a file under it), and keeps the session working; every other call is left to the person. And when the hook was missed, a
+/// worker still seen waiting on such a call a look later is sent round once with a brief that avoids the prompt, then rings.
 /// </summary>
 public sealed class PermissionGateTests
 {
@@ -211,7 +212,10 @@ public sealed class PermissionGateTests
 
     private readonly List<CommandRequest> _said = [];
 
-    private LegWatch Watch(string? asking, string? waitingFor = "permission to use EnterWorktree", string? refuse = null)
+    // A worker seen waiting long past one look (LegWatch.Interval, 30 s): the hook was missed, not on its way.
+    private static readonly TimeSpan LongWait = TimeSpan.FromMinutes(5);
+
+    private LegWatch Watch(string? asking, string? waitingFor = "permission to use EnterWorktree", string? refuse = null, TimeSpan? waited = null)
     {
         var watch = new LegWatch(_state, (command, _) =>
         {
@@ -245,9 +249,10 @@ public sealed class PermissionGateTests
             SpendWeighted = 0,
             State = SessionState.Waiting,
             WaitingFor = waitingFor,
+            WaitingSince = _time.GetUtcNow() - (waited ?? LongWait),
             Asking = asking,
             LastResponseAt = Start,
-            StartedAt = Start,
+            StartedAt = Start - (waited ?? LongWait),
         });
         return watch;
     }
@@ -288,7 +293,10 @@ public sealed class PermissionGateTests
 
         var brief = _said.ShouldHaveSingleItem().Args[0];
         brief.ShouldContain("(Edit)");
-        brief.ShouldContain(Plane());
+        // Why the prompt came, and the path that runs without one.
+        brief.ShouldContain("only when it does not take the path as inside your folder");
+        brief.ShouldContain($"the absolute path spelled from the plane, `{file}`");
+        brief.ShouldNotContain('\u2014');
         Waiting().ShouldBeEmpty();
 
         await watch.LookAsync(Ct);
@@ -296,6 +304,130 @@ public sealed class PermissionGateTests
         title.ShouldStartWith("TIA7/parser's worker wants to edit ");
         title.ShouldEndWith("(Edit)");
     }
+
+    [Fact]
+    public async Task AnEditGivenByARelativePathIsToldThePathSpelledFromThePlane()
+    {
+        var watch = Watch($"Edit: {Path.Combine("src", "..", "src", "a.cs")}", "permission to use Edit");
+
+        await watch.LookAsync(Ct);
+
+        _said.ShouldHaveSingleItem().Args[0].ShouldContain($"`{Path.Combine(Plane(), "src", "a.cs")}`");
+    }
+
+    [Fact]
+    public async Task AFreshWaitOnASafeCallIsNeitherSentRoundNorRungUntilItIsStillWaitingALookLater()
+    {
+        // The node may be answering it right now: a wait younger than one look is left to the next.
+        var watch = Watch($"EnterWorktree: {Plane()}", waited: TimeSpan.FromSeconds(1));
+
+        await watch.LookAsync(Ct);
+
+        _said.ShouldBeEmpty();
+        Waiting().ShouldBeEmpty();
+
+        // Still waiting on it a look later: the answer was missed, and the leg goes round.
+        _time.Advance(watch.Interval);
+        await watch.LookAsync(Ct);
+
+        _said.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.GoAround);
+        Waiting().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AFreshWaitOnACallThatNeedsAPersonRingsAtOnce()
+    {
+        var watch = Watch("Bash: git push origin main", "permission to use Bash", waited: TimeSpan.FromSeconds(1));
+
+        await watch.LookAsync(Ct);
+
+        _said.ShouldBeEmpty();
+        Waiting().ShouldHaveSingleItem().Bin.ShouldBe(CardBin.Ring);
+    }
+
+    [Fact]
+    public void APermissionRequestTheNodeAllowedLeavesTheSessionWorkingNotWaiting()
+    {
+        var hooks = new Pilot.Node.Sessions.HookBook();
+        var edit = Hook(Plane(), "Edit", In("file_path", Path.Combine(Plane(), "a.cs")));
+
+        hooks.Apply(JsonDocument.Parse(edit).RootElement, Start, allowed: true);
+
+        var allowed = hooks.Of(AgentRows.SessionA).ShouldNotBeNull();
+        allowed.State.ShouldBe(SessionState.Working);
+        (allowed.WaitingFor, allowed.Asking).ShouldBe((null, null));
+
+        // One the node left to the person waits on it, with the call it asks for.
+        hooks.Apply(JsonDocument.Parse(Hook(Plane(), "Bash", In("command", "git push origin main"))).RootElement, Start);
+        var asked = hooks.Of(AgentRows.SessionA).ShouldNotBeNull();
+        asked.State.ShouldBe(SessionState.Waiting);
+        asked.Asking.ShouldBe("Bash: git push origin main");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheNodeAnswersTheHookWithAllowAndTellsTheSessionWorkingNotWaiting()
+    {
+        // The hook's 2 s is for a live session; a loaded machine can take longer to start answering (StopGateTests).
+        var patient = TimeSpan.FromSeconds(30);
+        await using var node = await NodeHarness.StartAsync(Ct);
+        node.State.PutFlight(_state.Flights().Single());
+        var hooks = node.App.Services.GetRequiredService<Pilot.Node.Sessions.HookBook>();
+
+        // As Claude Code runs it: the PermissionRequest on stdin, the decision on stdout.
+        var allowed = new StringWriter();
+        var edit = Hook(Plane(), "Edit", In("file_path", Path.Combine(Plane(), "a.cs")));
+        (await HookCommands.HookAsync(node.SocketPath, new MemoryStream(System.Text.Encoding.UTF8.GetBytes(edit)), allowed, patient)).ShouldBe(0);
+
+        JsonDocument.Parse(allowed.ToString()).RootElement.GetProperty("hookSpecificOutput").GetProperty("decision").GetProperty("behavior").GetString().ShouldBe("allow");
+        hooks.Of(AgentRows.SessionA).ShouldNotBeNull().State.ShouldBe(SessionState.Working);
+
+        // A call that reaches outside: no answer, and the session waits on the person.
+        var left = new StringWriter();
+        var push = Hook(Plane(), "Bash", In("command", "git push origin main"));
+        (await HookCommands.HookAsync(node.SocketPath, new MemoryStream(System.Text.Encoding.UTF8.GetBytes(push)), left, patient)).ShouldBe(0);
+
+        left.ToString().ShouldBeEmpty();
+        hooks.Of(AgentRows.SessionA).ShouldNotBeNull().State.ShouldBe(SessionState.Waiting);
+    }
+
+    [Fact]
+    public async Task OnlyThePlanesWorkerIsAllowedNotAReviewerOrAnotherFlightsSession()
+    {
+        var edit = In("file_path", Path.Combine(Plane(), "a.cs"));
+        // No row yet: its first prompt can come before the tracker's first look, and a session in the plane is its worker.
+        (await Decide(Hook(Plane(), "Edit", edit))).ShouldNotBeNull();
+
+        Known(SessionRole.Worker, "TIA7");
+        (await Decide(Hook(Plane(), "Edit", edit))).ShouldNotBeNull();
+
+        Known(SessionRole.Reviewer, "TIA7");
+        (await Decide(Hook(Plane(), "Edit", edit))).ShouldBeNull();
+        (await Decide(Hook(Plane(), "Read", edit))).ShouldBeNull();
+
+        Known(SessionRole.Planner, "TIA7");
+        (await Decide(Hook(Plane(), "Edit", edit))).ShouldBeNull();
+
+        Known(SessionRole.Worker, "TIA8");
+        (await Decide(Hook(Plane(), "Edit", edit))).ShouldBeNull();
+    }
+
+    private void Known(SessionRole role, string flight) =>
+        _state.PutSession(new SessionRow
+        {
+            Id = AgentRows.SessionA[..8],
+            SessionId = AgentRows.SessionA,
+            Name = "se1-tia7-x",
+            Kind = SessionKind.Background,
+            Cwd = Plane(),
+            Role = role,
+            Flight = flight,
+            ContextTokens = 0,
+            ContextWindow = 200_000,
+            SpendWeighted = 0,
+            State = SessionState.Working,
+            StartedAt = Start,
+        });
 
     [Theory]
     [InlineData("Bash: git push origin main", "permission to use Bash")]

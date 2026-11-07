@@ -254,9 +254,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     {
                         break;
                     }
-                    // A call that only acts inside its own plane needs no person (PermissionGate allows it by hook): the hook was missed or came
-                    // too late, so the leg goes round once with a brief that says how to do it without the prompt, and a repeat rings.
-                    if (await SafeCallRoundAsync(leg, worker, subject, cancellationToken))
+                    // A call that only acts inside its own plane needs no person (PermissionGate allows it by hook): still waiting a look later,
+                    // the hook was missed or came too late, so the leg goes round once with a brief that says how to do it without the prompt,
+                    // and a repeat rings.
+                    if (await SafeCallRoundAsync(leg, worker, subject, now, cancellationToken))
                     {
                         break;
                     }
@@ -1548,27 +1549,56 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     private readonly HashSet<string> _safeCallTried = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// A Waiting worker whose pending call is one <see cref="PermissionGate"/> would allow (it only acts inside the leg's plane): the leg goes
-    /// round once per leg with a brief naming the call and how to do it without the prompt. True when it was sent round (no ring is
-    /// due); false when the call is not such a one, the go-around was refused, or it was sent round already and the worker still waits.
+    /// A worker still Waiting on a call <see cref="PermissionGate"/> would allow (it only acts inside the leg's plane), a look after the wait
+    /// began: the leg goes round once per leg with a brief naming the call and how to do it without the prompt. True when it was sent
+    /// round, or when the wait is younger than one look and is left to the next (no ring is due either way); false when the call is not
+    /// such a one, the go-around was refused, or it was sent round already and the worker still waits.
     /// </summary>
-    private async Task<bool> SafeCallRoundAsync(LegRow leg, SessionRow worker, string subject, CancellationToken cancellationToken)
+    private async Task<bool> SafeCallRoundAsync(LegRow leg, SessionRow worker, string subject, DateTimeOffset now, CancellationToken cancellationToken)
     {
         if (worker.WaitingFor?.Contains('?') == true
             || PermissionAsks.Split(worker.Asking) is not var (tool, path)
             || state.Flights().FirstOrDefault(f => f.Code == leg.Flight)?.Worktree is not { Length: > 0 } plane
-            || !PermissionGate.SafeInPlane(plane, tool, path)
-            || !_safeCallTried.Add(subject))
+            || !PermissionGate.SafeInPlane(plane, tool, path))
+        {
+            return false;
+        }
+        // Only a worker still waiting missed the node's answer. A wait younger than one look may be one the node is answering right now (the
+        // hook's allow on its way, or a notification of the prompt landing a moment before the call ran), so it is left to the next look,
+        // neither sent round nor rung. A wait with no time to it (no hook told of it) was missed for sure.
+        if (worker.WaitingSince is { } since && now - since < Interval)
+        {
+            return true;
+        }
+        if (!_safeCallTried.Add(subject))
         {
             return false;
         }
         var call = PermissionAsks.Describe(tool, path, plane);
-        var instead = tool == "EnterWorktree"
-            ? $"run `cd {plane}` in your shell instead of EnterWorktree: the plane is already your folder, and every command of yours runs there"
-            : $"use the path under the plane ({plane}) as it is, or work with the files from your shell inside the plane, not by a path the prompt would stop on";
+        var instead = tool == "EnterWorktree" ? $"run `cd {plane}` in your shell instead of EnterWorktree: the plane is already your folder, and every command of yours runs there" : FileInstead(tool, path!, plane);
         var reason = $"the last worker waited on a permission prompt for a call that only acts inside its own plane ({call}); do it without the prompt: {instead}";
         var around = await run(new CommandRequest { Verb = Verbs.GoAround, Target = subject, Args = [reason], Who = Who }, cancellationToken);
         return around.Ok;
+    }
+
+    /// <summary>
+    /// How a worker reads or edits a file under its plane without a prompt: a worker runs in auto mode, where Claude Code asks for a file
+    /// tool only when it does not take the path as inside the session's folder, so the brief says that and gives the path spelled from the
+    /// plane's own folder (absolute, same case and separators, no <c>..</c>).
+    /// </summary>
+    private static string FileInstead(string tool, string path, string plane)
+    {
+        string spelled;
+        try
+        {
+            spelled = Path.Combine(plane, Path.GetRelativePath(plane, Path.GetFullPath(path, plane)));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            spelled = plane;
+        }
+        return $"Claude Code asks before a {tool} only when it does not take the path as inside your folder (a relative path, a `..`, "
+            + $"another case or a linked folder), so give the {tool} the absolute path spelled from the plane, `{spelled}`, and it runs without asking";
     }
 
     /// <summary>

@@ -6,14 +6,22 @@ using Pilot.Node.Sessions;
 namespace Pilot.Node.Flights;
 
 /// <summary>
-/// The node's answer to a PermissionRequest hook: a node-started session in a flight's plane that asks leave for a call which only
-/// acts inside that plane (entering the plane itself, reading or editing a file under it) is allowed at once, so the person is
-/// never asked for what could do no harm. Every other call, and every other session, gets no answer, and the prompt stays with the person.
+/// The node's answer to a PermissionRequest hook: the worker of a flight's plane that asks leave for a call which only acts inside
+/// that plane (entering the plane itself, reading or editing a file under it) is allowed at once, so the person is never asked for
+/// what could do no harm. Every other call, and every other session, gets no answer, and the prompt stays with the person.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Like <see cref="StopGate"/> it counts only a plane the node flies and only a top-level session (a subagent's call is its parent's
 /// business). A path is read as written, joined to the session's folder and normalised, so a <c>..</c> that climbs out of the plane is
 /// outside it; a link inside the plane that points elsewhere is not followed. A hook it cannot read gets no answer.
+/// </para>
+/// <para>
+/// The worker is the session in the plane as the node sees it: a session whose row says another role (a reviewer, a planner, the
+/// watchtower) or another flight's worker gets no answer, so a reviewer is never let edit. A session in the plane the node has no row
+/// for yet counts as its worker, as the session tracker counts any other session working in a plane (an ad-hoc one too, a person's
+/// own); its first prompt can come before the tracker's first look.
+/// </para>
 /// </remarks>
 public sealed class PermissionGate(NodeState state)
 {
@@ -34,6 +42,7 @@ public sealed class PermissionGate(NodeState state)
     {
         if (hook.ValueKind != JsonValueKind.Object
             || ClaudeAgentsJson.Text(hook, "hook_event_name") != "PermissionRequest"
+            || ClaudeAgentsJson.Text(hook, "session_id") is not { Length: > 0 } session
             || ClaudeAgentsJson.Text(hook, "tool_name") is not { Length: > 0 } tool
             || ClaudeAgentsJson.Text(hook, "cwd") is not { Length: > 0 } cwd
             || ClaudeAgentsJson.Text(hook, "agent_id") is { Length: > 0 }
@@ -50,8 +59,13 @@ public sealed class PermissionGate(NodeState state)
         {
             return null;
         }
-        return flight is not null && SafeInPlane(flight.Worktree, cwd, tool, input) ? Allow() : null;
+        return flight is not null && WorkerOf(flight, session) && SafeInPlane(flight.Worktree, cwd, tool, input) ? Allow() : null;
     }
+
+    /// <summary>Whether <paramref name="session"/> is <paramref name="flight"/>'s worker as far as the node knows (see the remarks).</summary>
+    private bool WorkerOf(FlightRow flight, string session) =>
+        state.Sessions().FirstOrDefault(s => string.Equals(s.SessionId, session, StringComparison.OrdinalIgnoreCase)) is not { } row
+        || row.Role == SessionRole.Worker && string.Equals(row.Flight, flight.Code, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Whether a call of <paramref name="tool"/> with <paramref name="input"/>, made by a session in <paramref name="cwd"/> (in the plane),

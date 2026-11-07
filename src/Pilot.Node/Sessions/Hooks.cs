@@ -33,7 +33,12 @@ public sealed class HookBook
     public HookState? Of(string sessionId) => _bySession.GetValueOrDefault(sessionId);
 
     /// <summary>Takes one hook's stdin, as Claude Code sends it; returns the session it was about, or null for one it cannot read.</summary>
-    public string? Apply(JsonElement hook, DateTimeOffset at)
+    /// <param name="hook">The hook's stdin.</param>
+    /// <param name="at">When it came.</param>
+    /// <param name="allowed">The node answered this PermissionRequest itself (<see cref="Pilot.Node.Flights.PermissionGate"/>): the session
+    /// runs the call at once and shows no prompt, so it is working, not waiting. Kept as waiting, it stayed so until the session's next hook,
+    /// which can be minutes away (no PostToolUse is followed), and the leg watch sent round a worker the node had just let go on.</param>
+    public string? Apply(JsonElement hook, DateTimeOffset at, bool allowed = false)
     {
         if (hook.ValueKind != JsonValueKind.Object
             || ClaudeAgentsJson.Text(hook, "session_id") is not { Length: > 0 } sessionId
@@ -57,7 +62,7 @@ public sealed class HookBook
             "SessionStart" => previous is null or { State: SessionState.Ended } ? new HookState(name, at, SessionState.Idle, null, null) : null,
             "UserPromptSubmit" or "PreToolUse" or "PostToolUse" or "PostToolUseFailure" or "SubagentStart"
                 => new HookState(name, at, SessionState.Working, null, null),
-            "PermissionRequest" => PermissionRequest(hook, name, at),
+            "PermissionRequest" => allowed ? new HookState(name, at, SessionState.Working, null, null) : PermissionRequest(hook, name, at),
             "Notification" => FromNotification(hook, name, at, previous),
             "Stop" => new HookState(name, at, SessionState.Idle, null, null),
             "StopFailure" => new HookState(name, at, SessionState.Idle, null, ClaudeAgentsJson.Text(hook, "error") ?? "unknown"),

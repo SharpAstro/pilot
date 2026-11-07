@@ -128,13 +128,17 @@ public static partial class NodeApp
     {
         // A hook's stdin, forwarded by `pilot-node hook`: the session it names takes the hook's state, and the tracker
         // looks again now. 204, so a hook never learns anything worth failing over; but a Stop in a plane with files
-        // not committed is answered with the decision that sends the session back to commit them (StopGate).
+        // not committed is answered with the decision that sends the session back to commit them (StopGate), and a permission
+        // prompt for a call that only acts inside the session's own plane with the allow that runs it (PermissionGate).
         app.MapPost(NodeWire.HooksRoute, async (HttpContext context, HookBook hooks, StopGate gate, PermissionGate permissions, SessionTracker tracker, TimeProvider time, ILogger<HookBook> logger) =>
         {
             try
             {
                 using var hook = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
-                if (hooks.Apply(hook.RootElement, time.GetUtcNow()) is { } session)
+                // A permission prompt for a call that only acts inside the session's own plane is allowed here, so no one is asked for it.
+                // Decided before the hook is taken in, so a session the node lets go on is told working, never waiting on a prompt it does not show.
+                var allow = await permissions.DecideAsync(hook.RootElement, context.RequestAborted);
+                if (hooks.Apply(hook.RootElement, time.GetUtcNow(), allowed: allow is not null) is { } session)
                 {
                     // Debug only: PreToolUse fires on every tool call. Logging__LogLevel__Pilot.Node=Debug shows them.
                     logger.LogDebug("hook {Event} for {Session}", ClaudeAgentsJson.Text(hook.RootElement, "hook_event_name"), session[..Math.Min(8, session.Length)]);
@@ -145,8 +149,7 @@ public static partial class NodeApp
                     logger.LogInformation("stop held for {Session} in {Cwd}: files not committed", ClaudeAgentsJson.Text(hook.RootElement, "session_id"), ClaudeAgentsJson.Text(hook.RootElement, "cwd"));
                     return Results.Text(decision, "application/json");
                 }
-                // A permission prompt for a call that only acts inside the session's own plane is allowed here, so no one is asked for it.
-                if (await permissions.DecideAsync(hook.RootElement, context.RequestAborted) is { } allow)
+                if (allow is not null)
                 {
                     logger.LogInformation("permission allowed for {Session}: {Tool} in its plane", ClaudeAgentsJson.Text(hook.RootElement, "session_id"), ClaudeAgentsJson.Text(hook.RootElement, "tool_name"));
                     return Results.Text(allow, "application/json");
