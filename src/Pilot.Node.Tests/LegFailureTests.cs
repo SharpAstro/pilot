@@ -174,7 +174,7 @@ public sealed class LegFailureTests : IDisposable
         card.Summary.ShouldBe("The worker of TIA9/parser stopped and its check fails building Pilot.Ui. The flight changed none of the failing files or their projects. "
             + "main has changed those files since the flight took it (1 commit), so taking main may fix it.");
         // The panel draws a summary up to CardsView.SummaryChars (240) only: the c78 card, with a longer name and both notes, fits too.
-        card.Summary.Replace("TIA9/parser", "PIL834/read-stamps").Replace("(1 commit)", "(2 commits)").ShouldBe(C78Summary);
+        card.Summary.ShouldNotBeNull().Replace("TIA9/parser", "PIL834/read-stamps").Replace("(1 commit)", "(2 commits)").ShouldBe(C78Summary);
         C78Summary.Length.ShouldBeLessThanOrEqualTo(240);
         card.Detail.ShouldNotBeNull().ShouldContain("Fix the widget base clash");
     }
