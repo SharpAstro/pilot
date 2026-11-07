@@ -50,7 +50,7 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
 
         var card = Open().Single(c => c.Kind == "leg-failed");
         card.Summary.ShouldNotBeNull().ShouldContain($"{flight.Code}/parser");
-        card.Summary.ShouldContain("Send it round");
+        card.Summary.ShouldContain("stopped: the grammar cannot be parsed");
         card.Summary.ShouldNotContain("gave up");
     }
 
