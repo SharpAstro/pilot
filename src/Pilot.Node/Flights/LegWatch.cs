@@ -1,4 +1,5 @@
 using Pilot.Contracts;
+using Pilot.Node.Sessions;
 
 namespace Pilot.Node.Flights;
 
@@ -258,6 +259,21 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     // Waiting on the node, not on a person (#799 rule 3, row c17099): no ring while the node has the next move.
                     if (WaitsOnNode(leg, worker) && await NodeTakesOverAsync(leg, worker, cancellationToken))
                     {
+                        break;
+                    }
+                    // A call that only acts inside its own plane needs no person (PermissionGate allows it by hook): still waiting a look later,
+                    // the hook was missed or came too late, so the leg goes round once with a brief that says how to do it without the prompt,
+                    // and a repeat rings.
+                    if (await SafeCallRoundAsync(leg, worker, subject, now, cancellationToken))
+                    {
+                        break;
+                    }
+                    // A real question keeps its own words; a permission prompt is said by the call it asks leave for, when that is known.
+                    if (WantedCall(leg, worker) is { } wants)
+                    {
+                        Ring(leg, Waiting, $"{Name(leg)}'s worker wants to {wants}",
+                            $"it wants to {wants}; it cannot go on until the prompt is answered in its own session ({Steps(leg)})", worker,
+                            lead: $"The worker of {Name(leg)} wants to {wants}.");
                         break;
                     }
                     var asks = worker.WaitingFor is { Length: > 0 } what ? what : "a question or a permission";
@@ -1021,8 +1037,16 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             {
                 state.CloseCardsAbout(subject, "it has waited over " + Waited.Say(RingAfter) + ", so it rings", CardKinds.SessionWaiting);
             }
-            var what = session.WaitingFor is { Length: > 0 } w ? w : "a question or a permission";
             var age = session.WaitingSince is { } started ? $" · since {Waited.Say(now - started)}" : "";
+            // The same words as a leg's worker gets: the call it asks leave for, unless it asks a real question.
+            var wants = session.WaitingFor?.Contains('?') == true ? null : PermissionAsks.FromAsking(session.Asking);
+            if (wants is not null)
+            {
+                state.RaiseCard(rings ? CardBin.Ring : CardBin.ForYou, CardKinds.SessionWaiting, subject, $"{session.Name} wants to {wants}{age}",
+                    "answering in its own session lets it go on with the call", link: session.RemoteControlUrl);
+                continue;
+            }
+            var what = session.WaitingFor is { Length: > 0 } w ? w : "a question or a permission";
             state.RaiseCard(rings ? CardBin.Ring : CardBin.ForYou, CardKinds.SessionWaiting, subject, $"{session.Name} waits on {what}{age}", session.Asking, link: session.RemoteControlUrl);
         }
     }
@@ -1555,6 +1579,76 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         return true;
     }
 
+    // By leg subject: the legs sent round once already for a safe in-plane call their worker waited on; a worker of the same leg waiting again rings.
+    private readonly HashSet<string> _safeCallTried = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// A worker still Waiting on a call <see cref="PermissionGate"/> would allow (it only acts inside the leg's plane), a look after the wait
+    /// began: the leg goes round once per leg with a brief naming the call and how to do it without the prompt. True when it was sent
+    /// round, or when the wait is younger than one look and is left to the next (no ring is due either way); false when the call is not
+    /// such a one, the go-around was refused, or it was sent round already and the worker still waits.
+    /// </summary>
+    private async Task<bool> SafeCallRoundAsync(LegRow leg, SessionRow worker, string subject, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (worker.WaitingFor?.Contains('?') == true
+            || PermissionAsks.Split(worker.Asking) is not var (tool, path)
+            || state.Flights().FirstOrDefault(f => f.Code == leg.Flight)?.Worktree is not { Length: > 0 } plane
+            || !PermissionGate.SafeInPlane(plane, tool, path))
+        {
+            return false;
+        }
+        // Only a worker still waiting missed the node's answer. A wait younger than one look may be one the node is answering right now (the
+        // hook's allow on its way, or a notification of the prompt landing a moment before the call ran), so it is left to the next look,
+        // neither sent round nor rung. A wait with no time to it (no hook told of it) was missed for sure.
+        if (worker.WaitingSince is { } since && now - since < Interval)
+        {
+            return true;
+        }
+        if (!_safeCallTried.Add(subject))
+        {
+            return false;
+        }
+        var call = PermissionAsks.Describe(tool, path, plane);
+        var instead = tool == "EnterWorktree" ? $"run `cd {plane}` in your shell instead of EnterWorktree: the plane is already your folder, and every command of yours runs there" : FileInstead(tool, path!, plane);
+        var reason = $"the last worker waited on a permission prompt for a call that only acts inside its own plane ({call}); do it without the prompt: {instead}";
+        var around = await run(new CommandRequest { Verb = Verbs.GoAround, Target = subject, Args = [reason], Who = Who }, cancellationToken);
+        return around.Ok;
+    }
+
+    /// <summary>
+    /// How a worker reads or edits a file under its plane without a prompt: a worker runs in auto mode, where Claude Code asks for a file
+    /// tool only when it does not take the path as inside the session's folder, so the brief says that and gives the path spelled from the
+    /// plane's own folder (absolute, same case and separators, no <c>..</c>).
+    /// </summary>
+    private static string FileInstead(string tool, string path, string plane)
+    {
+        string spelled;
+        try
+        {
+            spelled = Path.Combine(plane, Path.GetRelativePath(plane, Path.GetFullPath(path, plane)));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            spelled = plane;
+        }
+        return $"Claude Code asks before the {tool} tool only when it does not take the path as inside your folder (a relative path, a `..`, "
+            + $"another case or a linked folder), so give the {tool} the absolute path spelled from the plane, `{spelled}`, and it runs without asking";
+    }
+
+    /// <summary>
+    /// What a Waiting worker's pending call would do, as <see cref="PermissionAsks"/> says it, or null when no call is known or the
+    /// worker asks a real question (a question mark in what it waits on), which keeps its own words.
+    /// </summary>
+    private string? WantedCall(LegRow leg, SessionRow worker)
+    {
+        if (worker.WaitingFor?.Contains('?') == true)
+        {
+            return null;
+        }
+        var plane = state.Flights().FirstOrDefault(f => f.Code == leg.Flight)?.Worktree;
+        return PermissionAsks.FromAsking(worker.Asking, plane);
+    }
+
     private void Ring(LegRow leg, string kind, string title, string? detail, SessionRow? worker = null, string? lead = null, string? redoWhy = null)
     {
         var choices = Choices(leg, worker, kind, redoWhy);
@@ -1574,7 +1668,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         return kind switch
         {
             Stopped => $"{lead ?? $"The worker of {what} was stopped by the API and no reset time is known."} {then}",
-            Waiting => $"The worker of {what} waits on you for an answer. Answer it in its own session; {redo} lets it go.",
+            Waiting => $"{lead ?? $"The worker of {what} waits on you for an answer."} Answering in its own session lets this worker go on with the call; {redo} stops this one and starts another on the leg from the branch.",
             Failed => $"The worker of {what} failed. {then}",
             Missing => $"The worker of {what} never showed up. {then}",
             Idle => $"The worker of {what} stopped with its leg unfinished. {then}",
