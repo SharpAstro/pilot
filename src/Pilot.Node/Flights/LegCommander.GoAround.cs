@@ -79,6 +79,8 @@ public sealed partial class LegCommander
 
         // Every go-around is capped whatever its reason: PIL277 went round six times on failed checks, conflicts and reviews together.
         // Past the cap the watchtower and the node's own sends are refused and the card is the person's; a person's go-around passes.
+        // A conflict round counts here on purpose: only the review cap above exempts it, since a main that keeps moving can send a leg
+        // round for ever (PIL338), and the person is rung by the go-around-cap card when it does.
         var cap = Models.MaxGoArounds;
         if (leg.GoArounds >= cap && !IsPerson(flight, command.Who) && command.PersonsWord is null)
         {

@@ -369,8 +369,11 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   (`LegCommander.ConflictBrief`): the conflicting files (a test merge, `git merge-tree`), the merge base, what each side added in each file, the
   base's commits that touch it (`git log --oneline <merge-base>..<base> -- <file>`), and the rule: `git merge --no-edit origin/<base>`, keep both
   sides' work, on a version pin take the higher, rerun the check, push plain, never `--force`. A conflict round is not counted against the
-  review go-around cap and is not held by the review loop, for a flight with a PR or without; a passed review is turned to changes as for any
-  done leg sent round. A worker that stops is the leg-failed card's to say, as for any stopped worker.
+  review go-around cap and is not held by the review loop, for a flight with a PR or without, but it does count toward the overall
+  `max-go-arounds` cap (5 by default), so a base that keeps moving ends at the go-around-cap card; a passed review is turned to changes as for any
+  done leg sent round. A worker that fails is followed at once by the next rung of the escalation, and only the last rung's failure reaches the person
+  (one decision card); a worker that stops otherwise is the leg-failed card's to say. When no worker could be put on the conflict at all, a sweep
+  writes why on the node's log and rings no one.
 - **How a flight's branch is brought up to date** (`BringUpToDateAsync`, before every push and before the merge queue) is always a merge,
   in every repo, whatever its merge queue or the node's merge method: `git fetch`, `git merge --no-edit origin/<base>`, a plain push. There is
   no rebase way and no `UpdateWay`; a repaired base (a base that is no branch on the remote) is the remote's default merged in, not rebased onto.

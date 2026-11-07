@@ -288,7 +288,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     if (await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } notUpdated)
                     {
                         // A worker resolves it and nothing rings: a flying leg's worker is told, else the last leg goes round with the brief (#344 rang for one, 2026-10-27).
-                        await HandConflictOverAsync(flight.Code, notUpdated, cancellationToken);
+                        await HandConflictOverInSweepAsync(flight.Code, notUpdated, cancellationToken);
                     }
                     else
                     {
@@ -357,12 +357,12 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         }
         if (flown.Any(l => l.State == LegState.Flying))
         {
-            await HandConflictOverAsync(code, $"GitHub reports the PR conflicting with {flight.Base}", cancellationToken);
+            await HandConflictOverInSweepAsync(code, $"GitHub reports the PR conflicting with {flight.Base}", cancellationToken);
             return;
         }
         if (await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } why)
         {
-            await HandConflictOverAsync(code, why, cancellationToken);
+            await HandConflictOverInSweepAsync(code, why, cancellationToken);
         }
     }
 
@@ -373,6 +373,18 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// </summary>
     private async Task<string?> HandConflictOverAsync(string code, string why, CancellationToken cancellationToken) =>
         legs is not null ? await legs.ResolveConflictAsync(code, why, cancellationToken) : "this node holds no way to resolve a conflict";
+
+    /// <summary>
+    /// <see cref="HandConflictOverAsync"/> for a sweep, which has no caller to refuse: a conflict no worker could be put on is said on the
+    /// node's log, never to a person (the conflict is the node's own work), so it is not lost where a sweep would otherwise drop the reason.
+    /// </summary>
+    private async Task HandConflictOverInSweepAsync(string code, string why, CancellationToken cancellationToken)
+    {
+        if (await HandConflictOverAsync(code, why, cancellationToken) is { } noWorker)
+        {
+            await Error.WriteLineAsync($"pr checks: no worker could be put on {code}'s conflict with its base: {noWorker}");
+        }
+    }
 
     /// <summary>
     /// Whether the head's failed checks are being run again, so its leg is not sent round yet: started now, once a head, or
@@ -883,7 +895,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 if (legs is not null && _rebased.Add($"{flight.Code} {head}")
                     && await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } why)
                 {
-                    await HandConflictOverAsync(flight.Code, why, cancellationToken);
+                    await HandConflictOverInSweepAsync(flight.Code, why, cancellationToken);
                 }
                 // The update closes the card when it starts a fresh review; one still open says what is wrong and offers the go-around.
                 if (legs is not null && state.Cards(openOnly: true).Any(c => c.Id == card.Id))
