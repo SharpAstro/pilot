@@ -22,7 +22,10 @@ public enum StandingKind
     /// <summary>A flight's session (planner, worker, validator, reviewer), or a PR review's: its own flight's legs, checks, artifacts and reviews, nothing outside it.</summary>
     FlightSession,
 
-    /// <summary>Another node, under a grant: as before the standings, and never the settings, setup or grants of this machine.</summary>
+    /// <summary>
+    /// Another node, under a grant: as before the standings, and never the settings, setup or grants of this machine. It may send
+    /// <see cref="Verbs.FlightChanges"/>, which only reads the files of this node's own flight's plane (the overlap check of its planners).
+    /// </summary>
     Grant,
 }
 

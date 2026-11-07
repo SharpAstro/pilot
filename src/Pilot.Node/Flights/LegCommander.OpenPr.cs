@@ -14,6 +14,10 @@ public sealed partial class LegCommander
     private async Task OpenPrAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var flight = FlightOf(command.Target);
+        // Another step's calls out for the flight (a push, a check rerun, the node's own sweep) only hold this back: it waits for them, as the
+        // node's own rebase does, instead of refusing as busy, and reads the flight afresh (pilot #871: a loaded run refused it).
+        await WaitForFlightFreeAsync(flight.Code, OpeningPr, cancellationToken);
+        flight = FlightOf(command.Target);
         if (flight.State == FlightState.Landed)
         {
             throw new FlightException($"{flight.Code} has landed");
@@ -102,6 +106,11 @@ public sealed partial class LegCommander
         if (mergedBase)
         {
             state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{repaired.Base} merged into {flight.Code}'s plane; a new PR opens", FlightCommander.MergedUnderLegKind);
+            // The earlier PR merged without these commits: the new PR carries them, and a line links it.
+            state.RaiseCard(CardBin.Handled, FollowUpPrKind, Verbs.FlightTarget(flight.Code),
+                $"{flight.Code}'s commits missed {(beforeOpen.MergedPullRequest is { } missed ? $"#{missed}'s" : "the earlier PR's")} merge: PR #{pr.Number} carries them",
+                $"The earlier PR merged without them, so the node merged {repaired.Base} into the plane, pushed plain and opened PR #{pr.Number}, which is reviewed as any PR. The flight lands when it merges.",
+                link: pr.Url);
         }
 
         // The PR open, a fresh reviewer reads it before the merge is offered. One that cannot start costs the flight
@@ -128,6 +137,8 @@ public sealed partial class LegCommander
         {
             return;
         }
+        // A PR in the merge queue locks its branch (GH006) and merges whatever head it had when it was queued: out first.
+        await EnsureNotQueuedAsync(flight, pr.Number, cancellationToken);
         // Unknown is treated as armed: the disarm is no error when it was not on.
         if (await github.AutoMergeArmedAsync(flight.RepoPath, pr.Number, cancellationToken) == false)
         {
@@ -223,6 +234,18 @@ public sealed partial class LegCommander
             throw new FlightException($"{flight.Branch} is not pushed: origin/{flight.Branch} holds commits its head lacks, and the node never overwrites a pushed branch");
         }
         var push = await git.RunAsync(["push", "-u", "origin", flight.Branch], flight.Worktree, cancellationToken);
+        // Git's whole text is read: GitHub's GH006 line is not always the first of its stderr.
+        if (!push.Ok && PushRefusals.IsProtectedBranch($"{push.Error}\n{push.Output}"))
+        {
+            // GH006 (PIL836): the PR was queued behind the node's back, or merged meanwhile; the PR is read and the push is made once more or handed on.
+            push = await RetryProtectedPushAsync(flight, cancellationToken);
+            // Still locked after the retry: a refusal the node cannot answer, said in its way (the sweep reads that, never the text,
+            // whose GH006 line may sit anywhere in git's output) with GitHub's own line, wherever git printed it.
+            if (!push.Ok && PushRefusals.ProtectedLine($"{push.Error}\n{push.Output}") is { } locked)
+            {
+                throw new PushRefusedException(RefusalWays.ProtectedBranch, $"git could not push {flight.Branch}: {locked}");
+            }
+        }
         if (!push.Ok)
         {
             throw new FlightException($"git could not push {flight.Branch}: {push.Why}");

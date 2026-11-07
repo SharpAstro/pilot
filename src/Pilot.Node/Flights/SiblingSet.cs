@@ -133,9 +133,10 @@ public static class SiblingSet
         while (queue.Count > 0)
         {
             var checkout = queue.Dequeue();
-            foreach (var name in SiblingWatch.SiblingNames(checkout))
+            // Only the clones the build really reaches from this folder: a plane's relative probes land inside the plane's
+            // .claude/worktrees, so a plane building on the packages holds no sibling (PIL802).
+            foreach (var path in SiblingWatch.ReachedClones(checkout))
             {
-                var path = Path.Combine(orgRoot, name);
                 if (Directory.Exists(path) && !found.Contains(path, StringComparer.OrdinalIgnoreCase))
                 {
                     found.Add(path);
