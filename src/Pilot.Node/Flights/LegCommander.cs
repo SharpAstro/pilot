@@ -279,6 +279,12 @@ public sealed partial class LegCommander(
             // A repeat of a step already running is no refusal: ok, saying so.
             made = ex.Message;
         }
+        catch (FlightBusyException ex)
+        {
+            // Refused only because the flight had calls out: said so in the way, for a caller that asks again once it is free.
+            error = ex.Message;
+            way = RefusalWays.Busy;
+        }
         catch (FlightException ex)
         {
             error = ex.Message;
