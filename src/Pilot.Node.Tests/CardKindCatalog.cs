@@ -190,7 +190,7 @@ internal static class CardKindCatalog
         new("watchtower-down", "Ring", [Tower, TowerStream], "WatchtowerTests.AnUntrustedFolderRingsWithTheFixAndIsTriedAgainLater", "the watchtower's folder is untrusted or its session did not start, read from its row", [nameof(Verbs.RestartWatchtower)]),
         new("watchtower-stopped", "Ring|Handled", [Tower], "WatchtowerTests.OneTheUsageLimitStoppedIsResumedAfterTheReset", "the watchtower's session row is stopped by the API with no reset to resume at", [nameof(Verbs.RestartWatchtower)]),
         new("watchtower-waits", "Handled", [Tower, TowerStream], "StartGateTests.TheWatchtowerKeptByTheNodeWaitsForTheWindowAndStartsOnceItHasResetButARestartAskedForGoesAhead"),
-        new("watchtower-ask", "ForYou", [Asks], "WatchtowerAskTests.APromptAndAQuestionEachRaiseACardWhoseButtonsAnswerThemAndTheCardClosesOnTheChatsAnswer"),
+        new("watchtower-ask", "ForYou", [Asks], "WatchtowerChatTests.APromptAndAQuestionEachRaiseACardWhoseButtonsAnswerThemAndTheCardClosesOnTheChatsAnswer"),
         new("watchtower-resumed", "Handled", [Tower], SourcePinned),
         new("watchtower-started", "Handled", [Tower], SourcePinned),
         new("watchtower-duplicate", "Handled", [Tower], "OneWatchtowerTests.StartingOneStopsAnotherLiveWatchtowerRowAndSaysSo"),

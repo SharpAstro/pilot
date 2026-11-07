@@ -18,7 +18,13 @@ public static partial class PilotCommand
             var sendId = Arg("send-id", "The send id of the queued message to answer now (the chat page's queued ids)");
             var now = Action(new Command("now", "Cancel the watchtower's running turn and answer this queued message next") { Arguments = { sendId } },
                 (p, client, ct) => Send(client, Verbs.ChatNow, Verbs.WatchtowerTarget, [p.GetValue(sendId)!], who, ct));
-            return new Command("chat", "The watchtower's chat") { Subcommands = { now } };
+            // chat ask: answers a permission prompt or a question the watchtower waits on (the chat page's asks). The person's alone: the node refuses a session.
+            var askId = Arg("request-id", "The id of the ask to answer (the chat page's asks)");
+            var decision = Arg("decision", "allow, deny or answer");
+            var askWords = Words("words", "For deny: why. For answer: the JSON object of each question's text to its answer", required: false);
+            var ask = Action(new Command("ask", "Answer a permission prompt or a question the watchtower waits on: allow, deny [why] or answer <json>") { Arguments = { askId, decision, askWords } },
+                (p, client, ct) => Send(client, Verbs.AnswerAsk, Verbs.WatchtowerTarget, [p.GetValue(askId)!, p.GetValue(decision)!, .. Join(p, askWords) is { Length: > 0 } words ? [words] : Array.Empty<string>()], who, ct));
+            return new Command("chat", "The watchtower's chat") { Subcommands = { now, ask } };
         }
 
         /// <summary>Makes the say, session end, say-all, compact, note, tell, watchtower, digest and archive: talking to and putting away sessions.</summary>
