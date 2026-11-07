@@ -220,6 +220,8 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         var gate = new Gate();
         var git = new GatedGit(new GitCli(), gate, args => args is ["fetch", ..]);
         var legs = Another(git);
+        // A test's commander does not advance flights by itself (RoleModels.Advances); the sweep is what is under test here.
+        legs.Models = new RoleModels(new NodeSettings());
 
         var rebase = legs.BringUpToDateAsync(flight.Code, Ct);
         await Within(gate.Reached, "the fetch of the update was out");
