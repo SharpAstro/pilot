@@ -98,8 +98,37 @@ public sealed class PlaneOutputTests : JobTestsBase
         DetachedShell.WindowsWrapper("in.ps1", "out.ps1", "x.exit").ShouldNotContain("ArtifactsPath");
     }
 
+    /// <summary>
+    /// The exception path (PIL802): a job in the plane of a flight labelled <c>pilot: sibling source</c> starts with
+    /// <c>UseLocalSiblings=true</c>, which opens pilot's plane probe to the clones; once the label is gone the same job gets nothing.
+    /// </summary>
     [Fact]
-    public async Task ByDefaultTwoPlanesRunAtOnceBecauseAPlaneReachesNoSibling()
+    public async Task AJobInASiblingSourceFlightsPlaneGetsUseLocalSiblingsAndOneOfAnyOtherFlightDoesNot()
+    {
+        var jobs = Runner(planeOutput: false);
+        jobs.SiblingsOf = _ => [];
+        var plane = PlaneIn("tia1");
+        _state.PutFlight(new FlightRow
+        {
+            Code = "TIA1", Repo = "pilot", RepoPath = Path.Combine(_root, "org", "pilot"), Issue = 1, Branch = "flight/tia1", Worktree = plane,
+            Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch, SiblingSource = true,
+        });
+        var print = OperatingSystem.IsWindows() ? "echo \"local=$env:UseLocalSiblings\"" : "echo \"local=$UseLocalSiblings\"";
+
+        var marked = Hand(jobs, print, plane);
+        (await Until(marked, j => j.EndedAt is not null)).Flight.ShouldBe("TIA1");
+        ReadLog(Row(marked).LogPath).ShouldContain("local=true");
+
+        _state.UpdateFlight("TIA1", f => f with { SiblingSource = false });
+        var plain = Hand(jobs, print, plane);
+        await Until(plain, j => j.EndedAt is not null);
+        var log = ReadLog(Row(plain).LogPath);
+        log.ShouldContain("local=");
+        log.ShouldNotContain("local=true");
+    }
+
+    [Fact]
+    public async Task WithNothingSetTheSettingIsOffAndTwoJobsInPlanesRunAtOnce()
     {
         // Nothing is set on the runner: the setting is off (PIL802), and the real sibling sets are asked. A plane builds on the
         // packages, so it reaches no clone and neither plane holds the other back.
