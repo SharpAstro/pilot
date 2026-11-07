@@ -125,6 +125,8 @@ public sealed partial class FlightCommander
     /// </summary>
     public async Task<int> LookAtPeerConnectionsAsync(CancellationToken cancellationToken)
     {
+        // First, a wait for a flight of this node that moved away becomes a wait on the node it moved to, so this look asks that node (#818).
+        await FollowMovedFlightsAsync(cancellationToken);
         var waiting = state.Flights().Where(f => f.State != FlightState.Landed && f.PeerConnections.Length > 0).ToList();
         if (waiting.Count == 0)
         {
