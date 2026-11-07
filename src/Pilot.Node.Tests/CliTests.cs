@@ -387,9 +387,10 @@ public sealed class CliTests : IAsyncLifetime
         await Ok(_root, "run", "--alone", "--", "echo benched");
         var job = _node.State.Jobs().Single();
         // Let it end before the folder goes, or its log is still held.
-        for (var i = 0; _node.State.Jobs().Single().EndedAt is null; i++)
+        // Two minutes, like the rest of the suite: a loaded machine holds a bench job longer than 30 s.
+        for (var clock = System.Diagnostics.Stopwatch.StartNew(); _node.State.Jobs().Single().EndedAt is null;)
         {
-            i.ShouldBeLessThan(300, "the bench job did not end");
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromMinutes(2), "the bench job did not end");
             await Task.Delay(100, Ct);
         }
         job.Kind.ShouldBe(JobKind.Bench);
