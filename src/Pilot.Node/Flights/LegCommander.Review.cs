@@ -77,6 +77,8 @@ public sealed partial class LegCommander
         // A spent 5-hour window holds the reviewer. The review is let go meanwhile, as a fresh one replaces it either way and an
         // old pass must not let the merge by a head nobody read: with its PR open and no review kept, the sweep starts it afresh.
         var held = Gate.Hold($"{Verbs.StartReview} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its reviewer", Models.WeekPaceFor(flight.Repo));
+        // The marks and kept jobs of the reviewer replaced, let go once the replacement's row is in (or the start is held).
+        ReviewerReplacement? replacement = null;
         if (flight.Review?.ReviewerJob is { } last)
         {
             // One still reviewing is replaced without its verdict.
@@ -84,8 +86,7 @@ public sealed partial class LegCommander
             {
                 GaveUp(flight.Code, state.Sessions().FirstOrDefault(s => s.Id == last), "reviewer given up without a verdict");
             }
-            DropQueuedJobsOf(last, "its reviewer was replaced");
-            await StopQuietly(last, cancellationToken);
+            replacement = await ReplaceReviewerAsync(flight, last, cancellationToken);
         }
         // The Opus cap and the repo mode hold it the same way (queued on the flight, its review let go meanwhile); the reviewer being
         // replaced does not count against its own successor.
@@ -93,6 +94,7 @@ public sealed partial class LegCommander
         var waiting = !held && AdmissionWaits(AdmissionRole.Reviewer, reviewModel, flight, null, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ReviewerName(flight) });
         if (held || waiting)
         {
+            NoReplacementComes(replacement);
             if (flight.Review is not null)
             {
                 state.PutFlight(flight with { Review = null });
@@ -148,6 +150,7 @@ public sealed partial class LegCommander
                 {
                     return $"{flight.Code} changed while {reviewer} was being started";
                 }
+                Unmark(replacement);
                 // A fresh review of a head past the reviewed one is a push that ends a hold (a pass kept over a base that only came in
                 // starts no reviewer and keeps it): the hold's leg, or flight pr, is who pushed.
                 var endsHold = EndHoldPastReview(now, reviewedHead, now.Holding?.By is { } leg && leg != "node" ? $"the {leg} leg" : "a push");
@@ -350,6 +353,11 @@ public sealed partial class LegCommander
                 // The verdict is kept and given to GitHub: the flight is let go (Dispose is safe twice), as plan-leg refuses a flight with a call out.
                 call.Dispose();
                 var fixer = await PlanReviewNotesLegAsync(flight, notes, cancellationToken);
+                // The hold waits on the leg that makes the notes, never on a watchtower that may not be running (PIL815).
+                if (fixer is not null)
+                {
+                    HoldForLeg(flight.Code, fixer);
+                }
                 RaiseReviewNotes(FlightOf(command.Target), notes, fixer);
             }
         }
@@ -435,7 +443,7 @@ public sealed partial class LegCommander
     {
         var number = flight.PullRequest!.Value;
         await OffLockAsync(flight, () => github.SetDraftAsync(flight.RepoPath, number, draft: true, cancellationToken));
-        Record(flight.Code, f => f with { Review = f.Review is { } held ? held with { State = ReviewState.Changes, Report = changes, FinishedAt = time.GetUtcNow(), ReviewUrl = null, MarksWhy = null } : null });
+        RecordReviewChanges(flight.Code, changes);
         await OffLockAsync(null, () => _marks.ApplyAsync(flight.Code, cancellationToken));
     }
 
@@ -605,9 +613,6 @@ public sealed partial class LegCommander
 
     /// <summary>The Handled card kind that says a flight was cleared to land.</summary>
     public const string HoldingClearedKind = "holding-cleared";
-
-    /// <summary>Why a flight whose review passed with notes holds its merge.</summary>
-    public const string HoldingReason = "the watchtower is making the review's small fixes";
 
     /// <summary>
     /// The watchtower's word, or the person's, that a flight in a holding pattern is cleared to land: the hold ends, the notes card

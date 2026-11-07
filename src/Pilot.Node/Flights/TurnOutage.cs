@@ -5,7 +5,7 @@ namespace Pilot.Node.Flights;
 /// <summary>
 /// The node's knowledge that sessions have stopped taking turns across the board (PIL791), as opposed to one session that is
 /// stuck. It opens when the account's login changes (<see cref="AccountChanged"/>) or when two different subjects show no first
-/// turn within <see cref="Window"/> of each other (<see cref="Observe"/>), raises one Ring card however many sessions stall, and
+/// turn within <see cref="Window"/> of each other (<see cref="Observe"/>), raises one For-you card (there is nothing for the person to press, so it does not ring, #799) however many sessions stall, and
 /// ends when any session shows a turn later than the outage began (<see cref="Look"/>). While it is open the first-turn ladders
 /// neither restart nor ring per session; the window it covered is kept in <see cref="LastWindow"/> for what redoes the work.
 /// </summary>
@@ -157,7 +157,7 @@ public sealed class TurnOutage(NodeState state)
             _waiting.Clear();
             _probedAt = at;
             _probeKey = null;
-            var card = state.RaiseCard(CardBin.Ring, CardKind, Verbs.NodeTarget, $"Sessions are not taking turns since {at.ToLocalTime():HH:mm}: {why}",
+            var card = state.RaiseCard(CardBin.ForYou, CardKind, Verbs.NodeTarget, $"Sessions are not taking turns since {at.ToLocalTime():HH:mm}: {why}",
                 $"outage opened at {at:O}: {why}; first-turn restarts and rings are held until a session takes a turn",
                 summary: $"No session has taken a turn since {at.ToLocalTime():HH:mm} ({why}). The node holds its restarts and rings for first turns and closes this card by itself once any session takes a turn.");
             _cardId = card.Id;

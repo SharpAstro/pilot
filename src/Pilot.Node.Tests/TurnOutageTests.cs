@@ -80,7 +80,7 @@ public sealed class TurnOutageTests
         _outage.IsOpen.ShouldBeTrue();
         _outage.Since.ShouldBe(Start.AddMinutes(55));
         var card = Open().ShouldHaveSingleItem();
-        (card.Bin, card.Kind, card.Subject).ShouldBe((CardBin.Ring, "turns-outage", Verbs.NodeTarget));
+        (card.Bin, card.Kind, card.Subject).ShouldBe((CardBin.ForYou, "turns-outage", Verbs.NodeTarget));
         card.Title.ShouldStartWith("Sessions are not taking turns since ");
         card.Title.ShouldEndWith("the account changed");
 

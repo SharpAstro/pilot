@@ -10,7 +10,7 @@ public sealed partial class NodeState
     {
         lock (_gate)
         {
-            return [.. _cards.Values.Where(c => !openOnly || c.State == CardState.Open).OrderByDescending(c => c.At).ThenByDescending(c => c.Id, StringComparer.Ordinal)];
+            return [.. _cards.Values.Where(c => !openOnly || c.State == CardState.Open).OrderByDescending(c => c.RungAt).ThenByDescending(c => c.Id, StringComparer.Ordinal)];
         }
     }
 
@@ -30,6 +30,17 @@ public sealed partial class NodeState
                 return open;
             }
             var now = _time.GetUtcNow();
+            // A landed flight (a folded or moved one lands too) has nothing left to ring about: a leg or worker card for it is a card
+            // about a cause already settled (#799 rule 2, row c3651). It is not stored or published; the caller gets the card it would
+            // have raised, closed. Said nowhere else: a Handled line per look of the watch would only be noise.
+            if (bin != CardBin.Handled && LegFlightOf(subject) is { } landedCode && _flights.TryGetValue(landedCode, out var landed) && landed.State == FlightState.Landed)
+            {
+                return new CardRow
+                {
+                    Id = "c0", Bin = CardBin.Handled, Kind = kind, Subject = subject, Title = title, Detail = detail, Choices = [], At = now,
+                    State = CardState.Closed, Outcome = $"{landedCode} landed already", ClosedBy = "node", ClosedAt = now,
+                };
+            }
             var number = _cards.Count == 0 ? 1 : _cards.Keys.Max(k => int.TryParse(k.AsSpan(1), out var n) ? n : 0) + 1;
             // One PR, one merge card: a pr-ready card replaces an older open merge card of the same subject, however it got there.
             if (bin != CardBin.Handled && kind == LegCommander.PrReady)
@@ -63,6 +74,36 @@ public sealed partial class NodeState
             card = card with { Commits = CommitsOf(card, link) };
             Publish(new CardAddedEvent { Seq = _seq + 1, At = now, Card = card });
             return card;
+        }
+    }
+
+    /// <summary>The flight code of a subject naming a leg or anything under one (<c>flight/&lt;code&gt;/&lt;leg&gt;</c>); null for a flight's own subject or any other.</summary>
+    private static string? LegFlightOf(string subject)
+    {
+        if (!subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+        var parts = subject[Verbs.FlightTargetPrefix.Length..].Split('/');
+        return parts.Length >= 2 && parts[0].Length > 0 ? parts[0] : null;
+    }
+
+    /// <summary>
+    /// Rings an open card again where it is (#799 rule 5): one <see cref="CardChangedEvent"/> with <see cref="CardRow.RungAgainAt"/> set to
+    /// now, so it sorts first again on every client and pushes as a change. Its id, kind, choices and <see cref="CardRow.At"/> stay, so
+    /// no second card says what the first already did. False when it is not open.
+    /// </summary>
+    public bool RingAgain(string id)
+    {
+        lock (_gate)
+        {
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open)
+            {
+                return false;
+            }
+            var now = _time.GetUtcNow();
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { RungAgainAt = now } });
+            return true;
         }
     }
 

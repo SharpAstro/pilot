@@ -174,7 +174,7 @@ prefix, `--machine` or `PILOT_MACHINE`, else from its name).
 | `plan-flight flight/<code>` | A planner, `<machine>-<flight>-plan`, in the plane: it reads the issue and the code and plans the legs (`plan-leg`), writing no code, then says `planned`. |
 | `planned flight/<code> [summary…]` | The planner is done: a For-you card lists the legs, with **Start** on the first. No leg may be named `plan`. |
 | `overlap flight/<code> <other> [file=<path>…] <why…>` | The planner found the flight to overlap another, which may fly on a reachable peer (found by its code on the repo's GitHub remote), and names the files both change (`--file`, once per file, as `touches` said them). A pair not asked before is recorded pending on the flight (with the node and the files) and rings one card, titled for the choice the planner leans to (`pick=fold`: `Fold PIL365 into PIL294`, kept on the row as `Pick`; else, and always for a peer's flight, `Connect PIL365 to PIL294`) and the files, `(both change DetachedShell.cs)` (up to four files named, then `and N more`; `PIL294 on DE1` for a peer's flight), whose detail names both flights with their titles, what each choice does and then every shared file (last, as the card cuts its detail at a few rows), and which offers **Fold into <other>**, **Connect to <other>** and **Plan in parallel**, never a "leave it". No fold is offered into a flight of another node. `plan-leg` and `planned` on the flight are refused while it waits, and the planner is told to end its turn (it is started again with the answer). A pair answered already returns the answer, with no card, even when the peer cannot be asked. Refused for an unknown, landed or the same flight. |
-| `touches flight/<code> <file…>` | The planner's overlap check across nodes (a read: no lock, changes nothing). Fetches the repo, then compares the files the flight's legs will change with every other flight not landed of the repo on this node (its pushed branch's changed files against its base, `origin/<branch>`, else its local branch) and on each reachable peer (matched by the repo's GitHub remote; its pushed branch read from this clone), and with every open PR (its files through `gh api`, all pages; a PR that is a flight's branch is that flight's line). Answers a line each, folds first, then connects, unknown, parallel: `PIL294 (DE1): connect, both change DetachedShell.cs, JobRunner.cs`. The choice is `OverlapChoice.Judge`, pure: **fold** with at least 2 shared files that are at least half of the smaller side's files, **connect** with any shared file, **parallel** with none. **unknown** (never skipped) for a flight whose branch is not pushed (a peer's; this node's flights fall back to their local branch), a peer with no grant, a refused grant or no answer within 3 s, and a PR whose files gh would not list. Needs at least one file. |
+| `touches flight/<code> <file…>` | The planner's overlap check across nodes (a read: no lock, changes nothing). Fetches the repo, then compares the files the flight's legs will change with every other flight not landed of the repo on this node (what its plane changes against its base: committed, uncommitted and untracked files, with `flight-changes`'s per-file lines; its pushed branch, else its local branch, when the plane is gone) and on each reachable peer (matched by the repo's GitHub remote; asked with `flight-changes flight/<code>`, which that node answers from its own plane, so a branch not pushed is seen; a peer that refuses the verb, being older, is read by its pushed branch from this clone), and with every open PR (its files through `gh api`, all pages; a PR that is a flight's branch is that flight's line). Answers a line each, folds first, then connects, unknown, parallel: `PIL294 (DE1): connect, both change DetachedShell.cs, JobRunner.cs`. The choice is `OverlapChoice.Judge`, pure: **fold** with at least 2 shared files that are at least half of the smaller side's files, **connect** with any shared file, **parallel** with none. **unknown** (never skipped) for a peer's flight whose node did not answer (and whose branch is then not read), a peer with no grant, a refused grant or no answer within 3 s, and a PR whose files gh would not list. Needs at least one file. |
 | `fold flight/<code> <other>` | The answer that the flight is part of the other: recorded, the card closed, the flight's issue added to the other (`FoldedIn`: the number and the flight it came from), the flight retired as `land` does (its planner stopped, its clean plane removed, its code and branch kept) but marked `FoldedInto` the other and with a Handled `folded` card instead of a landed one, and the other's planner started (one already planning it is stopped for it) whose brief names each folded issue and its flight and says to plan its points as legs after the ones it has. The other's PR then closes every folded issue beside its own. Refused into a landed flight, one whose PR is open (it would not close the issue), one of another repo or one of another node (a flight folds only into a flight of its own node: the issue and the PR are that node's to close, so the refusal says to connect or plan in parallel); a plane holding work of its own refuses and changes nothing. |
 | `separate flight/<code> <other>` | The answer to plan in parallel (the card's **Plan in parallel**): recorded on the flight (kept over a restart), the card closed, the waiting planner stopped and a fresh one started, whose brief lists the flight's overlap answers (so it connects to the other if it still depends on it). |
 | `connect-overlap flight/<code> <other>` | The answer to connect (the card's **Connect to <other>**): the flight is connected to the other (see `connect`; a refusal, as a cycle, records nothing and leaves the card open), the answer recorded on the flight (kept over a restart), the card closed, the waiting planner stopped and a fresh one started, whose brief says the flight is held until the other has landed (and on which node) and its legs are to be planned for main as it will be then. |
@@ -292,7 +292,7 @@ an answer that is not coming.
 
 | Command | What it does |
 | --- | --- |
-| `plan-leg flight/<code> name=… goal=… done-when=… [check=…] [ci-differs=…] [budget=…] [model=…] [effort=…] [item=…]…` | A leg at the end of the order, or a planned one replaced. A `check` running `dotnet build`/`dotnet test` without the `-c` the repo's `.github/workflows` build with (Release, in SharpAstro repos) is refused, naming the workflow, unless `ci-differs` says why it cannot match CI; the reason is kept in the Done-when. |
+| `plan-leg flight/<code> name=… goal=… done-when=… [check=…] [ci-differs=…] [whole-suite=…] [budget=…] [model=…] [effort=…] [item=…]…` | A leg at the end of the order, or a planned one replaced. A `check` running `dotnet build`/`dotnet test` without the `-c` the repo's `.github/workflows` build with (Release, in SharpAstro repos) is refused, naming the workflow, unless `ci-differs` says why it cannot match CI; the reason is kept in the Done-when. A `check` running `dotnet test` with no `--filter` (the whole suite, which is CI's on the PR) is refused, with a filter suggested from `git diff <base>...HEAD`, unless `whole-suite` says why; that reason is kept in the Done-when too. |
 | `remove-leg flight/<code>/<leg> [why…]` | Takes a planned leg out of the flight; refused, with the leg's state, for one flying, done or failed. |
 | `start-leg flight/<code>/<leg>` | Its worker: `claude --bg -w <plane> -n <name> --permission-mode auto` from the repo's main checkout (a plane git made is not a trusted folder of its own; `-w` enters it under the repo's trust). |
 | `validate-leg flight/<code>/<leg> go\|no-go [report…]` | A validator's answer: go starts the leg's worker; no-go keeps the leg planned and rings. |
@@ -682,7 +682,7 @@ pilot flight disconnect <code> <other> [--anyway]   # undoes a connect (this nod
 pilot flight pr <code> [title…]                # pushes the plane, opens its PR (body: the legs, Closes #<issue>)
 pilot flight merge <code> <head> [--method squash|rebase|merge]   # or --squash, --rebase, --merge
 pilot flight land <code>
-pilot leg plan <code> <name> --goal … --done-when … [--check …] [--ci-differs …] [--budget …] [--model …] [--effort …] [--item …]…
+pilot leg plan <code> <name> --goal … --done-when … [--check …] [--ci-differs …] [--whole-suite …] [--budget …] [--model …] [--effort …] [--item …]…
 pilot leg remove <code> <leg> [why…]           # takes a planned leg out of the flight
 pilot leg start <code> <leg>
 pilot leg validate go|no-go [report…]          # a leg's validator, from its plane (--leg <code>/<leg> elsewhere)
@@ -811,9 +811,10 @@ branch before any worker goes in, and lands one that is already gone.
 
 A benchmark is only worth its numbers when nothing else runs beside it. `pilot run --alone -- <command>` queues one
 exclusive job (kind `bench`): it goes ahead of the other queued jobs, waits until no other job runs and the machine's
-CPU is near idle (15 % or less, `JobRunner.BenchQuietCpu`), and then **holds everything else**: no other job, no check
-and no new leg worker or reviewer starts while it runs (their steps say `a benchmark (<id>) holds the node`), and the
-queue and admission pick up again when it ends. One bench job runs at a time.
+CPU is near idle (15 % or less, `JobRunner.BenchQuietCpu`), and then **holds the other jobs**: no other job or check
+starts while it runs (their steps say `a benchmark (<id>) holds the node`), and the queue picks up again when it ends.
+A benchmark, queued or running, never holds a leg start: new leg workers, planners, reviewers and PR fixers start as
+admission allows. One bench job runs at a time.
 
 `pilot bench <repo> (--ref <ref> | --baseline <ref> --candidate <ref>) [--fetch <cmd>] [--pr <n>] [--timeout 2h] -- <command...>`
 is that job made for a repo. The node updates the repo from origin, checks each ref out in a short-path **detached
@@ -1089,12 +1090,24 @@ Control on if it had it.
 pilot tell <text…>                             # to the watchtower, whichever session it is now
 pilot tell --card <id> <text…>                 # the same, about a card: its whole context goes ahead of your words
 pilot watchtower restart [why…]                # a fresh one, briefed from the node's state
+pilot order <text…>                            # a standing order the node keeps; prints its id (o1)
+pilot orders                                   # the orders that stand now, with their ids
+pilot order done <id>                          # retire one
 pilot ring <subject> <title> [--detail …]      # a card that needs the controller
 pilot flag <subject> <title> [--detail …]      # a card for them, no push
 pilot handled <subject> <line>                 # a Handled line
 ```
 
 `pilot-node --no-watchtower` keeps none.
+
+**Standing orders** (#782) are what the controller tells the watchtower that must outlast it: a hold on a flight or repo, a
+scope rule. The node keeps each as a note with an id (`order node <text>`, kept like any note, so it survives a node restart),
+and every fresh watchtower's brief lists the live ones under `## Standing orders`, ahead of `## Where things stand`, with a line
+telling it to record any such order with `pilot order` and to read them before acting. `pilot order done <id>` retires one
+(`order-done node <id>`); a retired order is gone from the next brief, and its id is never reused. The watchtower and the person
+may both use the three commands (a flight's own planner, worker or reviewer may not: they read repo and PR content), and the MCP tools follow (`order`, `order_done`, `orders`). Orders are not part of the brief's
+fingerprint, so giving one never replaces the live watchtower. The wire adds the optional `Id` and `RetiredAt` to a note and the
+verbs `order`, `order-done` and `orders`; an older client ignores both and shows a retired order as its own note, and an older node answers "knows no verb order". An order whose text starts with the word "done" is quoted (`pilot order "done with TIA2000"`), or it is read as retiring an id. The brief lists each order with who gave it, capped at 500 characters one, 20 and 4000 in all.
 
 **`tell card/<id> <words…>`** (`pilot tell --card <id> <words…>`, #400) says to the watchtower, as the person's message, the
 card's whole context and then the words, so it can act without looking anything up. The node refuses an unknown or closed card.
@@ -1479,6 +1492,16 @@ missing and which. Its button (`pilot settings setup claude-permissions`) first 
 file that is not valid JSON (or whose `allow` is not a list) is refused and left byte for byte as it was. Allowing a command
 only lets Claude Code run it: the node still refuses a caller without the role, and merges and a person's cards stay guarded by
 the node and the merge guard.
+
+The optional **User skills** check (`setup node user-skills`) says whether the Claude Code skills the node carries are
+current in the profile's `skills` folder (`~/.claude/skills`, or under `CLAUDE_CONFIG_DIR`). They live in
+`src/Pilot.Node/UserSkills/<name>/`, embedded in the binary (`UserSkills`), today one: `merge-queue`, which reads a PR's place
+in a GitHub merge queue (something `gh pr view --json` cannot see) and says what to do around the merge guard. `pilot-node
+setup` installs them, and so does every node start, so a release that changes a skill reaches the machine with its update.
+Each folder pilot writes carries `.pilot-installed`, the hash of what it wrote: a folder without it is someone else's, and
+one whose files no longer match it was changed by hand; both are kept and named by the check, never overwritten. The
+setting **user-skills** (`set node user-skills on|off`, on by default) turns it off, which also takes out the skills pilot
+wrote and nobody changed.
 
 One more optional check is **Guard hooks** (`setup node guard-hooks`): it says whether three generic guard hooks
 are in `~/.claude/settings.json`: `big_read_guard.sh` (refuses a whole-file `Read` and a bare `cat`),

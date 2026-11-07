@@ -116,7 +116,7 @@ public sealed class StartGate(NodeState state, TimeProvider time)
         }
         _weekRung = resets;
         state.CloseCardsAbout(Verbs.NodeTarget, "a new 7-day window", WeekKind);
-        state.RaiseCard(CardBin.Ring, WeekKind, Verbs.NodeTarget, $"The 7-day window is {week.UsedPercent:0} % spent; it resets {resets.ToLocalTime():ddd HH:mm}",
+        state.RaiseCard(CardBin.ForYou, WeekKind, Verbs.NodeTarget, $"The 7-day window is {week.UsedPercent:0} % spent; it resets {resets.ToLocalTime():ddd HH:mm}",
             $"The node still starts sessions of its own (the limit for the week is {weekLimit:0} %, and it only rings); the 5-hour limit is what holds a start. Pause flights by hand if the week should last.");
     }
 }

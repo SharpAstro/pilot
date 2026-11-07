@@ -46,6 +46,21 @@ public sealed class LegWatchTests
         return Task.FromResult(_state.Complete(command, _refuse));
     }
 
+    [Fact]
+    public async Task AWaitingWorkerWhosePendingCallIsKnownRingsWithWhatItWantsAndTheToolInBrackets()
+    {
+        Worker(SessionState.Waiting, waitingFor: "permission to use Bash");
+        _state.PutSession(_state.Sessions().Single() with { Asking = "Bash: git push origin main" });
+
+        await _watch.LookAsync(Ct);
+
+        var card = Open().Single(c => c.Kind == LegWatch.Waiting);
+        card.Title.ShouldBe("TIA1/parser's worker wants to run: git push origin main (Bash)");
+        card.Detail.ShouldNotBeNull().ShouldStartWith("it wants to run: git push origin main (Bash);");
+        card.Summary.ShouldNotBeNull().ShouldStartWith("The worker of TIA1/parser wants to run: git push origin main (Bash).");
+        SummaryMatchesChoices(card);
+    }
+
     private void Worker(SessionState state, DateTimeOffset? lastResponse = null, string? apiError = null, DateTimeOffset? resetsAt = null, string? waitingFor = null, long context = 0, string id = "a1b2c3d4") =>
         _state.PutSession(new SessionRow
         {
@@ -645,6 +660,70 @@ public sealed class LegWatchTests
         _said.Count.ShouldBe(2);
     }
 
+    private void ReviewingFlight(JobState? job, DateTimeOffset? jobEnded = null)
+    {
+        _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });
+        _state.PutFlight(new FlightRow
+        {
+            Code = "TIA1", Repo = "tianwen", RepoPath = "/r", Issue = 1, Branch = "flight/tia1", Worktree = "/r/w", Base = "origin/main",
+            State = FlightState.Flying, CreatedAt = Start,
+            Review = new ReviewRow { State = ReviewState.Reviewing, Reviewer = "du1-tia1-review", ReviewerJob = "a1b2c3d4", StartedAt = Start },
+        });
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow());
+        if (job is { } state)
+        {
+            _state.PutJob(new JobRow
+            {
+                Id = "rj1", Command = "dotnet test", Cwd = "/r/w", State = state, Owner = "a1b2c3d4", OwnerName = "du1-tia1-review",
+                LogPath = "/tmp/rj1.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start, EndedAt = jobEnded,
+            });
+        }
+    }
+
+    [Theory]
+    [InlineData(JobState.Running)]
+    [InlineData(JobState.Queued)]
+    public async Task AReviewerIdleWithAJobOfItsOwnRunningOrQueuedIsNeitherToldNorRestartedNorRung(JobState job)
+    {
+        ReviewingFlight(job);
+        _time.Advance(TimeSpan.FromMinutes(30));
+
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldBeEmpty();
+        Open().ShouldNotContain(c => c.Kind == LegWatch.ReviewStalled);
+    }
+
+    [Fact]
+    public async Task AReviewerWhoseJobEndedRecentlyGetsTheGraceFromThenAndIsNotStalledYet()
+    {
+        ReviewingFlight(null);
+        _time.Advance(TimeSpan.FromMinutes(30));
+        _state.PutJob(new JobRow
+        {
+            Id = "rj1", Command = "dotnet test", Cwd = "/r/w", State = JobState.Succeeded, Owner = "a1b2c3d4", OwnerName = "du1-tia1-review",
+            LogPath = "/tmp/rj1.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start, EndedAt = _time.GetUtcNow(),
+        });
+        _time.Advance(TimeSpan.FromMinutes(1));
+
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldBeEmpty();
+        Open().ShouldNotContain(c => c.Kind == LegWatch.ReviewStalled);
+    }
+
+    [Fact]
+    public async Task AReviewerIdlePastTheGraceWithNoJobIsToldToGiveItsVerdict()
+    {
+        ReviewingFlight(null);
+        _time.Advance(TimeSpan.FromMinutes(30));
+
+        await _watch.LookAsync(Ct);
+
+        (_said.ShouldHaveSingleItem().Verb, _said[0].Target).ShouldBe((Verbs.Say, "session/a1b2c3d4"));
+    }
+
     [Fact]
     public async Task ALaterReviewRoundOfTheSameFlightIsToldAgainBeforeItIsRestartedOrRung()
     {
@@ -1024,6 +1103,8 @@ public sealed class LegWatchTests
         waiting.Choices.ShouldHaveSingleItem();
         SummaryMatchesChoices(waiting);
         waiting.Summary!.ShouldContain("waits on you");
+        waiting.Summary!.ShouldContain("lets this worker go on with the call");
+        waiting.Summary!.ShouldContain("stops this one and starts another on the leg from the branch");
 
         Worker(SessionState.Failed);
         await _watch.LookAsync(Ct);
