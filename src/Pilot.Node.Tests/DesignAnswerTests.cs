@@ -135,8 +135,20 @@ public abstract class FlightDesignTestsBase : ReviewTestsBase
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),
             PostsItself = false,
             TakeFlightVerdict = _legs.TakePrVerdictAsync,
-            SendFlightRound = _legs.AnsweredDesignAsync,
+            SendFlightRound = WentRoundAsync,
         };
+    }
+
+    /// <summary>
+    /// The flight's last leg sent round, and its worker recorded before this returns: a go-around answers "started" once its plane
+    /// takes longer than StartReadyWithin or its launch longer than StartAnswerWithin (500 ms), which a busy machine's git and thread
+    /// pool do, and the leg is then still the done one it was. Waiting on the start, not a clock, is what every assertion of the round needs.
+    /// </summary>
+    private async Task<string?> WentRoundAsync(string code, string why, string? who, string? personsWord, CancellationToken cancellationToken)
+    {
+        var error = await _legs.AnsweredDesignAsync(code, why, who, personsWord, cancellationToken);
+        await Started(_legs, code);
+        return error;
     }
 
     private protected Task<CommandResult> RunPr(string verb, string who, params string[] args) =>
