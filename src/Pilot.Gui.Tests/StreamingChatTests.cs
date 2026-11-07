@@ -200,17 +200,22 @@ public sealed class StreamingChatTests
         var list = chat.PageSelectionViewport;
         list.Width.ShouldBeGreaterThan(0f, "the list's viewport is known after a frame");
         chat.Pointer = (list.X + list.Width / 2f, list.Y + list.Height / 2f);
-        Described(chat).ShouldContain("PIL855 has two legs");
+        // What the page says, arranged in the pixels of the frame the pointer is in: Described arranges in cells, which would rebind the
+        // list's viewport to cell units and put the pointer outside it.
+        string Shown() => string.Join(' ', Pixels(chat, renderer, 1280, 800).Select(a => a.Node).OfType<Layout.Node.Leaf>()
+            .Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value.Trim()));
+        Shown().ShouldContain("PIL855 has two legs");
 
         partial = "PIL855 has two legs left and then a good deal more words that would push the page";
         chat.Refresh();
         // The read carries the new words; the list, under the pointer, still shows what it showed when the pointer came.
         await Until(() => chat.Partial == partial);
-        var held = Described(chat);
-        held.Contains("good deal more", StringComparison.Ordinal).ShouldBeFalse($"pointer {chat.Pointer}, list {chat.PageSelectionViewport}, shows: {held[Math.Max(0, held.IndexOf("writing…", StringComparison.Ordinal))..]}");
+        var held = Shown();
+        held.Contains("good deal more", StringComparison.Ordinal).ShouldBeFalse($"pointer {chat.Pointer}, list {chat.PageSelectionViewport}");
+        held.ShouldContain("PIL855 has two legs");
 
         chat.Pointer = null;
-        Described(chat).ShouldContain("good deal more");
+        Shown().ShouldContain("good deal more");
         chat.Close();
     }
 
