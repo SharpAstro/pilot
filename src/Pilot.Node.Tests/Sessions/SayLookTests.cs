@@ -102,6 +102,12 @@ public sealed class SayLookTests : IDisposable
         first.ShouldBe(say, "the say waited for the background poll's listing");
         (await say).Way.ShouldBe(SayWays.Relayed);
         stuckPoll.IsCompleted.ShouldBeFalse();
+        // The measure of a say on a loaded node: its whole time under 2 s while the listing has not even started its process.
+        var line = _log.ToString().Trim();
+        TestContext.Current.TestOutputHelper?.WriteLine(line);
+        var total = System.Text.RegularExpressions.Regex.Match(line, @"delivered \((\d+) ms: gate \d+ ms, look \d+ ms, choose \d+ ms, deliver \d+ ms\)");
+        total.Success.ShouldBeTrue(line);
+        long.Parse(total.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture).ShouldBeLessThan(2000, line);
         _agents.Stuck.SetResult();
         await stuckPoll;
     }
