@@ -639,6 +639,25 @@ public sealed class SettingsPageTests
     }
 
     /// <summary>
+    /// The header's line is one line: a single value taken is named ("none" read as "default", as its pill says), and a list's value,
+    /// one entry a line, is never put in it raw (review of #828: "Repo roots set to a\nb\nc"); the node's own words are on one line.
+    /// </summary>
+    [Fact]
+    public void TheHeadersLineNamesASingleValueAndKeepsAListsOnOneLine()
+    {
+        var lan = Sample.Settings.Single(s => s.Key == "lan");
+        SettingsView<RgbaImage>.SaidOf(new SettingsReply("done", ReplyKind.Done, lan with { Value = "off" })).ShouldBe($"{lan.Label} set to off");
+        SettingsView<RgbaImage>.SaidOf(new SettingsReply("done", ReplyKind.Done, lan with { Value = "none" })).ShouldBe($"{lan.Label} set to default");
+
+        var roots = new SettingRow { Key = "repo-roots", Label = "Repo roots", Detail = "d", Value = "C:\\a\nC:\\b", Source = SettingSources.File, Many = true };
+        var said = SettingsView<RgbaImage>.SaidOf(new SettingsReply("repo-roots saved\nas two folders", ReplyKind.Done, roots));
+        said.ShouldBe("repo-roots saved as two folders");
+        said.ShouldNotContain("\n");
+
+        SettingsView<RgbaImage>.SaidOf(new SettingsReply("refused: no\nway", ReplyKind.Refused)).ShouldBe("refused: no way");
+    }
+
+    /// <summary>
     /// A pressed choice reads "setting…" while the node works, the header says what is being set, and the outcome names the setting
     /// and its value rather than a bare "done". With no answer (the node restarting for the change) the pill keeps saying "setting…"
     /// until the read that shows the outcome is in.

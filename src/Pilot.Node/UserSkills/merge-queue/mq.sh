@@ -5,6 +5,13 @@
 #   mq.sh queue  [owner/repo]        the queue on main, in order
 #   mq.sh watch  <pr> [owner/repo]   poll every 60 s until the PR is MERGED or CLOSED (exit 0), leaves the queue unmerged
 #                                    (exit 1), or five polls in a row fail (exit 3: state unknown)
+#   mq.sh enqueue <pr> [owner/repo]  put the PR in the queue (GraphQL enqueuePullRequest), then print its status.
+#                                    The USER's command (`! bash .../mq.sh enqueue N`): pilot's merge guard refuses it
+#                                    from a session, by design.
+#
+# Why enqueue is here: `gh pr merge N` does NOT join a queue on every repo. gh 2.86 answered a green, CLEAN PR on
+# tianwen (#2038, 2026-11-07) with "Auto merge is not allowed for this repository (enablePullRequestAutoMerge)":
+# it asked for auto-merge, which that repo has switched off, and never tried the queue.
 #
 # Why a script: `gh pr view --json` has NO field for queue membership (mergeStateStatus CLEAN and
 # autoMergeRequest null both describe a PR that is sitting in the queue), so a PR in the queue reads
@@ -12,11 +19,11 @@
 # the timeline events added_to_merge_queue / removed_from_merge_queue say what happened to it.
 set -euo pipefail
 
-cmd=${1:?usage: mq.sh status|queue|watch <pr> [owner/repo]}
+cmd=${1:?usage: mq.sh status|queue|watch|enqueue <pr> [owner/repo]}
 repo_arg=""
 pr=""
 case "$cmd" in
-  status|watch) pr=${2:?pr number}; repo_arg=${3:-} ;;
+  status|watch|enqueue) pr=${2:?pr number}; repo_arg=${3:-} ;;
   queue) repo_arg=${2:-} ;;
   *) echo "unknown command: $cmd" >&2; exit 2 ;;
 esac
@@ -43,6 +50,14 @@ status() {
 
 case "$cmd" in
   status) status "$pr" ;;
+  enqueue)
+    id=$(gh api graphql -f query='
+      query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){id}}}' \
+      -f o="$owner" -f n="$name" -F p="$pr" --jq .data.repository.pullRequest.id)
+    gh api graphql -f query='
+      mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{position}}}' \
+      -f id="$id" --jq '"queued at position \(.data.enqueuePullRequest.mergeQueueEntry.position)"'
+    status "$pr" ;;
   queue)
     gh api graphql -f query='
       query($o:String!,$n:String!){repository(owner:$o,name:$n){mergeQueue(branch:"main"){
