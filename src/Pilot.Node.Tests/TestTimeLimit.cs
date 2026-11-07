@@ -47,6 +47,21 @@ namespace Pilot.Node.Tests;
 /// known gap: a test that itself starves the pool (sync-over-async in a test body) shows as a stall in its own window and is
 /// excused for that time; its line then says "also slow at the time: none" (no victims), which is how to tell it apart.
 /// </para>
+/// <para>
+/// What stalled the process, as far as it is measured (#801, PIL801). Not a GC pause (3 ms and 0 ms over test windows of 32 s
+/// and 10 s), not the runtime's create-process lock (0 lock waits; git reached its main in 29 ms at the median, 210 ms at
+/// the most, over 237 traced git runs), and not the node's own counter (<c>NodeTraffic.Start</c> takes no shared lock). Locally
+/// the stalls are the whole test process starved of CPU: the leg checks run below normal priority on a machine whose
+/// normal-priority work holds every core, so a test's threads got 0.03 cores for seconds (process CPU 234 ms over 9.1 s of pool
+/// lag) and its git children, starved the same way, took 0.22 s at the median and up to 3.9 s for a push where an idle machine
+/// takes tens of milliseconds. A test that runs a dozen git processes in a row then crosses its limit with an idle process. On
+/// CI (run 42215014819, 4 cores) the stall was not process wide: only the three tests that ran real git stood still for 14 to 16 s
+/// while a fourth slot without git kept finishing a test every 2 to 3 s, which points at git process starts, but no reading
+/// existed then to say which; the readings above (process CPU, pool items, lock waits, sampler lateness) now name it at the next
+/// occurrence. The fix made is the git the tests start for nothing: <c>LegCommanderTestsBase</c> (23 classes) ran init, add
+/// and commit in each constructor and worktree prune in Dispose, four git processes and four blocked threads a test, and now
+/// copies a repo built once a run (<c>SeedRepo.MakePlain</c>), so a test starts none.
+/// </para>
 /// </summary>
 [AttributeUsage(AttributeTargets.Assembly | AttributeTargets.Class | AttributeTargets.Method, AllowMultiple = false)]
 public sealed class TestTimeLimitAttribute : BeforeAfterTestAttribute
