@@ -666,15 +666,50 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         return (await git.RunAsync(["diff", "--quiet", mainRef, "HEAD", "--", .. files], worktree, cancellationToken)).Ok;
     }
 
-    /// <summary>The plane's commits past <paramref name="head"/> (subjects, oldest first): what a merge at that head left out.</summary>
-    public async Task<IReadOnlyList<string>> PastAsync(string worktree, string head, CancellationToken cancellationToken)
+    /// <summary>
+    /// The plane's own commits past <paramref name="head"/> (subjects, oldest first): what a merge at that head left out. A merge of
+    /// <paramref name="mainRef"/> into the plane, and main's own commits it brought, are not the plane's work and are left out, as is
+    /// a commit main holds by patch (cherry-picked into a follow-up PR). PIL819's ring counted three "past it" where one was its own:
+    /// PIL804's commit from main, the merge of main, and the review-notes commit that missed the merge.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> PastAsync(string worktree, string head, string mainRef, CancellationToken cancellationToken)
     {
         if (!Directory.Exists(worktree))
         {
             return [];
         }
-        var past = await git.RunAsync(["log", "--reverse", "--format=%h %s", $"{head}..HEAD"], worktree, cancellationToken);
-        return past.Ok ? past.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+        var main = await MainRefAsync(worktree, mainRef, cancellationToken);
+        var past = await git.RunAsync(["rev-list", "--reverse", "--no-merges", "HEAD", $"^{head}", $"^{main}"], worktree, cancellationToken);
+        if (!past.Ok)
+        {
+            return [];
+        }
+        var cherry = await git.RunAsync(["cherry", main, "HEAD"], worktree, cancellationToken);
+        var notInMain = cherry.Ok
+            ? cherry.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(l => l.StartsWith('+')).Select(l => l[1..].Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : null;
+        var own = new List<string>();
+        foreach (var sha in past.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (notInMain is not null && !notInMain.Contains(sha))
+            {
+                continue;
+            }
+            var subject = await git.RunAsync(["log", "-1", "--format=%h %s", sha], worktree, cancellationToken);
+            own.Add(subject.Ok ? subject.Output.Trim() : sha[..Math.Min(9, sha.Length)]);
+        }
+        return own;
+    }
+
+    /// <summary>The remote's copy of <paramref name="mainRef"/> when the plane has it (<c>origin/main</c> for <c>main</c>), else the name as given.</summary>
+    private async Task<string> MainRefAsync(string worktree, string mainRef, CancellationToken cancellationToken)
+    {
+        if (mainRef.Contains('/'))
+        {
+            return mainRef;
+        }
+        var remote = $"origin/{mainRef}";
+        return (await git.RunAsync(["rev-parse", "--verify", "--quiet", remote], worktree, cancellationToken)).Ok ? remote : mainRef;
     }
 
     /// <summary>
@@ -842,6 +877,13 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
 
 /// <summary>A flight command that could not be done, with why: the command's error.</summary>
 public class FlightException(string message) : Exception(message);
+
+/// <summary>A landing refused after the merge because the plane holds work of its own the merge left out: the commits, to open a PR with.</summary>
+public sealed class LeftOutCommitsException(string message, IReadOnlyList<string> commits) : FlightException(message)
+{
+    /// <summary>The plane's own commits past the merged head, as <c>&lt;short sha&gt; &lt;subject&gt;</c>, oldest first.</summary>
+    public IReadOnlyList<string> Commits { get; } = commits;
+}
 
 /// <summary>GitHub's rate limit stopped a call: <see cref="ResetAt"/> is when its points come back, null when gh could not say.</summary>
 public sealed class RateLimitedException(string message, DateTimeOffset? resetAt) : FlightException(message)
