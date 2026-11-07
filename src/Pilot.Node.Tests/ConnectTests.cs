@@ -439,6 +439,42 @@ public sealed class ConnectTests : OverlapTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task AWaitOnATrackerSuffixedFlightKeepsItsFactsAndIsReleasedByItsMergedPrWhileTheNodeIsSilent()
+    {
+        // A flight made from a Shortcut story has a tracker suffix on its branch (Planes.BranchOf(code, item)); the wait copies it from the peer.
+        const string suffixed = "flight/pil294-sc-101645";
+        var theirs = Theirs("PIL294", 294) with { Branch = suffixed, PullRequest = 77 };
+        var (flights, github, peer) = await WaitingOnPeerWithGitHub(theirs, null);
+        github.PrOf[suffixed] = Pr(77, "OPEN");
+        peer.Unreachable = true;
+
+        // Silent and the PR still open: held, and the suffixed branch, PR and issue stay on the wait over the looks that cannot ask the node.
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
+        F("TIA2").State.ShouldBe(FlightState.Held);
+        var wait = F("TIA2").PeerConnections.ShouldHaveSingleItem();
+        (wait.Branch, wait.PullRequest, wait.Issue).ShouldBe((suffixed, 77, 294));
+        wait.Note.ShouldNotBeNull().ShouldEndWith("its PR #77 is open");
+
+        // The PR of the suffixed branch merges: GitHub is asked for that branch, not for the plain flight/pil294, so the wait is over.
+        github.PrOf[suffixed] = Pr(77, "MERGED");
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(1);
+        F("TIA2").State.ShouldBe(FlightState.Flying);
+        F("TIA2").PeerConnections.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("PIL30", "flight/pil30", true)]
+    [InlineData("PIL30", "flight/PIL30", true)]
+    [InlineData("PIL30", "flight/pil30-sc-101645", true)]
+    [InlineData("PIL30", "flight/pil300", false)]
+    [InlineData("PIL30", "flight/pil300-sc-1", false)]
+    [InlineData("PIL30", "flight/pil29", false)]
+    public void ABranchIsTheCodesOwnWhenPlainOrFollowedByATrackerSuffix(string code, string branch, bool own) =>
+        FlightCommander.IsOwnBranch(code, branch).ShouldBe(own);
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightThatMovedToAnotherNodeIsWaitedForThereAndOneThatMovedHereAsAFlightOfThisNode()
     {
         await TwoFlights();

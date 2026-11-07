@@ -239,7 +239,7 @@ public sealed partial class FlightCommander
     {
         // A wait recorded before a fold followed its survivor carries the folded flight's branch, PR and issue: those are not read for
         // this code, so they are dropped and the branch is the code's own, until a look at the node says them again.
-        if (wait.Branch is not null && !string.Equals(wait.Branch, Planes.BranchOf(wait.Code), StringComparison.OrdinalIgnoreCase))
+        if (wait.Branch is not null && !IsOwnBranch(wait.Code, wait.Branch))
         {
             wait = wait with { Branch = null, PullRequest = null, Issue = null };
         }
@@ -296,6 +296,8 @@ public sealed partial class FlightCommander
                 return (null, true);
             }
             // The wait now points at the survivor, so what GitHub is asked about is the survivor's branch, PR and issue, never the folded one's.
+            // A survivor the peer does not list falls back to the code's plain branch, which is a guess: a flight made from a tracker story
+            // carries a suffix (flight/pil30-sc-101645) that only the listed row knows.
             var survivor = read.Flights!.FirstOrDefault(f => string.Equals(f.Code, into, StringComparison.OrdinalIgnoreCase));
             return (wait with
             {
@@ -327,7 +329,18 @@ public sealed partial class FlightCommander
     /// <summary>Where this says what it would have said on stderr: the node's log; nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
-    /// <summary>The note of a wait whose node cannot be asked (#753): <c>SE1 is not on the LAN since 21:10; its PR #738 is open</c>.</summary>
+    /// <summary>
+    /// Whether the branch is the code's own, in any of its real forms: the plain <c>flight/pil30</c>, or that followed by a tracker suffix
+    /// (<c>flight/pil30-sc-101645</c>, <see cref="WorkItem.BranchSuffix"/>). The dash keeps <c>flight/pil30</c> from owning <c>flight/pil300</c>.
+    /// </summary>
+    internal static bool IsOwnBranch(string code, string branch)
+    {
+        var own = Planes.BranchOf(code);
+        return string.Equals(branch, own, StringComparison.OrdinalIgnoreCase)
+            || branch.StartsWith(own + "-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The note of a wait whose node cannot be asked (#753):<c>SE1 is not on the LAN since 21:10; its PR #738 is open</c>.</summary>
     internal static string UnreachableNote(string node, DateTimeOffset since, string pr) =>
         $"{node} is not on the LAN since {since.ToLocalTime():HH:mm}; {pr}";
 
