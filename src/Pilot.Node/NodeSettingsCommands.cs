@@ -75,6 +75,14 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             roles.Apply(updated);
             return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now");
         }
+        // On installs the skills now, off takes out the ones pilot wrote and nobody changed; the node start does the same.
+        if (key == NodeSettings.UserSkillsKey)
+        {
+            var (lines, problem) = setup.ApplyUserSkills(updated.UserSkills ?? true);
+            return problem is not null
+                ? state.Complete(command, $"{key} saved as {value}, but {problem}")
+                : state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now{(lines.Count > 0 ? ": " + string.Join("; ", lines) : "")}");
+        }
         if (!Live(key) && Running(key) == (updated.Get(key) is { } now ? Join(key, now) : Default(key)))
         {
             return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}; the node runs with it already");
@@ -237,6 +245,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.AcceptFleetFlightsKey => roles.AcceptsFleetFlights ? "on" : "off",
         NodeSettings.AutopilotKey => roles.Autopilot ? "on" : "off",
         NodeSettings.ReviewDeepFirstKey => roles.ReviewDeepFirst ? "on" : "off",
+        NodeSettings.UserSkillsKey => NodeSettings.Read(options.SettingsFile).UserSkills ?? true ? "on" : "off",
         NodeSettings.MergeBatchKey => roles.MergeBatch ? "on" : "off",
         NodeSettings.WorkerLadderKey => roles.WorkerLadder ? "on" : "off",
         // Never the token itself: present or absent.
@@ -278,7 +287,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     /// method, the start limits, the priority repos, the job limits, maintenance and whether fleet flights are accepted.</summary>
     private static bool Live(string key) => NodeSettings.IsLayeredKey(key)
         || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey
-            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.JobPriorityKey or NodeSettings.JobPlaneOutputKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DiskAlertGbKey || NodeSettings.StaleKeys.Contains(key);
+            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.JobPriorityKey or NodeSettings.JobPlaneOutputKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.UserSkillsKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DiskAlertGbKey || NodeSettings.StaleKeys.Contains(key);
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
     private static string Join(string key, IReadOnlyList<string> values) => string.Join(key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey ? '\n' : ' ', values);
@@ -293,6 +302,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.AcceptFleetFlightsKey => "off",
         NodeSettings.AutopilotKey => "off",
         NodeSettings.ReviewDeepFirstKey => "on",
+        NodeSettings.UserSkillsKey => "on",
         NodeSettings.MergeBatchKey => "off",
         NodeSettings.WorkerLadderKey => "on",
         NodeSettings.ShortcutTokenKey => "",
@@ -336,6 +346,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.AcceptFleetFlightsKey => ("Accept fleet flights", "Whether this node is willing to take a flight another node of the fleet routes to it, when a new flight is made", ["on", "off"]),
         NodeSettings.AutopilotKey => ("Autopilot", "While on, an assistant (a session you talk to) does your-only things (merge, land, settings, grants, update) directly when you asked; off, each raises a card for you to allow. Only you can change it, never an assistant", ["on", "off"]),
         NodeSettings.ReviewDeepFirstKey => ("Deep first review", "While on, the first review of a large diff runs on the reviewer's max; a re-review always runs on the leg model (the worker's) and reads only what changed. Off, the first review runs on the reviewer model too", ["on", "off"]),
+        NodeSettings.UserSkillsKey => ("User skills", "While on, the node installs the Claude Code skills it carries (merge-queue) into the profile's skills folder at setup and at every start, so a release that changes one reaches this machine with its update; a skill changed by hand, or a folder of the same name pilot did not write, is kept. Off takes out the ones pilot wrote and nobody changed", ["on", "off"]),
         NodeSettings.MergeBatchKey => ("Merge batches", "While on, a repo's merge queue entries that are ready (review passed at their head, checks green, nothing GitHub would refuse) are merged into one batch branch (pilot/batch/repo-machine-start-n: its base plus each PR, plain git), its CI run once on a draft PR from it, and landed together on green by a plain push of the base to the batch head. Only where the node may push the base: entries merged by merge, a base with no merge queue and no branch protection or rules (a queue repo batches by its own ruleset's group size). A red or conflicting batch, or one whose CI never starts, falls back to one entry at a time. A batch forms only from merges that overlap (asked while another merge of the repo is under way); an armed or autopilot merge is asked one at a time and merges alone. Off by default", ["on", "off"]),
         NodeSettings.WorkerLadderKey => ("Worker ladder", "While on, a leg redone steps its fresh worker up by attempt: attempts 1 and 2 on the leg's model and effort, attempt 3 on opus, attempt 4 on opus at xhigh, never below the leg's plan nor past the worker range's max; off keeps the leg's model", ["on", "off"]),
         NodeSettings.ShortcutTokenKey => ("Shortcut token", "The Shortcut API token that reads a story's title when a flight is made on one (sc-N); the SHORTCUT_API_TOKEN variable wins over it. Only whether it is set is shown", []),

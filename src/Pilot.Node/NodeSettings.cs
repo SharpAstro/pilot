@@ -41,6 +41,7 @@ public sealed record NodeSettings
     public const string AcceptFleetFlightsKey = "accept-fleet-flights";
     public const string AutopilotKey = "autopilot";
     public const string ReviewDeepFirstKey = "review-deep-first";
+    public const string UserSkillsKey = "user-skills";
     public const string ShortcutTokenKey = "shortcut-token";
     public const string RepoTrackersKey = "repo-trackers";
     public const string NoAutoMergeReposKey = "no-auto-merge-repos";
@@ -128,7 +129,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -162,6 +163,9 @@ public sealed record NodeSettings
 
     /// <summary>Whether the first review of a large diff runs on the deep model (<see cref="ReviewDeepFirstKey"/>); on unless the person saved it off. A re-review never does.</summary>
     public bool? ReviewDeepFirst { get; init; }
+
+    /// <summary>Whether the node installs and keeps current the Claude Code skills it carries (<see cref="UserSkillsKey"/>, <see cref="Node.UserSkills"/>); on unless the person saved it off.</summary>
+    public bool? UserSkills { get; init; }
 
     /// <summary>Whether a leg's fresh worker steps up the model ladder by attempt (<see cref="WorkerLadderKey"/>); on unless set off.</summary>
     public bool? WorkerLadder { get; init; }
@@ -369,6 +373,7 @@ public sealed record NodeSettings
                     AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
                     AutopilotKey => JsonValue.Create(Autopilot),
                     ReviewDeepFirstKey => JsonValue.Create(ReviewDeepFirst),
+                    UserSkillsKey => JsonValue.Create(UserSkills),
                     MergeBatchKey => JsonValue.Create(MergeBatch),
                     WorkerLadderKey => JsonValue.Create(WorkerLadder),
                     JobPlaneOutputKey => JsonValue.Create(JobPlaneOutput),
@@ -414,6 +419,7 @@ public sealed record NodeSettings
         AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
         AutopilotKey => Autopilot is { } autopilot ? [autopilot ? "on" : "off"] : null,
         ReviewDeepFirstKey => ReviewDeepFirst is { } deepFirst ? [deepFirst ? "on" : "off"] : null,
+        UserSkillsKey => UserSkills is { } skills ? [skills ? "on" : "off"] : null,
         MergeBatchKey => MergeBatch is { } batch ? [batch ? "on" : "off"] : null,
         WorkerLadderKey => WorkerLadder is { } ladder ? [ladder ? "on" : "off"] : null,
         JobPlaneOutputKey => JobPlaneOutput is { } planeOutput ? [planeOutput ? "on" : "off"] : null,
@@ -517,6 +523,14 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } deepFirst
                     ? (settings with { ReviewDeepFirst = deepFirst }, null)
                     : (null, "review-deep-first takes on or off");
+            case UserSkillsKey:
+                if (clear)
+                {
+                    return (settings with { UserSkills = null }, null);
+                }
+                return OnOff(One()) is { } userSkills
+                    ? (settings with { UserSkills = userSkills }, null)
+                    : (null, "user-skills takes on or off");
             case MergeBatchKey:
                 if (clear)
                 {
