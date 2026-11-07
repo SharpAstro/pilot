@@ -424,7 +424,18 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         await checks.LookAsync(Ct);
         F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
         _github.Checks = ChoiceStatus.Passing;
-        var thrown = PassingFailures(int.MaxValue);
+        // The armed loop reads the PR itself before it asks the merge, so GitHub's failure is the merge call's own: a 5xx answer.
+        var asked = 0;
+        _github.OnCall = call =>
+        {
+            if (call == nameof(IGitHub.MergeAsync))
+            {
+                asked++;
+            }
+            return Task.CompletedTask;
+        };
+        _github.MergeAnswers = "HTTP 503 Service Unavailable from GitHub";
+        Func<int> thrown = () => asked;
 
         await checks.LookAsync(Ct);
         thrown().ShouldBe(1);
