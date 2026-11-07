@@ -149,7 +149,7 @@ public sealed class MergedUnderLegTests : IDisposable
         // The flight moved on to PR #71 after the caller read it at #63.
         var moved = seen with { PullRequest = 71, PullRequestUrl = "https://github.com/x/tianwen/pull/71" };
         node.State.PutFlight(moved);
-        var cards = node.State.Cards().Count;
+        var cards = node.State.Cards().Length;
 
         var returned = node.App.Services.GetRequiredService<FlightCommander>().MarkMergedUnderLeg(seen, _mergedHead, "a push was refused");
 
@@ -157,7 +157,7 @@ public sealed class MergedUnderLegTests : IDisposable
         var now = node.State.Flights().Single();
         (now.PullRequest, now.MergedPullRequest, now.MergedHead).ShouldBe((71, null, null));
         now.Review.ShouldNotBeNull();
-        node.State.Cards().Count.ShouldBe(cards);
+        node.State.Cards().Length.ShouldBe(cards);
         node.State.Cards().Single(c => c.Id == ready.Id).State.ShouldBe(CardState.Open);
         node.State.Cards(openOnly: true).ShouldNotContain(c => c.Kind == FlightCommander.MergedUnderLegKind);
     }
