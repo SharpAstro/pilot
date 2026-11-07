@@ -23,18 +23,24 @@ internal sealed record AllowedTextFault(string Case, string Fault, string Reason
 /// <summary>The faults the sweep finds today and lets pass, each with its reason and issue: the list is the sweep's to-do.</summary>
 internal static class TextOverlapAllowList
 {
-    // The first run of the widened sweep found 42 failing cases, 300 fault lines, in 13 causes. PIL740's fix-faults leg fixed 12 in the views (a long title
-    // wraps, the PR title column gives up its floor, a long identifier in an idea breaks at its humps, the priority line wraps, and a window shorter than
-    // 480 units scrolls the Flights, Jobs, Chat and Sessions pages, the flight page's head scrolling itself where it is long). One is left.
-    // Its issue is SharpAstro/DIR.Lib#182 (the fix is in DIR.Lib, so the number is that repo's).
-    private const int DirLibFloatingPaletteIssue = 182;
+    // The views fix the sweep's faults (a long title wraps, the PR title column gives up its floor, a long identifier in an idea breaks at its humps,
+    // the priority line wraps, and a window shorter than 480 units scrolls the Flights, Jobs, Chat and Sessions pages, the flight page's head scrolling
+    // itself where it is long). One fault is left: the LAYERS menu is taller than the map body in a short window. The menu's translucent rows over the
+    // map's labels (DIR.Lib#182) are not a fault any more: FlightMapLayerPalette sets PaletteColors.Backing, an opaque panel behind them.
+    // The fold or scroll that fixes what is left is pilot's to build, so the entries cite a pilot issue, not a DIR.Lib one. They cite #790, which
+    // closes when its flight merges: point PilotFlightPilIssue at the LAYERS menu's own issue once one is filed. The entries go when the menu
+    // scrolls or folds.
+    private const int PilotFlightPilIssue = 790;
 
     public static readonly IReadOnlyList<AllowedTextFault> Entries =
     [
-        new("flights canvas | * | *", "overlap: 'PR states' * is drawn over 'artifacts' *",
-            "DIR.Lib's FloatingPalette (the LAYERS menu) floats over the pannable map and fades to 40% opacity, so a map label ('artifacts') panning under a "
-            + "row of it ('PR states') is drawn through its text; pilot passes the palette colours and a width only, so the fix is in DIR.Lib (opaque rows) or a decision "
-            + "that the sweep exempts a translucent floating menu over a pannable map", DirLibFloatingPaletteIssue),
+        new("flights canvas | * | 500 wide *", "overlap: 'PR states' * is drawn over 'artifacts' *",
+            "At 500 wide the LAYERS menu (a fixed 124 units, a dozen rows) is taller than the map body, so its lower rows ('PR states') lie over the "
+            + "flight detail's text below the map ('artifacts'); the painter clips the menu at the map body, so the capture shows no overlap, but the arranged "
+            + "rows do. The menu should scroll or fold its lower rows when the map is short", PilotFlightPilIssue),
+        new("flights canvas | * | 700 wide | * | 500 high", "overlap: 'PR states' * is drawn over 'artifacts' *",
+            "As at 500 wide: a window 500 high leaves the map body shorter than the LAYERS menu, whose lower rows lie over the flight detail's text below it",
+            PilotFlightPilIssue),
     ];
 
     public static bool Covers(string key, string line) => Entries.Any(e => e.Covers(key, line));

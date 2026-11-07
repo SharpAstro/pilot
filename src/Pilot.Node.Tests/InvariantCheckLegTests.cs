@@ -30,7 +30,7 @@ public sealed class InvariantCheckLegTests : LegCommanderTestsBase
     public async Task ALegPlannedBeforeGetsTheInvariantTestsOnTheRerun()
     {
         await Create();
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Parse", "done-when=It parses", "check=dotnet test Tianwen.slnx")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Parse", "done-when=It parses", "check=dotnet test Tianwen.slnx --filter FullyQualifiedName~Foo")).Ok.ShouldBeTrue();
         await Leg(Verbs.StartLeg, "flight/TIA1/parser");
         _state.PutLeg(L("parser") with { Check = "dotnet test Tianwen.slnx --filter FullyQualifiedName~Foo" });
 

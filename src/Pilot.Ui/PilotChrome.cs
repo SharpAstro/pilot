@@ -671,11 +671,11 @@ internal sealed class PilotChrome<TSurface>
         PilotWidgetBase<TSurface> target = page;
         if (panel is not null)
         {
-            if (page.Selection.Dragging)
+            if (page.PageSelection.Dragging)
             {
                 target = page;
             }
-            else if (panel.Selection.Dragging)
+            else if (panel.PageSelection.Dragging)
             {
                 target = panel;
             }
@@ -683,7 +683,7 @@ internal sealed class PilotChrome<TSurface>
             {
                 target = Over(CardsBounds!.Value, px, py) ? panel : page;
             }
-            else if (!page.Selection.HasSelection && panel.Selection.HasSelection)
+            else if (!page.PageSelection.HasSelection && panel.PageSelection.HasSelection)
             {
                 target = panel;
             }

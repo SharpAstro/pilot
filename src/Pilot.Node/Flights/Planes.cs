@@ -666,15 +666,104 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         return (await git.RunAsync(["diff", "--quiet", mainRef, "HEAD", "--", .. files], worktree, cancellationToken)).Ok;
     }
 
-    /// <summary>The plane's commits past <paramref name="head"/> (subjects, oldest first): what a merge at that head left out.</summary>
-    public async Task<IReadOnlyList<string>> PastAsync(string worktree, string head, CancellationToken cancellationToken)
+    /// <summary>
+    /// The plane's own commits past <paramref name="head"/> (subjects, oldest first): what a merge at that head left out. A merge of
+    /// <paramref name="mainRef"/> into the plane, and main's own commits it brought, are not the plane's work and are left out, as is
+    /// a commit main holds by patch (cherry-picked into a follow-up PR). PIL819's ring counted three "past it" where one was its own:
+    /// PIL804's commit from main, the merge of main, and the review-notes commit that missed the merge.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> PastAsync(string worktree, string head, string mainRef, CancellationToken cancellationToken)
     {
         if (!Directory.Exists(worktree))
         {
             return [];
         }
-        var past = await git.RunAsync(["log", "--reverse", "--format=%h %s", $"{head}..HEAD"], worktree, cancellationToken);
-        return past.Ok ? past.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+        var main = await MainRefAsync(worktree, mainRef, cancellationToken);
+        var past = await git.RunAsync(["rev-list", "--reverse", "--no-merges", "HEAD", $"^{head}", $"^{main}"], worktree, cancellationToken);
+        if (!past.Ok)
+        {
+            return [];
+        }
+        var cherry = await git.RunAsync(["cherry", main, "HEAD"], worktree, cancellationToken);
+        var notInMain = cherry.Ok
+            ? cherry.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(l => l.StartsWith('+')).Select(l => l[1..].Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : null;
+        var own = new List<string>();
+        foreach (var sha in past.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (notInMain is not null && !notInMain.Contains(sha))
+            {
+                continue;
+            }
+            var subject = await git.RunAsync(["log", "-1", "--format=%h %s", sha], worktree, cancellationToken);
+            own.Add(subject.Ok ? subject.Output.Trim() : sha[..Math.Min(9, sha.Length)]);
+        }
+        return own;
+    }
+
+    /// <summary>The remote's copy of <paramref name="mainRef"/> when the plane has it (<c>origin/main</c> for <c>main</c>), else the name as given.</summary>
+    private async Task<string> MainRefAsync(string worktree, string mainRef, CancellationToken cancellationToken)
+    {
+        if (mainRef.Contains('/'))
+        {
+            return mainRef;
+        }
+        var remote = $"origin/{mainRef}";
+        return (await git.RunAsync(["rev-parse", "--verify", "--quiet", remote], worktree, cancellationToken)).Ok ? remote : mainRef;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="commit"/> (a merge commit, however the PR was merged: squash, rebase or merge commit all leave one tree
+    /// behind) holds the plane's HEAD: the two trees equal (each resolved with <c>rev-parse '&lt;sha&gt;^{tree}'</c>), or, when main
+    /// moved since the plane last took it, every file the plane changed the same in the commit. The commit
+    /// is fetched first when the plane lacks it. True or false when both trees were read; else null and <c>Said</c> is
+    /// why they could not be (the card says it).
+    /// </summary>
+    public async Task<(bool? Same, string? Said)> HeadTreeIsAsync(string worktree, string commit, CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(worktree))
+        {
+            return (null, "its plane is gone");
+        }
+        if (!(await git.RunAsync(["cat-file", "-e", $"{commit}^{{commit}}"], worktree, cancellationToken)).Ok)
+        {
+            await git.RunAsync(["fetch", "--quiet", "origin"], worktree, cancellationToken);
+        }
+        var merged = await git.RunAsync(["rev-parse", $"{commit}^{{tree}}"], worktree, cancellationToken);
+        if (!merged.Ok)
+        {
+            return (null, $"the merge commit {CommitRefs.Short(commit)} could not be read here");
+        }
+        var plane = await git.RunAsync(["rev-parse", "HEAD^{tree}"], worktree, cancellationToken);
+        if (!plane.Ok)
+        {
+            return (null, "its plane's tree could not be read");
+        }
+        if (string.Equals(merged.Output.Trim(), plane.Output.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return (true, null);
+        }
+        // The trees differ. When main moved after the plane last took it, the squash holds the plane's work and main's too, so equal
+        // trees are too strict: the merge holds the plane's work when every file the plane changed since the merge's parent (its
+        // merge-base with the plane) reads the same in the merge. A file main changed as well differs, so that stays a "no".
+        var parent = await git.RunAsync(["rev-parse", $"{commit}^"], worktree, cancellationToken);
+        if (!parent.Ok)
+        {
+            return (false, null);
+        }
+        var mergeBase = await git.RunAsync(["merge-base", "HEAD", parent.Output.Trim()], worktree, cancellationToken);
+        if (!mergeBase.Ok)
+        {
+            return (false, null);
+        }
+        var mine = await git.RunAsync(["diff", "--name-only", "--no-renames", mergeBase.Output.Trim(), "HEAD"], worktree, cancellationToken);
+        var apart = await git.RunAsync(["diff", "--name-only", "--no-renames", "HEAD", commit], worktree, cancellationToken);
+        if (!mine.Ok || !apart.Ok)
+        {
+            return (null, "the plane's changes could not be compared with the merge's");
+        }
+        var changed = mine.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet(StringComparer.Ordinal);
+        return (!apart.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(changed.Contains), null);
     }
 
     /// <summary>Whether the plane holds changes not committed, in a line, or null when it is clean (or gone).</summary>
@@ -788,6 +877,13 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
 
 /// <summary>A flight command that could not be done, with why: the command's error.</summary>
 public class FlightException(string message) : Exception(message);
+
+/// <summary>A landing refused after the merge because the plane holds work of its own the merge left out: the commits, to open a PR with.</summary>
+public sealed class LeftOutCommitsException(string message, IReadOnlyList<string> commits) : FlightException(message)
+{
+    /// <summary>The plane's own commits past the merged head, as <c>&lt;short sha&gt; &lt;subject&gt;</c>, oldest first.</summary>
+    public IReadOnlyList<string> Commits { get; } = commits;
+}
 
 /// <summary>GitHub's rate limit stopped a call: <see cref="ResetAt"/> is when its points come back, null when gh could not say.</summary>
 public sealed class RateLimitedException(string message, DateTimeOffset? resetAt) : FlightException(message)

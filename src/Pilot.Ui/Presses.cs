@@ -163,15 +163,17 @@ internal sealed class Presses
     /// <summary>
     /// A node-bound button: <paramref name="idle"/> (made with <paramref name="hit"/>) while nothing of <paramref name="key"/> is with the
     /// node, else <paramref name="working"/>, told whether this is the button pressed: the same button dimmed, with no hit.
+    /// <paramref name="doneMark"/> false is for a switch or a setting's choice, whose new state is itself the outcome: once the node
+    /// took the press the button shows it at once, not "done" in its place (the owner, 2026-11-07); a refusal is still marked.
     /// </summary>
-    public Layout.Node Button(string key, string hit, Func<Layout.Node> idle, Func<bool, Layout.Node> working)
+    public Layout.Node Button(string key, string hit, Func<Layout.Node> idle, Func<bool, Layout.Node> working, bool doneMark = true)
     {
         MadeIds.TryAdd(hit, 0);
         if (PendingOf(key) is { } pressed)
         {
             return working(pressed == hit);
         }
-        return MarkOf(key) is { } mark && mark.Hit == hit ? Mark(mark.Refused) : idle();
+        return MarkOf(key) is { } mark && mark.Hit == hit && (doneMark || mark.Refused) ? Mark(mark.Refused) : idle();
     }
 
     /// <summary>

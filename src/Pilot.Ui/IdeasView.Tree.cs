@@ -32,7 +32,7 @@ internal sealed partial class IdeasView<TSurface>
 
     internal override Action<string>? SelectionCopy => CopyText;
 
-    internal override RectF32 SelectionViewport => _scroll.Viewport;
+    internal override RectF32 PageSelectionViewport => _scroll.Viewport;
 
     internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true } || Gallery.Viewing is not null;
 
@@ -143,7 +143,7 @@ internal sealed partial class IdeasView<TSurface>
                 break;
         }
         var whole = Layout.Builder.VStack(top, body.HStar()).Bg(P.Ground).Stretch();
-        whole = WithSelection(whole);
+        whole = WithPageSelection(whole);
         return Gallery.Over(About?.Over(whole, NightOrNull) ?? whole);
     }
 
@@ -211,9 +211,11 @@ internal sealed partial class IdeasView<TSurface>
             }, Layout.Axis.Vertical, _splitExtent ?? DefaultSplit, SplitThickness, SplitGrab, new HitResult.ButtonHit(SplitHit), P.Faint).Stretch();
     }
 
-    // One of the two panes: its rows, scrolled by its own controller, inside the page's gutters.
+    // One of the two panes: its rows, scrolled by its own controller, inside the page's gutters. The gutters are the scrolled stack's own
+    // padding (as in the flight page), so the scrollbar column the stack reserves is already padding and the rows keep the width they were
+    // measured at. The scrollbar sits at the page's edge.
     private Layout.Node Pane(List<Layout.Node> rows, ListScrollController scroll) =>
-        Layout.Builder.VStack(Layout.Builder.VStack([.. rows]).WithGap(RowGap).WithScroll(scroll).Stretch().HStar()).Pad(Gutter, 8f).Stretch();
+        Layout.Builder.VStack(Layout.Builder.VStack([.. rows]).WithGap(RowGap).WithScroll(scroll).Pad(Gutter, 0f).Stretch().HStar()).Pad(0f, 8f).Stretch();
 
     private async Task CommitRowAsync(string text)
     {
