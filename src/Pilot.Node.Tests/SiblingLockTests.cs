@@ -277,8 +277,9 @@ public sealed class SiblingLockTests : JobTestsBase
         {
             Directory.CreateDirectory(Path.Combine(plane, "src"));
             File.WriteAllText(Path.Combine(plane, ".git"), "gitdir: nowhere");
+            // Four levels up from the plane, as pilot's own fallback: a probe the plane's build really resolves (PIL802).
             File.WriteAllText(Path.Combine(plane, "Directory.Build.props"),
-                "<Project><PropertyGroup><UseLocalA Condition=\"Exists('../../A')\">true</UseLocalA></PropertyGroup></Project>");
+                "<Project><PropertyGroup><UseLocalA Condition=\"Exists('../../../../A')\">true</UseLocalA></PropertyGroup></Project>");
         }
         Directory.CreateDirectory(Path.Combine(org, "A"));
         Directory.CreateDirectory(Path.Combine(org, "B"));
