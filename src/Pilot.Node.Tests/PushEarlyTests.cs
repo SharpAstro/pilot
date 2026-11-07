@@ -20,19 +20,20 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
         Failed!  - Failed: 1, Passed: 4, Skipped: 0, Total: 5
         """;
 
-    private readonly FakeGit _git = new();
+    private readonly FakeGit _recorded;
     private readonly LegCommander _mine;
 
     public PushEarlyTests()
     {
+        _recorded = new FakeGit(_git);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
-        _mine = new LegCommander(_state, _workers, _checks, _github, _git, new Planes(_git), _flights, options, _clock);
+        _mine = new LegCommander(_state, _workers, _checks, _github, _recorded, new Planes(_recorded), _flights, options, _clock);
     }
 
     /// <summary>git that runs for real, except what talks to a remote or asks about the base, which it answers and remembers.</summary>
-    private sealed class FakeGit : IGit
+    private sealed class FakeGit(IGit real) : IGit
     {
-        private readonly GitCli _real = new();
+        private readonly IGit _real = real;
 
         public List<string[]> Calls { get; } = [];
 
@@ -77,7 +78,7 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
 
     private async Task<FlightRow> Flying()
     {
-        _git.Disarmed = () => _github.AutoMergeDisarmed.Count;
+        _recorded.Disarmed = () => _github.AutoMergeDisarmed.Count;
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
         (await Leg(Verbs.PlanLeg, "flight/tia1", "name=parser", "goal=Parse", "done-when=It parses", $"check={Check}")).Ok.ShouldBeTrue();
         await Leg(Verbs.StartLeg, "flight/TIA1/parser");
@@ -103,7 +104,7 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
 
         finish.Ok.ShouldBeFalse();
         L("parser").State.ShouldBe(LegState.Flying);
-        var push = _git.Pushes.ShouldHaveSingleItem();
+        var push = _recorded.Pushes.ShouldHaveSingleItem();
         push.ShouldBe(["push", "-u", "origin", "flight/tia1"]);
     }
 
@@ -116,7 +117,7 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
         await Finish("failed", "ran out of road");
 
         L("parser").State.ShouldBe(LegState.Failed);
-        _git.Pushes.ShouldHaveSingleItem().ShouldBe(["push", "-u", "origin", "flight/tia1"]);
+        _recorded.Pushes.ShouldHaveSingleItem().ShouldBe(["push", "-u", "origin", "flight/tia1"]);
     }
 
     [Fact]
@@ -124,7 +125,7 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
     public async Task APushRefusedAsNonFastForwardIsNotedOnTheLegAndNeverForced()
     {
         await Flying();
-        _git.PushRefused = "! [rejected] flight/TIA1 -> flight/TIA1 (non-fast-forward)";
+        _recorded.PushRefused = "! [rejected] flight/TIA1 -> flight/TIA1 (non-fast-forward)";
 
         var finish = await Finish("done", "parsed");
 
@@ -133,7 +134,7 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
         var report = L("parser").Report.ShouldNotBeNull();
         report.ShouldContain("not pushed early");
         report.ShouldContain("non-fast-forward");
-        _git.Pushes.ShouldHaveSingleItem().ShouldNotContain(a => a.Contains("force", StringComparison.Ordinal));
+        _recorded.Pushes.ShouldHaveSingleItem().ShouldNotContain(a => a.Contains("force", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -153,7 +154,7 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
         await Finish("done", "parsed");
 
         _github.AutoMergeDisarmed.ShouldBe([7]);
-        _git.DisarmedAtPush.ShouldBe([1]);
+        _recorded.DisarmedAtPush.ShouldBe([1]);
         calls.ShouldNotContain(nameof(IGitHub.CreateAsync));
         var after = _state.Flights().Single();
         after.PullRequest.ShouldBe(flight.PullRequest);
@@ -165,7 +166,7 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
     public async Task TwoFinishAttemptsInOneGoAroundMergeTheBaseOnceAndTheNextGoAroundMayMergeAgain()
     {
         var flight = await Flying();
-        _git.Behind = true;
+        _recorded.Behind = true;
         // The round after a review's changes: the PR is up and the go-around's finish brings the plane up to date.
         _state.PutFlight(flight with
         {
@@ -176,13 +177,13 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
         (await Finish("done", "first try")).Ok.ShouldBeFalse();
         (await Finish("done", "second try")).Ok.ShouldBeFalse();
 
-        _git.Merges.ShouldBe(1);
+        _recorded.Merges.ShouldBe(1);
 
         _state.PutLeg(L("parser") with { GoArounds = 1 });
         (await Finish("done", "next round")).Ok.ShouldBeFalse();
         (await Finish("done", "next round again")).Ok.ShouldBeFalse();
 
-        _git.Merges.ShouldBe(2);
+        _recorded.Merges.ShouldBe(2);
     }
 
     [Fact]
@@ -190,12 +191,12 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
     public async Task ADoneWhoseRerunFailsPushesEvenWhileTheBranchIsBehindItsBase()
     {
         await Flying();
-        _git.Behind = true;
+        _recorded.Behind = true;
 
         (await Finish("done", "parsed")).Ok.ShouldBeFalse();
 
         L("parser").State.ShouldBe(LegState.Flying);
-        _git.Pushes.ShouldHaveSingleItem().ShouldBe(["push", "-u", "origin", "flight/tia1"]);
+        _recorded.Pushes.ShouldHaveSingleItem().ShouldBe(["push", "-u", "origin", "flight/tia1"]);
         (L("parser").Report ?? "").ShouldNotContain("not pushed early");
     }
 
@@ -204,13 +205,13 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
     public async Task AFailedFinishPushesEvenWhileTheBranchIsBehindItsBase()
     {
         await Flying();
-        _git.Behind = true;
+        _recorded.Behind = true;
 
         await Finish("failed", "ran out of road");
 
         L("parser").State.ShouldBe(LegState.Failed);
-        _git.Pushes.ShouldHaveSingleItem().ShouldBe(["push", "-u", "origin", "flight/tia1"]);
-        _git.Merges.ShouldBe(0, "a failed finish pushes what the plane holds and merges nothing");
+        _recorded.Pushes.ShouldHaveSingleItem().ShouldBe(["push", "-u", "origin", "flight/tia1"]);
+        _recorded.Merges.ShouldBe(0, "a failed finish pushes what the plane holds and merges nothing");
     }
 
     [Fact]
@@ -218,7 +219,7 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
     public async Task ASecondAttemptInTheRoundSkipsTheMergeAndStillPushesAndItsPassingFinalPushGoesThroughWhileBehind()
     {
         var flight = await Flying();
-        _git.Behind = true;
+        _recorded.Behind = true;
         // The round after a review's changes: the PR is up, so the passing finish pushes and starts a fresh review.
         _state.PutFlight(flight with
         {
@@ -229,8 +230,8 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
         (await Finish("done", "first try")).Ok.ShouldBeFalse();
         (await Finish("done", "second try")).Ok.ShouldBeFalse();
 
-        _git.Merges.ShouldBe(1);
-        _git.Pushes.Count.ShouldBe(2,"the attempt whose merge was skipped pushes its commits all the same");
+        _recorded.Merges.ShouldBe(1);
+        _recorded.Pushes.Count.ShouldBe(2,"the attempt whose merge was skipped pushes its commits all the same");
 
         // The round's last attempt passes: its push after the leg is recorded done is a brought one, so a base that moved on since
         // the round's one merge does not refuse it.
@@ -238,8 +239,8 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
         (await Finish("done", "third try")).Ok.ShouldBeTrue();
 
         L("parser").State.ShouldBe(LegState.Done);
-        _git.Merges.ShouldBe(1);
-        _git.Pushes.Count.ShouldBe(3);
+        _recorded.Merges.ShouldBe(1);
+        _recorded.Pushes.Count.ShouldBe(3);
     }
 
     [Fact]
@@ -253,7 +254,7 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
         await Finish("failed", "no ephemeris here");
 
         L("parser").State.ShouldBe(LegState.Failed);
-        _git.Pushes.ShouldBeEmpty();
+        _recorded.Pushes.ShouldBeEmpty();
         L("parser").Report.ShouldBe("no ephemeris here");
     }
 

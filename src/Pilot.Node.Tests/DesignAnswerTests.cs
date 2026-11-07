@@ -128,7 +128,7 @@ public abstract class FlightDesignTestsBase : ReviewTestsBase
         Git(Repo, "config", "remote.origin.url", "https://github.com/x/tianwen.git");
         Git(Repo, "config", $"url.{origin}.insteadOf", "https://github.com/x/tianwen.git");
         _github.Login = "ada";
-        var git = new GitCli();
+        var git = _git;
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [_root]);
         _reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, options), options, TimeProvider.System)
         {

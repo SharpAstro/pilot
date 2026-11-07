@@ -22,14 +22,23 @@ public abstract class ReviewTestsBase : IDisposable
     private protected readonly FlightCommander _flights;
     private protected readonly LegCommander _legs;
 
-    protected ReviewTestsBase()
+    /// <summary>The git every commander of the test runs: <see cref="FakeRepoGit"/>, or <see cref="GitCli"/> for a class that is about git itself.</summary>
+    private protected readonly IGit _git;
+
+    private readonly TestGit _testGit;
+
+    /// <summary>
+    /// Real git's cost is the reason these tests were slow (#813): a git run is 100 to 400 ms on Windows and a flight's lifecycle makes
+    /// about 50, so a class of a few dozen flights took minutes there. Tests that check what the node decides run on <see cref="FakeRepoGit"/>;
+    /// a class that checks what git does (a rebase, a conflict a person resolves) passes <paramref name="realGit"/>. See <see cref="TestGit"/>.
+    /// </summary>
+    protected ReviewTestsBase(bool realGit = false)
     {
-        // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
-        SeedRepo.Make(_root);
-        var git = new GitCli();
-        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers, _github);
+        // Real: a repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
+        _git = _testGit = new TestGit(_root, realGit, () => SeedRepo.Make(_root));
+        _flights = new FlightCommander(_state, new Planes(_git), TimeProvider.System, _workers, _github);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
-        _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, git, new Planes(git), _flights, options, TimeProvider.System)
+        _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, _git, new Planes(_git), _flights, options, TimeProvider.System)
         {
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),
         };
@@ -37,20 +46,37 @@ public abstract class ReviewTestsBase : IDisposable
 
     private protected string Repo => Path.Combine(_root, "tianwen");
 
+    /// <summary>
+    /// Runs this test on git itself: for a test, or a case of a theory, that checks what git does (a rebase, a conflict, a clone) in a
+    /// class that otherwise checks what the node decides. Called first, before the test has used the repo: the model's folders are
+    /// replaced by the seed repo and its origin.
+    /// </summary>
+    private protected void RealGit() => _testGit.UseReal();
+
     public void Dispose()
     {
-        try
+        if (_testGit.IsReal)
         {
-            Git(Repo, "worktree", "prune");
+            try
+            {
+                Git(Repo, "worktree", "prune");
+            }
+            catch (InvalidOperationException)
+            {
+            }
         }
-        catch (InvalidOperationException)
-        {
-        }
+        _testGit.Release();
         TestDirs.DeleteTree(_root);
+        // A command the model could not answer may have been swallowed by the node's own catch: the test still fails.
+        _testGit.Verify();
     }
 
     private protected static string Git(string cwd, params string[] args)
     {
+        if (TestGit.Answer(cwd, args) is { } answered)
+        {
+            return answered;
+        }
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
         {
@@ -1209,6 +1235,8 @@ public sealed class ReviewTests3 : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task APlaneBehindItsBranchPushedFromElsewhereWithTheConflictResolvedTakesItAndRaisesNoConflict()
     {
+        // A second clone and a conflict a person resolves: git's own.
+        RealGit();
         var flight = await NewFlight("17", "parser");
         File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
         await Fly(flight, "parser");
@@ -1459,6 +1487,8 @@ public sealed class ReviewTests3 : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ACommitPushedToTheBranchFromElsewhereDuringAGoAroundIsTakenInNotLost(string number)
     {
+        // A second clone pushing to the branch: git's own.
+        RealGit();
         var flight = await NewFlight(number, "parser");
         var code = $"TIA{number}";
         var branch = $"flight/tia{number}";
@@ -1640,6 +1670,8 @@ public sealed class ReviewTests4 : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task APushStillBehindItsBaseAfterTheUpdateIsRefused()
     {
+        // A post-merge hook is git's own.
+        RealGit();
         var flight = await NewFlight("39", "parser");
         await Fly(flight, "parser");
         MainMoves();
