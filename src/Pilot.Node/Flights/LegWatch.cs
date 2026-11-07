@@ -1501,7 +1501,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>
     /// A worker waiting on the node. With the leg's check rerunning nothing is done: the run finishes the leg. Otherwise the node finishes
     /// the leg done, once per worker, by the same finish its worker would run (steps, check and push all asked). True when no ring is due
-    /// (the leg is finished, or the worker is told why not and gets its turn); false when that was tried already and the worker still waits.
+    /// (the leg is finished, or the worker is told why not and gets its turn); false when that was tried already and the worker still waits,
+    /// unless a job of the leg's check or of the worker's own is queued or running (pilot #848): that job's end wakes the worker, and a
+    /// queue that is stuck is the queue-jam card's to ring, so no leg ring is due while it lives.
     /// </summary>
     private async Task<bool> NodeTakesOverAsync(LegRow leg, SessionRow worker, CancellationToken cancellationToken)
     {
@@ -1511,7 +1513,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         }
         if (!_finishTried.Add(leg.WorkerJob!))
         {
-            return false;
+            // JobsOf holds the leg's own check job (it has the flight and leg but no owner) as well as the worker's jobs.
+            return JobsOf(worker, leg).Any(j => j.State is JobState.Running or JobState.Queued);
         }
         var done = await run(new CommandRequest { Verb = Verbs.FinishLeg, Target = Subject(leg), Args = ["done", $"finished by the node: its worker waited on the node ({Clip(worker.WaitingFor ?? "work done")})"], Who = Who }, cancellationToken);
         if (!done.Ok)
