@@ -214,7 +214,9 @@ public sealed class LockFreeGitTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task TheSweepLeavesAFlightWhoseCallsAreOutToItsNextSweepInsteadOfWaitingInOpenPr()
     {
-        var (flight, _) = await Passed("1");
+        // Every leg done and no PR yet, so open-pr is the sweep's next step for it (a Passed flight has its PR already).
+        var flight = await NewFlight("1", "parser");
+        await Fly(flight, "parser");
         var gate = new Gate();
         var git = new GatedGit(new GitCli(), gate, args => args is ["fetch", ..]);
         var legs = Another(git);
