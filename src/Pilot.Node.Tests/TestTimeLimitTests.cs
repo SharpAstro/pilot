@@ -74,8 +74,9 @@ public class TestTimeLimitTests
 
     private static TimeSpan S(double seconds) => TimeSpan.FromSeconds(seconds);
 
-    private static StallSample Sample(double at, double lag = 0, int threads = 4, long queue = 0, double gc = 0)
-        => new(S(at), S(lag), threads, queue, S(gc));
+    private static StallSample Sample(double at, double lag = 0, int threads = 4, long queue = 0, double gc = 0,
+        double cpu = 0, long contention = 0, long completed = 0, double late = 0)
+        => new(S(at), S(lag), threads, queue, S(gc), S(cpu), contention, completed, S(late));
 
     /// <summary>A window in which nothing was wrong: the pool answered in milliseconds and the GC barely paused.</summary>
     private static StallReadings Quiet(double window, params AlsoSlow[] others)
@@ -334,6 +335,96 @@ public class TestTimeLimitTests
         sampler.Tick();
         sampler.Samples()[^1].PoolLag.ShouldBe(TimeSpan.Zero);
         sampler.Take().PoolLag.ShouldBe(TimeSpan.Zero);
+    }
+
+    private static StallReadings StallOfSixSecondsWithCounters(double sampleLate)
+    {
+        // One stalled span, [2, 8], seen by two ticks (probe queued at 2 s, still waiting at 5 s, ran at 8 s). The counters at
+        // its two ends are the ones read at 2 s and 8 s.
+        var samples = new[]
+        {
+            Sample(1, cpu: 0.8, contention: 5, completed: 50),
+            Sample(2, cpu: 1.0, contention: 10, completed: 100),
+            Sample(5, lag: 3, cpu: 1.1, contention: 12, completed: 101, late: sampleLate),
+            Sample(8, lag: 6, cpu: 1.4, contention: 20, completed: 103),
+            Sample(9, cpu: 2.0, contention: 22, completed: 140),
+        };
+        return ProcessStall.Summarise(samples, Sample(0, cpu: 0.5), Sample(10, cpu: 2.5, contention: 25, completed: 160), []);
+    }
+
+    [Fact]
+    public void WhileThePoolLaggedTheReadingsCarryProcessCpuPoolItemsAndLockWaits()
+    {
+        var readings = StallOfSixSecondsWithCounters(sampleLate: 0);
+
+        readings.PoolStall.ShouldBe(S(6));
+        readings.StallCpu.ShouldBe(S(0.4), "only the stalled span counts, not the CPU the process used before or after it");
+        readings.StallCompleted.ShouldBe(3);
+        readings.StallContention.ShouldBe(10);
+
+        var line = new List<string>();
+        TestTimeLimitAttribute.Check("C", "M", false, S(10), S(2), TestTimeMode.Report, line.Add, readings);
+        line.ShouldHaveSingleItem().ShouldContain("while the pool lagged: process CPU 400 ms (0.07 cores), 3 pool items finished, 10 lock waits");
+    }
+
+    [Fact]
+    public void TheSamplersLateWakesAreSummedAndLessThanHalfThePoolStallIsStillPoolStarvation()
+    {
+        // The sampler's own thread is no pool thread: it must have overslept for at least half of the pool stall to say the
+        // whole process was off the CPU. 2.5 s of a 6 s stall is under half.
+        var some = StallOfSixSecondsWithCounters(sampleLate: 2.5);
+        some.LateTicks.ShouldBe(S(2.5));
+        some.MaxTickLate.ShouldBe(S(2.5));
+        some.Cause.ShouldBe(StallCause.PoolStarvation);
+    }
+
+    [Fact]
+    public void ASamplerThreadLateForAtLeastHalfThePoolStallIsProcessStarvedAndOnTimeIsPoolStarvation()
+    {
+        var late = StallOfSixSecondsWithCounters(sampleLate: 3);
+        late.Cause.ShouldBe(StallCause.ProcessStarved);
+        TestTimeLimitAttribute.Classify(S(10), S(2), late).Cause.ShouldBe(StallCause.ProcessStarved);
+
+        var lines = new List<string>();
+        TestTimeLimitAttribute.Check("C", "M", false, S(10), S(2), TestTimeMode.Report, lines.Add, late);
+        var line = lines.ShouldHaveSingleItem();
+        line.ShouldContain("process stall: 6.0 s lost to CPU starvation of the whole process");
+        line.ShouldContain("sampler thread late up to 3.0 s (3.0 s above 250 ms)");
+
+        // The sampler on time while the pool lagged: its threads were blocked, not starved of CPU.
+        var onTime = StallOfSixSecondsWithCounters(sampleLate: 0);
+        onTime.Cause.ShouldBe(StallCause.PoolStarvation);
+        TestTimeLimitAttribute.Check("C", "M", false, S(10), S(2), TestTimeMode.Report, lines.Add, onTime);
+        lines[1].ShouldContain("process stall: 6.0 s lost to pool starvation");
+        lines[1].ShouldNotContain("sampler thread late");
+
+        // Late by a little only: not worth a mention.
+        var slight = StallOfSixSecondsWithCounters(sampleLate: 0.1);
+        slight.Cause.ShouldBe(StallCause.PoolStarvation);
+    }
+
+    [Fact]
+    public void TheSamplerRecordsHowLateItsOwnThreadWokeAndTheRuntimesCounters()
+    {
+        var now = TimeSpan.Zero;
+        var pool = new List<Action>();
+        var runtime = new StallRuntime(4, 0, TimeSpan.Zero, Cpu: S(3), Contention: 7, Completed: 9);
+        var sampler = new StallSampler(() => now, pool.Add, () => runtime, capacity: 100);
+
+        sampler.Tick();                                // the first tick has no earlier one to be late after
+        now = ProcessStall.Interval;
+        sampler.Tick();                                // on time
+        now += ProcessStall.Interval + S(1.9);
+        runtime = runtime with { Cpu = S(3.2), Contention = 8, Completed = 12 };
+        sampler.Tick();                                // overslept by 1.9 s
+
+        var samples = sampler.Samples();
+        samples.Select(s => s.TickLate).ShouldBe([TimeSpan.Zero, TimeSpan.Zero, S(1.9)]);
+        samples[0].Cpu.ShouldBe(S(3));
+        samples[0].Contention.ShouldBe(7);
+        samples[0].Completed.ShouldBe(9);
+        samples[2].Cpu.ShouldBe(S(3.2));
+        sampler.Take().TickLate.ShouldBe(TimeSpan.Zero, "a mark taken by a test is no tick");
     }
 
     [Fact]

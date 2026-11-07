@@ -194,6 +194,21 @@ public sealed class TestTimeLimitAttribute : BeforeAfterTestAttribute
             .Append(" (").Append(Seconds(r.PoolStall)).Append(" above ").Append(Short(ProcessStall.LagThreshold)).Append(')')
             .Append(", GC pause ").Append(Short(r.GcPause));
 
+        // What tells a blocked pool from a starved process: while the pool lagged, a pool whose threads are all blocked uses
+        // almost no CPU and its sampler thread (which is no pool thread) wakes on time; a process the machine gave no CPU
+        // uses almost none either, but its sampler thread wakes late too; a process that is busy itself uses a lot of it.
+        if (r.PoolStall > TimeSpan.Zero)
+        {
+            var cores = r.StallCpu.TotalSeconds / r.PoolStall.TotalSeconds;
+            readings.Append(", while the pool lagged: process CPU ").Append(Short(r.StallCpu)).Append(" (").Append(cores.ToString("F2", System.Globalization.CultureInfo.InvariantCulture))
+                .Append(" cores), ").Append(r.StallCompleted).Append(" pool items finished, ").Append(r.StallContention).Append(" lock waits");
+        }
+
+        if (r.MaxTickLate >= ProcessStall.LagThreshold)
+        {
+            readings.Append(", sampler thread late up to ").Append(Short(r.MaxTickLate)).Append(" (").Append(Seconds(r.LateTicks)).Append(" above ").Append(Short(ProcessStall.LagThreshold)).Append(')');
+        }
+
         var alsoSlow = AlsoSlowText(r.AlsoSlow);
         return verdict.IsStall
             ? $"process stall: {Seconds(verdict.Lost)} lost to {verdict.Cause.Describe()}, also slow at the time: {alsoSlow}. {readings}."
