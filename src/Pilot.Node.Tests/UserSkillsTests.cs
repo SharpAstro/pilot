@@ -115,6 +115,68 @@ public sealed class UserSkillsTests : IDisposable
         skill.Files.Values.ShouldAllBe(bytes => !bytes.Contains((byte)'\r'));
     }
 
+    /// <summary>
+    /// Every carried skill's description is one double-quoted YAML scalar read to its end: unquoted, a ' #' starts a comment,
+    /// and Claude Code cut merge-queue's at 'Use when the user asks "is' (the review of #849), losing the triggers it exists for.
+    /// </summary>
+    [Fact]
+    public void EverySkillsDescriptionIsQuotedAndWhole()
+    {
+        foreach (var skill in UserSkills.Carried())
+        {
+            var lines = Encoding.UTF8.GetString(skill.Files["SKILL.md"]).Split('\n');
+            lines[0].ShouldBe("---", skill.Name);
+            var end = Array.IndexOf(lines, "---", 1);
+            end.ShouldBeGreaterThan(1, skill.Name);
+            var description = lines[1..end].Where(l => l.StartsWith("description: ", StringComparison.Ordinal)).ShouldHaveSingleItem(skill.Name);
+            var value = description["description: ".Length..];
+            value.ShouldStartWith("\"", customMessage: skill.Name);
+            value.ShouldEndWith("\"", customMessage: skill.Name);
+            // One scalar: no inner double quote, escaped or not, so nothing ends it early.
+            value[1..^1].ShouldNotContain('"', customMessage: skill.Name);
+        }
+        var mergeQueue = Encoding.UTF8.GetString(UserSkills.Carried().Single(s => s.Name == "merge-queue").Files["SKILL.md"]);
+        mergeQueue.Split('\n').Single(l => l.StartsWith("description: ", StringComparison.Ordinal)).ShouldContain("GH013");
+    }
+
+    /// <summary>
+    /// A replace that cannot happen (a file of the old skill held open, as a running mq.sh watch holds its script on Windows)
+    /// leaves the old skill whole, marker and all, so it still reads Outdated and the next install finishes it (the review of #849:
+    /// a delete in place took the marker and left the rest, which read NotOurs for ever).
+    /// </summary>
+    [Fact]
+    public void AReplaceBlockedByAnOpenFileLeavesTheOldSkillWholeAndTheNextInstallFinishesIt()
+    {
+        UserSkills.Install(Skills, [Skill("v1", "echo old\n")]);
+        var v2 = Skill("v2");
+        var script = Path.Combine(Skills, "demo", "bin", "run.sh");
+
+        using (new FileStream(script, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            try
+            {
+                UserSkills.Install(Skills, [v2]);
+            }
+            catch (IOException)
+            {
+                // Windows refuses to move a folder holding a file open without delete sharing: nothing may have changed.
+                UserSkills.StateOf(Skills, v2).ShouldBe(UserSkills.State.Outdated);
+                (FileOf("SKILL.md"), FileOf("bin/run.sh")).ShouldBe(("v1", "echo old\n"));
+            }
+            catch (UnauthorizedAccessException)
+            {
+                UserSkills.StateOf(Skills, v2).ShouldBe(UserSkills.State.Outdated);
+                (FileOf("SKILL.md"), FileOf("bin/run.sh")).ShouldBe(("v1", "echo old\n"));
+            }
+        }
+
+        UserSkills.Install(Skills, [v2]);
+        UserSkills.StateOf(Skills, v2).ShouldBe(UserSkills.State.Current);
+        (FileOf("SKILL.md"), FileOf("bin/run.sh")).ShouldBe(("v2", "echo hi\n"));
+        // Nothing left beside it once the files are let go: no temp folder, no folder moved aside.
+        Directory.EnumerateDirectories(Skills).Select(Path.GetFileName).ShouldBe(["demo"]);
+    }
+
     [Fact]
     public async Task TheSetupCheckOffersTheInstallAndPassesAfterIt()
     {

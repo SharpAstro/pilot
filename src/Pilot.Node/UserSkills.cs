@@ -112,6 +112,7 @@ public static class UserSkills
         var lines = new List<string>();
         foreach (var skill in skills ?? Carried())
         {
+            SweepLeftovers(root, skill.Name);
             var state = StateOf(root, skill);
             switch (state)
             {
@@ -136,10 +137,11 @@ public static class UserSkills
         var lines = new List<string>();
         foreach (var skill in skills ?? Carried())
         {
+            SweepLeftovers(root, skill.Name);
             switch (StateOf(root, skill))
             {
                 case State.Current or State.Outdated:
-                    Directory.Delete(Path.Combine(root, skill.Name), recursive: true);
+                    RemoveWhole(root, skill.Name);
                     lines.Add($"{skill.Name}: removed");
                     break;
                 case State.Edited:
@@ -150,16 +152,16 @@ public static class UserSkills
         return lines;
     }
 
-    // Written beside the folder and moved into place, so a session never reads half a skill; the marker last, inside.
+    // Written beside the folder and moved into place, so a session never reads half a skill; the marker last, inside. An old
+    // folder is MOVED aside before the new one goes in, never deleted in place: a delete that fails partway (Windows, while a
+    // running mq.sh watch holds the script open) could take the marker and leave the rest, which reads as NotOurs for ever.
+    // A move either happens whole or not at all, so a failed replace still reads Outdated and the next start tries again.
     private static void Write(string root, Skill skill)
     {
         Directory.CreateDirectory(root);
         var folder = Path.Combine(root, skill.Name);
         var temp = Path.Combine(root, $".{skill.Name}.pilot-tmp");
-        if (Directory.Exists(temp))
-        {
-            Directory.Delete(temp, recursive: true);
-        }
+        DeleteLeftover(temp);
         foreach (var (path, bytes) in skill.Files)
         {
             var file = Path.Combine(temp, path.Replace('/', Path.DirectorySeparatorChar));
@@ -167,11 +169,54 @@ public static class UserSkills
             File.WriteAllBytes(file, bytes);
         }
         File.WriteAllText(Path.Combine(temp, Marker), skill.Hash + "\n", new UTF8Encoding(false));
-        if (Directory.Exists(folder))
+        var aside = MoveAside(root, skill.Name);
+        Directory.Move(temp, folder);
+        DeleteLeftover(aside);
+    }
+
+    // Takes the folder out of the way whole (or throws with nothing changed); a failed delete of what was moved aside is harmless,
+    // and the next install or remove sweeps it.
+    private static void RemoveWhole(string root, string name) => DeleteLeftover(MoveAside(root, name));
+
+    private static string? MoveAside(string root, string name)
+    {
+        var folder = Path.Combine(root, name);
+        if (!Directory.Exists(folder))
+        {
+            return null;
+        }
+        var aside = Path.Combine(root, $".{name}.pilot-old-{Guid.NewGuid():N}");
+        Directory.Move(folder, aside);
+        return aside;
+    }
+
+    private static void DeleteLeftover(string? folder)
+    {
+        if (folder is null || !Directory.Exists(folder))
+        {
+            return;
+        }
+        try
         {
             Directory.Delete(folder, recursive: true);
         }
-        Directory.Move(temp, folder);
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Still held open: a dot-folder no session reads as a skill, swept at the next install or remove.
+        }
+    }
+
+    // What an earlier replace or remove moved aside and could not delete then.
+    private static void SweepLeftovers(string root, string name)
+    {
+        if (!Directory.Exists(root))
+        {
+            return;
+        }
+        foreach (var old in Directory.EnumerateDirectories(root, $".{name}.pilot-old-*"))
+        {
+            DeleteLeftover(old);
+        }
     }
 
     // A folder's files but the marker, by /-separated relative path.

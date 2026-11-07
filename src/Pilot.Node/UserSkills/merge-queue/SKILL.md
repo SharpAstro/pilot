@@ -1,6 +1,6 @@
 ---
 name: merge-queue
-description: Tell whether a PR is merged, queued, auto-merging or just open on a repo whose base branch has a GitHub merge queue, watch it land, and tidy up after it merged. Use when the user asks "is #N merged", "is it in the queue", "watch it land", when a push to main is refused with "Changes must be made through the merge queue" (GH013), or after a merge to bring main up to date and delete the landed branch. Installed by pilot (pilot-node setup, setting user-skills).
+description: "Tell whether a PR is merged, queued, auto-merging or just open on a repo whose base branch has a GitHub merge queue, watch it land, and tidy up after it merged. Use when the user asks 'is #N merged', 'is it in the queue', 'watch it land', when a push to main is refused with 'Changes must be made through the merge queue' (GH013), or after a merge to bring main up to date and delete the landed branch. Installed by pilot (pilot-node setup, setting user-skills)."
 ---
 
 # merge-queue: read where a PR stands, watch it land, clean up after it
