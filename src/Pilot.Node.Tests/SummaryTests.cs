@@ -125,8 +125,11 @@ public sealed class SummaryTests
         records.ShouldStartWith("Gone stale:");
         records.ShouldContain("- OLD1, open 1 d 6 h: waiting on ");
         records.IndexOf("Records of the node", StringComparison.Ordinal).ShouldBeGreaterThan(records.IndexOf("- OLD1", StringComparison.Ordinal));
-        SummaryPrompt.Fleet(3, records).ShouldContain("\"Gone stale\", list those first");
+        Flat(SummaryPrompt.Fleet(3, records)).ShouldContain("\"Gone stale\", list those first");
     }
+
+    // The prompt wraps its lines for reading; what it says is the words, not where they break.
+    private static string Flat(string text) => string.Join(' ', text.Split([' ', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
 
     [Fact]
     public void TheFleetRecordsHaveNoGoneStaleSectionWhenEverythingIsFresh()
@@ -267,9 +270,9 @@ public sealed class SummaryTests
         {
             prompt.IndexOf("## Needs you", StringComparison.Ordinal).ShouldBeGreaterThan(-1);
             prompt.IndexOf("## Where it is", StringComparison.Ordinal).ShouldBeGreaterThan(prompt.IndexOf("## Needs you", StringComparison.Ordinal));
-            prompt.ShouldContain("write the single word: Nothing.");
-            prompt.ShouldContain("commit hashes, test names and results only from the records; never invent them.");
-            prompt.ShouldContain("Answer in exactly this format and nothing else");
+            Flat(prompt).ShouldContain("write the single word: Nothing.");
+            Flat(prompt).ShouldContain("commit hashes, test names and results only from the records; never invent them.");
+            Flat(prompt).ShouldContain("Answer in exactly this format and nothing else");
             prompt.IndexOf("Records:", StringComparison.Ordinal).ShouldBeGreaterThan(prompt.IndexOf("## Where it is", StringComparison.Ordinal));
         }
         fleet.ShouldContain("At most 160 words");
