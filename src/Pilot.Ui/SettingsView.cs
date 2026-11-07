@@ -358,13 +358,20 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
                 {
                     // No row came (the node may be restarting for the change): read the settings, as the only way to know. The
                     // pill keeps saying it is setting until that read is in, so it never reads done for a change not yet seen.
-                    await RefreshAsync(load, CancellationToken.None).ConfigureAwait(false);
+                    try
+                    {
+                        await RefreshAsync(load, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // A client timeout while the node is still down: the line below says there was no answer, and the
+                        // page's own next read shows the outcome. Unhandled, it left the header on "setting …" for good.
+                    }
                 }
-                // The node's words, refusal included, are the page's line (Said); the control itself is back to its label. A bare
-                // "done" names what was set, from the row the node sent back.
-                Said = reply.Kind == ReplyKind.Done && reply.Row is { } set && reply.Line == "done"
-                    ? $"{set.Label} set to {set.Value}"
-                    : reply.Line.ReplaceLineEndings(" ").Trim();
+                // The node's words, refusal included, are the page's line (Said); the control itself is back to its label. A
+                // single value taken names what was set, from the row the node sent back; a list's value is lines, so its line is
+                // the node's own, on one line as the header has.
+                Said = SaidOf(reply);
                 return null;
             }).ConfigureAwait(false);
             if (reply is null)
@@ -778,7 +785,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
                 var action = $"settings:{setting.Key}:{choice}";
                 // The wire value for "leave it to Claude Code" is none; the button says default, as the help line does.
                 var label = choice == "none" ? "default" : choice;
-                parts.Add(NodePill(label, action, () => Act(Verbs.Set, [setting.Key, choice], $"setting {setting.Label} to {label}…", action), chosen, working: SettingWord));
+                parts.Add(NodePill(label, action, () => Act(Verbs.Set, [setting.Key, choice], $"setting {setting.Label} to {label}…", action), chosen, working: SettingWord, doneMark: false));
             }
         }
         else if (setting.Many)
@@ -972,11 +979,22 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// <summary>What a setting's choice pill reads while its <c>set</c> is with the node (the owner, 2026-11-07: "when clicking 'on' instead of 'done' it should show 'Setting...'").</summary>
     internal const string SettingWord = "setting";
 
+    /// <summary>
+    /// The header's line for a reply: the node's own words when it said more than a bare "done"; a single value taken with a bare
+    /// "done" names the setting and what it is now ("LAN set to off", the wire's
+    /// none read as "default", as its pill says); anything else, a list's change and a refusal included, is the node's own
+    /// words on one line, as the header has one.
+    /// </summary>
+    internal static string SaidOf(SettingsReply reply) =>
+        reply.Kind == ReplyKind.Done && reply.Row is { Many: false } set && reply.Line == SettingsCommands.BareDone
+            ? $"{set.Label} set to {(set.Value == "none" ? "default" : set.Value.ReplaceLineEndings(" ").Trim())}"
+            : reply.Line.ReplaceLineEndings(" ").Trim();
+
     // A pill that asks the node, through the press helper: while its press is with the node it reads "label…" (or "working…" when
     // given), dimmed, with no hit.
-    private Layout.Node NodePill(string label, string action, Action onClick, bool chosen = false, string? working = null) =>
+    private Layout.Node NodePill(string label, string action, Action onClick, bool chosen = false, string? working = null, bool doneMark = true) =>
         // A choice (given its working word) shows the node's new value once taken, not "done" in place of the pill.
-        Presses.Button(action, action, () => Pill(label, action, onClick, chosen), _ => Pill(working ?? label, action, onClick, chosen, working: true), doneMark: working is null);
+        Presses.Button(action, action, () => Pill(label, action, onClick, chosen), _ => Pill(working ?? label, action, onClick, chosen, working: true), doneMark);
 
     // A pill whose verb is out shows "…" after its label and does not click again until the node answers.
     private static Layout.Node Pill(string label, string action, Action onClick, bool chosen = false, bool working = false)
@@ -1004,13 +1022,16 @@ internal sealed record SettingsReply(string Line, ReplyKind Kind = ReplyKind.Don
 /// <summary>The Settings page's verbs on the node, for either host: what became of each, in a line, with the changed row.</summary>
 internal static class SettingsCommands
 {
+    /// <summary>A reply's line when the node took the verb and said nothing of how (no <c>Way</c>).</summary>
+    public const string BareDone = "done";
+
     public static async Task<SettingsReply> SendAsync(NodeClient client, string verb, string[] args, string who, CancellationToken cancellationToken)
     {
         try
         {
             var envelope = await client.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.NodeTarget, Args = args, Who = who }, cancellationToken);
             return envelope.Success && envelope.Response is { Ok: true } result
-                ? new SettingsReply(result.Way ?? "done", ReplyKind.Done, result.Setting)
+                ? new SettingsReply(result.Way ?? BareDone, ReplyKind.Done, result.Setting)
                 : new SettingsReply($"refused: {envelope.Response?.Error ?? envelope.Error}", ReplyKind.Refused);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or System.Text.Json.JsonException)
