@@ -124,7 +124,7 @@ public sealed class WatchtowerChatTests : IDisposable
     [Fact]
     public void TheBriefMakesTheChatTheFleetChatPassingWorkOnInTheBackgroundWithLimits()
     {
-        var brief = Briefs.Watchtower("du1-watchtower", [], [], [], "pilot", null, "DU1");
+        var brief = Briefs.WatchtowerRules("du1-watchtower", "pilot", "DU1");
 
         brief.ShouldContain("the Chat is the fleet chat, held here");
         brief.ShouldContain("pilot tell --node <name>");
@@ -502,7 +502,7 @@ public sealed class WatchtowerChatTests : IDisposable
     public void TheBriefSaysOtherNodesAreReadWithNodeAndActedOnThroughTheirWatchtower()
     {
         // DE1's watchtower said it could not read SE1's cards (2026-10-29).
-        var brief = Briefs.Watchtower("de1-watchtower", [], [], [], "pilot", machine: "DE1");
+        var brief = Briefs.WatchtowerRules("de1-watchtower", "pilot", "DE1");
 
         brief.ShouldContain("never say you cannot see another node's flights or cards");
         brief.ShouldContain("`pilot cards --node SE1`");
@@ -513,7 +513,7 @@ public sealed class WatchtowerChatTests : IDisposable
     [Fact]
     public void TheBriefMakesItTheAssistantInTheWindowAnswersInPlainWordsAndLaunchesAFlightInThreeSteps()
     {
-        var brief = Briefs.Watchtower("du1-watchtower", [], [], [], "pilot");
+        var brief = Briefs.WatchtowerRules("du1-watchtower", "pilot");
 
         // The person's assistant in the window as well as the fleet's lookout, and the node's own messages told from theirs.
         brief.ShouldContain("you are the controller's assistant in the window too");
@@ -571,7 +571,7 @@ public sealed class WatchtowerChatTests : IDisposable
     [Fact]
     public void TheBriefGivesTheWatchtowerAFixerOnAutopilotThroughItsOwnCliAndLeavesWhatTheNodeRefusesToThePerson()
     {
-        var brief = Briefs.Watchtower("de1-watchtower", [], [], [], "C:/p/pilot.exe --node-socket s", machine: "DE1");
+        var brief = Briefs.WatchtowerRules("de1-watchtower", "C:/p/pilot.exe --node-socket s", "DE1");
 
         // Its own CLI, as every other command of the brief, never a bare pilot.
         brief.ShouldContain("`C:/p/pilot.exe --node-socket s review fix <owner/repo#n>`");
@@ -586,7 +586,7 @@ public sealed class WatchtowerChatTests : IDisposable
     [Fact]
     public void The_watchtower_brief_says_to_verify_a_failed_leg_first()
     {
-        var brief = Briefs.Watchtower("de1-watchtower", [], [], [], "pilot", machine: "DE1");
+        var brief = Briefs.WatchtowerRules("de1-watchtower", "pilot", "DE1");
 
         brief.ShouldContain("On a leg-failed card, run `pilot leg finish verified --leg <code>/<leg>` for that leg first");
     }

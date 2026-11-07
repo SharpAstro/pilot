@@ -127,6 +127,9 @@ public sealed class Watchtower(
     /// <summary>Where the fingerprint of the brief the running watchtower was started with is kept, in the node's data folder.</summary>
     public string BriefFile => Path.Combine(options.DataFolder, "watchtower-brief");
 
+    /// <summary>Where the watchtower's rules are written when the node starts one, in the node's data folder; the brief names this path.</summary>
+    public string RulesFile => Path.Combine(options.DataFolder, Briefs.WatchtowerRulesFileName);
+
     private readonly SemaphoreSlim _one = new(1, 1);
     private string? _briefed;
     private bool _briefedRead;
@@ -1049,7 +1052,10 @@ public sealed class Watchtower(
             {
                 alreadyTold = [.. Tells().Keys];
             }
-            var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower), options.Machine, alreadyTold, StaleSection.Read(state, time.GetUtcNow(), Models.Stale), state.StandingOrders());
+            // The fixed rules are a file the brief points to, written fresh on every start so the file is the text the fingerprint covers (PIL855).
+            Directory.CreateDirectory(options.DataFolder);
+            File.WriteAllText(RulesFile,Briefs.WatchtowerRules(Name, Pilot, options.Machine));
+            var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower), options.Machine, alreadyTold, StaleSection.Read(state, time.GetUtcNow(), Models.Stale), state.StandingOrders(), Path.GetFullPath(RulesFile));
             fingerprint = BriefFingerprint();
             _job = await launcher.StartAsync(new WorkerStart(Name, folder, null, brief, Model: Models.Model(RoleModels.Watchtower), Effort: Models.Effort(RoleModels.Watchtower), RemoteControl: true,
                 // A background session's AskUserQuestion blocks until someone answers it in claude agents, and a say to the chat is read only between tool calls: it asks in an ask block instead.
