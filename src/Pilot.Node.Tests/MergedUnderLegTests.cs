@@ -137,6 +137,31 @@ public sealed class MergedUnderLegTests : IDisposable
         node.State.Legs("TIA1").Select(l => l.Name).ShouldBe(["parser", "render"]);
     }
 
+    // Review note 3: a caller's row read with the lock let go (a push's retry after GH006) may name a PR the flight has moved on from;
+    // marking it merged then writes nothing, closes no card and raises none, and returns the caller's row.
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task MarkingMergedUnderALegSkipsWriteCardsAndClosingWhenTheRowHoldsAnotherPr()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var ready = Merged(node);
+        var seen = node.State.Flights().Single();
+        // The flight moved on to PR #71 after the caller read it at #63.
+        var moved = seen with { PullRequest = 71, PullRequestUrl = "https://github.com/x/tianwen/pull/71" };
+        node.State.PutFlight(moved);
+        var cards = node.State.Cards().Count;
+
+        var returned = node.App.Services.GetRequiredService<FlightCommander>().MarkMergedUnderLeg(seen, _mergedHead, "a push was refused");
+
+        returned.ShouldBe(seen);
+        var now = node.State.Flights().Single();
+        (now.PullRequest, now.MergedPullRequest, now.MergedHead).ShouldBe((71, null, null));
+        now.Review.ShouldNotBeNull();
+        node.State.Cards().Count.ShouldBe(cards);
+        node.State.Cards().Single(c => c.Id == ready.Id).State.ShouldBe(CardState.Open);
+        node.State.Cards(openOnly: true).ShouldNotContain(c => c.Kind == FlightCommander.MergedUnderLegKind);
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task StartLegAfterTheMergeRingsAtOnce()

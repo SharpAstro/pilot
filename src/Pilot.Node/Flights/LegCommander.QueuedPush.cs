@@ -92,7 +92,11 @@ public sealed partial class LegCommander
     // The PR of each flight the node itself took out of the queue, and when: its removal is not one GitHub made unmerged.
     private readonly ConcurrentDictionary<string, (int Number, DateTimeOffset At)> _dequeuedByNode = new(StringComparer.Ordinal);
 
-    /// <summary>How far GitHub's removal time may sit from the node's own clock at the dequeue (clock skew and the call's own time) and still be that dequeue.</summary>
+    /// <summary>
+    /// How far GitHub's removal time may sit from the node's own clock at the dequeue (clock skew and the call's own time) and still be that dequeue.
+    /// A GitHub drop that falls inside this window of the node's own dequeue reads as the node's, and that is accepted: for it the PR must be
+    /// queued again first (which <see cref="QueuedAgain"/> sees), and a re-queue needs a fresh review of the new head, which takes longer than the window.
+    /// </summary>
     private static readonly TimeSpan DequeueSkew = TimeSpan.FromMinutes(2);
 
     /// <summary>

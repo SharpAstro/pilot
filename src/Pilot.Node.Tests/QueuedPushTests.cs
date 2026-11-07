@@ -238,6 +238,36 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
         _state.Cards(openOnly: true).ShouldContain(c => c.Kind == PrChecks.QueueDropped);
     }
 
+    // The window of DequeuedByNode (review note 1): a removal within two minutes of the node's own dequeue, either way, is the node's
+    // (clock skew and the call's own time); a later or earlier one is GitHub's to card. Pinned at one minute inside and one minute
+    // outside the window, around the span in which the node stamped its dequeue.
+    [Fact]
+    public async Task ARemovalWithinTwoMinutesOfTheNodesOwnDequeueIsTheNodesAndOneOutsideThatWindowIsGitHubs()
+    {
+        await QueuedWithACommit();
+        var notBefore = _clock.GetUtcNow();
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done")).Error.ShouldBeNull();
+        var notAfter = _clock.GetUtcNow();
+        _github.Dequeued.ShouldBe([63]);
+
+        // Inside the window, on both sides of the stamp: the node's own removal.
+        _legs.DequeuedByNode("TIA1", 63, notBefore - TimeSpan.FromMinutes(1)).ShouldBeTrue();
+        _legs.DequeuedByNode("TIA1", 63, notAfter + TimeSpan.FromMinutes(1)).ShouldBeTrue();
+        // A GitHub drop that falls inside the window still reads as the node's (accepted: a re-queue needs a fresh review of the new
+        // head first, which takes longer than the window, and QueuedAgain lets the entry go once the PR is queued again).
+        _legs.DequeuedByNode("TIA1", 63, notAfter).ShouldBeTrue();
+        // Outside it, either way: GitHub's.
+        _legs.DequeuedByNode("TIA1", 63, notBefore - TimeSpan.FromMinutes(3)).ShouldBeFalse();
+        _legs.DequeuedByNode("TIA1", 63, notAfter + TimeSpan.FromMinutes(3)).ShouldBeFalse();
+        // Another PR or another flight is never the node's.
+        _legs.DequeuedByNode("TIA1", 64, notAfter).ShouldBeFalse();
+        _legs.DequeuedByNode("TIA2", 63, notAfter).ShouldBeFalse();
+
+        // Queued again: the entry is let go, so a removal after that is GitHub's whatever the time.
+        _legs.QueuedAgain("TIA1");
+        _legs.DequeuedByNode("TIA1", 63, notAfter).ShouldBeFalse();
+    }
+
     [Fact]
     public async Task ALegThatCommitsWhileItsPrIsQueuedTakesItOutOfTheQueueBeforeThePushAndTheCardSaysWhy()
     {
