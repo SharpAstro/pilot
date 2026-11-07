@@ -102,7 +102,8 @@ public sealed class StoreRecoveryTests : IDisposable
     [Fact]
     public void AStoreWithARowThatCannotBeWrittenBackStartsFromTheNewestBackupKeepsTheOriginalsAndRingsOnce()
     {
-        var after = Build(notes: 12);
+        // 13 notes are 26 events and a compaction comes every 4, so the last note's events are after the newest backup and are lost with the bad row.
+        var after = Build(notes: 13);
         var backups = Backups();
         backups.Length.ShouldBeGreaterThanOrEqualTo(2);
         var newest = backups[0];
