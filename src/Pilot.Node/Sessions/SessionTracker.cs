@@ -464,6 +464,13 @@ public sealed class SessionTracker : BackgroundService
                 continue;
             }
 
+            if (IsStreamSession?.Invoke(previous.SessionId) == true && _state.Sessions().FirstOrDefault(r => r.Id == id) is { State: not (SessionState.Ended or SessionState.Failed) })
+            {
+                // The node's own stream session, live again (a resume after a restart) under the row this tracker seeded as ended: the node publishes it, and an
+                // ended copy of it here is not to be forgotten, taking the live row with it.
+                continue;
+            }
+
             if (previous.State is not (SessionState.Ended or SessionState.Failed))
             {
                 // It was running and is no longer listed: its process went. The row stays, as it was, as ended.

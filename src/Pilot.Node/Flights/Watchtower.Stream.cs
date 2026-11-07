@@ -259,22 +259,22 @@ public sealed partial class Watchtower : IStreamRoute
         {
             return null;
         }
-        if (row is not null)
+        if (row is not null && row.State is not (SessionState.Ended or SessionState.Failed))
         {
-            lock (_streamsLock)
-            {
-                return _streams.TryGetValue(row.Id, out var e) && e.StopReason is null && e.ExitCode is not null && row.State is SessionState.Ended or SessionState.Failed
-                    ? new StreamResume(e.RowId, row.SessionId, e.StartedAt, [.. e.Earlier], e)
-                    : null;
-            }
+            return null;
         }
         lock (_streamsLock)
         {
             if (_streams.Count > 0)
             {
-                return null;
+                // This node ran it: its own record of how it ended says whether anybody asked.
+                return row is not null && _streams.TryGetValue(row.Id, out var e) && e.StopReason is null && e.ExitCode is not null
+                    ? new StreamResume(e.RowId, row.SessionId, e.StartedAt, [.. e.Earlier], e)
+                    : null;
             }
         }
+        // A node that restarted: nothing of it is in memory, and its row (restored from the journal, ended by the tracker as not listed, or
+        // gone) says nothing; the newest generation on file does, when it is a stream one that ended with nobody asking.
         var all = Generations();
         if (all.LastOrDefault() is not { Stream: true, SessionId: { Length: > 0 } session } last)
         {
@@ -282,7 +282,7 @@ public sealed partial class Watchtower : IStreamRoute
         }
         var baseId = last.Job.Split('.')[0];
         var first = all.FirstOrDefault(g => g.Job == baseId) ?? last;
-        if (first.EndedBecause is not (null or SessionEndReasons.NodeStopped))
+        if (row is not null && row.Id != baseId || !EndedUnasked(first.EndedBecause))
         {
             return null;
         }
@@ -290,6 +290,10 @@ public sealed partial class Watchtower : IStreamRoute
             .Select(g => g.SessionId).OfType<string>().Where(id => id != session).Distinct().ToArray();
         return new StreamResume(baseId, session, first.StartedAt, earlier, null);
     }
+
+    /// <summary>Whether a stream generation's end was nobody's decision: none noted, the node's own stop, the tracker not finding its process after a restart, or a crash.</summary>
+    private static bool EndedUnasked(string? why) =>
+        why is null or SessionEndReasons.NodeStopped || why.StartsWith("its process went", StringComparison.Ordinal) || why.StartsWith("it exited", StringComparison.Ordinal);
 
     private async Task ResumeAfterEndAsync(StreamResume dead, string watching, DateTimeOffset now, CancellationToken cancellationToken)
     {

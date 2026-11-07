@@ -128,7 +128,9 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             if (Streams?.Invoke() is { } streams && streams.Handles(row))
             {
-                // The node's own process: ended directly, not by claude stop, which knows no such job.
+                // The node's own process: ended directly, not by claude stop, which knows no such job. The ledger first, as below: the row the
+                // exit publishes observes an end, and must find the node's reason there, not "finished".
+                ledger?.Stopped([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], reason, command.Who);
                 await streams.StopAsync(row, reason, cancellationToken);
             }
             else
