@@ -304,15 +304,18 @@ public sealed class SummaryTests
         _state.PutFlight(Flight("PIL797", issue: 797) with { Repo = "pilot", Title = "Cards and the summary say what happened" });
         _state.PutLeg(Leg("PIL797", "summary-plain", 1, LegState.Flying, goal: "Plain summary") with { Worker = "se1-pil797-summary-plain", StartedAt = Start - TimeSpan.FromMinutes(5) });
 
-        _state.PutFlight(Flight("TIA2000", FlightState.Landed, issue: 2000) with { PullRequest = 512, LandedAt = Start - TimeSpan.FromHours(1) });
+        // The card is raised while TIA2000 still flies, since the node now refuses a leg card of a landed flight (#799): the stale c3651
+        // is one raised before that rule, left open after the landing.
+        _state.PutFlight(Flight("TIA2000", issue: 2000) with { PullRequest = 512 });
         _state.PutLeg(Leg("TIA2000", "review-notes-2", 4, LegState.Flying, goal: "Act on the review notes") with
         {
             Checklist = [.. Enumerable.Range(1, 6).Select(n => new CheckItem { Text = $"Step {n}" })], Worker = "se1-tia2000-review-notes-2", StartedAt = Start - TimeSpan.FromHours(2),
         });
         _state.PutSession(Session("e2e2e2e2", "se1-tia2000-review-notes-2", "TIA2000", SessionState.Idle, leg: "review-notes-2"));
-        // Raised after the landing closed the flight's cards: the stale c3651.
-        return _state.RaiseCard(CardBin.Ring, "leg-idle", "flight/TIA2000/review-notes-2", "TIA2000's review-notes-2 worker is idle at 0 of 6 steps",
+        var stale = _state.RaiseCard(CardBin.Ring, "leg-idle", "flight/TIA2000/review-notes-2", "TIA2000's review-notes-2 worker is idle at 0 of 6 steps",
             "Start a fresh worker on review-notes-2");
+        _state.PutFlight(Flight("TIA2000", FlightState.Landed, issue: 2000) with { PullRequest = 512, LandedAt = Start - TimeSpan.FromHours(1) });
+        return stale;
     }
 
     [Fact]
@@ -382,8 +385,10 @@ public sealed class SummaryTests
     [Fact]
     public void ARecordsWithOnlyAStaleCardOfALandedFlightIsStillMadeSoItCanBeProposedResolved()
     {
-        _state.PutFlight(Flight("TIA2000", FlightState.Landed, issue: 2000));
+        // Raised while the flight flew, then left open by its landing: the node refuses such a card once the flight has landed (#799).
+        _state.PutFlight(Flight("TIA2000", issue: 2000));
         var stale = _state.RaiseCard(CardBin.Ring, "leg-idle", "flight/TIA2000/review-notes-2", "A leg is idle");
+        _state.PutFlight(Flight("TIA2000", FlightState.Landed, issue: 2000));
 
         var records = SummaryRecords.Fleet(_state, Start).ShouldNotBeNull();
 
