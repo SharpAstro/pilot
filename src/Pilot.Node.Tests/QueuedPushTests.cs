@@ -95,7 +95,9 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
 
         var ex = await Should.ThrowAsync<FlightException>(() => _legs.PushAsync(flight, Ct));
 
-        ex.Message.ShouldContain("GH006");
+        // The node's own refusal never carries GH006, which the sweep reads as a push it could not answer.
+        ex.Message.ShouldNotContain("GH006");
+        ex.Message.ShouldContain("merged meanwhile");
         ex.Message.ShouldContain("follow-up PR");
         var marked = _state.Flights().Single();
         (marked.PullRequest, marked.MergedPullRequest, marked.MergedHead).ShouldBe((null, 63, old));
@@ -155,7 +157,7 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
     }
 
     [Fact]
-    public async Task AGh006RefusalThePushCannotAnswerIsRefusedWithItsTextAndTheSweepRingsNothingForIt()
+    public async Task AGh006RefusalThePushCannotAnswerIsRefusedWithItsTextAndTheSweepRingsOnceWithNoStartToOffer()
     {
         var flight = await QueuedWithACommit();
         _github.Queue = null;
@@ -165,13 +167,55 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
         var ex = await Should.ThrowAsync<FlightException>(() => _legs.PushAsync(flight, Ct));
         ex.Message.ShouldContain("GH006");
 
-        // The sweep's unread-head review start meets the same refusal each time; it is no 'could not start its reviewer' ring.
+        // The sweep's unread-head review start meets the same refusal; it rings one card saying why, with no reviewer start that
+        // would be refused again, and asks no more.
         foreach (var _ in Enumerable.Range(0, 3))
         {
             await _legs.AdvanceFlightAsync("TIA1", Ct);
         }
-        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.NextStepKind);
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.NextStepKind).ShouldHaveSingleItem();
+        card.Bin.ShouldBe(CardBin.Ring);
+        card.Title.ShouldBe($"TIA1's new head cannot be pushed: GitHub locks {flight.Branch}");
+        card.Choices.ShouldBeEmpty();
+        card.Detail.ShouldNotBeNull().ShouldContain("take the PR out of the queue");
         _github.Dequeued.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ADequeueGitHubRefusesDuringTheSweepsPushLeavesACardThatSaysWhy()
+    {
+        var flight = await QueuedWithACommit();
+        MarkDone("parser");
+        _github.DequeueFails = "gh: not allowed";
+
+        foreach (var _ in Enumerable.Range(0, 3))
+        {
+            await _legs.AdvanceFlightAsync("TIA1", Ct);
+        }
+
+        // The refusal is the node's own, not a GH006 push it already answered: it is not skipped, and the card says why.
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.NextStepKind).ShouldHaveSingleItem();
+        card.Title.ShouldContain("could not start its reviewer");
+        card.Title.ShouldContain("#63 is in the merge queue");
+        card.Detail.ShouldNotBeNull().ShouldContain("could not be taken out (gh: not allowed)");
+        Git(Origin, "rev-parse", $"refs/heads/{flight.Branch}").ShouldNotBe(Git(flight.Worktree, "rev-parse", "HEAD"));
+    }
+
+    [Fact]
+    public async Task TheNodesOwnDequeueRaisesNoLeftTheMergeQueueCardWhenTheQueuesAreLookedAt()
+    {
+        var flight = await QueuedWithACommit();
+        MarkDone("parser");
+
+        var result = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done");
+        result.Error.ShouldBeNull();
+        _github.Dequeued.ShouldBe([63]);
+
+        // GitHub now reads the PR as open and out of the queue with a removal that was not a merge, as the node's own dequeue leaves it.
+        await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
+
+        _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.QueueDropped);
+        _state.Cards().ShouldContain(c => c.Kind == LegCommander.MergeTakenBackKind);
     }
 
     [Fact]

@@ -22,17 +22,21 @@ public sealed partial class LegCommander
     /// </summary>
     private async Task EnsureNotQueuedAsync(FlightRow flight, int number, CancellationToken cancellationToken)
     {
-        if (await github.MergeQueueAsync(flight.RepoPath, number, cancellationToken) is not { State: "OPEN", Queued: true })
+        if (await github.MergeQueueAsync(flight.RepoPath, number, cancellationToken) is not { State: "OPEN", Queued: true } queued)
         {
             return;
         }
+        // The removal that follows is the node's own: the queue look must not read it as GitHub letting the PR go unmerged.
+        _dequeuedByNode[flight.Code] = queued.Head;
         try
         {
             await github.DequeueAsync(flight.RepoPath, number, cancellationToken);
         }
         catch (FlightException ex)
         {
-            throw new FlightException($"{flight.Branch} is not pushed: #{number} is in the merge queue, which locks the branch (GH006) and would merge it without the new commits, and it could not be taken out ({ex.Message}): remove it from the queue on the PR page, then try again");
+            _dequeuedByNode.TryRemove(flight.Code, out _);
+            // The node's own refusals never carry GH006: the sweep reads that text as GitHub's refusal of a push the node could not answer.
+            throw new FlightException($"{flight.Branch} is not pushed: #{number} is in the merge queue, which locks the branch and would merge it without the new commits, and it could not be taken out ({ex.Message}): remove it from the queue on the PR page, then try again");
         }
         var why = $"new commits were pushed to {flight.Branch}, which the merge queue locks while the PR is queued";
         var target = Verbs.FlightTarget(flight.Code);
@@ -57,6 +61,16 @@ public sealed partial class LegCommander
             link: before?.PullRequestUrl ?? flight.PullRequestUrl);
     }
 
+    // The head of each flight's PR the node itself took out of the queue: its removal is not one GitHub made unmerged.
+    private readonly ConcurrentDictionary<string, string?> _dequeuedByNode = new(StringComparer.Ordinal);
+
+    // The flights whose push met a merged PR and handed its commits to a follow-up PR: the push was answered, so no card offers it again.
+    private readonly ConcurrentDictionary<string, int> _handedOn = new(StringComparer.Ordinal);
+
+    /// <summary>Whether the node itself took the flight's PR out of the merge queue when it held <paramref name="head"/> (PIL836).</summary>
+    public bool DequeuedByNode(string code, string? head) =>
+        _dequeuedByNode.TryGetValue(code, out var taken) && string.Equals(taken, head, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>The Handled line saying a flight's commits that missed an earlier PR's merge went to a new PR.</summary>
     public const string FollowUpPrKind = "follow-up-pr";
 
@@ -72,7 +86,7 @@ public sealed partial class LegCommander
         var current = state.Flights().FirstOrDefault(f => f.Code == flight.Code);
         if (pr is { State: "MERGED" } merged && current is not null)
         {
-            var said = $"{flight.Branch} is not pushed: GitHub refused it (GH006) because #{merged.Number} merged meanwhile";
+            var said = $"{flight.Branch} is not pushed: GitHub locked the branch because #{merged.Number} merged meanwhile";
             if (current.PullRequest == merged.Number)
             {
                 flights.MarkMergedUnderLeg(current, merged.Head, $"{said}, so the new commits missed the merge");
@@ -81,6 +95,7 @@ public sealed partial class LegCommander
             {
                 throw new FlightException($"{said}, and it is not the PR the flight holds: nothing was changed");
             }
+            _handedOn[flight.Code] = merged.Number;
             throw new FlightException($"{said}: the new commits go to a follow-up PR, which opens by itself once every leg is done");
         }
         if (pr is { State: "OPEN" })

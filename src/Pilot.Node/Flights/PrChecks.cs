@@ -254,6 +254,13 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 state.CloseCardsAbout(subject, "queued again", QueueDropped);
                 continue;
             }
+            // A removal the node made itself, to push new commits (PIL836), is no card: its merge entry ends, and the merge is offered
+            // again once a fresh review of the new head passes.
+            if (queue.RemovedAt is not null && legs?.DequeuedByNode(flight.Code, queue.Head) == true)
+            {
+                legs.EndLeftQueue(flight.Code, $"the node took #{number} out of the merge queue to push new commits");
+                continue;
+            }
             // GitHub's queue let it go unmerged: its merge entry ends, and the repo's later entries move up. Merge asks it again.
             if (queue.RemovedAt is not null && !string.Equals(queue.RemovedReason, "merged", StringComparison.OrdinalIgnoreCase))
             {
