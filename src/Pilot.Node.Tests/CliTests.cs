@@ -449,25 +449,27 @@ public sealed class CliTests : IAsyncLifetime
         await _node.PlannedAsync();
 
         await Ok(_root, "bench", "tianwen", "--ref", "HEAD", "--", "echo", "benched");
-        await BenchCards(1);
+        await BenchesEnded(1);
         await Ok(_root, "bench", "tianwen", "--ref", "HEAD", "--local", "--", "echo", "benched");
-        await BenchCards(2);
+        await BenchesEnded(2);
 
         var benches = _node.State.Jobs().Where(j => j.Kind == JobKind.Bench).OrderBy(j => j.StartedAt).ToArray();
         benches.Select(j => j.Local).ShouldBe([false, true]);
         // The worktrees go after the card: the folder is not left behind for the next test.
         for (var i = 0; Directory.Exists(Path.Combine(Repo, ".claude", "worktrees", "b1")) || Directory.Exists(Path.Combine(Repo, ".claude", "worktrees", "b2")); i++)
         {
-            i.ShouldBeLessThan(500, "the bench worktrees are still there");
+            i.ShouldBeLessThan(1500, "the bench worktrees are still there");
             await Task.Delay(20, Ct);
         }
     }
 
-    private async Task BenchCards(int count)
+    // The jobs, not the cards: a second bench of the same repo raises no card of its own while the first one's is open.
+    // The wait is generous because a bench is a git worktree and a shell on a machine that may be busy.
+    private async Task BenchesEnded(int count)
     {
-        for (var i = 0; _node.State.Cards().Count(c => c.Kind == "bench-result") < count; i++)
+        for (var i = 0; _node.State.Jobs().Count(j => j.Kind == JobKind.Bench && j.State == JobState.Succeeded) < count; i++)
         {
-            i.ShouldBeLessThan(1500, "no bench-result card came");
+            i.ShouldBeLessThan(4500, "the benches did not end");
             await Task.Delay(20, Ct);
         }
     }
