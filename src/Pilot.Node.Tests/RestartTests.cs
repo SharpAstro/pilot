@@ -62,17 +62,40 @@ public sealed class RestartTests
             Verb = Verbs.Run, Target = Verbs.SessionTarget(Owner), Args = [Path.GetTempPath(), "0", command], Who = "pil294-restart",
         }).Made!;
 
-    private static async Task<JobRow> Until(NodeHarness node, string id, Func<JobRow, bool> condition, int seconds = 30)
+    // The ceiling of every wait in this class (pilot #746 and #810): a test waits on the condition it needs, on the clock, with a ceiling
+    // wide enough for a machine that is saturated, and a passing test never waits for it. A count of short waits stretches with the load
+    // and ended a 30 s wait on the third of three queued pwsh jobs, each of which takes a good part of that to start on a busy runner.
+    private const int WaitSeconds = 120;
+
+    private static async Task<bool> WaitForAsync(Func<bool> condition, int seconds = WaitSeconds)
     {
-        for (var i = 0; i < seconds * 20; i++)
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        while (!condition())
+        {
+            if (clock.Elapsed >= TimeSpan.FromSeconds(seconds))
+            {
+                return false;
+            }
+            await Task.Delay(50, Ct);
+        }
+        return true;
+    }
+
+    private static async Task<JobRow> Until(NodeHarness node, string id, Func<JobRow, bool> condition, int seconds = WaitSeconds)
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
         {
             if (node.State.Jobs().FirstOrDefault(j => j.Id == id) is { } job && condition(job))
             {
                 return job;
             }
+            if (clock.Elapsed >= TimeSpan.FromSeconds(seconds))
+            {
+                throw new TimeoutException($"job {id} never came to the state awaited within {seconds} s: {node.State.Jobs().FirstOrDefault(j => j.Id == id)}");
+            }
             await Task.Delay(50, Ct);
         }
-        throw new TimeoutException($"job {id} never came to the state awaited: {node.State.Jobs().FirstOrDefault(j => j.Id == id)}");
     }
 
     // How the owner is woken (a relay while its session works, a resume once it idles) depends on when the restored row is
@@ -130,10 +153,7 @@ public sealed class RestartTests
         await using var second = await StartAsync(first.Folder);
         // Followed again, not read from an exit file: the second node holds the job, and its process is alive, before it ends.
         var jobs = second.App.Services.GetRequiredService<JobRunner>();
-        for (var i = 0; i < 200 && !jobs.IsRunning(id); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
+        await WaitForAsync(() => jobs.IsRunning(id));
         jobs.IsRunning(id).ShouldBeTrue();
         Alive(running.Pid!.Value).ShouldBeTrue();
         File.Exists(running.ExitPath).ShouldBeFalse();
@@ -159,16 +179,13 @@ public sealed class RestartTests
 
         await using var second = await StartAsync(first.Folder);
         var jobs = second.App.Services.GetRequiredService<JobRunner>();
-        for (var i = 0; i < 200 && !jobs.IsRunning(id); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
+        await WaitForAsync(() => jobs.IsRunning(id));
         var real = jobs.Say!;
         var thrown = 0;
         jobs.Say = (command, token) => Interlocked.Increment(ref thrown) == 1 ? throw new InvalidOperationException("the say blew up") : real(command, token);
         await File.WriteAllTextAsync(gate, "go", Ct);
 
-        var ended = await Until(second, id, j => j.EndedAt is not null && j.Told, seconds: 60);
+        var ended = await Until(second, id, j => j.EndedAt is not null && j.Told);
 
         ended.State.ShouldBe(JobState.Succeeded, Why(second, id));
         Deliveries(second).ShouldBe(1, Why(second, id));
@@ -182,15 +199,9 @@ public sealed class RestartTests
         var id = Run(first, Sleeping(1, 3));
         var running = await Until(first, id, j => j.State == JobState.Running);
         await first.StopKeepingFolderAsync();
-        for (var i = 0; i < 300 && !File.Exists(running.ExitPath); i++)
-        {
-            await Task.Delay(100, Ct);
-        }
+        await WaitForAsync(() => File.Exists(running.ExitPath));
         File.Exists(running.ExitPath).ShouldBeTrue();
-        for (var i = 0; i < 100 && Alive(running.Pid!.Value); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
+        await WaitForAsync(() => !Alive(running.Pid!.Value));
 
         await using var second = await StartAsync(first.Folder);
         var ended = await Until(second, id, j => j.EndedAt is not null && j.Told);
@@ -207,10 +218,7 @@ public sealed class RestartTests
         var running = await Until(first, id, j => j.State == JobState.Running);
         await first.StopKeepingFolderAsync();
         KillProcess(running.Pid!.Value);
-        for (var i = 0; i < 100 && Alive(running.Pid.Value); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
+        await WaitForAsync(() => !Alive(running.Pid!.Value));
         return (first.Folder, id);
     }
 
@@ -294,31 +302,25 @@ public sealed class RestartTests
         var id = Run(first, child);
         var running = await Until(first, id, j => j.State == JobState.Running);
         int? childPid = null;
-        for (var i = 0; i < 300 && childPid is null; i++)
+        await WaitForAsync(() =>
         {
             var text = ReadShared(running.LogPath);
             childPid = System.Text.RegularExpressions.Regex.Match(text, @"child (\d+)") is { Success: true } m ? int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture) : null;
-            await Task.Delay(50, Ct);
-        }
+            return childPid is not null;
+        });
         childPid.ShouldNotBeNull();
         await first.StopKeepingFolderAsync();
         Alive(running.Pid!.Value).ShouldBeTrue();
 
         await using var second = await StartAsync(first.Folder);
         var jobs = second.App.Services.GetRequiredService<JobRunner>();
-        for (var i = 0; i < 200 && !jobs.IsRunning(id); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
+        await WaitForAsync(() => jobs.IsRunning(id));
         jobs.IsRunning(id).ShouldBeTrue();
         jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "tester" }).Error.ShouldBeNull();
         var ended = await Until(second, id, j => j.EndedAt is not null);
 
         ended.State.ShouldBe(JobState.Cancelled, Why(second, id));
-        for (var i = 0; i < 100 && (Alive(running.Pid.Value) || Alive(childPid.Value)); i++)
-        {
-            await Task.Delay(100, Ct);
-        }
+        await WaitForAsync(() => !Alive(running.Pid!.Value) && !Alive(childPid!.Value));
         Alive(running.Pid.Value).ShouldBeFalse();
         Alive(childPid.Value).ShouldBeFalse();
     }
