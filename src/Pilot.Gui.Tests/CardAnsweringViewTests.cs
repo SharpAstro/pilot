@@ -262,7 +262,7 @@ public sealed class CardAnsweringViewTests
     public void OnlyTheNodesWordsForAJoinedAnswerAreRecognisedAsOne(string? made, bool joined) => CardAnswering.IsJoined(made).ShouldBe(joined);
 
     private static ResponseEnvelope<CommandResult> Answered(bool ok, string? made = null, string? error = null) =>
-        ResponseEnvelope<CommandResult>.Ok(new CommandResult { Verb = Verbs.Answer, Target = "card/c9", Who = "gui", Ok = ok, Made = made, Error = error });
+        ResponseEnvelope<CommandResult>.Ok(new CommandResult { Verb = Verbs.Answer, Target = "card/c9", Who = "gui", Seq = 1, Ok = ok, Made = made, Error = error });
 
     [Theory]
     [InlineData("already on its way, started by cli at 10:42")]
