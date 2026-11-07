@@ -56,12 +56,17 @@ gh pr create ...                      # milestone and body as the repo's own ins
 ```
 
 **After it merged**: a queue lands a PR by rebase or squash, so main holds the same changes under NEW hashes and
-`git branch -d` refuses ("not fully merged"). Prove the content landed, then force-delete:
+`git branch -d` refuses ("not fully merged"). Prove the PR's own PATCH landed, then force-delete:
 ```bash
 git checkout main && git pull --ff-only
-git diff --stat <branch> main -- <the files the PR changed>   # empty = landed
-git branch -D <branch>
+git cherry main <branch>      # rebase merge: every line '-' = each commit's patch is on main
+# squash merge (one commit on main for the whole branch): the two patch ids must match
+git diff $(git merge-base main <branch>) <branch> | git patch-id --stable
+git show <the squash commit on main> | git patch-id --stable
+git branch -D <branch>        # only after one of the two checks above passed
 ```
+Never prove it by diffing the branch against main's files: once main has moved on, a later PR touching the
+same file makes that diff non-empty, and an empty one says nothing about whether this PR's lines are there.
 The remote branch is normally deleted by the merge; `git fetch -p` drops the stale ref.
 
 ## Where an issue link points
