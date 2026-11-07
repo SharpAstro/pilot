@@ -227,7 +227,9 @@ public sealed class LegFailureTests : IDisposable
 
         summary.Length.ShouldBeLessThanOrEqualTo(240);
         summary.ShouldContain("so taking main may fix it.");
-        summary.ShouldContain("its check fails building Pilot.Ui");
+        // Both notes leave about 49 characters for name and cause together, so the cause is cut (to its start), not dropped.
+        summary.ShouldContain("its check fails");
+        summary.ShouldStartWith("The worker of PIL834/");
     }
 
     [Fact]
