@@ -113,7 +113,7 @@ public static partial class CardSummaries
             PrChecks.ClosedWithWork => $"{what}'s PR was closed without a merge but its plane holds work of its own. Reopen the PR, or open a new one for that work, then land the flight.",
             PrChecks.QueueDropped => $"GitHub took the PR of {what} out of the merge queue. The card's choice queues it again once the cause is dealt with.",
             PrChecks.MergeDropped => $"The merge of {what} did not go through. Merge it again once the cause is dealt with.",
-            PrChecks.AutopilotMergeRefused => $"The node tried to merge {what}'s PR and GitHub or the node refused, for the reason in the title. Try again only once that reason is gone; trying now fails the same way.",
+            PrChecks.AutopilotMergeRefused => $"The node tried to merge {what}'s PR and the refusal is yours to clear (or GitHub did not answer in three tries, a minute, four and fifteen apart), for the reason in the title. The card says what the node tried and the one thing to do; a merge again only helps once that is done.",
             CardKinds.AutopilotRan => "An assistant ran a command on the autopilot, which is on. Nothing to do; the card is the record.",
             CardKinds.PersonsWord => "The watchtower answered or dismissed a card at the person's word in its chat. Nothing to do; the card is the record.",
             Watchtower.RaisedKind => "A card raised for the person by the watchtower or a session. Read its detail and dismiss it once dealt with.",
