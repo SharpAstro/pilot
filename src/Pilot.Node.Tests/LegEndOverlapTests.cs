@@ -832,7 +832,7 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
 
         public bool HasGrant => true;
 
-        public FlightRow[] Flights { get; init; } = [];
+        public FlightRow[] Flights { get; set; } = [];
 
         public RepoInfo[] Repos { get; init; } = [];
 
