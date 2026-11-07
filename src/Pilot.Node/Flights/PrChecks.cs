@@ -978,6 +978,9 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             || flight.Review is not { State: ReviewState.Passed } || flight.MergeWhenGreen is not null
             // A flight in a holding pattern circles: not asked, and the head not marked as tried, so it merges once cleared.
             || flight.Holding is not null
+            // A leg still to fly (a review-notes leg, say) is the merge's own refusal: not asked, and the head not marked as tried, so
+            // it merges once that leg lands. Asking rang "merge on autopilot was refused: has legs not done" (PDF446, PIL841, 2026-11-07).
+            || state.Legs(flight.Code).Any(l => l.State != LegState.Done)
             || card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { } merge
             // Another merge of its repo holds the turn: asked at a later look, and only an ask made marks the head as tried.
             || legs.TurnHeld(flight.Repo)
@@ -1027,6 +1030,6 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         // no card offers a Merge on a PR that is merged or closed. With no choice left it is not a ring (nothing to press): it is filed For you.
         var closed = result.Error?.EndsWith(", not open", StringComparison.Ordinal) == true;
         state.RaiseCard(closed ? CardBin.ForYou : CardBin.Ring, AutopilotMergeRefused, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s merge on autopilot was refused: {LegCommander.OneLine(result.Error ?? "no reason given")}",
-            result.Error, closed ? [] : [merge with { Status = null, Label = $"Merge {flight.Code}'s PR #{flight.PullRequest} once more" }], link: flight.PullRequestUrl);
+            result.Error, closed ? [] : [merge with { Status = null, Label = $"Try merging PR #{flight.PullRequest} again" }], link: flight.PullRequestUrl);
     }
 }

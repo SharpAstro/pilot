@@ -67,6 +67,7 @@ internal static class CardKindCatalog
         new("worker-missing", "Ring", [Watch], "LegWatchTests.AFailedWorkerAndOneThatNeverShowedUpRing", "the tracker's listing of sessions never showed the worker the node started", [nameof(Verbs.GoAround)]),
         new("worker-never-turned", "Ring|Handled", [Watch], "LegWatchTests.AWorkerThatNeverTakesATurnIsStoppedAndStartedOnceThenRungWhenTheSecondShowsNothing", "the worker showed no first turn after two starts, read from its session row", [nameof(Verbs.GoAround)]),
         new("worker-nudged", "Handled", [Watch], "LegWaitTests.AnIdleWorkerWhoseLongWaitEndsIsWokenOnceAndNotNudgedOnTopOfIt"),
+        new("ticker-sent-round", "Handled", [Watch], "LegTickingPassTests.A_ticker_that_ended_with_step_two_unticked_sends_the_leg_round_naming_the_step_and_rings_nothing"),
         new("worker-told-job", "Handled", [Watch], "LegWatchTests.AnIdleWorkerWithAnEndedUntoldJobIsToldItAndNeitherNudgedNorRung"),
         new("worker-compacted", "Handled", [Watch], "LegWatchTests.AnIdleWorkerAtNinetyFivePercentIsCompactedAndNotNudged"),
         new("worker-waiting-job", "Handled", [Watch], "LegWatchTests.AnIdleWorkerWaitingOnAJobOfItsOwnRaisesNoRingAndOneHandledLineSayingSo"),
@@ -262,7 +263,7 @@ internal static class CardKindCatalog
     public static readonly (string Kind, string TitleHas, string? LabelHas)[] SourcePins =
     [
         ("issue-left-open", "is still open", null),
-        ("pr-review-queue-refused", "refused to queue", "once more"),
+        ("pr-review-queue-refused", "refused to queue", "again"),
         ("pr-fix-failed", "the fixer could not start", "Start the fixer on"),
         ("pr-fix-left", "fixer worktree is still there", null),
         ("pr-recheck", "recheck of", null),

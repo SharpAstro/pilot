@@ -110,7 +110,7 @@ public sealed partial class PrReviews
             var said = outcome.Said ?? "GitHub refused";
             state.PutPrReview(review with { QueueNote = $"GitHub refused to queue it: {said}" });
             state.RaiseCard(CardBin.ForYou, QueueRefusedKind, subject, $"GitHub refused to queue {review.Repo}#{review.Number}: {LegCommander.OneLine(said)}", said,
-                [new CardChoice { Label = $"Merge {review.Repo}#{review.Number} once more", Note = $"at {CommitRefs.Short(review.Head)}", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
+                [new CardChoice { Label = $"Try queueing {review.Repo}#{review.Number} again", Note = $"at {CommitRefs.Short(review.Head)}", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
             return;
         }
         state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });

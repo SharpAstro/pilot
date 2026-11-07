@@ -208,7 +208,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             // woken, and the finish (StopWorkerAfterFinishAsync) or a go-around (StopTickerAsync) stops both sessions.
             if (leg.TickerJob is not null)
             {
-                await LookAtTickerAsync(leg, sessions, now);
+                await LookAtTickerAsync(leg, sessions, now, cancellationToken);
                 continue;
             }
             // A worker that shows no first turn is stopped and started once more, before any ring or nudge.
@@ -738,9 +738,13 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>
     /// A leg in its ticking pass is left alone while its ticker works. A ticker that stops without finishing the leg (it never showed up
     /// or took no turn, ended, failed, or sat idle past <see cref="IdleGrace"/> with the leg still flying) rings worker-idle once, saying
-    /// so; it is not started again. A ticker idle on a finish whose check is rerunning is waiting, as a worker is.
+    /// so; it is not started again. A ticker whose finish's check is rerunning is waiting, as a worker is, whatever its session is doing:
+    /// it ran <c>leg finish done</c>, was told the check is rerunning and ended its turn as told, and the rerun finishes the leg (PIL852).
+    /// A ticker that stopped with every step ticked and the leg still flying is finished by the node, as <see cref="NodeTakesOverAsync"/>
+    /// finishes for a worker; only a refused finish rings. A ticker that stopped with steps unticked sends the leg round once, the go-around
+    /// reason naming those steps, and rings only when that go-around is refused or the leg already went round this way.
     /// </summary>
-    private async Task LookAtTickerAsync(LegRow leg, SessionRow[] sessions, DateTimeOffset now)
+    private async Task LookAtTickerAsync(LegRow leg, SessionRow[] sessions, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var job = leg.TickerJob!;
         if (!_tickerSeen.TryGetValue(job, out var seen))
@@ -753,17 +757,28 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             since = woken;
         }
-        // Idle on a finish whose check is rerunning, or on a job of the leg: its end wakes it.
-        var waiting = leg.Recheck is { Outcome: null }
-            || state.Jobs().Any(j => j.State is JobState.Running or JobState.Queued
+        // A finish whose check is rerunning is the leg's next move, whatever the ticker's session shows: the rerun's end finishes the leg
+        // (or tells the ticker why not). Looked at before the session's state, as an ended ticker is not stopped but done with its turn.
+        if (leg.Recheck is { Outcome: null })
+        {
+            return;
+        }
+        // Idle on a job of the leg: its end wakes it.
+        var waiting = state.Jobs().Any(j => j.State is JobState.Running or JobState.Queued
                 && string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase));
+        // A ticker the node has just told something (how its finish's check rerun ended, in this look or a recent one) is given its turn on
+        // it: its session still shows the turn it ended before it was told, so "ended" is not yet a stop, and the node's own finish is not
+        // asked for on top of what it was told. Past the idle grace without a turn of its own, it is stopped as any other. The hold is
+        // deliberately that simple: an ended ticker is held for up to IdleGrace after ANY tell of it (_wokenAt is written only by the node's
+        // tells), not only after a tell of a rerun's outcome, and never longer, so a ticker that really stopped is stopped at most that late.
+        var told = _wokenAt.TryGetValue(job, out var toldAt) && now - toldAt < IdleGrace;
         var ticker = $"{Name(leg)}'s ticker";
         string? why = row switch
         {
             null when now - seen > ShowUpGrace => "its session never showed up",
             null => null,
             { State: SessionState.Failed } => "its session failed",
-            { State: SessionState.Ended } or { Gone: true } => "its session ended",
+            { State: SessionState.Ended } or { Gone: true } => told ? null : "its session ended",
             _ when NoTurnYet(row) => now - row.StartedAt > FirstTurnGrace ? "it never took a turn" : null,
             { State: SessionState.Working or SessionState.Waiting } => null,
             _ when waiting => null,
@@ -779,12 +794,87 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             await StopSession(job, CancellationToken.None);
         }
         var subject = Subject(leg);
+        // Every step ticked and the leg still flying: the ticker's work is done and only its finish is left, so the node runs it, once per
+        // ticker, by the same finish the ticker would have run (steps, check and push all asked). A refusal rings as a stopped worker does.
+        if (leg.Checklist.Length > 0 && leg.Checklist.All(i => i.Done))
+        {
+            // Detached from this loop, as a restarted finish is (LookAtLegRechecksAsync): the finish reruns the check, whose Later can take
+            // minutes, and awaiting it here would hold every other leg's look behind it. The ticker's one-time rung mark already keeps it to
+            // one finish per ticker.
+            _ = Task.Run(() => FinishForTickerAsync(leg, subject, ticker, why, cancellationToken), CancellationToken.None);
+            return;
+        }
+        // Steps still unticked: the ticker found the commits did not cover them (or died before saying), so the leg goes round once, the
+        // reason naming each step so the fresh worker sees what remains and no ring is raised. Once per leg (keyed by leg, so a later
+        // worker's own ticker does not get a second round from it); a refused go-around, or a second stop, rings as before.
+        string? refused = null;
+        var unticked = leg.Checklist.Select((item, index) => (item, number: index + 1)).Where(s => !s.item.Done).ToList();
+        if (unticked.Count > 0 && !WentRoundForTicker(leg))
+        {
+            var named = string.Join("; ", unticked.Select(s => $"step {s.number}: {s.item.Text}"));
+            var reason = $"{TickerRoundLead} ({why}); unticked: {named}";
+            var sent = await run(new CommandRequest { Verb = Verbs.GoAround, Target = subject, Args = [reason], Who = Who }, cancellationToken);
+            if (sent.Later is { } laterRound)
+            {
+                sent = await laterRound;
+            }
+            if (sent.Ok)
+            {
+                state.RaiseCard(CardBin.Handled, TickerSentRound, subject, $"{Name(leg)}'s ticking pass stopped with {Steps(leg)}; sent round with a fresh worker",
+                    $"{why}; the leg went round once, telling the fresh worker which steps remain: {named}");
+                return;
+            }
+            refused = sent.Error ?? "refused";
+        }
         var around = Models.RedoLabel(leg, "its ticker stopped without finishing it");
+        var goAroundRefusal = refused is null ? "" : $"; the node's go-around was refused: {refused}";
         // Needs someone: the worker's commits were not ticked and finished by the ticking pass, which is run once, and what covers the steps is the controller's to say.
-        state.RaiseCard(CardBin.Ring, Idle, subject, $"{ticker} stopped without finishing the leg: {why}",
-            $"the worker ended with commits made and {Steps(leg)}, so the node started its ticking pass instead of sending the leg round; {why}, and the node starts no second ticker",
+        state.RaiseCard(CardBin.Ring, Idle, subject, $"{ticker} stopped without finishing the leg: {why}{(refused is null ? "" : $" (go-around refused: {Clip(refused)})")}",
+            $"the worker ended with commits made and {Steps(leg)}, so the node started its ticking pass instead of sending the leg round; {why}, and the node starts no second ticker{goAroundRefusal}",
             [new CardChoice { Label = around, Verb = Verbs.GoAround, Target = subject, Args = [$"the last worker ended with steps unticked and its ticker stopped without finishing: {why}"] }],
             summary: $"The ticking pass of {Name(leg)} stopped with the leg unfinished: {why}. {around} starts a fresh worker.");
+    }
+
+    /// <summary>The card kind of a leg the node sent round because its ticking pass stopped with steps unticked.</summary>
+    public const string TickerSentRound = "ticker-sent-round";
+
+    /// <summary>How the go-around reason of a leg sent round for a stopped ticker begins; it is also how that go-around is told from others.</summary>
+    private const string TickerRoundLead = "the last worker's commits did not cover every step, and its ticking pass stopped without finishing";
+
+    /// <summary>
+    /// Whether the leg was sent round once already for a stopped ticker; a second stop on the same leg rings. Read from the leg's own go-around
+    /// reasons, which are persisted, so a node restart does not forget it and send the leg round a second time.
+    /// </summary>
+    private static bool WentRoundForTicker(LegRow leg) =>
+        leg.GoAroundReasons.Any(r => r.Why.StartsWith(TickerRoundLead, StringComparison.Ordinal));
+
+    /// <summary>
+    /// The node's finish of a leg whose ticker stopped with every step ticked, awaited with its <c>Later</c> off the watch loop. A refusal
+    /// rings as a stopped worker does; a node that is stopping leaves the leg as it is, and anything else thrown is written, not lost.
+    /// </summary>
+    private async Task FinishForTickerAsync(LegRow leg, string subject, string ticker, string why, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var done = await run(new CommandRequest { Verb = Verbs.FinishLeg, Target = subject, Args = ["done", "finished by the node: its ticker stopped with every step ticked"], Who = Who }, cancellationToken);
+            if (done.Later is { } later)
+            {
+                done = await later;
+            }
+            if (!done.Ok)
+            {
+                var refusal = done.Error ?? "refused";
+                Ring(leg, Idle, $"{ticker} stopped with every step ticked, and the node's finish was refused: {Clip(refusal)}",
+                    $"{why}; the node ran `leg finish done` for it, since {Steps(leg)}, and it was refused: {refusal}", redoWhy: "its ticker stopped and the node's finish of it was refused");
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            await Error.WriteLineAsync($"leg watch: the node's finish of {Name(leg)} for its ticker failed: {ex.Message}");
+        }
     }
 
     /// <summary>Tells the owners given their ended, untold jobs (JobRunner.TellUntoldOf); whether any was told. The node sets it.</summary>
