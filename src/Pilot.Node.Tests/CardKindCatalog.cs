@@ -33,7 +33,6 @@ internal static class CardKindCatalog
     private const string HumanVerification = "Flights/LegCommander.HumanVerification.cs";
     private const string LegMerge = "Flights/LegCommander.Merge.cs";
     private const string LegQueuedPush = "Flights/LegCommander.QueuedPush.cs";
-    private const string LegChecksAndConflicts = "Flights/LegCommander.ChecksAndConflicts.cs";
     private const string Lay = "Flights/LegCommander.Lay.cs";
     private const string Shape = "Flights/LegCommander.Shape.cs";
     private const string Watch = "Flights/LegWatch.cs";
@@ -123,7 +122,6 @@ internal static class CardKindCatalog
         new("lay-failed", "ForYou", [Shape], "RebaseLayFlightTests.AMergeThatIsNotCleanPushesNothingAndRingsOnce"),
         new("drop-unexplained", "Handled|Ring", [Lay], "RebaseLayFlightTests.ADroppedPrWhoseCauseIsNotFoundRingsOnceAndIsNeverQueuedAgain", "a PR the base dropped has no cause the node can find on GitHub", [nameof(Verbs.Merge)]),
         new("pr-ready", "Ring", [LegReview, Lay], "PrFlightReviewTests.AnApproveAtTheFlightsHeadPassesItsReviewAndMarksItsPrReady", "the PR's state on GitHub is open, the review passed at its current head, and its checks are read", [nameof(Verbs.Merge)]),
-        new("pr-conflicts", "Ring", [LegChecksAndConflicts], "NodeCardTests.ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage", "the PR's mergeable state on GitHub is conflicting", [nameof(Verbs.GoAround)]),
         new("pr-checks-failed", "Ring", [Checks, Recheck], "NodeCardTests.ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage", "the PR's checks on GitHub failed at its current head", [nameof(Verbs.FixPr), nameof(Verbs.Merge)]),
         new("merge-taken-back", "Handled", [LegMerge, LegQueuedPush], "MergeTakeBackTests.PlanLegOnAQueuedMergeDequeuesAndTheCardSaysSo"),
         new("merged-under-leg", "ForYou", [FlightCommanderLand], "MergedUnderLegTests.ADoneLegGoesToANewPrWithTheMergedBaseMergedInAndPushedPlain"),

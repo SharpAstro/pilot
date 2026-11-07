@@ -361,13 +361,16 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   a review round starts ready, as the review runs on it; the merge card's merge still refuses a moved head.
 - A passed PR whose checks then fail is taken as changes, once a head: the PR goes back to draft, the merge card
   closes, and the ring, "fails its checks", offers **Fix the failing checks**, told to read the failed checks and make them pass on every runner.
-- A PR that conflicts with its base goes to the **watchtower**, not to a fresh worker. The node's update is
-  `git fetch` + `git merge --no-edit origin/<base>` in the plane, aborted with `git merge --abort` when it conflicts. A Ring `pr-conflicts`
-  card (once a head) names the conflict and the plane and carries the brief the watchtower follows (`LegCommander.UpdateInstruction`, the
-  watchtower's "Getting reviewed work in"): merge the base in there, resolve every file so both sides' work stays, rerun the leg's check
-  and push plain, then `pilot flight review <code>`. The card's **Resolve the conflict** choice (a go-around of the last leg on its work as
-  it stands) is the watchtower's only when it finds the conflict is real work (two designs, a goal to drop); no leg goes round for a conflict
-  by itself, and the review stays as it was.
+- A PR that conflicts with its base is the **node's own work, said to no one**: no card of any kind, no ring, no summary line. The node's
+  update is `git fetch` + `git merge --no-edit origin/<base>` in the plane, aborted with `git merge --abort` when it conflicts, and then
+  `LegCommander.ResolveConflictAsync` (one entry point for the PR sweep, a queue drop, the merge card, a PR recheck, the merge command and a
+  PR open) puts it to a worker, once for each head of the base. A leg flying on the plane with a live worker is **told** to merge the base in
+  and nothing else starts; with none flying, the last leg is **sent round** by the node. Either way the worker gets the conflict brief
+  (`LegCommander.ConflictBrief`): the conflicting files (a test merge, `git merge-tree`), the merge base, what each side added in each file, the
+  base's commits that touch it (`git log --oneline <merge-base>..<base> -- <file>`), and the rule: `git merge --no-edit origin/<base>`, keep both
+  sides' work, on a version pin take the higher, rerun the check, push plain, never `--force`. A conflict round is not counted against the
+  review go-around cap and is not held by the review loop, for a flight with a PR or without; a passed review is turned to changes as for any
+  done leg sent round. A worker that stops is the leg-failed card's to say, as for any stopped worker.
 - **How a flight's branch is brought up to date** (`BringUpToDateAsync`, before every push and before the merge queue) is always a merge,
   in every repo, whatever its merge queue or the node's merge method: `git fetch`, `git merge --no-edit origin/<base>`, a plain push. There is
   no rebase way and no `UpdateWay`; a repaired base (a base that is no branch on the remote) is the remote's default merged in, not rebased onto.

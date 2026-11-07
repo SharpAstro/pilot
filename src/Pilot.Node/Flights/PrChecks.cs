@@ -287,7 +287,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     }
                     if (await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } notUpdated)
                     {
-                        // Resolved by the watchtower in the plane, not by a worker the node sends: a conflict is a merge (#344 rang for one, 2026-10-27).
+                        // A worker resolves it and nothing rings: a flying leg's worker is told, else the last leg goes round with the brief (#344 rang for one, 2026-10-27).
                         await HandConflictOverAsync(flight.Code, notUpdated, cancellationToken);
                     }
                     else
@@ -340,18 +340,24 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <summary>
     /// A flight's PR that conflicts with its base, whatever its review said and with no merge card open (those are updated
     /// from the card): the base merged in by the node, once a head, while no leg flies and no reviewer reads; a merge that conflicts
-    /// goes to the watchtower to resolve in the plane. Only a passed PR's card did this, so a PR that conflicted under a review
-    /// asking for changes, or still flying, sat DIRTY until someone said so (#339, #340, 2026-10-27).
+    /// is a worker's to resolve (<see cref="HandConflictOverAsync"/>), and so is a conflict found while a leg flies: its worker is told to
+    /// merge the base in, as the node merges nothing into a plane a worker is changing. Only a passed PR's card did this, so a PR that
+    /// conflicted under a review asking for changes, or still flying, sat DIRTY until someone said so (#339, #340, 2026-10-27).
     /// </summary>
     private async Task ResolveConflictsAsync(string code, PullRequest pr, CancellationToken cancellationToken)
     {
         if (legs is null || pr.Mergeable != "CONFLICTING"
             || state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying, Review: { State: not ReviewState.Reviewing }, PullRequest: { } number } flight
             || number != pr.Number
-            || state.Legs(code) is not { Length: > 0 } flown || flown.Any(l => l.State != LegState.Done)
+            || state.Legs(code) is not { Length: > 0 } flown || flown.Any(l => l.State is not (LegState.Done or LegState.Flying))
             || state.Cards(openOnly: true).Any(c => c.Kind is LegCommander.PrReady or LegCommander.MergeFailed && c.Subject == Verbs.FlightTarget(code))
             || !_rebased.Add($"{code} {pr.Head}"))
         {
+            return;
+        }
+        if (flown.Any(l => l.State == LegState.Flying))
+        {
+            await HandConflictOverAsync(code, $"GitHub reports the PR conflicting with {flight.Base}", cancellationToken);
             return;
         }
         if (await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } why)
@@ -361,17 +367,12 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     }
 
     /// <summary>
-    /// The node's merge of the base into a flight conflicted: the watchtower is told to resolve it in the plane (a card), merge the
-    /// base in, rerun the check and push plain. The last leg goes round only if the watchtower says the conflict is real work, so a
-    /// merge is never a fresh worker's whole leg of tokens.
+    /// The node's merge of the base into a flight conflicted: a worker resolves it and nothing rings. A leg flying on the plane is told
+    /// to merge the base in; with none flying, the last leg goes round with the conflict brief (<see cref="LegCommander.ResolveConflictAsync"/>,
+    /// once for each head of the base). Null when a worker is on it; else why none could be.
     /// </summary>
-    private async Task HandConflictOverAsync(string code, string why, CancellationToken cancellationToken)
-    {
-        if (legs is not null)
-        {
-            await legs.ConflictsAsync(code, why, cancellationToken);
-        }
-    }
+    private async Task<string?> HandConflictOverAsync(string code, string why, CancellationToken cancellationToken) =>
+        legs is not null ? await legs.ResolveConflictAsync(code, why, cancellationToken) : "this node holds no way to resolve a conflict";
 
     /// <summary>
     /// Whether the head's failed checks are being run again, so its leg is not sent round yet: started now, once a head, or
@@ -454,7 +455,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             // queue cleared is told only that it was.
             string Said(string line) => merge?.DroppedFromQueue is not { } thrownOut ? line
                 : thrownOut.Contains("conflict", StringComparison.OrdinalIgnoreCase) && method.Equals("rebase", StringComparison.OrdinalIgnoreCase)
-                    ? $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass, and drops it again until the conflict is gone. The watchtower merges the base into the plane to resolve it; a merge queue that merges by rebase may still drop a branch brought up to date that way."
+                    ? $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass, and drops it again until the conflict is gone. A worker merges the base into the plane to resolve it; a merge queue that merges by rebase may still drop a branch brought up to date that way."
                     : $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass.";
             if (dropped is null && merge is { AwaitsCheck: true } && checks?.Status != ChoiceStatus.Failing)
             {
@@ -874,7 +875,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             // Reviewed and passed, but no longer merging into its base: main moved. The base is merged in by itself, once a head, and
-            // it is reviewed afresh; a merge that conflicts goes to the watchtower. The card says so meanwhile, offering the go-around
+            // it is reviewed afresh; a merge that conflicts is put to a worker. The card says so meanwhile, offering the go-around
             // that does it by hand, not a Merge GitHub would refuse.
             var conflicts = pr is { Mergeable: "CONFLICTING" } && pr.Number == number || merge is { Kind: MergeKinds.Conflicts };
             if (conflicts || merge is { Kind: MergeKinds.Behind })
@@ -889,7 +890,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 {
                     var what = conflicts ? "conflicts with its base" : "is behind its base";
                     legs.ShowMergeFailed(flight.Code, head, "", $"{flight.Code}'s PR #{number} {what}",
-                        conflicts ? $"GitHub cannot merge it until the conflict is resolved. The node merges the base in by itself, once a head; one that conflicts goes to the watchtower to resolve in the plane."
+                        conflicts ? $"GitHub cannot merge it until the conflict is resolved. The node merges the base in by itself, once a head; one that conflicts is put to a worker to resolve in the plane."
                             : $"GitHub will not merge it until it is up to date with its base. The node merges the base in by itself, once a head; redoing the leg (a go-around) does it by hand.",
                         pr?.Url ?? card.Link, rerun: false,
                         goAroundWhy: $"the PR {what}: {LegCommander.UpdateInstruction}",

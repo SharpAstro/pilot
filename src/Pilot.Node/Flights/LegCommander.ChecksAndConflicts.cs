@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 using Pilot.Contracts;
 using Pilot.Node.Sessions;
@@ -42,85 +43,192 @@ public sealed partial class LegCommander
                 Args = [$"the PR's checks failed on {CommitRefs.Short(head)}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push"] }]
             : [];
 
+    /// <summary>Says text to a session row (a node say), true when it was delivered; null where there is none (a test that tells no one).</summary>
+    public Func<string, string, CancellationToken, Task<bool>>? Say { get; set; }
+
     /// <summary>
-    /// A flight whose base merge conflicts goes to the watchtower, not to a fresh worker: a ring card names the conflict and the plane,
-    /// and the watchtower merges the base in there, resolves it, reruns the check and pushes plain. Its Resolve the conflict choice is for the
-    /// watchtower to take only when the conflict is real work (two designs, a goal to drop). One card a conflict, not one a look.
-    /// Null when the card is up; else why not.
+    /// A flight's PR that conflicts with its base is the node's own work, said to no one: no card of any kind. This is the one entry point of
+    /// every path that finds the conflict (the PR sweeps, a queue drop, the merge card, a PR recheck, the merge command, a PR open). A leg
+    /// flying on the plane with a live worker is told to merge the base, with the conflict brief, and nothing else starts; otherwise the last
+    /// leg, when it is done, goes round by the node with the brief. Once for each head of the base. Null when a worker is resolving it (told now,
+    /// or already for this head); else why none could be. <paramref name="lockHeld"/> is true for a caller that holds the leg lock already (the
+    /// merge command, a PR open).
     /// </summary>
-    public Task<string?> ConflictsAsync(string code, string why, CancellationToken cancellationToken)
+    public async Task<string?> ResolveConflictAsync(string code, string why, CancellationToken cancellationToken, bool lockHeld = false)
     {
         if (state.Flights().FirstOrDefault(f => f.Code == code) is not { } flight)
         {
-            return Task.FromResult<string?>($"{code} is not a flight");
+            return $"{code} is not a flight";
         }
-        var subject = Verbs.FlightTarget(code);
-        if (state.Cards(openOnly: true).Any(c => c.Kind == PrConflictsKind && c.Subject == subject))
+        if (flight.State != FlightState.Flying || !Directory.Exists(flight.Worktree))
         {
-            return Task.FromResult<string?>(null);
+            return $"{code} is not a flying flight with a plane";
         }
-        var legs = state.Legs(code);
-        var choices = new List<CardChoice>();
-        if (legs.LastOrDefault() is { } last)
-        {
-            // Not "Redo leg": a worker sent round resolves it on the leg's work as it stands; nothing is thrown away (the owner, 2026-10-29).
-            choices.Add(new CardChoice { Label = Models.SendBackLabel(last, ResolveConflict), Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name), Args = [ConflictBrief(why)] });
-        }
-        var number = flight.PullRequest is { } n ? $"PR #{n}" : "branch";
-        state.RaiseCard(CardBin.Ring, PrConflictsKind, subject, $"{code}'s {number} conflicts with its base",
-            $"{why}. A worker already tried (the node sends one first, and rings only when it stopped or the same conflict came back). The plane is {flight.Worktree}: {ConflictBrief(why)}, then {(flight.PullRequest is null ? $"`pilot flight pr {code}` (or dismiss this card, and the node opens it)" : $"`pilot flight review {code}`")}. {ResolveConflict} starts a fresh worker on the last leg.",
-            choices, link: flight.PullRequestUrl,
-            summary: $"The {number} of {code} conflicts with its base and a worker already tried. The watchtower merges the base into the plane and resolves it; {ResolveConflict} starts a fresh worker.");
-        return Task.FromResult<string?>(null);
-    }
-
-    /// <summary>The conflict card's go-around button: the last leg's worker resolves the conflict on its work as it stands.</summary>
-    public const string ResolveConflict = "Resolve the conflict";
-
-    /// <summary>The card a base merge that conflicts raises, for the watchtower to resolve in the plane.</summary>
-    public const string PrConflictsKind = "pr-conflicts";
-
-    /// <summary>What the watchtower or a worker is told when its flight's PR conflicts with its base.</summary>
-    public static string ConflictBrief(string why) => $"the PR conflicts with its base ({why}): {UpdateInstruction}";
-
-    /// <summary>What the node tells the worker it sends round on a conflict that held a flight's PR from opening.</summary>
-    public static string OpenConflictBrief(string why) =>
-        $"{ConflictBrief(why)}. Keep both sides' work; on a version pin line (a PackageVersion in Directory.Packages.props, say) take the higher of the two versions";
-
-    /// <summary>The base head each flight's open conflict was last sent round for: one send a conflict, never a loop.</summary>
-    private readonly ConcurrentDictionary<string, string> _conflictSent = new(StringComparer.Ordinal);
-
-    /// <summary>
-    /// A flight's PR open that conflicted with its base: the last leg is sent round by the node with the conflict brief, once for
-    /// each head of the base (a second look at the same head finds it sent). Null when sent; else why not, and the caller raises the card.
-    /// </summary>
-    private async Task<string?> SendConflictRoundAsync(FlightRow flight, string why, CancellationToken cancellationToken)
-    {
         var head = await git.RunAsync(["rev-parse", flight.Base], flight.Worktree, cancellationToken);
         var key = head.Ok ? head.Output.Trim() : "";
         if (key.Length == 0)
         {
             return "the base head could not be read";
         }
-        if (_conflictSent.TryGetValue(flight.Code, out var sent) && sent == key)
+        if (_conflictSent.TryGetValue(code, out var sent) && sent == key)
         {
-            return $"already sent round for {CommitRefs.Short(key)}";
+            // Told or sent round for this head already: its worker is on it, or stopped, and the stop has its own leg-failed card.
+            return null;
         }
-        if (state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault() is not { State: LegState.Done } last)
+        var legs = state.Legs(code).OrderBy(l => l.Order).ToArray();
+        var brief = ConflictBrief(why, await ConflictDetailAsync(flight, cancellationToken));
+        // A leg flying on the plane is the one to merge the base: a second worker on the same plane would only clash with it.
+        var flying = legs.FirstOrDefault(l => l.State == LegState.Flying && l.WorkerJob is { } job
+            && state.Sessions().Any(s => s.Id == job && s.State is not (SessionState.Ended or SessionState.Failed)));
+        if (flying?.WorkerJob is { } live)
         {
-            return "the last leg is not done";
+            if (Say is null)
+            {
+                return $"{code}/{flying.Name}'s worker cannot be told: this node has no way to say a line";
+            }
+            try
+            {
+                if (!await Say(live, $"[the node] {brief}. Merge the base into your plane now, then go on with your leg.", cancellationToken))
+                {
+                    return $"{code}/{flying.Name}'s worker could not be told";
+                }
+            }
+            catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                return $"{code}/{flying.Name}'s worker could not be told ({ex.Message})";
+            }
+            _conflictSent[code] = key;
+            return null;
         }
-        try
+        if (legs.LastOrDefault() is not { State: LegState.Done } last)
         {
-            await GoAroundAsync(new CommandRequest { Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [OpenConflictBrief(why)], Who = LegWatch.Who }, cancellationToken, openConflict: true);
+            return legs.LastOrDefault() is { } notDone ? $"the last leg, {notDone.Name}, is {notDone.State.ToString().ToLowerInvariant()}" : "the flight has no leg";
         }
-        catch (FlightException ex)
+        var command = new CommandRequest { Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name), Args = [brief], Who = LegWatch.Who };
+        if (lockHeld)
         {
-            return ex.Message;
+            try
+            {
+                await GoAroundAsync(command, cancellationToken, conflictRound: true);
+            }
+            catch (FlightException ex)
+            {
+                return ex.Message;
+            }
         }
-        _conflictSent[flight.Code] = key;
+        else
+        {
+            // Through the command route, which takes the lock and waits for the launch; the go-around finds its why among these and is no review's round.
+            _conflictRounds[code] = brief.Trim();
+            var round = await RunAsync(command, cancellationToken);
+            if (!round.Ok)
+            {
+                return round.Error ?? "the go-around was refused";
+            }
+        }
+        _conflictSent[code] = key;
         return null;
     }
+
+    /// <summary>What a Handled line or a refusal says once a conflict is a worker's: nothing rings.</summary>
+    public const string WorkerResolves = "a worker is resolving it";
+
+    /// <summary>
+    /// The brief a worker is told when its flight's PR conflicts with its base: the conflict, what each side did in the files and the base's
+    /// commits that touch them, and the rule. Keep both sides' work; on a version pin take the higher.
+    /// </summary>
+    public static string ConflictBrief(string why, string detail = "") =>
+        $"the PR conflicts with its base ({why}).{(detail.Length > 0 ? $"\n{detail}\n" : " ")}Rule: {UpdateInstruction}. Keep both sides' work; on a version pin line (a PackageVersion in Directory.Packages.props, say) take the higher of the two versions";
+
+    /// <summary>The most files of a conflict the brief lists one by one.</summary>
+    private const int ConflictFilesShown = 12;
+
+    /// <summary>The most commits of the base the brief names for one file.</summary>
+    private const int ConflictCommitsShown = 8;
+
+    /// <summary>
+    /// What the plane says of the conflict: the files a test merge of the base conflicts in (<c>git merge-tree</c>, else the files both sides
+    /// changed), the merge base, and for each file what each side added since it and the commits on the base that touch it. Empty when git
+    /// cannot say.
+    /// </summary>
+    private async Task<string> ConflictDetailAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        var cwd = flight.Worktree;
+        var baseRef = flight.Base;
+        var found = await git.RunAsync(["merge-base", "HEAD", baseRef], cwd, cancellationToken);
+        if (!found.Ok || found.Output.Trim() is not { Length: > 0 } mergeBase)
+        {
+            return "";
+        }
+        var files = new List<string>();
+        var tree = await git.RunAsync(["merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", baseRef], cwd, cancellationToken);
+        if (tree.ExitCode == 1)
+        {
+            files.AddRange(Lines(tree.Output).Skip(1).Distinct(StringComparer.Ordinal));
+        }
+        if (files.Count == 0)
+        {
+            // An older git (no merge-tree --write-tree) or a merge that went clean here: the files both sides changed.
+            var mine = await git.RunAsync(["diff", "--name-only", mergeBase, "HEAD"], cwd, cancellationToken);
+            var theirs = await git.RunAsync(["diff", "--name-only", mergeBase, baseRef], cwd, cancellationToken);
+            if (mine.Ok && theirs.Ok)
+            {
+                var onBase = Lines(theirs.Output).ToHashSet(StringComparer.Ordinal);
+                files.AddRange(Lines(mine.Output).Where(onBase.Contains));
+            }
+        }
+        if (files.Count == 0)
+        {
+            return "";
+        }
+        var text = new StringBuilder();
+        text.Append(CultureInfo.InvariantCulture, $"Merging {baseRef} (merge base {CommitRefs.Short(mergeBase)}) conflicts in {files.Count} file{(files.Count == 1 ? "" : "s")}:");
+        foreach (var file in files.Take(ConflictFilesShown))
+        {
+            var ours = await SideAddedAsync(cwd, mergeBase, "HEAD", file, cancellationToken);
+            var onTheBase = await SideAddedAsync(cwd, mergeBase, baseRef, file, cancellationToken);
+            text.Append(CultureInfo.InvariantCulture, $"\n- {file}: this branch {ours}; the base {onTheBase}");
+            var log = await git.RunAsync(["log", "--oneline", $"--max-count={ConflictCommitsShown}", $"{mergeBase}..{baseRef}", "--", file], cwd, cancellationToken);
+            foreach (var line in log.Ok ? Lines(log.Output) : [])
+            {
+                text.Append(CultureInfo.InvariantCulture, $"\n    {line}");
+            }
+        }
+        if (files.Count > ConflictFilesShown)
+        {
+            text.Append(CultureInfo.InvariantCulture, $"\n- and {files.Count - ConflictFilesShown} more: git status lists them once the merge is started");
+        }
+        return text.ToString();
+    }
+
+    private static IEnumerable<string> Lines(string output) => output.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0);
+
+    /// <summary>What one side did to a file since the merge base, as lines added and removed; "left it alone" when it did not touch it.</summary>
+    private async Task<string> SideAddedAsync(string cwd, string mergeBase, string side, string file, CancellationToken cancellationToken)
+    {
+        var numstat = await git.RunAsync(["diff", "--numstat", mergeBase, side, "--", file], cwd, cancellationToken);
+        if (!numstat.Ok || numstat.Output.Split('\n')[0].Split('\t') is not { Length: >= 3 } parts)
+        {
+            return "left it alone";
+        }
+        return parts[0] == "-" ? "changed it (binary)" : $"added {parts[0]} and removed {parts[1]} lines";
+    }
+
+    /// <summary>The base head each flight's conflict was last put to a worker for: one send a conflict, never a loop.</summary>
+    private readonly ConcurrentDictionary<string, string> _conflictSent = new(StringComparer.Ordinal);
+
+    /// <summary>The plane's and the base's heads (as one string) at the PR open that last conflicted, by flight: the sweep does not open it again until one moves.</summary>
+    private readonly ConcurrentDictionary<string, string> _conflictOpenTried = new(StringComparer.Ordinal);
+
+    private async Task<string> ConflictHeadsAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        var baseHead = await git.RunAsync(["rev-parse", flight.Base], flight.Worktree, cancellationToken);
+        var planeHead = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken);
+        return $"{(baseHead.Ok ? baseHead.Output.Trim() : "")} {(planeHead.Ok ? planeHead.Output.Trim() : "")}";
+    }
+
+    /// <summary>The brief of a conflict round the node asked for through the command route, by flight: the go-around that carries it is no review's round.</summary>
+    private readonly ConcurrentDictionary<string, string> _conflictRounds = new(StringComparer.Ordinal);
 
     /// <summary>What to do to bring the plane up to date with its base: merge it in, never rebase, never force push.</summary>
     public const string UpdateInstruction = "fetch, then merge origin/<base> into the plane (git merge --no-edit, never a rebase), resolving every conflict so both sides' work stays, rerun the check, and push plain (never --force or --force-with-lease)";

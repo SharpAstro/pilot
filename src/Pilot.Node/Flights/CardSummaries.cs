@@ -12,7 +12,7 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public static partial class CardSummaries
 {
-    // Well above the longest sentence a raiser writes (the pr-conflicts one, about 200 with a long code), so none is thrown away;
+    // Well above the longest sentence a raiser writes (about 200 with a long code), so none is thrown away;
     // text taken from a detail is far longer than a sentence and still fails.
     private const int MaxLength = 600;
 
@@ -43,7 +43,6 @@ public static partial class CardSummaries
             "leg-failed" => $"The worker of {what} stopped. Send it round again starts a fresh worker told why; Accept it as it stands keeps the failure in its report and the flight goes on.",
             LegCommander.PushBlockedKind => $"{what} is done and its check passes, but its branch was rebased off the pushed one. Push the rebased branch with lease overwrites origin's only if it has not moved; Merge origin's branch into the plane keeps its commits and pushes plain.",
             "pr-checks-failed" => $"The PR of {what} fails its checks and the node could not send the last leg back to fix them. The first choice starts a fresh worker on that leg, told which checks failed and to push a fix; or fix them by hand, then dismiss this.",
-            "pr-conflicts" => $"The PR of {what} conflicts with its base and a worker already tried and could not settle it (it stopped, or the same conflict came back). The watchtower resolves it in the plane (merge, check, plain push); Resolve the conflict starts a fresh worker on the last leg.",
             LegWatch.Stopped => $"The worker of {what} was stopped by the API and the node cannot resume it by itself. Tell it to carry on, or start a fresh worker on the leg.",
             LegWatch.LimitWait => $"The worker of {what} hit the usage limit. The node resumes it by itself after the window resets; nothing to do.",
             LegWatch.Idle => $"The worker of {what} has been idle with its leg unfinished and the node's nudges did not help. Nudge it to finish or say why not, or start a fresh worker on the leg.",

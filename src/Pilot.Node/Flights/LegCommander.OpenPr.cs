@@ -84,12 +84,12 @@ public sealed partial class LegCommander
         catch (FlightException ex) when (IsConflict(ex.Message))
         {
             // A base that conflicts is a worker's to resolve, whoever asked to open the PR (the node after the last leg, a card, the CLI):
-            // the last leg goes round by itself with the conflict told, once for each head of the base. Only when that cannot be done
-            // (already sent for this head, the leg not done) is it the watchtower's pr-conflicts card, as the update paths raise.
-            if (await SendConflictRoundAsync(FlightOf(Verbs.FlightTarget(flight.Code)), ex.Message, cancellationToken) is not null)
-            {
-                await ConflictsAsync(flight.Code, ex.Message, cancellationToken);
-            }
+            // the last leg goes round by itself with the conflict told, once for each head of the base, and nothing rings. The open's own
+            // call on the flight is let go first, as the go-around takes the flight itself.
+            call.Dispose();
+            await ResolveConflictAsync(flight.Code, ex.Message, cancellationToken, lockHeld: true);
+            // Noted for the node's sweep, which does not try the same open again until the plane or the base moves.
+            _conflictOpenTried[flight.Code] = await ConflictHeadsAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken);
             throw;
         }
         var (repaired, pr, mergedBase) = opened;
@@ -98,7 +98,7 @@ public sealed partial class LegCommander
         Record(flight.Code, f => f with { Base = repaired.Base, PullRequest = pr.Number, PullRequestUrl = pr.Url, MergedHead = mergedBase ? null : f.MergedHead });
         EndHoldPastReview(beforeOpen, pr.Head, "flight pr");
         // The PR opened, so a conflict that held its opening is resolved.
-        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR opened", PrConflictsKind);
+        _conflictOpenTried.TryRemove(flight.Code, out _);
         if (mergedBase)
         {
             state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{repaired.Base} merged into {flight.Code}'s plane; a new PR opens", FlightCommander.MergedUnderLegKind);

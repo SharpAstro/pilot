@@ -394,7 +394,7 @@ public sealed partial class LegCommander(
                 {
                     DropMerge(code, why);
                 }
-                error = $"{error}; {why}{(!IsConflict(why) ? "" : await ConflictsAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : ": the watchtower is told to resolve it in the plane")}";
+                error = $"{error}; {why}{(!IsConflict(why) ? "" : await ResolveConflictAsync(code, why, cancellationToken, lockHeld: true) is { } notSent ? $" ({notSent})" : $": {WorkerResolves}")}";
             }
             else
             {
@@ -464,7 +464,7 @@ public sealed partial class LegCommander(
         return state.Complete(command, error, way, made: made);
     }
 
-    /// <summary>Whether a reason <see cref="BringUpToDateAsync"/> gave is a merge that conflicted: the only one the watchtower is told to resolve.</summary>
+    /// <summary>Whether a reason <see cref="BringUpToDateAsync"/> gave is a merge that conflicted: the only one put to a worker to resolve.</summary>
     private static bool IsConflict(string why) => why.Contains(" conflicts (", StringComparison.Ordinal);
 
     /// <summary>

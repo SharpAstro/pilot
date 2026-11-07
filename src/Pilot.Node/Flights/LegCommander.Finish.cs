@@ -213,12 +213,8 @@ public sealed partial class LegCommander
                         new CardChoice { Label = $"Accept {leg.Name} as it stands, the failure kept in its report", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
                     ],
                     summary: $"The worker of {flight.Code}/{leg.Name} stopped. Send {leg.Name} round again starts a fresh worker told why; Accept {leg.Name} as it stands keeps the failure in its report and the flight goes on.");
-                // The worker the node sent round on the PR open's conflict gave up: the owner is rung about the conflict itself, once.
-                if (_conflictSent.ContainsKey(flight.Code) && flight.PullRequest is null
-                    && state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault()?.Name == leg.Name)
-                {
-                    await ConflictsAsync(flight.Code, $"the worker the node sent round on the conflict stopped: {reason}", cancellationToken);
-                }
+                // A worker that was sent round on the conflict and stopped is the leg-failed card's to say, as for any stopped worker: the
+                // conflict is no card of its own, and the same base head is not put to a worker twice (ResolveConflictAsync).
                 break;
             default:
                 throw new FlightException("finish-leg takes done or failed, then a report");
