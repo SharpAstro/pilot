@@ -35,7 +35,7 @@ public sealed partial class NodeState
                 var said = FlightWaiting.OnHoldText(onHold)!;
                 title = $"{title} ({said})";
                 detail = $"The flight is {said}. The node takes no step for it until it is released (pilot flight unhold {onHold.Code}); the choices that would are not offered.{(detail is { Length: > 0 } ? " " + detail : "")}";
-                choices = [.. (choices ?? []).Where(c => Pilot.Node.Flights.LegCommander.TakenOnHold(c.Verb) || !c.Target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal))];
+                choices = [.. (choices ?? []).Where(c => Pilot.Node.Flights.LegCommander.TakenOnHold(c.Verb, c.Args) || !c.Target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal))];
             }
             var now = _time.GetUtcNow();
             // A landed flight (a folded or moved one lands too) has nothing left to ring about: a leg or worker card for it is a card

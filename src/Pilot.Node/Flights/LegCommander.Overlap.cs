@@ -283,13 +283,18 @@ public sealed partial class LegCommander
 
     /// <summary>
     /// After a parallel answer on <paramref name="answered"/>: a leg-end row goes on (<see cref="GoOnAfterLegEndAnswerAsync"/>), a
-    /// planner-asked row has its planner stopped and a fresh one started. Called under the lock.
+    /// planner-asked row has its planner stopped and a fresh one started. A flight on the owner's hold (#771) keeps the planner it has:
+    /// none could be started in its place, and the planner look takes it up once the hold is released. Called under the lock.
     /// </summary>
     private async Task<string> GoOnAfterParallelAnswerAsync(FlightRow flight, OverlapRow answered, string told, CancellationToken cancellationToken)
     {
         if (answered.AfterLeg is not null)
         {
             return await GoOnAfterLegEndAnswerAsync(flight, told, cancellationToken);
+        }
+        if (IsOnHold(flight.Code))
+        {
+            return $"{told.Split(';')[0]}; {flight.Code} is on hold, so its planner is left as it is and waits for the release";
         }
         await StopPlannerAsync(flight, cancellationToken);
         StartPlanner(flight, replacing: true);

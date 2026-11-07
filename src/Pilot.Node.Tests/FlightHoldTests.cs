@@ -1,6 +1,7 @@
 using Pilot.Commands;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
+using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
 
@@ -22,12 +23,12 @@ public sealed class FlightHoldTests : ReviewTestsBase
 
     private PrChecks Checks() => new(_state, _github, TimeProvider.System, _flights, _legs);
 
-    private async Task<FlightRow> Reviewed(string issue)
+    private async Task<FlightRow> Reviewed(string issue, string report = "Checked.")
     {
         var flight = await NewFlight(issue, "parser");
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
-        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "Checked.")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", report)).Error.ShouldBeNull();
         return flight;
     }
 
@@ -169,6 +170,41 @@ public sealed class FlightHoldTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task TheReviewHoldSweepWritesNothingOnAHeldFlightsPrAndReleasesItsReviewHoldOnceUnheld()
+    {
+        _github.Checks = ChoiceStatus.Passing;
+        // Autopilot off: no review-notes leg is planned, the review hold is the node's, and with no watchtower the sweep would release it.
+        var flight = await Reviewed("10", "Checked.\n\n## Not blocking\n- rename `x` to `count`");
+        var since = F(flight.Code).Holding.ShouldNotBeNull().Since;
+        (await Hold(flight)).Error.ShouldBeNull();
+        var clock = new ManualTime(since);
+        var checks = new PrChecks(_state, _github, clock, _flights, _legs) { WatchtowerLive = () => false };
+
+        clock.Advance(checks.HoldingTakeBound + TimeSpan.FromMinutes(1));
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+        // A direct caller is refused as well: the owner's hold is asked in the handling itself, not only in the sweep's filter.
+        (await _legs.HandleHoldWithoutWatchtowerAsync(flight.Code, Ct)).ShouldBe(LegCommander.HoldHandling.None);
+        (await _legs.ReleaseUntakenHoldAsync(flight.Code, Ct)).ShouldBeFalse();
+
+        // Hold and unhold comment on the flight's issue (pilot: ...); the review hold's release writes "Review of ..." on the PR.
+        var pr = F(flight.Code).PullRequest!.Value;
+        bool ReviewNotes((int Number, string Body) c) => c.Body.StartsWith("Review of ", StringComparison.Ordinal);
+        _github.IssueComments.ShouldNotContain(c => ReviewNotes(c));
+        F(flight.Code).Holding.ShouldNotBeNull().Since.ShouldBe(since);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+
+        (await Run(Verbs.Unhold, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldBeNull();
+        await checks.LookAsync(Ct);
+
+        F(flight.Code).Holding.ShouldBeNull();
+        var notes = _github.IssueComments.Where(ReviewNotes).ShouldHaveSingleItem();
+        notes.Number.ShouldBe(pr);
+        notes.Body.ShouldContain("rename `x` to `count`");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARunningSessionStillReportsOnAHeldFlightAndNothingFollowsItsFinish()
     {
         SweepsAdvance();
@@ -219,13 +255,20 @@ public sealed class FlightHoldTests : ReviewTestsBase
         Staleness.Read([F(flight.Code) with { CreatedAt = DateTimeOffset.UnixEpoch }], [], [], [], null, DateTimeOffset.UtcNow, new StaleBounds())
             .Stale.ShouldBeEmpty();
 
+        var leg = Verbs.LegTarget(flight.Code, "parser");
         var card = _state.RaiseCard(CardBin.Ring, "test-ask", target, "something to decide", "words", [
             new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = target },
+            new CardChoice { Label = "Push the rebased branch with lease", Verb = Verbs.FinishLeg, Target = leg, Args = [LegCommander.PushedWithLease, "abc1234"] },
+            new CardChoice { Label = "Merge origin into the plane and push", Verb = Verbs.FinishLeg, Target = leg, Args = [LegCommander.MergedWithOrigin] },
+            new CardChoice { Label = "Mark done anyway", Verb = Verbs.FinishLeg, Target = leg, Args = ["accepted"] },
             new CardChoice { Label = "Release", Verb = Verbs.Unhold, Target = target },
         ]);
         card.Title.ShouldContain(on(flight));
         card.Detail.ShouldNotBeNull().ShouldContain("unhold");
-        card.Choices.Select(c => c.Label).ShouldBe(["Release"]);
+        // A finish that pushes is an outward step: neither offered nor taken; a plain finish (a report) still is.
+        card.Choices.Select(c => c.Label).ShouldBe(["Mark done anyway", "Release"]);
+        ShouldNameTheHold(await Run(Verbs.FinishLeg, leg, "controller", LegCommander.PushedWithLease, "abc1234"));
+        ShouldNameTheHold(await Run(Verbs.FinishLeg, leg, "controller", LegCommander.MergedWithOrigin));
     }
 
     private string on(FlightRow flight) => FlightWaiting.OnHoldText(F(flight.Code))!;

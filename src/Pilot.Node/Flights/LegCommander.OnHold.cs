@@ -15,9 +15,13 @@ public sealed partial class LegCommander
     /// <summary>The Handled card kind that says a flight was put on the owner's hold, or released from it.</summary>
     public const string OnHoldKind = "flight-on-hold";
 
-    /// <summary>The verbs a held flight still takes: the hold's own, and a running session's reports.</summary>
-    internal static bool TakenOnHold(string verb) =>
-        verb is Verbs.Hold or Verbs.Unhold or Verbs.FinishLeg or Verbs.WaitLeg or Verbs.Check or Verbs.AddArtifact;
+    /// <summary>
+    /// The verbs a held flight still takes: the hold's own, and a running session's reports. A finish that pushes (the push-blocked card's
+    /// <see cref="PushedWithLease"/> and <see cref="MergedWithOrigin"/>) is an outward step, so it is not taken.
+    /// </summary>
+    internal static bool TakenOnHold(string verb, string[]? args = null) =>
+        verb is Verbs.Hold or Verbs.Unhold or Verbs.WaitLeg or Verbs.Check or Verbs.AddArtifact
+        || (verb == Verbs.FinishLeg && args is not [PushedWithLease or MergedWithOrigin, ..]);
 
     /// <summary>Who a hold names when the person gave no name of their own: a hold is the person's alone (<see cref="Standing.YourOnlyVerbs"/>).</summary>
     public const string TheOwner = "the owner";
@@ -55,7 +59,7 @@ public sealed partial class LegCommander
     /// <summary>The refusal for <paramref name="command"/> when its flight is on hold and its verb is not one a held flight takes; null otherwise.</summary>
     private string? OnHoldRefusalFor(CommandRequest command)
     {
-        if (TakenOnHold(command.Verb) || !command.Target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal))
+        if (TakenOnHold(command.Verb, command.Args) || !command.Target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal))
         {
             return null;
         }

@@ -297,12 +297,6 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
         };
     }
 
-    /// <summary>
-    /// The owner's hold on GitHub (#771): <c>pilot: hold</c> on a local flight's issue holds the flight (by the label, the why from the newest
-    /// hold comment pilot wrote); a hold that had been labelled whose label is gone is released; a hold whose label write failed gets it again.
-    /// Each change is confirmed on a fresh read of the issue's labels, so a hold or unhold that is mid-way is not undone by an older list.
-    /// A read that fails leaves the rows as they were.
-    /// </summary>
     /// <summary>Who a hold comment names, from its head (<c>pilot: on hold by seb from SE1</c>); null when it names nobody.</summary>
     private static string? HoldCommentBy(string head)
     {
@@ -316,6 +310,12 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
         return (from >= 0 ? rest[..from] : rest).Trim() is { Length: > 0 } named ? named : null;
     }
 
+    /// <summary>
+    /// The owner's hold on GitHub (#771): <c>pilot: hold</c> on a local flight's issue holds the flight (by the label, the why from the newest
+    /// hold comment pilot wrote); a hold that had been labelled whose label is gone is released; a hold whose label write failed gets it again.
+    /// Each change is confirmed on a fresh read of the issue's labels, so a hold or unhold that is mid-way is not undone by an older list.
+    /// A read that fails leaves the rows as they were.
+    /// </summary>
     private async Task SweepHoldsAsync(RepoInfo repo, FlightRow[] flights, IssueInfo[] issues,
         Func<string, Func<Task<string[]?>>, Task<string[]?>> read, CancellationToken cancellationToken)
     {

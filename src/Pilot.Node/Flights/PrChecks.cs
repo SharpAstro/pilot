@@ -680,7 +680,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <see cref="HoldingTakeBound"/>, the node handles it itself: commits past the reviewed head in the plane are pushed as
     /// <c>flight pr</c> does (which ends the hold, and a fresh review gates the merge), and with none the hold is released with the
     /// review's notes written on the PR. A hold a live watchtower has left past <see cref="HoldingBound"/> rings a person to merge as it
-    /// is or wait. Closed when the hold ends.
+    /// is or wait. Closed when the hold ends. A flight on the owner's hold (#771) is left alone, its review hold untouched (no comment, no
+    /// push, no card) and its once-only handling not spent, until it is released.
     /// </summary>
     private async Task LookAtHoldsAsync(CancellationToken cancellationToken)
     {
@@ -695,7 +696,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 state.CloseCard(card.Id, "the hold ended", "node");
             }
         }
-        foreach (var flight in flights.Where(f => f is { State: not FlightState.Landed, Holding: not null, PullRequest: not null }))
+        foreach (var flight in flights.Where(f => f is { State: not FlightState.Landed, Holding: not null, PullRequest: not null, OnHold: null }))
         {
             var holding = flight.Holding!;
             var key = $"{flight.Code} {holding.Since.UtcTicks}";
