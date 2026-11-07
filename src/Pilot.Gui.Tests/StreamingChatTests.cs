@@ -245,6 +245,30 @@ public sealed class StreamingChatTests
     }
 
     [Fact]
+    public async Task AMessageSentMidTurnReadsReadAtItsNextStepNotQueuedBehindAndStillHasItsAnswerNowPill()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chat = Chat(renderer, () => Whole(Tail(false) with { QueuedBehind = [ChatPage.ReadAtNextStep, ChatPage.ReadAtNextStep] }), _ => Task.FromResult<string?>(null));
+        await Open(chat, 5);
+        chat.Close();
+
+        var text = Described(chat);
+        text.ShouldContain("read at its next step");
+        text.ShouldNotContain("queued behind");
+        // Its label is "sent": the watchtower has the message already.
+        var labels = Pixels(chat, renderer, 1280, 800).Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value).ToList();
+        labels.Count(v => v == "sent").ShouldBe(2);
+        labels.ShouldNotContain("queued");
+        Actions(chat).Where(a => a.StartsWith("chat:now:", StringComparison.Ordinal)).ShouldBe(["chat:now:s1"]);
+
+        // One held while its process starts keeps the word "queued".
+        var starting = Chat(renderer, () => Whole(Tail(false) with { Working = false, Partial = null, Doing = null, QueuedBehind = [ChatPage.QueuedBehindStart, ChatPage.QueuedBehindStart] }), _ => Task.FromResult<string?>(null));
+        await Open(starting, 5);
+        starting.Close();
+        Described(starting).ShouldContain("queued behind its start");
+    }
+
+    [Fact]
     public async Task TheAnswerNowPillIsWorkingWhileTheNodeHasItAndARefusalIsSaidUnderTheLine()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);

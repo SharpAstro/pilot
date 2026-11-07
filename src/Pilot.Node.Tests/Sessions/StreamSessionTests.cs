@@ -92,10 +92,10 @@ public sealed class StreamSessionTests
         public List<StreamSessionChange> Changes { get; } = [];
         public StreamSession Session { get; }
 
-        public Rig(string? resumeId = null)
+        public Rig(string? resumeId = null, bool starting = false)
         {
             Launcher = new FakeLauncher(Process);
-            Session = StreamSession.Start(Watchtower, resumeId, Launcher, Time, line => { lock (Log) { Log.Add(line); } });
+            Session = StreamSession.Start(Watchtower, resumeId, Launcher, Time, line => { lock (Log) { Log.Add(line); } }, starting);
             Session.Changed += change => { lock (Changes) { Changes.Add(change); } };
         }
 
@@ -228,7 +228,42 @@ public sealed class StreamSessionTests
         StreamSession.Describe(tool, JsonDocument.Parse(input).RootElement).ShouldBe(expected);
 
     [Fact]
-    public async Task AMessageSentMidTurnIsHeldQueuedThenTakenWhenTheTurnEnds()
+    public async Task AMessageSentMidTurnIsWrittenToStdinAtOnceAndTheTurnsNextStepAnswersItInTheSameTurn()
+    {
+        await using var rig = new Rig();
+        await rig.Session.SendAsync("first", TestContext.Current.CancellationToken);
+        rig.Process.Emit(Tool("Bash", new { command = "sleep 20" }));
+        await Until(() => rig.Session.Doing == "running sleep 20", "the doing line");
+
+        rig.Time.Advance(TimeSpan.FromSeconds(4));
+        await rig.Session.SendAsync("and also this", TestContext.Current.CancellationToken);
+
+        // On stdin before SendAsync returned: not held until the tool ends or the turn does.
+        rig.Process.Written.Length.ShouldBe(2);
+        JsonDocument.Parse(rig.Process.Written[1]).RootElement.GetProperty("message").GetProperty("content").GetString().ShouldBe("and also this");
+        rig.Session.Queued.ShouldBeEmpty();
+        rig.Session.ReadAtNextStep.ShouldBe(["and also this"]);
+        rig.Session.Working.ShouldBeTrue();
+
+        // The tool ends and the model's next step reads it and answers it: still the one turn, so no second turn begins.
+        rig.Time.Advance(TimeSpan.FromSeconds(16));
+        rig.Process.Emit(ToolResult);
+        await Until(() => rig.Session.ReadAtNextStep.Count == 0, "the next step to read the message");
+        rig.Process.Emit(Delta("Both done."));
+        await Until(() => rig.Session.PartialText == "Both done.", "the answer in the same turn");
+        rig.Session.Working.ShouldBeTrue();
+        rig.Session.Timings.ShouldBeEmpty();
+
+        rig.Process.Emit(Result(20000));
+        await Until(() => !rig.Session.Working, "the turn's end");
+        var turn = rig.Session.Timings.ShouldHaveSingleItem();
+        turn.Length.ShouldBe(TimeSpan.FromSeconds(20));
+        turn.Waited.ShouldBe(TimeSpan.Zero);
+        rig.Process.Written.Length.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task AMessageNoStepReadBeforeTheTurnEndedIsTakenAsTheNextTurnByTheResult()
     {
         await using var rig = new Rig();
         await rig.Session.SendAsync("first", TestContext.Current.CancellationToken);
@@ -238,14 +273,14 @@ public sealed class StreamSessionTests
         rig.Time.Advance(TimeSpan.FromSeconds(4));
         await rig.Session.SendAsync("second", TestContext.Current.CancellationToken);
 
-        rig.Session.Queued.ShouldBe(["second"]);
+        rig.Session.ReadAtNextStep.ShouldBe(["second"]);
         rig.Session.Working.ShouldBeTrue();
         rig.Process.Written.Length.ShouldBe(2);
         JsonDocument.Parse(rig.Process.Written[1]).RootElement.GetProperty("message").GetProperty("content").GetString().ShouldBe("second");
 
         rig.Time.Advance(TimeSpan.FromSeconds(2));
         rig.Process.Emit(Result(6000));
-        await Until(() => rig.Session.Queued.Count == 0 && rig.Session.Timings.Count == 1, "the queued message to be taken");
+        await Until(() => rig.Session.ReadAtNextStep.Count == 0 && rig.Session.Timings.Count == 1, "the unread message to be taken");
 
         rig.Session.Working.ShouldBeTrue();
         rig.Session.PartialText.ShouldBe("");
@@ -262,6 +297,44 @@ public sealed class StreamSessionTests
         second.Waited.ShouldBe(TimeSpan.FromSeconds(2));
         second.FirstWord.ShouldBe(TimeSpan.FromSeconds(1));
         rig.Kinds.Count(k => k == StreamChangeKind.Queued).ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task AMessageSentWhileTheProcessIsStartingIsHeldAndWrittenInOrderOnceItIsUp()
+    {
+        await using var rig = new Rig(resumeId: "0f0f0f0f-aaaa-bbbb-cccc-111122223333", starting: true);
+
+        rig.Time.Advance(TimeSpan.FromSeconds(1));
+        await rig.Session.SendAsync("one", TestContext.Current.CancellationToken);
+        await rig.Session.SendAsync("two", TestContext.Current.CancellationToken);
+
+        rig.Session.Starting.ShouldBeTrue();
+        rig.Session.Queued.ShouldBe(["one", "two"]);
+        rig.Session.ReadAtNextStep.ShouldBeEmpty();
+        rig.Session.Working.ShouldBeFalse();
+        rig.Process.Written.ShouldBeEmpty();
+
+        rig.Time.Advance(TimeSpan.FromSeconds(3));
+        await rig.Session.ReadyAsync(TestContext.Current.CancellationToken);
+
+        // Written, in order, the moment it is up: the first begins the turn (it waited for the start) and the second is read at its step.
+        rig.Session.Starting.ShouldBeFalse();
+        rig.Session.Queued.ShouldBeEmpty();
+        rig.Process.Written.Select(w => JsonDocument.Parse(w).RootElement.GetProperty("message").GetProperty("content").GetString()).ShouldBe(["one", "two"]);
+        rig.Session.Working.ShouldBeTrue();
+        rig.Session.ReadAtNextStep.ShouldBe(["two"]);
+
+        rig.Process.Emit(Delta("Hi"));
+        await Until(() => rig.Session.PartialText == "Hi", "the words");
+        rig.Process.Emit(Result(10));
+        await Until(() => rig.Session.Timings.Count == 1, "the first turn's end");
+        rig.Session.Timings[0].Waited.ShouldBe(TimeSpan.FromSeconds(3));
+
+        // Once up, a message is never held again.
+        await rig.Session.ReadyAsync(TestContext.Current.CancellationToken);
+        await rig.Session.SendAsync("three", TestContext.Current.CancellationToken);
+        rig.Session.Queued.ShouldBeEmpty();
+        rig.Process.Written.Length.ShouldBe(3);
     }
 
     [Fact]
@@ -343,6 +416,7 @@ public sealed class StreamSessionTests
         exit.Error.ShouldBe("Killed");
         rig.Session.Working.ShouldBeFalse();
         rig.Session.Queued.ShouldBeEmpty();
+        rig.Session.ReadAtNextStep.ShouldBeEmpty();
         await Should.ThrowAsync<InvalidOperationException>(() => rig.Session.SendAsync("anyone?", TestContext.Current.CancellationToken));
     }
 

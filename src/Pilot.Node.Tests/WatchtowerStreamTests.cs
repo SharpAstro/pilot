@@ -304,7 +304,7 @@ public sealed class WatchtowerStreamTests : IDisposable
     }
 
     [Fact]
-    public async Task AMessageSentWhileItWorksIsQueuedBehindItsTurnNotRefusedOrResumed()
+    public async Task AMessageSentWhileItWorksIsWrittenAtOnceAndReadAtItsNextStepNotRefusedOrResumed()
     {
         await _tower.LookAsync(Ct);
         _launcher.Process(0).Emit(Init(_launcher.SessionOf(0)));

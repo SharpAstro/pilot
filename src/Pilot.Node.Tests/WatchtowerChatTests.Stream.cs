@@ -96,16 +96,17 @@ public sealed partial class WatchtowerChatTests
         process.Emit(RunsPilotStatus);
         await UntilAsync(() => chat.Page(-1).Doing == "running pilot status", "what it is doing");
 
-        // Two messages said meanwhile are held, the first behind the tool, the second behind the first.
+        // Two messages said meanwhile are written to it at once, and it reads them at its next step: not "queued behind" anything.
         await SayAsync("s1", "one");
         await SayAsync("s2", "two");
         var held = chat.Page(-1);
         held.Queued.ShouldBe(["one", "two"]);
         held.QueuedIds.ShouldBe(["s1", "s2"]);
-        held.QueuedBehind.ShouldBe(["queued behind running pilot status", "queued behind the message before it"]);
+        held.QueuedBehind.ShouldBe([ChatPage.ReadAtNextStep, ChatPage.ReadAtNextStep]);
+        held.QueuedBehind.ShouldAllBe(b => !b.Contains("queued behind"));
         held.Partial.ShouldBe("Hello");
 
-        // Its result ends the turn: the first held message is the next turn (no words yet, so no partial), the other waits behind its answer.
+        // Its result ends the turn with no step having come to read them: the first is the next turn (no words yet, so no partial), the other is still to be read.
         _time.Advance(TimeSpan.FromMilliseconds(1200));
         process.Emit(ResultLine);
         await UntilAsync(() => chat.Page(-1).Timings is { Length: 1 }, "the turn's timing");
@@ -119,7 +120,7 @@ public sealed partial class WatchtowerChatTests
         next.Partial.ShouldBeNull();
         next.Doing.ShouldBeNull();
         next.Queued.ShouldBe(["two"]);
-        next.QueuedBehind.ShouldBe(["queued behind its answer"]);
+        next.QueuedBehind.ShouldBe([ChatPage.ReadAtNextStep]);
 
         // The turn of the message that waited says how long it did: from the end of the one before.
         _time.Advance(TimeSpan.FromMilliseconds(100));
@@ -271,10 +272,10 @@ public sealed partial class WatchtowerChatTests
         await SayAsync("s1", "first");
         await SayAsync("s2", "second");
         await SayAsync("s3", "third");
-        // s1 began a turn (the watchtower was idle); s2 and s3 are held, in that order.
+        // s1 began a turn (the watchtower was idle); s2 and s3 were written mid-turn and are unread, in that order.
         (await chat.AnswerNowAsync("s1", Ct)).ShouldNotBeNull().ShouldStartWith("send s1 is not queued");
         (await chat.AnswerNowAsync("nope", Ct)).ShouldNotBeNull().ShouldStartWith("send nope is not queued");
-        (await chat.AnswerNowAsync("s3", Ct)).ShouldNotBeNull().ShouldContain("queued behind 1 other message");
+        (await chat.AnswerNowAsync("s3", Ct)).ShouldNotBeNull().ShouldContain("comes after 1 other unread message");
         Interrupt(process).ShouldBeEmpty();
 
         (await chat.AnswerNowAsync("s2", Ct)).ShouldBeNull();
