@@ -126,7 +126,15 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         reason ??= command.Who.EndsWith("-watchtower", StringComparison.OrdinalIgnoreCase) ? SessionEndReasons.Watchtower : SessionEndReasons.Person;
         try
         {
-            await delivery.StopAsync(row.SessionId, cancellationToken);
+            if (Streams?.Invoke() is { } streams && streams.Handles(row))
+            {
+                // The node's own process: ended directly, not by claude stop, which knows no such job.
+                await streams.StopAsync(row, reason, cancellationToken);
+            }
+            else
+            {
+                await delivery.StopAsync(row.SessionId, cancellationToken);
+            }
         }
         catch (Exception ex) when (ex is SessionDeliveryException or TimeoutException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
@@ -156,6 +164,12 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
 
     /// <summary>How long a delivered request id is remembered, as long as the node remembers a command's request id.</summary>
     internal static readonly TimeSpan DeliveredRetention = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// The node's own stream sessions (the watchtower, PIL855), resolved when needed: a say to one is written to its standard input and a
+    /// stop ends its process, ahead of every other way. Null (a test's messenger) has none.
+    /// </summary>
+    public Func<IStreamRoute?>? Streams { get; init; }
 
     /// <summary>The sends delivered, kept for the chat to give each one's transcript entry and queued line its id (PIL595). Null keeps none.</summary>
     public SendLog? Sends { get; init; }
@@ -237,6 +251,19 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                 // bring back a conversation nobody is meant to be having. One still mid-turn is relayed to, not woken: the node
                 // tells it that it is replaced before ending it (PIL556).
                 throw new SessionDeliveryException($"{row.Name} ({row.Id}) was replaced by {newer.Id}, the current session of its role; the node does not wake a replaced session");
+            }
+            if (Streams?.Invoke() is { } streams && streams.Handles(row))
+            {
+                // The node's own stream session (PIL855): the text is written to its standard input at once, queued behind its turn when
+                // it is working, with no stop, no resume and no intercom. A compaction is /compact on that stdin, which only an idle
+                // session takes: said into a turn it would be words.
+                if (compact && row.State != SessionState.Idle)
+                {
+                    throw new SessionDeliveryException($"{row.Name} is {row.State.ToString().ToLowerInvariant()}, not idle: a compaction is only ever its next turn, never words said into one");
+                }
+                await streams.SendAsync(row, text, compact, cancellationToken);
+                Remember(deliveredKey, SayWays.Streamed, null, null, command, text, began);
+                return (SayWays.Streamed, null, null, false);
             }
             if (compact && row is not { Kind: SessionKind.Background, State: SessionState.Idle })
             {

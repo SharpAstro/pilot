@@ -135,6 +135,13 @@ public sealed class SessionTracker : BackgroundService
     /// <summary>Whether a session or row id is one of the node's watchtowers (known by id, not by name); null knows none.</summary>
     public Func<string, bool>? IsWatchtowerId { get; init; }
 
+    /// <summary>
+    /// Whether a session id is one the node runs itself as a stream session (the watchtower, <see cref="StreamSession"/>): the node
+    /// publishes its row from the stream, so a listing of the same session (if Claude Code lists a print-mode process at all) is
+    /// left out here, and never a second writer of the row.
+    /// </summary>
+    public Func<string, bool>? IsStreamSession { get; init; }
+
     /// <summary>Where a model or effort mismatch is said (the node's log, pilot #416); nothing for a tracker built without.</summary>
     public TextWriter Error { get; init; } = TextWriter.Null;
 
@@ -418,7 +425,8 @@ public sealed class SessionTracker : BackgroundService
         var present = new HashSet<string>(StringComparer.Ordinal);
         foreach (var agent in listed)
         {
-            if (_superseded.Contains(agent.SessionId) || _options.IsHidden(agent.Cwd) || RowIdOf(agent, listed) is not { } id)
+            if (_superseded.Contains(agent.SessionId) || _options.IsHidden(agent.Cwd) || IsStreamSession?.Invoke(agent.SessionId) == true
+                || RowIdOf(agent, listed) is not { } id)
             {
                 continue;
             }
@@ -735,19 +743,10 @@ public sealed class SessionTracker : BackgroundService
 
     private void Put(SessionRow row)
     {
-        if (Launched?.Observe(row, _endedAt.TryGetValue(row.Id, out var endedAt) ? endedAt : null) is { } entry)
+        if (Launched is not null)
         {
             // The ledger's account of a session the node launched: what started it, and once it ended, why, when and at what wall time.
-            var ended = entry.EndReason is not null;
-            row = row with
-            {
-                StartReason = entry.StartReason,
-                EndReason = entry.EndReason,
-                EndedAt = ended ? entry.EndedAt : null,
-                WallSeconds = ended ? entry.WallSeconds : null,
-                LastCompactedAt = entry.CompactedAt,
-                CompactedBecause = entry.CompactedBecause,
-            };
+            row = Launched.Stamp(row, _endedAt.TryGetValue(row.Id, out var endedAt) ? endedAt : null);
         }
         var wasEnded = _rows.TryGetValue(row.Id, out var before) && before.State is SessionState.Ended or SessionState.Failed;
         _rows[row.Id] = row;

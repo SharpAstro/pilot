@@ -109,6 +109,7 @@ public sealed class StreamSession : IAsyncDisposable
     private string _partialText = "";
     private string? _doing;
     private int? _exitCode;
+    private long _contextTokens;
     private DateTimeOffset _turnStarted;
     private TimeSpan _turnWaited;
     private TimeSpan? _firstWord;
@@ -168,6 +169,9 @@ public sealed class StreamSession : IAsyncDisposable
 
     /// <summary>The exit code once the process has ended; null while it runs.</summary>
     public int? ExitCode => Read(() => _exitCode);
+
+    /// <summary>What its latest assistant message read: input, cache creation and cache read tokens (<c>message.usage</c>), so the size of its context; 0 before the first.</summary>
+    public long ContextTokens => Read(() => _contextTokens);
 
     private T Read<T>(Func<T> read)
     {
@@ -359,6 +363,10 @@ public sealed class StreamSession : IAsyncDisposable
                         }
                         break;
                     case "assistant":
+                        if (ContextOf(root) is { } context)
+                        {
+                            _contextTokens = context;
+                        }
                         if (ToolUse(root) is { } doing && doing != _doing)
                         {
                             _doing = doing;
@@ -450,6 +458,19 @@ public sealed class StreamSession : IAsyncDisposable
 
     private static string? Str(JsonElement element, string name) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    /// <summary>The context an assistant message of the session itself (not a subagent's) read; null when it carries no usage.</summary>
+    private static long? ContextOf(JsonElement assistant)
+    {
+        if (assistant.TryGetProperty("parent_tool_use_id", out var parent) && parent.ValueKind == JsonValueKind.String
+            || !assistant.TryGetProperty("message", out var message) || !message.TryGetProperty("usage", out var usage) || usage.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+        long Count(string name) => usage.TryGetProperty(name, out var n) && n.ValueKind == JsonValueKind.Number && n.TryGetInt64(out var v) ? v : 0;
+        var total = Count("input_tokens") + Count("cache_creation_input_tokens") + Count("cache_read_input_tokens");
+        return total > 0 ? total : null;
+    }
 
     /// <summary>The last tool_use of an assistant message, in plain words; null when it has none.</summary>
     private static string? ToolUse(JsonElement assistant)

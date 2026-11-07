@@ -972,6 +972,12 @@ public static class SayWays
     /// any interactive session, is reached without stopping it.
     /// </summary>
     public const string Relayed = "relayed";
+
+    /// <summary>
+    /// The text was written to the standard input of the node's own long-lived stream session (the watchtower), at once, and queued
+    /// behind its turn when it was working: no resume and no intercom.
+    /// </summary>
+    public const string Streamed = "streamed";
 }
 
 /// <summary>

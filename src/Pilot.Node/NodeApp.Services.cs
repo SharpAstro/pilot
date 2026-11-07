@@ -346,6 +346,10 @@ public static partial class NodeApp
                 Error = logWriter,
                 JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
                 Transcripts = services.GetRequiredService<TranscriptBook>(),
+                // The watchtower is one long-lived claude -p stream-json process the node owns (PIL855).
+                Streams = new ClaudeStreamProcessLauncher(),
+                Ledger = services.GetRequiredService<SessionLedger>(),
+                Prepare = start => services.GetRequiredService<ClaudeWorkerLauncher>().WithMcp(start),
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());
@@ -571,6 +575,7 @@ public static partial class NodeApp
             Ledger = services.GetRequiredService<SpendLedger>(),
             Error = logWriter,
             IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
+            IsStreamSession = id => services.GetRequiredService<Watchtower>().OwnsSession(id),
             JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
             // A session that ends on its own takes its queued jobs off the queue (#327).
             DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why),
@@ -592,6 +597,7 @@ public static partial class NodeApp
             CancelJobs = (owners, who) => services.GetRequiredService<JobRunner>().CancelOwnedBy(owners, who),
             Sends = services.GetRequiredService<SendLog>(),
             Timings = services.GetRequiredService<SendTimings>(),
+            Streams = () => services.GetRequiredService<Watchtower>(),
         });
     }
 

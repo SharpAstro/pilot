@@ -24,8 +24,9 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
         var total = 0;
         foreach (var generation in tower.Generations())
         {
-            if (generation.SessionId is not { } session || transcripts.Window(session, 0, 0) is not { } window)
+            if (generation.SessionId is not { } session || segments.Any(s => s.Session == session) || transcripts.Window(session, 0, 0) is not { } window)
             {
+                // (A compaction that kept its session id is one transcript, read once.)
                 continue;
             }
             var divider = segments.Count > 0;
@@ -150,7 +151,8 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
         Index = index,
         Kind = TranscriptKind.Divider,
         At = generation.StartedAt,
-        Text = generation.Why is { Length: > 0 } why ? $"A fresh watchtower started: {why}" : "A fresh watchtower started",
+        Text = generation.IsCompaction ? "The watchtower compacted its conversation"
+            : generation.Why is { Length: > 0 } why ? $"A fresh watchtower started: {why}" : "A fresh watchtower started",
     };
 
     private sealed record Segment(Watchtower.Generation Generation, string Session, int Offset, bool Divider, int Count);
