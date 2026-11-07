@@ -241,10 +241,14 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
 
             // This node's label on an open issue no flight of this node (flying or held) is on is stale, left by a flight that
             // went without landing: taken off. Another node's label is never touched. Shortcut stories are covered by landing.
+            var issues = await Ref("open issues", async () => await github.IssuesAsync(repo.Path, cancellationToken));
+            if (issues is not null)
+            {
+                await SweepHoldsAsync(repo, flights, issues, Ref<string[]>, cancellationToken);
+            }
             if (Machine.Length > 0)
             {
                 var own = PilotMarks.NodeLabel(Machine);
-                var issues = await Ref("open issues", async () => await github.IssuesAsync(repo.Path, cancellationToken));
                 foreach (var issue in (issues ?? []).Where(i => i.Labels.Contains(own, StringComparer.OrdinalIgnoreCase)
                              && !flights.Any(f => f.State != FlightState.Landed && f.Tracker == TrackerKind.GitHub && f.Issue == i.Number)))
                 {
@@ -291,6 +295,101 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
             Errors = [.. errors],
             UpdatedAt = now,
         };
+    }
+
+    /// <summary>
+    /// The owner's hold on GitHub (#771): <c>pilot: hold</c> on a local flight's issue holds the flight (by the label, the why from the newest
+    /// hold comment pilot wrote); a hold that had been labelled whose label is gone is released; a hold whose label write failed gets it again.
+    /// Each change is confirmed on a fresh read of the issue's labels, so a hold or unhold that is mid-way is not undone by an older list.
+    /// A read that fails leaves the rows as they were.
+    /// </summary>
+    /// <summary>Who a hold comment names, from its head (<c>pilot: on hold by seb from SE1</c>); null when it names nobody.</summary>
+    private static string? HoldCommentBy(string head)
+    {
+        const string lead = PilotMarks.HoldCommentStart + " by ";
+        if (!head.StartsWith(lead, StringComparison.Ordinal))
+        {
+            return null;
+        }
+        var rest = head[lead.Length..];
+        var from = rest.LastIndexOf(" from ", StringComparison.Ordinal);
+        return (from >= 0 ? rest[..from] : rest).Trim() is { Length: > 0 } named ? named : null;
+    }
+
+    private async Task SweepHoldsAsync(RepoInfo repo, FlightRow[] flights, IssueInfo[] issues,
+        Func<string, Func<Task<string[]?>>, Task<string[]?>> read, CancellationToken cancellationToken)
+    {
+        foreach (var local in flights.Where(f => f.State != FlightState.Landed && f.Tracker == TrackerKind.GitHub))
+        {
+            if (issues.FirstOrDefault(i => i.Number == local.Issue) is not { } issue)
+            {
+                continue;
+            }
+            var listed = issue.Labels.Contains(PilotMarks.Hold, StringComparer.OrdinalIgnoreCase);
+            var hold = state.Flights().FirstOrDefault(f => f.Code == local.Code)?.OnHold;
+            if (!(listed ? hold is null or { Labelled: not true } : hold is { Labelled: not null }))
+            {
+                continue;
+            }
+            // Confirmed on a fresh read; one that fails leaves the row as it was.
+            var fresh = await read($"labels of #{issue.Number}", async () => await github.IssueLabelsAsync(repo.Path, issue.Number, cancellationToken));
+            if (fresh is null)
+            {
+                continue;
+            }
+            var labelled = fresh.Contains(PilotMarks.Hold, StringComparer.OrdinalIgnoreCase);
+            if (state.Flights().FirstOrDefault(f => f.Code == local.Code) is not { State: not FlightState.Landed } current)
+            {
+                continue;
+            }
+            var target = Verbs.FlightTarget(current.Code);
+            if (labelled && current.OnHold is null)
+            {
+                var why = "held on GitHub";
+                var by = LegCommander.TheOwner;
+                var comments = await read($"comments of #{issue.Number}", async () =>
+                    [.. (await github.IssueCommentsAsync(repo.Path, issue.Number, cancellationToken))
+                        .Where(c => c.Body.StartsWith(PilotMarks.HoldCommentStart, StringComparison.Ordinal))
+                        .OrderBy(c => c.CreatedAt).Select(c => c.Body)]);
+                if (comments is { Length: > 0 } && comments[^1] is var newest && newest.IndexOf(": ", PilotMarks.HoldCommentStart.Length, StringComparison.Ordinal) is var colon and >= 0
+                    && newest[(colon + 2)..].Trim() is { Length: > 0 } said)
+                {
+                    why = said;
+                    by = HoldCommentBy(newest[..colon]) ?? by;
+                }
+                state.PutFlight(current with { OnHold = new FlightOnHold { Reason = why, Since = time.GetUtcNow(), By = by, Labelled = true } });
+                state.CloseCardsAbout(target, $"{current.Code} is on hold by {by}", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, LegCommander.NextStepKind);
+                state.CloseCardsAbout(target, "on hold", LegCommander.OnHoldKind);
+                state.RaiseCard(CardBin.Handled, LegCommander.OnHoldKind, target, $"{current.Code} is on hold by {by}: {why}",
+                    $"{PilotMarks.Hold} was put on {current.Item.Noun} {current.Item.Display} on GitHub. The node starts nothing for {current.Code} and takes no outward step until the label is taken off (or `pilot flight unhold {current.Code}`).");
+            }
+            else if (!labelled && current.OnHold is { Labelled: true } held)
+            {
+                state.PutFlight(current with { OnHold = null });
+                state.CloseCardsAbout(target, $"{PilotMarks.Hold} was taken off {current.Item.Display}", LegCommander.OnHoldKind);
+                state.RaiseCard(CardBin.Handled, LegCommander.OnHoldKind, target, $"{current.Code} is off hold",
+                    $"{PilotMarks.Hold} was taken off {current.Item.Noun} {current.Item.Display} on GitHub, so the hold by {held.By} ({held.Reason}) ends. The node takes its next due step.");
+            }
+            else if (!labelled && current.OnHold is { Labelled: false } retry)
+            {
+                // The label write failed when the flight was put on hold: the hold stands, and the label is tried again.
+                await read($"{PilotMarks.Hold} on #{issue.Number}", async () =>
+                {
+                    await github.AddIssueLabelAsync(repo.Path, issue.Number, PilotMarks.Hold, cancellationToken);
+                    return Array.Empty<string>();
+                });
+                if (state.Flights().FirstOrDefault(f => f.Code == local.Code) is { OnHold: { } now } after && now == retry
+                    && (await read($"labels of #{issue.Number}", async () => await github.IssueLabelsAsync(repo.Path, issue.Number, cancellationToken))) is { } again
+                    && again.Contains(PilotMarks.Hold, StringComparer.OrdinalIgnoreCase))
+                {
+                    state.PutFlight(after with { OnHold = now with { Labelled = true } });
+                }
+            }
+            else if (labelled && current.OnHold is { Labelled: not true } known)
+            {
+                state.PutFlight(current with { OnHold = known with { Labelled = true } });
+            }
+        }
     }
 
     private static bool SamePath(string a, string b) =>

@@ -239,9 +239,13 @@ public sealed partial class GhCli
         }
     }
 
-    public async Task<IReadOnlyList<PrComment>> PrCommentsAsync(string repoPath, int number, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<PrComment>> PrCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) => CommentsAsync("pr", repoPath, number, cancellationToken);
+
+    public Task<IReadOnlyList<PrComment>> IssueCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) => CommentsAsync("issue", repoPath, number, cancellationToken);
+
+    private async Task<IReadOnlyList<PrComment>> CommentsAsync(string noun, string repoPath, int number, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "comments"], repoPath, cancellationToken);
+        var (exit, output, error) = await RunAsync([noun, "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "comments"], repoPath, cancellationToken);
         if (exit != 0)
         {
             throw new FlightException($"gh could not read the comments of #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");

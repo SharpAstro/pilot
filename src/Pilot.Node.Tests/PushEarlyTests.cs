@@ -109,6 +109,22 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task AFinishOnAFlightOnTheOwnersHoldIsNotPushedEarly()
+    {
+        // A running worker's finish is let through on the hold (#771); the push is an outward step the hold does not take.
+        await Flying();
+        (await _mine.RunAsync(new CommandRequest { Verb = Verbs.Hold, Target = "flight/TIA1", Args = ["waiting", "for", "the", "release"], Who = "me" }, Ct)).Error.ShouldBeNull();
+
+        var finish = await Finish("done", "parsed");
+
+        finish.Ok.ShouldBeFalse();
+        L("parser").State.ShouldBe(LegState.Flying);
+        _git.Pushes.ShouldBeEmpty();
+        L("parser").Report.ShouldNotBeNull().ShouldContain("not pushed early: TIA1 is on hold");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFailedFinishPushesToo()
     {
         await Flying();

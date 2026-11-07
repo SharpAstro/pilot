@@ -209,6 +209,8 @@ internal sealed record FlightLine
             State = flight.State switch { FlightState.Flying => "flying", FlightState.Held => "held", _ => flight.MovedTo is null ? "landed" : "moved" },
             StateDetail = flight.State switch
             {
+                // The owner's hold comes ahead of every other stage (#771).
+                not FlightState.Landed when FlightWaiting.OnHoldText(flight) is { } onHold => onHold,
                 FlightState.Held => $"waiting for {FlightWaiting.For(flight)}",
                 FlightState.Landed when flight.MovedTo is { } to => to.Text,
                 FlightState.Landed when flight.LandedAt is { } at => SessionLine.Ago(now - at),

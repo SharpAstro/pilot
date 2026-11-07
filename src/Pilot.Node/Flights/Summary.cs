@@ -98,6 +98,10 @@ public static class SummaryRecords
         var title = flight.Title is { Length: > 0 } t ? $" \"{t}\"" : "";
         text.AppendLine(CultureInfo.InvariantCulture, $"Flight {flight.Code}: {flight.Repo} {flight.Item.Noun}{title}.");
         text.AppendLine(CultureInfo.InvariantCulture, $"  State: {flight.State.ToString().ToLowerInvariant()}{(flight.State == FlightState.Held ? $", waiting for {FlightWaiting.For(flight)}" : "")}{(flight.FoldedInto is { } into ? $" (folded into {into})" : "")}. Branch {flight.Branch} from {flight.Base}. Created {Stamp(flight.CreatedAt)}{(flight.LandedAt is { } landed ? $", landed {Stamp(landed)}" : "")}.");
+        if (FlightWaiting.OnHoldText(flight) is { } onHold)
+        {
+            text.AppendLine(CultureInfo.InvariantCulture, $"  {onHold}. The owner's hold: nothing starts or goes out for this flight until it is released.");
+        }
         if (flight.FoldedIn.Length > 0)
         {
             text.AppendLine(CultureInfo.InvariantCulture, $"  Folded in: {string.Join(", ", flight.FoldedIn.Select(f => $"#{f.Number} (from {f.From})"))}.");

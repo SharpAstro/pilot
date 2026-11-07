@@ -165,6 +165,7 @@ public sealed partial class LegCommander
 
     private void StartValidator(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs)
     {
+        RefuseIfOnHold(flight.Code);
         var validator = ValidatorName(flight, leg);
         var target = Verbs.LegTarget(flight.Code, leg.Name);
         var brief = Briefs.Validate(flight, leg, legs, Briefs.Run(Cli, Socket), options.Machine);
@@ -230,6 +231,7 @@ public sealed partial class LegCommander
 
     private void StartWorker(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs)
     {
+        RefuseIfOnHold(flight.Code);
         RingSpendAlert(flight, leg, leg.GoArounds);
         var worker = WorkerName(flight, leg);
         var target = Verbs.LegTarget(flight.Code, leg.Name);

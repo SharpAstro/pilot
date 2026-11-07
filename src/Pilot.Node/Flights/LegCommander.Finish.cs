@@ -276,6 +276,11 @@ public sealed partial class LegCommander
     /// </summary>
     private async Task<string> PushEarlyAsync(FlightRow flight, CancellationToken cancellationToken)
     {
+        // A finish is let through on the owner's hold (#771), so a running worker can report; its push is an outward step, and is not taken.
+        if (IsOnHold(flight.Code))
+        {
+            return $"\nThe branch was not pushed early: {flight.Code} is on hold.";
+        }
         try
         {
             var ahead = await OffLockAsync(null, () => git.RunAsync(["rev-list", "--count", $"{flight.Base}..HEAD"], flight.Worktree, cancellationToken));
@@ -518,7 +523,8 @@ public sealed partial class LegCommander
         {
             HoldForWatchtower(flight.Code, leg.Name);
         }
-        if (behind && state.Legs(flight.Code).All(l => l.State == LegState.Done))
+        // On the owner's hold (#771) the fixed branch is neither pushed nor reviewed: the leg is recorded done and nothing follows.
+        if (behind && state.Legs(flight.Code).All(l => l.State == LegState.Done) && OnHoldRefusal(flight) is null)
         {
             if (push)
             {
