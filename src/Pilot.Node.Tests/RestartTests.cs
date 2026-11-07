@@ -62,10 +62,12 @@ public sealed class RestartTests
             Verb = Verbs.Run, Target = Verbs.SessionTarget(Owner), Args = [Path.GetTempPath(), "0", command], Who = "pil294-restart",
         }).Made!;
 
-    // The ceiling of every wait in this class (pilot #746 and #810): a test waits on the condition it needs, on the clock, with a ceiling
-    // wide enough for a machine that is saturated, and a passing test never waits for it. A count of short waits stretches with the load
-    // and ended a 30 s wait on the third of three queued pwsh jobs, each of which takes a good part of that to start on a busy runner.
-    private const int WaitSeconds = 120;
+    // The ceiling of every wait in this class (pilot #746 and #810): a test waits on the condition it needs, on the clock, and a passing
+    // test never waits for the ceiling, so it is the slowest box's, not the usual one's. Pilot's checks run below normal, and on a box
+    // that tianwen's training holds at 100% CPU a trivial pwsh took 78 to 146 s to start and exit at that priority, against 2 to 4 s at
+    // normal (measured 2026-11-07). Every job here is two of them (the outer wrapper and the line's own pwsh), so one job takes several
+    // minutes there: a 30 s wait ended on the third of three queued jobs, and a 120 s one on a followed job's exit after its last line.
+    private const int WaitSeconds = 900;
 
     private static async Task<bool> WaitForAsync(Func<bool> condition, int seconds = WaitSeconds)
     {
