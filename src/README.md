@@ -88,6 +88,17 @@ curl --unix-socket <path> http://localhost/api/v1/node
   `journal.jsonl` (each change after it, appended and flushed; folded into a new snapshot every 4096), and
   `blackbox.jsonl` (one line per command: when, who, verb, target, and what became of it; never compacted). A restart,
   a crash included, carries on with the same stream, the same numbers and every record.
+- **A start that cannot read the store does not stop the node.** Each compaction first keeps the snapshot and the journal as
+  `snapshot.json.bak-<seq>` and `journal.jsonl.bak-<seq>` (the last 3 of each): together the state as of `<seq>`. When
+  loading `store.json`, `snapshot.json` and `journal.jsonl`, or replaying them into the node's state, fails for any reason
+  but one (a store written by a newer node is still refused, with nothing moved, and the node exits with its message), the
+  node moves those three files into `store/unreadable-<UTC stamp>/` (nothing is deleted, and they are there byte for
+  byte), starts from the newest backup pair that loads (the older ones next, an empty store last; a pair that does not
+  load goes into the same folder), and rings one Ring card of kind `store`. The card, and one line in `logs/node.log` and
+  `node-start.log`, name the folder, the backup it started from, what was lost (the seqs after that backup) and the error.
+  The backup is copied, not consumed, and the restored state gets a stream of its own, so a client that held a lost
+  number takes a snapshot. `decisions.jsonl` is not moved: a line of it the build cannot read still stops the start. A
+  store nothing can start from is put back as it was found, and the node stops with the first error.
 - **Logs:** `logs/gui.log` (pilot-gui) and `logs/node.log` (pilot-node) in the pilot2 folder, a timestamp on each line,
   each rolled to `<name>.1.log` at 4 MB (one old file is kept). Neither writes to stderr; only a catastrophic error the
   log cannot take (the log cannot be opened, or the process dies before it can write) goes there. `pilot logs [gui|node]
