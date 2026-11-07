@@ -31,6 +31,8 @@ public sealed partial class WatchtowerChatTests
         process.Emit(CanUse("m1", "AskUserQuestion", ManyQuestion));
         await UntilAsync(() => StreamChat().Page(-1).Asks is { Length: 1 }, "the question");
 
+        // The page lists the ask as the session has it; its card is raised by the node's handler a moment later.
+        await UntilAsync(() => _state.Cards(openOnly: true).Any(c => c.Kind == "watchtower-ask"), "the ask's card");
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == "watchtower-ask");
         card.Choices.Select(c => c.Label).ShouldBe([Watchtower.DeclineLabel]);
         card.Detail.ShouldNotBeNull().ShouldContain("answer it in the chat");
@@ -59,7 +61,7 @@ public sealed partial class WatchtowerChatTests
         // The same read outside it is a prompt for the person.
         process.Emit(CanUse("outside", "Read", """{"file_path":"/somewhere/else.md"}"""));
         process.Emit(CanUse("q2", "AskUserQuestion", RepoQuestion));
-        await UntilAsync(() => StreamChat().Page(-1).Asks is { Length: 2 }, "the prompt and the question");
+        await UntilAsync(() => StreamChat().Page(-1).Asks is { Length: 2 } && _state.Cards(openOnly: true).Count(c => c.Kind == "watchtower-ask") == 2, "the prompt and the question, and their cards");
         (await _tower.AnswerAskAsync(["q2", "deny"], Ct)).ShouldBeNull();
         JsonDocument.Parse(ResponsesTo(process, "q2").Single()).RootElement.GetProperty("response").GetProperty("response").GetProperty("behavior").GetString().ShouldBe("deny");
 

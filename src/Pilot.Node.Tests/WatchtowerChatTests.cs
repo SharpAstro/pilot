@@ -669,7 +669,7 @@ public sealed partial class WatchtowerChatTests : IDisposable
 
         process.Emit(CanUse("p1", "Bash", """{"command":"git push origin main"}"""));
         process.Emit(CanUse("q1", "AskUserQuestion", RepoQuestion));
-        await UntilAsync(() => chat.Page(-1).Asks is { Length: 2 }, "both asks on the page");
+        await UntilAsync(() => chat.Page(-1).Asks is { Length: 2 } && _state.Cards(openOnly: true).Count(c => c.Kind == "watchtower-ask") == 2, "both asks on the page, and their cards");
 
         var page = chat.Page(-1);
         var prompt = page.Asks![0];
