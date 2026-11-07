@@ -98,7 +98,7 @@ public sealed class PushBlockedTests : IDisposable
 
         var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
         card.Kind.ShouldBe("leg-failed");
-        card.Title.ShouldBe("TIA9/parser stopped: the parser is wrong");
+        card.Title.ShouldBe("TIA9/parser: the parser is wrong");
     }
 
     [Fact]

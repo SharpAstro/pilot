@@ -204,15 +204,30 @@ public sealed partial class LegCommander
                 {
                     break;
                 }
+                // What failed is read from the check failure the last refused finish recorded on the leg (its report, until the worker's
+                // overwrites it just below): the worker's own report is often only "all steps done" (pilot #844, c78).
+                var failure = LegFailure.Read(leg.Report, report, flight.Worktree);
+                var (outside, mainCommits) = await FailureContextAsync(flight, failure, cancellationToken);
+                leg = state.Legs(flight.Code).FirstOrDefault(l => l.Name == leg.Name) ?? leg;
                 state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "failed", Wait = null, Recheck = null });
-                var reason = report.Split('\n', 2)[0].Trim() is { Length: > 0 } first ? Clip(first) : "no reason given";
+                var reason = failure.Cause;
+                var name = $"{flight.Code}/{leg.Name}";
+                var outsideWords = outside ? "The flight changed none of the failing files or their projects, so the failure is outside this leg's code. " : "";
+                var mainWords = mainCommits.Count > 0
+                    ? $"main has changed those files since the flight took it ({mainCommits.Count} commit{(mainCommits.Count == 1 ? "" : "s")}), so taking main may fix it. "
+                    : "";
+                var mainDetail = mainCommits.Count > 0
+                    ? $"main has changed the failing files since the flight took it; taking main may fix it:\n{string.Join('\n', mainCommits.Take(5))}{(mainCommits.Count > 5 ? $"\n...and {mainCommits.Count - 5} more" : "")}"
+                    : null;
+                var detail = string.Join("\n\n", new[] { report, notWhy, mainDetail }.Where(s => !string.IsNullOrEmpty(s)));
                 state.RaiseCard(CardBin.Ring, "leg-failed", Verbs.LegTarget(flight.Code, leg.Name),
-                    $"{flight.Code}/{leg.Name} stopped: {reason}", report.Length > 0 || notWhy is not null ? string.Join("\n\n", new[] { report, notWhy }.Where(s => !string.IsNullOrEmpty(s))) : null,
+                    $"{name}: {reason}{(outside ? ", outside this leg's code" : "")}", detail.Length > 0 ? detail : null,
                     [
-                        new CardChoice { Label = Models.SendBackLabel(leg, report.Length > 0 ? $"Send {leg.Name} round again to {reason}" : $"Send {leg.Name} round again"), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker stopped: {(report.Length > 0 ? report : "no reason given")}"] },
-                        new CardChoice { Label = $"Accept {leg.Name} as it stands, the failure kept in its report", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
+                        // The go-around still carries the whole report to the fresh worker; the buttons carry none of its words.
+                        new CardChoice { Label = Models.SendBackLabel(leg, "Send it round: a fresh worker fixes it and finishes"), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker stopped: {(report.Length > 0 ? report : "no reason given")}"] },
+                        new CardChoice { Label = failure.CheckFailed ? "Accept as it is: the flight goes on with the check failing" : "Accept as it is: the flight goes on, the failure kept in its report", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
                     ],
-                    summary: $"The worker of {flight.Code}/{leg.Name} stopped. Send {leg.Name} round again starts a fresh worker told why; Accept {leg.Name} as it stands keeps the failure in its report and the flight goes on.");
+                    summary: $"The worker of {name} stopped{(failure.CheckFailed ? $" and {reason}" : $": {reason}")}. {outsideWords}{mainWords}Send it round starts a fresh worker, told the whole report, that fixes it and finishes the leg; Accept as it is keeps the failure in the leg's report and the flight goes on{(failure.CheckFailed ? " with the check still failing" : "")}.");
                 // The worker the node sent round on the PR open's conflict gave up: the owner is rung about the conflict itself, once.
                 if (_conflictSent.ContainsKey(flight.Code) && flight.PullRequest is null
                     && state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault()?.Name == leg.Name)
@@ -304,7 +319,33 @@ public sealed partial class LegCommander
     /// <summary>The card a failed finish raises when the leg's work is done and its check passes but its branch needs a force push or a merge.</summary>
     public const string PushBlockedKind = "push-blocked";
 
-    private static string Clip(string text) => text.Length <= 70 ? text : text[..67].TrimEnd() + "...";
+    private static string Clip(string text) => LegFailure.Clip(text);
+
+    /// <summary>
+    /// Two facts about the files a failed check names (<paramref name="failure"/>), for the leg-failed card: whether the flight changed
+    /// none of them or their projects (<c>git diff --name-only base...HEAD</c>), and the commits main has that the plane lacks for those
+    /// files (<c>git log HEAD..origin/main</c>; <see cref="FlightRow.Base"/> is origin/main itself, so a range from it would never hold
+    /// any). Nothing is fetched here; a git that fails says nothing.
+    /// </summary>
+    private async Task<(bool Outside, IReadOnlyList<string> MainCommits)> FailureContextAsync(FlightRow flight, LegFailure.Reading failure, CancellationToken cancellationToken)
+    {
+        if (failure.Files.Count == 0)
+        {
+            return (false, []);
+        }
+        try
+        {
+            var diff = await OffLockAsync(null, () => git.RunAsync(["diff", "--name-only", $"{flight.Base}...HEAD"], flight.Worktree, cancellationToken));
+            var outside = diff.Ok && LegFailure.IsOutside(failure, diff.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+            var log = await OffLockAsync(null, () => git.RunAsync(["log", "--format=%h %s", "HEAD..origin/main", "--", .. failure.Files], flight.Worktree, cancellationToken));
+            var commits = log.Ok ? log.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+            return (outside, commits);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return (false, []);
+        }
+    }
 
     /// <summary>
     /// A leg finished failed whose plane is clean, steps ticked and check passing at its head, while origin/&lt;branch&gt; exists and is not an
