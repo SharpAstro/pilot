@@ -310,8 +310,11 @@ public sealed class CarriedFinishTests : LegCommanderTestsBase
                 return Task.FromResult(node.State.Complete(command, null));
             }
             Interlocked.Increment(ref finishes);
-            var error = busy ? LegCommander.BusyRefusal("TIA1", "being brought up to date", "wait for its answer, then ask again") : "the check failed";
-            return Task.FromResult(node.State.Complete(command, error));
+            // Free, the refusal is on its merits, and its check output holds the busy refusal's words (" is ", " already: "): only the
+            // result's way says busy, so these words must not.
+            return Task.FromResult(busy
+                ? node.State.Complete(command, LegCommander.BusyRefusal("TIA1", "being brought up to date", "wait for its answer, then ask again"), way: RefusalWays.Busy)
+                : node.State.Complete(command, "TIA1/parser's check failed (1); it stays flying. Last of its output:\nthe restore is done already: nothing to do"));
         }, TimeProvider.System)
         {
             Ready = Task.CompletedTask,
@@ -328,7 +331,7 @@ public sealed class CarriedFinishTests : LegCommanderTestsBase
         busy = false;
         await watch.LookAsync(Ct);
         await UntilAsync(() => watch.ResumesInFlight == 0 && Volatile.Read(ref finishes) == 2, "the node's finish is run again");
-        node.Parser.Recheck.ShouldNotBeNull().Outcome.ShouldNotBeNull().ShouldContain("the check failed");
+        node.Parser.Recheck.ShouldNotBeNull().Outcome.ShouldNotBeNull().ShouldContain("check failed (1)");
     }
 
     [Fact(Timeout = 120_000)]

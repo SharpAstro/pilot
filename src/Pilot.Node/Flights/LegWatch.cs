@@ -387,6 +387,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 Who = recheck.By!,
             };
             string? error;
+            var busy = false;
             try
             {
                 var result = await run(command, cancellationToken);
@@ -395,6 +396,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     result = await later;
                 }
                 error = result.Ok ? null : result.Error ?? "refused";
+                busy = !result.Ok && result.Way == RefusalWays.Busy;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -412,7 +414,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             // A refusal because the flight had calls out is no verdict on the leg: another command holds it, in whatever phase (merging the base,
             // rerunning the check, pushing), and when it is the worker's own finish it answers for itself. Nothing is told or written; a mark
             // still on the leg is run again by the next look, once the flight is free.
-            if (LegCommander.IsBusyRefusal(error))
+            if (busy)
             {
                 return;
             }
