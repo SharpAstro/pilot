@@ -63,6 +63,11 @@ public sealed partial class LegCommander
         }
         if (other.State == FlightState.Landed)
         {
+            if (other is { MovedTo: null, FoldedInto: null })
+            {
+                // Answered at once, no row and no card (PIL824): its work is in, so there is nothing to wait for or to ask.
+                return $"{other.Code} has landed{(node is null ? "" : $" on {node}")}: its work is in, so there is nothing to wait for and no card rings; plan {flight.Code} on top of it";
+            }
             throw new FlightException($"{other.Code} has landed: its work is in, so build on it instead of folding into it");
         }
         var named = args.Skip(1).TakeWhile(a => a.StartsWith(OverlapFileArg, StringComparison.Ordinal) || a.StartsWith(Verbs.OverlapPickArg, StringComparison.Ordinal)).ToArray();

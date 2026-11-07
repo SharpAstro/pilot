@@ -96,6 +96,8 @@ public sealed partial class LegCommander
         }
         // Two flights that each hold an overlap card on the other are planned in parallel by the node itself (PIL664).
         await AnswerMutualPendingAsync(cancellationToken);
+        // A pending overlap whose other flight has landed has nothing to wait for: closed by the node, no card (PIL824).
+        await AnswerLandedPendingAsync(cancellationToken);
         // A planner whose plan is done is ended, so it frees its slot before the starts below ask for one.
         await EndPlannedPlannersAsync(cancellationToken);
         // The starts admission holds go first, in the order it gives, so a freed slot goes to the one it ranks first.
