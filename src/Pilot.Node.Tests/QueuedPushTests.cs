@@ -204,8 +204,7 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
     [Fact]
     public async Task TheNodesOwnDequeueRaisesNoLeftTheMergeQueueCardWhenTheQueuesAreLookedAt()
     {
-        var flight = await QueuedWithACommit();
-        MarkDone("parser");
+        await QueuedWithACommit();
 
         var result = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done");
         result.Error.ShouldBeNull();
