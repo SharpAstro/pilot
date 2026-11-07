@@ -326,6 +326,7 @@ public sealed class ConflictResolutionRecheckTests : PrRecheckTestsBase
         Handled().ShouldHaveSingleItem().ShouldContain(LegCommander.WorkerResolves);
         var leg = _state.Legs(flight.Code).Single();
         (leg.State, leg.GoArounds, leg.ReviewGoArounds).ShouldBe((LegState.Flying, 1, 0));
-        _state.Cards().ShouldNotContain(c => c.Kind.Contains("conflict", StringComparison.OrdinalIgnoreCase) || c.Bin == CardBin.Ring);
+        var rung = _state.Cards().Where(c => c.Kind.Contains("conflict", StringComparison.OrdinalIgnoreCase) || c.Bin == CardBin.Ring).ToArray();
+        rung.ShouldBeEmpty($"cards that ring or are about a conflict: {string.Join("; ", rung.Select(c => $"{c.Kind} [{c.Bin}]: {c.Title} / {c.Detail}"))}");
     }
 }
