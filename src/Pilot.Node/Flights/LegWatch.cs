@@ -333,9 +333,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 _ = Task.Run(() => ResumeFinishAsync(leg, cancellationToken), CancellationToken.None);
             }
         }
-        // A Done leg carries an outcome only when the node's own finish (ResumeFinishAsync) ended it: that word is kept on the leg until told,
-        // so a node that stops between that finish and this look still tells it after the restart.
-        foreach (var leg in state.Legs().Where(l => l is { State: LegState.Flying or LegState.Done, Recheck.Outcome: not null } && !_resuming.ContainsKey(Subject(l))))
+        // A Done leg is told only the word of the node's own finish (ResumeFinishAsync), kept on the leg until told so a node that stops
+        // between that finish and this look still tells it after the restart. Any other outcome a Done leg carries (an accepted finish whose
+        // rerun then ended, say) was written for a worker that is gone, and is not said to anyone.
+        foreach (var leg in state.Legs().Where(l => (l is { State: LegState.Flying, Recheck.Outcome: not null } || IsNodeFinishWord(l)) && !_resuming.ContainsKey(Subject(l))))
         {
             state.PutLeg(leg with { Recheck = null });
             // The ticker's finish is the one being told of when it is the leg's active session (its worker ended).
@@ -352,6 +353,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             }
         }
     }
+
+    private static bool IsNodeFinishWord(LegRow leg) =>
+        leg is { State: LegState.Done, Recheck: { Outcome: { } outcome } recheck } && outcome == LegRecheck.NodeFinishedOutcome(recheck.Check);
 
     /// <summary>Completes when the job runner has taken up what a previous node left, so a resumed finish attaches to a carried check job instead of queueing a second; the node sets it.</summary>
     public Task Ready { get; set; } = Task.CompletedTask;
@@ -402,6 +406,13 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 error = ex.Message;
             }
             if (state.Legs(leg.Flight).FirstOrDefault(l => l.Name == leg.Name) is not { } now)
+            {
+                return;
+            }
+            // A refusal because the flight had calls out is no verdict on the leg: another command holds it, in whatever phase (merging the base,
+            // rerunning the check, pushing), and when it is the worker's own finish it answers for itself. Nothing is told or written; a mark
+            // still on the leg is run again by the next look, once the flight is free.
+            if (LegCommander.IsBusyRefusal(error))
             {
                 return;
             }
