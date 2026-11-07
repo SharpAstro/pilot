@@ -25,8 +25,20 @@ public enum MergeRefusalClass
 /// <summary>The one thing a person does about a <see cref="MergeRefusalClass.Persons"/> refusal.</summary>
 public enum MergeAction
 {
-    /// <summary>Nothing to press: the refusal is a fact to read (a closed PR, a bad ask, GitHub's own text).</summary>
+    /// <summary>Nothing to press: the refusal is a fact to read (a bad ask, GitHub's own text). What nothing classified falls to.</summary>
     None,
+
+    /// <summary>The PR was closed unmerged: nothing to merge, and nothing to press. A fact to read, so it is a For-you card, not a ring.</summary>
+    PrClosed,
+
+    /// <summary>The PR is a draft: mark it ready for review on GitHub.</summary>
+    MarkReadyOnGitHub,
+
+    /// <summary>
+    /// With a <see cref="MergeRefusalClass.Passing"/> refusal: the PR conflicts with its base. The node brings the branch up to date
+    /// and asks again, but a conflict that is real does not pass, so it is said when the tries run out.
+    /// </summary>
+    ResolveConflict,
 
     /// <summary>Branch protection needs an approval: approve the PR on GitHub.</summary>
     ApproveOnGitHub,

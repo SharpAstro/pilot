@@ -154,8 +154,9 @@ public sealed partial class LegCommander
             case MergeKinds.ChangesRequested:
                 throw new MergeBlockedException(MergeRefusals.ChangesRequested, $"#{pr.Number} has changes requested on GitHub: they are read first, then it merges");
             case MergeKinds.Blocked when mergeState.Reason is { } why && mergeState.FailedName is null:
-                // Blocked with no failed check named: what branch protection waits for is an approval.
-                throw new MergeBlockedException(MergeRefusals.NeedsApproval, $"#{pr.Number} is blocked on GitHub: {why}");
+                // A draft is marked ready for review, not approved; blocked with no failed check named and no draft: what branch
+                // protection waits for is an approval.
+                throw new MergeBlockedException(mergeState.Draft || pr.Draft ? MergeRefusals.Draft : MergeRefusals.NeedsApproval, $"#{pr.Number} is blocked on GitHub: {why}");
         }
         if (checks?.Status == ChoiceStatus.Pending)
         {
@@ -354,7 +355,7 @@ public sealed partial class LegCommander
             throw string.Equals(pr.State, "MERGED", StringComparison.OrdinalIgnoreCase) && (flight.PullRequest is null || flight.PullRequest == pr.Number)
                 ? new AlreadyMergedException(said)
                 // Closed unmerged: nothing to merge and nothing to press.
-                : new MergeBlockedException(MergeRefusals.Unclassified, said);
+                : new MergeBlockedException(MergeRefusals.Closed, said);
         }
         if (!pr.Head.StartsWith(head, StringComparison.OrdinalIgnoreCase))
         {
@@ -370,7 +371,7 @@ public sealed partial class LegCommander
         }
         if (string.Equals(pr.Mergeable, "CONFLICTING", StringComparison.OrdinalIgnoreCase))
         {
-            throw new MergeBlockedException(MergeRefusals.Passing, $"#{pr.Number} conflicts with its base, so GitHub cannot merge it");
+            throw new MergeBlockedException(MergeRefusals.Conflicting, $"#{pr.Number} conflicts with its base, so GitHub cannot merge it");
         }
         // Behind its base by the plane's own look, not only GitHub's (BEHIND needs a "require up to date" rule): never sent to the
         // queue to find out. The caller brings it up to date and reviews it afresh.

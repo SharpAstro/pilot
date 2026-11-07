@@ -26,8 +26,8 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         _state.Cards().Any(c => c.Kind is LegCommander.MergeFailed or PrChecks.MergeDropped).ShouldBeFalse();
     }
 
-    // A 5xx the node classified as passing, thrown while the merge reads the PR: the first <paramref name="failures"/> asks fail.
-    private Func<int> PassingFailures(int failures)
+    // A refusal the node classified as passing (a 5xx by default), thrown while the merge reads the PR: the first <paramref name="failures"/> asks fail.
+    private Func<int> PassingFailures(int failures, MergeRefusal? refusal = null, string message = "HTTP 503 Service Unavailable from GitHub")
     {
         var thrown = 0;
         _github.OnCall = call =>
@@ -35,7 +35,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
             if (call == nameof(IGitHub.PullRequestAsync) && _state.Merges().Any(m => m.Open) && thrown < failures)
             {
                 thrown++;
-                throw new MergeBlockedException(MergeRefusals.Passing, "HTTP 503 Service Unavailable from GitHub");
+                throw new MergeBlockedException(refusal ?? MergeRefusals.Passing, message);
             }
             return Task.CompletedTask;
         };
@@ -148,8 +148,8 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         card.Detail.ShouldContain("What to do:");
         card.Choices.ShouldHaveSingleItem().Label.ShouldContain("again");
 
-        // Not asked a fourth time: the person's card is the answer now.
-        clock.Advance(PrChecks.PassingBackoff[2] + TimeSpan.FromSeconds(1));
+        // Not asked a fourth time: the person's card is the answer now, however long it waits.
+        clock.Advance(TimeSpan.FromHours(1));
         await checks.LookAsync(Ct);
         thrown().ShouldBe(3);
     }
@@ -268,5 +268,195 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Choices.ShouldBeEmpty();
         card.Detail.ShouldNotBeNull().ShouldContain("What to do:");
+    }
+
+    // A person's refusal on the autopilot path: it rings once with the one action, and a merge is never what the button offers.
+    private async Task<CardRow> RingsFor(string issue, Action<FlightRow> arrange, string label)
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        var (flight, _) = await Passed(issue);
+        arrange(F(flight.Code));
+
+        await Checks().LookAsync(Ct);
+
+        var card = Refused().ShouldHaveSingleItem();
+        card.Bin.ShouldBe(CardBin.Ring);
+        card.Link.ShouldBe(F(flight.Code).PullRequestUrl);
+        card.Detail.ShouldNotBeNull().ShouldContain("What the node tried: asked GitHub to merge once");
+        var choice = card.Choices.ShouldHaveSingleItem();
+        choice.Label.ShouldBe(label);
+        choice.Verb.ShouldNotBe(Verbs.Merge);
+        return card;
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ChangesRequestedRingsWithReadTheRequestedChanges()
+    {
+        var card = await RingsFor("53", _ => _github.Merge = new MergeState(MergeKinds.ChangesRequested), "Read the requested changes");
+
+        card.Detail.ShouldNotBeNull().ShouldContain("Read the changes a review on GitHub asks for");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ADraftPrRingsWithMarkReadyOnGitHubNotApprove()
+    {
+        var card = await RingsFor("54", _ => _github.Merge = new MergeState(MergeKinds.Blocked, Reason: "it is a draft", Draft: true), "Mark ready on GitHub");
+
+        card.Detail.ShouldNotBeNull().ShouldContain("mark it ready for review on GitHub");
+        card.Detail.ShouldNotContain("Approve the PR");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnOpenDesignQuestionRingsWithAnswerTheDesignQuestionNamingItsCard()
+    {
+        var card = await RingsFor("55", flight =>
+        {
+            var own = PrRef.Parse(flight.PullRequestUrl).ShouldNotBeNull();
+            _state.RaiseCard(CardBin.ForYou, PrReviews.DesignKind, Verbs.PrTarget(own.Repo, own.Number), "Which way?");
+        }, "Answer the design question");
+
+        // The detail is where the person finds the card to answer: the refusal's own words name it.
+        card.Detail.ShouldNotBeNull().ShouldContain("has an open design question (card ");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFlightWhosePrIsGoneRingsWithOpenThePrAgain()
+    {
+        _github.OnCall = call =>
+        {
+            if (call == nameof(IGitHub.PullRequestAsync) && _state.Merges().Any(m => m.Open))
+            {
+                _github.Pr = null;
+            }
+            return Task.CompletedTask;
+        };
+
+        var card = await RingsFor("56", _ => { }, "Open the PR again");
+
+        card.Choices.Single().Verb.ShouldBe(Verbs.OpenPr);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARefusalNothingClassifiedRingsWithNoChoiceNotQuietlyForYou()
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        var (_, _) = await Passed("57");
+        _github.MergeAnswers = "gh: Required status check build is expected";
+
+        await Checks().LookAsync(Ct);
+
+        var card = Refused().ShouldHaveSingleItem();
+        card.Bin.ShouldBe(CardBin.Ring);
+        card.Choices.ShouldBeEmpty();
+        card.Detail.ShouldNotBeNull().ShouldContain("Required status check build is expected");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AConflictThatStaysRingsSayingItIsAConflictAndOffersNoMergeAgain()
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        var (_, _) = await Passed("58");
+        var thrown = PassingFailures(int.MaxValue, MergeRefusals.Conflicting, "#63 conflicts with its base, so GitHub cannot merge it");
+        var clock = new ShiftedClock();
+        var checks = Checks(clock);
+
+        await checks.LookAsync(Ct);
+        clock.Advance(PrChecks.PassingBackoff[0] + TimeSpan.FromSeconds(1));
+        await checks.LookAsync(Ct);
+        clock.Advance(PrChecks.PassingBackoff[1] + TimeSpan.FromSeconds(1));
+        await checks.LookAsync(Ct);
+
+        thrown().ShouldBe(3);
+        var card = Refused().ShouldHaveSingleItem();
+        card.Bin.ShouldBe(CardBin.Ring);
+        card.Detail.ShouldNotBeNull().ShouldContain("conflicts with its base");
+        card.Detail.ShouldContain("no failure of GitHub's");
+        card.Choices.ShouldBeEmpty();
+        card.Summary.ShouldNotBeNull().ShouldContain("still conflicted with its base after 3 tries");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task OnceTheApprovalCardIsClosedTheHeadIsAskedAgainAndMerges()
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        var (_, _) = await Passed("59");
+        _github.Merge = new MergeState(MergeKinds.Blocked, Reason: "at least 1 approving review is required");
+        var checks = Checks();
+
+        await checks.LookAsync(Ct);
+        var card = Refused().ShouldHaveSingleItem();
+        _github.Merged.ShouldBeEmpty();
+
+        // Still open: not asked again, and no second card.
+        await checks.LookAsync(Ct);
+        Refused().ShouldHaveSingleItem();
+        _github.Merged.ShouldBeEmpty();
+
+        // The person approved on GitHub and pressed the button: the card closes, and the same head is asked again.
+        _github.Merge = null;
+        _state.CloseCard(card.Id, "approved on GitHub; the node asks again", "tests").ShouldBeTrue();
+        await checks.LookAsync(Ct);
+
+        _github.Merged.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnArmedMergeGitHubFailsOnIsAskedAgainOnTheSameBackoffAndRingsOnTheThirdFailure()
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Pending;
+        var (flight, _) = await Passed("60");
+        var clock = new ShiftedClock();
+        var checks = Checks(clock);
+        await checks.LookAsync(Ct);
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
+        _github.Checks = ChoiceStatus.Passing;
+        var thrown = PassingFailures(int.MaxValue);
+
+        await checks.LookAsync(Ct);
+        thrown().ShouldBe(1);
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
+        NoRefusalRaised();
+
+        // Asked again only when the backoff has run out.
+        await checks.LookAsync(Ct);
+        thrown().ShouldBe(1);
+
+        clock.Advance(PrChecks.PassingBackoff[0] + TimeSpan.FromSeconds(1));
+        await checks.LookAsync(Ct);
+        thrown().ShouldBe(2);
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
+        NoRefusalRaised();
+
+        clock.Advance(PrChecks.PassingBackoff[1] + TimeSpan.FromSeconds(1));
+        await checks.LookAsync(Ct);
+        thrown().ShouldBe(3);
+
+        // The third failure lets the merge go and rings, once, with the failure's words and the merge again as the one choice.
+        F(flight.Code).MergeWhenGreen.ShouldBeNull();
+        var card = Refused().ShouldHaveSingleItem();
+        card.Bin.ShouldBe(CardBin.Ring);
+        card.Title.ShouldContain("armed");
+        card.Title.ShouldContain("3 times");
+        card.Detail.ShouldNotBeNull().ShouldContain("HTTP 503");
+        card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.Merge);
+        _state.Cards().Any(c => c.Kind == PrChecks.MergeDropped).ShouldBeFalse();
+
+        clock.Advance(TimeSpan.FromHours(1));
+        await checks.LookAsync(Ct);
+        thrown().ShouldBe(3);
+        Refused().ShouldHaveSingleItem();
     }
 }

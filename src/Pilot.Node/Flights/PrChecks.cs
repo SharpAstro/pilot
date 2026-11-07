@@ -57,13 +57,14 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     private sealed record MergeTries(List<DateTimeOffset> At, DateTimeOffset NextTry);
 
     /// <summary>
-    /// The waits between the autopilot's asks while GitHub's refusal passes by itself (a 5xx, a busy queue, a branch to bring up to
-    /// date). A third ask that still fails is a person's: <see cref="PassingTriesBeforeRing"/>.
+    /// The waits between the asks (the autopilot's, and an armed merge's) while GitHub's refusal passes by itself (a 5xx, a busy
+    /// queue, a branch to bring up to date): one after the first failure, one after the second. The third ask that still fails is a
+    /// person's, so there is no wait after it: <see cref="PassingTriesBeforeRing"/>.
     /// </summary>
-    public static readonly TimeSpan[] PassingBackoff = [TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(4), TimeSpan.FromMinutes(15)];
+    public static readonly TimeSpan[] PassingBackoff = [TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(4)];
 
-    /// <summary>The asks of a passing refusal after which the node rings: the third that still fails.</summary>
-    public const int PassingTriesBeforeRing = 3;
+    /// <summary>The asks of a passing refusal after which the node rings: the third that still fails, one more than there are waits.</summary>
+    public static readonly int PassingTriesBeforeRing = PassingBackoff.Length + 1;
 
     /// <summary>How long the loop waits between looks.</summary>
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(30);
@@ -545,13 +546,37 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             var armed = state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady && c.Subject == subject && c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Status == ChoiceStatus.Armed)).Select(c => c.Id).ToList();
             if (dropped is null && legs is not null)
             {
-                var result = await legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = subject, Args = [head, method], Who = "node" }, cancellationToken);
-                if (MergeRefusals.Of(result) is { Class: MergeRefusalClass.NodeWait or MergeRefusalClass.Passing })
+                // A passing refusal's backoff has not run out: the merge stays armed and is asked at the look after it.
+                var armedKey = $"armed {flight.Code} {head}";
+                if (_mergeTries.TryGetValue(armedKey, out var armedEarlier) && time.GetUtcNow() < armedEarlier.NextTry)
                 {
-                    // The node's own wait, or a refusal that passes by itself (GitHub's 5xx, a busy queue, a branch the node brings up to
-                    // date): the merge stays armed and is asked again at a later look. Nothing is dropped and no card is raised (PIL864).
                     continue;
                 }
+                var result = await legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = subject, Args = [head, method], Who = "node" }, cancellationToken);
+                var refusal = MergeRefusals.Of(result);
+                if (refusal is { Class: MergeRefusalClass.NodeWait })
+                {
+                    // The node's own wait: the merge stays armed and is asked again at a later look. Nothing is dropped and no card is raised (PIL864).
+                    continue;
+                }
+                if (refusal is { Class: MergeRefusalClass.Passing })
+                {
+                    // A refusal that passes by itself (GitHub's 5xx, a busy queue, a branch the node brings up to date): asked again on the
+                    // same backoff as the autopilot's own merge, so a stuck merge is not unnoticed. The third failure lets the merge go and rings.
+                    var tries = _mergeTries.TryGetValue(armedKey, out var armedBefore) ? new List<DateTimeOffset>(armedBefore.At) : new List<DateTimeOffset>();
+                    tries.Add(time.GetUtcNow());
+                    if (tries.Count < PassingTriesBeforeRing)
+                    {
+                        _mergeTries[armedKey] = new MergeTries(tries, time.GetUtcNow() + PassingBackoff[tries.Count - 1]);
+                        continue;
+                    }
+                    _mergeTries.Remove(armedKey);
+                    state.PutFlight(flight with { MergeWhenGreen = null });
+                    legs.DropMerge(flight.Code, $"#{number}'s merge was refused {tries.Count} times: {LegCommander.OneLine(result.Error ?? "no reason given")}");
+                    RaiseMergeRefused(flight, new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [head, method] }, result, refusal, tries, armedKey, "armed");
+                    continue;
+                }
+                _mergeTries.Remove(armedKey);
                 dropped = result.Ok ? null : $"its checks passed, but the merge was refused: {result.Error}";
                 if (result.Ok && result.Way is null)
                 {
@@ -1086,16 +1111,17 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             return;
         }
         _mergeTries[key] = new MergeTries(asked, time.GetUtcNow());
-        RaiseMergeRefused(flight, merge, result, refusal!, asked, key);
+        RaiseMergeRefused(flight, merge, result, refusal!, asked, key, "on autopilot");
     }
 
     /// <summary>
     /// The card of a refusal only a person can clear (or a passing one that did not pass in <see cref="PassingTriesBeforeRing"/> tries):
     /// what failed (GitHub's or the node's words, whole), what the node tried and when, and the one thing to do. Its one choice names
     /// that action, never a merge again while the cause holds. With no action to take (a closed PR, GitHub's own text) it is a fact to
-    /// read, filed For you with no choice.
+    /// read, filed For you with no choice when it is a closed PR, and a ring when the node simply could not classify it (an unknown
+    /// failure is not quieter than a known one). <paramref name="how"/> says how the merge was asked: <c>on autopilot</c>, or <c>armed</c>.
     /// </summary>
-    private void RaiseMergeRefused(FlightRow flight, CardChoice merge, CommandResult result, MergeRefusal refusal, List<DateTimeOffset> asked, string key)
+    private void RaiseMergeRefused(FlightRow flight, CardChoice merge, CommandResult result, MergeRefusal refusal, List<DateTimeOffset> asked, string key, string how)
     {
         var error = result.Error ?? "no reason given";
         var subject = Verbs.FlightTarget(flight.Code);
@@ -1104,7 +1130,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         var tried = asked.Count == 1 ? $"asked GitHub to merge once, at {times}"
             : $"asked GitHub to merge {asked.Count} times, at {times}";
         var passing = refusal.Class == MergeRefusalClass.Passing;
-        var closed = error.EndsWith(", not open", StringComparison.Ordinal);
+        // A passing refusal that is a conflict says so, not that GitHub did not answer.
+        var conflicting = passing && refusal.Action == MergeAction.ResolveConflict;
         // The one action: its words for the body, its button, and whether pressing it only says "done" (it is done on GitHub or another card).
         var (todo, label, verb, args, doneElsewhere) = refusal.Action switch
         {
@@ -1113,15 +1140,19 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             MergeAction.AnswerDesignQuestion => ("Answer the design question on its card, or dismiss it there, then press the button: the node asks again.", "Answer the design question", Verbs.Dismiss, new[] { "answered; the node asks again" }, true),
             MergeAction.RerunFailedCheck => ("Re-run the failed check; if it was no flake, redo the leg.", "Re-run the failed check", Verbs.RerunChecks, merge.Args, false),
             MergeAction.OpenPrAgain => ("Open the PR again so the commits the plane holds are pushed and reviewed before it lands.", "Open the PR again", Verbs.OpenPr, Array.Empty<string>(), false),
+            MergeAction.MarkReadyOnGitHub => ("The PR is a draft: mark it ready for review on GitHub, then press the button: the node asks again.", "Mark ready on GitHub", Verbs.Dismiss, new[] { "marked ready on GitHub; the node asks again" }, true),
+            MergeAction.ResolveConflict => ("The PR conflicts with its base and the node's update of the branch did not clear it, so this is no failure of GitHub's: resolve the conflict in the plane (merge the base in), push, and review it again. Merging again does not help while the conflict stands.", "", "", Array.Empty<string>(), false),
+            MergeAction.PrClosed => ("Nothing to merge: the PR is closed. Open a new PR from the plane if the work is still wanted.", "", "", Array.Empty<string>(), false),
             _ when passing => ($"GitHub did not take it in {PassingTriesBeforeRing} tries: look at GitHub, and merge again once it answers.", $"Merge PR #{number} again", Verbs.Merge, merge.Args, false),
-            _ => (closed ? "Nothing to merge: the PR is closed. Open a new PR from the plane if the work is still wanted." : "Read what GitHub or the node said above; nothing the node can press fixes it.", "", "", Array.Empty<string>(), false),
+            _ => ("Read what GitHub or the node said above; nothing the node can press fixes it.", "", "", Array.Empty<string>(), false),
         };
         var detail = $"{error}\n\nWhat the node tried: {tried}.\nWhat to do: {todo}";
-        var title = passing ? $"{flight.Code}'s merge on autopilot was refused {asked.Count} times: {LegCommander.OneLine(error)}"
-            : $"{flight.Code}'s merge on autopilot was refused: {LegCommander.OneLine(error)}";
-        var summary = $"The node tried to merge {flight.Code}'s PR and {(passing ? $"GitHub did not take it in {asked.Count} tries" : "was refused")}: {LegCommander.OneLine(error)} {todo}";
+        var title = passing ? $"{flight.Code}'s merge {how} was refused {asked.Count} times: {LegCommander.OneLine(error)}"
+            : $"{flight.Code}'s merge {how} was refused: {LegCommander.OneLine(error)}";
+        var summary = $"The node tried to merge {flight.Code}'s PR and {(conflicting ? $"it still conflicted with its base after {asked.Count} tries" : passing ? $"GitHub did not take it in {asked.Count} tries" : "was refused")}: {LegCommander.OneLine(error)} {todo}";
         var choices = label.Length == 0 ? [] : new List<CardChoice> { new() { Label = label, Verb = verb, Target = verb == Verbs.Dismiss ? "" : subject, Args = args } };
-        var raised = state.RaiseCard(label.Length == 0 ? CardBin.ForYou : CardBin.Ring, AutopilotMergeRefused, subject, title, detail, choices, link: flight.PullRequestUrl, summary: summary);
+        // A closed PR is a fact to read (For you); anything else a person must see rings, with a choice or without one.
+        var raised = state.RaiseCard(refusal.Action == MergeAction.PrClosed ? CardBin.ForYou : CardBin.Ring, AutopilotMergeRefused, subject, title, detail, choices, link: flight.PullRequestUrl, summary: summary);
         if (choices.Count == 1 && verb == Verbs.Dismiss)
         {
             // Done on GitHub or on another card: pressing says so and closes this one, and the autopilot asks again at the next look.

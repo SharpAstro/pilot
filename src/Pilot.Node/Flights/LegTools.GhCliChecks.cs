@@ -139,7 +139,7 @@ public sealed partial class GhCli
         var failed = checks.FirstOrDefault(c => c.Bucket == "fail");
         var dropped = queue is { Queued: false, RemovedAt: not null, RemovedReason: { Length: > 0 } reason } && !reason.Equals("merged", StringComparison.OrdinalIgnoreCase)
             ? reason.Replace('_', ' ').ToLowerInvariant() : null;
-        MergeState Say(string kind, string? why = null, bool awaits = false) => new(kind, done, total, queue is { Queued: true } ? queue.Position : null, why, failed.Name, failed.Link, dropped, awaits);
+        MergeState Say(string kind, string? why = null, bool awaits = false, bool draft = false) => new(kind, done, total, queue is { Queued: true } ? queue.Position : null, why, failed.Name, failed.Link, dropped, awaits, draft);
 
         var mergeState = facts.MergeStateStatus;
         if (queue is { Queued: true })
@@ -156,7 +156,7 @@ public sealed partial class GhCli
         }
         if (mergeState == "DRAFT" || facts.Draft)
         {
-            return Say(MergeKinds.Blocked, "it is a draft");
+            return Say(MergeKinds.Blocked, "it is a draft", draft: true);
         }
         if (failed.Name is not null)
         {

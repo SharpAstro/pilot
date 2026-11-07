@@ -22,6 +22,7 @@ public sealed class MergeRefusalTests
 
     private static readonly MergeRefusal NodeWait = new(MergeRefusalClass.NodeWait);
     private static readonly MergeRefusal Passing = new(MergeRefusalClass.Passing);
+    private static readonly MergeRefusal Conflicting = new(MergeRefusalClass.Passing, MergeAction.ResolveConflict);
 
     private static MergeRefusal Persons(MergeAction action) => new(MergeRefusalClass.Persons, action);
 
@@ -158,13 +159,9 @@ public sealed class MergeRefusalTests
         (await first).Ok.ShouldBeTrue();
     }
 
-    [Fact]
-    public void BeingMergedAlreadyAndTheReposTurnHeldAreNodeWaits()
-    {
-        // A merge asked while a stuck one holds the flight is refused with this class; the repo's turn held makes the next merge wait
-        // inside its command (WaitTurnAsync), which answers nothing to refuse.
-        MergeRefusals.Of(new MergeBlockedException(MergeRefusals.NodeWait, "TIA1 is being merged already: wait for its answer, then ask again")).ShouldBe(NodeWait);
-    }
+    // "Being merged already" (a merge whose gh call never returns, asked again past StuckAfter) is driven for real in CoalesceGuardTests, whose
+    // stuck case asserts the NodeWait class. The repo's turn held makes the next merge wait inside its command (WaitTurnAsync), which answers
+    // nothing to refuse.
 
     [Fact]
     public async Task ChecksRunningIsAWaitTheMergeArmsOnAndNoRefusal()
@@ -210,17 +207,26 @@ public sealed class MergeRefusalTests
         Flight(node);
         node.GitHub.MergeAnswers = "gh: Pull Request is not mergeable";
 
-        Refused(await Merge(node), Passing, "Pull Request is not mergeable");
+        Refused(await Merge(node), Conflicting, "Pull Request is not mergeable");
+    }
+
+    [Fact]
+    public async Task APrGitHubReadsAsConflictingIsPassingNamingTheConflict()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Flight(node);
+        node.GitHub.Pr = new PullRequest(63, "OPEN", PrHead, PrUrl, Mergeable: "CONFLICTING");
+
+        Refused(await Merge(node), Conflicting, "conflicts with its base");
     }
 
     [Theory]
     [InlineData(MergeAnswerKind.Transient)]
     [InlineData(MergeAnswerKind.Behind)]
-    [InlineData(MergeAnswerKind.Conflicts)]
     public void TheSortedAnswersThatPassAreClassedPassing(MergeAnswerKind kind) => MergeRefusals.Of(kind).ShouldBe(Passing);
 
     [Fact]
-    public void TheQueueBusyIsPassing() => MergeRefusals.QueueBusy.ShouldBe(Passing);
+    public void AConflictsAnswerPassesWithTheConflictNamed() => MergeRefusals.Of(MergeAnswerKind.Conflicts).ShouldBe(Conflicting);
 
     [Fact]
     public void AHeadMovedAnswerIsANodeWaitForTheReviewOfTheNewHead() => MergeRefusals.Of(MergeAnswerKind.HeadMoved).ShouldBe(NodeWait);
@@ -278,9 +284,28 @@ public sealed class MergeRefusalTests
     }
 
     [Fact]
-    public void CommitsUnpushedInThePlaneAreOpenPrAgain() =>
-        // Driven through a real plane in LegTests' merge guards (it asserts this class on the refusal); the class is the one given there.
-        MergeRefusals.Unpushed.ShouldBe(Persons(MergeAction.OpenPrAgain));
+    public async Task CommitsUnpushedInThePlaneAreOpenPrAgain()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var flight = Flight(node);
+        // The plane holds one commit past the PR's head, which is the head the review passed.
+        var pushed = Plane(flight.Worktree);
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "second");
+        node.State.PutFlight(flight with { Review = flight.Review! with { ReviewedHead = pushed } });
+        node.GitHub.Pr = new PullRequest(63, "OPEN", pushed, PrUrl);
+
+        Refused(await Merge(node, pushed), Persons(MergeAction.OpenPrAgain), "plane holds 1 commit past #63's head");
+    }
+
+    [Fact]
+    public async Task ADraftPrIsMarkReadyOnGitHubNotAnApproval()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Flight(node);
+        node.GitHub.Merge = new MergeState(MergeKinds.Blocked, Reason: "it is a draft", Draft: true);
+
+        Refused(await Merge(node), Persons(MergeAction.MarkReadyOnGitHub), "it is a draft");
+    }
 
     [Fact]
     public async Task AClosedPrIsAFactToReadWithNothingToPress()
@@ -289,7 +314,7 @@ public sealed class MergeRefusalTests
         Flight(node);
         node.GitHub.Pr = new PullRequest(63, "CLOSED", PrHead, PrUrl);
 
-        Refused(await Merge(node), Persons(MergeAction.None), "is closed, not open");
+        Refused(await Merge(node), Persons(MergeAction.PrClosed), "is closed, not open");
     }
 
     [Fact]
