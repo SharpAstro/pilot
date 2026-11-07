@@ -92,7 +92,7 @@ public sealed class LegFailureTests : IDisposable
 
         var card = await FailedCard();
 
-        card.Title.ShouldBe("TIA9/parser: its check fails building Pilot.Ui, outside this leg's code");
+        card.Title.ShouldBe("TIA9/parser: its check fails building Pilot.Ui, in files this leg did not change");
         card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([(SendRound, Verbs.GoAround), ("Accept as it is: the flight goes on with the check failing", Verbs.FinishLeg)]);
         card.Choices.ShouldNotContain(c => c.Label.Contains("All 7 steps") || c.Label.Contains("filtered tests"));
         card.Choices.Single(c => c.Verb == Verbs.GoAround).Args.ShouldBe([$"the last worker stopped: {Report}"]);
@@ -189,6 +189,47 @@ public sealed class LegFailureTests : IDisposable
 
         card.Summary.ShouldNotBeNull().ShouldNotContain("main has changed");
         card.Detail.ShouldNotBeNull().ShouldNotContain("main has changed");
+    }
+
+    private const string BothNotes = " The flight changed none of the failing files or their projects. main has changed those files since the flight took it (12 commits), so taking main may fix it.";
+
+    [Fact]
+    public void TheSummaryOfAnyFailureStaysWithinThePanelsCharacters()
+    {
+        // Not only the c78 case: a long leg name with many failing projects, and a long clipped report line, each with both notes.
+        var manyProjects = string.Join(" and ", Enumerable.Range(1, 8).Select(i => $"Pilot.LongProjectName{i}"));
+        var longReport = LegFailure.Clip(new string('x', 200));
+        foreach (var (cause, checkFailed) in new[] { ($"its check fails building {manyProjects}", true), ($"its check fails 9 tests in {new string('C', 90)} and 4 more classes", true), (longReport, false), ("its check fails (exit 1)", true) })
+        {
+            foreach (var name in new[] { "PIL834/read-stamps", "PIL834/" + new string('l', 80) })
+            {
+                var summary = LegCommander.FailedSummary(name, cause, checkFailed, BothNotes);
+
+                summary.Length.ShouldBeLessThanOrEqualTo(240, $"{name} / {cause}");
+                summary.ShouldStartWith($"The worker of {name} stopped");
+                // The notes about the files and main are the facts kept; the cause gives way when something must. (A name so long that
+                // nothing is left for the cause cuts the whole sentence instead.)
+                if (name.Length < 40)
+                {
+                    summary.ShouldContain("main has changed those files");
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void ASummaryThatFitsIsLeftAlone()
+    {
+        LegCommander.FailedSummary("TIA9/parser", "its check fails (exit 1)", true, "").ShouldBe("The worker of TIA9/parser stopped and its check fails (exit 1).");
+    }
+
+    [Fact]
+    public void ACauseTooLongForTheSummaryEndsInAnEllipsis()
+    {
+        var summary = LegCommander.FailedSummary("PIL834/read-stamps", "its check fails building " + new string('P', 300), true, BothNotes);
+
+        summary.Length.ShouldBeLessThanOrEqualTo(240);
+        summary.ShouldContain("...");
     }
 
     [Fact]

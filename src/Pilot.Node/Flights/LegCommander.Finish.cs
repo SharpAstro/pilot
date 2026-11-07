@@ -221,7 +221,8 @@ public sealed partial class LegCommander
                     : null;
                 var detail = string.Join("\n\n", new[] { report, notWhy, mainDetail }.Where(s => !string.IsNullOrEmpty(s)));
                 state.RaiseCard(CardBin.Ring, "leg-failed", Verbs.LegTarget(flight.Code, leg.Name),
-                    $"{name}: {reason}{(outside ? ", outside this leg's code" : "")}", detail.Length > 0 ? detail : null,
+                    // "files this leg did not change": what was compared is the failing files and their src/<Project>/ folders, not the leg's code as a whole.
+                    $"{name}: {reason}{(outside ? ", in files this leg did not change" : "")}", detail.Length > 0 ? detail : null,
                     [
                         // The go-around still carries the whole report to the fresh worker; the buttons carry none of its words.
                         new CardChoice { Label = Models.SendBackLabel(leg, "Send it round: a fresh worker fixes it and finishes"), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker stopped: {(report.Length > 0 ? report : "no reason given")}"] },
@@ -229,7 +230,8 @@ public sealed partial class LegCommander
                     ],
                     // The panel draws a summary up to CardsView.SummaryChars (240) only, so it says what stopped, whether the flight changed
                     // the failing files and whether main has; the buttons already say what each leads to (#844 review).
-                    summary: $"The worker of {name} stopped{(failure.CheckFailed ? $" and {reason}" : $": {reason}")}.{outsideWords}{mainWords}");
+                    // The cause is what gives way when a long name or many projects would pass 240 (the notes after it are the facts to keep).
+                    summary: FailedSummary(name, reason, failure.CheckFailed, outsideWords + mainWords));
                 // The worker the node sent round on the PR open's conflict gave up: the owner is rung about the conflict itself, once.
                 if (_conflictSent.ContainsKey(flight.Code) && flight.PullRequest is null
                     && state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault()?.Name == leg.Name)
@@ -242,6 +244,24 @@ public sealed partial class LegCommander
         }
 
         await StopWorkerAfterFinishAsync(flight, leg, command, cancellationToken);
+    }
+
+    /// <summary>
+    /// The leg-failed card's summary, never longer than the panel draws (<c>CardsView.SummaryChars</c>, 240): when the sentence is
+    /// too long its cause is cut with an ellipsis, so the notes about the flight's files and main stay whole.
+    /// </summary>
+    internal static string FailedSummary(string name, string reason, bool checkFailed, string notes)
+    {
+        const int PanelChars = 240;
+        string Build(string cause) => $"The worker of {name} stopped{(checkFailed ? $" and {cause}" : $": {cause}")}.{notes}";
+        var text = Build(reason);
+        if (text.Length <= PanelChars)
+        {
+            return text;
+        }
+        var room = reason.Length - (text.Length - PanelChars);
+        // Past this a cause is only an ellipsis: the whole sentence is cut instead.
+        return room >= 12 ? Build(reason[..(room - 3)].TrimEnd() + "...") : text[..(PanelChars - 3)] + "...";
     }
 
     /// <summary>The outcome of finish-leg for a leg stopped on the controller's or the owner's word: done in the row, its report starting with this.</summary>

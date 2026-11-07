@@ -45,7 +45,7 @@ public sealed class LegFailedCardTests
     internal static CardRow After() => new()
     {
         Id = "c78", Bin = CardBin.Ring, Kind = "leg-failed", Subject = "flight/PIL834/read-stamps",
-        Title = "PIL834/read-stamps: its check fails building Pilot.Ui, outside this leg's code",
+        Title = "PIL834/read-stamps: its check fails building Pilot.Ui, in files this leg did not change",
         // The same text as LegFailureTests.C78Summary, which pins that the node raises it: within CardsView.SummaryChars, so drawn whole.
         Summary = "The worker of PIL834/read-stamps stopped and its check fails building Pilot.Ui. The flight changed none of the failing files or their projects. "
             + "main has changed those files since the flight took it (2 commits), so taking main may fix it.",
