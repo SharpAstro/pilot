@@ -80,14 +80,20 @@ public sealed class FlightCommanderTests : IDisposable
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private readonly FlightCommander _commander;
 
+    /// <summary>The git the node runs here: <see cref="FakeRepoGit"/> unless a test asks for git itself (#813). See <see cref="TestGit"/>.</summary>
+    private readonly TestGit _testGit;
+
     public FlightCommanderTests()
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        _commander = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System);
+        _testGit = TestGit.Building(_root, realGit: false, () =>
+        {
+            Directory.CreateDirectory(Repo);
+            Git(Repo, "init", "-q", "-b", "main");
+            File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
+            Git(Repo, "add", ".");
+            Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
+        });
+        _commander = new FlightCommander(_state, new Planes(_testGit), TimeProvider.System);
     }
 
     private string Repo => Path.Combine(_root, "tianwen");
@@ -106,10 +112,17 @@ public sealed class FlightCommanderTests : IDisposable
             File.SetAttributes(file, FileAttributes.Normal);
         }
         Directory.Delete(_root, recursive: true);
+        _testGit.Release();
+        // A command the model could not answer may have been swallowed by the node's own catch: the test still fails.
+        _testGit.Verify();
     }
 
     private static string Git(string cwd, params string[] args)
     {
+        if (TestGit.Answer(cwd, args) is { } answered)
+        {
+            return answered;
+        }
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
         {

@@ -41,6 +41,9 @@ internal sealed class FakeRepoGit : IGit
 
         /// <summary>A rebase that stopped on a conflict: the head it began at, which <c>rebase --abort</c> returns to.</summary>
         public string? Rebasing { get; set; }
+
+        /// <summary>Locked by <c>git worktree lock</c>: <c>remove</c> refuses it unless forced twice, and prune keeps it.</summary>
+        public bool Locked { get; set; }
     }
 
     /// <summary>One repo of the model: a clone with its checkouts, or a bare repo a clone fetches from and pushes to.</summary>
@@ -907,7 +910,11 @@ internal sealed class FakeRepoGit : IGit
                 {
                     text.Append("worktree ").Append(w.Path).Append('\n').Append("HEAD ").Append(HeadId(w)).Append('\n');
                     text.Append(w.Branch is { } b ? $"branch refs/heads/{b}\n" : "detached\n");
-                    if (!Directory.Exists(w.Path))
+                    if (w.Locked)
+                    {
+                        text.Append("locked\n");
+                    }
+                    else if (!Directory.Exists(w.Path))
                     {
                         text.Append("prunable gitdir file points to non-existent location\n");
                     }
@@ -915,10 +922,30 @@ internal sealed class FakeRepoGit : IGit
                 }
                 return Ok(text.ToString());
             case ["prune"]:
-                _cur.Worktrees.RemoveAll(w => w != _cur.Worktrees[0] && !Directory.Exists(w.Path));
+                _cur.Worktrees.RemoveAll(w => w != _cur.Worktrees[0] && !w.Locked && !Directory.Exists(w.Path));
                 return Ok("");
-            case ["unlock", _]:
-                return Fail("fatal: not locked", 128);
+            case ["lock", var path]:
+                if (LinkedWorktree(path) is not { } toLock)
+                {
+                    return Fail($"fatal: '{path}' is not a working tree", 128);
+                }
+                if (toLock.Locked)
+                {
+                    return Fail($"fatal: '{path}' is already locked", 128);
+                }
+                toLock.Locked = true;
+                return Ok("");
+            case ["unlock", var path]:
+                if (LinkedWorktree(path) is not { } toUnlock)
+                {
+                    return Fail($"fatal: '{path}' is not a working tree", 128);
+                }
+                if (!toUnlock.Locked)
+                {
+                    return Fail($"fatal: '{path}' is not locked", 128);
+                }
+                toUnlock.Locked = false;
+                return Ok("");
             case ["remove", ..]:
                 return WorktreeRemove(a);
             case ["add", ..]:
@@ -928,14 +955,26 @@ internal sealed class FakeRepoGit : IGit
         }
     }
 
+    /// <summary>The linked worktree at <paramref name="path"/> (never the main checkout); null when there is none.</summary>
+    private Worktree? LinkedWorktree(string path)
+    {
+        var norm = Norm(path);
+        return _cur.Worktrees.Skip(1).FirstOrDefault(w => string.Equals(w.Path, norm, StringComparison.OrdinalIgnoreCase));
+    }
+
     private GitRun WorktreeRemove(List<string> a)
     {
-        var force = a.Contains("--force");
+        var forced = a.Count(x => x is "--force" or "-f");
+        var force = forced > 0;
         var path = Norm(a.Last());
         var wt = _cur.Worktrees.FirstOrDefault(w => string.Equals(w.Path, path, StringComparison.OrdinalIgnoreCase));
         if (wt is null || wt == _cur.Worktrees[0])
         {
             return Fail($"fatal: '{a.Last()}' is not a working tree", 128);
+        }
+        if (wt.Locked && forced < 2)
+        {
+            return Fail($"fatal: cannot remove a locked working tree;\nuse 'remove -f -f' to override or unlock first", 128);
         }
         if (!force && Dirty(wt))
         {
