@@ -60,6 +60,8 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive, Anchor = ScrollAnchor.Bottom };
     private readonly TranscriptEntryView _entries = new() { PromptLabel = "you", AssistantLabel = "watchtower", AssistantLines = int.MaxValue };
+    // 1 once the follow read the feed again (its indices moved): the next render clears _entries' index-keyed caches first.
+    private int _rowsStale;
     private readonly ChatComposer _composer = new();
 
     // The question card's own scroll, fresh for each question so a new one starts at its top.
@@ -402,6 +404,13 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
                     cancellationToken.ThrowIfCancellationRequested();
                 }
                 ImmutableInterlocked.Update(ref _held, held => Merge(held, page, reread));
+                if (reread)
+                {
+                    // The row caches (parsed Markdown, opened folds) are keyed by feed index, and every held entry may now sit at
+                    // another one: the render thread forgets them before it builds the rows (it owns them), so no row is drawn
+                    // with its neighbour's text.
+                    Volatile.Write(ref _rowsStale, 1);
+                }
                 Changed?.Invoke();
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -750,6 +759,10 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : $"held by {WatchtowerOwner}'s watchtower"),
         }, new TopBarParts(null, null, Autopilot, About, Night, NodePills()));
 
+        if (Interlocked.Exchange(ref _rowsStale, 0) == 1)
+        {
+            _entries.Reset();
+        }
         var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking).Select(AsQuoted)], held.Working).Select(r => r.WStar()).ToList();
         // What was said and the watchtower has not taken yet: last among the messages, dim, and saying so.
         // One send is one row, matched by its id and never by its words, so two sends of the same words are two rows: a queued

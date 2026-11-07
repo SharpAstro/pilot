@@ -655,12 +655,62 @@ public sealed class ChatTests
     }
 
     [Fact]
+    public async Task AShiftedFeedDrawsEachReplyWithItsOwnTextNotItsNeighboursCachedOne()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var shifted = false;
+        var chat = new ChatView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        // Two dividers go in below the held entries: each reply lands on an index the first render parsed another reply under
+        // (the watchtower's replies are Markdown, whose parsed tree is cached by feed index).
+        var feed = () => shifted
+            ? new ChatPage
+            {
+                Entries =
+                [
+                    new TranscriptEntry { Index = 0, Id = "s2a", Kind = TranscriptKind.Divider, Text = "A fresh watchtower started", At = At },
+                    new TranscriptEntry { Index = 1, Id = "s2b", Kind = TranscriptKind.Divider, Text = "Another fresh watchtower started", At = At },
+                    .. Identified(2, 4, "reply"),
+                ],
+                Total = 6,
+            }
+            : new ChatPage { Entries = Identified(0, 4, "reply"), Total = 4 };
+        chat.Load = (after, _) =>
+        {
+            var page = feed();
+            return Task.FromResult(new ChatPage { Entries = [.. page.Entries.Where(e => e.Index > after)], Total = page.Total });
+        };
+
+        await Read(chat, 4);
+        var before = Described(chat);
+        before.ShouldContain("reply 1");
+        before.ShouldContain("reply 3");
+
+        shifted = true;
+        chat.Open();
+        for (var i = 0; i < 100 && chat.Entries.Count != 6; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+        chat.Close();
+        chat.Entries.Count.ShouldBe(6);
+
+        var after = Described(chat);
+        // Each reply once, and in the feed's order: reply 1 sits where reply 3 was cached, and must not show reply 3's text.
+        foreach (var n in new[] { 0, 1, 2, 3 })
+        {
+            after.Split($"reply {n}").Length.ShouldBe(2, $"reply {n} is drawn exactly once in: {after}");
+        }
+        after.IndexOf("reply 1", StringComparison.Ordinal).ShouldBeLessThan(after.IndexOf("reply 3", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task AnEntryThatIsAlreadyHeldIsNeverAppendedAgainWhateverItsIndexIs()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var round = 0;
         var chat = new ChatView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
-        // Each look after the first answers with an already held entry at an index past the held last one, and one new one.
+        // Each look after the first answers with already held entries at indices past the held last one. That is a shifted feed,
+        // so the follow reads again from -1 (which answers with the two it first held); only the absence of duplicates is shown.
         chat.Load = (after, _) =>
         {
             round++;
