@@ -363,7 +363,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     internal override Action<string>? SelectionCopy => CopyText;
 
-    internal override RectF32 SelectionViewport => _scroll.Viewport;
+    internal override RectF32 PageSelectionViewport => _scroll.Viewport;
 
     internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true } || _menu.IsOpen;
 
@@ -562,7 +562,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             parts.Add(Details(selected));
         }
         var page = WhenShort(Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch());
-        page = WithSelection(page);
+        page = WithPageSelection(page);
         page = About?.Over(page) ?? page;
         return _menu.IsOpen ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg)) : page;
     }
