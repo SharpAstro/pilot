@@ -827,6 +827,42 @@ public sealed class FlightMoveTests2 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFlightHeldOnAFlightThatMovesAwayWaitsForItOnTheReceiverAndFliesOnceItHasLandedThere_818()
+    {
+        Fly(LegState.Done);
+        _sender.PutFlight(OnSender with { PullRequest = 41 });
+        // TIA902 waits for TIA900, a flight of SE1, which is about to move to DE1.
+        _sender.PutFlight(new FlightRow
+        {
+            Code = "TIA902", Repo = "tianwen", RepoPath = Sending, Issue = 902, Branch = "flight/tia902", Worktree = "/nowhere", Base = "origin/main", State = FlightState.Held,
+            Connections = [Code], CreatedAt = DateTimeOffset.UnixEpoch,
+        });
+
+        var moved = await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.MoveFlight, Target = "flight/TIA900", Who = "tests" }, Ct);
+
+        moved.Ok.ShouldBeTrue(moved.Error);
+        MovedAway();
+        // Followed there at the move itself, not on a later sweep: no local connection is left to a flight that is no longer SE1's.
+        var waiting = _sender.Flights().Single(f => f.Code == "TIA902");
+        waiting.State.ShouldBe(FlightState.Held);
+        waiting.Connections.ShouldBeEmpty();
+        var wait = waiting.PeerConnections.ShouldHaveSingleItem();
+        (wait.Code, wait.Node, wait.Branch, wait.PullRequest, wait.Issue).ShouldBe((Code, "DE1", Branch, 41, 900));
+        _sender.Cards().Single(c => c.Kind == FlightCommander.WaitFollowedKind).Title.ShouldBe("TIA902 now waits for TIA900 on DE1, where TIA900 moved");
+
+        // DE1 flies it still: held. Landed there: the look releases it.
+        (await _senderFlights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
+        _sender.Flights().Single(f => f.Code == "TIA902").State.ShouldBe(FlightState.Held);
+        _state.PutFlight(_state.Flights().Single(f => f.Code == Code) with { State = FlightState.Landed, LandedAt = DateTimeOffset.UtcNow });
+        (await _senderFlights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(1);
+        var released = _sender.Flights().Single(f => f.Code == "TIA902");
+        released.State.ShouldBe(FlightState.Flying);
+        released.PeerConnections.ShouldBeEmpty();
+        released.Connections.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task ANodeOutOfMaintenanceKeepsItsFlightsAndFliesThemOn()
     {
         Fly(LegState.Done);
