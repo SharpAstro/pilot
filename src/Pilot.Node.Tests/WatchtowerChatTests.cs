@@ -562,7 +562,9 @@ public sealed class WatchtowerChatTests : IDisposable
         brief.Length.ShouldBeLessThan(Briefs.MaxWatchtowerBrief + 200);
         brief.ShouldNotContain(detail);
         // The rings first, though they were opened last, and the rest named by count with where to read them.
-        brief.IndexOf("- c291 [ring]", StringComparison.Ordinal).ShouldBeLessThan(brief.IndexOf("- c1 [for you]", StringComparison.Ordinal));
+        // Only a few cards are listed (Briefs.MaxCardsListed), so with ten rings open the rings take every line and no "for you" card is listed.
+        brief.ShouldContain("- c291 [ring]");
+        brief.ShouldNotContain("[for you]");
         brief.ShouldMatch(@"- and \d+ more: `pilot cards` lists them\.");
         // One line a card, its title cut short.
         brief.ReplaceLineEndings("\n").Split('\n').Where(l => l.StartsWith("- c", StringComparison.Ordinal)).ShouldAllBe(l => l.Length < 260);
