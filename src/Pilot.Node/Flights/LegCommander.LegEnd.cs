@@ -464,6 +464,100 @@ public sealed partial class LegCommander
         }
     }
 
+    /// <summary>Card kind of the Handled line the node leaves when it closes a pending overlap because the other flight has landed.</summary>
+    public const string OverlapLandedKind = "overlap-landed";
+
+    /// <summary>
+    /// Pending overlap rows whose other flight has landed (PIL824): there is nothing to wait for, so the row is answered (connect, with no wait
+    /// recorded), its overlap card closes with the reason, one Handled line says so, and the flight goes on as after any answer (a leg-end row
+    /// advances, a planner-asked row has its planner restarted). A local other is read from its row (landed, not moved or folded); a peer's is
+    /// asked of the peers off the lock under their budget, so a slow peer holds nothing and a peer that does not answer leaves the row pending.
+    /// </summary>
+    internal async Task AnswerLandedPendingAsync(CancellationToken cancellationToken)
+    {
+        var peerRows = new List<(string Code, string Other, string Node)>();
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            foreach (var code in state.Flights().Where(f => f.State != FlightState.Landed).Select(f => f.Code).ToList())
+            {
+                if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: not FlightState.Landed } flight)
+                {
+                    continue;
+                }
+                foreach (var row in flight.Overlaps.Where(o => o.Answer == OverlapAnswer.Pending).ToList())
+                {
+                    if (row.Node is not null)
+                    {
+                        peerRows.Add((code, row.Other, row.Node));
+                    }
+                    else if (state.Flights().FirstOrDefault(f => string.Equals(f.Code, row.Other, StringComparison.OrdinalIgnoreCase)) is { State: FlightState.Landed, MovedTo: null, FoldedInto: null })
+                    {
+                        await AnswerLandedAsync(flight, row, row.Other, cancellationToken);
+                        break;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            _one.Release();
+        }
+
+        foreach (var (code, other, node) in peerRows)
+        {
+            try
+            {
+                if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: not FlightState.Landed } asking
+                    || !await flights.PeerFlightLandedAsync(asking, other, node, cancellationToken))
+                {
+                    continue;
+                }
+                await _one.WaitAsync(cancellationToken);
+                try
+                {
+                    // Looked at again under the lock: the row may have been answered while the peers were asked.
+                    if (state.Flights().FirstOrDefault(f => f.Code == code) is { State: not FlightState.Landed } now
+                        && now.Overlaps.FirstOrDefault(o => o.Answer == OverlapAnswer.Pending && string.Equals(o.Other, other, StringComparison.OrdinalIgnoreCase) && o.Node is not null) is { } row)
+                    {
+                        await AnswerLandedAsync(now, row, $"{other} on {node}", cancellationToken);
+                    }
+                }
+                finally
+                {
+                    _one.Release();
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await Error.WriteLineAsync($"landed overlap: {code}'s row about {other} on {node} could not be looked at: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>Answers a pending row whose other has landed, closes its card, says so on a Handled line and lets the flight go on. Called under the lock.</summary>
+    private async Task AnswerLandedAsync(FlightRow flight, OverlapRow row, string at, CancellationToken cancellationToken)
+    {
+        var answered = row with { Answer = OverlapAnswer.Connect, At = time.GetUtcNow() };
+        var now = flight with { Overlaps = [.. flight.Overlaps.Select(o => ReferenceEquals(o, row) ? answered : o)] };
+        state.PutFlight(now);
+        var target = Verbs.FlightTarget(now.Code);
+        state.CloseCardsAbout(target, $"{row.Other} had landed: there is nothing to wait for", OverlapKind);
+        var told = $"{row.Other} had landed: {now.Code} goes on, no answer needed";
+        state.RaiseCard(CardBin.Handled, OverlapLandedKind, target, told,
+            $"{now.Code} overlapped {at}, which has landed since, so its work is in and there is nothing to wait for. The node closed the overlap card itself and {now.Code} goes on"
+            + (row.AfterLeg is null ? " (its planner is started again with the answer)." : $"; {row.AfterLeg} stays done."));
+        Error.WriteLine($"landed overlap: {now.Code} overlapped {at}, which has landed; answered by the node, no card rang");
+        try
+        {
+            await GoOnAfterParallelAnswerAsync(now, answered, told, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await Error.WriteLineAsync($"landed overlap: {now.Code} could not go on after {row.Other} had landed: {ex.Message}");
+        }
+    }
+
     /// <summary>Card kind of the note the node leaves when it connects a flight to another itself, for an unforeseen overlap found at a leg's end.</summary>
     public const string OverlapConnectedKind = "overlap-connected";
 

@@ -361,6 +361,104 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
         _workers.Started.Select(w => w.Name).ShouldContain(n => n.Contains("tia2") && n.Contains("plan"));
     }
 
+    /// <summary>TIA1 (parser done) holds a pending leg-end row about <paramref name="other"/> with its overlap card open.</summary>
+    private async Task Tia1PendingAboutAsync(string other, string? node = null)
+    {
+        await FinishParserAsync();
+        var tia1 = _state.Flights().Single(f => f.Code == "TIA1");
+        _state.PutFlight(tia1 with { Overlaps = [new OverlapRow { Other = other, Node = node, Files = ["shared.cs"], Pick = Verbs.OverlapPickConnect, Why = "asked", Answer = OverlapAnswer.Pending, AfterLeg = "parser", At = DateTimeOffset.UtcNow }] });
+        _state.RaiseCard(CardBin.Ring, LegCommander.OverlapKind, Verbs.FlightTarget("TIA1"), $"TIA1/parser overlaps {other} (shared.cs)", "asked", []);
+    }
+
+    [Fact]
+    public async Task APendingRowWhoseLocalOtherHasLandedIsClosedByTheSweepWithAHandledLineAndTheNextLegStarts()
+    {
+        await FlyingAsync("parser.cs");
+        OtherFlight("TIA2", "shared.cs");
+        await Tia1PendingAboutAsync("TIA2");
+        _state.PutFlight(_state.Flights().Single(f => f.Code == "TIA2") with { State = FlightState.Landed });
+
+        await _legs.AnswerLandedPendingAsync(Ct);
+
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.OverlapKind);
+        var note = _state.Cards().Single(c => c.Kind == LegCommander.OverlapLandedKind);
+        note.Bin.ShouldBe(CardBin.Handled);
+        note.Title.ShouldBe("TIA2 had landed: TIA1 goes on, no answer needed");
+        var flight = _state.Flights().Single(f => f.Code == "TIA1");
+        flight.Overlaps.Single().Answer.ShouldBe(OverlapAnswer.Connect);
+        flight.Connections.ShouldBeEmpty();
+        flight.State.ShouldNotBe(FlightState.Held);
+        L("parser").State.ShouldBe(LegState.Done);
+        _workers.Started.Select(w => w.Name).ShouldContain("du1-tia1-render-validator");
+
+        // A second sweep has nothing left to answer.
+        var cards = _state.Cards().Length;
+        await _legs.AnswerLandedPendingAsync(Ct);
+        _state.Cards().Length.ShouldBe(cards);
+    }
+
+    [Fact]
+    public async Task APendingRowWhoseOtherLandedOnAPeerIsClosedByTheSweepToo()
+    {
+        await FlyingAsync("parser.cs");
+        const string gitHub = "SharpAstro/tianwen";
+        Git(Repo, "config", $"url.{Origin.Replace('\\', '/')}.insteadOf", $"https://github.com/{gitHub}.git");
+        Git(Repo, "remote", "set-url", "origin", $"https://github.com/{gitHub}.git");
+        var theirs = _state.Flights().Single() with
+        {
+            Code = "PIL9", Issue = 9, Branch = "flight/pil9", RepoPath = "D:/src/tianwen", Worktree = "D:/src/tianwen/.claude/worktrees/pil9",
+            Overlaps = [], PlannedFiles = null, Connections = [], PeerConnections = [],
+        };
+        var peer = new FakePeer("DE1") { Flights = [theirs], Repos = [new RepoInfo { Name = "tianwen", Path = "D:/src/tianwen", GitHub = gitHub }] };
+        var fleet = new FakeFleet();
+        fleet.Peers.Add(peer);
+        _flights.Fleet = fleet;
+        await Tia1PendingAboutAsync("PIL9", "DE1");
+
+        // Still flying there: the row stays pending and its card open.
+        await _legs.AnswerLandedPendingAsync(Ct);
+        _state.Flights().Single(f => f.Code == "TIA1").Overlaps.Single().Answer.ShouldBe(OverlapAnswer.Pending);
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.OverlapKind);
+
+        peer.Flights = [theirs with { State = FlightState.Landed }];
+        await _legs.AnswerLandedPendingAsync(Ct);
+
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.OverlapKind);
+        _state.Cards().Single(c => c.Kind == LegCommander.OverlapLandedKind).Title.ShouldBe("PIL9 had landed: TIA1 goes on, no answer needed");
+        _state.Flights().Single(f => f.Code == "TIA1").Overlaps.Single().Answer.ShouldBe(OverlapAnswer.Connect);
+        _workers.Started.Select(w => w.Name).ShouldContain("du1-tia1-render-validator");
+    }
+
+    [Fact]
+    public async Task APlannerAskedPendingRowWhoseOtherLandedHasItsPlannerRestartedWithTheAnswer()
+    {
+        await FlyingAsync("parser.cs");
+        OtherFlight("TIA2", "shared.cs");
+        PendingOnTheOthersCard(null, "shared.cs");
+        _state.PutFlight(_state.Flights().Single(f => f.Code == "TIA1") with { State = FlightState.Landed });
+
+        await _legs.AnswerLandedPendingAsync(Ct);
+
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.OverlapKind);
+        _state.Cards().Single(c => c.Kind == LegCommander.OverlapLandedKind).Title.ShouldBe("TIA1 had landed: TIA2 goes on, no answer needed");
+        _state.Flights().Single(f => f.Code == "TIA2").Overlaps.Single().Answer.ShouldBe(OverlapAnswer.Connect);
+        await Eventually.Holds(() => _workers.Started.Any(w => w.Name == "du1-tia2-plan"), Ct);
+    }
+
+    [Fact]
+    public async Task AOneWayRowWhoseOtherHasNotLandedIsLeftPendingBySweep()
+    {
+        await FlyingAsync("parser.cs");
+        OtherFlight("TIA2", "shared.cs");
+        await Tia1PendingAboutAsync("TIA2");
+
+        await _legs.AnswerLandedPendingAsync(Ct);
+
+        _state.Flights().Single(f => f.Code == "TIA1").Overlaps.Single().Answer.ShouldBe(OverlapAnswer.Pending);
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.OverlapKind);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.OverlapLandedKind);
+    }
+
     [Fact]
     public async Task AOneWayOverlapIsConnectedByTheNodeWhenTheOthersPendingRowNamesAnotherFlight()
     {
