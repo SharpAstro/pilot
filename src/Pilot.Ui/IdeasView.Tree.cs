@@ -32,7 +32,7 @@ internal sealed partial class IdeasView<TSurface>
 
     internal override Action<string>? SelectionCopy => CopyText;
 
-    internal override RectF32 SelectionViewport => _scroll.Viewport;
+    internal override RectF32 PageSelectionViewport => _scroll.Viewport;
 
     internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true } || Gallery.Viewing is not null;
 
@@ -143,7 +143,7 @@ internal sealed partial class IdeasView<TSurface>
                 break;
         }
         var whole = Layout.Builder.VStack(top, body.HStar()).Bg(P.Ground).Stretch();
-        whole = WithSelection(whole);
+        whole = WithPageSelection(whole);
         return Gallery.Over(About?.Over(whole, NightOrNull) ?? whole);
     }
 
