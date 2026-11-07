@@ -84,9 +84,9 @@ public sealed class RoleRangeRowsTests
             else
             {
                 // Too narrow for 'S high': the effort alone, or its first letter, under the model it belongs to.
-                texts.ShouldContain(t => t is "high" or "h");
-                texts.ShouldContain(t => t is "xhigh" or "x");
-                texts.ShouldContain(t => t is "sonnet" or "S");
+                texts.ShouldContain(t => t == "high" || t == "h");
+                texts.ShouldContain(t => t == "xhigh" || t == "x");
+                texts.ShouldContain(t => t == "sonnet" || t == "S");
             }
             texts.ShouldContain(t => t.Contains("the fleet's range is sonnet-medium..opus-xhigh"));
             texts.ShouldContain("differs");
