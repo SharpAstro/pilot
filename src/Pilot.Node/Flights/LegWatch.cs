@@ -743,7 +743,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 && string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase));
         // A ticker the node has just told something (how its finish's check rerun ended, in this look or a recent one) is given its turn on
         // it: its session still shows the turn it ended before it was told, so "ended" is not yet a stop, and the node's own finish is not
-        // asked for on top of what it was told. Past the idle grace without a turn of its own, it is stopped as any other.
+        // asked for on top of what it was told. Past the idle grace without a turn of its own, it is stopped as any other. The hold is
+        // deliberately that simple: an ended ticker is held for up to IdleGrace after ANY tell of it (_wokenAt is written only by the node's
+        // tells), not only after a tell of a rerun's outcome, and never longer, so a ticker that really stopped is stopped at most that late.
         var told = _wokenAt.TryGetValue(job, out var toldAt) && now - toldAt < IdleGrace;
         var ticker = $"{Name(leg)}'s ticker";
         string? why = row switch

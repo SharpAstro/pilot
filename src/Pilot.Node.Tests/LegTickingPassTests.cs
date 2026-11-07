@@ -488,6 +488,25 @@ public sealed class LegTickingPassTests : LegCommanderTestsBase
     }
 
     [Fact]
+    public async Task An_ended_ticker_that_was_told_is_held_for_the_idle_grace_and_not_a_moment_longer()
+    {
+        await TickerEndedWithAllTickedAsync();
+        _state.PutLeg(L("parser") with { Recheck = new LegRecheck { Check = "dotnet test", Since = _clock.GetUtcNow(), Outcome = "the check failed: Parser.Tests: 3 failed" } });
+        await _watch.LookAsync(Ct);
+
+        // Just inside the grace after the tell: still held, the node's finish is not asked for (a real delay, so a detached finish would show).
+        _clock.Advance(_watch.IdleGrace - TimeSpan.FromSeconds(1));
+        await _watch.LookAsync(Ct);
+        await Task.Delay(200, Ct);
+        _checks.Runs.ShouldBeEmpty();
+
+        // At the grace: held no longer, so the node finishes the leg.
+        _clock.Advance(TimeSpan.FromSeconds(1));
+        await _watch.LookAsync(Ct);
+        await Until(() => _checks.Runs.Count == 1);
+    }
+
+    [Fact]
     public async Task A_node_that_restarted_after_a_ticker_sent_the_leg_round_does_not_send_it_round_a_second_time()
     {
         await TickerEndedWithStepTwoUntickedAsync();
