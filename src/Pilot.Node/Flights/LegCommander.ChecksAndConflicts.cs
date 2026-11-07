@@ -70,7 +70,9 @@ public sealed partial class LegCommander
         state.RaiseCard(CardBin.Ring, PrConflictsKind, subject, $"{code}'s {number} conflicts with its base",
             $"{why}. A worker already tried (the node sends one first, and rings only when it stopped or the same conflict came back). The plane is {flight.Worktree}: {ConflictBrief(why)}, then {(flight.PullRequest is null ? $"`pilot flight pr {code}` (or dismiss this card, and the node opens it)" : $"`pilot flight review {code}`")}. {ResolveConflict} starts a fresh worker on the last leg.",
             choices, link: flight.PullRequestUrl,
-            summary: $"The {number} of {code} conflicts with its base and a worker already tried. The watchtower merges the base into the plane and resolves it; {ResolveConflict} starts a fresh worker.");
+            summary: $"The {number} of {code} conflicts with its base and a worker already tried. The watchtower merges the base into the plane and resolves it; {ResolveConflict} starts a fresh worker.",
+            // The title is the same for every conflict of the PR: a new head or a further go-around is a new cause (#853).
+            cause: $"conflicts:{flight.PullRequest}:{flight.GitHubHead}:{legs.Sum(l => l.GoArounds)}");
         return Task.FromResult<string?>(null);
     }
 

@@ -86,6 +86,14 @@ public sealed record CardRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? AttachmentExt { get; init; }
 
+    /// <summary>
+    /// What the card is about, as the raiser keys it, when its title carries a part that changes for the same cause (an age, a count): the
+    /// node remembers a person's dismissal by kind, subject and this key, so the next watch pass does not raise the same cause again (#853).
+    /// Null when the title is the key. A card an older node wrote has none; an older client ignores it.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Cause { get; init; }
+
     /// <summary>How many characters of a sha the node and its clients show: the node's CommitRefs and the pages cut to this.</summary>
     public const int ShortShaLength = 9;
 }

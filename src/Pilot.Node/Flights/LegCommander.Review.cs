@@ -489,7 +489,9 @@ public sealed partial class LegCommander
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url,
             summary: holding
                 ? $"{flight.Code} passed its review with notes and circles in a holding pattern: {holdReason}. Merge is refused until it is cleared or the fixes are pushed."
-                : $"{flight.Code} is reviewed and its PR #{pr.Number} is ready. Merge lands it; dismissing leaves the PR open.");
+                : $"{flight.Code} is reviewed and its PR #{pr.Number} is ready. Merge lands it; dismissing leaves the PR open.",
+            // The title names the PR only: a new head is a new card for a person to see, whatever was dismissed for the one before (#853).
+            cause: $"{(holding ? "holding" : "ready")}:{pr.Number}:{pr.Head}");
     }
 
     /// <summary>The Handled card kind that says a passed flight's PR-ready card was restored by the sweep.</summary>
@@ -559,7 +561,9 @@ public sealed partial class LegCommander
         state.RaiseCard(CardBin.ForYou, ReviewNotesKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review passed with notes",
             $"PR #{flight.PullRequest}, head {(flight.Review?.ReviewedHead is { } head ? CommitRefs.Short(head) : "unknown")}. Notes: {string.Join("; ", notes)} {action}",
             link: flight.PullRequestUrl,
-            summary: CardSummaries.ReviewNotes(flight.Code, notes, fixerLeg));
+            summary: CardSummaries.ReviewNotes(flight.Code, notes, fixerLeg),
+            // The title is the same for every pass with notes: the head reviewed and the notes are the cause (#853).
+            cause: $"{flight.Review?.ReviewedHead}:{string.Join('\n', notes)}");
     }
 
     /// <summary>The name a review-notes leg is planned under: <c>review-notes</c>, then <c>review-notes-2</c> and on for a later round.</summary>
@@ -843,6 +847,8 @@ public sealed partial class LegCommander
         state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), title, detail, choices, link: flight.PullRequestUrl,
             summary: reason == SendBackReason.ReviewNotStarted || last is null
                 ? $"{said} {(reason == SendBackReason.ReviewNotStarted ? $"{words} starts it again; " : "")}{anyway} takes it as it is."
-                : $"{said} {words} has a worker do it on the leg's work as it stands, nothing thrown away; {anyway} takes it as it is.");
+                : $"{said} {words} has a worker do it on the leg's work as it stands, nothing thrown away; {anyway} takes it as it is.",
+            // Each round on a new head, or after a further send-back, is a new cause even when the first line of the findings reads the same (#853).
+            cause: $"{title}|{flight.Review?.ReviewedHead}|{last?.ReviewGoArounds}|{last?.GoArounds}");
     }
 }
