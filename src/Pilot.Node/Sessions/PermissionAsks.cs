@@ -45,13 +45,22 @@ public static class PermissionAsks
     /// </summary>
     public static string? FromAsking(string? asking, string? plane = null)
     {
+        if (Split(asking) is not var (tool, summary))
+        {
+            return null;
+        }
+        return tool == "AskUserQuestion" ? null : Describe(tool, summary, plane);
+    }
+
+    /// <summary>The tool and the line of its input that <see cref="Pilot.Contracts.SessionRow.Asking"/> holds, or null for none.</summary>
+    public static (string Tool, string? Summary)? Split(string? asking)
+    {
         if (asking is not { Length: > 0 })
         {
             return null;
         }
         var split = asking.IndexOf(": ", StringComparison.Ordinal);
-        var tool = split > 0 ? asking[..split] : asking;
-        return tool == "AskUserQuestion" ? null : Describe(tool, split > 0 ? asking[(split + 2)..] : null, plane);
+        return (split > 0 ? asking[..split] : asking, split > 0 ? asking[(split + 2)..] : null);
     }
 
     /// <summary>The one line a hook or a pending call keeps of a call, as <see cref="Pilot.Contracts.SessionRow.Asking"/> says it.</summary>

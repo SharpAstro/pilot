@@ -129,7 +129,7 @@ public static partial class NodeApp
         // A hook's stdin, forwarded by `pilot-node hook`: the session it names takes the hook's state, and the tracker
         // looks again now. 204, so a hook never learns anything worth failing over; but a Stop in a plane with files
         // not committed is answered with the decision that sends the session back to commit them (StopGate).
-        app.MapPost(NodeWire.HooksRoute, async (HttpContext context, HookBook hooks, StopGate gate, SessionTracker tracker, TimeProvider time, ILogger<HookBook> logger) =>
+        app.MapPost(NodeWire.HooksRoute, async (HttpContext context, HookBook hooks, StopGate gate, PermissionGate permissions, SessionTracker tracker, TimeProvider time, ILogger<HookBook> logger) =>
         {
             try
             {
@@ -144,6 +144,12 @@ public static partial class NodeApp
                 {
                     logger.LogInformation("stop held for {Session} in {Cwd}: files not committed", ClaudeAgentsJson.Text(hook.RootElement, "session_id"), ClaudeAgentsJson.Text(hook.RootElement, "cwd"));
                     return Results.Text(decision, "application/json");
+                }
+                // A permission prompt for a call that only acts inside the session's own plane is allowed here, so no one is asked for it.
+                if (await permissions.DecideAsync(hook.RootElement, context.RequestAborted) is { } allow)
+                {
+                    logger.LogInformation("permission allowed for {Session}: {Tool} in its plane", ClaudeAgentsJson.Text(hook.RootElement, "session_id"), ClaudeAgentsJson.Text(hook.RootElement, "tool_name"));
+                    return Results.Text(allow, "application/json");
                 }
             }
             catch (JsonException)

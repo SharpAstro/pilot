@@ -254,6 +254,12 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     {
                         break;
                     }
+                    // A call that only acts inside its own plane needs no person (PermissionGate allows it by hook): the hook was missed or came
+                    // too late, so the leg goes round once with a brief that says how to do it without the prompt, and a repeat rings.
+                    if (await SafeCallRoundAsync(leg, worker, subject, cancellationToken))
+                    {
+                        break;
+                    }
                     // A real question keeps its own words; a permission prompt is said by the call it asks leave for, when that is known.
                     if (WantedCall(leg, worker) is { } wants)
                     {
@@ -1536,6 +1542,33 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             await SayAsync(worker, $"You wait on the node, but the node could not finish your leg for you: {done.Error} Put that right and run `{Pilot} leg finish done \"<one-line report>\"` yourself.", cancellationToken);
         }
         return true;
+    }
+
+    // By leg subject: the legs sent round once already for a safe in-plane call their worker waited on; a worker of the same leg waiting again rings.
+    private readonly HashSet<string> _safeCallTried = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// A Waiting worker whose pending call is one <see cref="PermissionGate"/> would allow (it only acts inside the leg's plane): the leg goes
+    /// round once per leg with a brief naming the call and how to do it without the prompt. True when it was sent round (no ring is
+    /// due); false when the call is not such a one, the go-around was refused, or it was sent round already and the worker still waits.
+    /// </summary>
+    private async Task<bool> SafeCallRoundAsync(LegRow leg, SessionRow worker, string subject, CancellationToken cancellationToken)
+    {
+        if (worker.WaitingFor?.Contains('?') == true
+            || PermissionAsks.Split(worker.Asking) is not var (tool, path)
+            || state.Flights().FirstOrDefault(f => f.Code == leg.Flight)?.Worktree is not { Length: > 0 } plane
+            || !PermissionGate.SafeInPlane(plane, tool, path)
+            || !_safeCallTried.Add(subject))
+        {
+            return false;
+        }
+        var call = PermissionAsks.Describe(tool, path, plane);
+        var instead = tool == "EnterWorktree"
+            ? $"run `cd {plane}` in your shell instead of EnterWorktree: the plane is already your folder, and every command of yours runs there"
+            : $"use the path under the plane ({plane}) as it is, or work with the files from your shell inside the plane, not by a path the prompt would stop on";
+        var reason = $"the last worker waited on a permission prompt for a call that only acts inside its own plane ({call}); do it without the prompt: {instead}";
+        var around = await run(new CommandRequest { Verb = Verbs.GoAround, Target = subject, Args = [reason], Who = Who }, cancellationToken);
+        return around.Ok;
     }
 
     /// <summary>
