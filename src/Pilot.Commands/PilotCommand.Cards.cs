@@ -14,7 +14,7 @@ public static partial class PilotCommand
             .Where(c => all || c.State == CardState.Open)
             .OrderBy(c => c.State)
             .ThenBy(c => c.Bin)
-            .ThenByDescending(c => c.At)
+            .ThenByDescending(c => c.RungAt)
             .ToList();
         if (cards.Count == 0)
         {

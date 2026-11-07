@@ -45,9 +45,18 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     // What the follow has read, as one immutable record swapped whole: the follow appends on the pool, the render thread
     // reads the record it finds, and neither ever waits on the other.
-    private sealed record Held(ImmutableList<TranscriptEntry> Entries, int Total, string? Problem, bool Working, string? Question, string[] Choices, string[] Queued, string?[] QueuedIds)
+    // Ids is the stable id (TranscriptEntry.Id) of each held entry and the feed index it was read at, kept beside Entries in the
+    // same record so the two always agree: the follow keys on the id, since a feed index shifts when the feed gains a divider.
+    // Epoch names the feed's indexing the entries were read under: a token swapped for a new one whenever the held list's indices
+    // may all have moved (a reread, another node's feed). The render thread's row caches are keyed by feed index, so it forgets
+    // them when the Epoch of the list it is about to draw is not the one it last drew. It travels with the list it belongs to, so
+    // a render that still holds the old list neither takes the signal away from the next render nor draws new rows from old caches.
+    private sealed record Held(ImmutableList<TranscriptEntry> Entries, ImmutableDictionary<string, int> Ids, int Total, string? Problem, bool Working, string? Question, string[] Choices, string[] Queued, string?[] QueuedIds, object Epoch)
     {
-        public static readonly Held Empty = new([], 0, null, false, null, [], [], []);
+        public static readonly Held Empty = Fresh();
+
+        // An empty list under an epoch of its own.
+        public static Held Fresh() => new([], ImmutableDictionary<string, int>.Empty, 0, null, false, null, [], [], [], new object());
     }
 
     private Held _held = Held.Empty;
@@ -58,6 +67,8 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive, Anchor = ScrollAnchor.Bottom };
     private readonly TranscriptEntryView _entries = new() { PromptLabel = "you", AssistantLabel = "watchtower", AssistantLines = int.MaxValue };
+    // The Held.Epoch _entries' index-keyed caches were last built under: a render clears them first when the list it draws has another.
+    private object _rowsEpoch = Held.Empty.Epoch;
     private readonly ChatComposer _composer = new();
 
     // The question card's own scroll, fresh for each question so a new one starts at its top.
@@ -136,7 +147,8 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var open = _following is not null;
         Close();
         Volatile.Write(ref _node, node);
-        Volatile.Write(ref _held, Held.Empty);
+        // Another feed, another indexing: a fresh epoch, so no cache built for the old node's indices is drawn from.
+        Volatile.Write(ref _held, Held.Fresh());
         Volatile.Write(ref _notices, []);
         // What was sent for the old node stays in the outbox and is delivered to it; its page draws only its own entries, so a
         // failed line is back with Retry and Edit when the person returns. Only what is done with (sent) goes.
@@ -327,6 +339,55 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>Asks the follow to read now rather than at its next look: after a message went.</summary>
     public void Refresh() => Volatile.Read(ref _nudge).TrySetResult();
 
+    // Whether a page after the held last index shows the feed's indices moved under what is held (see FollowAsync). An entry
+    // without an Id (an older node) cannot show it, and keeps the index rule.
+    private static bool Shifted(Held held, ChatPage page)
+    {
+        if (page.Entries.Length == 0)
+        {
+            return false;
+        }
+        var known = 0;
+        foreach (var entry in page.Entries)
+        {
+            if (entry.Id is { } id && held.Ids.TryGetValue(id, out var at))
+            {
+                if (at != entry.Index)
+                {
+                    return true;
+                }
+                known++;
+            }
+        }
+        return known == page.Entries.Length && page.Total > held.Total;
+    }
+
+    // What the follow holds once the page is in. Appends only the entries whose Id is not held (one without an Id: whose Index is
+    // past the held last, as before). With `whole` the page is the feed read again from its start: it is the held list, in the order
+    // the feed gives, each id once, with every index as the feed has it now.
+    private static Held Merge(Held held, ChatPage page, bool whole)
+    {
+        var entries = whole ? ImmutableList.CreateBuilder<TranscriptEntry>() : held.Entries.ToBuilder();
+        var ids = whole ? ImmutableDictionary.CreateBuilder<string, int>() : held.Ids.ToBuilder();
+        var last = whole || held.Entries.Count == 0 ? int.MinValue : held.Entries[^1].Index;
+        foreach (var entry in page.Entries)
+        {
+            if (entry.Id is { } id)
+            {
+                if (ids.TryAdd(id, entry.Index))
+                {
+                    entries.Add(entry);
+                }
+            }
+            else if (entry.Index > last)
+            {
+                entries.Add(entry);
+            }
+        }
+        // A reread may have moved every index: a new epoch tells the render to forget its index-keyed caches.
+        return new Held(entries.ToImmutable(), ids.ToImmutable(), page.Total, null, page.Working, page.PendingQuestion, page.Choices ?? [], page.Queued ?? [], page.QueuedIds ?? [], whole ? new object() : held.Epoch);
+    }
+
     private async Task FollowAsync(Func<int, CancellationToken, Task<ChatPage>> load, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
@@ -335,21 +396,29 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             Volatile.Write(ref _nudge, nudge);
             try
             {
-                var had = Volatile.Read(ref _held).Entries;
-                var after = had.Count == 0 ? -1 : had[^1].Index;
+                var had = Volatile.Read(ref _held);
+                var after = had.Entries.Count == 0 ? -1 : had.Entries[^1].Index;
                 var page = await load(after, cancellationToken).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
                 var renumbered = after >= 0 && page.Total <= after;
-                if (renumbered)
+                // The feed shifted: an entry already held comes back at another index (a divider went in below it), or the page
+                // after the held last index brings nothing but entries already held while the feed grew. Its new entries sit
+                // somewhere else than after the held last index, so read it all again and merge by id.
+                var reread = renumbered || (after >= 0 && Shifted(had, page));
+                if (reread)
                 {
-                    // The feed is shorter than what is held (an earlier watchtower's transcript is gone, so every index dropped):
-                    // asking after the old index would skip the entries that now sit below it. Read it all again.
+                    // Renumbered: the feed is shorter than what is held (an earlier watchtower's transcript is gone, so every index
+                    // dropped), and asking after the old index would skip the entries that now sit below it. Read it all again.
                     page = await load(-1, cancellationToken).ConfigureAwait(false);
                     cancellationToken.ThrowIfCancellationRequested();
                 }
-                ImmutableInterlocked.Update(ref _held, held => new Held(
-                    renumbered ? ImmutableList.CreateRange(page.Entries) : held.Entries.AddRange(page.Entries.Where(e => held.Entries.Count == 0 || e.Index > held.Entries[^1].Index)),
-                    page.Total, null, page.Working, page.PendingQuestion, page.Choices ?? [], page.Queued ?? [], page.QueuedIds ?? []));
+                // A reread holds the newest TranscriptBook.FirstRead entries the feed gives, as a fresh open does: the entries before
+                // that window are not asked for again, and the folds opened by index cannot be matched to the new indices, so they
+                // close. That is accepted: a feed that shifted (or renumbered) has no older indexing to keep them under.
+                // The row caches (parsed Markdown, opened folds) are keyed by feed index, and every held entry may now sit at another
+                // one: the merged list carries a new epoch (see Held), so the render thread (which owns them) forgets them before it
+                // builds rows from it, and no row is drawn with its neighbour's text.
+                ImmutableInterlocked.Update(ref _held, held => Merge(held, page, reread));
                 Changed?.Invoke();
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -698,6 +767,10 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : $"held by {WatchtowerOwner}'s watchtower"),
         }, new TopBarParts(null, null, Autopilot, About, Night, NodePills()));
 
+        if (!ReferenceEquals(Interlocked.Exchange(ref _rowsEpoch, held.Epoch), held.Epoch))
+        {
+            _entries.Reset();
+        }
         var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking).Select(AsQuoted)], held.Working).Select(r => r.WStar()).ToList();
         // What was said and the watchtower has not taken yet: last among the messages, dim, and saying so.
         // One send is one row, matched by its id and never by its words, so two sends of the same words are two rows: a queued

@@ -6,15 +6,47 @@ namespace Pilot.Node.Flights;
 
 public static partial class Briefs
 {
+    private const int MaxOrderText = 500;
+    private const int MaxOrdersListed = 20;
+    private const int MaxOrdersTotal = 4000;
+
     /// <summary>
     /// What the watchtower is told when it starts: its job, what it may and may not do, the commands it does it with,
     /// and where every flight and open card stands now. Briefed from the node's state, never an earlier watchtower's
     /// conversation, so a fresh one picks up where the last left off (#36).
     /// </summary>
     /// <param name="model">The model the watchtower runs on, when the node chose one (#114): said, so a lighter model rings for a judgement rather than makes it.</param>
-    public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot, string? model = null, string? machine = null, IReadOnlySet<string>? alreadyTold = null, IReadOnlyList<StaleItem>? stale = null)
+    public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot, string? model = null, string? machine = null, IReadOnlySet<string>? alreadyTold = null, IReadOnlyList<StaleItem>? stale = null, IReadOnlyList<NodeNote>? orders = null)
     {
         var text = new StringBuilder(WatchtowerTemplate(name, pilot, model, machine));
+        // Before everything that changes: an order the controller gave an earlier watchtower (a hold, a scope rule) outlives it (#782).
+        // Not part of the fingerprint: adding an order must never replace the live watchtower.
+        text.AppendLine("## Standing orders");
+        text.AppendLine("Read these before acting: they are the controller's, kept by the node, and bind you as they bound the watchtower before you.");
+        var standing = orders?.Where(o => o.Id is { Length: > 0 } && o.RetiredAt is null).ToList() ?? [];
+        if (standing.Count == 0)
+        {
+            text.AppendLine("None stand now.");
+        }
+        // Capped: the brief is a first prompt on a command line, and a pasted paragraph kept as an order must not fail every later start.
+        var listed = 0;
+        var count = 0;
+        foreach (var order in standing)
+        {
+            var line = order.Text.ReplaceLineEndings(" ");
+            line = line.Length > MaxOrderText ? line[..MaxOrderText] + "..." : line;
+            if (count >= MaxOrdersListed || listed + line.Length > MaxOrdersTotal)
+            {
+                text.AppendLine($"(more orders stand than fit here: `{pilot} orders` lists them all)");
+                break;
+            }
+            count++;
+            listed += line.Length;
+            text.AppendLine($"- {order.Id} (from {order.Who}): {line}");
+        }
+        text.AppendLine($"When the controller gives you an order that should outlast your session (a hold on a flight or repo, a scope rule), record it with `{pilot} order \"<their words>\"`;");
+        text.AppendLine($"`{pilot} orders` lists them, and `{pilot} order done <id>` retires one when they lift it. Never retire one on your own say-so.");
+        text.AppendLine();
         if (stale is { Count: > 0 })
         {
             text.AppendLine($"## {StaleSection.Heading}");
@@ -252,6 +284,9 @@ public static partial class Briefs
         text.AppendLine($"  `{pilot} flight clear <code> <why>` when the notes are not worth a round. Say which you did on the review-notes card. A fix of your own");
         text.AppendLine($"  only for a one-line change: make it in the plane, commit it, then `{pilot} flight pr <code>`. With the autopilot on the node has");
         text.AppendLine("  planned the review-notes leg itself (the card names it): there is nothing to do but watch it.");
+        text.AppendLine("  A hold does not wait for you once your session has ended (it ends by design after a reply): with no watchtower running, five minutes after");
+        text.AppendLine("  the hold the node pushes any commits left in the plane past the reviewed head (as `flight pr` does, so a fresh review gates the merge), or");
+        text.AppendLine("  posts the notes on the PR as one comment and releases the hold. So make or clear the fixes in the turn you take the card.");
         text.AppendLine("- A flight in `pilot status` whose legs are all done, whose PR carries `pilot: changes` and whose PR head is not the head its");
         text.AppendLine("  review read (Summary prints that one as `read head`): no review has read this work. The node's sweep should have started one");
         text.AppendLine($"  and did not, so start it yourself with `{pilot} flight review <code>` rather than wait for a card.");

@@ -57,14 +57,18 @@ public sealed partial class NodeState
     {
         lock (_gate)
         {
-            // Nothing held and nothing to say (no session counted, no priority flight, no peer left out): a node that has just started and swept
-            // adds no event, so a client's first snapshot is the same as before the sweep ran at start.
-            if (_admission is null && row.OpusCount == 0 && row.Counted.Length == 0 && row.Priority.Length == 0 && row.PeersNotCounted is null)
+            // Nothing held and nothing to say (no session counted, no priority flight, no peer left out, no idle session waiting on a person or a job):
+            // a node that has just started and swept adds no event, so a client's first snapshot is the same as before the sweep ran at start. A node
+            // whose only sessions are waiting ones has something to say (the "not counted" line is for exactly that case), so it is published.
+            if (_admission is null && row.OpusCount == 0 && row.Counted.Length == 0 && row.Priority.Length == 0 && row.PeersNotCounted is null
+                && row.WaitingOnPerson.Length == 0)
             {
                 return;
             }
+            // Who waits is compared as written, like who is counted: the count staying put while a worker's job ends or a session asks a card is a change.
             if (_admission is { } held && held.OpusCount == row.OpusCount && held.OpusCap == row.OpusCap && held.OneFlightPerRepo == row.OneFlightPerRepo
-                && held.PeersNotCounted == row.PeersNotCounted && held.Counted.SequenceEqual(row.Counted) && held.Priority.SequenceEqual(row.Priority))
+                && held.PeersNotCounted == row.PeersNotCounted && held.Counted.SequenceEqual(row.Counted) && held.Priority.SequenceEqual(row.Priority)
+                && held.WaitingOnPerson.SequenceEqual(row.WaitingOnPerson))
             {
                 return;
             }

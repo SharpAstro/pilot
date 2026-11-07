@@ -84,6 +84,7 @@ public static partial class NodeApp
         });
         builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>(), services.GetRequiredService<RemovalQueue>()));
         builder.Services.AddSingleton<StopGate>();
+        builder.Services.AddSingleton<PermissionGate>();
         builder.Services.AddSingleton(new Attachments(options.DataFolder));
     }
 
@@ -307,12 +308,20 @@ public static partial class NodeApp
                 Ledger = services.GetRequiredService<SessionLedger>(),
                 Gate = services.GetRequiredService<StartGate>(),
                 Error = logWriter,
+                Ready = services.GetRequiredService<JobRunner>().Recovered,
                 StartedPlanner = legs.StartedPlanner,
                 RestartPlanner = legs.RestartPlannerAsync,
                 StopPlanner = legs.StopPlannerAsync,
                 RestartWorker = legs.RestartWorkerAsync,
                 RestartValidator = legs.RestartValidatorAsync,
+                PlaneHead = legs.PlaneHeadOfAsync,
+                StartTicker = legs.StartTickerAsync,
                 StopSession = legs.StopSessionAsync,
+                ChangedFiles = async (flight, ct) =>
+                {
+                    var diff = await services.GetRequiredService<IGit>().RunAsync(["diff", "--name-only", $"{flight.Base}...HEAD"], flight.Worktree, ct);
+                    return diff.Ok ? diff.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : null;
+                },
                 TellEndedJobs = (owners, ct) => services.GetRequiredService<JobRunner>().TellUntoldOf(owners, ct),
             };
         });
@@ -444,6 +453,8 @@ public static partial class NodeApp
                 Priority = nodeOptions.JobPriority,
                 PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? false,
                 EndedForGood = id => services.GetRequiredService<SessionTracker>().IsEndedForGood(id),
+                // A job's end is told to its owner only once the tracker has listed the sessions (pilot #810), as the watchtower waits.
+                Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,
                 Lifetime = services.GetService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
             };
         });
@@ -562,8 +573,10 @@ public static partial class NodeApp
             Ledger = services.GetRequiredService<SpendLedger>(),
             Error = logWriter,
             IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
+            JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
             // A session that ends on its own takes its queued jobs off the queue (#327).
             DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why),
+            IsBeingReplaced = id => services.GetRequiredService<LegCommander>().IsBeingReplaced(id),
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.

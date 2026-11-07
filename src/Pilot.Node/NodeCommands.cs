@@ -350,7 +350,8 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (command.Verb == Verbs.RestartWatchtower)
         {
             var why = string.Join(' ', command.Args ?? []).Trim();
-            return state.Complete(command, await Get<Watchtower>().RestartAsync(why.Length > 0 ? $"restarted by {command.Who}: {why}" : $"restarted by {command.Who}", cancellationToken));
+            var restarted = await Get<Watchtower>().RestartWithWayAsync(why.Length > 0 ? $"restarted by {command.Who}: {why}" : $"restarted by {command.Who}", cancellationToken);
+            return state.Complete(command, restarted.Error, restarted.Way);
         }
         if (command.Verb == Verbs.Raise)
         {

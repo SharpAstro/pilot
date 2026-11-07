@@ -14,6 +14,15 @@ public sealed partial class NodeState
         }
     }
 
+    private volatile string? _currentWatchtower;
+
+    /// <summary>The row id the watchtower keeper records as the role's current session; null when it records none. The messenger reads it too.</summary>
+    public string? CurrentWatchtower
+    {
+        get => _currentWatchtower;
+        set => _currentWatchtower = value;
+    }
+
     /// <summary>Adds a session row, or replaces the one with its <see cref="SessionRow.Id"/>: what the sessions leg calls.</summary>
     public void PutSession(SessionRow row)
     {

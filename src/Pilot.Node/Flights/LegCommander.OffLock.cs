@@ -61,7 +61,7 @@ public sealed partial class LegCommander
         {
             if (!_calling.TryGetValue(code, out var busy))
             {
-                throw new FlightException($"{code} is being changed already: wait for its answer, then ask again");
+                throw new FlightBusyException(BusyRefusal(code, "being changed", "wait for its answer, then ask again"));
             }
             // The same step asked again while it is live: told it is in progress, nothing refused and nothing touched.
             if (coalesce && busy.What == what && call.At - busy.At < StuckAfter)
@@ -69,14 +69,28 @@ public sealed partial class LegCommander
                 throw new InProgressException($"{code} is {what}");
             }
             busy.Refused = true;
-            throw new FlightException($"{code} is {busy.What} already: {busy.Advice}");
+            throw new FlightBusyException(BusyRefusal(code, busy.What, busy.Advice));
         }
         return call;
     }
 
+    /// <summary>The words of a command refused because the flight has calls out.</summary>
+    internal static string BusyRefusal(string code, string what, string advice) => $"{code} is {what} already: {advice}";
+
+    /// <summary>
+    /// A command refused because another command had calls out for the flight (<see cref="Calling"/>): no verdict on the command's own merits.
+    /// Its result carries <see cref="RefusalWays.Busy"/>, so a caller tells it from any other refusal by that, never by its words, which a
+    /// failed check's output or a step's text could echo.
+    /// </summary>
+    internal sealed class FlightBusyException(string message) : FlightException(message);
+
     /// <summary>True while the flight has a call of <paramref name="what"/> out that is live: out for less than <see cref="StuckAfter"/>. A stuck one is not live, so it is refused and rung as before.</summary>
     internal bool IsCalling(string code, string what) =>
         _calling.TryGetValue(code, out var busy) && busy.What == what && time.GetUtcNow() - busy.At < StuckAfter;
+
+    /// <summary>True while the flight has any step's calls out that is live (out for less than <see cref="StuckAfter"/>): what the node's sweep leaves a flight alone for rather than wait inside a command, one flight at a time.</summary>
+    internal bool IsCallingAnything(string code) =>
+        _calling.TryGetValue(code, out var busy) && time.GetUtcNow() - busy.At < StuckAfter;
 
     /// <summary>
     /// What the flight whose card <paramref name="target"/> names (<c>flight/&lt;code&gt;</c> or <c>flight/&lt;code&gt;/&lt;leg&gt;</c>) has calls out for, in words
@@ -105,6 +119,33 @@ public sealed partial class LegCommander
                 return Calling(code, what);
             }
             _one.Release();
+        }
+    }
+
+    /// <summary>
+    /// For a command that is only held back by a step's calls being out for the flight (a push, a check rerun, a merge of the base, the
+    /// node's own sweep): waits, with the lock let go, until the flight has none of a step other than <paramref name="except"/>, which is
+    /// the command's own and coalesces in <see cref="Calling"/>. A call out longer than <see cref="StuckAfter"/> is stuck, not waited for:
+    /// <see cref="Calling"/> then refuses as before, so it rings. To be called under the lock, which is held again on return, so the
+    /// caller reads the flight afresh, as it may have changed while this waited (pilot #871).
+    /// </summary>
+    private async Task WaitForFlightFreeAsync(string code, string except, CancellationToken cancellationToken)
+    {
+        while (_calling.TryGetValue(code, out var busy) && busy.What != except)
+        {
+            var left = StuckAfter - (time.GetUtcNow() - busy.At);
+            if (left <= TimeSpan.Zero)
+            {
+                return;
+            }
+            try
+            {
+                await OffLockAsync(null, () => busy.Free.Task.WaitAsync(left, time, cancellationToken));
+            }
+            catch (TimeoutException)
+            {
+                return;
+            }
         }
     }
 
@@ -148,13 +189,20 @@ public sealed partial class LegCommander
         {
             return $"{seen.Code} is gone: nothing was changed";
         }
-        return NodeState.SameFlight(Unmarked(seen), Unmarked(now)) ? null : $"{seen.Code} changed while GitHub and git were being asked: nothing was recorded, look again and ask again";
+        return NodeState.SameFlight(Unmarked(seen), Unmarked(now)) || MovedByQueuedPush(seen, now) ? null : $"{seen.Code} changed while GitHub and git were being asked: nothing was recorded, look again and ask again";
     }
 
-    // What the node writes about a flight's PR by itself, from its looks and its marks, comes and goes whatever a command does.
+    // What the node writes about a flight's PR by itself, from its looks and its marks, comes and goes whatever a command does. So does what
+    // the stale watch writes from its own reads (the last move and the stale summary, on its 20 s tick): a tick landing while a command's
+    // git was out made the command find the flight "changed" and refuse (pilot #871: open-pr under a loaded run).
     private static FlightRow Unmarked(FlightRow flight) =>
         flight with
         {
+            LastMovedAt = null,
+            LastMove = null,
+            StaleSummary = null,
+            StaleCause = null,
+            StaleSince = null,
             GitHubHead = null,
             GitHubDraft = null,
             GitHubLabel = null,

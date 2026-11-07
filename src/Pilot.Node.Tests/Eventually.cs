@@ -8,13 +8,20 @@ internal static class Eventually
 {
     public static readonly TimeSpan Cap = TimeSpan.FromMinutes(5);
 
-    public static async Task Holds(Func<bool> condition, CancellationToken ct, TimeSpan? cap = null)
+    public static Task Holds(Func<bool> condition, CancellationToken ct, TimeSpan? cap = null) =>
+        Holds(condition, () => "", ct, cap);
+
+    /// <summary>As above; on a timeout <paramref name="describe"/> says what is not there and in what state, read at the moment of failure.</summary>
+    public static async Task Holds(Func<bool> condition, Func<string> describe, CancellationToken ct, TimeSpan? cap = null)
     {
         var deadline = DateTime.UtcNow + (cap ?? Cap);
         while (!condition() && DateTime.UtcNow < deadline)
         {
             await Task.Delay(10, ct);
         }
-        condition().ShouldBeTrue();
+        if (!condition())
+        {
+            condition().ShouldBeTrue(describe());
+        }
     }
 }

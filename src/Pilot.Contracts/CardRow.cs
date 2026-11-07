@@ -38,6 +38,18 @@ public sealed record CardRow
 
     public required DateTimeOffset At { get; init; }
 
+    /// <summary>
+    /// When the node rang this same card again, unanswered (#799 rule 5): a card nobody answered is rung again in place, not by a second
+    /// card about it. It sorts first again by this time while <see cref="At"/> stays when it was raised, so its age is true. Null when it
+    /// was never rung again; an older client ignores it and sorts by <see cref="At"/>.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? RungAgainAt { get; init; }
+
+    /// <summary>The time the card sorts by: when it was last rung, which is when it was raised unless it was rung again.</summary>
+    [JsonIgnore]
+    public DateTimeOffset RungAt => RungAgainAt ?? At;
+
     public required CardState State { get; init; }
 
     /// <summary>How it was closed: the choice taken, <c>dismissed</c>, or what closed it (<c>TIA1611 landed</c>).</summary>
@@ -212,6 +224,21 @@ public static class Waited
         return span.TotalMinutes < 1 ? "under 1 m"
             : span.TotalHours < 1 ? $"{(int)span.TotalMinutes} m"
             : span.TotalDays < 1 ? $"{(int)span.TotalHours} h {span.Minutes} m"
+            : $"{(int)span.TotalDays} d {span.Hours} h";
+    }
+
+    /// <summary>
+    /// A span at the grain a stale line wants: whole minutes under an hour, whole hours under a day, else days and hours (<c>25 m</c>,
+    /// <c>10 h</c>, <c>2 d 5 h</c>). The node's digest and the UI's mark both say it, so they never disagree on a number.
+    /// </summary>
+    public static string Coarse(TimeSpan span)
+    {
+        if (span < TimeSpan.Zero)
+        {
+            span = TimeSpan.Zero;
+        }
+        return span.TotalHours < 1 ? $"{(int)span.TotalMinutes} m"
+            : span.TotalDays < 1 ? $"{(int)span.TotalHours} h"
             : $"{(int)span.TotalDays} d {span.Hours} h";
     }
 }

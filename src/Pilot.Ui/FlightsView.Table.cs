@@ -163,7 +163,7 @@ internal sealed partial class FlightsView<TSurface>
                 : line.StaleWorkMark is { } workMark
                     ? Layout.Builder.VStack(
                         Layout.Builder.Text(line.Code, 15f, text).RowH(22f),
-                        Whole(Layout.Builder.Text(workMark, 11f, Held).RowH(18f), workMark, 0))
+                        Whole(Layout.Builder.Text(workMark, 11f, Held).RowH(18f), line.StaleWorkTip ?? workMark, 0))
                 : line.ShownPriority is { } priority
                     ? Layout.Builder.VStack(
                         Layout.Builder.Text(line.Code, 15f, text).RowH(22f),

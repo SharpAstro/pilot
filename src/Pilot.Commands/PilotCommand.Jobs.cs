@@ -63,7 +63,7 @@ public static partial class PilotCommand
         {
             // run, jobs, job: a long run handed to the node, which wakes the session that handed it over
             var runTimeout = new Option<string?>("--timeout") { Description = "How long it may run: 90m, 2h, 45s; 2h by default, 8h at most" };
-            var runAlone = new Option<bool>("--alone") { Description = "Run with the node to itself (a benchmark): waits for no other job and a quiet CPU, and holds every other job and new leg until it ends" };
+            var runAlone = new Option<bool>("--alone") { Description = "Run with the node to itself (a benchmark): waits for no other job and a quiet CPU, and holds every other job (not new legs) until it ends" };
             var runFailFast = new Option<bool>("--fail-fast") { Description = "End the job at its first failed test, so a run whose first failure is all you need frees the queue (a check does this by itself)" };
             var runWords = new Argument<string[]>("command") { Description = "The command, after --: pilot run -- dotnet test", Arity = ArgumentArity.OneOrMore };
             var runCommand = Action(new Command("run", "Hand a long run to the node as a job, then end your turn: the node wakes this session with how it ended")
