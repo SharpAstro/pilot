@@ -186,7 +186,7 @@ public static class ProcessStall
             inside.Max(s => s.TickLate));
     }
 
-    private static TimeSpan Positive(TimeSpan time) => time > TimeSpan.Zero ? time : TimeSpan.Zero;
+    internal static TimeSpan Positive(TimeSpan time) => time > TimeSpan.Zero ? time : TimeSpan.Zero;
 
     /// <summary>The counters as last read at or before <paramref name="at"/> (the first reading when none is that old).</summary>
     private static StallSample CountersAt(List<StallSample> ordered, TimeSpan at)
@@ -306,7 +306,7 @@ public sealed class StallSampler
 
             // The sampler sleeps one interval between ticks; whatever it overslept is time this thread, which no pool block can
             // hold up, was kept from running.
-            var tickLate = _lastTick is { } last ? Positive(now - last - ProcessStall.Interval) : TimeSpan.Zero;
+            var tickLate = _lastTick is { } last ? ProcessStall.Positive(now - last - ProcessStall.Interval) : TimeSpan.Zero;
             _lastTick = now;
 
             var runtime = _read();
