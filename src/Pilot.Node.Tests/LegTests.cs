@@ -2119,7 +2119,9 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "late read");
         _github.Pr = new PullRequest(63, "OPEN", pushed, "https://github.com/x/tianwen/pull/63");
-        (await Leg(Verbs.Merge, "flight/TIA1", pushed[..8])).Error.ShouldBe("TIA1's plane holds 1 commit past #63's head: open the PR again (flight pr) to push it, and review what is new before it lands");
+        var unpushedRefusal = await Leg(Verbs.Merge, "flight/TIA1", pushed[..8]);
+        unpushedRefusal.Error.ShouldBe("TIA1's plane holds 1 commit past #63's head: open the PR again (flight pr) to push it, and review what is new before it lands");
+        unpushedRefusal.Refusal.ShouldBe(MergeRefusals.Unpushed);
         var tip = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
         _github.Pr = new PullRequest(63, "OPEN", tip, "https://github.com/x/tianwen/pull/63");
 
