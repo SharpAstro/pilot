@@ -308,14 +308,17 @@ public sealed class OverlapTests1 : OverlapTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AnUnknownALandedAndTheSameFlightAreRefused()
+    public async Task AnUnknownAndTheSameFlightAreRefusedAndALandedOneIsAnsweredAtOnceWithNoCard()
     {
         await TwoFlights();
 
         (await Leg(Verbs.Overlap, "flight/TIA2", "TIA9", "why")).Error.ShouldBe("There is no flight TIA9");
         (await Leg(Verbs.Overlap, "flight/TIA2", "TIA2", "why")).Error.ShouldBe("TIA2 cannot overlap itself");
         _state.PutFlight(_state.Flights().Single(f => f.Code == "TIA1") with { State = FlightState.Landed });
-        (await Leg(Verbs.Overlap, "flight/TIA2", "TIA1", "why")).Error.ShouldNotBeNull().ShouldStartWith("TIA1 has landed");
+        // PIL824: its work is in, so there is nothing to wait for; no row, no card.
+        var landed = await Leg(Verbs.Overlap, "flight/TIA2", "TIA1", "why");
+        landed.Ok.ShouldBeTrue();
+        landed.Made.ShouldNotBeNull().ShouldStartWith("TIA1 has landed");
 
         Cards().ShouldBeEmpty();
         _state.Flights().Single(f => f.Code == "TIA2").Overlaps.ShouldBeEmpty();

@@ -443,7 +443,7 @@ public sealed partial class LegCommander
     {
         var number = flight.PullRequest!.Value;
         await OffLockAsync(flight, () => github.SetDraftAsync(flight.RepoPath, number, draft: true, cancellationToken));
-        Record(flight.Code, f => f with { Review = f.Review is { } held ? held with { State = ReviewState.Changes, Report = changes, FinishedAt = time.GetUtcNow(), ReviewUrl = null, MarksWhy = null } : null });
+        RecordReviewChanges(flight.Code, changes);
         await OffLockAsync(null, () => _marks.ApplyAsync(flight.Code, cancellationToken));
     }
 
