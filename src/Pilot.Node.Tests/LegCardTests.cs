@@ -160,9 +160,10 @@ public sealed class LegCardTests
         card.Title.ShouldBe(title);
         card.Detail.ShouldNotBeNull().ShouldStartWith(title["TIA1/parser's worker ".Length..].Insert(0, "it ") + ";");
         card.Detail.ShouldContain("answered in its own session");
-        card.Summary.ShouldContain("Answering in its own session lets this worker go on with the call");
-        card.Summary.ShouldContain("stops this one and starts another on the leg from the branch");
-        card.Summary.ShouldContain(card.Choices.Single().Label);
+        var summary = card.Summary.ShouldNotBeNull();
+        summary.ShouldContain("Answering in its own session lets this worker go on with the call");
+        summary.ShouldContain("stops this one and starts another on the leg from the branch");
+        summary.ShouldContain(card.Choices.Single().Label);
         $"{card.Title}{card.Detail}{card.Summary}".ShouldNotContain("—");
         $"{card.Title}{card.Detail}{card.Summary}".ShouldNotContain("--");
     }

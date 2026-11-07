@@ -1103,8 +1103,8 @@ public sealed class LegWatchTests
         waiting.Choices.ShouldHaveSingleItem();
         SummaryMatchesChoices(waiting);
         waiting.Summary!.ShouldContain("waits on you");
-        waiting.Summary.ShouldContain("lets this worker go on with the call");
-        waiting.Summary.ShouldContain("stops this one and starts another on the leg from the branch");
+        waiting.Summary!.ShouldContain("lets this worker go on with the call");
+        waiting.Summary!.ShouldContain("stops this one and starts another on the leg from the branch");
 
         Worker(SessionState.Failed);
         await _watch.LookAsync(Ct);
