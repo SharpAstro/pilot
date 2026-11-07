@@ -32,7 +32,7 @@ public sealed class StopGate(NodeState state, Planes planes)
             || ClaudeAgentsJson.Text(hook, "cwd") is not { Length: > 0 } cwd
             // A subagent's stop is its parent's business, as in HookBook.
             || ClaudeAgentsJson.Text(hook, "agent_id") is { Length: > 0 }
-            || PlaneAt(cwd) is not { } flight)
+            || PlaneAt(state, cwd) is not { } flight)
         {
             return null;
         }
@@ -81,7 +81,7 @@ public sealed class StopGate(NodeState state, Planes planes)
     }
 
     /// <summary>The flight not landed whose plane holds <paramref name="cwd"/>, the plane itself or a folder in it.</summary>
-    private FlightRow? PlaneAt(string cwd)
+    internal static FlightRow? PlaneAt(NodeState state, string cwd)
     {
         string folder;
         try
@@ -92,12 +92,15 @@ public sealed class StopGate(NodeState state, Planes planes)
         {
             return null;
         }
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var comparison = PathComparison;
         return state.Flights().FirstOrDefault(f => f.State != FlightState.Landed && Normal(f.Worktree) is var plane
             && (folder.Equals(plane, comparison) || folder.StartsWith(plane + Path.DirectorySeparatorChar, comparison)));
     }
 
-    private static string Normal(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+    /// <summary>How paths compare on this machine: case-insensitive on Windows.</summary>
+    internal static StringComparison PathComparison => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+    internal static string Normal(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
 
     /// <summary>The flying leg, whose worker it most likely is, else the flight: its cards close when that finishes or lands.</summary>
     private string Subject(FlightRow flight) =>
