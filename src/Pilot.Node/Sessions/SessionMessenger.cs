@@ -23,8 +23,9 @@ namespace Pilot.Node.Sessions;
 /// </remarks>
 public sealed class SessionMessenger(NodeState state, SessionTracker tracker, ISessionDelivery delivery, TextWriter log, StartOptionsBook? starts = null, SessionLedger? ledger = null)
 {
-    // One say at a time per row: a second resume of a session mid-resume would continue the old id twice.
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _busy = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.Ordinal);
+    // One say at a time per row: a second resume of a session mid-resume would continue the old id twice. A person's say goes
+    // in ahead of the node's own queued words (PIL794).
+    private readonly ConcurrentDictionary<string, SayGate> _busy = new ConcurrentDictionary<string, SayGate>(StringComparer.Ordinal);
 
     /// <summary>Does <paramref name="command"/>, a <c>say</c>, and puts its result on the stream.</summary>
     public Task<CommandResult> SayAsync(CommandRequest command, CancellationToken cancellationToken) => DoAsync(command, compact: false, cancellationToken);
@@ -238,9 +239,9 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             text = $"{FromWatchtowerPrefix}{node}] {text}";
         }
 
-        var gate = _busy.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
+        var gate = _busy.GetOrAdd(id, _ => new SayGate());
         var step = Stopwatch.StartNew();
-        await gate.WaitAsync(cancellationToken);
+        await gate.WaitAsync(urgent: command.Who != Flights.LegWatch.Who, cancellationToken);
         parts.Gate = step.Elapsed;
         try
         {

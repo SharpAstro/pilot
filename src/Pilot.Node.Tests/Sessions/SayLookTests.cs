@@ -107,6 +107,61 @@ public sealed class SayLookTests : IDisposable
     }
 
     [Fact]
+    public async Task APersonsSayGoesAheadOfTheNodesOwnQueuedNudgesAtTheGate()
+    {
+        // The node's nudges held the watchtower's gate 3 to 17 s each while an owner's message queued behind them (DE1, 2026-11-07).
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "de1-watchtower", "working", pid: Pid, status: "busy", cwd: Cwd));
+        _profile.WriteSessionRecord(Pid, """{"status":"busy"}""");
+        await _tracker.PollAsync(Ct);
+        var relaying = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var inside = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _delivery.DuringRelay = async () =>
+        {
+            _delivery.DuringRelay = null;
+            inside.TrySetResult();
+            await relaying.Task;
+        };
+
+        var first = _messenger.SayAsync(Say("b2c3d4e5", "nudge one", LegWatchWho), Ct);
+        await inside.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+        var second = _messenger.SayAsync(Say("b2c3d4e5", "nudge two", LegWatchWho), Ct);
+        var third = _messenger.SayAsync(Say("b2c3d4e5", "nudge three", LegWatchWho), Ct);
+        var owner = _messenger.SayAsync(Say("b2c3d4e5", "from the owner", "sebastiangodelet@seb-surface/gui"), Ct);
+        relaying.SetResult();
+        await Task.WhenAll(first, second, third, owner);
+
+        _delivery.Relays.Select(r => r.Text).ShouldBe([NodeVoice.Prefix + "nudge one", "from the owner", NodeVoice.Prefix + "nudge two", NodeVoice.Prefix + "nudge three"]);
+    }
+
+    private const string LegWatchWho = Pilot.Node.Flights.LegWatch.Who;
+
+    [Fact]
+    public async Task AGateLetsUrgentWaitersInFirstAndACancelledWaiterLeavesTheQueue()
+    {
+        var gate = new SayGate();
+        await gate.WaitAsync(urgent: false, Ct);
+        var order = new List<string>();
+        using var gone = new CancellationTokenSource();
+        var ordinary = gate.WaitAsync(urgent: false, Ct).ContinueWith(_ => order.Add("ordinary"), Ct, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        var cancelled = gate.WaitAsync(urgent: true, gone.Token);
+        var urgent = gate.WaitAsync(urgent: true, Ct).ContinueWith(_ => order.Add("urgent"), Ct, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        gate.Waiting.ShouldBe(3);
+        await gone.CancelAsync();
+        await Should.ThrowAsync<OperationCanceledException>(cancelled);
+        gate.Waiting.ShouldBe(2);
+
+        gate.Release();
+        await urgent;
+        gate.Release();
+        await ordinary;
+        gate.Release();
+
+        order.ShouldBe(["urgent", "ordinary"]);
+        gate.Waiting.ShouldBe(0);
+        await gate.WaitAsync(urgent: false, Ct).WaitAsync(TimeSpan.FromSeconds(5), Ct);
+    }
+
+    [Fact]
     public async Task AListingTakenWhileASessionWasStoppedIsNotAppliedOverTheStop()
     {
         // The listing now runs outside the tracker's gate: one taken before a stop must not bring the stopped row back to live.
