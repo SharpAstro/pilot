@@ -354,11 +354,20 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
                     // What the person chose for this verb goes only once the node has taken it: a refusal leaves the choice to amend.
                     taken?.Invoke();
                 }
-                // The node's words, refusal included, are the page's line (Said); the control itself is back to its label.
-                Said = reply.Line.ReplaceLineEndings(" ").Trim();
+                if (verb == Verbs.Set && reply.Row is null && reply.Kind == ReplyKind.NoAnswer && Load is { } load)
+                {
+                    // No row came (the node may be restarting for the change): read the settings, as the only way to know. The
+                    // pill keeps saying it is setting until that read is in, so it never reads done for a change not yet seen.
+                    await RefreshAsync(load, CancellationToken.None).ConfigureAwait(false);
+                }
+                // The node's words, refusal included, are the page's line (Said); the control itself is back to its label. A bare
+                // "done" names what was set, from the row the node sent back.
+                Said = reply.Kind == ReplyKind.Done && reply.Row is { } set && reply.Line == "done"
+                    ? $"{set.Label} set to {set.Value}"
+                    : reply.Line.ReplaceLineEndings(" ").Trim();
                 return null;
             }).ConfigureAwait(false);
-            if (reply is not { } answered)
+            if (reply is null)
             {
                 return;
             }
@@ -369,11 +378,6 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             else if (verb == Verbs.RevokeGrant)
             {
                 await RefreshGrantsAsync(CancellationToken.None).ConfigureAwait(false);
-            }
-            else if (verb == Verbs.Set && answered.Row is null && answered.Kind == ReplyKind.NoAnswer && Load is { } load)
-            {
-                // No row came (the node may be restarting for the change): read the settings, as the only way to know.
-                await RefreshAsync(load, CancellationToken.None).ConfigureAwait(false);
             }
             Changed?.Invoke();
         }
@@ -774,7 +778,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
                 var action = $"settings:{setting.Key}:{choice}";
                 // The wire value for "leave it to Claude Code" is none; the button says default, as the help line does.
                 var label = choice == "none" ? "default" : choice;
-                parts.Add(NodePill(label, action, () => Act(Verbs.Set, [setting.Key, choice], $"{setting.Label}: {label}…", action), chosen));
+                parts.Add(NodePill(label, action, () => Act(Verbs.Set, [setting.Key, choice], $"setting {setting.Label} to {label}…", action), chosen, working: SettingWord));
             }
         }
         else if (setting.Many)
@@ -965,9 +969,14 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private static string[] Roots(SettingRow setting) =>
         (setting.Saved ?? setting.Value).Split('\n', StringSplitOptions.RemoveEmptyEntries);
 
-    // A pill that asks the node, through the press helper: while its press is with the node it reads "label…", dimmed, with no hit.
-    private Layout.Node NodePill(string label, string action, Action onClick, bool chosen = false) =>
-        Presses.Button(action, action, () => Pill(label, action, onClick, chosen), _ => Pill(label, action, onClick, chosen, working: true));
+    /// <summary>What a setting's choice pill reads while its <c>set</c> is with the node (the owner, 2026-11-07: "when clicking 'on' instead of 'done' it should show 'Setting...'").</summary>
+    internal const string SettingWord = "setting";
+
+    // A pill that asks the node, through the press helper: while its press is with the node it reads "label…" (or "working…" when
+    // given), dimmed, with no hit.
+    private Layout.Node NodePill(string label, string action, Action onClick, bool chosen = false, string? working = null) =>
+        // A choice (given its working word) shows the node's new value once taken, not "done" in place of the pill.
+        Presses.Button(action, action, () => Pill(label, action, onClick, chosen), _ => Pill(working ?? label, action, onClick, chosen, working: true), doneMark: working is null);
 
     // A pill whose verb is out shows "…" after its label and does not click again until the node answers.
     private static Layout.Node Pill(string label, string action, Action onClick, bool chosen = false, bool working = false)
