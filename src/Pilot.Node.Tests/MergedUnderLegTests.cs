@@ -118,7 +118,7 @@ public sealed class MergedUnderLegTests : IDisposable
         flight.PullRequest.ShouldBeNull();
         node.State.Cards().Single(c => c.Id == ready.Id).State.ShouldBe(CardState.Closed);
         var ring = node.State.Cards(openOnly: true).Single(c => c.Kind == FlightCommander.MergedUnderLegKind);
-        ring.Bin.ShouldBe(CardBin.Ring);
+        ring.Bin.ShouldBe(CardBin.ForYou);
         ring.Detail.ShouldNotBeNull().ShouldContain("new PR");
         node.GitHub.Merged.ShouldBeEmpty();
     }
@@ -353,6 +353,54 @@ public sealed class MergedUnderLegTests : IDisposable
         var ring = node.State.Cards(openOnly: true).Single(c => c.Kind == "not-landed");
         ring.Bin.ShouldBe(CardBin.Ring);
         ring.Detail.ShouldNotBeNull().ShouldContain("a late commit");
+    }
+
+    /// <summary>
+    /// PIL819: the plane took main after the merge (a commit of another flight, and the merge of main) and holds one review-notes commit
+    /// that missed the merge. The ring names that one commit only, and offers a PR with it, not Land it, which would be refused again.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task OnlyTheFlightsOwnCommitThatMissedTheMergeIsNamedAndTheChoiceIsAPrWithIt()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Merged(node);
+        Commit(Repo, "other.txt", "PIL804: another flight's work");
+        Git(Repo, "push", "-q", "origin", "main");
+        Commit(Plane, "notes.txt", "PIL819: review notes");
+        Git(Plane, "fetch", "-q", "origin");
+        Git(Plane, "merge", "-q", "--no-edit", "origin/main");
+
+        await Look(node);
+
+        node.State.Flights().Single().State.ShouldBe(FlightState.Flying);
+        var ring = node.State.Cards(openOnly: true).Single(c => c.Kind == "not-landed");
+        ring.Title.ShouldBe("1 commit of TIA1 missed the merge of PR #63");
+        ring.Detail.ShouldNotBeNull().ShouldContain("PIL819: review notes");
+        ring.Detail.ShouldNotContain("another flight's work");
+        ring.Detail.ShouldNotContain("Merge ");
+        ring.Summary.ShouldNotBeNull().ShouldContain("PIL819: review notes");
+        var choice = ring.Choices.ShouldHaveSingleItem();
+        choice.Verb.ShouldBe(Verbs.OpenPr);
+        choice.Label.ShouldBe("Open a PR with the commit");
+    }
+
+    /// <summary>A plane that only took main after the merge (another flight's commit and the merge of main) holds nothing of its own: it lands.</summary>
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task APlaneThatOnlyTookMainAfterTheMergeLands()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Merged(node);
+        Commit(Repo, "other.txt", "PIL804: another flight's work");
+        Git(Repo, "push", "-q", "origin", "main");
+        Git(Plane, "fetch", "-q", "origin");
+        Git(Plane, "merge", "-q", "--no-edit", "origin/main");
+
+        await Look(node);
+
+        node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
+        node.State.Cards(openOnly: true).ShouldNotContain(c => c.Kind == "not-landed");
     }
 
     [Fact]

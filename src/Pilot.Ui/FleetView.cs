@@ -559,7 +559,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     internal override Action<string>? SelectionCopy => CopyText;
 
-    internal override RectF32 SelectionViewport => _scroll.Viewport;
+    internal override RectF32 PageSelectionViewport => _scroll.Viewport;
 
     internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true };
 
@@ -607,7 +607,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             }
         }
         var page = Layout.Builder.VStack(Header(screen), Main(screen).Stretch()).Bg(Ground).Stretch();
-        page = WithSelection(page);
+        page = WithPageSelection(page);
         return About?.Over(page) ?? page;
     }
 

@@ -20,7 +20,7 @@ public sealed partial class LegCommander
         }
         HoldForOverlap(flight);
 
-        string? name = null, goal = null, doneWhen = null, check = null, model = null, effort = null, ciDiffers = null;
+        string? name = null, goal = null, doneWhen = null, check = null, model = null, effort = null, ciDiffers = null, wholeSuite = null;
         long? budget = null;
         var items = new List<CheckItem>();
         foreach (var arg in command.Args ?? [])
@@ -28,7 +28,7 @@ public sealed partial class LegCommander
             var equals = arg.IndexOf('=');
             if (equals <= 0)
             {
-                throw new FlightException($"plan-leg takes key=value arguments (name, goal, done-when, check, ci-differs, budget, model, effort, item), not '{arg}'");
+                throw new FlightException($"plan-leg takes key=value arguments (name, goal, done-when, check, ci-differs, whole-suite, budget, model, effort, item), not '{arg}'");
             }
             var (key, value) = (arg[..equals].Trim(), arg[(equals + 1)..].Trim());
             switch (key)
@@ -38,6 +38,7 @@ public sealed partial class LegCommander
                 case "done-when": doneWhen = value; break;
                 case "check": check = value.Length > 0 ? value : null; break;
                 case "ci-differs": ciDiffers = value.Length > 0 ? value : null; break;
+                case CheckScope.WholeSuiteKey: wholeSuite = value.Length > 0 ? value : null; break;
                 case "model": model = value.Length > 0 ? value : null; break;
                 case "effort": effort = value.Length > 0 ? value : null; break;
                 case "item" when value.Length > 0: items.Add(new CheckItem { Text = value }); break;
@@ -102,6 +103,23 @@ public sealed partial class LegCommander
             }
         }
 
+        // A check fits its change: a dotnet test with no filter runs the whole suite, which is CI's on the PR. The refusal suggests
+        // the filter from what the flight has changed so far.
+        if (check is not null && CheckScope.WholeSuite(check) is { } whole)
+        {
+            if (wholeSuite is null)
+            {
+                string? suggestion = null;
+                var diff = await git.RunAsync(["diff", "--name-only", $"{flight.Base}...HEAD"], flight.Worktree, cancellationToken);
+                if (diff.Ok)
+                {
+                    suggestion = CheckScope.Suggest(diff.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), flight.Worktree);
+                }
+                throw new FlightException(CheckScope.Refusal(whole, suggestion));
+            }
+            doneWhen = $"{doneWhen}\nThe check runs the whole suite on purpose: {wholeSuite}";
+        }
+
         // The repo's invariant tests ride along any filtered dotnet test, so the stored check is the one that runs everywhere.
         if (check is not null)
         {
@@ -164,6 +182,8 @@ public sealed partial class LegCommander
 
         var why = string.Join(' ', command.Args ?? []).Trim();
         state.RemoveLeg(flight.Code, leg.Name);
+        // A hold that named the leg waits on it no more: it is the watchtower's again (or the node's, with none running).
+        HoldForWatchtower(flight.Code, leg.Name);
         // The legs after it close up the order, so a plan's numbered list and the next order Plan takes stay contiguous.
         var order = 0;
         foreach (var kept in state.Legs(flight.Code))
@@ -200,7 +220,7 @@ public sealed partial class LegCommander
             return null;
         }
         var why = $"{peer.Code} flies {flight.Branch} on {peer.Node}: {flight.Code} is flown by one node, so it is not {(command.Verb == Verbs.PlanFlight ? "planned" : "started")} here";
-        state.RaiseCard(CardBin.Ring, FlownElsewhereKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} is flown on {peer.Node} too", why);
+        state.RaiseCard(CardBin.ForYou, FlownElsewhereKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} is flown on {peer.Node} too", why);
         return why;
     }
 

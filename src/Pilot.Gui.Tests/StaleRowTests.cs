@@ -4,6 +4,7 @@ using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Pilot.Ui;
 using Shouldly;
+using SharpAstro.Png;
 using Xunit;
 
 namespace Pilot.Gui.Tests;
@@ -25,6 +26,9 @@ public sealed class StaleRowTests
         StaleSummary = stale ? Summary : null,
         StaleCause = stale ? "flight:job j3178" : null,
         StaleSince = stale ? Live.At.AddHours(12) : null,
+        // Ten hours before Now when stale (StaleSince is deliberately a different time); 25 minutes before it for a flight that is still moving.
+        LastMovedAt = stale ? Now.AddHours(-10) : Now.AddMinutes(-25),
+        LastMove = stale ? "review passed" : "leg render finished",
         StaleRaises = stale ? [new FlightStaleRaise { Bound = "flight", Level = IssuePriority.High, At = Live.At.AddHours(12), Note = "raised to high: open 19 h" }] : null,
     };
 
@@ -84,7 +88,7 @@ public sealed class StaleRowTests
 
         view.Render(screen, bounds);
         var row = PageButtonFeedbackTests.Words(view.Tree(screen));
-        row.ShouldContain("stale · raised to high");
+        row.ShouldContain("stale · no progress for 10 h · raised to high");
         row.ShouldContain("rechecking since 10:02");
 
         view.OpenDetail("TIA1611");
@@ -93,6 +97,95 @@ public sealed class StaleRowTests
         page.ShouldContain("stale:");
         page.ShouldContain("waiting on job j3178");
         page.ShouldContain("raised to high: open 19 h");
+    }
+
+    [Fact]
+    public void AStaleMarkSaysHowLongTheFlightHasNotMovedAndStaleSinceDoesNotChangeIt()
+    {
+        var line = Line();
+        line.StaleWorkMark.ShouldBe("stale · no progress for 10 h · raised to high");
+
+        var later = FlightLine.Build([Flight() with { StaleSince = Live.At.AddHours(18) }], [], Now, []).Single();
+        later.StaleWorkMark.ShouldBe(line.StaleWorkMark);
+
+        // An older node gives no last move: the mark falls back to the plain word, without a number.
+        FlightLine.Build([Flight() with { LastMovedAt = null, LastMove = null }], [], Now, []).Single().StaleWorkMark.ShouldBe("stale · raised to high");
+    }
+
+    [Fact]
+    public void TheAgeTicksWithTheClockWhileTheRowDoesNotMove()
+    {
+        var row = Flight();
+        var first = FlightLine.Build([row], [], Now, []).Single();
+        var later = FlightLine.Build([row], [], Now.AddHours(2).AddMinutes(30), []).Single();
+
+        first.Idle.ShouldBe(TimeSpan.FromHours(10));
+        later.Idle.ShouldBe(TimeSpan.FromHours(12.5));
+        later.Idle!.Value.ShouldBeGreaterThan(first.Idle!.Value);
+        later.StaleWorkMark.ShouldBe("stale · no progress for 12 h · raised to high");
+    }
+
+    [Fact]
+    public void TheMarksTooltipHasTheLastMoveWithItsLocalTimeAndTheStaleTimeline()
+    {
+        var line = Line();
+        var time = Now.AddHours(-10).ToLocalTime().ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+
+        line.LastMoveText.ShouldBe($"last: review passed {time}");
+        line.StaleWorkTip.ShouldNotBeNull().ShouldContain("stale · no progress for 10 h");
+        line.StaleWorkTip.ShouldContain($"last: review passed {time}");
+        line.StaleWorkTip.ShouldContain(Summary);
+    }
+
+    [Fact]
+    public void AFlightThatIsMovingSaysItsLastActivityOnItsPageAndNotInItsRow()
+    {
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        var view = NewView(renderer, out _);
+        var screen = Screen(stale: false);
+        var bounds = new RectF32(0, 0, 1600, 900);
+
+        view.Render(screen, bounds);
+        PageButtonFeedbackTests.Words(view.Tree(screen)).ShouldNotContain("last activity");
+
+        view.OpenDetail("TIA1611");
+        view.Render(screen, bounds);
+        PageButtonFeedbackTests.Words(view.Tree(screen)).ShouldContain("last activity 25 m ago");
+
+        // A landed flight says nothing.
+        Line(stale: false, state: FlightState.Landed).ActivityText.ShouldBeNull();
+    }
+
+    [Fact]
+    public void AStaleFlightsPageSaysHowLongItHasBeenStillAndItsLastMove()
+    {
+        var time = Now.AddHours(-10).ToLocalTime().ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+        Line().ActivityText.ShouldBe($"no progress for 10 h · last: review passed {time}");
+
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        var view = NewView(renderer, out _);
+        var screen = Screen();
+        view.OpenDetail("TIA1611");
+        view.Render(screen, new RectF32(0, 0, 1600, 900));
+        PageButtonFeedbackTests.Words(view.Tree(screen)).ShouldContain($"no progress for 10 h · last: review passed {time}");
+
+        // A landed flight keeps no stale words, whatever is left on its row.
+        Line(state: FlightState.Landed).ActivityText.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData(25 * 60, "25 m")]
+    [InlineData(10 * 3600 + 59 * 60, "10 h")]
+    [InlineData(2 * 86400 + 23 * 3600 + 30 * 60, "2 d 23 h")]
+    public void TheMarkSaysTheAgeInTheNodesWordsWhichIsNotSessionLinesAgo(int seconds, string expected)
+    {
+        var idle = TimeSpan.FromSeconds(seconds);
+        var row = Flight() with { LastMovedAt = Now - idle };
+
+        FlightLine.Build([row], [], Now, []).Single().StaleWorkMark.ShouldBe($"stale · no progress for {expected} · raised to high");
+        // The same words as the node's digest line (Staleness.Say is Waited.Coarse), and not what SessionLine.Ago would print.
+        Waited.Coarse(idle).ShouldBe(expected);
+        SessionLine.Ago(idle).ShouldNotBe(expected);
     }
 
     [Fact]
@@ -163,11 +256,85 @@ public sealed class StaleRowTests
         PageButtonFeedbackTests.Words(view.Tree(screen)).ShouldContain("nobody can say");
     }
 
+    private static double Luminance(RGBAColor32 c)
+    {
+        static double Linear(byte v)
+        {
+            var s = v / 255.0;
+            return s <= 0.03928 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4);
+        }
+        return 0.2126 * Linear(c.Red) + 0.7152 * Linear(c.Green) + 0.0722 * Linear(c.Blue);
+    }
+
+    private static double Contrast(RGBAColor32 a, RGBAColor32 b)
+    {
+        var (hi, lo) = (Math.Max(Luminance(a), Luminance(b)), Math.Min(Luminance(a), Luminance(b)));
+        return (hi + 0.05) / (lo + 0.05);
+    }
+
+    [Fact]
+    public void TheMarkHoldsContrastOnTheRowsPlainAlternateHoveredAndSelectedGrounds()
+    {
+        var measured = new List<string>();
+        foreach (var (name, p) in new[] { ("standard", Palette.Standard), ("night", Palette.Night) })
+        {
+            foreach (var (ground, bg) in new[] { ("plain", p.Ground), ("alternate", p.RowAltBg), ("hovered", p.RowHoverBg), ("focused", p.RowFocusBg), ("selection bar", p.SelectionBg) })
+            {
+                // The mark is Held ink; on the selection bar a row's text is drawn again in SelectionText, so that is the pair measured there.
+                var ink = ground == "selection bar" ? p.SelectionText : p.Held;
+                var ratio = Contrast(ink, bg);
+                measured.Add($"{name}/{ground}: {ratio:0.0}:1{(ratio < 4.5 ? " (below 4.5)" : "")}");
+            }
+        }
+
+        // The standard palette holds AA on every ground. Night (dim reds on black, by design under the dark-adapted eye) is measured and
+        // reported but not asserted: its Held ink is 4.2:1 plain and 3.5:1 on the focused row, and its Bright text is lower still, so it is the palette's own limit, not this mark's.
+        measured.Where(m => m.StartsWith("standard", StringComparison.Ordinal) && m.Contains("below", StringComparison.Ordinal)).ShouldBeEmpty(string.Join("; ", measured));
+    }
+
+    /// <summary>
+    /// With PILOT_TEST_CAPTURE set to a file path, writes the flights table with a stale row (and a long title) as PNGs beside it, at 700 and 1400 wide:
+    /// <c>stale-before-*</c> is the row as an older node gives it (no last move: the old mark), <c>stale-after-*</c> the mark with its age.
+    /// </summary>
+    [Fact]
+    public void CapturesOfTheFlightsTableWithAStaleRowAtNarrowAndWideWindows()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var dir = Path.GetDirectoryName(capture) ?? ".";
+        const string LongTitle = "Render the planets from the GPU buffer through the shared swapchain with a very long title";
+        var moving = Flight(stale: false) with { Code = "TIA1612", Title = "Draw the moons" };
+        foreach (var (label, stale) in new[]
+        {
+            ("before", Flight() with { LastMovedAt = null, LastMove = null, Title = LongTitle }),
+            ("after", Flight() with { Title = LongTitle }),
+            // The longest mark there is: days, and a raise to urgent.
+            ("after-days", Flight() with
+            {
+                Title = LongTitle, LastMovedAt = Now.AddHours(-71),
+                StaleRaises = [new FlightStaleRaise { Bound = "flight", Level = IssuePriority.Urgent, At = Live.At.AddHours(12), Note = "raised to urgent: open 19 h" }],
+            }),
+        })
+        {
+            foreach (var width in new[] { 700, 1400 })
+            {
+                using var renderer = new RgbaImageRenderer((uint)width, 360);
+                var view = NewView(renderer, out _);
+                var screen = new FlightsScreen(FlightLine.Build([stale, moving], [], Now, []), "test", Now);
+                view.Render(screen, new RectF32(0, 0, width, 360));
+                File.WriteAllBytes(Path.Combine(dir, $"stale-{label}-{width}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, 360));
+            }
+        }
+    }
+
     [Theory]
     [InlineData(1600, "list", "idle")]
     [InlineData(1600, "list", "pending")]
     [InlineData(1600, "list", "refused")]
     [InlineData(700, "list", "idle")]
+    [InlineData(1400, "list", "idle")]
     [InlineData(1000, "detail", "idle")]
     [InlineData(1000, "detail", "refused")]
     [InlineData(600, "detail", "pending")]

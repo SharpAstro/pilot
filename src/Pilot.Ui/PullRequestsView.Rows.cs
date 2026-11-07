@@ -95,7 +95,7 @@ internal sealed partial class PullRequestsView<TSurface>
                 ? Layout.Builder.VStack(Header(screen), Waiting(waiting), main)
                 : Layout.Builder.VStack(Header(screen), main))
             .Bg(P.Ground).Stretch();
-        page = WithSelection(page);
+        page = WithPageSelection(page);
         return About?.Over(page, NightOrNull) ?? page;
     }
 

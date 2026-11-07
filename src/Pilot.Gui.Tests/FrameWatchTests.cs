@@ -343,6 +343,8 @@ public partial class FrameWatchTests
         // Discovering since Now: "LAN: discovering (N s)" for ten seconds, then still listening. Without it, a node is heard and
         // the row is not drawn.
         chrome.Flights.Lan = lan ? LanWatch.Over(() => [], PageData.Now) : LanWatch.Over(() => [new LanNode("10.0.0.9:47731", "LE1")], PageData.Now);
+        // A card's "stale 9 d 13 h" is counted from this clock, not the wall's: left alone it turned at the real minute the run was at.
+        chrome.Cards.Clock = () => at;
         chrome.Show(shown);
         if (page == "flight page")
         {

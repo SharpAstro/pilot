@@ -43,6 +43,26 @@ public sealed partial class FlightCommander
         return (found, why);
     }
 
+    /// <summary>
+    /// Whether flight <paramref name="code"/> of the peer <paramref name="node"/> has landed, as <see cref="LookAtPeerConnectionsAsync"/> reads a
+    /// wait: the peer says its row landed (not moved to another node, not folded into a flight), or its PR is merged on GitHub. The peers are
+    /// asked under <see cref="PeerBudget"/>, so a slow one never holds the caller; a peer that does not answer, or lists no such flight, is
+    /// false (not landed as far as is known), never an error. Does not take the lock.
+    /// </summary>
+    public async Task<bool> PeerFlightLandedAsync(FlightRow flight, string code, string node, CancellationToken cancellationToken)
+    {
+        var (found, _) = await FindOnPeersAsync(flight.RepoPath, code, cancellationToken);
+        if (found.FirstOrDefault(p => string.Equals(p.Node, node, StringComparison.OrdinalIgnoreCase)) is not { Flight: var row })
+        {
+            return false;
+        }
+        if (row.State == FlightState.Landed)
+        {
+            return row.MovedTo is null && row.FoldedInto is null;
+        }
+        return row.PullRequest is not null && github is not null && await MergedOnGitHubAsync(flight, row, cancellationToken);
+    }
+
     private static async Task<PeerRead> ReadPeerFlightsAsync(IFleetPeer peer, string? gitHub, CancellationToken budget, CancellationToken caller)
     {
         if (!peer.HasGrant)

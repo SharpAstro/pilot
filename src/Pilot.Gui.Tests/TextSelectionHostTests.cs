@@ -93,7 +93,7 @@ public sealed class TextSelectionHostTests
 
         window.Drag(Start(first), End(last));
 
-        window.Chrome.Home.Selection.HasSelection.ShouldBeTrue();
+        window.Chrome.Home.PageSelection.HasSelection.ShouldBeTrue();
         window.CtrlC();
         window.Home.Single().ShouldContain("\n");
         window.Home.Single().ShouldStartWith(first.Text.Trim());
@@ -113,8 +113,8 @@ public sealed class TextSelectionHostTests
 
         window.Drag(Start(first), End(last));
 
-        window.Chrome.Cards.Selection.HasSelection.ShouldBeTrue();
-        window.Chrome.Home.Selection.HasSelection.ShouldBeFalse();
+        window.Chrome.Cards.PageSelection.HasSelection.ShouldBeTrue();
+        window.Chrome.Home.PageSelection.HasSelection.ShouldBeFalse();
         window.CtrlC();
         window.Cards.Single().ShouldContain("Planets draw from the GPU");
         window.Cards.Single().ShouldEndWith("Shader compile is red");
@@ -141,7 +141,7 @@ public sealed class TextSelectionHostTests
 
         window.Drag(Start(first), End(last));
 
-        window.Chrome.Chat.Selection.HasSelection.ShouldBeTrue();
+        window.Chrome.Chat.PageSelection.HasSelection.ShouldBeTrue();
         window.CtrlC();
         var copied = window.Chat.Single();
         copied.ShouldStartWith("Which repo holds the planets?");
@@ -173,8 +173,8 @@ public sealed class TextSelectionHostTests
             // The chrome's selection leaves the press to the router, which gives it to the button.
             window.Chrome.HandleInput(new InputEvent.MouseDown(button.X + button.Width / 2f, button.Y + button.Height / 2f)).ShouldBeFalse($"{name}'s button");
             window.Send(new InputEvent.MouseUp(button.X + button.Width / 2f, button.Y + button.Height / 2f));
-            window.Chrome.Cards.Selection.HasSelection.ShouldBeFalse(name);
-            window.Chrome.Home.Selection.HasSelection.ShouldBeFalse(name);
+            window.Chrome.Cards.PageSelection.HasSelection.ShouldBeFalse(name);
+            window.Chrome.Home.PageSelection.HasSelection.ShouldBeFalse(name);
         }
     }
 
@@ -186,21 +186,21 @@ public sealed class TextSelectionHostTests
         window.Render();
         var home = window.Chrome.Home.SelectableTextRegions.ToArray().First(r => r.Text.Length > 0);
         window.Drag(Start(home), End(home));
-        window.Chrome.Home.Selection.HasSelection.ShouldBeTrue();
+        window.Chrome.Home.PageSelection.HasSelection.ShouldBeTrue();
 
         window.Chrome.Show(PilotPage.Jobs);
-        window.Chrome.Home.Selection.HasSelection.ShouldBeFalse();
+        window.Chrome.Home.PageSelection.HasSelection.ShouldBeFalse();
 
         window.Chrome.Show(PilotPage.Home);
         window.Render();
         var title = window.Chrome.Cards.SelectableTextRegions.ToArray().First(r => r.Text.Trim() == "Planets");
         window.Drag(Start(title), End(title));
-        window.Chrome.Cards.Selection.HasSelection.ShouldBeTrue();
+        window.Chrome.Cards.PageSelection.HasSelection.ShouldBeTrue();
 
         // A window with no room for the panel beside the page: its text is not there to keep selected.
         window.Resize(500, 900);
         window.Render();
         window.Send(new InputEvent.MouseMove(10, 10));
-        window.Chrome.Cards.Selection.HasSelection.ShouldBeFalse();
+        window.Chrome.Cards.PageSelection.HasSelection.ShouldBeFalse();
     }
 }
