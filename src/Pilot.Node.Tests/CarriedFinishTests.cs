@@ -162,6 +162,7 @@ public sealed class CarriedFinishTests : LegCommanderTestsBase
         var only = node.Checks.ShouldHaveSingleItem();
         (only.Id, only.State).ShouldBe(("jc1", JobState.Succeeded));
         await UntilToldAsync(node);
+        node.Parser.Recheck.ShouldBeNull();
         var said = node.Said.ShouldHaveSingleItem();
         said.Args[0].ShouldBe(LegRecheck.NodeFinishedOutcome(check));
         said.Args[0].ShouldNotContain("`leg finish done` again");
