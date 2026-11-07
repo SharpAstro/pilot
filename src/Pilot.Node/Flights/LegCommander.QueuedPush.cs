@@ -26,8 +26,9 @@ public sealed partial class LegCommander
         {
             return;
         }
-        // The removal that follows is the node's own: the queue look must not read it as GitHub letting the PR go unmerged.
-        _dequeuedByNode[flight.Code] = queued.Head;
+        // The removal that follows is the node's own: the queue look must not read it as GitHub letting the PR go unmerged. Kept by
+        // the PR and the time, never the head: by the look GitHub reads the PR at the pushed head, not the one it was queued at.
+        _dequeuedByNode[flight.Code] = (number, time.GetUtcNow());
         try
         {
             await github.DequeueAsync(flight.RepoPath, number, cancellationToken);
@@ -61,15 +62,31 @@ public sealed partial class LegCommander
             link: before?.PullRequestUrl ?? flight.PullRequestUrl);
     }
 
-    // The head of each flight's PR the node itself took out of the queue: its removal is not one GitHub made unmerged.
-    private readonly ConcurrentDictionary<string, string?> _dequeuedByNode = new(StringComparer.Ordinal);
+    // The PR of each flight the node itself took out of the queue, and when: its removal is not one GitHub made unmerged.
+    private readonly ConcurrentDictionary<string, (int Number, DateTimeOffset At)> _dequeuedByNode = new(StringComparer.Ordinal);
 
-    // The flights whose push met a merged PR and handed its commits to a follow-up PR: the push was answered, so no card offers it again.
-    private readonly ConcurrentDictionary<string, int> _handedOn = new(StringComparer.Ordinal);
+    /// <summary>How far GitHub's removal time may sit before the node's own clock at the dequeue (clock skew) and still be that dequeue.</summary>
+    private static readonly TimeSpan DequeueSkew = TimeSpan.FromMinutes(2);
 
-    /// <summary>Whether the node itself took the flight's PR out of the merge queue when it held <paramref name="head"/> (PIL836).</summary>
-    public bool DequeuedByNode(string code, string? head) =>
-        _dequeuedByNode.TryGetValue(code, out var taken) && string.Equals(taken, head, StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// Whether the removal of PR <paramref name="number"/> from the merge queue at <paramref name="removedAt"/> is the node's own (PIL836):
+    /// the node took that PR out at or after that time, less <see cref="DequeueSkew"/>. Every look until the PR is queued again reads
+    /// the same removal, so the entry is kept until then (<see cref="QueuedAgain"/>): a removal after that is GitHub's to card.
+    /// </summary>
+    public bool DequeuedByNode(string code, int number, DateTimeOffset removedAt) =>
+        _dequeuedByNode.TryGetValue(code, out var taken) && taken.Number == number && removedAt >= taken.At - DequeueSkew;
+
+    /// <summary>Lets go of the node's own dequeue of a flight's PR once the PR is queued again: a removal after that is GitHub's.</summary>
+    public void QueuedAgain(string code) => _dequeuedByNode.TryRemove(code, out _);
+
+    /// <summary>
+    /// A push refused in a way its caller acts on, said in <see cref="Way"/> (a <see cref="RefusalWays"/> constant) and carried to the
+    /// command's result, so the sweep decides from what the push did and never from the refusal's text (PIL836).
+    /// </summary>
+    internal sealed class PushRefusedException(string way, string message) : FlightException(message)
+    {
+        public string Way { get; } = way;
+    }
 
     /// <summary>The Handled line saying a flight's commits that missed an earlier PR's merge went to a new PR.</summary>
     public const string FollowUpPrKind = "follow-up-pr";
@@ -95,8 +112,7 @@ public sealed partial class LegCommander
             {
                 throw new FlightException($"{said}, and it is not the PR the flight holds: nothing was changed");
             }
-            _handedOn[flight.Code] = merged.Number;
-            throw new FlightException($"{said}: the new commits go to a follow-up PR, which opens by itself once every leg is done");
+            throw new PushRefusedException(RefusalWays.HandedOn, $"{said}: the new commits go to a follow-up PR, which opens by itself once every leg is done");
         }
         if (pr is { State: "OPEN" })
         {

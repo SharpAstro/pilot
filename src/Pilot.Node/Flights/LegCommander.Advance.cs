@@ -293,14 +293,14 @@ public sealed partial class LegCommander
             return false;
         }
         // A push that met a merged PR was answered by the push itself: the commits go to a follow-up PR, and a start offered again would
-        // meet the same refusal, so nothing rings (PIL836). Decided from what the push did, never from the refusal's text.
-        if (_handedOn.TryRemove(current.Code, out _))
+        // meet the same refusal, so nothing rings (PIL836). Decided from what the push did (the result's way), never from the refusal's text.
+        if (result.Way == RefusalWays.HandedOn)
         {
             return false;
         }
-        // GitHub's own GH006 text left in the refusal is a push the node could not answer (the PR was taken out of the queue and the
-        // branch is still locked, or a ruleset protects it): one card says so and what to do, with no reviewer start to offer, and the sweep stops asking.
-        if (PushRefusals.IsProtectedBranch(result.Error))
+        // A GH006 the push could not answer (the PR was taken out of the queue and the branch is still locked, or a ruleset protects
+        // it): one card says so and what to do, with no reviewer start to offer, and the sweep stops asking.
+        if (result.Way == RefusalWays.ProtectedBranch)
         {
             _rung[current.Code] = key;
             var locked = result.Error is { Length: > 0 } text ? text : "no reason given";

@@ -285,6 +285,12 @@ public sealed partial class LegCommander(
             error = ex.Message;
             way = RefusalWays.Busy;
         }
+        catch (PushRefusedException ex)
+        {
+            // A push refused in a way the caller acts on (PIL836): said so in the way, never left to the refusal's words.
+            error = ex.Message;
+            way = ex.Way;
+        }
         catch (FlightException ex)
         {
             error = ex.Message;
@@ -295,6 +301,8 @@ public sealed partial class LegCommander(
         }
         finally
         {
+            // A push's turning of the review was this command's own write: once its result is recorded, no later command is waved through by it.
+            _queueTurned.TryRemove(CodeOf(command.Target), out _);
             _one.Release();
         }
 

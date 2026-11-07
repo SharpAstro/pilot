@@ -235,6 +235,12 @@ public sealed partial class LegCommander
         {
             // GH006 (PIL836): the PR was queued behind the node's back, or merged meanwhile; the PR is read and the push is made once more or handed on.
             push = await RetryProtectedPushAsync(flight, cancellationToken);
+            // Still locked after the retry: a refusal the node cannot answer, said in its way (the sweep reads that, never the text,
+            // whose GH006 line may sit anywhere in git's output) with GitHub's own line, wherever git printed it.
+            if (!push.Ok && PushRefusals.ProtectedLine($"{push.Error}\n{push.Output}") is { } locked)
+            {
+                throw new PushRefusedException(RefusalWays.ProtectedBranch, $"git could not push {flight.Branch}: {locked}");
+            }
         }
         if (!push.Ok)
         {

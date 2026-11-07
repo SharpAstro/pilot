@@ -8,7 +8,13 @@ public static class PushRefusals
     /// <c>remote: error: GH006: Protected branch update failed for refs/heads/flight/pil819.</c> A branch whose PR sits in the merge
     /// queue is locked the same way, and so is one a ruleset protects, so the text alone does not say which.
     /// </summary>
-    public static bool IsProtectedBranch(string? text) =>
-        text is { Length: > 0 }
-        && (text.Contains("GH006", StringComparison.Ordinal) || text.Contains("Protected branch update failed", StringComparison.OrdinalIgnoreCase));
+    public static bool IsProtectedBranch(string? text) => ProtectedLine(text) is not null;
+
+    /// <summary>
+    /// The line of <paramref name="text"/> that is GitHub's protected-branch refusal (<see cref="IsProtectedBranch"/>), trimmed, wherever
+    /// git printed it (GitHub often prints <c>remote: Resolving deltas</c> before it); null when there is none.
+    /// </summary>
+    public static string? ProtectedLine(string? text) =>
+        text?.Split('\n').Select(l => l.Trim()).FirstOrDefault(l =>
+            l.Contains("GH006", StringComparison.Ordinal) || l.Contains("Protected branch update failed", StringComparison.OrdinalIgnoreCase));
 }

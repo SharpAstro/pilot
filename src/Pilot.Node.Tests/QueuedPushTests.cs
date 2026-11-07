@@ -59,10 +59,12 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
     private string HookPath => Path.Combine(Origin, "hooks", "pre-receive");
 
     // Origin refuses a push as GitHub does a queued branch: the GH006 line on the hook's stderr (git relays it as "remote: ..."), exit 1.
-    // The marker file says a push was refused; with onlyOnce, the next push passes.
-    private void RefuseWithGh006(FlightRow flight, bool onlyOnce = false)
+    // The marker file says a push was refused; with onlyOnce, the next push passes. With progressFirst, the hook prints a progress line
+    // before the GH006 line, as GitHub often does, so the refusal's first line is not GitHub's error.
+    private void RefuseWithGh006(FlightRow flight, bool onlyOnce = false, bool progressFirst = false)
     {
-        var refuse = $"touch '{RefusedMarker}'\necho 'error: GH006: Protected branch update failed for refs/heads/{flight.Branch}.' >&2\necho 'error: Cannot change this locked branch because it is in a merge queue.' >&2\nexit 1";
+        var progress = progressFirst ? "echo 'Resolving deltas: 100% (3/3), completed with 2 local objects.' >&2\n" : "";
+        var refuse = $"touch '{RefusedMarker}'\n{progress}echo 'error: GH006: Protected branch update failed for refs/heads/{flight.Branch}.' >&2\necho 'error: Cannot change this locked branch because it is in a merge queue.' >&2\nexit 1";
         File.WriteAllText(HookPath, $"#!/bin/sh\n{(onlyOnce ? $"if [ -f '{RefusedMarker}' ]; then exit 0; fi\n" : "")}{refuse}\n");
         if (!OperatingSystem.IsWindows())
         {
@@ -93,9 +95,10 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
         RefuseWithGh006(flight);
         MergeOnceRefused(old);
 
-        var ex = await Should.ThrowAsync<FlightException>(() => _legs.PushAsync(flight, Ct));
+        var ex = await Should.ThrowAsync<LegCommander.PushRefusedException>(() => _legs.PushAsync(flight, Ct));
 
-        // The node's own refusal never carries GH006, which the sweep reads as a push it could not answer.
+        // Handed on, said in the refusal's way, which the sweep reads; the node's own words carry no GH006.
+        ex.Way.ShouldBe(RefusalWays.HandedOn);
         ex.Message.ShouldNotContain("GH006");
         ex.Message.ShouldContain("merged meanwhile");
         ex.Message.ShouldContain("follow-up PR");
@@ -156,16 +159,21 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
         Rings().ShouldBeEmpty();
     }
 
-    [Fact]
-    public async Task AGh006RefusalThePushCannotAnswerIsRefusedWithItsTextAndTheSweepRingsOnceWithNoStartToOffer()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AGh006RefusalThePushCannotAnswerIsRefusedWithItsTextAndTheSweepRingsOnceWithNoStartToOffer(bool progressFirst)
     {
         var flight = await QueuedWithACommit();
         _github.Queue = null;
         MarkDone("parser");
-        RefuseWithGh006(flight);
+        RefuseWithGh006(flight, progressFirst: progressFirst);
 
-        var ex = await Should.ThrowAsync<FlightException>(() => _legs.PushAsync(flight, Ct));
-        ex.Message.ShouldContain("GH006");
+        // Said in the refusal's way, with GitHub's own line wherever git printed it, never the progress line before it.
+        var ex = await Should.ThrowAsync<LegCommander.PushRefusedException>(() => _legs.PushAsync(flight, Ct));
+        ex.Way.ShouldBe(RefusalWays.ProtectedBranch);
+        ex.Message.ShouldContain("GH006: Protected branch update failed");
+        ex.Message.ShouldNotContain("Resolving deltas");
 
         // The sweep's unread-head review start meets the same refusal; it rings one card saying why, with no reviewer start that
         // would be refused again, and asks no more.
@@ -204,17 +212,30 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
     [Fact]
     public async Task TheNodesOwnDequeueRaisesNoLeftTheMergeQueueCardWhenTheQueuesAreLookedAt()
     {
-        await QueuedWithACommit();
+        var flight = await QueuedWithACommit();
 
         var result = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done");
         result.Error.ShouldBeNull();
         _github.Dequeued.ShouldBe([63]);
 
-        // GitHub now reads the PR as open and out of the queue with a removal that was not a merge, as the node's own dequeue leaves it.
-        await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
+        // GitHub now reads the PR as open and out of the queue with a removal that was not a merge, as the node's own dequeue leaves it,
+        // and at the pushed head, as real GitHub's headRefOid has it by the look (the head the PR was queued at is gone).
+        var pushed = Git(flight.Worktree, "rev-parse", "HEAD");
+        Git(Origin, "rev-parse", $"refs/heads/{flight.Branch}").ShouldBe(pushed);
+        _github.Queue = _github.Queue.ShouldNotBeNull() with { Head = pushed };
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
 
         _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.QueueDropped);
         _state.Cards().ShouldContain(c => c.Kind == LegCommander.MergeTakenBackKind);
+
+        // Queued again and then let go by GitHub: that removal is GitHub's, and is carded.
+        _github.Queue = _github.Queue with { Queued = true, Position = 1, RemovedAt = null, RemovedReason = null };
+        await checks.LookAsync(Ct);
+        _github.Queue = _github.Queue with { Queued = false, Position = null, RemovedAt = DateTimeOffset.UtcNow, RemovedReason = "checks failed" };
+        await checks.LookAsync(Ct);
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == PrChecks.QueueDropped);
     }
 
     [Fact]
@@ -267,6 +288,11 @@ public sealed class PushRefusalTests
     [InlineData("remote: error: GH006: Protected branch update failed for refs/heads/flight/pil819.\nremote: error: Cannot change this locked branch because it is in a merge queue.\nTo https://github.com/SharpAstro/pilot.git\n ! [remote rejected] flight/pil819 -> flight/pil819 (protected branch hook declined)\nerror: failed to push some refs to 'https://github.com/SharpAstro/pilot.git'")]
     [InlineData("remote: error: Protected branch update failed for refs/heads/main.")]
     public void GitHubsProtectedBranchRefusalIsRecognised(string text) => PushRefusals.IsProtectedBranch(text).ShouldBeTrue();
+
+    [Fact]
+    public void GitHubsLineIsFoundAfterTheProgressGitPrintsFirst() =>
+        PushRefusals.ProtectedLine("remote: Resolving deltas: 100% (3/3), completed with 2 local objects.        \r\nremote: error: GH006: Protected branch update failed for refs/heads/flight/pil819.\r\nTo https://github.com/SharpAstro/pilot.git")
+            .ShouldBe("remote: error: GH006: Protected branch update failed for refs/heads/flight/pil819.");
 
     [Theory]
     [InlineData(null)]
