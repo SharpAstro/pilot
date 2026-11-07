@@ -283,15 +283,22 @@ public abstract class JobTestsBase : IDisposable
 
         public async Task<JobRow> UntilAsync(string id, Func<JobRow, bool> condition, CancellationToken cancellationToken)
         {
-            for (var i = 0; i < 400; i++)
+            // Bounded by the clock, not by a count of 50 ms waits: on a loaded machine each wait takes many times its length, so a
+            // count made the ceiling anything from 20 s to minutes (pilot #810, a check that failed after 1 m 47 s of them).
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            JobRow job;
+            while (!condition(job = Job(id)))
             {
-                if (Job(id) is var job && condition(job))
+                if (clock.Elapsed >= WaitCeiling)
                 {
-                    return job;
+                    // The row the wait ended on says why: a job that already ended (a timeout, a start that failed) reads very
+                    // differently from one that never left the queue.
+                    throw new TimeoutException($"job {id} never came to the state awaited within {WaitCeiling}: it is {job.State}"
+                        + $" (error: {job.Error ?? "none"}; step: {job.Step ?? "none"}; started {job.StartedAt:O}; ended {job.EndedAt?.ToString("O") ?? "never"}; told {job.Told})");
                 }
                 await Task.Delay(50, cancellationToken);
             }
-            throw new TimeoutException($"job {id} never came to the state awaited");
+            return job;
         }
 
         /// <summary>The job once it has ended and its owner has been told.</summary>
@@ -1653,23 +1660,30 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReattachedJobsTimeoutCountsFromItsStartNotFromTheRestart()
     {
+        // The first node enforces the timeout until it is stopped, so the test must see the job Running and stop that node inside
+        // the timeout. Under load the test's own waits run long (pilot #810: a check beside other flights' jobs saw a 3 s window
+        // pass before the test looked), so the window is a wide one; what the count proves is the gap between timeout and restart.
+        const int timeout = 6;
         var first = await Node.StartAsync(_root);
-        var id = first.Run(_root, Sleep(60), timeoutSeconds: 3).Made!;
-        await first.UntilAsync(id, j => j.State == JobState.Running, Ct);
+        var id = first.Run(_root, Sleep(60), timeoutSeconds: timeout).Made!;
+        var started = await first.UntilAsync(id, j => j.State == JobState.Running || j.EndedAt is not null, Ct);
+        (started.State, started.Error).ShouldBe((JobState.Running, null),
+            "the first node ended the job itself before the test could stop it: the machine was too slow for the timeout window");
         await first.StopAsync();
-        await Task.Delay(2000, Ct);
+        await Task.Delay(TimeSpan.FromSeconds(timeout / 2), Ct);
 
         var restarted = DateTimeOffset.UtcNow;
         using var second = await Node.StartAsync(_root);
         var job = await second.EndedAsync(id, Ct);
 
-        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 3s"));
-        // Counted from the start: it had about 1s left when the second node came up. A fresh 3s from the restart would end it no
-        // earlier than restarted + 3s, so ending before that proves the count. Both ends are the job's own row and the test's
-        // restart stamp, not how long the test took to get here.
-        job.EndedAt!.Value.ShouldBeLessThan(restarted + TimeSpan.FromSeconds(3));
+        (job.State, job.Error).ShouldBe((JobState.Failed, $"stopped after its timeout of {timeout}s"));
+        // Counted from the start: it had about half the timeout left when the second node came up. A fresh timeout from the restart
+        // would end it no earlier than restarted + timeout, so ending before that proves the count. Both ends are the job's own row
+        // and the test's restart stamp, not how long the test took to get here.
+        job.EndedAt!.Value.ShouldBeLessThan(restarted + TimeSpan.FromSeconds(timeout));
     }
 
     [Fact]
