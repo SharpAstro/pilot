@@ -424,17 +424,19 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         await checks.LookAsync(Ct);
         F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
         _github.Checks = ChoiceStatus.Passing;
-        // The armed loop reads the PR itself before it asks the merge, so GitHub's failure is the merge call's own: a 5xx answer.
+        // The armed loop reads the PR itself before it asks the merge, and a failure there is no refusal: only the merge verb's own
+        // read of the PR (made from LegCommander) fails, as the passing refusal the verb throws. A 5xx answer to the merge call is
+        // no refusal either: the verb arms the merge again on it.
         var asked = 0;
         _github.OnCall = call =>
         {
-            if (call == nameof(IGitHub.MergeAsync))
+            if (call == nameof(IGitHub.PullRequestAsync) && Environment.StackTrace.Contains(nameof(LegCommander), StringComparison.Ordinal))
             {
                 asked++;
+                throw new MergeBlockedException(MergeRefusals.Passing, "HTTP 503 Service Unavailable from GitHub");
             }
             return Task.CompletedTask;
         };
-        _github.MergeAnswers = "HTTP 503 Service Unavailable from GitHub";
         Func<int> thrown = () => asked;
 
         await checks.LookAsync(Ct);
