@@ -240,7 +240,7 @@ public sealed class WatchtowerBrainTests : IDisposable
     [Fact]
     public async Task AnIdleBrainOverTheContextThresholdIsSentSlashCompactOnce()
     {
-        await UpAndIdleAsync(context: 150_000);
+        await UpAndIdleAsync(context: 110_000);
 
         // Not yet idle for long enough.
         _time.Advance(TimeSpan.FromMinutes(40));
@@ -261,7 +261,7 @@ public sealed class WatchtowerBrainTests : IDisposable
     [Fact]
     public async Task AWorkingBrainIsNeverSentSlashCompact()
     {
-        await UpAndIdleAsync(context: 150_000);
+        await UpAndIdleAsync(context: 110_000);
         var said = await _messenger.SayAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(Row().Id), Args = ["how are the flights?"], Who = "gui" }, Ct);
         said.Ok.ShouldBeTrue(said.Error);
         Row().State.ShouldBe(SessionState.Working);
@@ -287,7 +287,7 @@ public sealed class WatchtowerBrainTests : IDisposable
     [Fact]
     public async Task AnIdleBrainWithNothingLeftToWatchIsCompactedToo()
     {
-        await UpAndIdleAsync(context: 150_000);
+        await UpAndIdleAsync(context: 110_000);
         _state.PutLeg(new LegRow { Flight = "TIA9", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done });
         _state.PutFlight(_state.Flights().Single() with { State = FlightState.Landed, LandedAt = _time.GetUtcNow() });
         _tower.Keeping().ShouldBeNull();
