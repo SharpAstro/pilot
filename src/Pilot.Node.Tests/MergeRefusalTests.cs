@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Pilot.Commands;
 using Pilot.Contracts;
@@ -24,11 +25,15 @@ public sealed class MergeRefusalTests
 
     private static MergeRefusal Persons(MergeAction action) => new(MergeRefusalClass.Persons, action);
 
+    /// <summary>
+    /// TIA1 with its leg done and its review passed at <see cref="PrHead"/>, PR #63 open there. Its repo is the node's folder, which
+    /// exists, so the landing after a merge that went through runs git there (as in MergeArmTests); no plane on disk, as a merge needs none.
+    /// </summary>
     private static FlightRow Flight(NodeHarness node, ReviewState? review = ReviewState.Passed, LegState leg = LegState.Done, FlightHolding? holding = null)
     {
         var row = new FlightRow
         {
-            Code = "TIA1", Repo = "tianwen", RepoPath = Path.Combine(node.Folder, "tianwen"), Issue = 1, Branch = "flight/tia1", Worktree = Path.Combine(node.Folder, "plane-TIA1"),
+            Code = "TIA1", Repo = "tianwen", RepoPath = node.Folder, Issue = 1, Branch = "flight/tia1", Worktree = Path.Combine(node.Folder, "plane-TIA1"),
             Base = "main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow, PullRequest = 63, PullRequestUrl = PrUrl, Holding = holding,
             Review = review is { } state ? new ReviewRow { State = state, Reviewer = "du1-review", StartedAt = DateTimeOffset.UtcNow, ReviewedHead = PrHead } : null,
         };
@@ -36,6 +41,29 @@ public sealed class MergeRefusalTests
         node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = leg });
         node.GitHub.Pr = new PullRequest(63, "OPEN", PrHead, PrUrl);
         return row;
+    }
+
+    /// <summary>A plane on disk at <paramref name="worktree"/>: a repo of one commit, whose sha it returns as the head it holds.</summary>
+    private static string Plane(string worktree)
+    {
+        Directory.CreateDirectory(worktree);
+        Git(worktree, "init", "-q", "-b", "main");
+        Git(worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "first");
+        return Git(worktree, "rev-parse", "HEAD");
+    }
+
+    private static string Git(string cwd, params string[] args)
+    {
+        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var arg in args)
+        {
+            start.ArgumentList.Add(arg);
+        }
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
     }
 
     private static Task<CommandResult> Merge(NodeHarness node, params string[] args) =>
@@ -91,7 +119,12 @@ public sealed class MergeRefusalTests
     public async Task AHeadNewerThanTheOneReviewedIsANodeWait()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
-        Flight(node);
+        var flight = Flight(node);
+        // After this refusal the node reads the plane (HeadMovedAsync), so the flight has one, holding the reviewed head: the head moved
+        // from outside it, and the merge is dropped saying so, with no reviewer started. The merge names a head that is not the reviewed
+        // one, so the refusal is this one and not a re-pin's.
+        var reviewed = Plane(flight.Worktree);
+        node.State.PutFlight(flight with { Review = flight.Review! with { ReviewedHead = reviewed } });
         node.GitHub.Pr = new PullRequest(63, "OPEN", "def5678aaaabbbbccccdddd", PrUrl);
 
         Refused(await Merge(node), NodeWait, "is newer than the one you reviewed");
