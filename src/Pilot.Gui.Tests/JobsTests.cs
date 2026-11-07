@@ -130,7 +130,7 @@ public sealed class JobsTests
         var line = JobLine.From(whole, Live.At);
 
         line.WholeSuite.ShouldBeTrue();
-        line.ToDumpLine().ShouldBe("j14 | dotnet test j14 | ORB204/parser | running (Passed Parser.NestedGroups) | 1h ago | 1h 23m | whole suite");
+        line.ToDumpLine().ShouldBe("j14 | dotnet test j14 | ORB204/parser | running (Passed Parser.NestedGroups) | 1h 23m ago | 1h 23m | whole suite");
         // Without the mark the line is as it was, and the detail has no scope.
         JobLine.From(whole with { WholeSuite = null }, Live.At).WholeSuite.ShouldBeFalse();
         JobLine.From(whole with { WholeSuite = null }, Live.At).ToDumpLine().ShouldNotContain("whole suite");
