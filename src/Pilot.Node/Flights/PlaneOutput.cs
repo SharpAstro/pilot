@@ -3,8 +3,8 @@ namespace Pilot.Node.Flights;
 /// <summary>
 /// A job in a plane builds into output under the plane (<c>job-plane-output</c>): MSBuild's artifacts output layout puts every
 /// project's <c>obj</c> and <c>bin</c>, a sibling clone's project included, under <c>&lt;plane&gt;/artifacts</c>, so two planes never write
-/// the same sibling <c>obj</c> and the sibling lock has nothing to guard. It is on unless set off (PIL802), so four slots can build at
-/// once. A worker's own build outside the node lands in the normal <c>obj</c>, so a later <c>test --no-build</c> through the node
+/// the same sibling <c>obj</c> and the sibling lock has nothing to guard. It is off unless set on: since PIL802 a plane builds on the published
+/// packages and compiles no sibling at all, so only a <c>pilot: sibling source</c> flight would need it. A worker's own build outside the node lands in the normal <c>obj</c>, so a later <c>test --no-build</c> through the node
 /// must follow a node build; <see cref="NoBuildNotice"/> says so in the log of one that does not.
 /// </summary>
 public static class PlaneOutput

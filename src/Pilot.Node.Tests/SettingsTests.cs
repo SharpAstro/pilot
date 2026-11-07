@@ -169,15 +169,20 @@ public sealed class SettingsTests : IDisposable
     /// <summary>PIL802: a node with nothing saved builds plane jobs into the planes' own artifacts, the page says on (default), and off still works at once.</summary>
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task JobPlaneOutputIsOnByDefaultAndSetOffIsInForceAtOnce()
+    public async Task JobPlaneOutputIsOffByDefaultAndASetIsInForceAtOnce()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         var runner = node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
 
-        runner.PlaneOutput.ShouldBeTrue();
+        // Off by default since planes build on the packages (PIL802).
+        runner.PlaneOutput.ShouldBeFalse();
         (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == NodeSettings.JobPlaneOutputKey).ShouldSatisfyAllConditions(
-            s => s.Value.ShouldBe("on"), s => s.Saved.ShouldBeNull(), s => s.Source.ShouldBe(SettingSources.Default), s => s.Pending.ShouldBeFalse(),
-            s => s.Choices.ShouldBe(["on", "off"]), s => s.Detail.ShouldContain("the default"), s => s.Detail.ShouldNotContain("Off by default"));
+            s => s.Value.ShouldBe("off"), s => s.Saved.ShouldBeNull(), s => s.Source.ShouldBe(SettingSources.Default), s => s.Pending.ShouldBeFalse(),
+            s => s.Choices.ShouldBe(["on", "off"]), s => s.Detail.ShouldContain("Off by default"));
+
+        var first = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["job-plane-output", "on"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        first.Way.ShouldNotBeNull().ShouldStartWith("job-plane-output saved as on, and in force now");
+        runner.PlaneOutput.ShouldBeTrue();
 
         var off = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["job-plane-output", "off"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
         off.Way.ShouldNotBeNull().ShouldStartWith("job-plane-output saved as off, and in force now");

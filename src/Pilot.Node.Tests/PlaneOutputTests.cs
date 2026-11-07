@@ -6,7 +6,7 @@ using Xunit;
 
 namespace Pilot.Node.Tests;
 
-/// <summary>A dotnet job in a plane builds into the plane's own artifacts unless job-plane-output is set off, and takes no sibling lock (PIL724, on by default since PIL802).</summary>
+/// <summary>A dotnet job in a plane builds into the plane's own artifacts while job-plane-output is on, and takes no sibling lock (PIL724); off by default since planes build on the packages (PIL802).</summary>
 [Collection(JobsCollection.Name)]
 public sealed class PlaneOutputTests : JobTestsBase
 {
@@ -49,13 +49,13 @@ public sealed class PlaneOutputTests : JobTestsBase
     }
 
     [Fact]
-    public void TheSettingIsOnByDefaultAndListed()
+    public void TheSettingIsOffByDefaultAndListed()
     {
         NodeSettings.Keys.ShouldContain(NodeSettings.JobPlaneOutputKey);
-        // Nothing saved means the default, which is on (PIL802); a saved off still turns it off.
-        NodeSettings.JobPlaneOutputDefault.ShouldBeTrue();
+        // Nothing saved means the default, which is off since planes build on the packages (PIL802); a saved on turns it on.
+        NodeSettings.JobPlaneOutputDefault.ShouldBeFalse();
         new NodeSettings().JobPlaneOutput.ShouldBeNull();
-        _jobs.PlaneOutput.ShouldBeTrue();
+        _jobs.PlaneOutput.ShouldBeFalse();
         NodeSettings.With(new NodeSettings(), NodeSettings.JobPlaneOutputKey, ["on"]).Settings!.JobPlaneOutput.ShouldBe(true);
         NodeSettings.With(new NodeSettings(), NodeSettings.JobPlaneOutputKey, ["off"]).Settings!.JobPlaneOutput.ShouldBe(false);
         NodeSettings.With(new NodeSettings(), NodeSettings.JobPlaneOutputKey, ["maybe"]).Error.ShouldNotBeNull();
@@ -99,10 +99,13 @@ public sealed class PlaneOutputTests : JobTestsBase
     }
 
     [Fact]
-    public async Task ByDefaultTwoPlanesBuildingTheSameSiblingRunAtOnce()
+    public async Task ByDefaultTwoPlanesRunAtOnceBecauseAPlaneReachesNoSibling()
     {
-        // Nothing is set on the runner: the default is on, so the shared sibling holds neither plane back.
+        // Nothing is set on the runner: the setting is off (PIL802), and the real sibling sets are asked. A plane builds on the
+        // packages, so it reaches no clone and neither plane holds the other back.
         var jobs = Runner(planeOutput: null);
+        jobs.PlaneOutput.ShouldBeFalse();
+        jobs.SiblingsOf = null;
         var first = Hand(jobs, "echo 'one'; sleep 20", PlaneIn("pil1"));
         var second = Hand(jobs, "echo 'two'; sleep 20", PlaneIn("pil2"));
         await Until(first, j => j.State == JobState.Running);

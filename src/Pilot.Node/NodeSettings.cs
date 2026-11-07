@@ -26,10 +26,13 @@ public sealed record NodeSettings
     public const string MaxJobsKey = "max-jobs";
     public const string JobMemoryKey = "job-memory";
     public const string JobPriorityKey = "job-priority";
-    /// <summary>Whether a job in a plane builds into output under the plane (MSBuild artifacts output), so two planes never share a sibling clone's obj and the sibling lock is skipped for it; on unless set off.</summary>
+    /// <summary>Whether a job in a plane builds into output under the plane (MSBuild artifacts output), so two planes never share a sibling clone's obj and the sibling lock is skipped for it; off unless set on.</summary>
     public const string JobPlaneOutputKey = "job-plane-output";
-    /// <summary>What <see cref="JobPlaneOutputKey"/> is when the settings file does not say (PIL802): on, so four slots can build at once.</summary>
-    public const bool JobPlaneOutputDefault = true;
+    /// <summary>
+    /// What <see cref="JobPlaneOutputKey"/> is when the settings file does not say: off (PIL802). A plane builds on the published
+    /// packages, so it compiles no sibling and has nothing to share; only a <c>pilot: sibling source</c> flight holds clones.
+    /// </summary>
+    public const bool JobPlaneOutputDefault = false;
     public const string MergeMethodKey = "merge-method";
     public const string StartLimitKey = "start-limit";
     public const string PriorityStartLimitKey = "priority-start-limit";

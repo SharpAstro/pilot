@@ -1362,7 +1362,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             : null;
     }
 
-    /// <summary>Whether a job in a plane builds into the plane's own artifacts (<see cref="NodeSettings.JobPlaneOutputKey"/>); on unless set off, live.</summary>
+    /// <summary>Whether a job in a plane builds into the plane's own artifacts (<see cref="NodeSettings.JobPlaneOutputKey"/>); off unless set on, live.</summary>
     public bool PlaneOutput
     {
         get => _planeOutput;
