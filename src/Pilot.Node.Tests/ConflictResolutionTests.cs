@@ -45,7 +45,7 @@ public sealed class ConflictResolutionTests : ReviewTestsBase
 
     private void NoCardAboutIt()
     {
-        Open().ShouldNotContain(c => c.Bin is CardBin.Ring or CardBin.ForYou);
+        Open().ShouldNotContain(c => c.Bin == CardBin.Ring || c.Bin == CardBin.ForYou);
         _state.Cards().ShouldNotContain(c => c.Kind.Contains("conflict", StringComparison.OrdinalIgnoreCase) || c.Title.Contains("conflicts with its base", StringComparison.OrdinalIgnoreCase));
     }
 
@@ -75,7 +75,7 @@ public sealed class ConflictResolutionTests : ReviewTestsBase
         _state.PutSession(new SessionRow
         {
             Id = leg.WorkerJob!, SessionId = leg.WorkerJob + "-0000-4000-8000-000000000000", Name = leg.Worker!, Kind = SessionKind.Background, Cwd = flight.Worktree,
-            Role = SessionRole.Worker, Flight = flight.Code, Leg = leg.Name, State = SessionState.Idle, StartedAt = DateTimeOffset.UtcNow, LastResponseAt = DateTimeOffset.UtcNow,
+            Role = SessionRole.Worker, Flight = flight.Code, Leg = leg.Name, ContextTokens = 0, ContextWindow = 200_000, SpendWeighted = 0, State = SessionState.Idle, StartedAt = DateTimeOffset.UtcNow, LastResponseAt = DateTimeOffset.UtcNow,
         });
 
     [Fact]
@@ -277,7 +277,8 @@ public sealed class ConflictResolutionTests : ReviewTestsBase
     public async Task AFlyingLegWhoseWorkerIsNotLiveIsNotToldAndNothingRings()
     {
         var flight = await Conflicted("51", openPr: false);
-        (await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, "parser"), "controller")).Error.ShouldBeNull();
+        // A done leg is put flying again by a go-around (a start is refused for it).
+        (await Run(Verbs.GoAround, Verbs.LegTarget(flight.Code, "parser"), "controller", "redo it")).Error.ShouldBeNull();
         var started = _workers.Started.Count;
         var told = false;
         _legs.Say = (_, _, _) =>

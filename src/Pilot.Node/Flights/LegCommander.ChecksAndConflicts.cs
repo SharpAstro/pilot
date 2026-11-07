@@ -64,6 +64,9 @@ public sealed partial class LegCommander
         {
             return $"{code} is not a flying flight with a plane";
         }
+        // The plane's view of the base is as old as its last fetch: GitHub has the conflict against the base as it is now, so the brief
+        // and the once-per-head key must be made from the base as it is now. A failed fetch leaves the view as it was.
+        await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
         var head = await git.RunAsync(["rev-parse", flight.Base], flight.Worktree, cancellationToken);
         var key = head.Ok ? head.Output.Trim() : "";
         if (key.Length == 0)

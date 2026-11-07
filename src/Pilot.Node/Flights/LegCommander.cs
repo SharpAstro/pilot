@@ -394,7 +394,8 @@ public sealed partial class LegCommander(
                 {
                     DropMerge(code, why);
                 }
-                error = $"{error}; {why}{(!IsConflict(why) ? "" : await ResolveConflictAsync(code, why, cancellationToken, lockHeld: true) is { } notSent ? $" ({notSent})" : $": {WorkerResolves}")}";
+                // The command's lock was let go above (as BringUpToDateKeepingAsync, which takes it itself, relies on), so the round goes by the command route.
+                error = $"{error}; {why}{(!IsConflict(why) ? "" : await ResolveConflictAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : $": {WorkerResolves}")}";
             }
             else
             {
