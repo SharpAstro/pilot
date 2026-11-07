@@ -953,6 +953,19 @@ beside its choices (`CardsView.OnChatAbout`; dead while a press of the card is w
 closed card and from a watch-only card of a node with no grant); the flight page's merge block has the same button for its
 card. It shows the Chat page with the card quoted above the box (see below) and the keyboard in the box.
 
+A card whose answer is underway (`CardRow.Answering`, #792) says so where its buttons are: one line, `Merge: pressed by cli at 20:35,
+waiting on TIA1's PR #7 being merged` (local time; no `waiting on` part when the node names nothing), the same wording
+`CardAnswering.Line` gives `pilot cards` (plain and Markdown, under the card's words) and the TUI. Every node-bound button of
+that card is dead while it is set: both choices and Dismiss (and a grant's Connect) draw as words with no hit, the choice
+pressed reading `Merge …`. A card's refusal is not drawn beside that line. A kept refusal (what the node said to the last
+press) is dropped as the panel is built when the stream shows the card **closed** (gone from the open cards, or held closed
+under the pointer) or **answering**, and when a closed card comes back open if the refusal had been drawn, so an open card never
+keeps a "was refused" about a state it has left. A refusal that lands after the change (the node's reply beating the stream: a
+choice that closed its card first and was refused, or this press's own answer ending refused) is kept and drawn: it is the
+outcome of the press that made the change. An ok answer is never a refusal: a press that joined an answer (`already on its way,
+started by cli at 20:35`, `already answered by cli at 20:35`, recognised by `CardAnswering.IsJoined`) clears an older refusal
+and is logged by the GUI and TUI as `joined: ...`, not `done`.
+
 A node the window cannot reach (its stream is down: the same `Connected` the Fleet page shows) leaves the panel with its
 cards, which may be long answered and cannot be commanded now (#325). In their place, at the foot of **For you**, one dim
 line per such node reads `DE1 is unreachable since 10:31 · 3 ringing, 2 for you held` (the time is today's clock, or the
@@ -1610,6 +1623,8 @@ underway for longer than the leg commander's stuck limit (10 minutes) no longer 
 node that restarts does not bring a mark back. A choice that closes its card first (a landing) answers a repeat of itself in the
 next few minutes with ok and `already answered by <who> at <HH:mm>`, not "closed already"; any other choice on a closed card is
 refused as before. The field is optional, so it does not raise `NodeWire.Version`: an older client ignores it and keeps its buttons.
+The GUI's cards panel, the TUI and `pilot cards` show the mark (see the cards panel under the GUI above): the line, dead buttons, and
+no refusal left on a card that moved on.
 
 ## Hooks
 
