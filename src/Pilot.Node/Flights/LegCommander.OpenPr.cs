@@ -128,6 +128,8 @@ public sealed partial class LegCommander
         {
             return;
         }
+        // A PR in the merge queue locks its branch (GH006) and merges whatever head it had when it was queued: out first.
+        await EnsureNotQueuedAsync(flight, pr.Number, cancellationToken);
         // Unknown is treated as armed: the disarm is no error when it was not on.
         if (await github.AutoMergeArmedAsync(flight.RepoPath, pr.Number, cancellationToken) == false)
         {

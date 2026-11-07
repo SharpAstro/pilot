@@ -140,7 +140,7 @@ public sealed partial class LegCommander
         {
             return $"{seen.Code} is gone: nothing was changed";
         }
-        return NodeState.SameFlight(Unmarked(seen), Unmarked(now)) ? null : $"{seen.Code} changed while GitHub and git were being asked: nothing was recorded, look again and ask again";
+        return NodeState.SameFlight(Unmarked(seen), Unmarked(now)) || MovedByQueuedPush(seen, now) ? null : $"{seen.Code} changed while GitHub and git were being asked: nothing was recorded, look again and ask again";
     }
 
     // What the node writes about a flight's PR by itself, from its looks and its marks, comes and goes whatever a command does.
