@@ -583,6 +583,25 @@ public sealed class SayTests : IDisposable
     }
 
     [Fact]
+    public async Task ASaysLogLineSplitsItsTimeIntoGateLookChooseAndDeliver()
+    {
+        // A 51 s say whose relay took 185 ms said only its total (DE1, 2026-11-07): the line says where the time went.
+        _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "pil5-say-int"));
+
+        await _messenger.SayAsync(Say("a1b2c3d4", "hello"), Ct);
+
+        _log.ToString().ShouldMatch(@"delivered \(\d+ ms: gate \d+ ms, look \d+ ms, choose \d+ ms, deliver \d+ ms\)");
+    }
+
+    [Fact]
+    public async Task ARefusedSaysLogLineNamesOnlyThePartsItReached()
+    {
+        await _messenger.SayAsync(Say("nobody", "hello"), Ct);
+
+        _log.ToString().ShouldMatch(@"refused: .* \(\d+ ms: gate \d+ ms, look \d+ ms\)");
+    }
+
+    [Fact]
     public async Task EverySayIsLoggedWithWhoTheTargetTheWayAndTheOutcome()
     {
         _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "pil5-say-int"));

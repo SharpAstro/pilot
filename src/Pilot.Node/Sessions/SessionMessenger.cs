@@ -41,6 +41,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     private async Task<CommandResult> DoAsync(CommandRequest command, bool compact, CancellationToken cancellationToken)
     {
         var clock = Stopwatch.StartNew();
+        var parts = new SayParts();
         string? way = null;
         string? sessionId = null;
         string? route = null;
@@ -48,7 +49,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         string? error;
         try
         {
-            (way, sessionId, route, duplicate) = await DeliverAsync(command, compact, cancellationToken);
+            (way, sessionId, route, duplicate) = await DeliverAsync(command, compact, parts, cancellationToken);
             error = null;
         }
         catch (SessionDeliveryException ex)
@@ -64,7 +65,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             // A cancelled say (the client's connection went) or an unexpected failure used to leave no line at all, so a say
             // that was lost, or went on in the background, was invisible in node.log (PIL595).
             var kind = ex is OperationCanceledException ? "cancelled" : $"failed: {ex.GetType().Name}: {ex.Message}";
-            await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} from={SenderKind(command.Who)} target={command.Target} way={way ?? "none"} {kind} ({(long)clock.Elapsed.TotalMilliseconds} ms)");
+            await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} from={SenderKind(command.Who)} target={command.Target} way={way ?? "none"} {kind} ({parts.Line(clock.Elapsed)})");
             await log.FlushAsync(CancellationToken.None);
             throw;
         }
@@ -72,7 +73,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         var result = state.Complete(command, error, way, sessionId);
         var outcome = duplicate ? $"skipped: request id {command.RequestId} was already sent{(sessionId is null ? "" : $" as {sessionId}")}"
             : error is null ? "delivered" +(sessionId is null ? "" : $" as {sessionId}") : $"refused: {error}";
-        await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} from={SenderKind(command.Who)} target={command.Target} way={way ?? "none"}{(route is null ? "" : $" route={route}")} {outcome} ({(long)clock.Elapsed.TotalMilliseconds} ms)");
+        await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} from={SenderKind(command.Who)} target={command.Target} way={way ?? "none"}{(route is null ? "" : $" route={route}")} {outcome} ({parts.Line(clock.Elapsed)})");
         await log.FlushAsync(cancellationToken);
         return result;
     }
@@ -181,7 +182,33 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         }
     }
 
-    private async Task<(string? Way, string? SessionId, string? Route, bool Duplicate)> DeliverAsync(CommandRequest command, bool compact, CancellationToken cancellationToken)
+    /// <summary>
+    /// Where a say's time went, for its node.log line: the wait for the target's gate, the fresh look at the target, the choice of
+    /// way, and the delivery itself (relay or resume). A 51 s say whose relay took 185 ms (DE1, 2026-11-07) said only its total.
+    /// </summary>
+    internal sealed class SayParts
+    {
+        public TimeSpan? Gate { get; set; }
+        public TimeSpan? Look { get; set; }
+        public TimeSpan? Choose { get; set; }
+        public TimeSpan? Deliver { get; set; }
+
+        /// <summary><c>51118 ms: gate 3 ms, look 12 ms, choose 0 ms, deliver 185 ms</c>; a part not reached is left out.</summary>
+        public string Line(TimeSpan total)
+        {
+            var named = new List<string>();
+            foreach (var (name, took) in new[] { ("gate", Gate), ("look", Look), ("choose", Choose), ("deliver", Deliver) })
+            {
+                if (took is { } t)
+                {
+                    named.Add($"{name} {(long)t.TotalMilliseconds} ms");
+                }
+            }
+            return named.Count == 0 ? $"{(long)total.TotalMilliseconds} ms" : $"{(long)total.TotalMilliseconds} ms: {string.Join(", ", named)}";
+        }
+    }
+
+    private async Task<(string? Way, string? SessionId, string? Route, bool Duplicate)> DeliverAsync(CommandRequest command, bool compact, SayParts parts, CancellationToken cancellationToken)
     {
         if (!command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal) || command.Target.Length == Verbs.SessionTargetPrefix.Length)
         {
@@ -212,12 +239,17 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         }
 
         var gate = _busy.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
+        var step = Stopwatch.StartNew();
         await gate.WaitAsync(cancellationToken);
+        parts.Gate = step.Elapsed;
         try
         {
             // A fresh look first, as v1's say() does: a session idle a poll ago may be mid-turn now, and stopping it would
             // cut its turn off.
+            step.Restart();
             await tracker.PollAsync(cancellationToken);
+            parts.Look = step.Elapsed;
+            step.Restart();
             var rows = state.Sessions();
             var row = Find(rows, id) ?? throw new SessionDeliveryException($"There is no session {id}: give its row id, or the name of one live session, as pilot sessions lists them");
             // The same request id said to this row again, by resume or relay, is the first's delivery, not a second one (PIL595).
@@ -249,6 +281,8 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             // with no stop and no resume (PIL584). A compaction stays a resume, since /compact has to be the session's own next turn; a
             // failed direct relay (no live endpoint) falls back to the resume.
             var way = Choose(row);
+            parts.Choose = step.Elapsed;
+            step.Restart();
             // The owner's say (from a pilot UI) to a background session that is not mid-turn is not relayed: Claude Code tags every
             // intercom message as a peer's, so only a resume lands it as the owner's own user turn (PIL625). A Working background
             // session is still relayed (a resume would cut its turn) and so is an interactive one (someone is at its terminal);
@@ -261,6 +295,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                 {
                     var liveRoute = await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who), ReplyTo(rows, row, command.Who), row.SessionId, DirectOnly: true), cancellationToken);
                     Timings?.Record(SendTimings.Relay, liveClock.Elapsed, $"target={command.Target}");
+                    parts.Deliver = step.Elapsed;
                     Remember(deliveredKey, SayWays.Relayed, null, liveRoute, command, text, began);
                     return (SayWays.Relayed, null, liveRoute, false);
                 }
@@ -276,6 +311,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                     var resumeClock = Stopwatch.StartNew();
                     var resumedAs = await ResumeAsync(row, text, cancellationToken);
                     Timings?.Record(SendTimings.Resume, resumeClock.Elapsed, $"target={command.Target}");
+                    parts.Deliver = step.Elapsed;
                     ledger?.Resumed([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], compact ? SessionStartReasons.Compaction : "say");
                     Remember(deliveredKey, SayWays.Resumed, resumedAs, null, command, text, began);
                     return (SayWays.Resumed, resumedAs, null, false);
@@ -290,6 +326,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                     var relayClock = Stopwatch.StartNew();
                     var route = await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who), ReplyTo(rows, row, command.Who), row.SessionId, DirectOnly: direct), cancellationToken);
                     Timings?.Record(SendTimings.Relay, relayClock.Elapsed, $"target={command.Target}");
+                    parts.Deliver = step.Elapsed;
                     Remember(deliveredKey, SayWays.Relayed, null, route, command, text, began);
                     return (SayWays.Relayed, null, route, false);
             }
