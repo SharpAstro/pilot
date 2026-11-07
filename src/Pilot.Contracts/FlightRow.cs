@@ -139,6 +139,14 @@ public sealed record FlightRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool HumanVerification { get; init; }
 
+    /// <summary>
+    /// Whether the flight's issue carries the <c>pilot: sibling source</c> label as of the node's last start of the flight: the exception
+    /// to the rule that a flight builds on the published packages, as CI does (PIL802). Its node jobs in a plane run with
+    /// <c>UseLocalSiblings=true</c>, so they compile the sibling clones and hold them. Optional and additive, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool SiblingSource { get; init; }
+
     /// <summary>Whether the issue's repo has the Priority field (and the token can read it): where it does, it alone says priority and the <c>pilot: priority</c> label is ignored.</summary>
     public bool HasPriorityField { get; init; }
 

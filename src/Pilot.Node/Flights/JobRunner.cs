@@ -1385,7 +1385,19 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     private bool _planeOutput = NodeSettings.JobPlaneOutputDefault;
 
     /// <summary>The clones a job's build compiles; settable so a test can give fixed sets. Answered once per job, kept until it ends.</summary>
-    public Func<JobRow, IReadOnlyCollection<string>> SiblingsOf { get; set; } = job => SiblingSet.Of(job.Command, job.Cwd);
+    public Func<JobRow, IReadOnlyCollection<string>>? SiblingsOf { get; set; }
+
+    private IReadOnlyCollection<string> SiblingsOfJob(JobRow job) => SiblingsOf is { } given ? given(job) : SiblingSet.Of(job.Command, job.Cwd, SiblingSource(job));
+
+    /// <summary>
+    /// Whether <paramref name="job"/> runs in the plane of a flight marked to build on sibling source (<see cref="FlightRow.SiblingSource"/>,
+    /// the <c>pilot: sibling source</c> label): such a job gets <c>UseLocalSiblings=true</c>, which opens pilot's plane probe to the
+    /// clones, and holds them. Every other plane builds on the published packages, as CI does (PIL802).
+    /// </summary>
+    private bool SiblingSource(JobRow job) =>
+        job.Flight is { } code
+        && Flights.PlaneOutput.PlaneOf(job.Cwd) is not null
+        && state.Flights().FirstOrDefault(f => f.Code == code) is { SiblingSource: true };
 
     private readonly ConcurrentDictionary<string, IReadOnlyCollection<string>> _siblings = new(StringComparer.Ordinal);
 
@@ -1399,7 +1411,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         try
         {
             // A plane job that builds into the plane's own artifacts shares nothing to hold (job-plane-output).
-            set = PlaneOutput && Flights.PlaneOutput.PlaneOf(job.Cwd) is not null ? [] : SiblingsOf(job);
+            set = PlaneOutput && Flights.PlaneOutput.PlaneOf(job.Cwd) is not null ? [] : SiblingsOfJob(job);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
@@ -1585,7 +1597,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             // An exit file of an earlier run of this id would end the job at once: there is none.
             File.Delete(exitPath);
-            shell = DetachedShell.For(job.Id, job.Command, job.Cwd, job.LogPath, exitPath, Priority, Flights.PlaneOutput.Variables(PlaneOutput, job.Cwd),
+            var variables = new Dictionary<string, string>(Flights.PlaneOutput.Variables(PlaneOutput, job.Cwd), StringComparer.Ordinal);
+            if (SiblingSource(job))
+            {
+                variables[Flights.PlaneOutput.UseLocalSiblings] = "true";
+            }
+            shell = DetachedShell.For(job.Id, job.Command, job.Cwd, job.LogPath, exitPath, Priority, variables,
                 Flights.PlaneOutput.NoBuildNotice(PlaneOutput, job.Command, job.Cwd));
             var started = shell.Start();
             process = new JobProcess(started.Id, StartOf(started), started);

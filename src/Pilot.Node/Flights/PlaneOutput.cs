@@ -12,6 +12,9 @@ public static class PlaneOutput
     public const string UseArtifactsOutput = "UseArtifactsOutput";
     public const string ArtifactsPath = "ArtifactsPath";
 
+    /// <summary>The switch that opens pilot's plane probe to the sibling clones; the node sets it for a flight marked <c>pilot: sibling source</c> (PIL802).</summary>
+    public const string UseLocalSiblings = "UseLocalSiblings";
+
     /// <summary>The plane (<c>&lt;repo&gt;/.claude/worktrees/&lt;code&gt;</c>) holding <paramref name="cwd"/>; null for a folder outside any plane (a main clone included).</summary>
     public static string? PlaneOf(string cwd)
     {

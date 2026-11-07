@@ -32,7 +32,7 @@
   -->
   <PropertyGroup>
     <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\LAN.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
-    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\LAN.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND '$(UseLocalSiblings)' == 'true' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\LAN.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
     <UseLocalLanLib Condition="'$(UseLocalLanLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)LAN.Lib\src\LAN.Lib\LAN.Lib.csproj')">true</UseLocalLanLib>
   </PropertyGroup>
   <ItemGroup Condition="'$(UseLocalLanLib)' == 'true'">

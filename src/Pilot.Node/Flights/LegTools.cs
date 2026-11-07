@@ -465,10 +465,16 @@ public static class PilotMarks
     public const string Recheck = LabelPrefix + "recheck";
 
     /// <summary>The labels the node reads from a person; each is made in a repo when the node labels a flight item there. A later one is added here.</summary>
-    public static readonly string[] ReadFromPeople = [Priority, Recheck, HumanVerification];
+    public static readonly string[] ReadFromPeople = [Priority, Recheck, HumanVerification, SiblingSource];
 
     /// <summary>Put on a flight's issue by a person: the flight's live behaviour needs a person's check, so its briefs say how to note such checks and the node files each as an issue for the controller.</summary>
     public const string HumanVerification = LabelPrefix + "human verification";
+
+    /// <summary>
+    /// Put on a flight's issue by a person: the exception to building on the published packages. The flight's node jobs in a plane
+    /// compile the sibling clones' source (<c>UseLocalSiblings=true</c>) and hold them while they build (PIL802).
+    /// </summary>
+    public const string SiblingSource = LabelPrefix + "sibling source";
 
     /// <summary>
     /// The prefix of the label that says which node flies an issue or story. Deliberately not starting with
@@ -506,6 +512,7 @@ public static class PilotMarks
         Pinned => ("fbca04", "pinned to the top of its section in pilot's Ideas pane"),
         Priority => ("e99695", "pilot: its starts bypass the Opus cap and the repo hold"),
         HumanVerification => ("c5def5", "a person must check this flight's live behaviour; pilot files those checks as issues"),
+        SiblingSource => ("bfd4f2", "this flight builds on the sibling clones' source, not the published packages"),
         _ => ("ededed", "set by pilot"),
     };
 }
