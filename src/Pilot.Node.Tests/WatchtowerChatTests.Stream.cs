@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Pilot.Contracts;
+using Pilot.Node.Flights;
 using Pilot.Node.Sessions;
 using Shouldly;
 using Xunit;
@@ -21,7 +22,7 @@ public sealed partial class WatchtowerChatTests
     private const string ResultLine = """{"type":"result","subtype":"success","is_error":false,"duration_ms":900,"session_id":"x"}""";
 
     private static string Delta(string text) =>
-        $$"""{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"{{text}}"}}}""";
+        $$$$"""{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"{{{{text}}}}"}}}""";
 
     private const string RunsPilotStatus =
         """{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"pilot status"}}]}}""";
@@ -221,7 +222,7 @@ public sealed partial class WatchtowerChatTests
 
         // The first at once, one more (trailing) for what came after it: the last words are announced, but 50 deltas are not 50 events.
         await UntilAsync(() => sink.Chat - before >= 2, "the leading and the trailing event");
-        await Task.Delay(400);
+        await Task.Delay(400, TestContext.Current.CancellationToken);
         (sink.Chat - before).ShouldBeInRange(2, 4);
 
         // A turn's end is announced at once, whatever the throttle says.
