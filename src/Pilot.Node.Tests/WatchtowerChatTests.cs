@@ -8,7 +8,7 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>The conversation with the watchtower as one chat feed: across the watchtowers there have been, with a divider where a fresh one began, and what it waits on.</summary>
-public sealed class WatchtowerChatTests : IDisposable
+public sealed partial class WatchtowerChatTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 

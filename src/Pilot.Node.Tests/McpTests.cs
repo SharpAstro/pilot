@@ -156,6 +156,16 @@ public sealed class McpTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ChatNowIsATool_AndARefusalSaysWhyNothingWasCancelled()
+    {
+        var replies = await Serve(Server(), Initialize, Call(2, "chat_now", """{"send-id":"s1"}"""));
+
+        var (isError, text) = Result(replies[1]);
+        isError.ShouldBeTrue();
+        text.ShouldStartWith("refused: chat-now watchtower: nothing is running");
+    }
+
+    [Fact]
     public void ACallIsSpelledAsTheCliParsesIt_WordsThatLookLikeOptionsStayWords()
     {
         var root = PilotCommand.Build(_node.Folder, TextWriter.Null, TextWriter.Null);

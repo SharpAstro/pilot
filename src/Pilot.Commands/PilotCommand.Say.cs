@@ -9,6 +9,18 @@ public static partial class PilotCommand
 {
     private sealed partial class BuildContext
     {
+        /// <summary>
+        /// Makes <c>chat now &lt;send id&gt;</c> (PIL855): cancels the turn the watchtower is on so that the queued message with that send id
+        /// (the chat page's queued ids) is answered next. The node refuses it, saying why, when nothing runs or the send id is not queued.
+        /// </summary>
+        internal Command ChatCommand()
+        {
+            var sendId = Arg("send-id", "The send id of the queued message to answer now (the chat page's queued ids)");
+            var now = Action(new Command("now", "Cancel the watchtower's running turn and answer this queued message next") { Arguments = { sendId } },
+                (p, client, ct) => Send(client, Verbs.ChatNow, Verbs.WatchtowerTarget, [p.GetValue(sendId)!], who, ct));
+            return new Command("chat", "The watchtower's chat") { Subcommands = { now } };
+        }
+
         /// <summary>Makes the say, session end, say-all, compact, note, tell, watchtower, digest and archive: talking to and putting away sessions.</summary>
         internal (Command, Command, Command, Command, Command, Command, Command, Command, Command, Command, Command) SessionCommands()
         {

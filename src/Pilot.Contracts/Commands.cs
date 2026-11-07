@@ -189,6 +189,13 @@ public static class Verbs
     public const string Say = "say";
 
     /// <summary>
+    /// <c>chat-now watchtower &lt;send id&gt;</c>: cancels the turn the watchtower is on and has the queued message with that send id
+    /// (<see cref="TranscriptEntry.SendId"/>, <see cref="ChatPage.QueuedIds"/>) answered next. Refused, with the reason, when nothing is
+    /// running or the send id is not queued.
+    /// </summary>
+    public const string ChatNow = "chat-now";
+
+    /// <summary>
     /// <c>compact session/&lt;id&gt; [focus…]</c>: compacts an idle background session's conversation (Claude Code's
     /// <c>/compact</c>, the focus what its summary keeps), resuming it with that as its next turn. A session mid-turn or
     /// interactive is refused.

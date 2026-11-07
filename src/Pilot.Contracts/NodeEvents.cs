@@ -45,6 +45,7 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(ReposChangedEvent), "reposChanged")]
 [JsonDerivedType(typeof(NodeChangedEvent), "nodeChanged")]
 [JsonDerivedType(typeof(DecisionEvent), "decision")]
+[JsonDerivedType(typeof(ChatChangedEvent), "chatChanged")]
 public abstract record NodeEvent
 {
     /// <summary>
@@ -263,6 +264,13 @@ public sealed record DecisionEvent : NodeEvent
 {
     public required DecisionRow Decision { get; init; }
 }
+
+/// <summary>
+/// The watchtower's chat changed: partial words arrived, it started or ended a tool, a message was queued or taken, a turn ended. It
+/// carries nothing: a client asks for the chat feed (<see cref="NodeWire.ChatRoute"/>) when it sees one, so it need not poll. The node
+/// sends at most about ten a second while words stream.
+/// </summary>
+public sealed record ChatChangedEvent : NodeEvent;
 
 /// <summary>A note on the node: the state the demo verb <c>note node</c> changes.</summary>
 public sealed record NodeNote

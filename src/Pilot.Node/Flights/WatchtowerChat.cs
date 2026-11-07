@@ -58,7 +58,10 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
             }
         }
 
-        var stamps = Stamps(segments, latest);
+        // The stream session is the authority on what is held and what runs now; a watchtower that is not one has the transcript's say.
+        var stream = tower.CurrentStream();
+        string[] queuedLines = stream is not null ? [.. stream.Queued] : latest?.Queued ?? [];
+        var stamps = Stamps(segments, queuedLines);
         for (var i = 0; i < entries.Count; i++)
         {
             if (stamps.Entries.TryGetValue(entries[i].Index, out var sendId))
@@ -74,9 +77,61 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
             Working = tower.Current() is { State: SessionState.Working },
             PendingQuestion = latest?.Pending?.Question,
             Choices = latest?.Pending is { Choices.Length: > 0 } pending ? pending.Choices : null,
-            Queued = latest is { Queued.Length: > 0 } ? latest.Queued : null,
+            Queued = queuedLines.Length > 0 ? queuedLines : null,
             QueuedIds = stamps.Queued is { } ids && ids.Any(id => id is not null) ? ids : null,
+            Partial = stream is { Working: true } && stream.PartialText is { Length: > 0 } words ? words : null,
+            Doing = stream is { Working: true } ? stream.Doing : null,
+            QueuedBehind = stream is not null && queuedLines.Length > 0 ? BehindOf(stream.Doing, queuedLines.Length) : null,
+            Timings = stream is { Timings.Count: > 0 } ? [.. stream.Timings.TakeLast(ChatTimings.Kept).Select(TimingOf)] : null,
         };
+    }
+
+    /// <summary>What each of <paramref name="count"/> queued lines waits behind: the first, what the watchtower is doing (or its answer); the rest, the line before.</summary>
+    internal static string[] BehindOf(string? doing, int count)
+    {
+        var behind = new string[count];
+        for (var i = 0; i < count; i++)
+        {
+            behind[i] = i > 0 ? "queued behind the message before it" : doing is { Length: > 0 } ? $"queued behind {doing}" : "queued behind its answer";
+        }
+        return behind;
+    }
+
+    private static ChatTiming TimingOf(TurnTiming turn) => new()
+    {
+        StartedAt = turn.StartedAt,
+        FirstWordMs = turn.FirstWord is { } first ? (long)first.TotalMilliseconds : null,
+        TurnMs = (long)turn.Length.TotalMilliseconds,
+        WaitedMs = turn.Waited > TimeSpan.Zero ? (long)turn.Waited.TotalMilliseconds : null,
+    };
+
+    /// <summary>
+    /// Cancels the turn the watchtower is on so that the queued message with <paramref name="sendId"/> is answered next (PIL855), the
+    /// <see cref="Verbs.ChatNow"/> verb. Null when it was done; otherwise why it was refused: nothing is running (it is idle, or not a stream
+    /// watchtower), the send id is not queued, or other messages are queued ahead of it (the process takes its queue in order, so
+    /// only the next one can be answered now).
+    /// </summary>
+    public async Task<string?> AnswerNowAsync(string sendId, CancellationToken cancellationToken)
+    {
+        if (tower.CurrentStream() is not { Working: true } stream)
+        {
+            return "nothing is running: the watchtower is idle, so there is no turn to cancel and a message sent to it is answered at once";
+        }
+        var page = Page(-1);
+        var index = page.QueuedIds is { } ids ? Array.IndexOf(ids, sendId) : -1;
+        if (index < 0 || page.Queued is not { } queued || index >= queued.Length)
+        {
+            return $"send {sendId} is not queued: it was taken already, or never reached the watchtower";
+        }
+        if (index > 0)
+        {
+            return $"send {sendId} is queued behind {index} other {(index == 1 ? "message" : "messages")} and the watchtower takes its queue in order: answer-now takes only the next one";
+        }
+        if (!await stream.InterruptBeforeAsync(queued[0], cancellationToken))
+        {
+            return $"send {sendId} was taken as the interrupt was written: nothing was cancelled";
+        }
+        return null;
     }
 
     // How far before a send began an entry may be stamped by it: the transcript's clock and the node's are one machine's, but a
@@ -91,7 +146,7 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
     /// every send of its words was taken by an entry for is a stale line of the oldest of them, which a client then hides
     /// beside that entry.
     /// </summary>
-    private (Dictionary<int, string> Entries, string?[]? Queued) Stamps(List<Segment> segments, TranscriptBook.TranscriptWindow? latest)
+    private (Dictionary<int, string> Entries, string?[]? Queued) Stamps(List<Segment> segments, string[] queuedLines)
     {
         var taken = new Dictionary<int, string>();
         if (sends?.All() is not { Length: > 0 } all)
@@ -123,15 +178,15 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
                 }
             }
         }
-        if (latest is not { Queued.Length: > 0 })
+        if (queuedLines.Length == 0)
         {
             return (taken, null);
         }
-        var queued = new string?[latest.Queued.Length];
+        var queued = new string?[queuedLines.Length];
         var queuedUsed = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 0; i < queued.Length; i++)
         {
-            var key = TranscriptBook.Reader.Same(latest.Queued[i]);
+            var key = TranscriptBook.Reader.Same(queuedLines[i]);
             var match = free.FirstOrDefault(f => !used.Contains(f.Send.Id) && !queuedUsed.Contains(f.Send.Id) && f.Key == key);
             if (match.Send is null)
             {

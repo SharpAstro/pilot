@@ -35,4 +35,47 @@ public sealed record ChatPage
     /// <see cref="TranscriptEntry.SendId"/>. Null with none, and from an older node.
     /// </summary>
     public string?[]? QueuedIds { get; init; }
+
+    /// <summary>
+    /// The words of the turn the watchtower is on, so far, as it streams them (PIL855); null when it is idle, from an older node, and
+    /// before the turn has said a word. Once the turn ends its words are an entry of <see cref="Entries"/>, and this is null again.
+    /// </summary>
+    public string? Partial { get; init; }
+
+    /// <summary>What the watchtower is doing now, in plain words ("running pilot status"); null when it is idle or saying, and from an older node.</summary>
+    public string? Doing { get; init; }
+
+    /// <summary>
+    /// For each line of <see cref="Queued"/> (same length and order), what it waits behind, in plain words: "queued behind running pilot
+    /// status", "queued behind its answer", "queued behind the message before it". Null with none, and from an older node.
+    /// </summary>
+    public string[]? QueuedBehind { get; init; }
+
+    /// <summary>
+    /// How long the last <see cref="ChatTimings.Kept"/> chat messages took the watchtower, oldest first (newest last): the first word and the
+    /// whole turn. Null before any, and from an older node.
+    /// </summary>
+    public ChatTiming[]? Timings { get; init; }
+}
+
+/// <summary>How many chat timings a <see cref="ChatPage"/> carries.</summary>
+public static class ChatTimings
+{
+    public const int Kept = 20;
+}
+
+/// <summary>How long one chat message took the watchtower to answer.</summary>
+public sealed record ChatTiming
+{
+    /// <summary>When the turn began: the message's send, or, for a message that was queued, the end of the turn before it.</summary>
+    public required DateTimeOffset StartedAt { get; init; }
+
+    /// <summary>From the start of the turn to its first word, in milliseconds; null when the turn said no words (a tool-only turn).</summary>
+    public long? FirstWordMs { get; init; }
+
+    /// <summary>From the start of the turn to its end, in milliseconds.</summary>
+    public required long TurnMs { get; init; }
+
+    /// <summary>How long the message waited in the queue before the turn began, in milliseconds; null when it began at once.</summary>
+    public long? WaitedMs { get; init; }
 }

@@ -21,7 +21,7 @@ public sealed class WatchtowerStreamTests : IDisposable
 
     private static readonly DateTimeOffset Start = new(2026, 11, 3, 9, 0, 0, TimeSpan.Zero);
 
-    private sealed class FakeProcess : IStreamProcess
+    internal sealed class FakeProcess : IStreamProcess
     {
         private readonly Channel<string> _out = Channel.CreateUnbounded<string>();
         private readonly TaskCompletionSource<int> _exit = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -32,6 +32,18 @@ public sealed class WatchtowerStreamTests : IDisposable
         public string ErrorTail { get; private set; } = "";
 
         public Task<int> Exited => _exit.Task;
+
+        /// <summary>Every line written to it, as written: the user messages and the control requests.</summary>
+        public string[] Lines
+        {
+            get
+            {
+                lock (_written)
+                {
+                    return [.. _written];
+                }
+            }
+        }
 
         /// <summary>The text of each user message written to it, in order.</summary>
         public string[] Said
@@ -77,7 +89,7 @@ public sealed class WatchtowerStreamTests : IDisposable
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    private sealed class FakeLauncher : IStreamProcessLauncher
+    internal sealed class FakeLauncher : IStreamProcessLauncher
     {
         public List<(IReadOnlyList<string> Arguments, string Folder, FakeProcess Process)> Started { get; } = [];
 

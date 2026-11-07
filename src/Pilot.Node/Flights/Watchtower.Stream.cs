@@ -54,6 +54,26 @@ public sealed partial class Watchtower : IStreamRoute
         public bool Counted { get; set; }
     }
 
+    private ChatNudge? _chatNudge;
+
+    private ChatNudge Nudge => _chatNudge ??= new ChatNudge(time, state.NotifyChatChanged);
+
+    /// <summary>
+    /// The stream session of the current watchtower (the one <see cref="Current"/> names), while its process runs; null when there is
+    /// none: a watchtower that is a <c>claude --bg</c> one, or that has ended.
+    /// </summary>
+    public StreamSession? CurrentStream()
+    {
+        if (Current() is not { } row)
+        {
+            return null;
+        }
+        lock (_streamsLock)
+        {
+            return _streams.TryGetValue(row.Id, out var entry) && entry.Session is { ExitCode: null } session ? session : null;
+        }
+    }
+
     private readonly Dictionary<string, StreamEntry> _streams = new(StringComparer.Ordinal);
     private readonly Lock _streamsLock = new();
     // Starts, resumes and stops of the stream processes, one at a time: the look and a say that finds it ended both resume it.
@@ -192,6 +212,15 @@ public sealed partial class Watchtower : IStreamRoute
 
     private void OnChange(StreamEntry e, StreamSessionChange change)
     {
+        // The chat page carries the stream live (PIL855): words nudge it at most ten times a second, everything else at once.
+        if (change.Kind == StreamChangeKind.Text)
+        {
+            Nudge.Words();
+        }
+        else if (change.Kind is not StreamChangeKind.Init)
+        {
+            Nudge.Now();
+        }
         switch (change.Kind)
         {
             case StreamChangeKind.Init or StreamChangeKind.TurnStarted:

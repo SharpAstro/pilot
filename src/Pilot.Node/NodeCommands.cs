@@ -347,6 +347,15 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             var said = await Get<SessionMessenger>().SayAsync(command with { Verb = Verbs.Say, Target = target }, cancellationToken);
             return state.Complete(command, said.Error, said.Way, said.SessionId);
         }
+        if (command.Verb == Verbs.ChatNow)
+        {
+            var sendId = (command.Args ?? []).FirstOrDefault()?.Trim() ?? "";
+            if (command.Target != Verbs.WatchtowerTarget || sendId.Length == 0)
+            {
+                return state.Complete(command, $"{Verbs.ChatNow} takes the watchtower and the send id of the queued message to answer now (the chat page's queued ids, or pilot chat now <send id>)");
+            }
+            return state.Complete(command, await Get<WatchtowerChat>().AnswerNowAsync(sendId, cancellationToken));
+        }
         if (command.Verb == Verbs.RestartWatchtower)
         {
             var why = string.Join(' ', command.Args ?? []).Trim();

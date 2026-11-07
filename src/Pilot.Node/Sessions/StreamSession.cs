@@ -220,7 +220,15 @@ public sealed class StreamSession : IAsyncDisposable
     }
 
     /// <summary>Writes the interrupt control request: claude ends the running turn with a result, then takes the next queued message.</summary>
-    public async Task InterruptAsync(CancellationToken cancellationToken = default)
+    public Task InterruptAsync(CancellationToken cancellationToken = default) => InterruptCoreAsync(null, cancellationToken);
+
+    /// <summary>
+    /// The interrupt, written only while a turn runs and <paramref name="queued"/> is the first message held (the one claude takes next),
+    /// so an answer-now never cancels the very turn it asked for when that turn began meanwhile. Returns whether it was written.
+    /// </summary>
+    public Task<bool> InterruptBeforeAsync(string queued, CancellationToken cancellationToken = default) => InterruptCoreAsync(queued, cancellationToken);
+
+    private async Task<bool> InterruptCoreAsync(string? onlyBefore, CancellationToken cancellationToken)
     {
         await _writes.WaitAsync(cancellationToken);
         try
@@ -228,13 +236,14 @@ public sealed class StreamSession : IAsyncDisposable
             string id;
             lock (_lock)
             {
-                if (_exitCode is not null)
+                if (_exitCode is not null || onlyBefore is not null && (!_working || _queued.Count == 0 || _queued[0].Text != onlyBefore))
                 {
-                    return;
+                    return false;
                 }
                 id = $"pilot-interrupt-{++_requests}";
             }
             await _process.WriteLineAsync(InterruptLine(id), cancellationToken);
+            return true;
         }
         finally
         {
