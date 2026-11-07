@@ -14,6 +14,10 @@ public sealed partial class LegCommander
     private async Task OpenPrAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var flight = FlightOf(command.Target);
+        // Another step's calls out for the flight (a push, a check rerun, the node's own sweep) only hold this back: it waits for them, as the
+        // node's own rebase does, instead of refusing as busy, and reads the flight afresh (pilot #871: a loaded run refused it).
+        await WaitForFlightFreeAsync(flight.Code, OpeningPr, cancellationToken);
+        flight = FlightOf(command.Target);
         if (flight.State == FlightState.Landed)
         {
             throw new FlightException($"{flight.Code} has landed");
