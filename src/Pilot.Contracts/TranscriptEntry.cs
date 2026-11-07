@@ -11,6 +11,13 @@ public sealed record TranscriptEntry
     /// <summary>Its place in the transcript, from 0: a client asks for what comes after the last one it has.</summary>
     public required int Index { get; init; }
 
+    /// <summary>
+    /// What names this entry whatever its <see cref="Index"/> becomes: stable across reads and across a chat feed's generations
+    /// (the session, the transcript line's uuid and the block's place in that line; a divider's names its generation's session),
+    /// so a client keys its list on it. Null from an older node. Optional, so it does not raise <see cref="NodeWire.Version"/>.
+    /// </summary>
+    public string? Id { get; init; }
+
     public DateTimeOffset? At { get; init; }
 
     public required TranscriptKind Kind { get; init; }
