@@ -318,7 +318,9 @@ public sealed class JobRetellTests : IDisposable
         var redone = _state.Jobs().Single();
         (redone.RetoldAt, redone.RetellRung).ShouldBe((null, null));
         redone.ToldAt.ShouldBe(_clock.GetUtcNow());
-        Cards(JobRunner.UnansweredKind).ShouldBeEmpty();
+        var ring = Cards(JobRunner.UnansweredKind).ShouldHaveSingleItem();
+        ring.State.ShouldBe(CardState.Closed);
+        ring.Outcome.ShouldBe("its tells fell in an outage and were redone");
     }
 
     [Fact]
