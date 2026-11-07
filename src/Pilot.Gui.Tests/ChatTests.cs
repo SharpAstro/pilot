@@ -576,6 +576,130 @@ public sealed class ChatTests
         afters.Take(3).ShouldBe([-1, 5, -1]);
     }
 
+    // The issue #854 feed: the held entries carry stable ids; a new watchtower starts, a divider goes in below them, and every
+    // earlier entry comes back at a higher index, so the page after the held last index holds only what is already held.
+    private static TranscriptEntry[] Identified(int shift, int count, string? only = null) =>
+        [.. Enumerable.Range(0, count).Select(i => new TranscriptEntry
+        {
+            Index = i + shift,
+            Id = $"s1/line{i}/0",
+            Kind = i % 2 == 0 ? TranscriptKind.User : TranscriptKind.Assistant,
+            Text = $"{only ?? "entry"} {i}",
+            At = At.AddSeconds(i),
+        })];
+
+    private static ChatPage Shifted(int count) => new()
+    {
+        Entries = [new TranscriptEntry { Index = 0, Id = "s2", Kind = TranscriptKind.Divider, Text = "A fresh watchtower started", At = At.AddMinutes(1) }, .. Identified(1, count)],
+        Total = count + 1,
+    };
+
+    private static async Task<List<int>> ReadThroughAShift(ChatView<RgbaImage> chat, Action startShift, List<int> afters, int expected)
+    {
+        await Read(chat, 4);
+        startShift();
+        chat.Open();
+        for (var i = 0; i < 100 && chat.Entries.Count != expected; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+        // One more look, so a duplicate that would come with the next read has come.
+        chat.Refresh();
+        await Task.Delay(300, TestContext.Current.CancellationToken);
+        chat.Close();
+        return afters;
+    }
+
+    [Fact]
+    public async Task AFeedThatShiftedByAnInsertedDividerShowsEachEntryOnce()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var afters = new List<int>();
+        var shifted = false;
+        var chat = new ChatView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        chat.Load = (after, _) =>
+        {
+            afters.Add(after);
+            var feed = shifted ? Shifted(4) : new ChatPage { Entries = Identified(0, 4), Total = 4 };
+            return Task.FromResult(new ChatPage { Entries = [.. feed.Entries.Where(e => e.Index > after)], Total = feed.Total });
+        };
+
+        await ReadThroughAShift(chat, () => shifted = true, afters, 5);
+
+        chat.Entries.Select(e => e.Text).ShouldBe(["A fresh watchtower started", "entry 0", "entry 1", "entry 2", "entry 3"]);
+        chat.Entries.Select(e => e.Index).ShouldBe([0, 1, 2, 3, 4]);
+        // The first read, after the held last index (3) which brings only entry 3 again, then the whole feed.
+        afters.Take(3).ShouldBe([-1, 3, -1]);
+    }
+
+    [Fact]
+    public async Task AnotherNodesFeedThatShiftedByAnInsertedDividerShowsEachEntryOnce()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var afters = new List<int>();
+        var shifted = false;
+        var chat = new ChatView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        chat.LoadOn = (node, after, _) =>
+        {
+            node.ShouldBe(Other);
+            afters.Add(after);
+            var feed = shifted ? Shifted(4) : new ChatPage { Entries = Identified(0, 4), Total = 4 };
+            return Task.FromResult(new ChatPage { Entries = [.. feed.Entries.Where(e => e.Index > after)], Total = feed.Total });
+        };
+        chat.SwitchTo(Other);
+
+        await ReadThroughAShift(chat, () => shifted = true, afters, 5);
+
+        chat.Entries.Select(e => e.Text).ShouldBe(["A fresh watchtower started", "entry 0", "entry 1", "entry 2", "entry 3"]);
+        afters.Take(3).ShouldBe([-1, 3, -1]);
+    }
+
+    [Fact]
+    public async Task AnEntryThatIsAlreadyHeldIsNeverAppendedAgainWhateverItsIndexIs()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var round = 0;
+        var chat = new ChatView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        // Each look after the first answers with an already held entry at an index past the held last one, and one new one.
+        chat.Load = (after, _) =>
+        {
+            round++;
+            return Task.FromResult(after < 0
+                ? new ChatPage { Entries = Identified(0, 2), Total = 2 }
+                : new ChatPage { Entries = [.. Identified(0, 3).Skip(1).Select(e => e with { Index = e.Index + 5 })], Total = 8 });
+        };
+
+        await Read(chat, 2);
+        chat.Open();
+        for (var i = 0; i < 100 && round < 3; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+        chat.Close();
+
+        chat.Entries.Select(e => e.Id).Distinct().Count().ShouldBe(chat.Entries.Count);
+    }
+
+    [Fact]
+    public async Task EntriesWithoutAnIdKeepTheIndexRuleSoAnOlderNodesFeedStillFollows()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chat = new ChatView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        chat.Load = (after, _) => Task.FromResult(after < 0
+            ? Page(Conversation()[..3])
+            : new ChatPage { Entries = [.. Conversation().Where(e => e.Index >= 2)], Total = 6 });
+
+        chat.Open();
+        for (var i = 0; i < 100 && chat.Entries.Count < 6; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+        chat.Close();
+
+        // Entry 2 comes again (an older node sends no id): the index rule drops it.
+        chat.Entries.Select(e => e.Index).ShouldBe([0, 1, 2, 3, 4, 5]);
+    }
+
     [Fact]
     public async Task ClosingStopsTheFollowAndReopeningReadsOnFromWhatItHolds()
     {

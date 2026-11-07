@@ -45,9 +45,11 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     // What the follow has read, as one immutable record swapped whole: the follow appends on the pool, the render thread
     // reads the record it finds, and neither ever waits on the other.
-    private sealed record Held(ImmutableList<TranscriptEntry> Entries, int Total, string? Problem, bool Working, string? Question, string[] Choices, string[] Queued, string?[] QueuedIds)
+    // Ids is the stable id (TranscriptEntry.Id) of each held entry and the feed index it was read at, kept beside Entries in the
+    // same record so the two always agree: the follow keys on the id, since a feed index shifts when the feed gains a divider.
+    private sealed record Held(ImmutableList<TranscriptEntry> Entries, ImmutableDictionary<string, int> Ids, int Total, string? Problem, bool Working, string? Question, string[] Choices, string[] Queued, string?[] QueuedIds)
     {
-        public static readonly Held Empty = new([], 0, null, false, null, [], [], []);
+        public static readonly Held Empty = new([], ImmutableDictionary<string, int>.Empty, 0, null, false, null, [], [], []);
     }
 
     private Held _held = Held.Empty;
@@ -327,6 +329,54 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>Asks the follow to read now rather than at its next look: after a message went.</summary>
     public void Refresh() => Volatile.Read(ref _nudge).TrySetResult();
 
+    // Whether a page after the held last index shows the feed's indices moved under what is held (see FollowAsync). An entry
+    // without an Id (an older node) cannot show it, and keeps the index rule.
+    private static bool Shifted(Held held, ChatPage page)
+    {
+        if (page.Entries.Length == 0)
+        {
+            return false;
+        }
+        var known = 0;
+        foreach (var entry in page.Entries)
+        {
+            if (entry.Id is { } id && held.Ids.TryGetValue(id, out var at))
+            {
+                if (at != entry.Index)
+                {
+                    return true;
+                }
+                known++;
+            }
+        }
+        return known == page.Entries.Length && page.Total > held.Total;
+    }
+
+    // What the follow holds once the page is in. Appends only the entries whose Id is not held (one without an Id: whose Index is
+    // past the held last, as before). With `whole` the page is the feed read again from its start: it is the held list, in the order
+    // the feed gives, each id once, with every index as the feed has it now.
+    private static Held Merge(Held held, ChatPage page, bool whole)
+    {
+        var entries = whole ? ImmutableList.CreateBuilder<TranscriptEntry>() : held.Entries.ToBuilder();
+        var ids = whole ? ImmutableDictionary.CreateBuilder<string, int>() : held.Ids.ToBuilder();
+        var last = whole || held.Entries.Count == 0 ? int.MinValue : held.Entries[^1].Index;
+        foreach (var entry in page.Entries)
+        {
+            if (entry.Id is { } id)
+            {
+                if (ids.TryAdd(id, entry.Index))
+                {
+                    entries.Add(entry);
+                }
+            }
+            else if (entry.Index > last)
+            {
+                entries.Add(entry);
+            }
+        }
+        return new Held(entries.ToImmutable(), ids.ToImmutable(), page.Total, null, page.Working, page.PendingQuestion, page.Choices ?? [], page.Queued ?? [], page.QueuedIds ?? []);
+    }
+
     private async Task FollowAsync(Func<int, CancellationToken, Task<ChatPage>> load, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
@@ -335,21 +385,23 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             Volatile.Write(ref _nudge, nudge);
             try
             {
-                var had = Volatile.Read(ref _held).Entries;
-                var after = had.Count == 0 ? -1 : had[^1].Index;
+                var had = Volatile.Read(ref _held);
+                var after = had.Entries.Count == 0 ? -1 : had.Entries[^1].Index;
                 var page = await load(after, cancellationToken).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
                 var renumbered = after >= 0 && page.Total <= after;
-                if (renumbered)
+                // The feed shifted: an entry already held comes back at another index (a divider went in below it), or the page
+                // after the held last index brings nothing but entries already held while the feed grew. Its new entries sit
+                // somewhere else than after the held last index, so read it all again and merge by id.
+                var reread = renumbered || (after >= 0 && Shifted(had, page));
+                if (reread)
                 {
-                    // The feed is shorter than what is held (an earlier watchtower's transcript is gone, so every index dropped):
-                    // asking after the old index would skip the entries that now sit below it. Read it all again.
+                    // Renumbered: the feed is shorter than what is held (an earlier watchtower's transcript is gone, so every index
+                    // dropped), and asking after the old index would skip the entries that now sit below it. Read it all again.
                     page = await load(-1, cancellationToken).ConfigureAwait(false);
                     cancellationToken.ThrowIfCancellationRequested();
                 }
-                ImmutableInterlocked.Update(ref _held, held => new Held(
-                    renumbered ? ImmutableList.CreateRange(page.Entries) : held.Entries.AddRange(page.Entries.Where(e => held.Entries.Count == 0 || e.Index > held.Entries[^1].Index)),
-                    page.Total, null, page.Working, page.PendingQuestion, page.Choices ?? [], page.Queued ?? [], page.QueuedIds ?? []));
+                ImmutableInterlocked.Update(ref _held, held => Merge(held, page, reread));
                 Changed?.Invoke();
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
