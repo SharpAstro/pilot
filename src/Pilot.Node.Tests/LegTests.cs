@@ -1105,6 +1105,7 @@ public abstract class LegCommanderTestsBase : IDisposable
 
     protected LegCommanderTestsBase(bool realGit = false)
     {
+        _state = new NodeState(_journal, TimeProvider.System);
         _git = _testGit = new TestGit(_root, realGit, MakeRealRepo, withOrigin: false);
         _flights = new FlightCommander(_state, new Planes(_git), TimeProvider.System);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
@@ -1113,7 +1114,6 @@ public abstract class LegCommanderTestsBase : IDisposable
 
     private void MakeRealRepo()
     {
-        _state = new NodeState(_journal, TimeProvider.System);
         Directory.CreateDirectory(Repo);
         Git(Repo, "init", "-q", "-b", "main");
         File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
