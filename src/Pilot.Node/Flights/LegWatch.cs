@@ -700,7 +700,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// so; it is not started again. A ticker whose finish's check is rerunning is waiting, as a worker is, whatever its session is doing:
     /// it ran <c>leg finish done</c>, was told the check is rerunning and ended its turn as told, and the rerun finishes the leg (PIL852).
     /// A ticker that stopped with every step ticked and the leg still flying is finished by the node, as <see cref="NodeTakesOverAsync"/>
-    /// finishes for a worker; only a refused finish rings.
+    /// finishes for a worker; only a refused finish rings. A ticker that stopped with steps unticked sends the leg round once, the go-around
+    /// reason naming those steps, and rings only when that go-around is refused or the leg already went round this way.
     /// </summary>
     private async Task LookAtTickerAsync(LegRow leg, SessionRow[] sessions, DateTimeOffset now, CancellationToken cancellationToken)
     {
@@ -763,13 +764,42 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             }
             return;
         }
+        // Steps still unticked: the ticker found the commits did not cover them (or died before saying), so the leg goes round once, the
+        // reason naming each step so the fresh worker sees what remains and no ring is raised. Once per leg (keyed by leg, so a later
+        // worker's own ticker does not get a second round from it); a refused go-around, or a second stop, rings as before.
+        string? refused = null;
+        var unticked = leg.Checklist.Select((item, index) => (item, number: index + 1)).Where(s => !s.item.Done).ToList();
+        if (unticked.Count > 0 && _tickerWentRound.Add(subject))
+        {
+            var named = string.Join("; ", unticked.Select(s => $"step {s.number}: {s.item.Text}"));
+            var reason = $"the last worker's commits did not cover every step, and its ticking pass stopped without finishing ({why}); unticked: {named}";
+            var sent = await run(new CommandRequest { Verb = Verbs.GoAround, Target = subject, Args = [reason], Who = Who }, cancellationToken);
+            if (sent.Later is { } laterRound)
+            {
+                sent = await laterRound;
+            }
+            if (sent.Ok)
+            {
+                state.RaiseCard(CardBin.Handled, TickerSentRound, subject, $"{Name(leg)}'s ticking pass stopped with {Steps(leg)}; sent round with a fresh worker",
+                    $"{why}; the leg went round once, telling the fresh worker which steps remain: {named}");
+                return;
+            }
+            refused = sent.Error ?? "refused";
+        }
         var around = Models.RedoLabel(leg, "its ticker stopped without finishing it");
+        var refusal = refused is null ? "" : $"; the node's go-around was refused: {refused}";
         // Needs someone: the worker's commits were not ticked and finished by the ticking pass, which is run once, and what covers the steps is the controller's to say.
-        state.RaiseCard(CardBin.Ring, Idle, subject, $"{ticker} stopped without finishing the leg: {why}",
-            $"the worker ended with commits made and {Steps(leg)}, so the node started its ticking pass instead of sending the leg round; {why}, and the node starts no second ticker",
+        state.RaiseCard(CardBin.Ring, Idle, subject, $"{ticker} stopped without finishing the leg: {why}{(refused is null ? "" : $" (go-around refused: {Clip(refused)})")}",
+            $"the worker ended with commits made and {Steps(leg)}, so the node started its ticking pass instead of sending the leg round; {why}, and the node starts no second ticker{refusal}",
             [new CardChoice { Label = around, Verb = Verbs.GoAround, Target = subject, Args = [$"the last worker ended with steps unticked and its ticker stopped without finishing: {why}"] }],
             summary: $"The ticking pass of {Name(leg)} stopped with the leg unfinished: {why}. {around} starts a fresh worker.");
     }
+
+    /// <summary>The card kind of a leg the node sent round because its ticking pass stopped with steps unticked.</summary>
+    public const string TickerSentRound = "ticker-sent-round";
+
+    /// <summary>Legs already sent round once for a stopped ticker, by leg subject; a second stop on the same leg rings.</summary>
+    private readonly HashSet<string> _tickerWentRound = new(StringComparer.Ordinal);
 
     /// <summary>Tells the owners given their ended, untold jobs (JobRunner.TellUntoldOf); whether any was told. The node sets it.</summary>
     public Func<IReadOnlyCollection<string>, CancellationToken, Task<bool>>? TellEndedJobs { get; set; }

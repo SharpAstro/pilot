@@ -289,24 +289,83 @@ public sealed class LegTickingPassTests : LegCommanderTestsBase
         (card.Bin, card.Title).ShouldBe((CardBin.Ring, "TIA1/parser stopped: step 2 is not covered by any commit"));
     }
 
-    [Fact]
-    public async Task A_ticker_that_ends_without_finishing_rings_once_and_is_not_started_again()
+    /// <summary>The ticker of the leg ended with step 1 ticked and step 2 not, and no finish.</summary>
+    private async Task TickerEndedWithStepTwoUntickedAsync()
     {
         await FlyingAsync(commit: true);
         WorkerEnded();
         await LookUntilTickerAsync();
+        (await AsTicker(Verbs.Check, "1")).Ok.ShouldBeTrue();
         _state.PutSession(Session(L("parser").TickerJob!, Ticker, SessionState.Ended, TimeSpan.FromMinutes(5)));
+    }
+
+    [Fact]
+    public async Task A_ticker_that_ended_with_step_two_unticked_sends_the_leg_round_naming_the_step_and_rings_nothing()
+    {
+        await TickerEndedWithStepTwoUntickedAsync();
+        var worker = L("parser").WorkerJob!;
+
+        await _watch.LookAsync(Ct);
+
+        await Until(() => L("parser").WorkerJob != worker);
+        L("parser").State.ShouldBe(LegState.Flying);
+        L("parser").GoArounds.ShouldBe(1);
+        var why = L("parser").GoAroundReasons.Single().Why;
+        why.ShouldContain("step 2: Test it");
+        why.ShouldNotContain("Write the parser");
+        why.ShouldContain("commits did not cover");
+        // A fresh worker was started, and its brief carries the reason.
+        _workers.Started.Last().Brief.ShouldContain("step 2: Test it");
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegWatch.Idle);
+        _state.Cards().ShouldContain(c => c.Kind == LegWatch.TickerSentRound && c.Bin == CardBin.Handled);
+    }
+
+    [Fact]
+    public async Task A_second_ticker_stop_on_the_same_leg_after_its_go_around_rings_worker_idle_once()
+    {
+        await TickerEndedWithStepTwoUntickedAsync();
+        var worker = L("parser").WorkerJob!;
+        await _watch.LookAsync(Ct);
+        await Until(() => L("parser").WorkerJob != worker);
+
+        // The fresh worker commits more and ends; its ticker runs and stops with a step unticked again.
+        var flight = _state.Flights().Single();
+        File.WriteAllText(Path.Combine(flight.Worktree, "parser2.cs"), "class Parser2 {}\n");
+        Git(flight.Worktree, "add", ".");
+        Commit(flight.Worktree, "More parser");
+        WorkerEnded();
+        await LookUntilTickerAsync();
+        var second = L("parser").TickerJob.ShouldNotBeNull();
+        _state.PutSession(Session(second, Ticker, SessionState.Ended, TimeSpan.FromMinutes(5)));
 
         await _watch.LookAsync(Ct);
         await _watch.LookAsync(Ct);
         _clock.Advance(TimeSpan.FromMinutes(10));
         await _watch.LookAsync(Ct);
 
+        L("parser").GoArounds.ShouldBe(1);
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegWatch.Idle);
         card.Bin.ShouldBe(CardBin.Ring);
         card.Title.ShouldContain("ticker stopped without finishing the leg: its session ended");
+        _state.Cards(openOnly: true).Count(c => c.Bin == CardBin.Ring).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task A_ticker_that_ended_with_steps_unticked_rings_naming_the_refusal_when_the_go_around_is_refused()
+    {
+        await TickerEndedWithStepTwoUntickedAsync();
+        // A held flight refuses a go-around.
+        _state.PutFlight(_state.Flights().Single() with { State = FlightState.Held });
+
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+
+        L("parser").GoArounds.ShouldBe(0);
+        var card = _state.Cards(openOnly: true).Single(c => c.Bin == CardBin.Ring);
+        card.Kind.ShouldBe(LegWatch.Idle);
+        card.Title.ShouldContain("go-around refused");
         _workers.Started.Count(w => w.Name == Ticker).ShouldBe(1);
-        _said.ShouldBeEmpty();
     }
 
     /// <summary>The leg in its ticking pass with every step ticked by its ticker, whose session then ended with no finish.</summary>
