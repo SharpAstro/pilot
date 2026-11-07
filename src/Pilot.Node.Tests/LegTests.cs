@@ -85,6 +85,11 @@ internal sealed class FakeChecks : ICheckRunner
     /// <summary>Awaited as each run begins: a check that takes as long as the test says. Null answers at once.</summary>
     public Func<Task>? OnRun { get; set; }
 
+    /// <summary>What the node says about its own stopping, as a real runner reads it from its lifetime (pilot #819).</summary>
+    public bool Stopping { get; set; }
+
+    public bool NodeStopping => Stopping;
+
     public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null)
     {
         Runs.Add((command, cwd));
@@ -691,12 +696,16 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, DequeueAsync fails with it.</summary>
     public string? DequeueFails { get; set; }
 
+    /// <summary>Run as a dequeue is made, before it is recorded: what a test reads of the world at that moment (PIL836: whether the push came first).</summary>
+    public Action? OnDequeued { get; set; }
+
     public Task DequeueAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
         if (DequeueFails is { } why)
         {
             return Task.FromException(new FlightException(why));
         }
+        OnDequeued?.Invoke();
         Dequeued.Add(number);
         // The queue lets it go: the PR is not queued any more, and GitHub says it was removed by hand.
         if (Queue is { Queued: true } queued)
@@ -1078,7 +1087,9 @@ public abstract class LegCommanderTestsBase : IDisposable
     private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2l-" + Guid.NewGuid().ToString("N")[..8]);
-    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    /// <summary>The state's journal, so a test can load what it holds into a fresh state as a restart does.</summary>
+    private protected readonly InMemoryJournal _journal = new();
+    private protected readonly NodeState _state;
     private protected readonly FakeWorkers _workers = new();
     private protected readonly FakeChecks _checks = new();
     private protected readonly FakeGitHub _github = new();
@@ -1089,6 +1100,7 @@ public abstract class LegCommanderTestsBase : IDisposable
 
     protected LegCommanderTestsBase()
     {
+        _state = new NodeState(_journal, TimeProvider.System);
         Directory.CreateDirectory(Repo);
         Git(Repo, "init", "-q", "-b", "main");
         File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");

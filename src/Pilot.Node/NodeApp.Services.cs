@@ -307,11 +307,14 @@ public static partial class NodeApp
                 Ledger = services.GetRequiredService<SessionLedger>(),
                 Gate = services.GetRequiredService<StartGate>(),
                 Error = logWriter,
+                Ready = services.GetRequiredService<JobRunner>().Recovered,
                 StartedPlanner = legs.StartedPlanner,
                 RestartPlanner = legs.RestartPlannerAsync,
                 StopPlanner = legs.StopPlannerAsync,
                 RestartWorker = legs.RestartWorkerAsync,
                 RestartValidator = legs.RestartValidatorAsync,
+                PlaneHead = legs.PlaneHeadOfAsync,
+                StartTicker = legs.StartTickerAsync,
                 StopSession = legs.StopSessionAsync,
                 ChangedFiles = async (flight, ct) =>
                 {

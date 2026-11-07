@@ -90,6 +90,8 @@ public sealed partial class LegCommander
         }
         // Two flights that each hold an overlap card on the other are planned in parallel by the node itself (PIL664).
         await AnswerMutualPendingAsync(cancellationToken);
+        // A pending overlap whose other flight has landed has nothing to wait for: closed by the node, no card (PIL824).
+        await AnswerLandedPendingAsync(cancellationToken);
         // A planner whose plan is done is ended, so it frees its slot before the starts below ask for one.
         await EndPlannedPlannersAsync(cancellationToken);
         // The starts admission holds go first, in the order it gives, so a freed slot goes to the one it ranks first.
@@ -291,6 +293,22 @@ public sealed partial class LegCommander
         {
             _missedOnce.TryRemove(current.Code, out _);
             return false;
+        }
+        // A push that met a merged PR was answered by the push itself: the commits go to a follow-up PR, and a start offered again would
+        // meet the same refusal, so nothing rings (PIL836). Decided from what the push did (the result's way), never from the refusal's text.
+        if (result.Way == RefusalWays.HandedOn)
+        {
+            return false;
+        }
+        // A GH006 the push could not answer (the PR was taken out of the queue and the branch is still locked, or a ruleset protects
+        // it): one card says so and what to do, with no reviewer start to offer, and the sweep stops asking.
+        if (result.Way == RefusalWays.ProtectedBranch)
+        {
+            _rung[current.Code] = key;
+            var locked = result.Error is { Length: > 0 } text ? text : "no reason given";
+            state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code}'s new head cannot be pushed: GitHub locks {current.Branch}",
+                $"GitHub refused the push of {current.Branch} as a protected branch (GH006) and the node could not clear it: the PR was not in the merge queue, or it was taken out and the branch stayed locked, or a ruleset protects the branch. The node will not try again by itself. On GitHub, take the PR out of the queue or lift what protects the branch, then start the reviewer again: {locked}");
+            return true;
         }
         // The first refusal rings nothing: the next sweep asks again, and a second in a row rings.
         if (FirstMiss(current.Code, key))

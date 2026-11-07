@@ -174,6 +174,76 @@ public sealed class WatchtowerStartTests : IDisposable
         Live().ShouldBe(1);
     }
 
+    private void RowAt(string id, SessionState state, TimeSpan age) =>
+        _state.PutSession(new SessionRow
+        {
+            Id = id,
+            SessionId = id + "-0000-4000-8000-000000000000",
+            Name = "du1-watchtower",
+            Kind = SessionKind.Background,
+            Cwd = _options.WatchtowerFolder,
+            Role = SessionRole.Watchtower,
+            ContextTokens = 10_000,
+            ContextWindow = 200_000,
+            State = state,
+            SpendWeighted = 0,
+            LastResponseAt = _time.GetUtcNow(),
+            StartedAt = _time.GetUtcNow() - age,
+        });
+
+    /// <summary>A watchtower whose end-session runs and whose launches are both written to one list, in the order they happen.</summary>
+    private Watchtower RecordingTower(List<string> events)
+    {
+        var ending = _workers.EndingRun(_state);
+        return new Watchtower(_state, new RecordingLauncher(_workers, events), async (command, ct) =>
+        {
+            if (command.Verb == Verbs.EndSession)
+            {
+                events.Add("end:" + command.Target[Verbs.SessionTargetPrefix.Length..]);
+            }
+            return await ending(command, ct);
+        }, _options, _time) { Pilot = "pilot" };
+    }
+
+    [Fact]
+    public async Task AnIdleLiveWatchtowerBesideTheOneReplacedIsEndedBeforeTheFreshOneLaunches()
+    {
+        // #841: two idle watchtowers live under one name (card c4492) while a fresh one starts: the node ended only the replaced row
+        // before the launch and left the other for a later look, so a say to the name was refused as ambiguous in between.
+        RowAt("old00001", SessionState.Idle, TimeSpan.FromHours(2));
+        RowAt("cur00001", SessionState.Idle, TimeSpan.FromHours(1));
+        var events = new List<string>();
+
+        await RecordingTower(events).RestartAsync("test", Ct);
+
+        events.ShouldBe(["end:cur00001", "end:old00001", "start"]);
+    }
+
+    [Fact]
+    public async Task AWatchtowerMidTurnIsNotEndedBeforeTheFreshOneLaunches()
+    {
+        RowAt("busy0001", SessionState.Working, TimeSpan.FromHours(2));
+        RowAt("cur00001", SessionState.Idle, TimeSpan.FromHours(1));
+        var events = new List<string>();
+
+        await RecordingTower(events).RestartAsync("test", Ct);
+
+        // The one mid-turn is told and given its grace once the fresh one has an id; it is not ended before the start.
+        events.ShouldBe(["end:cur00001", "start"]);
+        _workers.Stopped.ShouldNotContain("busy0001");
+    }
+
+    private sealed class RecordingLauncher(IWorkerLauncher inner, List<string> events) : IWorkerLauncher
+    {
+        public Task<string> StartAsync(WorkerStart start, CancellationToken cancellationToken)
+        {
+            events.Add("start");
+            return inner.StartAsync(start, cancellationToken);
+        }
+
+        public Task StopAsync(string job, CancellationToken cancellationToken) => inner.StopAsync(job, cancellationToken);
+    }
+
     private sealed class ThrowingAfterUp(Action<string, SessionState> row) : IWorkerLauncher
     {
         public int Attempts { get; private set; }

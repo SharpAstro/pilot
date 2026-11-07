@@ -153,6 +153,18 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     private void RaiseNotLanded(FlightRow flight, int number, string mergedHead, FlightException ex)
     {
         var subject = Verbs.FlightTarget(flight.Code);
+        // Work of its own that missed the merge (a review-notes commit made after the PR was queued, PIL819): Land it would only be
+        // refused again, so the one choice is the one that moves it on, a PR with that work; the flight lands when that one merges.
+        if (ex is LeftOutCommitsException left)
+        {
+            var one = left.Commits.Count == 1;
+            var what = one ? "1 commit" : $"{left.Commits.Count} commits";
+            state.RaiseCard(CardBin.Ring, NotLandedKind, subject, $"{what} of {flight.Code} missed the merge of PR #{number}",
+                $"{ex.Message}. The rest of the flight is in main. Open a PR with {(one ? "it" : "them")}: the node pushes the branch with main merged in and opens the PR, and the flight lands when that PR merges.",
+                [new CardChoice { Label = $"Open a PR with the {(one ? "commit" : "commits")}", Verb = Verbs.OpenPr, Target = subject }],
+                summary: CardSummaries.LeftOut(flight.Code, number, left.Commits));
+            return;
+        }
         state.RaiseCard(CardBin.Ring, NotLandedKind, subject, $"{flight.Code}'s PR #{number} merged on GitHub, but the flight did not land: {LegCommander.OneLine(ex.Message)}",
             $"{ex.Message}. The PR is merged, so its branch is in the base; the flight stays flying until it is landed.",
             [new CardChoice { Label = "Land it", Verb = Verbs.Land, Target = subject, Args = [mergedHead] }],
@@ -240,6 +252,14 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             if (queue.Queued)
             {
                 state.CloseCardsAbout(subject, "queued again", QueueDropped);
+                legs?.QueuedAgain(flight.Code);
+                continue;
+            }
+            // A removal the node made itself, to push new commits (PIL836), is no card: its merge entry ends, and the merge is offered
+            // again once a fresh review of the new head passes. Told by the PR and the removal's time, as GitHub reads the PR at the pushed head by now.
+            if (queue.RemovedAt is { } ownRemoval && legs?.DequeuedByNode(flight.Code, number, ownRemoval) == true)
+            {
+                legs.EndLeftQueue(flight.Code, $"the node took #{number} out of the merge queue to push new commits");
                 continue;
             }
             // GitHub's queue let it go unmerged: its merge entry ends, and the repo's later entries move up. Merge asks it again.
