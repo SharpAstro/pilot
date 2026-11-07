@@ -1358,7 +1358,9 @@ public sealed partial class Watchtower(
             $"Stopped the watchtower: no flight in the air and no UI connected for {QuietFor.TotalMinutes:0} minutes; a flight taking off or a UI connecting resumes it within the hour, else starts a fresh one");
     }
 
-    private string BriefFingerprint() => Briefs.WatchtowerFingerprint(Name, Pilot, Models.Model(RoleModels.Watchtower), options.Machine);
+    // A stream watchtower's model is not part of it: a changed model restarts the process on --resume at its next idle (RelaunchOnSettingAsync),
+    // in the same conversation, instead of ending it for a fresh generation on a new brief.
+    private string BriefFingerprint() => Briefs.WatchtowerFingerprint(Name, Pilot, Streams is null ? Models.Model(RoleModels.Watchtower) : null, options.Machine);
 
     /// <summary>The fingerprint of the brief the running watchtower was started with, or null when the node has no record of it.</summary>
     private string? Briefed()

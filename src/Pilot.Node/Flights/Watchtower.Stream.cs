@@ -405,7 +405,7 @@ public sealed partial class Watchtower : IStreamRoute
         }
         // The model and effort are the setting's as of now, not those the process ran on: a restart after a changed setting runs on the new ones.
         var wanted = plan.Entry?.Start ?? StreamStartOf("", SessionStartReasons.WatchtowerStart);
-        var start = Prepare(wanted with { Model = Models.Model(RoleModels.Watchtower) ?? wanted.Model, Effort = Models.Effort(RoleModels.Watchtower) ?? wanted.Effort });
+        var start = Prepare(Models.Model(RoleModels.Watchtower) is { } model ? wanted with { Model = model, Effort = Models.Effort(RoleModels.Watchtower) } : wanted);
         var fresh = Launch(start, plan.SessionId, plan.RowId, plan.StartedAt, plan.Earlier);
         if (plan.Entry?.Session is { } old)
         {
@@ -433,9 +433,9 @@ public sealed partial class Watchtower : IStreamRoute
             {
                 return null;
             }
-            var modelDrifted = model is not null && !string.Equals(model, entry.Start.Model, StringComparison.Ordinal);
-            var effortDrifted = effort is not null && !string.Equals(effort, entry.Start.Effort, StringComparison.Ordinal);
-            return modelDrifted || effortDrifted ? (model, effort) : null;
+            // With a model set (the node's own settings, not a bare test node), the effort is the setting's too: none means Claude Code's own for that model.
+            return model is not null && (!string.Equals(model, entry.Start.Model, StringComparison.Ordinal) || !string.Equals(effort, entry.Start.Effort, StringComparison.Ordinal))
+                ? (model, effort) : null;
         }
     }
 
@@ -464,7 +464,9 @@ public sealed partial class Watchtower : IStreamRoute
             }
             // The reader reports the exit as requested before this returns.
             await session.DisposeAsync();
-            await ResumeLockedAsync(new StreamResume(entry.RowId, session.SessionId, entry.StartedAt, [.. entry.Earlier], entry), why, cancellationToken);
+            var fresh = await ResumeLockedAsync(new StreamResume(entry.RowId, session.SessionId, entry.StartedAt, [.. entry.Earlier], entry), why, cancellationToken);
+            // Its brief names the model it started on ("You run on ..."): say the new one, so what it knows of itself is true.
+            await fresh.Session!.SendAsync($"The node restarted you on {fresh.Start.Model}{(fresh.Start.Effort is null ? "" : " at effort " + fresh.Start.Effort)}, as Settings now say. Carry on; nothing else changed.", cancellationToken);
             return true;
         }
         finally
