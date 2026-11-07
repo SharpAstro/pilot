@@ -796,7 +796,7 @@ public sealed partial class LegCommander
 
     /// <summary>
     /// Why a done leg is sent back: what its card is worded for (the review's findings, failed checks, or a reviewer that did not start).
-    /// A conflict is not sent back: it goes to the watchtower (<see cref="ConflictsAsync"/>).
+    /// A conflict is not sent back as one of these: a worker is told it, or the last leg goes round on it (<see cref="ResolveConflictAsync"/>).
     /// </summary>
     private enum SendBackReason
     {

@@ -271,6 +271,34 @@ public sealed partial class RoleModels
         return (model, effort);
     }
 
+    /// <summary>The rungs of the conflict ladder (PIL846): sonnet, then opus, then opus at xhigh.</summary>
+    public const int ConflictRungs = 3;
+
+    /// <summary>
+    /// The model and effort of the worker sent to resolve a PR's conflict on <paramref name="rung"/> (1 to <see cref="ConflictRungs"/>):
+    /// 1 is Sonnet at the worker role's default effort, 2 Opus at that effort, 3 Opus at xhigh, whatever the leg's plan or go-around
+    /// count says. Never past the worker range's max: a rung above it runs on the max and says so in <c>Words</c>. Read from the range
+    /// even for a commander that passes no model to other workers, so the ladder is the same wherever it runs.
+    /// </summary>
+    public (string Model, string? Effort, string Words) ConflictWorkerFor(int rung)
+    {
+        var range = Range(Worker);
+        var wanted = rung switch
+        {
+            <= 1 => new ModelPair("sonnet", range.Default.Effort),
+            2 => new ModelPair("opus", range.Default.Effort),
+            _ => new ModelPair("opus", "xhigh"),
+        };
+        var words = Describe(wanted);
+        if (wanted.Order <= range.Max.Order)
+        {
+            return (wanted.Model, wanted.Effort, words);
+        }
+        return (range.Max.Model, range.Max.Effort, $"{Describe(range.Max)}, clamped from {words} by the worker range max {range.Max}");
+    }
+
+    private static string Describe(ModelPair pair) => pair.Effort is null ? pair.Model : $"{pair.Model} at {pair.Effort}";
+
     /// <summary>
     /// The choice that starts a fresh worker on <paramref name="leg"/>, naming why the last one is let go (<paramref name="why"/> completes
     /// "the last one ...": <c>went idle</c>, <c>never showed up</c>); its next worker is attempt go-arounds + 2, numbered as the redo it

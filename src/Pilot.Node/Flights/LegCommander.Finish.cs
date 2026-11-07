@@ -105,6 +105,13 @@ public sealed partial class LegCommander
                 {
                     throw new FlightException($"{flight.Code}/{leg.Name} has steps not ticked: {string.Join("; ", open)}");
                 }
+                // A conflict worker that says it is done while a test merge of the base still conflicts has not resolved it: that counts as
+                // failed and the next rung starts (PIL846), where the bring-up below would only refuse it and leave the same worker flying.
+                if (await ConflictStillAsync(flight, leg, cancellationToken)
+                    && await ConflictRoundEndedAsync(flight, leg, report.Length > 0 ? $"finished done, but merging the base still conflicts: {report}" : "finished done, but merging the base still conflicts", cancellationToken))
+                {
+                    break;
+                }
                 // The go-around's push comes next when it is the last leg. The plane is brought up to date with its base first, so the
                 // check below runs on what is pushed; a conflict is undone and refused, the leg left flying for its worker to resolve.
                 // A review that passed at an earlier head asks the same once the leg's commits moved the plane past it (a review-notes leg).
@@ -170,6 +177,7 @@ public sealed partial class LegCommander
                     }
                 }
                 var said = report.Length > 0 ? report : leg.Report;
+                _conflictLadder.TryRemove(flight.Code, out _);
                 await RecordDoneAsync(flight, leg, notOurs is null ? said : string.IsNullOrWhiteSpace(said) ? notOurs : $"{said}\n{notOurs}", push: true, cancellationToken);
                 break;
             case "failed":
@@ -183,6 +191,12 @@ public sealed partial class LegCommander
                 if (SiblingRestoreFailure.In(report, flight.Worktree) is { } stale && _siblingRefused.TryAdd($"{flight.Code}/{leg.Name}", 0))
                 {
                     throw new FlightException($"{stale.Text}\nThen finish again; if it still fails, report it again and the node will take it as a failure.");
+                }
+                // A conflict worker that failed is followed at once by the next rung of the ladder (PIL846), with no card between; past the
+                // last rung only a report in the decision shape rings, and any other failure is the leg-failed card's below.
+                if (await ConflictRoundEndedAsync(flight, leg, report, cancellationToken))
+                {
+                    break;
                 }
                 // A worker that fails a leg whose work is done and pushed has only lost its way at the end: the node finishes it. This is
                 // decided on the plane as the worker left it: the early push below would put every plane at origin/<branch> first.
@@ -213,12 +227,8 @@ public sealed partial class LegCommander
                         new CardChoice { Label = $"Accept {leg.Name} as it stands, the failure kept in its report", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
                     ],
                     summary: $"The worker of {flight.Code}/{leg.Name} stopped. Send {leg.Name} round again starts a fresh worker told why; Accept {leg.Name} as it stands keeps the failure in its report and the flight goes on.");
-                // The worker the node sent round on the PR open's conflict gave up: the owner is rung about the conflict itself, once.
-                if (_conflictSent.ContainsKey(flight.Code) && flight.PullRequest is null
-                    && state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault()?.Name == leg.Name)
-                {
-                    await ConflictsAsync(flight.Code, $"the worker the node sent round on the conflict stopped: {reason}", cancellationToken);
-                }
+                // A worker that was sent round on the conflict and stopped is the leg-failed card's to say, as for any stopped worker: the
+                // conflict is no card of its own, and the same base head is not put to a worker twice (ResolveConflictAsync).
                 break;
             default:
                 throw new FlightException("finish-leg takes done or failed, then a report");
