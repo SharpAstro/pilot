@@ -212,10 +212,10 @@ public sealed partial class FlightCommander
                     throw new FlightException($"{flight.Code} merged at {CommitRefs.Short(mergedHead)}, but its plane holds {dirty}: commit and land {(dirty.StartsWith("1 ", StringComparison.Ordinal) ? "it" : "them")} in a PR of their own, then land the flight");
                 }
                 // Commits past the merged head are in the merge all the same when the merge's tree is the plane's own.
-                if (await planes.PastAsync(flight.Worktree, mergedHead, cancellationToken) is { Count: > 0 } past
+                if (await planes.PastAsync(flight.Worktree, mergedHead, mainRef, cancellationToken) is { Count: > 0 } past
                     && !(workInMerge || (await MergeHoldsPlaneAsync(flight, cancellationToken)).Holds))
                 {
-                    throw new FlightException($"{flight.Code} merged at {CommitRefs.Short(mergedHead)}, but its plane holds {past.Count} commit{(past.Count == 1 ? "" : "s")} past it: {string.Join("; ", past)}. Land {(past.Count == 1 ? "it" : "them")} in a PR of {(past.Count == 1 ? "its" : "their")} own, then land the flight");
+                    throw new LeftOutCommitsException($"{flight.Code} merged at {CommitRefs.Short(mergedHead)}, but {(past.Count == 1 ? "1 commit of its own" : $"{past.Count} commits of its own")} missed the merge: {string.Join("; ", past)}", past);
                 }
             }
             else if (await planes.UnlandedAsync(flight.Worktree, mainRef, cancellationToken) is { Count: > 0 } loose)
