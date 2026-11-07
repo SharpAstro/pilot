@@ -59,6 +59,22 @@ public sealed class HookBookTests
     }
 
     [Fact]
+    public void APermissionRequestKeepsTheCallItAsksLeaveFor()
+    {
+        var bash = After(Hook("PermissionRequest", ",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin main\\nsecond line\"}")).ShouldNotBeNull();
+        bash.Asking.ShouldBe("Bash: git push origin main");
+        bash.WaitingFor.ShouldBe("permission to use Bash");
+
+        After(Hook("PermissionRequest", ",\"tool_name\":\"EnterWorktree\",\"tool_input\":{\"path\":\"/r/w\"}")).ShouldNotBeNull().Asking.ShouldBe("EnterWorktree: /r/w");
+        After(Hook("PermissionRequest", ",\"tool_name\":\"NotebookEdit\",\"tool_input\":{\"notebook_path\":\"n.ipynb\"}")).ShouldNotBeNull().Asking.ShouldBe("NotebookEdit: n.ipynb");
+        // A call with no input says only its tool; a question is no call, and the notification's words say nothing of one.
+        After(Hook("PermissionRequest", ",\"tool_name\":\"Skill\"")).ShouldNotBeNull().Asking.ShouldBe("Skill");
+        After(Hook("PermissionRequest", ",\"tool_name\":\"AskUserQuestion\",\"tool_input\":{\"questions\":[{\"question\":\"Which?\"}]}")).ShouldNotBeNull().Asking.ShouldBeNull();
+        After(Hook("PermissionRequest")).ShouldNotBeNull().Asking.ShouldBeNull();
+        After(Hook("Notification", ",\"notification_type\":\"permission_prompt\",\"message\":\"Claude needs your permission to use Bash\"")).ShouldNotBeNull().Asking.ShouldBeNull();
+    }
+
+    [Fact]
     public void AnApiErrorOrAUsageLimitStopsItUntilItWorksAgain()
     {
         After(Hook("StopFailure", ",\"error\":\"rate_limit\"")).ShouldNotBeNull().ApiError.ShouldBe("rate_limit");
@@ -97,6 +113,11 @@ public sealed class HookRowTests : IDisposable
 
         row.State.ShouldBe(SessionState.Waiting);
         row.WaitingFor.ShouldBe("permission to use Bash");
+        row.Asking.ShouldBeNull();
+
+        // The hook's call is the row's Asking before any transcript is read.
+        SessionRowBuilder.Build(Agent(4343), TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc, hook with { Event = "PermissionRequest", Asking = "Bash: dotnet test" })
+            .Asking.ShouldBe("Bash: dotnet test");
         // A session whose process is gone is the listing's, whatever its last hook said.
         SessionRowBuilder.Build(Agent(null, status: null), TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc, hook).State.ShouldBe(SessionState.Ended);
     }

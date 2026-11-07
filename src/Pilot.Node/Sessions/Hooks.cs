@@ -6,9 +6,11 @@ namespace Pilot.Node.Sessions;
 
 /// <summary>
 /// What a session's latest hook said: the state it puts the session in, what it waits on, the API error that stopped
-/// it, and when. Null fields say nothing, and leave the row to what the agents listing and transcripts say.
+/// it, and when. Null fields say nothing, and leave the row to what the agents listing and transcripts say. <c>Asking</c> is the call a
+/// permission prompt asks leave for, as <see cref="Pilot.Contracts.SessionRow.Asking"/> says it (<c>Bash: git push origin main</c>), kept from
+/// the PermissionRequest hook's tool name and input so the words exist before the transcript is read.
 /// </summary>
-public sealed record HookState(string Event, DateTimeOffset At, SessionState? State, string? WaitingFor, string? ApiError, string? EndReason = null);
+public sealed record HookState(string Event, DateTimeOffset At, SessionState? State, string? WaitingFor, string? ApiError, string? EndReason = null, string? Asking = null);
 
 /// <summary>
 /// The hooks Claude Code posts to the node (<c>POST /api/v1/hooks</c>, by <c>pilot-node hook</c>), per session. A hook
@@ -55,8 +57,7 @@ public sealed class HookBook
             "SessionStart" => previous is null or { State: SessionState.Ended } ? new HookState(name, at, SessionState.Idle, null, null) : null,
             "UserPromptSubmit" or "PreToolUse" or "PostToolUse" or "PostToolUseFailure" or "SubagentStart"
                 => new HookState(name, at, SessionState.Working, null, null),
-            "PermissionRequest" => new HookState(name, at, SessionState.Waiting,
-                ClaudeAgentsJson.Text(hook, "tool_name") is { } tool ? $"permission to use {tool}" : "a permission", null),
+            "PermissionRequest" => PermissionRequest(hook, name, at),
             "Notification" => FromNotification(hook, name, at, previous),
             "Stop" => new HookState(name, at, SessionState.Idle, null, null),
             "StopFailure" => new HookState(name, at, SessionState.Idle, null, ClaudeAgentsJson.Text(hook, "error") ?? "unknown"),
@@ -69,6 +70,13 @@ public sealed class HookBook
             Reports?.Heard(sessionId, next);
         }
         return sessionId;
+    }
+
+    private static HookState PermissionRequest(JsonElement hook, string name, DateTimeOffset at)
+    {
+        var tool = ClaudeAgentsJson.Text(hook, "tool_name");
+        var summary = tool is not null && hook.TryGetProperty("tool_input", out var input) ? Transcripts.Summarize(tool, input) : null;
+        return new HookState(name, at, SessionState.Waiting, tool is not null ? $"permission to use {tool}" : "a permission", null, Asking: PermissionAsks.Asking(tool, summary));
     }
 
     private static HookState? FromNotification(JsonElement hook, string name, DateTimeOffset at, HookState? previous)

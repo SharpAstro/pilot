@@ -253,6 +253,14 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     {
                         break;
                     }
+                    // A real question keeps its own words; a permission prompt is said by the call it asks leave for, when that is known.
+                    if (WantedCall(leg, worker) is { } wants)
+                    {
+                        Ring(leg, Waiting, $"{Name(leg)}'s worker wants to {wants}",
+                            $"it wants to {wants}; it cannot go on until the prompt is answered in its own session ({Steps(leg)})", worker,
+                            lead: $"The worker of {Name(leg)} wants to {wants}.");
+                        break;
+                    }
                     var asks = worker.WaitingFor is { Length: > 0 } what ? what : "a question or a permission";
                     Ring(leg, Waiting, $"{Name(leg)}'s worker waits on you for {Clip(asks)}",
                         $"{asks}; the worker cannot go on until it is answered in its own session ({Steps(leg)})", worker);
@@ -992,8 +1000,16 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             {
                 state.CloseCardsAbout(subject, "it has waited over " + Waited.Say(RingAfter) + ", so it rings", CardKinds.SessionWaiting);
             }
-            var what = session.WaitingFor is { Length: > 0 } w ? w : "a question or a permission";
             var age = session.WaitingSince is { } started ? $" · since {Waited.Say(now - started)}" : "";
+            // The same words as a leg's worker gets: the call it asks leave for, unless it asks a real question.
+            var wants = session.WaitingFor?.Contains('?') == true ? null : PermissionAsks.FromAsking(session.Asking);
+            if (wants is not null)
+            {
+                state.RaiseCard(rings ? CardBin.Ring : CardBin.ForYou, CardKinds.SessionWaiting, subject, $"{session.Name} wants to {wants}{age}",
+                    "answering in its own session lets it go on with the call", link: session.RemoteControlUrl);
+                continue;
+            }
+            var what = session.WaitingFor is { Length: > 0 } w ? w : "a question or a permission";
             state.RaiseCard(rings ? CardBin.Ring : CardBin.ForYou, CardKinds.SessionWaiting, subject, $"{session.Name} waits on {what}{age}", session.Asking, link: session.RemoteControlUrl);
         }
     }
@@ -1521,6 +1537,20 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         return true;
     }
 
+    /// <summary>
+    /// What a Waiting worker's pending call would do, as <see cref="PermissionAsks"/> says it, or null when no call is known or the
+    /// worker asks a real question (a question mark in what it waits on), which keeps its own words.
+    /// </summary>
+    private string? WantedCall(LegRow leg, SessionRow worker)
+    {
+        if (worker.WaitingFor?.Contains('?') == true)
+        {
+            return null;
+        }
+        var plane = state.Flights().FirstOrDefault(f => f.Code == leg.Flight)?.Worktree;
+        return PermissionAsks.FromAsking(worker.Asking, plane);
+    }
+
     private void Ring(LegRow leg, string kind, string title, string? detail, SessionRow? worker = null, string? lead = null, string? redoWhy = null)
     {
         var choices = Choices(leg, worker, kind, redoWhy);
@@ -1540,7 +1570,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         return kind switch
         {
             Stopped => $"{lead ?? $"The worker of {what} was stopped by the API and no reset time is known."} {then}",
-            Waiting => $"The worker of {what} waits on you for an answer. Answer it in its own session; {redo} lets it go.",
+            Waiting => $"{lead ?? $"The worker of {what} waits on you for an answer."} Answering in its own session lets this worker go on with the call; {redo} stops this one and starts another on the leg from the branch.",
             Failed => $"The worker of {what} failed. {then}",
             Missing => $"The worker of {what} never showed up. {then}",
             Idle => $"The worker of {what} stopped with its leg unfinished. {then}",

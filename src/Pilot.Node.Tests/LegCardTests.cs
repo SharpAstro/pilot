@@ -41,7 +41,7 @@ public sealed class LegCardTests
         });
     }
 
-    private void Worker(SessionState state, string? apiError = null, DateTimeOffset? resetsAt = null, string? waitingFor = null) =>
+    private void Worker(SessionState state, string? apiError = null, DateTimeOffset? resetsAt = null, string? waitingFor = null, string? asking = null) =>
         _state.PutSession(new SessionRow
         {
             Id = "a1b2c3d4",
@@ -56,6 +56,7 @@ public sealed class LegCardTests
             ContextWindow = 200_000,
             State = state,
             WaitingFor = waitingFor,
+            Asking = asking,
             SpendWeighted = 0,
             ApiError = apiError,
             ApiErrorResetsAt = resetsAt,
@@ -136,6 +137,44 @@ public sealed class LegCardTests
         card.Title.ShouldBe("TIA1/parser's worker waits on you for permission to run rm -rf build");
         card.Detail.ShouldStartWith("permission to run rm -rf build; the worker cannot go on until it is answered in its own session");
         card.Choices.Select(c => c.Label).ShouldBe(["Start a fresh worker on parser (the last one waited on you)"]);
+    }
+
+    [Theory]
+    [InlineData("Bash: git push origin main", "TIA1/parser's worker wants to run: git push origin main (Bash)")]
+    [InlineData("Edit: src/Parser.cs", "TIA1/parser's worker wants to edit src/Parser.cs (Edit)")]
+    [InlineData("Read: src/Parser.cs", "TIA1/parser's worker wants to read src/Parser.cs (Read)")]
+    [InlineData("EnterWorktree: /r/other", "TIA1/parser's worker wants to switch its folder to /r/other (EnterWorktree)")]
+    [InlineData("EnterWorktree: /r/w", "TIA1/parser's worker wants to switch its folder to its own plane (EnterWorktree)")]
+    public async Task AWaitingWorkerWithAKnownPendingCallSaysWhatItWantsAndWhatEachChoiceDoes(string asking, string title)
+    {
+        Worker(SessionState.Waiting, waitingFor: "permission to use Tool", asking: asking);
+        _state.PutFlight(new FlightRow
+        {
+            Code = "TIA1", Repo = "tianwen", RepoPath = "/r", Issue = 1, Branch = "flight/tia1", Worktree = "/r/w", Base = "origin/main",
+            State = FlightState.Flying, CreatedAt = Start,
+        });
+
+        await _watch.LookAsync(Ct);
+
+        var card = Open().ShouldHaveSingleItem();
+        card.Title.ShouldBe(title);
+        card.Detail.ShouldNotBeNull().ShouldStartWith(title["TIA1/parser's worker ".Length..].Insert(0, "it ") + ";");
+        card.Detail.ShouldContain("answered in its own session");
+        card.Summary.ShouldContain("Answering in its own session lets this worker go on with the call");
+        card.Summary.ShouldContain("stops this one and starts another on the leg from the branch");
+        card.Summary.ShouldContain(card.Choices.Single().Label);
+        $"{card.Title}{card.Detail}{card.Summary}".ShouldNotContain("—");
+        $"{card.Title}{card.Detail}{card.Summary}".ShouldNotContain("--");
+    }
+
+    [Fact]
+    public async Task AWaitingWorkersRealQuestionKeepsItsOwnWordsEvenWithACallPending()
+    {
+        Worker(SessionState.Waiting, waitingFor: "Which branch should I use?", asking: "Bash: git checkout");
+
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldHaveSingleItem().Title.ShouldBe("TIA1/parser's worker waits on you for Which branch should I use?");
     }
 
     [Fact]
