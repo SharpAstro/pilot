@@ -84,7 +84,8 @@ public sealed partial class LegCommander
         catch (FlightException ex) when (IsConflict(ex.Message))
         {
             // A base that conflicts is a worker's to resolve, whoever asked to open the PR (the node after the last leg, a card, the CLI):
-            // the last leg goes round by itself with the conflict told, once for each head of the base, and nothing rings. The open's own
+            // a worker flying a leg is told to merge the base, else the last leg goes round by itself with the conflict told, once for each
+            // head of the base (a failed worker is followed by a stronger one), and nothing rings until the last rung fails. The open's own
             // call on the flight is let go first, as the go-around takes the flight itself.
             call.Dispose();
             await ResolveConflictAsync(flight.Code, ex.Message, cancellationToken, lockHeld: true);
