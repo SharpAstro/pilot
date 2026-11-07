@@ -386,6 +386,63 @@ public sealed class LegWatchTests
         card.Choices.Select(c => c.Label).ShouldBe(["Nudge du1-tia1-parser to finish parser or say why not", "Start a fresh worker on parser (the last one went idle with the leg unfinished)"]);
     }
 
+    private void Flight(FlightState state) => _state.PutFlight(new FlightRow
+    {
+        Code = "TIA1", Repo = "tianwen", RepoPath = "/r", Issue = 1, Title = "Parse it", Branch = "flight/tia1", Worktree = "/r/.claude/worktrees/TIA1",
+        Base = "origin/main", State = state, CreatedAt = Start, LandedAt = state == FlightState.Landed ? Start : null,
+    });
+
+    // c3651, 2026-11-06: TIA2000 landed and its cards closed, yet its leg review-notes-2 was still flying with an idle worker, so the watch rang again.
+    [Fact]
+    public async Task AFlyingLegOfALandedFlightRaisesNoCardWhereTheSameLegOfAFlyingFlightRings()
+    {
+        Worker(SessionState.Idle);
+        _time.Advance(TimeSpan.FromMinutes(10));
+
+        Flight(FlightState.Flying);
+        foreach (var _ in Enumerable.Range(0, 4))
+        {
+            await _watch.LookAsync(Ct);
+        }
+        Open().ShouldHaveSingleItem().Kind.ShouldBe(LegWatch.Idle);
+
+        // It lands: its cards close with it, and the leg is still flying with the worker idle.
+        _state.CloseCardsAbout(Verbs.FlightTarget("TIA1"), "TIA1 landed");
+        Flight(FlightState.Landed);
+        var said = _said.Count;
+        var cards = _state.Cards().Length;
+        foreach (var _ in Enumerable.Range(0, 4))
+        {
+            _time.Advance(TimeSpan.FromMinutes(10));
+            await _watch.LookAsync(Ct);
+        }
+
+        Open().ShouldBeEmpty();
+        _state.Cards().Length.ShouldBe(cards);
+        _said.Count.ShouldBe(said);
+    }
+
+    [Fact]
+    public async Task ACardAboutALegRaisedBeforeItsFlightLandsIsClosedAtTheLandingAndNotRaisedAgain()
+    {
+        Worker(SessionState.Idle);
+        Flight(FlightState.Flying);
+        _time.Advance(TimeSpan.FromMinutes(10));
+        foreach (var _ in Enumerable.Range(0, 4))
+        {
+            await _watch.LookAsync(Ct);
+        }
+        var card = Open().ShouldHaveSingleItem();
+        card.Subject.ShouldBe("flight/TIA1/parser");
+
+        _state.CloseCardsAbout(Verbs.FlightTarget("TIA1"), "TIA1 landed");
+        Flight(FlightState.Landed);
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task AnIdleWorkerWithRoomRingsAndItsDetailSaysItIsIdleWithRoom()
     {

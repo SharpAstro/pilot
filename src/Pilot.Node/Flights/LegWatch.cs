@@ -175,7 +175,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         await LookAtLegWaitsAsync(now, cancellationToken);
         await LookAtLegRechecksAsync(now, cancellationToken);
         await LookAtPlannersAsync(sessions, now, cancellationToken);
-        foreach (var leg in state.Legs().Where(l => l.State == LegState.Flying && l.WorkerJob is not null))
+        foreach (var leg in LegsInPlay().Where(l => l.State == LegState.Flying && l.WorkerJob is not null))
         {
             var subject = Verbs.LegTarget(leg.Flight, leg.Name);
             var worker = sessions.FirstOrDefault(s => s.Id == leg.WorkerJob);
@@ -253,7 +253,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// </summary>
     private async Task LookAtLegWaitsAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
-        foreach (var leg in state.Legs().Where(l => l is { State: LegState.Flying, Wait: not null }))
+        foreach (var leg in LegsInPlay().Where(l => l is { State: LegState.Flying, Wait: not null }))
         {
             var wait = leg.Wait!;
             var came = wait.Path is { } path
@@ -294,7 +294,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// </summary>
     private async Task LookAtLegRechecksAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
-        foreach (var leg in state.Legs().Where(l => l is { State: LegState.Flying, Recheck.Outcome: not null }))
+        foreach (var leg in LegsInPlay().Where(l => l is { State: LegState.Flying, Recheck.Outcome: not null }))
         {
             state.PutLeg(leg with { Recheck = null });
             if (leg.WorkerJob is not { } job)
@@ -615,7 +615,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// </summary>
     private async Task LookAtValidatorsAsync(SessionRow[] sessions, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        foreach (var leg in state.Legs().Where(l => l is { State: LegState.Planned, Validation: LegValidation.Pending, ValidatorJob: not null }))
+        foreach (var leg in LegsInPlay().Where(l => l is { State: LegState.Planned, Validation: LegValidation.Pending, ValidatorJob: not null }))
         {
             var subject = Subject(leg);
             var startedAt = state.Cards().Where(c => c.Kind == LegCommander.ValidatingKind && c.Subject == subject).Select(c => c.At).DefaultIfEmpty(now).Max();
@@ -1158,8 +1158,23 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>The ledger of launched sessions: which were stopped on a land or merge, and which the node does not know; null in a test with none.</summary>
     public Sessions.SessionLedger? Ledger { get; set; }
 
+    /// <summary>
+    /// The legs of flights that have not landed. A landed flight's cards are closed at its landing (<c>CloseCardsAbout</c>), so a leg left
+    /// flying in one (c3651, 2026-11-06: TIA2000's review-notes-2 after TIA2000 landed) must raise nothing again: the watch looks at no leg of it.
+    /// </summary>
+    private IEnumerable<LegRow> LegsInPlay()
+    {
+        var landed = state.Flights().Where(f => f.State == FlightState.Landed).Select(f => f.Code).ToHashSet(StringComparer.Ordinal);
+        return landed.Count == 0 ? state.Legs() : state.Legs().Where(l => !landed.Contains(l.Flight));
+    }
+
     private void Ring(LegRow leg, string kind, string title, string? detail, SessionRow? worker = null, string? lead = null, string? redoWhy = null)
     {
+        // A leg of a landed flight raises no card, whichever path got here.
+        if (state.Flights().Any(f => f.State == FlightState.Landed && f.Code == leg.Flight))
+        {
+            return;
+        }
         var choices = Choices(leg, worker, kind, redoWhy);
         state.RaiseCard(CardBin.Ring, kind, Subject(leg), title, detail, choices, summary: RingSummary(leg, kind, choices, lead));
     }
