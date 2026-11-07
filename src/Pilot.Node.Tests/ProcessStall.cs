@@ -7,10 +7,16 @@ namespace Pilot.Node.Tests;
 /// goes backwards); <paramref name="PoolLag"/> is how long the sampler's latest pool probe waited for a pool thread
 /// (still waiting, if it had not run yet); the rest are the runtime's own counters.
 /// </summary>
-public readonly record struct StallSample(TimeSpan At, TimeSpan PoolLag, int Threads, long Queue, TimeSpan GcPause);
+/// <param name="Cpu">Total CPU time the process has used so far (all its threads).</param>
+/// <param name="Contention">Monitor lock waits so far (a thread that had to wait for a lock another held).</param>
+/// <param name="Completed">Pool work items finished so far.</param>
+/// <param name="TickLate">How late the sampler's own thread (not a pool thread) woke for this tick; zero for a mark taken by a test.</param>
+public readonly record struct StallSample(TimeSpan At, TimeSpan PoolLag, int Threads, long Queue, TimeSpan GcPause,
+    TimeSpan Cpu = default, long Contention = 0, long Completed = 0, TimeSpan TickLate = default);
 
-/// <summary>What the runtime reports about itself: the pool's thread count and queue length, and total GC pause time so far.</summary>
-public readonly record struct StallRuntime(int Threads, long Queue, TimeSpan GcPause);
+/// <summary>What the runtime reports about itself: the pool's thread count and queue length, total GC pause time, the process's CPU time, monitor lock waits and pool items finished, all so far.</summary>
+public readonly record struct StallRuntime(int Threads, long Queue, TimeSpan GcPause,
+    TimeSpan Cpu = default, long Contention = 0, long Completed = 0);
 
 /// <summary>
 /// A test's window on the sampler's clock. <paramref name="End"/> is null while the test still runs. A test running at
@@ -30,19 +36,29 @@ public sealed record AlsoSlow(string Name, TimeSpan Elapsed, bool Running, bool 
 /// <param name="MaxQueue">Longest pool queue over the window.</param>
 /// <param name="GcPause">GC pause time that fell inside the window.</param>
 /// <param name="AlsoSlow">Other tests that ran alongside for a while, longest first.</param>
+/// <param name="StallCpu">CPU time the whole process used while the pool lagged (the stalled spans only).</param>
+/// <param name="StallContention">Monitor lock waits while the pool lagged.</param>
+/// <param name="StallCompleted">Pool work items finished while the pool lagged.</param>
+/// <param name="LateTicks">How late the sampler's own thread woke, summed over the ticks of the window that were late by at least <see cref="ProcessStall.LagThreshold"/>.</param>
+/// <param name="MaxTickLate">The latest the sampler's own thread woke over the window.</param>
 public sealed record StallReadings(
     TimeSpan Window, TimeSpan MaxPoolLag, TimeSpan PoolStall, int MinThreads, int MaxThreads, long MaxQueue,
-    TimeSpan GcPause, IReadOnlyList<AlsoSlow> AlsoSlow)
+    TimeSpan GcPause, IReadOnlyList<AlsoSlow> AlsoSlow,
+    TimeSpan StallCpu = default, long StallContention = 0, long StallCompleted = 0,
+    TimeSpan LateTicks = default, TimeSpan MaxTickLate = default)
 {
     /// <summary>The time the process lost: the larger of the pool stall and the GC pause (a GC pause also stalls the pool, so they are not added).</summary>
     public TimeSpan Lost => PoolStall > GcPause ? PoolStall : GcPause;
 
     /// <summary>
     /// What took the time: the GC when its pause covers at least half of the pool stall (a stop-the-world pause stalls the
-    /// pool too, so the lag is its consequence), otherwise pool starvation.
+    /// pool too, so the lag is its consequence); otherwise the whole process starved of CPU when the sampler's own thread,
+    /// which no pool block can hold up, woke late for at least half of it; otherwise pool starvation.
     /// </summary>
     public StallCause Cause => Lost == TimeSpan.Zero ? StallCause.None
-        : GcPause * 2 >= PoolStall ? StallCause.Gc : StallCause.PoolStarvation;
+        : GcPause * 2 >= PoolStall ? StallCause.Gc
+        : LateTicks * 2 >= PoolStall ? StallCause.ProcessStarved
+        : StallCause.PoolStarvation;
 }
 
 public enum StallCause
@@ -50,6 +66,7 @@ public enum StallCause
     None,
     PoolStarvation,
     Gc,
+    ProcessStarved,
 }
 
 /// <summary>
@@ -88,7 +105,8 @@ public static class ProcessStall
     public static TimeSpan Now() => Stopwatch.GetElapsedTime(Epoch);
 
     /// <summary>The runtime's counters right now.</summary>
-    public static StallRuntime ReadRuntime() => new(ThreadPool.ThreadCount, ThreadPool.PendingWorkItemCount, GC.GetTotalPauseDuration());
+    public static StallRuntime ReadRuntime() => new(ThreadPool.ThreadCount, ThreadPool.PendingWorkItemCount, GC.GetTotalPauseDuration(),
+        Environment.CpuUsage.TotalTime, Monitor.LockContentionCount, ThreadPool.CompletedWorkItemCount);
 
     /// <summary>Queues <paramref name="work"/> on the global pool queue, as a test's own tasks would be.</summary>
     public static void QueueToPool(Action work) => ThreadPool.UnsafeQueueUserWorkItem(static a => a(), work, preferLocal: false);
@@ -137,15 +155,54 @@ public static class ProcessStall
 
         var gc = end.GcPause - start.GcPause;
 
+        // What the whole process did while the pool lagged: counters read at the two ends of each stalled span.
+        var merged = Merge(spans);
+        var ordered = counters.OrderBy(s => s.At).ToList();
+        TimeSpan stallCpu = default;
+        long stallContention = 0, stallCompleted = 0;
+        foreach (var (from, to) in merged)
+        {
+            var a = CountersAt(ordered, from);
+            var b = CountersAt(ordered, to);
+            stallCpu += Positive(b.Cpu - a.Cpu);
+            stallContention += Math.Max(0, b.Contention - a.Contention);
+            stallCompleted += Math.Max(0, b.Completed - a.Completed);
+        }
+
+        // The sampler's own thread is no pool thread: when it woke late too, nothing the pool did explains it.
+        var late = inside.Where(s => s.TickLate >= LagThreshold).ToList();
+
         return new StallReadings(
             window,
             inside.Max(s => s.PoolLag),
-            UnionLength(spans),
+            Length(merged),
             counters.Min(s => s.Threads),
             counters.Max(s => s.Threads),
             counters.Max(s => s.Queue),
             gc > TimeSpan.Zero ? gc : TimeSpan.Zero,
-            AlsoSlowIn(others, start.At, end.At));
+            AlsoSlowIn(others, start.At, end.At),
+            stallCpu, stallContention, stallCompleted,
+            late.Aggregate(TimeSpan.Zero, (sum, s) => sum + s.TickLate),
+            inside.Max(s => s.TickLate));
+    }
+
+    private static TimeSpan Positive(TimeSpan time) => time > TimeSpan.Zero ? time : TimeSpan.Zero;
+
+    /// <summary>The counters as last read at or before <paramref name="at"/> (the first reading when none is that old).</summary>
+    private static StallSample CountersAt(List<StallSample> ordered, TimeSpan at)
+    {
+        var found = ordered[0];
+        foreach (var sample in ordered)
+        {
+            if (sample.At > at)
+            {
+                break;
+            }
+
+            found = sample;
+        }
+
+        return found;
     }
 
     private static List<AlsoSlow> AlsoSlowIn(IReadOnlyList<TestWindow> others, TimeSpan from, TimeSpan to)
@@ -165,13 +222,11 @@ public static class ProcessStall
         return found;
     }
 
-    /// <summary>Total length covered by the spans, with overlaps counted once: consecutive ticks of one stalled probe all cover the same time.</summary>
-    private static TimeSpan UnionLength(List<(TimeSpan From, TimeSpan To)> spans)
+    /// <summary>The spans with overlaps joined, in order: consecutive ticks of one stalled probe all cover the same time.</summary>
+    private static List<(TimeSpan From, TimeSpan To)> Merge(List<(TimeSpan From, TimeSpan To)> spans)
     {
         spans.Sort((a, b) => a.From.CompareTo(b.From));
-        var total = TimeSpan.Zero;
-        var open = false;
-        TimeSpan from = default, to = default;
+        var merged = new List<(TimeSpan From, TimeSpan To)>();
         foreach (var span in spans)
         {
             if (span.To <= span.From)
@@ -179,23 +234,22 @@ public static class ProcessStall
                 continue;
             }
 
-            if (!open)
+            if (merged.Count > 0 && span.From <= merged[^1].To)
             {
-                (from, to, open) = (span.From, span.To, true);
-            }
-            else if (span.From <= to)
-            {
-                to = span.To > to ? span.To : to;
+                var last = merged[^1];
+                merged[^1] = (last.From, span.To > last.To ? span.To : last.To);
             }
             else
             {
-                total += to - from;
-                (from, to) = (span.From, span.To);
+                merged.Add(span);
             }
         }
 
-        return open ? total + (to - from) : total;
+        return merged;
     }
+
+    private static TimeSpan Length(List<(TimeSpan From, TimeSpan To)> merged)
+        => merged.Aggregate(TimeSpan.Zero, (total, span) => total + (span.To - span.From));
 }
 
 /// <summary>
@@ -213,6 +267,7 @@ public sealed class StallSampler
     private int _next;
     private int _count;
     private Probe? _probe;
+    private TimeSpan? _lastTick;
 
     public StallSampler(Func<TimeSpan> clock, Action<Action> queueToPool, Func<StallRuntime> readRuntime, int capacity)
     {
@@ -249,8 +304,13 @@ public sealed class StallSampler
                 }
             }
 
+            // The sampler sleeps one interval between ticks; whatever it overslept is time this thread, which no pool block can
+            // hold up, was kept from running.
+            var tickLate = _lastTick is { } last ? Positive(now - last - ProcessStall.Interval) : TimeSpan.Zero;
+            _lastTick = now;
+
             var runtime = _read();
-            Add(new StallSample(at, lag, runtime.Threads, runtime.Queue, runtime.GcPause));
+            Add(new StallSample(at, lag, runtime.Threads, runtime.Queue, runtime.GcPause, runtime.Cpu, runtime.Contention, runtime.Completed, tickLate));
 
             if (_probe is null)
             {
@@ -275,7 +335,7 @@ public sealed class StallSampler
         }
 
         var runtime = _read();
-        return new StallSample(now, lag, runtime.Threads, runtime.Queue, runtime.GcPause);
+        return new StallSample(now, lag, runtime.Threads, runtime.Queue, runtime.GcPause, runtime.Cpu, runtime.Contention, runtime.Completed);
     }
 
     /// <summary>The samples kept, oldest first.</summary>

@@ -232,6 +232,7 @@ public static class StallCauseText
     {
         StallCause.Gc => "GC",
         StallCause.PoolStarvation => "pool starvation",
+        StallCause.ProcessStarved => "CPU starvation of the whole process (the sampler thread woke late too)",
         _ => "nothing",
     };
 }
