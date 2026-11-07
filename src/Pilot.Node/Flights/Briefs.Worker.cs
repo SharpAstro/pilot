@@ -5,6 +5,20 @@ namespace Pilot.Node.Flights;
 
 public static partial class Briefs
 {
+    /// <summary>
+    /// What a leg's worker is told about a design choice, and about waiting (PIL800, pilot #800). It sits beside <see cref="ReportRule"/>,
+    /// not in it, because the planner and the reviewer read that one and a choice between ways to do a leg is the worker's. A worker that
+    /// reported blocked on a choice one option settled rang the person for nothing, and one that reported blocked while its own job or the
+    /// node's check rerun ran rang for a wait the node ends by itself.
+    /// </summary>
+    internal static string DesignChoiceRule(string run) =>
+        "- A design choice in your leg is yours to take when one option meets the leg's Done-when, the issue's acceptance criteria and the repo\n" +
+        "  docs your change touches (prefer code that obeys a documented rule over rewording the rule): take it, and say in your report which\n" +
+        "  option you took and why. Report blocked only when no option meets them, when two do and differ in what the owner gets, or when\n" +
+        "  the choice would change the criteria themselves.\n" +
+        "- Waiting on a job of your own or on the node's check rerun is not a reason to report blocked: end your turn, and the node wakes you\n" +
+        $"  when it ends. `{run} session report blocked` is for a person's decision only.";
+
     /// <param name="socket">The node's socket when it is not the default one: the CLI is told it, or it would ask another node.</param>
     public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null, string? resumed = null, string? machine = null, string? update = null, string? pilotMd = null)
     {
@@ -166,6 +180,7 @@ public static partial class Briefs
         text.AppendLine("  A run goes on to its end unless you hand it over as `" + run + " run --fail-fast -- <command>`, which the node ends at its first failed test; use it when the first failure is all you need.");
         text.AppendLine(WaitRule(run));
         text.AppendLine(ReportRule(run));
+        text.AppendLine(DesignChoiceRule(run));
         // Claude Code isolates a -w session in its worktree and refuses a command it cannot prove stays inside: a git in a
         // loop, a pilot run handed a shell's -Command string. The worker recovers by splitting it, a turn lost each time
         // (TIA1781's cross-structure, SE1 2026-10-25).
