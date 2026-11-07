@@ -1128,6 +1128,9 @@ public abstract class LegCommanderTestsBase : IDisposable
     /// <summary>Runs this test on git itself, before it has used the repo: for a test of a class that otherwise checks what the node decides.</summary>
     private protected void RealGit() => _testGit.UseReal();
 
+    /// <summary>The model this test runs on; null when it runs on real git.</summary>
+    private protected FakeRepoGit? RepoModel => _testGit.Fake;
+
     public void Dispose()
     {
         // A leg start that pulled a sibling has RepoWatch reading the repos in the background; let it finish before the folders go.

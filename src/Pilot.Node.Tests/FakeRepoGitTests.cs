@@ -157,6 +157,38 @@ public sealed class FakeRepoGitTests : IDisposable
     }
 
     [Fact]
+    public void APreReceiveHookThatRefusesLeavesTheOriginAsItWasAndGitRelaysItsLines()
+    {
+        // As GitHub refuses a push to a queued branch (GH006): the hook's stderr comes back as "remote: ..." lines, and no ref moves.
+        MakePlane();
+        Commit(Plane, "a.txt", "one\n", "add a");
+        Run(Plane, "push", "-q", "origin", "HEAD:flight/x");
+        var pushed = Run(Plane, "rev-parse", "HEAD");
+        Commit(Plane, "a.txt", "two\n", "edit a");
+        var asked = new List<string>();
+        _git.PreReceive = r =>
+        {
+            asked.Add(r);
+            return ["error: GH006: Protected branch update failed for refs/heads/flight/x."];
+        };
+
+        var refused = _git.Run(["push", "-q", "origin", "HEAD:flight/x"], Plane);
+
+        refused.Ok.ShouldBeFalse();
+        refused.Error.ShouldContain("remote: error: GH006: Protected branch update failed for refs/heads/flight/x.");
+        refused.Error.ShouldContain("! [remote rejected] HEAD -> flight/x (pre-receive hook declined)");
+        asked.ShouldBe(["refs/heads/flight/x"]);
+        Run(Plane, "ls-remote", "origin", "flight/x").ShouldBe($"{pushed}\trefs/heads/flight/x");
+
+        // A push that moves nothing never reaches the hook; one let through moves the branch.
+        Run(Repo, "push", "-q", "origin", "main");
+        asked.Count.ShouldBe(1);
+        _git.PreReceive = null;
+        Run(Plane, "push", "-q", "origin", "HEAD:flight/x");
+        Run(Plane, "ls-remote", "origin", "flight/x").ShouldBe($"{Run(Plane, "rev-parse", "HEAD")}\trefs/heads/flight/x");
+    }
+
+    [Fact]
     public void AWorktreeWhoseFolderWentIsListedPrunableAndPruneForgetsIt()
     {
         MakePlane();

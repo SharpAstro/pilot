@@ -36,6 +36,9 @@ internal sealed class TestGit : IGit
     /// <summary>Whether this test runs on git itself.</summary>
     public bool IsReal => _fake is null;
 
+    /// <summary>The model this test runs on; null on real git.</summary>
+    public FakeRepoGit? Fake => _fake;
+
     /// <summary>
     /// Moves this test to real git: for a test, or a case of a theory, in a class that otherwise checks what the node decides. Called first,
     /// before the test has used the repo: the model's folders are replaced by the real repo.

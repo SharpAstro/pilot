@@ -118,6 +118,31 @@ internal sealed class FakeRepoGit : IGit
         }
     }
 
+    private Func<string, IReadOnlyList<string>?>? _preReceive;
+
+    /// <summary>
+    /// The origin's pre-receive hook, which real git runs from <c>origin.git/hooks/pre-receive</c>: given the ref a push would move, the lines the
+    /// hook prints on stderr when it refuses the push (exit 1), or null to let it through. Null means no hook. It runs only for a push that
+    /// would move a ref, after the non-fast-forward check, as git's does.
+    /// </summary>
+    public Func<string, IReadOnlyList<string>?>? PreReceive
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _preReceive;
+            }
+        }
+        set
+        {
+            lock (_gate)
+            {
+                _preReceive = value;
+            }
+        }
+    }
+
     /// <summary>The model whose folders <paramref name="cwd"/> is in; null when it is in none.</summary>
     public static FakeRepoGit? Owning(string cwd)
     {
@@ -648,14 +673,22 @@ internal sealed class FakeRepoGit : IGit
         {
             return Fail($"error: src refspec {src} does not match any", 1);
         }
-        if (_origin.TryGetValue(dstRef, out var old) && old != id)
+        var known = _origin.TryGetValue(dstRef, out var old);
+        var moves = !known || old != id;
+        if (known && moves)
         {
-            var fastForward = IsAncestor(old, id);
+            var fastForward = IsAncestor(old!, id);
             var leased = lease is not null && lease.Split('=', 2)[1].Split(':') is [_, var expected] && Resolve(expected, wt) == old;
             if (!fastForward && !force && !leased)
             {
                 return Fail($" ! [rejected]        {src} -> {dst} (non-fast-forward)\nerror: failed to push some refs to '{_originPath}'", 1);
             }
+        }
+        // The origin's pre-receive hook sees the update before any ref moves (an up-to-date push sends none); git relays a refusal line by line as "remote: ...".
+        if (moves && _preReceive?.Invoke(dstRef) is { } refusal)
+        {
+            var relayed = string.Concat(refusal.Select(l => "remote: " + l + "\n"));
+            return Fail($"{relayed}To {_originPath}\n ! [remote rejected] {src} -> {dst} (pre-receive hook declined)\nerror: failed to push some refs to '{_originPath}'", 1);
         }
         _origin[dstRef] = id;
         if (dstRef.StartsWith("refs/heads/", StringComparison.Ordinal))
