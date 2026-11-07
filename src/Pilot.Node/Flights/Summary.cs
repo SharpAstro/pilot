@@ -24,18 +24,27 @@ public static class SummaryRecords
     /// <summary>The longest of what a finished leg says, in the fleet's records: a done leg is a line there, not a section.</summary>
     public const int MaxDoneReport = 240;
 
+    /// <summary>The heading over the open cards of flights that have landed: they are never a need, only a candidate for the Resolved section.</summary>
+    public const string LandedCards = "Open cards about flights that have already landed (stale, never a need; at most list their ids under Resolved):";
+
     /// <summary>
-    /// The records of every flight in play (not landed), the open cards about none of them and the PR reviews not closed; null
+    /// The records of every flight in play (not landed), the open cards about none of them (those about a landed flight apart, under
+    /// <see cref="LandedCards"/>) and the PR reviews not closed; null
     /// when there is nothing of that to say, which a summary does not spend a call on.
     /// </summary>
     public static string? Fleet(NodeState state, DateTimeOffset now, StaleBounds? bounds = null)
     {
         var held = state.Snapshot();
         var inPlay = held.Flights.Where(f => f.State != FlightState.Landed).OrderBy(f => f.CreatedAt).ThenBy(f => f.Code, StringComparer.Ordinal).ToList();
-        var strays = held.Cards.Where(c => c.State == CardState.Open && c.Kind != Digest.Kind && !inPlay.Any(f => About(c, f.Code)))
+        var landed = held.Flights.Where(f => f.State == FlightState.Landed).Select(f => f.Code).ToList();
+        // An open card about a flight that has landed is never a need (its cards are closed at the landing, so one left is stale): it is
+        // told apart from the strays, and the prompt only lets it be proposed as resolved.
+        var ofLanded = held.Cards.Where(c => c.State == CardState.Open && c.Kind != Digest.Kind && landed.Any(code => About(c, code)))
+            .OrderBy(c => c.At).ToList();
+        var strays = held.Cards.Where(c => c.State == CardState.Open && c.Kind != Digest.Kind && !inPlay.Any(f => About(c, f.Code)) && !ofLanded.Contains(c))
             .OrderBy(c => c.At).ToList();
         var reviews = held.PrReviews.Where(r => r.State != PrReviewState.Closed).OrderBy(r => r.StartedAt).ToList();
-        if (inPlay.Count == 0 && strays.Count == 0 && reviews.Count == 0)
+        if (inPlay.Count == 0 && strays.Count == 0 && reviews.Count == 0 && ofLanded.Count == 0)
         {
             return null;
         }
@@ -61,6 +70,15 @@ public static class SummaryRecords
             text.AppendLine();
             text.AppendLine("Open cards about no flight in play:");
             foreach (var card in strays)
+            {
+                Card(text, card, "  ");
+            }
+        }
+        if (ofLanded.Count > 0)
+        {
+            text.AppendLine();
+            text.AppendLine(LandedCards);
+            foreach (var card in ofLanded)
             {
                 Card(text, card, "  ");
             }
@@ -279,16 +297,39 @@ public static class SummaryPrompt
         {{Needs}}
         - One bullet per thing that stays stuck unless the person acts: a question only they can answer, a
           permission prompt, a card in the ring, a PR waiting for their merge, a leg that failed, a worker
-          that stopped or waits. If there is nothing, write the single word: Nothing. When the records open
-          with "Gone stale", list those first, oldest first, each with its age and what moves it.
+          that stopped or waits. Each bullet is one plain sentence that names the flight (or leg) and says
+          what the person should do, such as "Merge PIL784's PR #812" or "Tell PIL797's worker to carry on".
+          If there is nothing, write the single word: Nothing. When the records open with "Gone stale", list
+          those first, oldest first, each with how long it has waited and what to do.
 
         {{Where}}
-        At most {{words.ToString(CultureInfo.InvariantCulture)}} words of plain prose: what has been done, what is happening now, what is left. Quote
-        commit hashes, test names and results only from the records; never invent them.
+        At most {{words.ToString(CultureInfo.InvariantCulture)}} words as a short list, one line per flight, the one that matters most first (what needs the
+        person, then what is flying, then what is held or planned), each line saying in plain words what has
+        been done or what is happening now. Quote commit hashes, test names and results only from the records;
+        never invent them.
+
+        {{Plain}}
 
         {{(resolved ? ResolvedSection : "")}}Records:
 
         {{records}}
+        """;
+
+    /// <summary>The words of the node's own bookkeeping the summary never says: the person reads the summary, not the node's counters.</summary>
+    public static readonly string[] BannedWords =
+    [
+        "ticked", "stale bound", "redo N", "go-around N", "model and effort names (Opus, Sonnet, Haiku, high, medium)", "step counts (\"3 of 7 steps\")", "session names (\"se1-pil797-summary-plain\")",
+    ];
+
+    /// <summary>The rules every line of both sections follows, the same as the cards': plain words, what to do, nothing about what is over.</summary>
+    public static readonly string Plain = $"""
+        Rules for every line of both sections:
+        - Plain words a person who did not watch the node would understand. Never use the node's internal words: {string.Join(", ", BannedWords)}.
+          Say "restarted twice", not "go-around 2"; say "no worker is running", not "0 of 6 steps ticked".
+        - Say what to do, not what the record says. Do not restate a card's title or its detail; one sentence is enough.
+        - Say nothing about a flight that has landed, its legs, its workers or its PR. A landed flight needs no one, even if the
+          records still show an open card about it: that card is stale, never a need.
+        - Do not count flights, steps or cards. Do not repeat a line under both headings.
         """;
 
     private static readonly string ResolvedSection = $"""
