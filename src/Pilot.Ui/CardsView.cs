@@ -599,7 +599,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // The summary takes what the dots leave, and the dots are a few with "+N" past them: with the summary at its own width
             // and a dot per card, a long summary or many waiting cards pushed the dots past the panel's edge (DE1, c11514).
             : Layout.Builder.HStack([
-                    Layout.Builder.Text(screen.Summary, 12f, Dim).Selectable().WithTooltip(screen.Summary, Layout.DockSide.Left).WStar(),
+                    Layout.Builder.Text(screen.Summary, 12f, Dim).Selectable().WStar(),
                     .. _waiting.Take(WaitingDots).Select(Waiting),
                     .. _waiting.Count > WaitingDots
                         ? [Layout.Builder.Text($"+{_waiting.Count - WaitingDots}", 12f, Dim, TextAlign.Center).Pad(2f, 0f).WAuto()
