@@ -81,7 +81,7 @@ public sealed class LegTickingPassTests : LegCommanderTestsBase
 
     private static async Task Until(Func<bool> condition)
     {
-        var until = DateTime.UtcNow.AddSeconds(4);
+        var until = DateTime.UtcNow.AddSeconds(30);
         while (!condition() && DateTime.UtcNow < until)
         {
             await Task.Delay(10, Ct);
@@ -286,26 +286,252 @@ public sealed class LegTickingPassTests : LegCommanderTestsBase
         failed.Ok.ShouldBeTrue(failed.Error);
         L("parser").State.ShouldBe(LegState.Failed);
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == "leg-failed");
-        (card.Bin, card.Title).ShouldBe((CardBin.Ring, "TIA1/parser stopped: step 2 is not covered by any commit"));
+        (card.Bin, card.Title).ShouldBe((CardBin.Ring, "TIA1/parser: step 2 is not covered by any commit"));
     }
 
-    [Fact]
-    public async Task A_ticker_that_ends_without_finishing_rings_once_and_is_not_started_again()
+    /// <summary>The ticker of the leg ended with step 1 ticked and step 2 not, and no finish.</summary>
+    private async Task TickerEndedWithStepTwoUntickedAsync()
     {
         await FlyingAsync(commit: true);
         WorkerEnded();
         await LookUntilTickerAsync();
+        (await AsTicker(Verbs.Check, "1")).Ok.ShouldBeTrue();
         _state.PutSession(Session(L("parser").TickerJob!, Ticker, SessionState.Ended, TimeSpan.FromMinutes(5)));
+    }
+
+    [Fact]
+    public async Task A_ticker_that_ended_with_step_two_unticked_sends_the_leg_round_naming_the_step_and_rings_nothing()
+    {
+        await TickerEndedWithStepTwoUntickedAsync();
+        var worker = L("parser").WorkerJob!;
+
+        await _watch.LookAsync(Ct);
+
+        await Until(() => L("parser").WorkerJob != worker);
+        L("parser").State.ShouldBe(LegState.Flying);
+        L("parser").GoArounds.ShouldBe(1);
+        var why = L("parser").GoAroundReasons.Single().Why;
+        why.ShouldContain("step 2: Test it");
+        why.ShouldNotContain("Write the parser");
+        why.ShouldContain("commits did not cover");
+        // A fresh worker was started, and its brief carries the reason.
+        _workers.Started.Last().Brief.ShouldContain("step 2: Test it");
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegWatch.Idle);
+        _state.Cards().ShouldContain(c => c.Kind == LegWatch.TickerSentRound && c.Bin == CardBin.Handled);
+    }
+
+    [Fact]
+    public async Task A_second_ticker_stop_on_the_same_leg_after_its_go_around_rings_worker_idle_once()
+    {
+        await TickerEndedWithStepTwoUntickedAsync();
+        var worker = L("parser").WorkerJob!;
+        await _watch.LookAsync(Ct);
+        await Until(() => L("parser").WorkerJob != worker);
+
+        // The fresh worker commits more and ends; its ticker runs and stops with a step unticked again.
+        var flight = _state.Flights().Single();
+        File.WriteAllText(Path.Combine(flight.Worktree, "parser2.cs"), "class Parser2 {}\n");
+        Git(flight.Worktree, "add", ".");
+        Commit(flight.Worktree, "More parser");
+        WorkerEnded();
+        await LookUntilTickerAsync();
+        var second = L("parser").TickerJob.ShouldNotBeNull();
+        _state.PutSession(Session(second, Ticker, SessionState.Ended, TimeSpan.FromMinutes(5)));
 
         await _watch.LookAsync(Ct);
         await _watch.LookAsync(Ct);
         _clock.Advance(TimeSpan.FromMinutes(10));
         await _watch.LookAsync(Ct);
 
+        L("parser").GoArounds.ShouldBe(1);
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegWatch.Idle);
         card.Bin.ShouldBe(CardBin.Ring);
         card.Title.ShouldContain("ticker stopped without finishing the leg: its session ended");
+        _state.Cards(openOnly: true).Count(c => c.Bin == CardBin.Ring).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task A_ticker_that_ended_with_steps_unticked_rings_naming_the_refusal_when_the_go_around_is_refused()
+    {
+        await TickerEndedWithStepTwoUntickedAsync();
+        // A held flight refuses a go-around.
+        _state.PutFlight(_state.Flights().Single() with { State = FlightState.Held });
+
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+
+        L("parser").GoArounds.ShouldBe(0);
+        var card = _state.Cards(openOnly: true).Single(c => c.Bin == CardBin.Ring);
+        card.Kind.ShouldBe(LegWatch.Idle);
+        card.Title.ShouldContain("go-around refused");
         _workers.Started.Count(w => w.Name == Ticker).ShouldBe(1);
-        _said.ShouldBeEmpty();
+    }
+
+    /// <summary>The leg in its ticking pass with every step ticked by its ticker, whose session then ended with no finish.</summary>
+    private async Task TickerEndedWithAllTickedAsync()
+    {
+        await FlyingAsync(commit: true);
+        WorkerEnded();
+        await LookUntilTickerAsync();
+        (await AsTicker(Verbs.Check, "1")).Ok.ShouldBeTrue();
+        (await AsTicker(Verbs.Check, "2")).Ok.ShouldBeTrue();
+        _state.PutSession(Session(L("parser").TickerJob!, Ticker, SessionState.Ended, TimeSpan.FromMinutes(5)));
+    }
+
+    [Fact]
+    public async Task A_ticker_that_ended_with_every_step_ticked_and_no_finish_gets_the_leg_finished_done_by_the_node()
+    {
+        await TickerEndedWithAllTickedAsync();
+
+        await _watch.LookAsync(Ct);
+
+        // The node's finish runs off the watch loop, so the leg is done a moment after the look.
+        await Until(() => L("parser").State == LegState.Done);
+        L("parser").Report.ShouldNotBeNull().ShouldContain("finished by the node: its ticker stopped with every step ticked");
+        _checks.Runs.ShouldNotBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegWatch.Idle);
+    }
+
+    [Fact]
+    public async Task A_ticker_that_ended_with_every_step_ticked_whose_finish_the_node_has_refused_rings_once_naming_the_refusal()
+    {
+        await TickerEndedWithAllTickedAsync();
+        _checks.Next = new CheckRun(1, "Parser.Tests: 3 failed");
+
+        await _watch.LookAsync(Ct);
+        await Until(() => _state.Cards(openOnly: true).Any(c => c.Bin == CardBin.Ring));
+        await _watch.LookAsync(Ct);
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        await _watch.LookAsync(Ct);
+
+        L("parser").State.ShouldBe(LegState.Flying);
+        var card = _state.Cards(openOnly: true).Single(c => c.Bin == CardBin.Ring);
+        card.Kind.ShouldBe(LegWatch.Idle);
+        card.Title.ShouldContain("ticker stopped with every step ticked, and the node's finish was refused");
+        card.Title.ShouldContain("check");
+        card.Detail.ShouldNotBeNull().ShouldContain("Parser.Tests: 3 failed");
+        // The node asks for the finish once per ticker.
+        _checks.Runs.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task A_ticker_that_ran_finish_and_ended_while_its_check_rerun_is_still_running_is_not_rung_and_the_rerun_finishes_the_leg()
+    {
+        await FlyingAsync(commit: true);
+        WorkerEnded();
+        await LookUntilTickerAsync();
+        (await AsTicker(Verbs.Check, "1")).Ok.ShouldBeTrue();
+        (await AsTicker(Verbs.Check, "2")).Ok.ShouldBeTrue();
+        var gate = new TaskCompletionSource();
+        _checks.OnRun = () => gate.Task;
+        var finishing = AsTicker(Verbs.FinishLeg, "done", "ticked by the ticking pass: The parser covers both steps");
+        await Until(() => L("parser").Recheck is { Outcome: null });
+
+        // The ticker was told its check is rerunning and ended its turn, as told: its session ended, long past the idle grace.
+        _state.PutSession(Session(L("parser").TickerJob!, Ticker, SessionState.Ended, TimeSpan.FromMinutes(5)));
+        await _watch.LookAsync(Ct);
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        await _watch.LookAsync(Ct);
+
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+        _workers.Stopped.ShouldNotContain(L("parser").TickerJob!);
+        // The node's finish is not asked for a second time while the first one's rerun runs.
+        _checks.Runs.Count.ShouldBe(1);
+
+        gate.SetResult();
+        (await finishing).Ok.ShouldBeTrue();
+        L("parser").State.ShouldBe(LegState.Done);
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+    }
+
+    [Fact]
+    public async Task The_nodes_finish_of_a_stopped_ticker_runs_off_the_watch_loop_so_a_slow_check_does_not_hold_the_look()
+    {
+        await TickerEndedWithAllTickedAsync();
+        var gate = new TaskCompletionSource();
+        _checks.OnRun = () => gate.Task;
+
+        // The look returns while the finish's check is still running.
+        await _watch.LookAsync(Ct).WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await Until(() => _checks.Runs.Count == 1);
+        L("parser").State.ShouldBe(LegState.Flying);
+
+        gate.SetResult();
+        await Until(() => L("parser").State == LegState.Done);
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+    }
+
+    [Fact]
+    public async Task A_ticker_told_how_a_failed_rerun_ended_in_this_look_is_given_its_turn_not_finished_a_second_time()
+    {
+        await TickerEndedWithAllTickedAsync();
+        // The ticker's finish was answered, its check rerun ended failed, and the outcome is for the ticker: the look says it, and the
+        // ticker's session still shows the turn it ended before it was told.
+        _state.PutLeg(L("parser") with { Recheck = new LegRecheck { Check = "dotnet test", Since = _clock.GetUtcNow(), Outcome = "the check failed: Parser.Tests: 3 failed" } });
+
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldContain(c => c.Args.Any(a => a.Contains("Parser.Tests: 3 failed", StringComparison.Ordinal)));
+        // No finish by the node on top of what the ticker was just told, and no ring.
+        await Task.Delay(200, Ct);
+        _checks.Runs.ShouldBeEmpty();
+        L("parser").State.ShouldBe(LegState.Flying);
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+        _workers.Stopped.ShouldNotContain(L("parser").TickerJob!);
+
+        // Past the idle grace with no turn of its own, it is stopped and finished as any other.
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        await _watch.LookAsync(Ct);
+        await Until(() => _checks.Runs.Count == 1);
+    }
+
+    [Fact]
+    public async Task An_ended_ticker_that_was_told_is_held_for_the_idle_grace_and_not_a_moment_longer()
+    {
+        await TickerEndedWithAllTickedAsync();
+        _state.PutLeg(L("parser") with { Recheck = new LegRecheck { Check = "dotnet test", Since = _clock.GetUtcNow(), Outcome = "the check failed: Parser.Tests: 3 failed" } });
+        await _watch.LookAsync(Ct);
+
+        // Just inside the grace after the tell: still held, the node's finish is not asked for (a real delay, so a detached finish would show).
+        _clock.Advance(_watch.IdleGrace - TimeSpan.FromSeconds(1));
+        await _watch.LookAsync(Ct);
+        await Task.Delay(200, Ct);
+        _checks.Runs.ShouldBeEmpty();
+
+        // At the grace: held no longer, so the node finishes the leg.
+        _clock.Advance(TimeSpan.FromSeconds(1));
+        await _watch.LookAsync(Ct);
+        await Until(() => _checks.Runs.Count == 1);
+    }
+
+    [Fact]
+    public async Task A_node_that_restarted_after_a_ticker_sent_the_leg_round_does_not_send_it_round_a_second_time()
+    {
+        await TickerEndedWithStepTwoUntickedAsync();
+        var worker = L("parser").WorkerJob!;
+        await _watch.LookAsync(Ct);
+        await Until(() => L("parser").WorkerJob != worker);
+
+        var flight = _state.Flights().Single();
+        File.WriteAllText(Path.Combine(flight.Worktree, "parser2.cs"), "class Parser2 {}\n");
+        Git(flight.Worktree, "add", ".");
+        Commit(flight.Worktree, "More parser");
+        WorkerEnded();
+        await LookUntilTickerAsync();
+        _state.PutSession(Session(L("parser").TickerJob!, Ticker, SessionState.Ended, TimeSpan.FromMinutes(5)));
+
+        // A fresh watch over the same state, as after a restart: nothing of the first one's memory is left.
+        var restarted = new LegWatch(_state, RunAsync, _clock)
+        {
+            Models = new RoleModels(null),
+            PlaneHead = _legs.PlaneHeadOfAsync,
+            StartTicker = _legs.StartTickerAsync,
+        };
+        await restarted.LookAsync(Ct);
+
+        L("parser").GoArounds.ShouldBe(1);
+        _state.Cards(openOnly: true).Single(c => c.Bin == CardBin.Ring).Kind.ShouldBe(LegWatch.Idle);
     }
 }

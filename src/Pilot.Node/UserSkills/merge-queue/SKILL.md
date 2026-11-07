@@ -25,6 +25,7 @@ queued it. Queue state is GraphQL only (`PullRequest.mergeQueueEntry`), and the 
 | `bash <this skill's folder>/mq.sh status <pr>` | one line: `MERGED at ...`, `QUEUED position N state S since ...`, `AUTO ...` (enters the queue when checks pass), `OPEN not queued; mergeState ... checks ...`, or `CLOSED` |
 | `bash <this skill's folder>/mq.sh queue` | every entry in main's queue, in order |
 | `bash <this skill's folder>/mq.sh watch <pr>` | polls each 60 s: exit 0 once merged or closed; exit 1 with the removal event if the PR LEFT the queue unmerged (a failed queue build); a failed poll is retried, and exit 3 means five failed in a row, so the PR's state is unknown, never that it left the queue |
+| `bash <this skill's folder>/mq.sh enqueue <pr>` | puts the PR in the queue and prints its status line; the USER runs it (`!`), since the merge guard refuses it from a session |
 
 The folder is `~/.claude/skills/merge-queue` (or under `CLAUDE_CONFIG_DIR`). An optional last argument
 `owner/repo` targets another repo.
@@ -37,9 +38,10 @@ position; if OPEN and checks pass, say it is ready to queue.
 **Queue a PR: a session does not.** pilot's merge guard (a PreToolUse hook) refuses `gh pr merge`, the GraphQL
 `enqueuePullRequest` / `mergePullRequest` and a push to a default branch, and points at
 `pilot flight merge <code> <head>`. A flight's PR merges that way. Any other PR is the user's to queue: from the
-PR page, or `! gh pr merge <N>` typed in the prompt (a `!` command is the user's own, and no hook sees it). On a
-queue-protected base `gh pr merge N` needs no strategy flag: with checks green it joins the queue, with checks
-pending it arms auto-merge. Never suggest `--admin`, which bypasses the queue.
+PR page, or `! bash <this skill's folder>/mq.sh enqueue <N>` typed in the prompt (a `!` command is the user's own,
+and no hook sees it). Give the user that exact line, with the folder written out. **Do not offer `gh pr merge N`**:
+gh 2.86 asked a green, CLEAN tianwen PR for auto-merge instead of the queue and failed with "Auto merge is not
+allowed for this repository (enablePullRequestAutoMerge)". Never suggest `--admin`, which bypasses the queue.
 
 **Watch it land**: run `mq.sh watch N` in the background and report when it exits. A queue run builds the PR on
 top of main, so a PR green on its branch can still be thrown out; exit 1 means that, and the queue's own check
@@ -54,12 +56,17 @@ gh pr create ...                      # milestone and body as the repo's own ins
 ```
 
 **After it merged**: a queue lands a PR by rebase or squash, so main holds the same changes under NEW hashes and
-`git branch -d` refuses ("not fully merged"). Prove the content landed, then force-delete:
+`git branch -d` refuses ("not fully merged"). Prove the PR's own PATCH landed, then force-delete:
 ```bash
 git checkout main && git pull --ff-only
-git diff --stat <branch> main -- <the files the PR changed>   # empty = landed
-git branch -D <branch>
+git cherry main <branch>      # rebase merge: every line '-' = each commit's patch is on main
+# squash merge (one commit on main for the whole branch): the two patch ids must match
+git diff $(git merge-base main <branch>) <branch> | git patch-id --stable
+git show <the squash commit on main> | git patch-id --stable
+git branch -D <branch>        # only after one of the two checks above passed
 ```
+Never prove it by diffing the branch against main's files: once main has moved on, a later PR touching the
+same file makes that diff non-empty, and an empty one says nothing about whether this PR's lines are there.
 The remote branch is normally deleted by the merge; `git fetch -p` drops the stale ref.
 
 ## Where an issue link points

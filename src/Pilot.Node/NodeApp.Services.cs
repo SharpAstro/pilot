@@ -453,6 +453,8 @@ public static partial class NodeApp
                 Priority = nodeOptions.JobPriority,
                 PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? NodeSettings.JobPlaneOutputDefault,
                 EndedForGood = id => services.GetRequiredService<SessionTracker>().IsEndedForGood(id),
+                // A job's end is told to its owner only once the tracker has listed the sessions (pilot #810), as the watchtower waits.
+                Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,
                 Lifetime = services.GetService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
             };
         });
