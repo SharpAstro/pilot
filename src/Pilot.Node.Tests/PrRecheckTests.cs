@@ -668,7 +668,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
 {
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AFlightsPrWhoseBaseMergeConflictsIsHandedToTheWatchtowerAndTheHandledLineSaysSo()
+    public async Task AFlightsPrWhoseBaseMergeConflictsSendsTheLastLegRoundAndTheHandledLineSaysSo()
     {
         await PassedFlightAsync(readme: "theirs\n");
         MainMoves("README.md", "ours\n");
@@ -676,14 +676,13 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
 
         await LookAsync();
 
-        // No go-around: the review stays passed and the watchtower is told by a ring card.
-        _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        // The last leg went round once with the conflict (a review round it is not), and nothing rings: the Handled line says a worker has it.
         var said = Handled().ShouldHaveSingleItem();
         said.ShouldStartWith("recheck of widget#7: merging ");
         said.ShouldContain("conflicts");
-        said.ShouldContain("the watchtower is told");
-        _state.Legs(_state.Flights().Single().Code).ShouldAllBe(l => l.GoArounds == 0);
-        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.PrConflictsKind && c.Bin == CardBin.Ring);
+        said.ShouldContain(LegCommander.WorkerResolves);
+        _state.Legs(_state.Flights().Single().Code).ShouldAllBe(l => l.GoArounds == 1 && l.ReviewGoArounds == 0 && l.State == LegState.Flying);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Bin == CardBin.Ring);
     }
 
     [Fact]
