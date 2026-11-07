@@ -608,6 +608,13 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
                 : $"card {card.Id} offers {string.Join(", ", card.Choices.Select((c, i) => $"{i + 1} {c.Label}"))}, not '{which}'");
         }
 
+        // A choice the node would refuse now (its flight is held, its session is gone) is refused here, before anything is taken, closed or run,
+        // with the reason its card shows on it (ChoiceAvailability): a client that pressed before it saw the mark runs nothing (#792).
+        if (ChoiceAvailability.WhyNot(choice, state.Flights(), state.Sessions()) is { } unavailable)
+        {
+            return state.Complete(command, $"{choice.Label} was refused: {unavailable}");
+        }
+
         // An assistant's ask denied: closed with who said so, and the session that asked is told it was not done. Deny is the
         // choice that dismisses the ask card itself; an Allow can be a dismissal too (of a ring card), so the verb alone cannot tell them apart.
         if (card.Kind == CardKinds.AssistantAsk && choice.Verb == Verbs.Dismiss && choice.Target == Verbs.CardTarget(card.Id))

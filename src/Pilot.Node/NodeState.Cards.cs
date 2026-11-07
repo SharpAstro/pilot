@@ -48,7 +48,8 @@ public sealed partial class NodeState
                 Title = title,
                 Detail = detail,
                 Summary = CardSummaries.Resolve(summary, detail, kind, subject, title, choices ?? []),
-                Choices = [.. choices ?? []],
+                // A choice the node would refuse already (its flight is held) is born marked, not offered until the next sweep (#792).
+                Choices = Available(choices ?? []),
                 Link = link,
                 AskedBy = askedBy,
                 Why = why,
@@ -125,19 +126,27 @@ public sealed partial class NodeState
         }
     }
 
-    /// <summary>Gives an open card new choices (a merge's checks turned green, say); false when it is not open or nothing changed.</summary>
+    /// <summary>
+    /// Gives an open card new choices (a merge's checks turned green, say); false when it is not open or nothing changed. A choice the node
+    /// would refuse now (its flight held, its session gone) reads <see cref="ChoiceStatus.Unavailable"/> whatever the caller gave, so a
+    /// refresh of a card's statuses never offers it again (#792); a choice that would not be refused no longer carries that mark.
+    /// </summary>
     public bool UpdateChoices(string id, IReadOnlyList<CardChoice> choices, IReadOnlyList<CardChoice>? ifStill = null)
     {
         lock (_gate)
         {
             // With ifStill, a compare-and-set: written only while the card still holds the choices the caller read, so a press
             // that armed the merge between that read and this write is not undone.
-            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open || card.Choices.SequenceEqual(choices)
-                || ifStill is not null && !card.Choices.SequenceEqual(ifStill))
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open)
             {
                 return false;
             }
-            Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { Choices = [.. choices] } });
+            var next = Available(choices);
+            if (card.Choices.SequenceEqual(next) || ifStill is not null && !card.Choices.SequenceEqual(ifStill))
+            {
+                return false;
+            }
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { Choices = next } });
             return true;
         }
     }
@@ -157,7 +166,7 @@ public sealed partial class NodeState
             }
             // An open card may move between Ring and For-you; never to or from Handled, which is born closed.
             var nextBin = bin is { } b && b != CardBin.Handled && card.Bin != CardBin.Handled ? b : card.Bin;
-            var next = card with { Title = title, Detail = detail, Choices = [.. choices], Link = link, Kind = kind ?? card.Kind, Bin = nextBin };
+            var next = card with { Title = title, Detail = detail, Choices = Available(choices), Link = link, Kind = kind ?? card.Kind, Bin = nextBin };
             // A card that says something new says it in new words: the summary follows the title and kind, as the raiser wrote it or the table has it.
             next = next with { Summary = summary is null && next.Title == card.Title && next.Kind == card.Kind ? card.Summary : CardSummaries.Resolve(summary, detail, next.Kind, next.Subject, next.Title, next.Choices) };
             next = next with { Commits = CommitsOf(next, link) };

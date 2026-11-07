@@ -249,6 +249,15 @@ public static class ChoiceStatus
 
     /// <summary>The PR merged: the card reads Merged for a few seconds, then goes.</summary>
     public const string Merged = "merged";
+
+    /// <summary>
+    /// The node would refuse this choice right now (#792): its flight is held (<c>PIL501 is held: waiting for PIL500</c>) or the session it
+    /// names is gone (<c>session a1b2c3d4 no longer exists</c>). <see cref="CardChoice.Note"/> says which. Not a button: a client draws
+    /// it dead with the note beside it, and the node refuses an answer of it with the same words (nothing pressed on a stale client runs).
+    /// The node clears the mark once the choice would run again. Optional on the wire like every status: an older client draws the button
+    /// as before and the press is refused with the reason.
+    /// </summary>
+    public const string Unavailable = "unavailable";
 }
 
 /// <summary>

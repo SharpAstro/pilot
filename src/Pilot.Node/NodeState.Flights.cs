@@ -26,10 +26,19 @@ public sealed partial class NodeState
                     return;
                 }
                 Publish(new FlightChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = flight });
+                // A flight that turned held (or flies again) changes which of its cards' choices the node would refuse (#792).
+                if (HoldChanged(known, flight))
+                {
+                    SyncChoiceAvailability();
+                }
             }
             else
             {
                 Publish(new FlightAddedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = flight });
+                if (flight.State == FlightState.Held)
+                {
+                    SyncChoiceAvailability();
+                }
             }
         }
     }
@@ -51,6 +60,10 @@ public sealed partial class NodeState
             if (!Same(known, changed))
             {
                 Publish(new FlightChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = changed });
+                if (HoldChanged(known, changed))
+                {
+                    SyncChoiceAvailability();
+                }
             }
             return changed;
         }
