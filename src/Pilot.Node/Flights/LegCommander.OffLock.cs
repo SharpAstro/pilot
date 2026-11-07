@@ -180,10 +180,17 @@ public sealed partial class LegCommander
         return NodeState.SameFlight(Unmarked(seen), Unmarked(now)) || MovedByQueuedPush(seen, now) ? null : $"{seen.Code} changed while GitHub and git were being asked: nothing was recorded, look again and ask again";
     }
 
-    // What the node writes about a flight's PR by itself, from its looks and its marks, comes and goes whatever a command does.
+    // What the node writes about a flight's PR by itself, from its looks and its marks, comes and goes whatever a command does. So does what
+    // the stale watch writes from its own reads (the last move and the stale summary, on its 20 s tick): a tick landing while a command's
+    // git was out made the command find the flight "changed" and refuse (pilot #871: open-pr under a loaded run).
     private static FlightRow Unmarked(FlightRow flight) =>
         flight with
         {
+            LastMovedAt = null,
+            LastMove = null,
+            StaleSummary = null,
+            StaleCause = null,
+            StaleSince = null,
             GitHubHead = null,
             GitHubDraft = null,
             GitHubLabel = null,

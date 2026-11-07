@@ -206,6 +206,30 @@ public sealed class LockFreeGitTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task AnOpenPrHeldInAPushIsNotRefusedBecauseTheStaleWatchWroteTheFlightsLastMoveMeanwhile()
+    {
+        var flight = await NewFlight("1", "parser");
+        await Fly(flight, "parser");
+        var gate = new Gate();
+        var git = new GatedGit(new GitCli(), gate, args => args is ["push", ..]);
+        var legs = Another(git);
+
+        var open = legs.RunAsync(new CommandRequest { Verb = Verbs.OpenPr, Target = Verbs.FlightTarget(flight.Code), Who = "controller" }, Ct);
+        await Within(gate.Reached, "the push was out");
+
+        // What the stale watch's tick writes from its own reads, with the push out: the open must not take it for a change of the flight (pilot #871).
+        var at = DateTimeOffset.UtcNow;
+        _state.UpdateFlight(flight.Code, f => f with { LastMovedAt = at, LastMove = "leg parser finished", StaleCause = "idle: a worker", StaleSummary = "idle", StaleSince = at });
+
+        gate.Open();
+        var done = await open;
+
+        done.Ok.ShouldBeTrue($"{done.Error} (way: {done.Way ?? "none"})");
+        F(flight.Code).PullRequest.ShouldNotBeNull();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALandingHeldInGitLeavesAnotherFlightsCommandsAndACreateAnswering()
     {
         var flight = await NewFlight("1", "parser");
