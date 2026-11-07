@@ -155,6 +155,12 @@ public sealed partial class LegCommander
         {
             return;
         }
+        // Another step's calls are out for the flight (a push, a check rerun, a rebase): open-pr would wait for them, as a person's does, but
+        // the sweep takes its flights one at a time, so it leaves this one to the next sweep rather than hold every flight behind it (pilot #871).
+        if (step.Verb == Verbs.OpenPr && IsCallingAnything(current.Code))
+        {
+            return;
+        }
         var result = await RunAsync(step, cancellationToken);
         if (result.Ok)
         {
@@ -293,6 +299,22 @@ public sealed partial class LegCommander
         {
             _missedOnce.TryRemove(current.Code, out _);
             return false;
+        }
+        // A push that met a merged PR was answered by the push itself: the commits go to a follow-up PR, and a start offered again would
+        // meet the same refusal, so nothing rings (PIL836). Decided from what the push did (the result's way), never from the refusal's text.
+        if (result.Way == RefusalWays.HandedOn)
+        {
+            return false;
+        }
+        // A GH006 the push could not answer (the PR was taken out of the queue and the branch is still locked, or a ruleset protects
+        // it): one card says so and what to do, with no reviewer start to offer, and the sweep stops asking.
+        if (result.Way == RefusalWays.ProtectedBranch)
+        {
+            _rung[current.Code] = key;
+            var locked = result.Error is { Length: > 0 } text ? text : "no reason given";
+            state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code}'s new head cannot be pushed: GitHub locks {current.Branch}",
+                $"GitHub refused the push of {current.Branch} as a protected branch (GH006) and the node could not clear it: the PR was not in the merge queue, or it was taken out and the branch stayed locked, or a ruleset protects the branch. The node will not try again by itself. On GitHub, take the PR out of the queue or lift what protects the branch, then start the reviewer again: {locked}");
+            return true;
         }
         // The first refusal rings nothing: the next sweep asks again, and a second in a row rings.
         if (FirstMiss(current.Code, key))

@@ -30,6 +30,12 @@
     <PackageReference Include="System.CommandLine" />
   </ItemGroup>
 
+  <!-- The Claude Code skills the node installs for every session on the machine (UserSkills.cs), in the binary: a native
+       release carries no file beside it. Named UserSkills/<skill>/<path>. -->
+  <ItemGroup>
+    <EmbeddedResource Include="UserSkills\**\*" LogicalName="UserSkills/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <!--
     LAN.Lib (discovery, invites, grants) from the sibling clone when it is there, as the GUI takes DIR.Lib: see the
     GUI's project for SharpAstroRoot's two probes and why a publish with a runtime identifier takes the package.

@@ -85,6 +85,7 @@ public static partial class NodeApp
         });
         builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>(), services.GetRequiredService<RemovalQueue>()));
         builder.Services.AddSingleton<StopGate>();
+        builder.Services.AddSingleton<PermissionGate>();
         builder.Services.AddSingleton(new Attachments(options.DataFolder));
     }
 

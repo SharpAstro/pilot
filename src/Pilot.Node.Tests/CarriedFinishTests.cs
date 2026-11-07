@@ -158,10 +158,12 @@ public sealed class CarriedFinishTests : LegCommanderTestsBase
         await UntilAsync(() => node.Parser.State == LegState.Done, "the node finishes the leg");
 
         node.Parser.Report.ShouldBe(Report);
+        // The node's word sits on the Done leg's recheck until the watch's next look tells it, so Recheck is only null after that look (no timing on RecordDoneAsync's git gap).
         // The one job is the carried one, which passed; no finish was run by the worker.
         var only = node.Checks.ShouldHaveSingleItem();
         (only.Id, only.State).ShouldBe(("jc1", JobState.Succeeded));
         await UntilToldAsync(node);
+        node.Parser.Recheck.ShouldBeNull();
         var said = node.Said.ShouldHaveSingleItem();
         said.Args[0].ShouldBe(LegRecheck.NodeFinishedOutcome(check));
         said.Args[0].ShouldNotContain("`leg finish done` again");
