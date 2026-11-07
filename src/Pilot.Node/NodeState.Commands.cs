@@ -99,7 +99,8 @@ public sealed partial class NodeState
             Who = command.Who,
             Ok = error is null,
             Error = error,
-            Way = error is null ? way : null,
+            // A refusal carries a way only to say it was no verdict on the command (RefusalWays): any other way is a done command's.
+            Way = error is null || way == RefusalWays.Busy ? way : null,
             SessionId = error is null ? sessionId : null,
             Made = error is null ? made : null,
             Setting = error is null ? setting : null,
