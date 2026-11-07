@@ -615,10 +615,7 @@ if (feed is not null && client is not null && clients is not null)
         return refused;
     };
     // The node says the chat changed as the watchtower's words stream: read the feed now, not at the page's next look.
-    if (feed is not null)
-    {
-        feed.ChatChanged = chrome.Chat.Refresh;
-    }
+    feed.ChatChanged = chrome.Chat.Refresh;
     chrome.Chat.OnRestart = async () =>
     {
         var refused = await ChatCommands.RestartWatchtowerAsync(client, GuiSay.Who, cts.Token);
