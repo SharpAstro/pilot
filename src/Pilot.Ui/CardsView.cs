@@ -971,6 +971,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             var action = $"card:{card.Id}:{number}";
             // A choice shown as a chip stays one while a press is with the node; a button is dead, and says "…" if it is the one pressed.
             var label = StatusLabel(choice, card.Detail);
+            // A choice the node would refuse right now (its flight held, its session gone): dead, with the reason beside it, so nobody
+            // presses it to be told "refused" (#792). A field the choice asks for is not drawn either: there is nothing to send it to.
+            if (choice.Status == ChoiceStatus.Unavailable)
+            {
+                buttons.Add((UnavailableChoice(label, choice.Note), true));
+                continue;
+            }
             if (choice.AsksFor is not null)
             {
                 var words = WordsOf(card, choice);
@@ -1163,6 +1170,23 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             pill = pill.BgHover(tint?.Hover ?? ButtonHover).Follows(new HitResult.ButtonHit(action), _ => onClick?.Invoke());
         }
         return tooltip is null ? pill : tipSide is { } side ? pill.WithTooltip(tooltip, side) : pill.WithTooltip(tooltip);
+    }
+
+    /// <summary>
+    /// A choice the node would refuse now (<see cref="ChoiceStatus.Unavailable"/>): its button dead, answering nothing, and the reason
+    /// (<paramref name="note"/>: <c>PIL501 is held: waiting for PIL500</c>) beside it; under it for a long label, which takes a row of its own.
+    /// </summary>
+    internal static Layout.Node UnavailableChoice(string label, string? note)
+    {
+        var pill = ChoicePill(label, false, null, null, null, Dim, wrap: true, bg: CardBg);
+        if (note is not { Length: > 0 })
+        {
+            return pill;
+        }
+        var why = Whole(WrappedProse.Of(note, 11f, Dim, DetailLines, lineChars: LineChars / 2).WStar(), note, note.Length > DetailFits / 2);
+        return Wraps(label)
+            ? Layout.Builder.VStack(pill, why).WithGap(2f).WStar().HAuto()
+            : Layout.Builder.HStack(pill, why).WithGap(8f).WStar().HAuto();
     }
 
     // A closed card's button as it was, the same size, answering nothing.
