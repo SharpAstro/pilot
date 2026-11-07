@@ -47,7 +47,7 @@ public static partial class CardSummaries
             LegWatch.Stopped => $"The worker of {what} was stopped by the API and the node cannot resume it by itself. Tell it to carry on, or start a fresh worker on the leg.",
             LegWatch.LimitWait => $"The worker of {what} hit the usage limit. The node resumes it by itself after the window resets; nothing to do.",
             LegWatch.Idle => $"The worker of {what} has been idle with its leg unfinished and the node's nudges did not help. Nudge it to finish or say why not, or start a fresh worker on the leg.",
-            LegWatch.Waiting => $"The worker of {what} waits on you for an answer. Answer it in its own session, or start a fresh worker on the leg.",
+            LegWatch.Waiting => $"The worker of {what} waits on you for an answer. Answering in its own session lets this worker go on with the call; starting a fresh worker stops this one and starts another on the leg from the branch.",
             LegWatch.NeverTurned => $"The worker of {what} took no first turn after two starts. Tell it to carry on if it is there, or start a fresh worker on the leg.",
             LegWatch.Failed or LegWatch.Missing => $"The worker of {what} is gone. Tell it to carry on if it is still there, or start a fresh worker on the leg.",
             LegWatch.OverBudget => $"The worker of {what} is past its budget but keeps working. Let it spend more, or start a fresh worker on the leg.",
@@ -60,11 +60,14 @@ public static partial class CardSummaries
             LegCommander.StartFailedKind => $"A session of {what} did not start and the node does not retry it by itself. Start it again from the card.",
             LegCommander.OverlapKind => $"{what} overlaps another flight's files. Fold it in, connect it, or plan both in parallel.",
             LegCommander.OverlapParallelKind => $"{what} shares files with an open PR no flight owns, with a flight that held a card on it too, or with another flight in a small one-way overlap, so the node planned in parallel by itself. Nothing to do; the second to land resolves the conflicts.",
+            LegCommander.OverlapConnectedKind => $"{what} shares files with a flight in the air that its plan did not foresee, and that flight is moving, so the node connected it to the other itself: its next leg waits until the other lands. Nothing to do; disconnect it with --anyway to fly both in parallel instead.",
+            LegCommander.OverlapLandedKind => $"{what} overlapped a flight that has landed since, so there is nothing to wait for. The node closed the overlap card itself and {what} goes on. Nothing to do.",
             StopGate.Kind => $"A session of {what} was told once to commit its files and stopped again with them still there. It can be told once more; the files stay in the plane until they are committed.",
             LegCommander.PlannedKind => choices.Count == 0
                 ? $"{what} has a plan of legs, but its flight is held and cannot start yet. The detail says what it waits for; Start is offered here once that lifts."
                 : $"{what} has a plan of legs. Start it to fly them, or change the plan first.",
             "landed" => $"{what} landed: its PR is merged and its legs are done. Nothing to do; dismiss it when read.",
+            LegWatch.TickerSentRound => $"The ticking pass of {what} stopped with steps unticked, so the node sent the leg round once with a fresh worker told which steps remain. Nothing to do.",
             "worker-told-job" => $"The worker of {what} was idle because a job of its own had ended untold, and the node told it. Nothing to do.",
             "not-landed" => $"The PR of {what} merged on GitHub, but landing the flight was refused. The branch is in the base; the detail says what stood in the way, and the flight lands once that is dealt with.",
             "worker-nudged" => $"The worker of {what} went idle with its leg unfinished and the node nudged it. Nothing to do unless it goes idle again.",
@@ -103,13 +106,14 @@ public static partial class CardSummaries
             FlightCommander.ConnectionReleasedKind => "A flight that waited for another flight no longer does, because that flight landed. Nothing to do.",
             FlightCommander.DisconnectedKind => "A flight was disconnected from another flight it had been connected to. Nothing to do.",
             FlightCommander.ReceivedKind => $"{what} was handed over to this node, which made its plane. Nothing to do.",
+            LegCommander.FollowUpPrKind => $"The commits of {what} missed the merge of its earlier PR, so a new PR carries them. Nothing to do; it is reviewed as any PR and the flight lands when it merges.",
             FlightCommander.MergedUnderLegKind => $"GitHub merged the PR of {what} before the new leg's work could join it. The new leg's work goes to a new PR once the legs are done; nothing to do.",
             "checks-rerun" => $"Failed checks of {what}'s PR were run again once before its leg is sent round. Nothing to do unless they fail again.",
             PrChecks.ClosedLanded => $"{what}'s PR was closed without a merge and its plane held nothing of its own, so the flight landed. Nothing to do.",
             PrChecks.ClosedWithWork => $"{what}'s PR was closed without a merge but its plane holds work of its own. Reopen the PR, or open a new one for that work, then land the flight.",
             PrChecks.QueueDropped => $"GitHub took the PR of {what} out of the merge queue. The card's choice queues it again once the cause is dealt with.",
             PrChecks.MergeDropped => $"The merge of {what} did not go through. Merge it again once the cause is dealt with.",
-            PrChecks.AutopilotMergeRefused => $"The autopilot's merge of {what}'s PR was refused. Merge once more after dealing with what the title says, or merge by hand.",
+            PrChecks.AutopilotMergeRefused => $"The node tried to merge {what}'s PR and GitHub or the node refused, for the reason in the title. Try again only once that reason is gone; trying now fails the same way.",
             CardKinds.AutopilotRan => "An assistant ran a command on the autopilot, which is on. Nothing to do; the card is the record.",
             CardKinds.PersonsWord => "The watchtower answered or dismissed a card at the person's word in its chat. Nothing to do; the card is the record.",
             Watchtower.RaisedKind => "A card raised for the person by the watchtower or a session. Read its detail and dismiss it once dealt with.",
@@ -200,6 +204,18 @@ public static partial class CardSummaries
         // The summary already says the PR merged, so the refusal's own "TIA1 merged at 1a2b3c4d, but" opening is left out.
         var reason = LegCommander.OneLine(MergedOpening().Replace(why.Replace(worktree, "its plane", StringComparison.OrdinalIgnoreCase), ""));
         return $"The PR #{number} of {code} merged on GitHub, but the flight did not land: {reason}. Its branch is in the base; the flight lands once that is dealt with.";
+    }
+
+    /// <summary>
+    /// The sentence of a merged flight whose own commits missed the merge: which one (the first by subject), and that a PR with them
+    /// lands the flight. Never main's commits or merges of main, which are not the flight's work.
+    /// </summary>
+    public static string LeftOut(string code, int number, IReadOnlyList<string> commits)
+    {
+        var first = commits.Count > 0 ? commits[0] : "";
+        var more = commits.Count > 1 ? $" and {commits.Count - 1} more" : "";
+        var text = $"PR #{number} merged without {code}'s last work: {first}{more}. A PR with {(commits.Count == 1 ? "it" : "them")} brings it in, and the flight lands when that merges.";
+        return text.Length <= 240 ? text : text[..237] + "...";
     }
 
     /// <summary>

@@ -78,13 +78,24 @@ public sealed partial class FlightCommander
     /// </summary>
     public FlightRow MarkMergedUnderLeg(FlightRow flight, string mergedHead, string why)
     {
-        var number = flight.PullRequest;
-        var marked = flight with
+        // A flight without a PR has none that merged: no caller passes one, but without this its null would match a row holding no PR
+        // too (null equals null below) and write MergedPullRequest = null.
+        if (flight.PullRequest is not { } number)
+        {
+            return flight;
+        }
+        // Written on the row as it is at this moment, and only while it still holds the PR that merged: a caller's row may have been
+        // read with the lock let go (a push's retry after GH006), and a whole-row write of it would undo what moved meanwhile.
+        var marked = state.UpdateFlight(flight.Code, f => f.PullRequest != number ? null : f with
         {
             MergedHead = mergedHead, MergedPullRequest = number, PullRequest = null, PullRequestUrl = null, Review = null,
             MergeWhenGreen = null, MergeQueue = null, GitHubHead = null,
-        };
-        state.PutFlight(marked);
+        });
+        if (marked is null)
+        {
+            // The flight moved on from that PR (or is gone): nothing of it is marked, nor carded.
+            return flight;
+        }
         // Its merge entry ends merged too: with the PR let go, no look of the queues sees the flight again to end it.
         state.EndMergeAsMerged(flight.Code, $"#{number} merged without the new leg, whose work goes to a new PR");
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"#{number} merged on GitHub without the new leg", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, "not-landed");
@@ -212,10 +223,10 @@ public sealed partial class FlightCommander
                     throw new FlightException($"{flight.Code} merged at {CommitRefs.Short(mergedHead)}, but its plane holds {dirty}: commit and land {(dirty.StartsWith("1 ", StringComparison.Ordinal) ? "it" : "them")} in a PR of their own, then land the flight");
                 }
                 // Commits past the merged head are in the merge all the same when the merge's tree is the plane's own.
-                if (await planes.PastAsync(flight.Worktree, mergedHead, cancellationToken) is { Count: > 0 } past
+                if (await planes.PastAsync(flight.Worktree, mergedHead, mainRef, cancellationToken) is { Count: > 0 } past
                     && !(workInMerge || (await MergeHoldsPlaneAsync(flight, cancellationToken)).Holds))
                 {
-                    throw new FlightException($"{flight.Code} merged at {CommitRefs.Short(mergedHead)}, but its plane holds {past.Count} commit{(past.Count == 1 ? "" : "s")} past it: {string.Join("; ", past)}. Land {(past.Count == 1 ? "it" : "them")} in a PR of {(past.Count == 1 ? "its" : "their")} own, then land the flight");
+                    throw new LeftOutCommitsException($"{flight.Code} merged at {CommitRefs.Short(mergedHead)}, but {(past.Count == 1 ? "1 commit of its own" : $"{past.Count} commits of its own")} missed the merge: {string.Join("; ", past)}", past);
                 }
             }
             else if (await planes.UnlandedAsync(flight.Worktree, mainRef, cancellationToken) is { Count: > 0 } loose)

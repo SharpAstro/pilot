@@ -200,7 +200,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     internal override LinkMenu? SelectionLinks => _links;
 
-    internal override RectF32 SelectionViewport => _scroll.Viewport;
+    internal override RectF32 PageSelectionViewport => _scroll.Viewport;
 
     internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true };
 
@@ -237,7 +237,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         _count = shown.Count;
         var page = Layout.Builder.VStack(Header(screen), Main(shown, screen).HStar()).Bg(Ground).Stretch();
-        page = WithSelection(page);
+        page = WithPageSelection(page);
         return _links.Over(About?.Over(page) ?? page);
     }
 

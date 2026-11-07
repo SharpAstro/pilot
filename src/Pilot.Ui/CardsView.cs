@@ -428,7 +428,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     internal override LinkMenu? SelectionLinks => _links;
 
-    internal override RectF32 SelectionViewport => _scroll.Viewport;
+    internal override RectF32 PageSelectionViewport => _scroll.Viewport;
 
     public void Render(CardsScreen screen, RectF32 bounds)
     {
@@ -596,10 +596,15 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         blocks.Add(Layout.Builder.Text("For you", 18f, Bright).Selectable().RowH(30f));
         blocks.Add(_waiting.Count == 0
             ? Layout.Builder.Text(screen.Summary, 12f, Dim).Selectable().RowH(20f)
+            // The summary takes what the dots leave, and the dots are a few with "+N" past them: with the summary at its own width
+            // and a dot per card, a long summary or many waiting cards pushed the dots past the panel's edge (DE1, c11514).
             : Layout.Builder.HStack([
-                    Layout.Builder.Text(screen.Summary, 12f, Dim).Selectable().WAuto(),
-                    Layout.Builder.Spacer().WStar(),
-                    .. _waiting.Select(Waiting)])
+                    Layout.Builder.Text(screen.Summary, 12f, Dim).Selectable().WStar(),
+                    .. _waiting.Take(WaitingDots).Select(Waiting),
+                    .. _waiting.Count > WaitingDots
+                        ? [Layout.Builder.Text($"+{_waiting.Count - WaitingDots}", 12f, Dim, TextAlign.Center).Pad(2f, 0f).WAuto()
+                            .WithTooltip(string.Join("\n", _waiting.Skip(WaitingDots).Select(c => $"new: {Titled(c)}")), Layout.DockSide.Left)]
+                        : Array.Empty<Layout.Node>()])
                 .RowH(20f));
         foreach (var card in screen.Open)
         {
@@ -650,7 +655,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         var stack = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).Stretch();
         // A card's image opens full size over the panel (the page beside it does not draw a second viewer for it).
-        return Gallery.Over(_links.Over(WithSelection(Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch())), panel: true);
+        return Gallery.Over(_links.Over(WithPageSelection(Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch())), panel: true);
     }
 
     /// <summary>The panel's line for a node out of reach: dim, two lines at most, the whole text on hover once it is cut.</summary>
@@ -748,6 +753,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     /// <summary>The card's title as shown: a landed flight's starts with 🛬. The node's title is left as it raised it.</summary>
     internal static string Titled(CardRow card) => card.Kind == "landed" ? Palette.Glyph("🛬", "✈") + " " + card.Title : card.Title;
+
+    /// <summary>The most waiting cards drawn as dots; the rest are one "+N" with their titles on hover.</summary>
+    internal const int WaitingDots = 3;
 
     /// <summary>A card raised while the panel is held: a dot in its bin's colour, its title on hover, until the pointer leaves.</summary>
     private static Layout.Node Waiting(CardRow card) =>
