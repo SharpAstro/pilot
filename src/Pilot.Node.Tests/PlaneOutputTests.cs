@@ -134,7 +134,9 @@ public sealed class PlaneOutputTests : JobTestsBase
         // The jobs view says how many run against how many could, and who waits on a sibling hold.
         Row(second).Slots.ShouldBe(2);
         Row(second).WaitsOnSibling.ShouldBe(true);
-        JobQueue.SlotsLine(_state.Jobs()).ShouldBe("1 running of 2 slots, 1 waiting on a sibling hold");
+        // The second slot stands idle for the hold, and the line says so and since when (PIL802).
+        var idleSince = Row(second).HoldIdleSince.ShouldNotBeNull();
+        JobQueue.SlotsLine(_state.Jobs()).ShouldBe($"1 running of 2 slots, 1 idle behind the sibling hold since {LocalTime(idleSince)}, 1 waiting on a sibling hold");
         await CancelAll(jobs, first);
         jobs.Dispatch(JobRunner.LookAgain.Instance);
         await Until(second, j => j.State == JobState.Running);
