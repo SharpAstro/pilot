@@ -6,11 +6,11 @@ namespace Pilot.Node.Flights;
 
 public static partial class Briefs
 {
-    private const int MaxOrderText = 500;
+    private const int MaxOrderText = 300;
     private const int MaxOrdersListed = 10;
-    private const int MaxOrdersTotal = 1500;
+    private const int MaxOrdersTotal = 1000;
     private const int MaxHeldListed = 5;
-    private const int MaxCardsListed = 8;
+    private const int MaxCardsListed = 6;
 
     /// <summary>The file name the node gives the rules of the watchtower, in its data folder.</summary>
     public const string WatchtowerRulesFileName = "watchtower-rules.md";
@@ -64,7 +64,7 @@ public static partial class Briefs
             {
                 var line = StaleSection.Line(item, flights);
                 // About a fifth of the brief, and always leaving room for the counts and the cards after it.
-                if (text.Length - from + line.Length > MaxStaleListed || text.Length + line.Length > MaxWatchtowerBrief - 1800)
+                if (text.Length - from + line.Length > MaxStaleListed || text.Length + line.Length > MaxWatchtowerBrief - 2200)
                 {
                     text.AppendLine($"(more are stale than fit here: `{pilot} status` lists them)");
                     break;
@@ -135,7 +135,7 @@ public static partial class Briefs
         {
             var line = ShortCardLine(card);
             // Room is kept for the "and N more" line after them.
-            if (listed >= MaxCardsListed || text.Length + line.Length > MaxWatchtowerBrief - 100)
+            if (listed >= MaxCardsListed || text.Length + line.Length > MaxWatchtowerBrief - 400)
             {
                 break;
             }

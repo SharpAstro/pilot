@@ -153,9 +153,12 @@ public sealed class WatchtowerTests : IDisposable
         await _tower.LookAsync(Ct);
 
         var brief = _workers.Started.ShouldHaveSingleItem().Brief;
-        brief.ShouldContain("whose legs are all done, whose PR carries `pilot: changes` and whose PR head is not the head its");
-        brief.ShouldContain("`read head`");
-        brief.ShouldContain("start it yourself with `pilot flight review <code>`");
+        // The rule is in the rules file the brief names, not in the brief (PIL855).
+        var rules = Briefs.WatchtowerRules("du1-watchtower", "pilot");
+        rules.ShouldContain("whose legs are all done, whose PR carries `pilot: changes` and whose PR head is not the head its");
+        rules.ShouldContain("`read head`");
+        rules.ShouldContain("start it yourself with `pilot flight review <code>`");
+        brief.ShouldContain("watchtower-rules.md");
     }
 
     [Fact]
