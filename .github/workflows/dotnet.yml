@@ -61,8 +61,10 @@ jobs:
     # x64 Windows, not Arm: hosted Arm runners are limited on private repos, and the platform code is the same.
     #
     # The Windows job is meant to take under 12 minutes (#813). It took 26 once, when the git-backed tests ran real git at 100 to 400 ms
-    # a process (Windows' process start and the scanner); those tests now run on an in-memory git (FakeRepoGit) unless a test checks git
-    # itself. A job that hangs is stopped here, with its hang dump, rather than by the merge queue's 20 minutes without a name.
+    # a process: Windows' process start, one at a time under .NET's process-creation lock (#794). Not the scanner: the hosted image
+    # already has Defender's real-time scanning off, with C:\ and D:\ excluded (runner-images' Configure-WindowsDefender.ps1). Those
+    # tests now run on an in-memory git (FakeRepoGit) unless a test checks git itself. A job that hangs is stopped here, with its hang
+    # dump, rather than by the merge queue's 20 minutes without a name; the queue's own limit is the reason for the 12.
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -79,15 +81,6 @@ jobs:
         # Git Bash on Windows, so the version step's shell script runs on both.
         shell: bash
     steps:
-    - name: Turn off Defender's real-time scanning
-      # Windows only: what tests there are that still run git start a process each, and the scanner looks at every one of them and at every
-      # file written. Best effort (tamper protection can refuse it), so a refusal costs nothing. Before the checkout, so the workspace is
-      # never scanned; the repo root, since src is not there before it.
-      if: runner.os == 'Windows'
-      shell: pwsh
-      working-directory: .
-      continue-on-error: true
-      run: Set-MpPreference -DisableRealtimeMonitoring $true
     - uses: actions/checkout@v7
     - uses: actions/setup-dotnet@v6
       with:
