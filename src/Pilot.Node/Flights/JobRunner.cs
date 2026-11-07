@@ -62,6 +62,18 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>How long a queued benchmark waits for a quiet CPU before its owner is rung and told why the CPU is busy.</summary>
     public TimeSpan BenchQuietWait { get; set; } = TimeSpan.FromMinutes(30);
 
+    /// <summary>The Ring card for a job queue that has stopped moving: jobs wait and none has started for <see cref="QueueJamAfter"/> (#848).</summary>
+    public const string QueueJammedKind = "queue-jammed";
+
+    /// <summary>The one subject of the jam card: the queue itself, never a job in it, so a jam is one card however many jobs wait.</summary>
+    public const string QueueJamSubject = "queue";
+
+    /// <summary>
+    /// How long the queue may stand still, with the oldest queued job waiting that long and no job starting, before the node rings
+    /// one card naming the job that holds it.
+    /// </summary>
+    public TimeSpan QueueJamAfter { get; set; } = TimeSpan.FromMinutes(30);
+
     // Benches whose owner has been told they wait for a quiet CPU: once per bench.
     private readonly ConcurrentDictionary<string, byte> _benchBusyTold = new(StringComparer.Ordinal);
 
@@ -985,7 +997,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             var place = why is null ? "" : $" ({why})";
             _queue[i] = job with
             {
-                Step = i == 0 ? $"next in line: {whys[0]}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : BehindHeld(i, whys) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : BuildHold(job) is { } building ? $"queued, {i} ahead of it{place}; {building}" : BehindOwn(i, whys) is { } own ? $"queued, {i} ahead of it{place}; {own}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
+                Step = i == 0 ? $"{QueueJam.NextInLine}{whys[0]}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : BehindHeld(i, whys) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : BuildHold(job) is { } building ? $"queued, {i} ahead of it{place}; {building}" : BehindOwn(i, whys) is { } own ? $"queued, {i} ahead of it{place}; {own}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
                 Slots = MaxRunning,
                 WaitsOnSibling = SiblingHold(job) is not null,
             };
@@ -994,6 +1006,36 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
         CheckIdle();
         CheckBenchBusy();
+        CheckJammed();
+    }
+
+    /// <summary>
+    /// One Ring card while the queue is jammed (<see cref="QueueJam"/>): jobs wait, the oldest past <see cref="QueueJamAfter"/>, and
+    /// none has started in that time. It names the job that holds the queue and what it holds, its text follows the counts on every
+    /// look, and it closes by itself once a job starts or the queue empties. Read from the job rows, so a restarted node keeps the card
+    /// it had. A benchmark head waiting for a quiet CPU is left to <see cref="BenchBusyKind"/>.
+    /// </summary>
+    private void CheckJammed()
+    {
+        var now = time.GetUtcNow();
+        var rows = state.Jobs();
+        if (QueueJam.Read(rows, MaxRunning, now, QueueJamAfter, job => _released.ContainsKey(job.Id) ? [] : SiblingsFor(job)) is not { } jam)
+        {
+            state.CloseCardsAbout(QueueJamSubject, QueueJam.Calm(rows, now, QueueJamAfter), QueueJammedKind);
+            return;
+        }
+        // A jam the person closed (dismissed it, or answered it by cancelling the holder) stays closed: it is over once another job
+        // starts, and a card raised again on the next look would ring the person for what they already settled.
+        if (state.Cards().Any(c => c.Kind == QueueJammedKind && c.Subject == QueueJamSubject && c.State == CardState.Closed && c.ClosedBy != "node" && c.Title.EndsWith(jam.Since, StringComparison.Ordinal)))
+        {
+            return;
+        }
+        IReadOnlyList<CardChoice> choices = jam.Holder is { } holder
+            ? [new CardChoice { Label = $"Cancel job {holder.Id}, which holds the queue", Verb = Verbs.CancelJob, Target = Verbs.JobTarget(holder.Id) }]
+            : [];
+        var card = state.RaiseCard(CardBin.Ring, QueueJammedKind, QueueJamSubject, jam.Title, jam.Detail, choices);
+        // The counts and the holder move on while the card stays open: the one card says what is true now.
+        state.UpdateCard(card.Id, jam.Title, jam.Detail, choices, card.Link);
     }
 
     /// <summary>

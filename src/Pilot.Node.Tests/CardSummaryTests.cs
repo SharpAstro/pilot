@@ -29,6 +29,7 @@ public sealed class CardSummaryTests
         { LegCommander.PlannedKind, "flight/PIL355" },
         { "landed", "flight/PIL355" },
         { "not-landed", "flight/PIL355" },
+        { JobRunner.QueueJammedKind, JobRunner.QueueJamSubject },
         { CardKinds.SessionWaiting, "session/a1b2c3d4" },
         { CardKinds.AssistantAsk, "session/a1b2c3d4" },
         { "some-kind-nobody-wrote-yet", "flight/PIL355" },
