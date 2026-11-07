@@ -180,6 +180,7 @@ public static partial class NodeApp
                 Traffic = traffic.LastHourRow(),
                 SendTimings = timings.Rows(),
                 CommandTimings = commandTimings.Rows(),
+                Heap = NodeHeap.Read(),
             }),
             PilotJsonContext.Default.ResponseEnvelopeNodeInfo));
 

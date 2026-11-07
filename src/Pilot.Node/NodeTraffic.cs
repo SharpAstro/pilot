@@ -210,6 +210,9 @@ public sealed class NodeTraffic
         };
     }
 
+    /// <summary>Where the hourly line's GC figures come from (#794): the node's own heap unless a test says otherwise.</summary>
+    public Func<NodeHeapRow> Heap { get; set; } = () => NodeHeap.Read();
+
     /// <summary>
     /// Writes the line of the last full clock hour when it has not been written yet; true when it wrote. Called by the hourly
     /// service after each hour boundary.
@@ -228,7 +231,7 @@ public sealed class NodeTraffic
         var t = Hour(hour);
         var child = CanMeasureChildren ? $"{t.ChildBytes} bytes (estimate, upper bound)" : "unknown";
         write(string.Create(CultureInfo.InvariantCulture,
-            $"traffic {hour:yyyy-MM-dd HH}:00Z: http in {t.HttpIn} bytes, out {t.HttpOut} bytes; git and gh children {child}; git runs {t.GitRuns}, gh runs {t.GhRuns}"));
+            $"traffic {hour:yyyy-MM-dd HH}:00Z: http in {t.HttpIn} bytes, out {t.HttpOut} bytes; git and gh children {child}; git runs {t.GitRuns}, gh runs {t.GhRuns}; {Heap().Line()}"));
         return true;
     }
 

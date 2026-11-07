@@ -97,6 +97,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(SendTimingRow[]))]
 [JsonSerializable(typeof(CommandTimingRow))]
 [JsonSerializable(typeof(CommandTimingRow[]))]
+[JsonSerializable(typeof(NodeHeapRow))]
 [JsonSerializable(typeof(ResponseEnvelope<NodeInfo>))]
 [JsonSerializable(typeof(ResponseEnvelope<CommandResult>))]
 [JsonSerializable(typeof(ResponseEnvelope<SessionRow[]>))]
