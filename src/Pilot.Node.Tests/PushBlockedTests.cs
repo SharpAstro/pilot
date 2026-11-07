@@ -7,7 +7,7 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>A leg whose work is done and whose check passes, but whose rebased branch cannot go up plain, gets its own card with two ways up (PIL474).</summary>
-/// <remarks>Slow: every test rebases and pushes a real plane to a bare origin (5 to 16 s each under load).</remarks>
+/// <remarks>Slow on real git: every test rebases and pushes a plane to a bare origin (5 to 16 s each under load). Git is <see cref="FakeRepoGit"/> (#813).</remarks>
 [Trait("Category", "Slow")]
 public sealed class PushBlockedTests : IDisposable
 {
@@ -24,7 +24,31 @@ public sealed class PushBlockedTests : IDisposable
     private readonly string _origin;
     private readonly string _head;
 
+    /// <summary>The git the node runs here: <see cref="FakeRepoGit"/>, which models the remote, the plane and the other clone (#813). See <see cref="TestGit"/>.</summary>
+    private readonly TestGit _testGit;
+
     public PushBlockedTests()
+    {
+        _testGit = TestGit.Building(_root, realGit: false, Build);
+        _origin = Git(Remote, "rev-parse", Branch);
+        _head = Git(Plane, "rev-parse", "HEAD");
+
+        IGit git = _testGit;
+        var flights = new FlightCommander(_state, new Planes(git), TimeProvider.System);
+        var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
+        _legs = new LegCommander(_state, new FakeWorkers(), _checks, new FakeGitHub(), git, new Planes(git), flights, options, TimeProvider.System);
+        _state.PutFlight(new FlightRow
+        {
+            Code = "TIA9", Repo = "tianwen", RepoPath = Plane, Issue = 9, Branch = Branch, Worktree = Plane, Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow,
+        });
+        _state.PutLeg(new LegRow
+        {
+            Flight = "TIA9", Name = "parser", Order = 1, Goal = "Parse", DoneWhen = "Tests pass", Check = "dotnet test", State = LegState.Flying, Worker = Worker,
+        });
+    }
+
+    /// <summary>The remote, a plane on the flight's branch whose head rewrote what it pushed, and a second clone of that branch.</summary>
+    private void Build()
     {
         Directory.CreateDirectory(_root);
         Git(_root, "init", "-q", "--bare", "-b", "main", "remote.git");
@@ -38,24 +62,9 @@ public sealed class PushBlockedTests : IDisposable
         File.WriteAllText(Path.Combine(Plane, "mine.txt"), "mine\n");
         Commit(Plane, "mine");
         Git(Plane, "push", "-q", "-u", "origin", Branch);
-        _origin = Git(Plane, "rev-parse", "HEAD");
         Git(_root, "clone", "-q", "-b", Branch, Remote, "other");
         // The plane rewrites what it pushed (a rebase does): origin's branch is no longer an ancestor of its head.
         Git(Plane, "commit", "-q", "--amend", "-m", "mine, rewritten", "--date=2001-01-01T00:00:00");
-        _head = Git(Plane, "rev-parse", "HEAD");
-
-        var git = new GitCli();
-        var flights = new FlightCommander(_state, new Planes(git), TimeProvider.System);
-        var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
-        _legs = new LegCommander(_state, new FakeWorkers(), _checks, new FakeGitHub(), git, new Planes(git), flights, options, TimeProvider.System);
-        _state.PutFlight(new FlightRow
-        {
-            Code = "TIA9", Repo = "tianwen", RepoPath = Plane, Issue = 9, Branch = Branch, Worktree = Plane, Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow,
-        });
-        _state.PutLeg(new LegRow
-        {
-            Flight = "TIA9", Name = "parser", Order = 1, Goal = "Parse", DoneWhen = "Tests pass", Check = "dotnet test", State = LegState.Flying, Worker = Worker,
-        });
     }
 
     private string Remote => Path.Combine(_root, "remote.git");
@@ -185,11 +194,14 @@ public sealed class PushBlockedTests : IDisposable
 
     public void Dispose()
     {
+        _testGit.Release();
         foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
         Directory.Delete(_root, recursive: true);
+        // A command the model could not answer may have been swallowed by the node's own catch: the test still fails.
+        _testGit.Verify();
     }
 
     private static void Commit(string cwd, string message)
@@ -200,6 +212,10 @@ public sealed class PushBlockedTests : IDisposable
 
     private static string Git(string cwd, params string[] args)
     {
+        if (TestGit.Answer(cwd, args) is { } answered)
+        {
+            return answered;
+        }
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         start.Environment["GIT_COMMITTER_NAME"] = "t";
         start.Environment["GIT_COMMITTER_EMAIL"] = "t@example.com";

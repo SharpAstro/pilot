@@ -351,6 +351,7 @@ internal sealed class FakeRepoGit : IGit
             "ls-remote" => LsRemote(a),
             "switch" => Switch(a, wt),
             "checkout" => Switch([.. a.Select(x => x == "-b" ? "-c" : x)], wt),
+            "pull" => Pull(a, wt),
             _ => throw new NotSupportedException("verb"),
         };
     }
@@ -746,11 +747,31 @@ internal sealed class FakeRepoGit : IGit
     {
         a.RemoveAll(x => x is "-q" or "--quiet");
         var create = a.Remove("-c");
-        if (wt is null || a.Count != 1 || a[0].StartsWith('-'))
+        if (wt is null || a.Count is < 1 or > 2 || a.Count == 2 && !create || a.Any(x => x.StartsWith('-')))
         {
             throw new NotSupportedException("switch form");
         }
         var head = HeadId(wt);
+        if (create && a.Count == 2)
+        {
+            // A branch made at a start point: as a switch to it, the folder and index become that commit's.
+            var start = Resolve(a[1], wt);
+            if (start is null)
+            {
+                return Fail($"fatal: invalid reference: {a[1]}", 128);
+            }
+            if (_cur.Refs.ContainsKey("refs/heads/" + a[0]))
+            {
+                return Fail($"fatal: a branch named '{a[0]}' already exists", 128);
+            }
+            _cur.Refs["refs/heads/" + a[0]] = start;
+            var previous = wt.Index;
+            wt.Branch = a[0];
+            wt.Detached = null;
+            wt.Index = new Dictionary<string, string>(_commits[start].Tree);
+            Materialize(wt, _commits[start].Tree, previous);
+            return Ok("");
+        }
         if (create)
         {
             if (_cur.Refs.ContainsKey("refs/heads/" + a[0]))
@@ -812,6 +833,22 @@ internal sealed class FakeRepoGit : IGit
             _cur.Refs[parts[1]] = id;
         }
         return Ok("");
+    }
+
+    /// <summary><c>git pull [-q] [--no-rebase] origin &lt;branch&gt;</c>: a fetch of origin, then a merge of what it fetched for that branch.</summary>
+    private GitRun Pull(List<string> a, Worktree? wt)
+    {
+        a.RemoveAll(x => x is "-q" or "--quiet" or "--no-rebase" or "--no-edit");
+        if (wt is null || a is not ["origin", var branch] || branch.StartsWith('-'))
+        {
+            throw new NotSupportedException("pull form");
+        }
+        if (!OriginRefs.ContainsKey("refs/heads/" + branch))
+        {
+            return Fail($"fatal: couldn't find remote ref {branch}", 1);
+        }
+        Fetch(["origin"]);
+        return Merge(["-m", $"Merge branch '{branch}' of {OriginPath}", "origin/" + branch], wt);
     }
 
     private GitRun Push(List<string> a, Worktree? wt)

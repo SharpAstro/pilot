@@ -25,20 +25,26 @@ public sealed class TouchesTests : IDisposable
     private readonly FakeGitHub _github = new();
     private readonly LegCommander _legs;
 
+    /// <summary>The git the node runs here: <see cref="FakeRepoGit"/> unless a test asks for git itself (#813). See <see cref="TestGit"/>.</summary>
+    private readonly TestGit _testGit;
+
     public TouchesTests()
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        // The checkout's remote is GitHub's, as a peer's is told apart by it; the fetch comes from a bare copy of its own.
-        var bare = Path.Combine(_root, "origin.git");
-        Git(_root, "clone", "-q", "--bare", Repo, bare);
-        Git(Repo, "remote", "add", "origin", $"https://github.com/{GitHub}.git");
-        Git(Repo, "config", $"url.{bare.Replace('\\', '/')}.insteadOf", $"https://github.com/{GitHub}.git");
-        Git(Repo, "fetch", "-q", "origin");
-        var git = new GitCli();
+        _testGit = TestGit.Building(_root, realGit: false, () =>
+        {
+            Directory.CreateDirectory(Repo);
+            Git(Repo, "init", "-q", "-b", "main");
+            File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
+            Git(Repo, "add", ".");
+            Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
+            // The checkout's remote is GitHub's, as a peer's is told apart by it; the fetch comes from a bare copy of its own.
+            var bare = Path.Combine(_root, "origin.git");
+            Git(_root, "clone", "-q", "--bare", Repo, bare);
+            Git(Repo, "remote", "add", "origin", $"https://github.com/{GitHub}.git");
+            Git(Repo, "config", $"url.{bare.Replace('\\', '/')}.insteadOf", $"https://github.com/{GitHub}.git");
+            Git(Repo, "fetch", "-q", "origin");
+        });
+        IGit git = _testGit;
         var flights = new FlightCommander(_state, new Planes(git), TimeProvider.System) { Machine = "SE1", Fleet = _fleet };
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "SE1");
         _legs = new LegCommander(_state, new FakeWorkers(), new FakeChecks(), _github, git, new Planes(git), flights, options, TimeProvider.System);
@@ -54,10 +60,17 @@ public sealed class TouchesTests : IDisposable
             File.SetAttributes(file, FileAttributes.Normal);
         }
         Directory.Delete(_root, recursive: true);
+        _testGit.Release();
+        // A command the model could not answer may have been swallowed by the node's own catch: the test still fails.
+        _testGit.Verify();
     }
 
     private static string Git(string cwd, params string[] args)
     {
+        if (TestGit.Answer(cwd, args) is { } answered)
+        {
+            return answered;
+        }
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
         {
