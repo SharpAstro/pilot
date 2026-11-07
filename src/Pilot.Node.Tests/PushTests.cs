@@ -108,7 +108,7 @@ public sealed class PushTests : IDisposable
         Git(Plane, "status", "--porcelain").ShouldBe("");
         File.Exists(Path.Combine(Plane, ".git", "MERGE_HEAD")).ShouldBeFalse();
         var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
-        card.Bin.ShouldBe(CardBin.Ring);
+        card.Bin.ShouldBe(CardBin.ForYou);
         card.Kind.ShouldBe(LegCommander.PushDivergedKind);
         card.Detail.ShouldNotBeNull().ShouldContain(theirs[..8]);
         card.Detail.ShouldContain(mine[..8]);

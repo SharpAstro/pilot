@@ -51,6 +51,7 @@ public static partial class CardSummaries
             LegWatch.NeverTurned => $"The worker of {what} took no first turn after two starts. Tell it to carry on if it is there, or start a fresh worker on the leg.",
             LegWatch.Failed or LegWatch.Missing => $"The worker of {what} is gone. Tell it to carry on if it is still there, or start a fresh worker on the leg.",
             LegWatch.OverBudget => $"The worker of {what} is past its budget but keeps working. Let it spend more, or start a fresh worker on the leg.",
+            LegWatch.LegStale => $"{what} has gone past two go-arounds or six hours flying. The detail lists its check runs and whether each failure was the flight's. Nothing to do unless the cause is yours to fix.",
             LegWatch.ReviewStalled => $"The reviewer of {what} stalled twice. Start a fresh reviewer, or dismiss this once it moves.",
             LegWatch.ValidationStalled => $"The validator of {what} stalled. Start the leg without its validation, or remove the leg.",
             LegCommander.NoGoKind => $"The validator of {what} reports the tree is not as its brief assumes. Start the leg as the tree is, drop it, or plan the flight again.",
@@ -60,7 +61,9 @@ public static partial class CardSummaries
             LegCommander.OverlapKind => $"{what} overlaps another flight's files. Fold it in, connect it, or plan both in parallel.",
             LegCommander.OverlapParallelKind => $"{what} shares files with an open PR no flight owns, with a flight that held a card on it too, or with another flight in a small one-way overlap, so the node planned in parallel by itself. Nothing to do; the second to land resolves the conflicts.",
             StopGate.Kind => $"A session of {what} was told once to commit its files and stopped again with them still there. It can be told once more; the files stay in the plane until they are committed.",
-            LegCommander.PlannedKind => $"{what} has a plan of legs. Start it to fly them, or change the plan first.",
+            LegCommander.PlannedKind => choices.Count == 0
+                ? $"{what} has a plan of legs, but its flight is held and cannot start yet. The detail says what it waits for; Start is offered here once that lifts."
+                : $"{what} has a plan of legs. Start it to fly them, or change the plan first.",
             "landed" => $"{what} landed: its PR is merged and its legs are done. Nothing to do; dismiss it when read.",
             "worker-told-job" => $"The worker of {what} was idle because a job of its own had ended untold, and the node told it. Nothing to do.",
             "not-landed" => $"The PR of {what} merged on GitHub, but landing the flight was refused. The branch is in the base; the detail says what stood in the way, and the flight lands once that is dealt with.",
@@ -76,9 +79,11 @@ public static partial class CardSummaries
             LegCommander.LegRemovedKind => $"A leg of {what} was removed before it flew. Nothing to do; the legs after it keep their order.",
             LegCommander.FlownElsewhereKind => $"{what} is already flown on another node, so this node did not start it. Stop it there first, or leave it where it is.",
             LegCommander.ValidatingKind => $"A validator was started to check {what} against the tree before its worker starts. Nothing to do; the node starts the leg on its answer.",
+            LegCommander.TickerStartedKind => $"The worker of {what} ended with commits made and steps unticked, so the node started a ticker to tick what the commits cover and finish the leg. Nothing to do; it rings only if the ticker stops without finishing.",
             LegCommander.SiblingBehindKind => $"{what} compiles against a sibling clone that is behind origin and the node could not pull it. Pull it by hand, or let the leg run as it is.",
             LegCommander.SiblingPulledKind => $"The node pulled a sibling clone that was behind origin before it started {what}. Nothing to do.",
             LegCommander.SelfFinishedKind => $"The node finished {what} itself: its work was pushed and its check passed. Nothing to do.",
+            LegCommander.RetiredKind => $"{what} was stopped on the word of the controller or the owner, so it ends retired, not failed. The flight goes on with its next leg; nothing to do.",
             LegCommander.PushDivergedKind => $"{what} was not pushed because the remote branch holds commits the plane lacks. Merge origin's branch into the plane by hand, then push again.",
             LegCommander.MergeTakenBackKind => $"The merge of {what}'s PR was taken back because a new leg was planned. The merge is offered again once the new leg is done and a fresh review passes; nothing to do.",
             "planner-ended" => $"The planner of {what} was ended once its first leg flew, so it no longer holds an Opus slot. Nothing to do; a later plan starts a fresh one.",
@@ -141,8 +146,9 @@ public static partial class CardSummaries
             LegCommander.HumanVerificationKind => $"The review of {what} noted checks only a person can make, and the node filed each as an issue in the repo's human-verification milestone. Check each by hand and close its issue; dismiss this once read.",
             LegCommander.HumanVerificationRefusedKind => $"GitHub refused some of {what}'s human checks, so they are not filed; the verdict stands. The detail names them; file them by hand.",
             LegCommander.HoldingClearedKind => "The watchtower or the person cleared a flight held in a holding pattern to land: its merge is no longer held, and autopilot merges it as for any passed review.",
+            LegCommander.HoldReleasedKind => "A flight held in a holding pattern had no watchtower running to make its review's not blocking notes, so the node wrote them on the PR as one comment and released the hold: autopilot merges it as for any passed review. Nothing to do.",
             LegCommander.PrReadyRestoredKind => "A flight's review had passed but no merge card was open (the node restarted between the verdict and the card), so the node raised its PR-ready card again. Nothing to do.",
-            LegCommander.HoldingTimeoutKind => $"{what} has circled in a holding pattern for 30 minutes with no leg making its fixes and the watchtower not clearing it, or the watchtower is not live. Merge as it is lands it at the reviewed head; Wait keeps it holding and asks again later.",
+            LegCommander.HoldingTimeoutKind => $"{what} has circled in a holding pattern for 30 minutes with no leg making its fixes and a live watchtower not clearing it (a hold with no watchtower running is released by the node itself). Merge as it is lands it at the reviewed head; Wait keeps it holding and asks again later.",
             LegCommander.ReviewLoopKind => "The review of a flight has asked for changes in three rounds. Pass with notes ends the loop; Allow one more round lets a fourth start.",
             "review-kept" => "A flight's base was merged into its branch and its own diff is unchanged, so its passed review stands and no reviewer started. Nothing to do.",
             LegWatch.StraySession => "A live session that should not be running: one past its purpose (its leg is done or was redone, or its flight landed), or one the node did not start and no role claims. Stop it ends the session; the card closes by itself when the session ends. A role's current session never rings here.",
@@ -153,7 +159,6 @@ public static partial class CardSummaries
             Compactor.Kind => "The node compacted a session's context, or could not and tries again. Nothing to do.",
             Digest.Kind => "What landed, what was handled and what is parked since the last digest. Read it and dismiss it.",
             StaleWatch.ActedKind => $"The node acted on {what} at half a stale bound (told its worker of an ended job, nudged it, or raised its priority). Nothing to do.",
-            StaleWatch.ReminderKind => $"A card about {what} has rung with no answer for over half a stale bound. Answer or dismiss it.",
             NodeUpdater.Kind => "A new pilot is out, or an update was installed or failed. The card's choice installs it; otherwise nothing to do.",
             NodeLan.AskedKind => "A node on the LAN asks to fly flights here. Allow lets it run any command here until revoked; Refuse turns it away.",
             "restart" => "The node restarted at someone's word. Nothing to do.",
@@ -195,6 +200,18 @@ public static partial class CardSummaries
         // The summary already says the PR merged, so the refusal's own "TIA1 merged at 1a2b3c4d, but" opening is left out.
         var reason = LegCommander.OneLine(MergedOpening().Replace(why.Replace(worktree, "its plane", StringComparison.OrdinalIgnoreCase), ""));
         return $"The PR #{number} of {code} merged on GitHub, but the flight did not land: {reason}. Its branch is in the base; the flight lands once that is dealt with.";
+    }
+
+    /// <summary>
+    /// The sentence of a merged flight whose own commits missed the merge: which one (the first by subject), and that a PR with them
+    /// lands the flight. Never main's commits or merges of main, which are not the flight's work.
+    /// </summary>
+    public static string LeftOut(string code, int number, IReadOnlyList<string> commits)
+    {
+        var first = commits.Count > 0 ? commits[0] : "";
+        var more = commits.Count > 1 ? $" and {commits.Count - 1} more" : "";
+        var text = $"PR #{number} merged without {code}'s last work: {first}{more}. A PR with {(commits.Count == 1 ? "it" : "them")} brings it in, and the flight lands when that merges.";
+        return text.Length <= 240 ? text : text[..237] + "...";
     }
 
     /// <summary>

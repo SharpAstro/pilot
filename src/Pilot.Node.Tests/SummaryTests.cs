@@ -123,7 +123,7 @@ public sealed class SummaryTests
         var records = SummaryRecords.Fleet(_state, Start).ShouldNotBeNull();
 
         records.ShouldStartWith("Gone stale:");
-        records.ShouldContain("- OLD1, open 1 d 6 h: waiting on ");
+        records.ShouldContain("- OLD1, open 1 d 6 h: no progress for 1 d 6 h, waiting on ");
         records.IndexOf("Records of the node", StringComparison.Ordinal).ShouldBeGreaterThan(records.IndexOf("- OLD1", StringComparison.Ordinal));
         Flat(SummaryPrompt.Fleet(3, records)).ShouldContain("\"Gone stale\", list those first");
     }

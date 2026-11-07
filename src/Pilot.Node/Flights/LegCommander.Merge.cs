@@ -109,15 +109,27 @@ public sealed partial class LegCommander
         // Every ask of GitHub and git is made with the lock let go (PIL338): the flight is this command's meanwhile, and what it
         // found is recorded only if the flight is still as it was decided on.
         using var call = Calling(flight.Code, "being merged");
-        var (pr, checks, mergeState) = await OffLockAsync(flight, async () =>
+        PullRequest pr;
+        ChecksSummary? checks;
+        MergeState? mergeState;
+        try
         {
-            var pr = await LookAtPrAsync(flight, head, cancellationToken);
-            var checks = await github.ChecksSummaryAsync(flight.RepoPath, pr.Number, cancellationToken);
-            // A merge queue takes no PR whose required checks have not passed, and a plain merge would be refused for the same:
-            // pressed while they run, the merge waits for them on this head (TIA1818's #1826, DE1 2026-10-25).
-            var mergeState = checks?.Status == ChoiceStatus.Failing ? null : await github.MergeStateAsync(flight.RepoPath, pr.Number, cancellationToken);
-            return (pr, checks, mergeState);
-        });
+            (pr, checks, mergeState) = await OffLockAsync(flight, async () =>
+            {
+                var pr = await LookAtPrAsync(flight, head, cancellationToken);
+                var checks = await github.ChecksSummaryAsync(flight.RepoPath, pr.Number, cancellationToken);
+                // A merge queue takes no PR whose required checks have not passed, and a plain merge would be refused for the same:
+                // pressed while they run, the merge waits for them on this head (TIA1818's #1826, DE1 2026-10-25).
+                var mergeState = checks?.Status == ChoiceStatus.Failing ? null : await github.MergeStateAsync(flight.RepoPath, pr.Number, cancellationToken);
+                return (pr, checks, mergeState);
+            });
+        }
+        catch (AlreadyMergedException)
+        {
+            // GitHub merged it before this merge asked (the queue, a person, the autopilot's earlier look): the state wanted. The
+            // command's end lands the flight as any merge does, and nothing is refused or rung (#799 rule 6, row c17100).
+            return (true, null, null);
+        }
         // A head re-pinned by the look (moved only by its base or by whitespace or documentation) is the review's head now.
         flight = FlightOf(command.Target);
         // A head that is in the queue now, or whose checks are still pending, is not one the queue dropped for a conflict: only a PR
@@ -335,7 +347,11 @@ public sealed partial class LegCommander
             ?? throw new FlightException($"{flight.Branch} has no PR");
         if (!string.Equals(pr.State, "OPEN", StringComparison.OrdinalIgnoreCase))
         {
-            throw new FlightException($"#{pr.Number} is {pr.State.ToLowerInvariant()}, not open");
+            var said = $"#{pr.Number} is {pr.State.ToLowerInvariant()}, not open";
+            // Merged already is what a merge wants (#799 rule 6): the caller lands the flight, it is no refusal to ring.
+            throw string.Equals(pr.State, "MERGED", StringComparison.OrdinalIgnoreCase) && (flight.PullRequest is null || flight.PullRequest == pr.Number)
+                ? new AlreadyMergedException(said)
+                : new FlightException(said);
         }
         if (!pr.Head.StartsWith(head, StringComparison.OrdinalIgnoreCase))
         {

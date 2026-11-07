@@ -20,6 +20,10 @@ public static partial class PilotCommand
         if (snapshot.Admission is { } admission)
         {
             yield return $"{admission.Line()}{(admission.Counted.Length > 0 ? ": " + string.Join(", ", admission.Counted) : "")}{(admission.OneFlightPerRepo ? "; one flight per repo" : "")}";
+            if (admission.WaitingOnPerson is { Length: > 0 } waiting)
+            {
+                yield return $"not counted: {waiting.Length} idle, waiting on a person or a job: {string.Join(", ", waiting)}";
+            }
         }
         foreach (var queued in QueuedFlight.Of(snapshot.Flights, snapshot.Legs, snapshot.Admission))
         {

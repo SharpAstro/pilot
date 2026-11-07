@@ -300,7 +300,7 @@ public static class Verbs
     public const string Check = "check";
 
     /// <summary>
-    /// <c>finish-leg flight/&lt;code&gt;/&lt;leg&gt; done|failed|accepted|verified [report…]</c>. Done only with every step ticked and its
+    /// <c>finish-leg flight/&lt;code&gt;/&lt;leg&gt; done|failed|retired|accepted|verified [report…]</c>. Retired ends a flying leg stopped on the controller's or the owner's word: done in the row with its report starting <c>retired:</c>, a Handled line and no card, and the flight goes on. Done only with every step ticked and its
     /// check, rerun by the node in the plane, passing. Accepted takes a failed leg's read as it is (the controller's, never
     /// its worker's or the watchtower's): the leg is done, its failure kept in the report, and the flight goes on. Verified
     /// (anyone's) finishes a failed leg only when its steps are ticked, its plane is clean and matches its pushed branch, and
@@ -453,6 +453,18 @@ public static class Verbs
 
     /// <summary><c>extend-budget flight/&lt;code&gt;/&lt;leg&gt; &lt;tokens&gt;</c>: raises the leg's budget, in weighted tokens, to the new figure.</summary>
     public const string ExtendBudget = "extend-budget";
+
+    /// <summary>
+    /// <c>order node &lt;text&gt;</c>: keeps a standing order (a hold on a flight or repo, a scope rule) that every fresh watchtower
+    /// reads first in its brief; the result's <see cref="CommandResult.Made"/> is its id. Kept as a <see cref="NodeNote"/> with an id.
+    /// </summary>
+    public const string Order = "order";
+
+    /// <summary><c>order-done node &lt;id&gt;</c>: retires a standing order, so the next brief no longer lists it.</summary>
+    public const string OrderDone = "order-done";
+
+    /// <summary><c>orders node</c>: the live standing orders, one line each as <c>o1  text</c>, in the result's <see cref="CommandResult.Made"/>.</summary>
+    public const string Orders = "orders";
 
     /// <summary><c>digest node</c>: the digest now, as a For-you card, beside the ones at 08:00 and 18:00.</summary>
     public const string Digest = "digest";
