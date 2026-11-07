@@ -1,4 +1,5 @@
 using Pilot.Contracts;
+using Pilot.Node.Sessions;
 
 namespace Pilot.Node.Flights;
 

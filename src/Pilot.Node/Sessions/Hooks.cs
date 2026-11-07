@@ -75,7 +75,7 @@ public sealed class HookBook
     private static HookState PermissionRequest(JsonElement hook, string name, DateTimeOffset at)
     {
         var tool = ClaudeAgentsJson.Text(hook, "tool_name");
-        var summary = tool is not null && hook.TryGetProperty("tool_input", out var input) ? Transcripts.Summarize(tool, input) : null;
+        var summary = tool is not null && hook.TryGetProperty("tool_input", out var input) ? TranscriptTail.Summarize(tool, input) : null;
         return new HookState(name, at, SessionState.Waiting, tool is not null ? $"permission to use {tool}" : "a permission", null, Asking: PermissionAsks.Asking(tool, summary));
     }
 
