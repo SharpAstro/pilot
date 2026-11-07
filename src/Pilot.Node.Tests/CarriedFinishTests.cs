@@ -153,7 +153,8 @@ public sealed class CarriedFinishTests : LegCommanderTestsBase
         await UntilAsync(() => node.Checks.Any(j => j.State == JobState.Running), "the carried check job runs");
         node.Parser.State.ShouldBe(LegState.Flying);
         File.WriteAllText(Gate, "go");
-        await UntilAsync(() => node.Parser.State == LegState.Done, "the node finishes the leg");
+        // Done and the recheck cleared are two writes: a slow runner can look between them (CI failed so, twice), so wait for both.
+        await UntilAsync(() => node.Parser is { State: LegState.Done, Recheck: null }, "the node finishes the leg and clears its recheck");
 
         node.Parser.ShouldSatisfyAllConditions(
             l => l.Report.ShouldBe(Report),
@@ -229,7 +230,8 @@ public sealed class CarriedFinishTests : LegCommanderTestsBase
         second.Error.ShouldContain("already");
         node.Checks.ShouldHaveSingleItem().Id.ShouldBe("jc1");
         File.WriteAllText(Gate, "go");
-        await UntilAsync(() => node.Parser.State == LegState.Done, "the node finishes the leg");
+        // Done and the recheck cleared are two writes: a slow runner can look between them (CI failed so, twice), so wait for both.
+        await UntilAsync(() => node.Parser is { State: LegState.Done, Recheck: null }, "the node finishes the leg and clears its recheck");
         node.Checks.ShouldHaveSingleItem().State.ShouldBe(JobState.Succeeded);
         node.Parser.Report.ShouldBe(Report);
     }
