@@ -699,12 +699,16 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, DequeueAsync fails with it.</summary>
     public string? DequeueFails { get; set; }
 
+    /// <summary>Run as a dequeue is made, before it is recorded: what a test reads of the world at that moment (PIL836: whether the push came first).</summary>
+    public Action? OnDequeued { get; set; }
+
     public Task DequeueAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
         if (DequeueFails is { } why)
         {
             return Task.FromException(new FlightException(why));
         }
+        OnDequeued?.Invoke();
         Dequeued.Add(number);
         // The queue lets it go: the PR is not queued any more, and GitHub says it was removed by hand.
         if (Queue is { Queued: true } queued)

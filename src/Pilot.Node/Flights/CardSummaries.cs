@@ -106,6 +106,7 @@ public static partial class CardSummaries
             FlightCommander.ConnectionReleasedKind => "A flight that waited for another flight no longer does, because that flight landed. Nothing to do.",
             FlightCommander.DisconnectedKind => "A flight was disconnected from another flight it had been connected to. Nothing to do.",
             FlightCommander.ReceivedKind => $"{what} was handed over to this node, which made its plane. Nothing to do.",
+            LegCommander.FollowUpPrKind => $"The commits of {what} missed the merge of its earlier PR, so a new PR carries them. Nothing to do; it is reviewed as any PR and the flight lands when it merges.",
             FlightCommander.MergedUnderLegKind => $"GitHub merged the PR of {what} before the new leg's work could join it. The new leg's work goes to a new PR once the legs are done; nothing to do.",
             "checks-rerun" => $"Failed checks of {what}'s PR were run again once before its leg is sent round. Nothing to do unless they fail again.",
             PrChecks.ClosedLanded => $"{what}'s PR was closed without a merge and its plane held nothing of its own, so the flight landed. Nothing to do.",

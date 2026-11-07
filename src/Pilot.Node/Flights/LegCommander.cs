@@ -299,6 +299,12 @@ public sealed partial class LegCommander(
             error = ex.Message;
             way = RefusalWays.Busy;
         }
+        catch (PushRefusedException ex)
+        {
+            // A push refused in a way the caller acts on (PIL836): said so in the way, never left to the refusal's words.
+            error = ex.Message;
+            way = ex.Way;
+        }
         catch (FlightException ex)
         {
             error = ex.Message;
@@ -309,6 +315,8 @@ public sealed partial class LegCommander(
         }
         finally
         {
+            // A push's turning of the review was this command's own write: once its result is recorded, no later command is waved through by it.
+            _queueTurned.TryRemove(CodeOf(command.Target), out _);
             _one.Release();
         }
 
@@ -500,6 +508,9 @@ public sealed partial class LegCommander(
         }
         finally
         {
+            // A push's turning of the review (EnsureNotQueuedAsync) was this update's own write. RunAsync clears it for a command, but the
+            // sweeps call this on their own, so it is let go here too: no later command is waved through by it.
+            _queueTurned.TryRemove(code, out _);
             await AwaitLaunchesAsync(launches);
         }
     }
@@ -586,6 +597,12 @@ public sealed partial class LegCommander(
                 return (null, null);
             }
             flight = Record(code, f => f with { Base = repaired.Base })!;
+            // kept was decided before the push, on the review as it stood then: a push that took the PR out of the merge queue turned the
+            // passed review back meanwhile, and a review that is no longer passed carries nowhere and offers no PR-ready.
+            if (kept is { Length: > 0 } && flight.Review is not { State: ReviewState.Passed })
+            {
+                kept = null;
+            }
             if (kept is { Length: > 0 })
             {
                 // Its review read this branch before the base was merged in: the merge alone moved it, so the pass goes with it to the
