@@ -79,7 +79,8 @@ public sealed partial class LegCommander
             return null;
         }
         var legs = state.Legs(code).OrderBy(l => l.Order).ToArray();
-        var brief = ConflictBrief(why, await ConflictDetailAsync(flight, cancellationToken));
+        var detail = await ConflictDetailAsync(flight, cancellationToken);
+        var brief = ConflictBrief(why, detail);
         // A leg flying on the plane is the one to merge the base: a second worker on the same plane would only clash with it.
         var flying = legs.FirstOrDefault(l => l.State == LegState.Flying && l.WorkerJob is { } job
             && state.Sessions().Any(s => s.Id == job && s.State is not (SessionState.Ended or SessionState.Failed)));
@@ -100,6 +101,8 @@ public sealed partial class LegCommander
             {
                 return $"{code}/{flying.Name}'s worker could not be told ({ex.Message})";
             }
+            // A worker told to merge the base is no rung of the ladder: if it stops, the leg-failed card says so.
+            _conflictLadder.TryRemove(code, out _);
             _conflictSent[code] = key;
             return null;
         }
@@ -107,12 +110,34 @@ public sealed partial class LegCommander
         {
             return legs.LastOrDefault() is { } notDone ? $"the last leg, {notDone.Name}, is {notDone.State.ToString().ToLowerInvariant()}" : "the flight has no leg";
         }
-        var command = new CommandRequest { Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name), Args = [brief], Who = LegWatch.Who };
+        // A fresh head of the base starts the ladder over at its first rung: sonnet.
+        var sentRound = await SendConflictRoundAsync(flight, last, why, detail, rung: 1, key, lastReport: null, lockHeld, cancellationToken);
+        if (sentRound is not null)
+        {
+            return sentRound;
+        }
+        _conflictSent[code] = key;
+        return null;
+    }
+
+    /// <summary>
+    /// Sends <paramref name="leg"/> round as the conflict worker of <paramref name="rung"/> (<see cref="RoleModels.ConflictWorkerFor"/>): the
+    /// go-around is passed the rung's model and effort and its label and reason name the rung, and the flight's ladder is kept so the leg's
+    /// end can start the next rung. Null when the round started; else why not.
+    /// </summary>
+    private async Task<string?> SendConflictRoundAsync(FlightRow flight, LegRow leg, string why, string detail, int rung, string baseHead, string? lastReport, bool lockHeld, CancellationToken cancellationToken)
+    {
+        var (model, effort, words) = Models.ConflictWorkerFor(rung);
+        var round = new ConflictRung(rung, model, effort, words);
+        var brief = ConflictBrief(why, detail, round, lastReport);
+        var command = new CommandRequest { Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [brief], Who = LegWatch.Who };
+        // The round the leg is on once the go-around has started: the ladder only reads a leg's end as its own while the leg is still there.
+        var ladder = new ConflictLadder(baseHead, rung, leg.Name, leg.GoArounds + 1);
         if (lockHeld)
         {
             try
             {
-                await GoAroundAsync(command, cancellationToken, conflictRound: true);
+                await GoAroundAsync(command, cancellationToken, conflictRound: true, rung: round);
             }
             catch (FlightException ex)
             {
@@ -122,15 +147,131 @@ public sealed partial class LegCommander
         else
         {
             // Through the command route, which takes the lock and waits for the launch; the go-around finds its why among these and is no review's round.
-            _conflictRounds[code] = brief.Trim();
-            var round = await RunAsync(command, cancellationToken);
-            if (!round.Ok)
+            _conflictRounds[flight.Code] = new ConflictRound(brief.Trim(), round);
+            var result = await RunAsync(command, cancellationToken);
+            if (!result.Ok)
             {
-                return round.Error ?? "the go-around was refused";
+                return result.Error ?? "the go-around was refused";
             }
         }
-        _conflictSent[code] = key;
+        _conflictLadder[flight.Code] = ladder;
         return null;
+    }
+
+    /// <summary>The rung of the conflict ladder a go-around starts its worker on: its model and effort, and the words that name it.</summary>
+    private sealed record ConflictRung(int Number, string Model, string? Effort, string Words)
+    {
+        public string Label => $"conflict worker {Number} of {RoleModels.ConflictRungs} ({Words})";
+    }
+
+    /// <summary>A conflict round asked for through the command route: its brief, which the go-around finds again, and its rung.</summary>
+    private sealed record ConflictRound(string Brief, ConflictRung Rung);
+
+    /// <summary>Where a flight's conflict stands on the ladder: the base head it is for, the rung last sent, the leg flying it and that leg's go-around count then.</summary>
+    private sealed record ConflictLadder(string BaseHead, int Rung, string Leg, int Round);
+
+    /// <summary>The flights whose conflict is on the ladder (PIL846), by flight. Not kept over a node restart: a conflict worker that fails after one is the leg-failed card's.</summary>
+    private readonly ConcurrentDictionary<string, ConflictLadder> _conflictLadder = new(StringComparer.Ordinal);
+
+    /// <summary>The card kind of a conflict whose last rung found the two sides change the same behaviour in opposite ways: the person's to choose.</summary>
+    public const string ConflictDecisionKind = "conflict-decision";
+
+    /// <summary>
+    /// A leg that was flying a conflict round ended without resolving it: failed, or done with the plane's test merge of the base still
+    /// conflicting at the same base head. The next rung starts at once, told what the last worker said; a new base head starts the ladder over
+    /// at rung 1. Past the last rung, a report in the <see cref="ConflictDecision"/> shape rings one decision card; any other report is left
+    /// to the caller (the leg-failed card). True when the node dealt with it (a rung sent or the card raised); false when the leg is not on the
+    /// ladder, or nothing could be sent. The leg is recorded failed while the round starts, and as it was when none could.
+    /// </summary>
+    private async Task<bool> ConflictRoundEndedAsync(FlightRow flight, LegRow leg, string report, CancellationToken cancellationToken)
+    {
+        if (!_conflictLadder.TryGetValue(flight.Code, out var ladder) || ladder.Leg != leg.Name || ladder.Round != leg.GoArounds)
+        {
+            return false;
+        }
+        var head = await BaseHeadAsync(flight, cancellationToken);
+        if (head.Length == 0)
+        {
+            _conflictLadder.TryRemove(flight.Code, out _);
+            return false;
+        }
+        var rung = ladder.BaseHead == head ? ladder.Rung + 1 : 1;
+        if (rung > RoleModels.ConflictRungs)
+        {
+            _conflictLadder.TryRemove(flight.Code, out _);
+            if (ConflictDecision.TryParse(report) is not { } decision)
+            {
+                return false;
+            }
+            state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report, Wait = null, Recheck = null });
+            RaiseConflictDecision(flight, leg, decision);
+            return true;
+        }
+        var failed = leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "failed", Wait = null, Recheck = null };
+        state.PutLeg(failed);
+        var why = ladder.BaseHead == head
+            ? $"the last conflict worker (rung {ladder.Rung}) did not resolve it"
+            : "the base moved on";
+        var notSent = await SendConflictRoundAsync(flight, failed, why, await ConflictDetailAsync(flight, cancellationToken), rung, head, report.Length > 0 ? report : null, lockHeld: true, cancellationToken);
+        if (notSent is not null)
+        {
+            // Nothing could start (the go-around cap, a start refused): the leg is as its worker left it, for the leg-failed card.
+            state.PutLeg(leg);
+            _conflictLadder.TryRemove(flight.Code, out _);
+            return false;
+        }
+        _conflictSent[flight.Code] = head;
+        return true;
+    }
+
+    private async Task<string> BaseHeadAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
+        var head = await git.RunAsync(["rev-parse", flight.Base], flight.Worktree, cancellationToken);
+        return head.Ok ? head.Output.Trim() : "";
+    }
+
+    /// <summary>
+    /// Whether a conflict worker's leg that says it is done left the conflict as it was: the flight is on the ladder for this leg and round and
+    /// a test merge of the base, as it is now, into the plane still conflicts. Whether that is the same base head or a new one is for
+    /// <see cref="ConflictRoundEndedAsync"/> to say: the same head is the next rung, a new one starts the ladder over.
+    /// </summary>
+    private async Task<bool> ConflictStillAsync(FlightRow flight, LegRow leg, CancellationToken cancellationToken)
+    {
+        if (!_conflictLadder.TryGetValue(flight.Code, out var ladder) || ladder.Leg != leg.Name || ladder.Round != leg.GoArounds)
+        {
+            return false;
+        }
+        await BaseHeadAsync(flight, cancellationToken);
+        var tree = await git.RunAsync(["merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", flight.Base], flight.Worktree, cancellationToken);
+        return tree.ExitCode == 1;
+    }
+
+    private void RaiseConflictDecision(FlightRow flight, LegRow leg, ConflictDecision decision)
+    {
+        var target = Verbs.LegTarget(flight.Code, leg.Name);
+        var files = string.Join(", ", decision.Files);
+        var fileWords = decision.Files.Length == 1 ? decision.Files[0] : $"{decision.Files[0]} and {decision.Files.Length - 1} more";
+        var detail = $"The last of {RoleModels.ConflictRungs} conflict workers found that the PR and its base change the same behaviour in opposite ways, so both cannot stay.\n" +
+            $"Files: {files}\nOn the base: {decision.OnBase}\nOn the branch: {decision.OnBranch}\n" +
+            $"Keeping the base's behaviour costs: {decision.KeepBaseCosts}\nKeeping the branch's behaviour costs: {decision.KeepBranchCosts}";
+        state.RaiseCard(CardBin.Ring, ConflictDecisionKind, target,
+            $"{flight.Code}'s PR conflicts with its base in {fileWords}: keep the base's behaviour or the branch's?",
+            detail,
+            [
+                new CardChoice { Label = Models.SendBackLabel(leg, "Keep the base's behaviour"), Verb = Verbs.GoAround, Target = target, Args = [ConflictKeepBrief("base", decision)] },
+                new CardChoice { Label = Models.SendBackLabel(leg, "Keep the branch's behaviour"), Verb = Verbs.GoAround, Target = target, Args = [ConflictKeepBrief("branch", decision)] },
+            ],
+            summary: $"The workers sent to merge {flight.Code}'s PR with its base found the two change the same behaviour in opposite ways in {files}. Keeping the base's behaviour costs: {decision.KeepBaseCosts}. Keeping the branch's behaviour costs: {decision.KeepBranchCosts}. Either choice sends the leg round told which side to keep.");
+    }
+
+    /// <summary>What the leg round a decision card's choice sends is told: the conflict, which side wins, and what the other side's work loses.</summary>
+    private static string ConflictKeepBrief(string side, ConflictDecision decision)
+    {
+        var keepBase = side == "base";
+        return $"the PR conflicts with its base ({string.Join(", ", decision.Files)}); the person decided: keep the {side}'s behaviour. On the base: {decision.OnBase}. On the branch: {decision.OnBranch}. " +
+            $"Keep the {side}'s behaviour in those files and drop the {(keepBase ? "branch" : "base")}'s where the two disagree; that costs: {(keepBase ? decision.KeepBaseCosts : decision.KeepBranchCosts)}. " +
+            $"Keep every other change of both sides. Rule: {UpdateInstruction}";
     }
 
     /// <summary>What a Handled line or a refusal says once a conflict is a worker's: nothing rings.</summary>
@@ -142,6 +283,16 @@ public sealed partial class LegCommander
     /// </summary>
     public static string ConflictBrief(string why, string detail = "") =>
         $"the PR conflicts with its base ({why}).{(detail.Length > 0 ? $"\n{detail}\n" : " ")}Rule: {UpdateInstruction}. Keep both sides' work; on a version pin line (a PackageVersion in Directory.Packages.props, say) take the higher of the two versions";
+
+    /// <summary>
+    /// The brief of a conflict worker on a rung of the ladder (PIL846): <see cref="ConflictBrief(string, string)"/> with the rung named first,
+    /// what the last worker reported, and how to report when the two sides cannot both stay (<see cref="ConflictDecision.Shape"/>).
+    /// </summary>
+    private static string ConflictBrief(string why, string detail, ConflictRung rung, string? lastReport) =>
+        $"[{rung.Label}] {ConflictBrief(why, detail)}" +
+        (lastReport is { Length: > 0 } ? $"\nThe worker before you stopped and reported:\n{lastReport}\n" : "\n") +
+        "If you find that the two sides change the same behaviour in opposite ways, so that keeping both sides' work is impossible, do not guess and do not drop either side: " +
+        $"abort the merge (git merge --abort) and finish the leg failed with a report in exactly this shape, one field a line:\n{ConflictDecision.Shape}";
 
     /// <summary>The most files of a conflict the brief lists one by one.</summary>
     private const int ConflictFilesShown = 12;
@@ -231,7 +382,7 @@ public sealed partial class LegCommander
     }
 
     /// <summary>The brief of a conflict round the node asked for through the command route, by flight: the go-around that carries it is no review's round.</summary>
-    private readonly ConcurrentDictionary<string, string> _conflictRounds = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ConflictRound> _conflictRounds = new(StringComparer.Ordinal);
 
     /// <summary>What to do to bring the plane up to date with its base: merge it in, never rebase, never force push.</summary>
     public const string UpdateInstruction = "fetch, then merge origin/<base> into the plane (git merge --no-edit, never a rebase), resolving every conflict so both sides' work stays, rerun the check, and push plain (never --force or --force-with-lease)";

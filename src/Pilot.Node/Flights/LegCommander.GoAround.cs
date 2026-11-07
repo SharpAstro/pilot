@@ -33,7 +33,7 @@ public sealed partial class LegCommander
             summary: $"{flight.Code}/{leg.Name} has gone around {leg.GoArounds} times, the cap. The watchtower and the node send it round no more; Go around sends one more, Accept takes the leg as it stands.");
     }
 
-    private async Task GoAroundAsync(CommandRequest command, CancellationToken cancellationToken, bool conflictRound = false)
+    private async Task GoAroundAsync(CommandRequest command, CancellationToken cancellationToken, bool conflictRound = false, ConflictRung? rung = null)
     {
         var (flight, leg) = LegOf(command.Target);
         RefuseIfStarting(LegsKey(flight.Code), $"a session on {flight.Code}'s plane");
@@ -45,9 +45,10 @@ public sealed partial class LegCommander
         // A done leg goes around for its flight's conflict with the base (the node's own send, from a PR open, a sweep or a merge, by
         // ResolveConflictAsync), a PR or none: the round is no answer to a review, so it is not counted as one, the review loop does not
         // hold it, and a passed review is turned to changes below as for any done leg that goes round under one.
-        if (!conflictRound && _conflictRounds.TryGetValue(flight.Code, out var asked) && asked == why)
+        if (!conflictRound && _conflictRounds.TryGetValue(flight.Code, out var asked) && asked.Brief == why)
         {
             conflictRound = true;
+            rung = asked.Rung;
             _conflictRounds.TryRemove(KeyValuePair.Create(flight.Code, asked));
         }
         var forConflict = leg.State == LegState.Done && conflictRound;
@@ -148,10 +149,12 @@ public sealed partial class LegCommander
         var worker = WorkerName(flight, leg);
         var target = Verbs.LegTarget(flight.Code, leg.Name);
         var legs = state.Legs(flight.Code);
-        var (attemptModel, attemptEffort) = Models.WorkerFor(leg.Model, leg.Effort, next.GoArounds + 1);
+        // A conflict worker runs on its rung's model and effort, whatever the leg's plan or go-around count says (PIL846).
+        var (attemptModel, attemptEffort) = rung is { } onRung ? (onRung.Model, onRung.Effort) : Models.WorkerFor(leg.Model, leg.Effort, next.GoArounds + 1);
+        var rungWords = rung is { } named ? $", {named.Label}" : "";
         // The plane's HEAD as this go-around's worker starts, read off the lock with the plane in place; null when it cannot be read.
         string? startHead = null;
-        Launching(LegsKey(flight.Code), $"{worker}, going around {flight.Code}/{leg.Name}", target,
+        Launching(LegsKey(flight.Code), $"{worker}, going around {flight.Code}/{leg.Name}{rungWords}", target,
             new CardChoice { Label = Models.RedoLabel(leg, "did not start"), Verb = Verbs.GoAround, Target = target, Args = [why] },
             async entering =>
             {
