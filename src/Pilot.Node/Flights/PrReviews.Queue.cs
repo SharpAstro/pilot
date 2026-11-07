@@ -32,7 +32,7 @@ public sealed partial class PrReviews
         {
             return;
         }
-        var at = review.Head[..Math.Min(8, review.Head.Length)];
+        var at = CommitRefs.Short(review.Head);
         if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
         {
             state.PutPrReview(review with { QueueNote = $"the PR is {read.State.ToLowerInvariant()}" });
@@ -66,7 +66,7 @@ public sealed partial class PrReviews
         }
         if (!string.Equals(read.Head, review.Head, StringComparison.OrdinalIgnoreCase))
         {
-            state.PutPrReview(review with { QueueNote = $"its head moved to {read.Head[..Math.Min(8, read.Head.Length)]} after the review of {at}" });
+            state.PutPrReview(review with { QueueNote = $"its head is newer than the review ({CommitRefs.Short(read.Head)} · reviewed {at})" });
             return;
         }
         var checks = await github.ChecksSummaryAsync(review.ClonePath, review.Number, cancellationToken);
@@ -99,15 +99,18 @@ public sealed partial class PrReviews
                 [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
             return;
         }
-        try
+        var outcome = await LegCommander.LandPrAsync(github, review.ClonePath, review.Number, review.Head, Models.MergeMethod, cancellationToken);
+        if (outcome.Kind == LandKind.RetryLater)
         {
-            await MergeFallback.MergeAsync(github, review.ClonePath, review.Number, review.Head, Models.MergeMethod, cancellationToken);
+            // GitHub did not answer: no note and no card, so the next sweep asks again.
+            return;
         }
-        catch (FlightException ex)
+        if (outcome.Kind == LandKind.Refused)
         {
-            state.PutPrReview(review with { QueueNote = $"GitHub refused to queue it: {ex.Message}" });
-            state.RaiseCard(CardBin.ForYou, QueueRefusedKind, subject, $"GitHub refused to queue {review.Repo}#{review.Number}: {LegCommander.OneLine(ex.Message)}", ex.Message,
-                [new CardChoice { Label = $"Merge {review.Repo}#{review.Number} once more at {review.Head[..Math.Min(8, review.Head.Length)]}", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
+            var said = outcome.Said ?? "GitHub refused";
+            state.PutPrReview(review with { QueueNote = $"GitHub refused to queue it: {said}" });
+            state.RaiseCard(CardBin.ForYou, QueueRefusedKind, subject, $"GitHub refused to queue {review.Repo}#{review.Number}: {LegCommander.OneLine(said)}", said,
+                [new CardChoice { Label = $"Try queueing {review.Repo}#{review.Number} again", Note = $"at {CommitRefs.Short(review.Head)}", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
             return;
         }
         state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });
@@ -134,11 +137,20 @@ public sealed partial class PrReviews
         }
         if (!read.Head.StartsWith(head, StringComparison.OrdinalIgnoreCase))
         {
-            throw new FlightException($"{pr}'s head moved to {read.Head[..Math.Min(8, read.Head.Length)]} past the {head[..7]} reviewed: review it again");
+            throw new FlightException($"{pr}'s head is newer than the review ({CommitRefs.Short(read.Head)} · reviewed {CommitRefs.Short(head)}): review it again");
         }
-        var (queued, instead) = await MergeFallback.MergeAsync(github, review.ClonePath, pr.Number, read.Head, Models.MergeMethod, cancellationToken);
+        var outcome = await LegCommander.LandPrAsync(github, review.ClonePath, pr.Number, read.Head, Models.MergeMethod, cancellationToken);
+        if (outcome.Kind == LandKind.RetryLater)
+        {
+            throw new FlightException($"GitHub did not answer the merge ({outcome.Said ?? "no answer"}): press Merge again");
+        }
+        if (!outcome.Done)
+        {
+            throw new FlightException(outcome.Said ?? "GitHub refused the merge");
+        }
+        var queued = outcome.Kind == LandKind.Queued;
         state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });
         state.RaiseCard(CardBin.Handled, QueuedKind, Verbs.PrTarget(pr.Repo, pr.Number),
-            queued ? $"Queued {pr} in {read.Base}'s merge queue" : $"Merged {pr}", $"{command.Who} chose Merge at {head[..7]}.{(instead is null ? "" : $" {MergeFallback.Note(instead)}.")}", link: review.Url);
+            queued ? $"Queued {pr} in {read.Base}'s merge queue" : $"Merged {pr}", $"{command.Who} chose Merge at {CommitRefs.Short(head)}.", link: review.Url);
     }
 }

@@ -67,7 +67,7 @@ public sealed partial class LegCommander
             holder.Answered = true;
             if (result.Merged)
             {
-                SetEntry(asked.Code, MergeEntryState.Merging, _mergeFallbacks.TryRemove(asked.Code, out var fell) ? $"merged: the flight lands ({fell})" : "merged: the flight lands");
+                SetEntry(asked.Code, MergeEntryState.Merging, "merged: the flight lands");
             }
             else if (result.Way == MergeWays.Armed)
             {
@@ -87,7 +87,8 @@ public sealed partial class LegCommander
         catch (FlightException ex)
         {
             // Not mergeable as it is (conflicting, behind its base) is the update's: the entry stays while the node brings it up to date.
-            if (!Conflicts(ex.Message) && !Behind(ex.Message))
+            // A head that moved is dropped by the command's end, which says what comes next (HeadMovedAsync) once git has looked.
+            if (!Conflicts(ex.Message) && !Behind(ex.Message) && !HeadMoved(ex.Message))
             {
                 DropMerge(asked.Code, ex.Message);
             }
@@ -102,31 +103,40 @@ public sealed partial class LegCommander
         }
     }
 
-    // What the merge entry says of a rebase GitHub refused and a squash or merge took over (MergeFallback), by flight, until the merge ends.
-    private readonly ConcurrentDictionary<string, string> _mergeFallbacks = new(StringComparer.Ordinal);
-
     private async Task<(bool Merged, string? Made, string? Way)> MergeEntryAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var (flight, head, method) = Mergeable(command);
-        // A fallback note belongs to the merge that made it: one left by a merge that failed would show on this one.
-        _mergeFallbacks.TryRemove(flight.Code, out _);
         // Every ask of GitHub and git is made with the lock let go (PIL338): the flight is this command's meanwhile, and what it
         // found is recorded only if the flight is still as it was decided on.
         using var call = Calling(flight.Code, "being merged");
-        var (pr, checks, mergeState) = await OffLockAsync(flight, async () =>
+        PullRequest pr;
+        ChecksSummary? checks;
+        MergeState? mergeState;
+        try
         {
-            var pr = await LookAtPrAsync(flight, head, cancellationToken);
-            var checks = await github.ChecksSummaryAsync(flight.RepoPath, pr.Number, cancellationToken);
-            // A merge queue takes no PR whose required checks have not passed, and a plain merge would be refused for the same:
-            // pressed while they run, the merge waits for them on this head (TIA1818's #1826, DE1 2026-10-25).
-            var mergeState = checks?.Status == ChoiceStatus.Failing ? null : await github.MergeStateAsync(flight.RepoPath, pr.Number, cancellationToken);
-            return (pr, checks, mergeState);
-        });
+            (pr, checks, mergeState) = await OffLockAsync(flight, async () =>
+            {
+                var pr = await LookAtPrAsync(flight, head, cancellationToken);
+                var checks = await github.ChecksSummaryAsync(flight.RepoPath, pr.Number, cancellationToken);
+                // A merge queue takes no PR whose required checks have not passed, and a plain merge would be refused for the same:
+                // pressed while they run, the merge waits for them on this head (TIA1818's #1826, DE1 2026-10-25).
+                var mergeState = checks?.Status == ChoiceStatus.Failing ? null : await github.MergeStateAsync(flight.RepoPath, pr.Number, cancellationToken);
+                return (pr, checks, mergeState);
+            });
+        }
+        catch (AlreadyMergedException)
+        {
+            // GitHub merged it before this merge asked (the queue, a person, the autopilot's earlier look): the state wanted. The
+            // command's end lands the flight as any merge does, and nothing is refused or rung (#799 rule 6, row c17100).
+            return (true, null, null);
+        }
+        // A head re-pinned by the look (moved only by its base or by whitespace or documentation) is the review's head now.
+        flight = FlightOf(command.Target);
         // A head that is in the queue now, or whose checks are still pending, is not one the queue dropped for a conflict: only a PR
         // that is neither queued nor waiting on checks is refused as dropped (the mark outlives a requeue by hand or a re-run).
         if (DroppedForConflict(flight.Code, pr.Head) && mergeState?.Kind != MergeKinds.Queued && checks?.Status != ChoiceStatus.Pending)
         {
-            throw new FlightException($"GitHub's merge queue dropped #{pr.Number} at {Short(pr.Head)} for a conflict: it is queued again once its head moves");
+            throw new FlightException($"GitHub's merge queue dropped #{pr.Number} at {CommitRefs.Short(pr.Head)} for a conflict: it is queued again once its head moves");
         }
         if (checks?.Status == ChoiceStatus.Failing)
         {
@@ -161,55 +171,30 @@ public sealed partial class LegCommander
         {
             Record(flight.Code, f => f with { MergeWhenGreen = null });
         }
-        // A branch that holds a merge of its base cannot be rebased by GitHub: it is merged by squash (or merge) from the start (PIL690).
-        if (await MethodForMergeCommitsAsync(flight, pr.Head, method, cancellationToken) is { } preferred)
-        {
-            method = preferred;
-            _mergeFallbacks[flight.Code] = MergeFallback.PreferredNote(preferred);
-        }
-        SetEntry(flight.Code, MergeEntryState.Merging, $"merging #{pr.Number} ({method})", cardNote: _mergeFallbacks.TryGetValue(flight.Code, out var chosen) ? chosen : null);
+        SetEntry(flight.Code, MergeEntryState.Merging, $"merging #{pr.Number} ({method})");
         // The merge itself is the longest ask: nothing of the flight is held over it, and what follows reads the flight afresh.
-        var queueHead = await LayIfNotRebaseableAsync(flight, pr.Head, cancellationToken);
-        try
+        var outcome = await LandFlightAsync(flight, pr, method, cancellationToken);
+        // Read again: the armed mark was cleared above and the shape step may have re-pinned the review, so an arm below checks the
+        // flight as it is now, not the copy read before (a retried merge at green was refused as "changed while asked").
+        flight = FlightOf(command.Target);
+        var laid =!string.Equals(outcome.Head, pr.Head, StringComparison.OrdinalIgnoreCase);
+        switch (outcome.Kind)
         {
-            var (queued, instead) = await OffLockAsync(null, () => MergeFallback.MergeAsync(github, flight.RepoPath, pr.Number, queueHead, method, cancellationToken));
-            if (instead is not null)
-            {
-                // GitHub could not rebase the branch (it holds merges of its base): not a refusal, the same head merged by another
-                // method. Said on the entry and the card, which show it until the flight lands.
-                var note = MergeFallback.Note(instead);
-                _mergeFallbacks[flight.Code] = note;
-                SetEntry(flight.Code, MergeEntryState.Merging, note, cardNote: note);
-            }
-            return queued ? (false, QueuedLine(flight.Code), MergeWays.Queued) : (true, null, null);
+            case LandKind.Merged:
+                return (true, null, null);
+            case LandKind.Queued:
+                return (false, QueuedLine(flight.Code), MergeWays.Queued);
+            case LandKind.RetryLater:
+                // GitHub did not answer: the merge waits on the flight and the node asks again at its next look, with no card.
+                return await ArmAsync(flight, pr with { Head = outcome.Head }, method, null, $"GitHub did not answer the merge ({OneLine(outcome.Said ?? "no answer")}); the node asks again", command.Who == "node", cancellationToken);
+            case LandKind.Refused when laid && outcome.Answer is not (MergeAnswerKind.Behind or MergeAnswerKind.Conflicts or MergeAnswerKind.HeadMoved):
+                // Just laid: its checks have not run on the new head, so the queue refuses it. A Merge card at the laid head stays and the
+                // merge waits for the checks there, as for any head whose checks run.
+                RaiseReadyAtLaid(flight, outcome.Head, outcome.Said ?? "");
+                return await ArmAsync(flight, pr with { Head = outcome.Head }, method, null, "laid on its base; merging when checks pass on the new head", command.Who == "node", cancellationToken);
+            default:
+                throw RefusalOf(pr.Number, outcome);
         }
-        catch (FlightException ex) when (!string.Equals(queueHead, pr.Head, StringComparison.OrdinalIgnoreCase))
-        {
-            // Just laid: its checks have not run on the new head, so the queue refuses it. A Merge card at the laid head stays and the
-            // merge waits for the checks there, as for any head whose checks run.
-            RaiseReadyAtLaid(flight, queueHead, ex.Message);
-            return await ArmAsync(flight, pr with { Head = queueHead }, method, null, "laid on its base; merging when checks pass on the new head", command.Who == "node", cancellationToken);
-        }
-    }
-
-    /// <summary>
-    /// For a rebase merge on a base with no merge queue: the method to use instead when the PR's branch holds a merge commit since its
-    /// base (<c>git rev-list --merges --count origin/&lt;base&gt;..&lt;head&gt;</c> in the plane), squash or else merge, whichever the repo allows;
-    /// null to keep <paramref name="method"/> (no merge commit, no plane, git failed, or neither method allowed). Asks git and GitHub: never under the lock.
-    /// </summary>
-    private async Task<string?> MethodForMergeCommitsAsync(FlightRow flight, string head, string method, CancellationToken cancellationToken)
-    {
-        if (!string.Equals(method, "rebase", StringComparison.OrdinalIgnoreCase) || !Directory.Exists(flight.Worktree)
-            || await OffLockAsync(null, () => github.MergeQueueMethodAsync(flight.RepoPath, BaseBranch(flight), cancellationToken)) is not null)
-        {
-            return null;
-        }
-        var merges = await OffLockAsync(null, () => git.RunAsync(["rev-list", "--merges", "--count", $"origin/{BaseBranch(flight)}..{head}"], flight.Worktree, cancellationToken));
-        if (!merges.Ok || !int.TryParse(merges.Output.Trim(), out var count) || count == 0)
-        {
-            return null;
-        }
-        return MergeFallback.Replacement(await OffLockAsync(null, () => github.AllowedMergeMethodsAsync(flight.RepoPath, cancellationToken)));
     }
 
     /// <summary>What an armed merge says while every check shown is green and one GitHub requires has yet to be created.</summary>
@@ -362,11 +347,15 @@ public sealed partial class LegCommander
             ?? throw new FlightException($"{flight.Branch} has no PR");
         if (!string.Equals(pr.State, "OPEN", StringComparison.OrdinalIgnoreCase))
         {
-            throw new FlightException($"#{pr.Number} is {pr.State.ToLowerInvariant()}, not open");
+            var said = $"#{pr.Number} is {pr.State.ToLowerInvariant()}, not open";
+            // Merged already is what a merge wants (#799 rule 6): the caller lands the flight, it is no refusal to ring.
+            throw string.Equals(pr.State, "MERGED", StringComparison.OrdinalIgnoreCase) && (flight.PullRequest is null || flight.PullRequest == pr.Number)
+                ? new AlreadyMergedException(said)
+                : new FlightException(said);
         }
         if (!pr.Head.StartsWith(head, StringComparison.OrdinalIgnoreCase))
         {
-            throw new FlightException($"#{pr.Number}'s head is {pr.Head[..Math.Min(8, pr.Head.Length)]}, not the {head} you reviewed: look again before it lands");
+            pr = await RepinMovedHeadAsync(flight, pr, head, cancellationToken);
         }
         // A commit made in the plane after the PR's last push would be left behind by the merge, and the landing would
         // then take the plane with it (TIA1658's plan read, 2026-10-23, landed by hand afterwards).
@@ -397,13 +386,90 @@ public sealed partial class LegCommander
                 {
                     return pr;
                 }
-                throw new FlightException(BehindText(pr.Number));
+                throw new FlightException(BehindText(pr.Number, await HeadWords.BehindAsync(git, flight.Worktree, flight.Base, $"origin/{BaseBranch(flight)}", tip, cancellationToken)));
             }
         }
         return pr;
     }
 
-    private static string BehindText(int number) => $"#{number} is behind its base";
+    private const string HeadMovedMarker = "look again before it lands";
+
+    /// <summary>True for the head-moved refusal of <see cref="RepinMovedHeadAsync"/> (a PR head past the reviewed one, in words).</summary>
+    private static bool HeadMoved(string error) => error.EndsWith(HeadMovedMarker, StringComparison.Ordinal) && error.Contains("head is ", StringComparison.Ordinal);
+
+    /// <summary>
+    /// A merge refused because the PR's head moved past the reviewed head: when the head has commits of its own past it (not only
+    /// the base), the merge row is dropped saying a review of the new head starts and the merge is offered again once it passes, and
+    /// that review is started the way the sweep starts an unread-head review. Returns the error the command answers. Outside the lock.
+    /// </summary>
+    private async Task<string> HeadMovedAsync(CommandRequest command, string error, CancellationToken cancellationToken)
+    {
+        var flight = FlightOf(command.Target);
+        var reviewed = flight.Review?.ReviewedHead;
+        var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+        var own = true;
+        if (reviewed is { Length: > 0 } && pr is not null && Directory.Exists(flight.Worktree))
+        {
+            await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
+            var count = await git.RunAsync(["rev-list", "--first-parent", "--no-merges", "--count", $"{reviewed}..{pr.Head}"], flight.Worktree, cancellationToken);
+            own = !(count.Ok && count.Output.Trim() == "0");
+        }
+        if (!own || reviewed is not { Length: > 0 } || pr is null)
+        {
+            DropMerge(flight.Code, error);
+            return error;
+        }
+        // The unread-head review reads the plane: a head pushed from outside it leaves the plane at the reviewed head, and the start
+        // would quietly do nothing, so that case says so instead of promising a review.
+        var plane = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken);
+        if (plane.Ok && string.Equals(plane.Output.Trim(), reviewed, StringComparison.OrdinalIgnoreCase))
+        {
+            var outside = $"the head moved to {CommitRefs.Short(pr.Head)} past the reviewed {CommitRefs.Short(reviewed)} from outside the plane, which still holds the reviewed head: no review starts until the plane has the new head";
+            DropMerge(flight.Code, outside);
+            return $"{error}; {outside}";
+        }
+        var reason = $"the head moved to {CommitRefs.Short(pr.Head)} past the reviewed {CommitRefs.Short(reviewed)}: a review of it starts, and the merge is offered again once it passes";
+        DropMerge(flight.Code, reason);
+        var started = await RunAsync(new CommandRequest { Verb = Verbs.StartReview, Target = Verbs.FlightTarget(flight.Code), Args = [UnreadHeadArg], Who = "node" }, cancellationToken);
+        return started.Ok ? $"{error}; {reason}" : $"{error}; {reason}, but the review did not start: {started.Error ?? "no reason given"}";
+    }
+
+    /// <summary>A moved head in words (<see cref="HeadWords"/>, shas after them); the plain form when the plane cannot say.</summary>
+    internal async Task<string> MovedHeadWordsAsync(FlightRow flight, string reviewed, string head, CancellationToken cancellationToken)
+    {
+        if (Directory.Exists(flight.Worktree))
+        {
+            await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
+            return (await HeadWords.DescribeAsync(git, flight.Worktree, flight.Base, $"origin/{BaseBranch(flight)}", reviewed, head, cancellationToken)).Text;
+        }
+        return $"newer than the review ({CommitRefs.Short(head)} · reviewed {CommitRefs.Short(reviewed)})";
+    }
+
+    private static string BehindText(int number, string? words = null) => words is null ? $"#{number} is behind its base" : $"#{number} is behind its base ({words})";
+
+    /// <summary>
+    /// The PR's head is not the one the card named. A head moved only by its base, by whitespace or by documentation (.md) changes is
+    /// re-pinned: the review's head and marks move to it and the landing goes on with it. A real code change throws, in words
+    /// (<see cref="HeadWords"/>), asking for a re-review.
+    /// </summary>
+    private async Task<PullRequest> RepinMovedHeadAsync(FlightRow flight, PullRequest pr, string head, CancellationToken cancellationToken)
+    {
+        if (flight.Review is { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } reviewed } && Directory.Exists(flight.Worktree)
+            && reviewed.StartsWith(head, StringComparison.OrdinalIgnoreCase))
+        {
+            await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
+            var words = await HeadWords.DescribeAsync(git, flight.Worktree, flight.Base, $"origin/{BaseBranch(flight)}", reviewed, pr.Head, cancellationToken);
+            if (words.Repinnable && words.Relation != HeadRelation.Unknown)
+            {
+                Record(flight.Code, f => f with { Review = f.Review is { } held ? held with { ReviewedHead = pr.Head, StatusState = null } : null });
+                await _marks.ApplyAsync(flight.Code, cancellationToken);
+                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s head moved by {flight.Base} or by whitespace or documentation only; its review carries to {CommitRefs.Short(pr.Head)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+                return pr;
+            }
+            throw new FlightException($"#{pr.Number}'s head is {words.Text}: look again before it lands");
+        }
+        throw new FlightException($"#{pr.Number}'s head is newer than the one you reviewed ({CommitRefs.Short(pr.Head)} · reviewed {CommitRefs.Short(head)}): look again before it lands");
+    }
 
     private static bool Behind(string error) => error.Contains("is behind its base", StringComparison.OrdinalIgnoreCase);
 
@@ -611,9 +677,10 @@ public sealed partial class LegCommander
     private static string JoinOffers(IReadOnlyList<string> offers) =>
         offers.Count == 1 ? offers[0] : string.Join(", ", offers.Take(offers.Count - 1)) + " or " + offers[^1];
 
-    // A merge refused because the PR no longer merges into its base (main moved under it).
+    // A merge refused because the PR no longer merges into its base (main moved under it), in the node's own words as RefusalOf
+    // writes them; GitHub's texts are sorted by MergeAnswers alone.
     private static bool Conflicts(string error) =>
-        error.Contains("conflicts with its base", StringComparison.OrdinalIgnoreCase) || error.Contains("not mergeable", StringComparison.OrdinalIgnoreCase);
+        error.Contains("conflicts with its base", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Marks the Merge choice of every open card about <paramref name="target"/> with <paramref name="status"/>, for every client to show.</summary>
     public void MarkMerge(string target, string? status)

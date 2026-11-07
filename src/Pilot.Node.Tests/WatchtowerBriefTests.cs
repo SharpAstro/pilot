@@ -14,6 +14,48 @@ public class WatchtowerBriefTests
         new() { Id = id, Bin = bin, Kind = "k", Subject = "flight/X", Title = title, At = DateTimeOffset.UnixEpoch, State = Pilot.Contracts.CardState.Open };
 
     [Fact]
+    public void StandingOrdersAreListedWithTheirIdsBeforeWhereThingsStandAndTellHowToRecordOne()
+    {
+        var orders = new[]
+        {
+            new Pilot.Contracts.NodeNote { At = DateTimeOffset.UnixEpoch, Who = "gui", Text = "Hold TIA2000", Id = "o1" },
+            new Pilot.Contracts.NodeNote { At = DateTimeOffset.UnixEpoch, Who = "gui", Text = "Gone already", Id = "o2", RetiredAt = DateTimeOffset.UnixEpoch },
+        };
+        var brief = Briefs.Watchtower("wt", [], [], [], "pilot", orders: orders);
+        var heading = brief.IndexOf("## Standing orders", StringComparison.Ordinal);
+        heading.ShouldBeGreaterThanOrEqualTo(0);
+        heading.ShouldBeLessThan(brief.IndexOf("## Where things stand", StringComparison.Ordinal));
+        brief.IndexOf("- o1 (from gui): Hold TIA2000", StringComparison.Ordinal).ShouldBeGreaterThan(heading);
+        brief.ShouldNotContain("Gone already");
+        brief.ShouldContain("`pilot order \"<their words>\"`");
+        brief.ShouldContain("`pilot order done <id>`");
+    }
+
+    [Fact]
+    public void TheFingerprintIgnoresStandingOrders()
+    {
+        var before = Briefs.WatchtowerFingerprint("wt", "pilot");
+        var order = new Pilot.Contracts.NodeNote { At = DateTimeOffset.UnixEpoch, Who = "gui", Text = "Hold TIA2000", Id = "o1" };
+        Briefs.Watchtower("wt", [], [], [], "pilot", orders: [order]).ShouldContain("Hold TIA2000");
+        Briefs.WatchtowerFingerprint("wt", "pilot").ShouldBe(before);
+    }
+
+    [Fact]
+    public void TheHoldRuleDelegatesToAFixerLegOrClearsAndAllowsOnlyAOneLineFixOfItsOwn()
+    {
+        var brief = Brief();
+        brief.ShouldContain("go to a fixer worker by default");
+        brief.ShouldContain("within a few minutes of the hold");
+        brief.ShouldContain("plan and start a review-notes leg carrying the notes (`pilot leg plan`, then `pilot leg start`");
+        brief.ShouldContain("or clear the flight with `pilot flight clear <code> <why>` when the notes are not worth a round");
+        brief.ShouldContain("Say which you did on the review-notes card");
+        brief.ShouldContain("A fix of your own only for a one-line change");
+        brief.ShouldContain("then `pilot flight pr <code>`");
+        brief.ShouldContain("the node has planned the review-notes leg itself");
+        brief.ShouldNotContain("make the small ones yourself");
+    }
+
+    [Fact]
     public void CardsAlreadyToldAreOneSummaryBlockApartFromTheNewOnes()
     {
         var cards = new[] { Card("c1", Pilot.Contracts.CardBin.ForYou), Card("c2", Pilot.Contracts.CardBin.Ring), Card("c3", Pilot.Contracts.CardBin.Ring) };

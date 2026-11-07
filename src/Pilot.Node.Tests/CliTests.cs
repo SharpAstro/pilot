@@ -213,7 +213,7 @@ public sealed class CliTests : IAsyncLifetime
         var flight = _node.State.Flights().Single();
         flight.Code.ShouldBe("TIA1611");
         await Ok(_root, "leg", "plan", "TIA1611", "gpu", "--goal", "Draw the planets on the GPU", "--done-when", "The capture shows them",
-            "--check", "dotnet test", "--budget", "4000000", "--item", "Write the shader", "--item", "Capture it");
+            "--check", "dotnet test --filter A", "--budget", "4000000", "--item", "Write the shader", "--item", "Capture it");
         await Ok(_root, "leg", "start", "TIA1611", "gpu");
         var worker = _node.Workers.Started.Single();
         worker.Brief.ShouldContain("check <step number>");
@@ -359,11 +359,11 @@ public sealed class CliTests : IAsyncLifetime
 
         exit.ShouldBe(0);
         output.ShouldBe(
-            "MOO4  #64  moons  1  0040aaaa  merging  · merging #64 (rebase)\n" +
-            "TIA3  #63  tianwen  1  003faaaa  merging  · in the merge queue\n" +
-            "TIA2  #62  tianwen  2  003eaaaa  merging  · in the merge queue\n" +
-            "TIA5  #65  tianwen  -  0041aaaa  dropped  · check build failed on 0041aaaa\n" +
-            "TIA1  #61  tianwen  -  003daaaa  merged  · merged: the flight lands\n");
+            "MOO4  #64  moons  1  0040aaaab  merging  · merging #64 (rebase)\n" +
+            "TIA3  #63  tianwen  1  003faaaab  merging  · in the merge queue\n" +
+            "TIA2  #62  tianwen  2  003eaaaab  merging  · in the merge queue\n" +
+            "TIA5  #65  tianwen  -  0041aaaab  dropped  · check build failed on 0041aaaa\n" +
+            "TIA1  #61  tianwen  -  003daaaab  merged  · merged: the flight lands\n");
 
         // Thirty rows at most: the open ones first, the oldest ended ones left out.
         for (var i = 0; i < 30; i++)

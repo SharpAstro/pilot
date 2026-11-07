@@ -86,7 +86,7 @@ public abstract class ReviewTestsBase : IDisposable
         var clock = Stopwatch.StartNew();
         while (legs.Starting(code))
         {
-            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20), $"{code}'s reviewer was not recorded");
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(90), $"{code}'s reviewer was not recorded");
             await Task.Delay(10, Ct);
         }
     }
@@ -116,6 +116,8 @@ public abstract class ReviewTestsBase : IDisposable
     {
         var start = await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, leg), "controller");
         start.Error.ShouldBeNull();
+        // The worker is on the leg only once its session is up, which a loaded machine does not do within the command.
+        await Started(_legs, flight.Code);
         var worker = _state.Legs(flight.Code).Single(l => l.Name == leg).Worker!;
         File.WriteAllText(Path.Combine(flight.Worktree, $"{leg}-{Guid.NewGuid():N}.txt"), string.Concat(Enumerable.Repeat("work\n", lines)));
         Git(flight.Worktree, "add", ".");
@@ -713,7 +715,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
 
         var drifted = F(flight.Code);
         (drifted.GitHubHead, drifted.GitHubLabel).ShouldBe(("beef1111beef1111", null));
-        drifted.GitHubDisagrees.ShouldBe($"pilot: passed was removed on GitHub; the head moved to beef1111 since the review read {reviewed[..8]}");
+        drifted.GitHubDisagrees.ShouldBe($"pilot: passed was removed on GitHub; the head moved to beef1111b since the review read {reviewed[..9]}");
         // Recorded, not put right: the node's own marks stand as it set them.
         (drifted.Review!.Label, drifted.Review.StatusState).ShouldBe(("pilot: passed", "success"));
         _github.LabelCalls.Count(c => c.Number == number).ShouldBe(2);
@@ -1421,7 +1423,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "controller", "20", "Flight 20")).Ok.ShouldBeTrue();
         var flight = _state.Flights().OrderByDescending(f => f.CreatedAt).First();
         (await Run(Verbs.PlanLeg, Verbs.FlightTarget(flight.Code), "controller", "name=parser", "goal=Do it", "done-when=Its check passes",
-            "check=dotnet test", "item=The step")).Ok.ShouldBeTrue();
+            "check=dotnet test --filter A", "item=The step")).Ok.ShouldBeTrue();
         await Fly(flight, "parser");
         await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "naming")).Ok.ShouldBeTrue();

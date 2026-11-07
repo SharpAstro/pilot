@@ -153,6 +153,18 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     private void RaiseNotLanded(FlightRow flight, int number, string mergedHead, FlightException ex)
     {
         var subject = Verbs.FlightTarget(flight.Code);
+        // Work of its own that missed the merge (a review-notes commit made after the PR was queued, PIL819): Land it would only be
+        // refused again, so the one choice is the one that moves it on, a PR with that work; the flight lands when that one merges.
+        if (ex is LeftOutCommitsException left)
+        {
+            var one = left.Commits.Count == 1;
+            var what = one ? "1 commit" : $"{left.Commits.Count} commits";
+            state.RaiseCard(CardBin.Ring, NotLandedKind, subject, $"{what} of {flight.Code} missed the merge of PR #{number}",
+                $"{ex.Message}. The rest of the flight is in main. Open a PR with {(one ? "it" : "them")}: the node pushes the branch with main merged in and opens the PR, and the flight lands when that PR merges.",
+                [new CardChoice { Label = $"Open a PR with the {(one ? "commit" : "commits")}", Verb = Verbs.OpenPr, Target = subject }],
+                summary: CardSummaries.LeftOut(flight.Code, number, left.Commits));
+            return;
+        }
         state.RaiseCard(CardBin.Ring, NotLandedKind, subject, $"{flight.Code}'s PR #{number} merged on GitHub, but the flight did not land: {LegCommander.OneLine(ex.Message)}",
             $"{ex.Message}. The PR is merged, so its branch is in the base; the flight stays flying until it is landed.",
             [new CardChoice { Label = "Land it", Verb = Verbs.Land, Target = subject, Args = [mergedHead] }],
@@ -240,6 +252,14 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             if (queue.Queued)
             {
                 state.CloseCardsAbout(subject, "queued again", QueueDropped);
+                legs?.QueuedAgain(flight.Code);
+                continue;
+            }
+            // A removal the node made itself, to push new commits (PIL836), is no card: its merge entry ends, and the merge is offered
+            // again once a fresh review of the new head passes. Told by the PR and the removal's time, as GitHub reads the PR at the pushed head by now.
+            if (queue.RemovedAt is { } ownRemoval && legs?.DequeuedByNode(flight.Code, number, ownRemoval) == true)
+            {
+                legs.EndLeftQueue(flight.Code, $"the node took #{number} out of the merge queue to push new commits");
                 continue;
             }
             // GitHub's queue let it go unmerged: its merge entry ends, and the repo's later entries move up. Merge asks it again.
@@ -379,7 +399,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 return false;
             }
             state.RaiseCard(CardBin.Handled, "checks-rerun", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number}: {runs} failed {(runs == 1 ? "run" : "runs")} running again",
-                $"once at {head[..Math.Min(8, head.Length)]}, before its leg is sent round: a test that fails by chance is not a go-around");
+                $"once at {CommitRefs.Short(head)}, before its leg is sent round: a test that fails by chance is not a go-around");
             return true;
         }
         catch (FlightException)
@@ -417,7 +437,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             var moved = pr is { State: "OPEN" } && pr.Number == number && !string.Equals(pr.Head, head, StringComparison.OrdinalIgnoreCase);
             string? dropped = pr is null || pr.Number != number || pr.State != "OPEN" ? $"#{number} is no longer open"
-                : moved ? $"#{number}'s head moved from {head[..Math.Min(8, head.Length)]} to {pr.Head[..Math.Min(8, pr.Head.Length)]} while its checks ran: look at what is new, then merge again"
+                : moved ? $"#{number}'s head is {(legs is null ? $"newer than the review ({CommitRefs.Short(pr.Head)} · reviewed {CommitRefs.Short(head)})" : await legs.MovedHeadWordsAsync(flight, head, pr.Head, cancellationToken))}, moved while its checks ran: look at what is new, then merge again"
                 : null;
             // What GitHub says of the PR is what the card says of the merge: an auto-merge somebody turned off on the PR page, or a
             // merge GitHub blocks (a review required, changes requested, behind its base), is no merge waiting any more, and the
@@ -489,7 +509,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 // The node armed this merge itself, so no person is waiting on a card for it: its failed checks send the leg
                 // round as they do with the autopilot off and the PR-ready card open, not onto a For-you card the leg never reads.
                 state.PutFlight(flight with { MergeWhenGreen = null });
-                legs.DropMerge(flight.Code, $"#{number}'s checks failed on {head[..Math.Min(8, head.Length)]}: sent back as changes");
+                legs.DropMerge(flight.Code, $"#{number}'s checks failed on {CommitRefs.Short(head)}: sent back as changes");
                 if (_failed.Add($"{flight.Code} {head}") && await legs.ChecksFailedAsync(flight.Code, head, cancellationToken) is { } why)
                 {
                     var failChoices = legs.ChecksFailedChoices(flight.Code, head, number);
@@ -543,17 +563,17 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 continue;
             }
-            legs?.DropMerge(flight.Code, failed && checks is { FailedName: { } failedName } ? $"check {failedName} failed on {head[..Math.Min(8, head.Length)]}" : dropped);
+            legs?.DropMerge(flight.Code, failed && checks is { FailedName: { } failedName } ? $"check {failedName} failed on {CommitRefs.Short(head)}" : dropped);
             var headNow = pr?.Head ?? head;
             var (title, detail, link) = failed && checks is { FailedName: { } name }
-                ? ($"{flight.Code}'s PR #{number}: check {name} failed", $"The merge waited for the checks to pass, and {name} failed on {head[..Math.Min(8, head.Length)]}. Redo the leg to fix it, re-run the checks if it was a flake, or merge again.{autoMergeNote}", checks.FailedLink)
+                ? ($"{flight.Code}'s PR #{number}: check {name} failed", $"The merge waited for the checks to pass, and {name} failed on {CommitRefs.Short(head)}. Redo the leg to fix it, re-run the checks if it was a flake, or merge again.{autoMergeNote}", checks.FailedLink)
                 : ($"{flight.Code}'s merge did not go through: {(dropped.Split('\n')[0].Length > 70 ? dropped.Split('\n')[0][..67].TrimEnd() + "..." : dropped.Split('\n')[0])}", dropped + autoMergeNote, null);
             if (legs is null || !legs.ShowMergeFailed(flight.Code, headNow, method, title, detail, link ?? flight.PullRequestUrl, rerun: failed,
-                    goAroundWhy: failed ? $"the PR's checks failed{(checks?.FailedName is { } n ? $" ({n})" : "")} on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push" : dropped,
+                    goAroundWhy: failed ? $"the PR's checks failed{(checks?.FailedName is { } n ? $" ({n})" : "")} on {CommitRefs.Short(head)}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push" : dropped,
                     because: failed ? (checks?.FailedName is { } failedCheck ? $"because check {failedCheck} failed" : "because the PR's checks failed") : $"({LegCommander.OneLine(dropped)})"))
             {
                 state.RaiseCard(CardBin.ForYou, MergeDropped, subject, $"{flight.Code}'s merge did not go through: {LegCommander.OneLine(dropped)}", dropped,
-                    [new CardChoice { Label = $"Merge {flight.Code}'s PR again at {headNow[..Math.Min(8, headNow.Length)]}", Verb = Verbs.Merge, Target = subject, Args = [headNow] }], link: flight.PullRequestUrl);
+                    [new CardChoice { Label = $"Merge {flight.Code}'s PR again", Note = $"at {CommitRefs.Short(headNow)}", Verb = Verbs.Merge, Target = subject, Args = [headNow] }], link: flight.PullRequestUrl);
             }
         }
     }
@@ -628,7 +648,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 _ => $"GitHub shows it as {merge.Kind}",
             };
             state.RaiseCard(CardBin.ForYou, MergeDropped, subject, $"{flight.Code}'s merge did not go through: {LegCommander.OneLine(why)}", $"{why}. Merge again once that is dealt with.",
-                [new CardChoice { Label = $"Merge {flight.Code}'s PR again at {pr.Head[..Math.Min(8, pr.Head.Length)]}", Verb = Verbs.Merge, Target = subject, Args = [pr.Head] }], link: flight.PullRequestUrl);
+                [new CardChoice { Label = $"Merge {flight.Code}'s PR again", Note = $"at {CommitRefs.Short(pr.Head)}", Verb = Verbs.Merge, Target = subject, Args = [pr.Head] }], link: flight.PullRequestUrl);
         }
         return true;
     }
@@ -647,10 +667,22 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     private readonly Dictionary<string, DateTimeOffset> _holdingRung = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// A flight in a holding pattern never circles forever: with no live watchtower, or once the hold is older than
-    /// <see cref="HoldingBound"/>, a Ring card asks the person to merge as it is or wait. Closed when the hold ends.
+    /// How long a hold waits for a watchtower to be told and take it (a watchtower that ended by design is resumed or started by the tell)
+    /// before the node handles it with no watchtower: PIL815, SE1's watchtower ended about two minutes after each reply and its holds never cleared.
     /// </summary>
-    private void LookAtHolds()
+    public TimeSpan HoldingTakeBound { get; init; } = TimeSpan.FromMinutes(5);
+
+    // The holds the node already handled on, once each (flight code and Holding.Since): a push that did not end the hold is not repeated each look.
+    private readonly HashSet<string> _holdHandled = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// A flight in a holding pattern never circles forever. With no live watchtower, once the hold is older than
+    /// <see cref="HoldingTakeBound"/>, the node handles it itself: commits past the reviewed head in the plane are pushed as
+    /// <c>flight pr</c> does (which ends the hold, and a fresh review gates the merge), and with none the hold is released with the
+    /// review's notes written on the PR. A hold a live watchtower has left past <see cref="HoldingBound"/> rings a person to merge as it
+    /// is or wait. Closed when the hold ends.
+    /// </summary>
+    private async Task LookAtHoldsAsync(CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
         var cards = state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.HoldingTimeoutKind).ToList();
@@ -668,7 +700,27 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             var holding = flight.Holding!;
             var key = $"{flight.Code} {holding.Since.UtcTicks}";
             var subject = Verbs.FlightTarget(flight.Code);
+            // A hold a leg makes the fixes of is covered by that leg's own watch while it flies: no timeout rings for it. A leg still Planned is
+            // given HoldingBound to be started, and a hold it never started (nothing flies it) rings like any other hold.
+            var holder = holding.By is { Length: > 0 } by && by != "node" ? state.Legs(flight.Code).FirstOrDefault(l => l.Name == by && l.State is LegState.Flying or LegState.Planned) : null;
+            if (holder is { State: LegState.Flying } || (holder is not null && now - holding.Since < HoldingBound))
+            {
+                continue;
+            }
             var live = WatchtowerLive?.Invoke() ?? true;
+            if (!live)
+            {
+                // Told, and given the bound to take it up (a tell resumes or starts the watchtower); then the node does what a watchtower would not be there to.
+                if (now - holding.Since < HoldingTakeBound)
+                {
+                    continue;
+                }
+                if (legs is not null && _holdHandled.Add(key)
+                    && await legs.HandleHoldWithoutWatchtowerAsync(flight.Code, cancellationToken) != LegCommander.HoldHandling.None)
+                {
+                    continue;
+                }
+            }
             if ((live && now - holding.Since < HoldingBound)
                 || cards.Any(c => c.Subject == subject)
                 || (_holdingRung.TryGetValue(key, out var rung) && now - rung < HoldingBound)
@@ -677,9 +729,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             _holdingRung[key] = now;
-            var why = live ? $"the watchtower has not cleared it in {(int)HoldingBound.TotalMinutes} minutes" : "there is no live watchtower to clear it";
+            var why = holder is not null ? $"its {holder.Name} leg was planned and never started in {(int)HoldingBound.TotalMinutes} minutes"
+                : live ? $"the watchtower has not cleared it in {(int)HoldingBound.TotalMinutes} minutes" : "there is no live watchtower to clear it";
             var card = state.RaiseCard(CardBin.Ring, LegCommander.HoldingTimeoutKind, subject, $"{flight.Code}'s PR #{flight.PullRequest} is still holding: {why}",
-                $"{LegCommander.HoldingReason}. Merge as it is lands the PR at the reviewed head, notes and all; Wait keeps holding and asks again in {(int)HoldingBound.TotalMinutes} minutes.",
+                $"{holding.Reason}. Merge as it is lands the PR at the reviewed head, notes and all; Wait keeps holding and asks again in {(int)HoldingBound.TotalMinutes} minutes.",
                 link: flight.PullRequestUrl,
                 summary: $"{flight.Code} has circled in a holding pattern and {why}. Merge as it is clears the hold and merges at the reviewed head; Wait keeps it holding and asks again later.");
             state.UpdateChoices(card.Id,
@@ -736,7 +789,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     public async Task LookAsync(CancellationToken cancellationToken)
     {
         await RestorePassedWithoutCardAsync(cancellationToken);
-        LookAtHolds();
+        await LookAtHoldsAsync(cancellationToken);
         await MergeWhenGreenAsync(cancellationToken);
         if (legs is not null)
         {
@@ -919,6 +972,9 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             || flight.Review is not { State: ReviewState.Passed } || flight.MergeWhenGreen is not null
             // A flight in a holding pattern circles: not asked, and the head not marked as tried, so it merges once cleared.
             || flight.Holding is not null
+            // A leg still to fly (a review-notes leg, say) is the merge's own refusal: not asked, and the head not marked as tried, so
+            // it merges once that leg lands. Asking rang "merge on autopilot was refused: has legs not done" (PDF446, PIL841, 2026-11-07).
+            || state.Legs(flight.Code).Any(l => l.State != LegState.Done)
             || card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { } merge
             // Another merge of its repo holds the turn: asked at a later look, and only an ask made marks the head as tried.
             || legs.TurnHeld(flight.Repo)
@@ -964,7 +1020,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 $"{flight.Code}'s PR #{flight.PullRequest} {(result.Made is { Length: > 0 } ? "is merging" : "merged")} on autopilot", result.Made);
             return;
         }
-        state.RaiseCard(CardBin.Ring, AutopilotMergeRefused, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s merge on autopilot was refused: {LegCommander.OneLine(result.Error ?? "no reason given")}",
-            result.Error, [merge with { Status = null, Label = $"Merge {flight.Code}'s PR #{flight.PullRequest} once more" }], link: flight.PullRequestUrl);
+        // A merge of a PR that is merged lands the flight and never reaches here (#799 rule 6); one closed unmerged has nothing to merge:
+        // no card offers a Merge on a PR that is merged or closed. With no choice left it is not a ring (nothing to press): it is filed For you.
+        var closed = result.Error?.EndsWith(", not open", StringComparison.Ordinal) == true;
+        state.RaiseCard(closed ? CardBin.ForYou : CardBin.Ring, AutopilotMergeRefused, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s merge on autopilot was refused: {LegCommander.OneLine(result.Error ?? "no reason given")}",
+            result.Error, closed ? [] : [merge with { Status = null, Label = $"Try merging PR #{flight.PullRequest} again" }], link: flight.PullRequestUrl);
     }
 }

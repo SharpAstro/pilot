@@ -27,6 +27,31 @@ public sealed partial class NodeState
                 case (Verbs.Note, _):
                     error = $"note takes the target node, not {command.Target}";
                     break;
+                case (Verbs.Order, Verbs.NodeTarget) when string.Join(' ', args).Trim() is { Length: > 0 } order:
+                {
+                    var id = NextOrderId();
+                    Publish(new NoteAddedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Note = new NodeNote { At = _time.GetUtcNow(), Who = command.Who, Text = order, Id = id } });
+                    return CompleteLocked(command, null, way: null, sessionId: null, made: id);
+                }
+                case (Verbs.Order, Verbs.NodeTarget):
+                    error = "order node needs the order's text";
+                    break;
+                case (Verbs.OrderDone, Verbs.NodeTarget):
+                {
+                    var id = string.Join(' ', args).Trim();
+                    if (_notes.FirstOrDefault(n => n.Id is { Length: > 0 } && string.Equals(n.Id, id, StringComparison.OrdinalIgnoreCase) && n.RetiredAt is null) is not { } standing)
+                    {
+                        error = id.Length == 0 ? "order-done node needs the order's id (pilot orders lists them)" : $"No standing order {id} stands (pilot orders lists them)";
+                        break;
+                    }
+                    Publish(new NoteAddedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Note = standing with { RetiredAt = _time.GetUtcNow() } });
+                    return CompleteLocked(command, null, way: null, sessionId: null, made: standing.Id);
+                }
+                case (Verbs.Orders, Verbs.NodeTarget):
+                    return CompleteLocked(command, null, way: null, sessionId: null, made: string.Join('\n', StandingOrdersLocked().Select(o => $"{o.Id}  {o.Text}")));
+                case (Verbs.Order or Verbs.OrderDone or Verbs.Orders, _):
+                    error = $"{command.Verb} takes the target node, not {command.Target}";
+                    break;
                 default:
                     error = $"The node knows no verb {command.Verb}";
                     break;
@@ -35,6 +60,20 @@ public sealed partial class NodeState
             return CompleteLocked(command, error, way: null, sessionId: null);
         }
     }
+
+    /// <summary>The standing orders that stand now (not retired), oldest first: what a fresh watchtower's brief lists.</summary>
+    public NodeNote[] StandingOrders()
+    {
+        lock (_gate)
+        {
+            return StandingOrdersLocked();
+        }
+    }
+
+    private NodeNote[] StandingOrdersLocked() => [.. _notes.Where(n => n.Id is { Length: > 0 } && n.RetiredAt is null)];
+
+    private string NextOrderId() =>
+        $"o{_notes.Select(n => n.Id is { Length: > 1 } id && id[0] == 'o' && int.TryParse(id.AsSpan(1), out var number) ? number : 0).DefaultIfEmpty(0).Max() + 1}";
 
     /// <summary>
     /// Puts the result of a command done outside <see cref="Execute"/> on the stream: one whose work is too long to do
@@ -60,7 +99,8 @@ public sealed partial class NodeState
             Who = command.Who,
             Ok = error is null,
             Error = error,
-            Way = error is null ? way : null,
+            // A refusal carries a way only to say it was no verdict on the command, or how a push was refused (RefusalWays): any other way is a done command's.
+            Way = error is null || RefusalWays.Is(way) ? way : null,
             SessionId = error is null ? sessionId : null,
             Made = error is null ? made : null,
             Setting = error is null ? setting : null,

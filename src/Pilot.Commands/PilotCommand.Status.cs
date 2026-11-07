@@ -20,6 +20,10 @@ public static partial class PilotCommand
         if (snapshot.Admission is { } admission)
         {
             yield return $"{admission.Line()}{(admission.Counted.Length > 0 ? ": " + string.Join(", ", admission.Counted) : "")}{(admission.OneFlightPerRepo ? "; one flight per repo" : "")}";
+            if (admission.WaitingOnPerson is { Length: > 0 } waiting)
+            {
+                yield return $"not counted: {waiting.Length} idle, waiting on a person or a job: {string.Join(", ", waiting)}";
+            }
         }
         foreach (var queued in QueuedFlight.Of(snapshot.Flights, snapshot.Legs, snapshot.Admission))
         {
@@ -125,7 +129,7 @@ public static partial class PilotCommand
                     PrReviewState.Closed => $"{review.Verdict}, closed",
                     _ => $"{review.Verdict}, on card {review.Card}",
                 };
-                text.AppendLine($"PR {review.Repo}#{review.Number}  {review.Title ?? review.Url}  ({how}, at {review.Head[..Math.Min(8, review.Head.Length)]})");
+                text.AppendLine($"PR {review.Repo}#{review.Number}  {review.Title ?? review.Url}  ({how}, at {review.Head[..Math.Min(9, review.Head.Length)]})");
                 if (review.Fixer is { } fixer)
                 {
                     text.AppendLine($"  fixing, {fixer}, round {review.FixRound ?? 1}");

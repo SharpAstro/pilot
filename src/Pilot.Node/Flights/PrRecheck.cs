@@ -334,8 +334,6 @@ public sealed class PrRecheck : IHostedService
         return reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = subject, Who = "node" }, cancellationToken);
     }
 
-    private static string Short8(string sha) => sha[..Math.Min(8, sha.Length)];
-
     private FlightRow? Now(string code) => state.Flights().FirstOrDefault(f => f.Code == code);
 
     /// <summary>The label a flight's review stands at; null while it holds none (its reviewer waits for the 5-hour window).</summary>
@@ -398,7 +396,7 @@ public sealed class PrRecheck : IHostedService
         var merge = await github.MergeStateAsync(entry.Path, entry.Number, cancellationToken);
         var checks = await github.ChecksAsync(entry.Path, entry.Number, cancellationToken);
         var code = flight.Code;
-        var head = Short8(pr.Head);
+        var head = CommitRefs.Short(pr.Head);
         var subject = Verbs.FlightTarget(code);
 
         if (merge is { Kind: MergeKinds.Queued })
@@ -411,8 +409,8 @@ public sealed class PrRecheck : IHostedService
             if (await legs.BringUpToDateAsync(code, cancellationToken) is not { } why)
             {
                 var onto = (Now(code)?.Base ?? flight.Base).Replace("origin/", "", StringComparison.Ordinal);
-                var restarted = Now(code)?.Review is { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } kept } ? $"its review carried over to {Short8(kept)}"
-                    : Now(code)?.Review?.ReviewedHead is { Length: > 0 } read ? $"review restarted at {Short8(read)}" : "its review has not started yet";
+                var restarted = Now(code)?.Review is { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } kept } ? $"its review carried over to {CommitRefs.Short(kept)}"
+                    : Now(code)?.Review?.ReviewedHead is { Length: > 0 } read ? $"review restarted at {CommitRefs.Short(read)}" : "its review has not started yet";
                 return await FinishAsync(entry, pr, $"brought up to date with {onto}, {restarted}", LabelOf(code), cancellationToken);
             }
             // A merge that conflicts goes to the watchtower as PrChecks hands it, and the Handled line says so too.
@@ -441,7 +439,7 @@ public sealed class PrRecheck : IHostedService
                 Fail(entry, started.Error ?? "the review did not start", pr.Url);
                 return Outcome.Kept;
             }
-            var restarted = Now(code)?.Review?.ReviewedHead is { Length: > 0 } read ? $"review restarted at {Short8(read)}" : "its review waits for a window to start";
+            var restarted = Now(code)?.Review?.ReviewedHead is { Length: > 0 } read ? $"review restarted at {CommitRefs.Short(read)}" : "its review waits for a window to start";
             return await FinishAsync(entry, pr, $"head {head} was not the one reviewed, {restarted}", LabelOf(code), cancellationToken);
         }
 
@@ -466,6 +464,11 @@ public sealed class PrRecheck : IHostedService
                 // A merge of this flight is already running: not merged yet. The recheck ends here with the label taken off and a
                 // Handled line that says so; the running merge reports its own result on the flight's card.
                 return await FinishAsync(entry, pr, $"a merge is already running at {head}", null, cancellationToken);
+            }
+            if (merged.Way == MergeWays.Armed)
+            {
+                // GitHub did not answer, or the merge waits for a check: it stays armed on the flight and the node asks again.
+                return await FinishAsync(entry, pr, $"passed and green, the merge waits at {head}: {merged.Made}", PilotMarks.Passed, cancellationToken);
             }
             return merged.Way is null
                 ? await FinishAsync(entry, pr, $"passed and green, merged at {head}", null, cancellationToken)
@@ -502,7 +505,7 @@ public sealed class PrRecheck : IHostedService
             return await FinishAsync(entry, pr, "already queued", PilotMarks.Queued, cancellationToken);
         }
 
-        var head = Short8(pr.Head);
+        var head = CommitRefs.Short(pr.Head);
         var stands = review.State == PrReviewState.Reviewing ? PilotMarks.Reviewing : review.Verdict == "changes" ? PilotMarks.Changes : PilotMarks.Passed;
         if (pr.Head.Length > 0 && !string.Equals(review.Head, pr.Head, StringComparison.OrdinalIgnoreCase))
         {
@@ -516,7 +519,7 @@ public sealed class PrRecheck : IHostedService
                 Fail(entry, started.Error ?? "the review did not start", pr.Url);
                 return Outcome.Kept;
             }
-            return await FinishAsync(entry, pr, $"head {head} was not the one reviewed ({Short8(review.Head)}), review restarted", PilotMarks.Reviewing, cancellationToken);
+            return await FinishAsync(entry, pr, $"head {head} was not the one reviewed ({CommitRefs.Short(review.Head)}), review restarted", PilotMarks.Reviewing, cancellationToken);
         }
 
         var merge = await github.MergeStateAsync(entry.Path, entry.Number, cancellationToken);

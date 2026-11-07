@@ -49,6 +49,32 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task OnAutopilotAFlightWithALegStillFlyingIsNotMergedNorRungAndMergesOnceTheLegLands()
+    {
+        // PDF446 and PIL841, 2026-11-07: the review passed while a review-notes leg still flew, the autopilot asked for the merge, the
+        // merge refused it ("has legs not done: review-notes") and a ring offered "Merge once more". The leg is the merge's own wait.
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        var (flight, _) = await Passed("44");
+        var notes = _state.Legs(flight.Code).Single() with { Name = "review-notes", State = LegState.Flying };
+        _state.PutLeg(notes);
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        await checks.LookAsync(Ct);
+
+        _state.Merges().ShouldBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.AutopilotMergeRefused);
+
+        // The leg lands: the same head is asked now, as it was never marked as tried.
+        _state.PutLeg(notes with { State = LegState.Done });
+        await checks.LookAsync(Ct);
+
+        _state.Merges().ShouldNotBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.AutopilotMergeRefused);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeGitHubAnswersWithAlreadyInTheQueueEndsQueuedAndRingsNothing()
     {
         AutopilotOn();

@@ -82,7 +82,7 @@ public sealed class PushBlockedTests : IDisposable
 
         (card.Bin, card.Kind, card.Subject).ShouldBe((CardBin.Ring, LegCommander.PushBlockedKind, Target));
         card.Title.ShouldBe("TIA9/parser is done, but its rebased branch needs a force push with lease or a merge");
-        card.Detail.ShouldNotBeNull().Split('\n')[0].ShouldBe($"Check passed at {_head[..8]}, origin/{Branch} at {_origin[..8]} is not an ancestor of it, so a plain push is refused. Nothing was pushed or overwritten.");
+        card.Detail.ShouldNotBeNull().Split('\n')[0].ShouldBe($"Check passed at {_head[..9]}, origin/{Branch} at {_origin[..9]} is not an ancestor of it, so a plain push is refused. Nothing was pushed or overwritten.");
         card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Push the rebased branch with lease", Verbs.FinishLeg), ($"Merge origin/{Branch} into the plane and push", Verbs.FinishLeg)]);
         card.Choices.ShouldNotContain(c => c.Label.Contains("Mark done anyway") || c.Label.Contains("Accept"));
         Git(Remote, "rev-parse", Branch).ShouldBe(_origin);

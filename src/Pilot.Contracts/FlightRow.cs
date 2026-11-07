@@ -122,8 +122,22 @@ public sealed record FlightRow
     /// </summary>
     public string? GitHubLabel { get; init; }
 
+    /// <summary>
+    /// The human checks the node has filed as issues for this flight, oldest first: a reviewer that restates one in a later round files nothing
+    /// again. Optional and additive, so the wire version does not move; null before the first is filed.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public HumanCheck[]? HumanChecks { get; init; }
+
     /// <summary>The issue's GitHub Priority field as of the node's last start of the flight; null when unset or not read.</summary>
     public IssuePriority? IssuePriority { get; init; }
+
+    /// <summary>
+    /// Whether the flight's issue carries the <c>pilot: human verification</c> label as of the node's last start of the flight: its briefs then
+    /// say how to note checks only a person can make. Optional and additive, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool HumanVerification { get; init; }
 
     /// <summary>Whether the issue's repo has the Priority field (and the token can read it): where it does, it alone says priority and the <c>pilot: priority</c> label is ignored.</summary>
     public bool HasPriorityField { get; init; }
@@ -266,6 +280,18 @@ public sealed record FlightRow
     /// <summary>When the flight was first read as stale for the cause in <see cref="StaleCause"/>.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public DateTimeOffset? StaleSince { get; init; }
+
+    /// <summary>
+    /// When the flight last really moved (a leg started or finished, a card answered, the PR opened, a review verdict), kept current on every
+    /// stale watch tick. Unlike <see cref="StaleSince"/>, which is when the node first read the flight as stale, this is the flight's own last
+    /// activity, so a row says how long it has been still whether or not it is stale. Null before the first tick.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? LastMovedAt { get; init; }
+
+    /// <summary>The words of the event at <see cref="LastMovedAt"/> (<c>review passed</c>, <c>leg parser finished</c>); null with it.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LastMove { get; init; }
 
     /// <summary>The priority raises the node made (or could not make) for stale bounds, oldest first; one per bound. Null before the first.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -450,6 +476,25 @@ public sealed record PeerConnection
     /// PIL294</c>); null while its answer is that the flight has not landed.
     /// </summary>
     public string? Note { get; init; }
+
+    /// <summary>The waited-for flight's branch, so GitHub can be asked when its node cannot be (#753); null in a wait recorded before it was known.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Branch { get; init; }
+
+    /// <summary>The waited-for flight's PR number, when its node last said it had one (#753).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? PullRequest { get; init; }
+
+    /// <summary>The waited-for flight's issue number, when its node last said it had one (#753).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Issue { get; init; }
+
+    /// <summary>
+    /// When the node of the waited-for flight was first found unreachable, kept on later failing looks and cleared when it answers (#753);
+    /// null while it answers.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? UnreachableSince { get; init; }
 }
 
 /// <summary>An issue folded into a flight, and the flight it came from.</summary>
@@ -492,6 +537,20 @@ public sealed record OverlapRow
     public required string Why { get; init; }
 
     public required OverlapAnswer Answer { get; init; }
+
+    /// <summary>
+    /// Set when the node answered the overlap itself and not the controller: <see cref="AnsweredByNodeConnected"/> (it connected the flight at a
+    /// leg's end) or <see cref="AnsweredByNodeLanded"/> (the other had landed, so there was nothing to wait for). Null for the controller's answer,
+    /// which is what the planner's brief says of every row that has no mark.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? AnsweredByNode { get; init; }
+
+    /// <summary>The node connected the flight to the other itself, for an unforeseen overlap found at a leg's end.</summary>
+    public const string AnsweredByNodeConnected = "connected";
+
+    /// <summary>The node answered connect itself because the other flight had landed: there was nothing to wait for.</summary>
+    public const string AnsweredByNodeLanded = "landed";
 
     /// <summary>When it was asked, then when it was answered.</summary>
     public required DateTimeOffset At { get; init; }

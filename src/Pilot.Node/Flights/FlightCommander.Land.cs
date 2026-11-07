@@ -78,19 +78,30 @@ public sealed partial class FlightCommander
     /// </summary>
     public FlightRow MarkMergedUnderLeg(FlightRow flight, string mergedHead, string why)
     {
-        var number = flight.PullRequest;
-        var marked = flight with
+        // A flight without a PR has none that merged: no caller passes one, but without this its null would match a row holding no PR
+        // too (null equals null below) and write MergedPullRequest = null.
+        if (flight.PullRequest is not { } number)
+        {
+            return flight;
+        }
+        // Written on the row as it is at this moment, and only while it still holds the PR that merged: a caller's row may have been
+        // read with the lock let go (a push's retry after GH006), and a whole-row write of it would undo what moved meanwhile.
+        var marked = state.UpdateFlight(flight.Code, f => f.PullRequest != number ? null : f with
         {
             MergedHead = mergedHead, MergedPullRequest = number, PullRequest = null, PullRequestUrl = null, Review = null,
             MergeWhenGreen = null, MergeQueue = null, GitHubHead = null,
-        };
-        state.PutFlight(marked);
+        });
+        if (marked is null)
+        {
+            // The flight moved on from that PR (or is gone): nothing of it is marked, nor carded.
+            return flight;
+        }
         // Its merge entry ends merged too: with the PR let go, no look of the queues sees the flight again to end it.
         state.EndMergeAsMerged(flight.Code, $"#{number} merged without the new leg, whose work goes to a new PR");
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"#{number} merged on GitHub without the new leg", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, "not-landed");
-        state.RaiseCard(CardBin.Ring, MergedUnderLegKind, Verbs.FlightTarget(flight.Code),
+        state.RaiseCard(CardBin.ForYou, MergedUnderLegKind, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}'s PR #{number} merged without the new leg",
-            $"{why}. GitHub merged #{number} at {mergedHead[..Math.Min(8, mergedHead.Length)]} before the merge could be taken back, so it holds none of the new leg's work: that goes to a new PR from the merged base, which opens when the legs are done (the base merged in, pushed, reviewed as any PR). {flight.Code} stays flying and is not landed.",
+            $"{why}. GitHub merged #{number} at {CommitRefs.Short(mergedHead)} before the merge could be taken back, so it holds none of the new leg's work: that goes to a new PR from the merged base, which opens when the legs are done (the base merged in, pushed, reviewed as any PR). {flight.Code} stays flying and is not landed.",
             link: flight.PullRequestUrl);
         return marked;
     }
@@ -124,13 +135,29 @@ public sealed partial class FlightCommander
     private async Task LandingAsync(FlightRow flight, CancellationToken cancellationToken, string? mergedHead, string? foldedInto)
     {
         // A merge does not land work still to come: a leg planned or flying means the PR went without it. Read from the state
-        // alone, before any of the flight's sessions is stopped, so a flying leg's worker is left at its work.
+        // alone, before any of the flight's sessions is stopped, so a flying leg's worker is left at its work. Unless the merge's
+        // tree is the plane's own (#799 rule 1): then every leg's commits are in it, whatever the merge method, the legs end done
+        // with that said, and the landing goes on.
+        var workInMerge = false;
         if (mergedHead is not null
-            && state.Legs(flight.Code).Where(l => l.State != LegState.Done).Select(l => $"{l.Name} ({l.State.ToString().ToLowerInvariant()})").ToList() is { Count: > 0 } open)
+            && state.Legs(flight.Code).Where(l => l.State != LegState.Done).ToList() is { Count: > 0 } notDone)
         {
-            var said = $"its legs {string.Join(", ", open)} are not done";
-            MarkMergedUnderLeg(flight, mergedHead, said);
-            throw new FlightException($"{flight.Code}'s PR merged, but {said}: their work goes to a new PR, and the flight is not landed");
+            string? unread = null;
+            // A leg planned and never started has no work in any plane: it is work still to come, whatever the trees say.
+            if (!notDone.Any(l => l is { State: LegState.Planned, StartedAt: null }))
+            {
+                (workInMerge, unread) = await OffLockAsync(() => MergeHoldsPlaneAsync(flight, cancellationToken));
+            }
+            if (workInMerge)
+            {
+                EndLegsAsMerged(flight, notDone);
+            }
+            else
+            {
+                var said = $"its legs {string.Join(", ", notDone.Select(l => $"{l.Name} ({l.State.ToString().ToLowerInvariant()})"))} are not done{(unread is null ? "" : $" and the merge's tree could not be compared with the plane's ({unread})")}";
+                MarkMergedUnderLeg(flight, mergedHead, said);
+                throw new FlightException($"{flight.Code}'s PR merged, but {said}: their work goes to a new PR, and the flight is not landed");
+            }
         }
         // What it releases is read before its plane goes, and before anything is changed: a land that cannot say what its
         // consumers wait for is refused, never half done. A folded flight released nothing.
@@ -193,11 +220,13 @@ public sealed partial class FlightCommander
             {
                 if (await planes.UncommittedAsync(flight.Worktree, cancellationToken) is { } dirty)
                 {
-                    throw new FlightException($"{flight.Code} merged at {mergedHead[..Math.Min(8, mergedHead.Length)]}, but its plane holds {dirty}: commit and land {(dirty.StartsWith("1 ", StringComparison.Ordinal) ? "it" : "them")} in a PR of their own, then land the flight");
+                    throw new FlightException($"{flight.Code} merged at {CommitRefs.Short(mergedHead)}, but its plane holds {dirty}: commit and land {(dirty.StartsWith("1 ", StringComparison.Ordinal) ? "it" : "them")} in a PR of their own, then land the flight");
                 }
-                if (await planes.PastAsync(flight.Worktree, mergedHead, cancellationToken) is { Count: > 0 } past)
+                // Commits past the merged head are in the merge all the same when the merge's tree is the plane's own.
+                if (await planes.PastAsync(flight.Worktree, mergedHead, mainRef, cancellationToken) is { Count: > 0 } past
+                    && !(workInMerge || (await MergeHoldsPlaneAsync(flight, cancellationToken)).Holds))
                 {
-                    throw new FlightException($"{flight.Code} merged at {mergedHead[..Math.Min(8, mergedHead.Length)]}, but its plane holds {past.Count} commit{(past.Count == 1 ? "" : "s")} past it: {string.Join("; ", past)}. Land {(past.Count == 1 ? "it" : "them")} in a PR of {(past.Count == 1 ? "its" : "their")} own, then land the flight");
+                    throw new LeftOutCommitsException($"{flight.Code} merged at {CommitRefs.Short(mergedHead)}, but {(past.Count == 1 ? "1 commit of its own" : $"{past.Count} commits of its own")} missed the merge: {string.Join("; ", past)}", past);
                 }
             }
             else if (await planes.UnlandedAsync(flight.Worktree, mainRef, cancellationToken) is { Count: > 0 } loose)
@@ -353,6 +382,41 @@ public sealed partial class FlightCommander
                 continue;
             }
             state.PutFlight(Settle(waiting));
+        }
+    }
+
+    /// <summary>
+    /// Whether the merge of <paramref name="flight"/>'s PR holds everything the plane holds (#799 rule 1): the plane clean and its
+    /// HEAD's tree equal to the merge commit's, or every file the plane changed the same in it when main moved on. Ancestry is no test: a squash or a rebase leaves none. <c>Unread</c> says why when the
+    /// trees could not be compared (GitHub named no merge commit, or it cannot be fetched): that is not "no".
+    /// </summary>
+    private async Task<(bool Holds, string? Unread)> MergeHoldsPlaneAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(flight.Worktree))
+        {
+            return (false, "its plane is gone");
+        }
+        if (await planes.UncommittedAsync(flight.Worktree, cancellationToken) is not null)
+        {
+            return (false, null);
+        }
+        var (commit, _) = await MergeOfAsync(flight, cancellationToken);
+        if (commit is null)
+        {
+            return (false, "GitHub named no merge commit");
+        }
+        var (same, said) = await planes.HeadTreeIsAsync(flight.Worktree, commit, cancellationToken);
+        return (same == true, said);
+    }
+
+    /// <summary>The legs of a flight whose PR merged with the plane's whole tree in it end done: their work merged in the PR.</summary>
+    private void EndLegsAsMerged(FlightRow flight, IReadOnlyList<LegRow> legs)
+    {
+        var report = $"its work merged in #{flight.PullRequest}: the merge's tree is the plane's";
+        foreach (var leg in legs)
+        {
+            var now = state.Legs(flight.Code).FirstOrDefault(l => l.Name == leg.Name) ?? leg;
+            state.PutLeg(now with { State = LegState.Done, FinishedAt = time.GetUtcNow(), Wait = null, Report = now.Report is { Length: > 0 } was ? $"{report}\n{was}" : report });
         }
     }
 

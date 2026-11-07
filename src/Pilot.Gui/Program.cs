@@ -233,7 +233,17 @@ if (gate is null)
 }
 
 var Title = remoteEndpoint is null ? "pilot v2 · sessions" : $"pilot v2 · {remoteEndpoint}";
-using var window = SdlVulkanWindow.Create(Title, 1280, 800);
+// Who the app is, for the taskbar grouping, the process name and a power-inhibit reason. The version is the GUI assembly's
+// informational version, read by reflection and passed whole with its "+<sha>" source-revision suffix (null lets SDL fill it
+// from the entry assembly). clickThroughOnFocus (true) and keepDisplayAwake
+// (false) are left at their defaults: the first click on an unfocused window presses what it lands on, and an idle GUI
+// lets the display sleep.
+var appVersion = typeof(GuiOptions).Assembly
+    .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+    .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+    .FirstOrDefault()?.InformationalVersion;
+using var window = SdlVulkanWindow.Create(Title, 1280, 800,
+    appMetadata: new SdlAppMetadata(Name: "pilot", Version: appVersion, Identifier: "com.sharpastro.pilot"));
 // The window's icon (the exe's is the ApplicationIcon): a missing file or one the decoder rejects leaves the platform's
 // default. The decoded array is adopted by the RgbaImage, not copied.
 var iconPath = Path.Combine(AppContext.BaseDirectory, "Resources", "pilot-256.png");
@@ -1182,6 +1192,41 @@ using var inspector = DebugInspector.Attach(loop, new DebugInspectorOptions
             widget.CollectPaintedRegions(regions);
         }
         return regions;
+    },
+    // The text faults of the page shown, found by the one TextOverlap check (PageFaults), as flat values: faults is a JSON array a tool parses.
+    AppState = state =>
+    {
+        var shown = chrome.Faults();
+        state.Set("page", shown.Page);
+        state.Set("pages", string.Join(", ", Pilot.Ui.PilotPageNames.Names));
+        state.Set("window", shown.WindowText);
+        // So a tool that sizes the window can put it back (pilot gui overlaps): maximised again, or its own size.
+        state.Set("maximized", window.IsMaximized);
+        state.Set("pageSize", shown.PageSizeText);
+        state.Set("dpi", shown.Dpi);
+        state.Set("faultCount", shown.Count);
+        state.Set("faults", shown.FaultsJson());
+    },
+    // The arranged nodes of everything the window painted: the rail, the page and the panel beside it.
+    GetLayout = () =>
+    {
+        var nodes = new List<DIR.Lib.Layout.ArrangedNode<float>>();
+        foreach (var widget in chrome.Widgets)
+        {
+            widget.CollectPaintedNodes(nodes);
+        }
+        return nodes;
+    },
+    // "page" takes the window to a page by name ({"page":"settings"}); an unknown name is refused with the names that exist.
+    SignalFactories = new Dictionary<string, Action<System.Text.Json.JsonElement>>
+    {
+        ["page"] = args =>
+        {
+            if (!chrome.TryShow(args.OptString("page") ?? args.OptString("name"), out var refusal))
+            {
+                throw new ArgumentException(refusal);
+            }
+        },
     },
 });
 #endif

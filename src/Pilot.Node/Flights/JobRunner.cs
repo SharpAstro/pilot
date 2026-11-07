@@ -40,6 +40,19 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 {
     public const string UntoldKind = "job-untold";
 
+    /// <summary>The Ring card for a job whose owner was told twice and still did not act (#756).</summary>
+    public const string UnansweredKind = "job-told-unanswered";
+
+    /// <summary>How long an idle owner may sit without acting on a tell before it is told again, and again before it rings (#756).</summary>
+    public TimeSpan RetellAfter { get; init; } = TimeSpan.FromMinutes(4);
+
+    /// <summary>
+    /// For a tell relayed into a session mid-turn: the first <c>LastResponseAt</c> seen after the tell, which is the end of the busy
+    /// turn that was already running (it cannot have acted on the tell). Only a response later than it counts as acting. In memory:
+    /// a node restart takes the next one seen, which errs towards a retell.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _busyTurnEnd = new(StringComparer.Ordinal);
+
     /// <summary>The For-you card for a running job that has used next to no CPU while others queue behind it.</summary>
     public const string IdleKind = "job-idle";
 
@@ -63,6 +76,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>How often a running job's log and exit file are looked at.</summary>
     public TimeSpan FollowEvery { get; set; } = TimeSpan.FromMilliseconds(250);
 
+    /// <summary>
+    /// How long a fail-fast job runs on after its first failed test, at most, for that test's report (its error message, up to
+    /// its stack trace) to reach the log: xunit's <c>[FAIL]</c> line comes before it, often by several lines. It stops as soon as
+    /// the report is in.
+    /// </summary>
+    public TimeSpan FailFastGrace { get; set; } = TimeSpan.FromSeconds(3);
+
     /// <summary>Where a job's exit code is written when it ends: its log's path plus <c>.exit</c>.</summary>
     public static string ExitPathOf(string logPath) => logPath + ".exit";
 
@@ -71,6 +91,23 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     /// <summary>The session ledger, to tell a session that ended normally from one that was replaced; null where none is kept (#601).</summary>
     public Sessions.SessionLedger? Ledger { get; set; }
+
+    /// <summary>The node log: one line per tell with its outcome and the target session's state (#756).</summary>
+    public TextWriter Log { get; init; } = TextWriter.Null;
+
+    private void LogTell(JobRow job, string target, SessionRow? targetRow, string outcome)
+    {
+        try
+        {
+            Log.WriteLine($"{time.GetUtcNow():O} job tell {job.Id} owner={job.Owner} target={target} outcome={outcome} state={(targetRow is null ? "no row" : targetRow.State.ToString())}");
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+        }
+    }
+
+    private void MarkTold(JobRow job, string way, bool whileWorking = false) =>
+        state.PutJob(job with { Told = true, ToldAt = time.GetUtcNow(), ToldWay = way, ToldWhileWorking = whileWorking ? true : null });
 
     /// <summary>How often a running job's step (its last line) is put on the stream, so a long run shows it is alive without a delta per line.</summary>
     public TimeSpan StepEvery { get; init; } = TimeSpan.FromSeconds(10);
@@ -153,6 +190,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     // Cancels that reached the dispatcher before their job did (Run puts the row, then hands the job over, and a cancel
     // can land between the two): the job is cancelled before its turn when it arrives. The dispatcher's alone.
     private readonly Dictionary<string, (string Who, string? Dropped)> _withdrawnEarly = new(StringComparer.Ordinal);
+    // Adoptions that reached the dispatcher before their job did (the same race as a cancel): applied when the job arrives.
+    private readonly Dictionary<string, Adopted> _adoptedEarly = new(StringComparer.Ordinal);
     // Read-modify-write of a running job's row (pause, resume, the step): one at a time, so none loses another's change.
     private readonly object _rowLock = new();
     // The checks a caller awaits (RunCheckAsync), by job id: completed when the job ends however it ends.
@@ -178,6 +217,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     internal sealed record HandedOver(JobRow Job) : Signal;
 
     internal sealed record Withdrawn(string Id, string Who, string? Dropped = null) : Signal;
+
+    /// <summary>A job re-owned by its owner's replacement (#777): the dispatcher's own copy takes the new owner, so its next write keeps it.</summary>
+    internal sealed record Adopted(string Id, string? Owner, string? OwnerName, string? Flight, string? Leg) : Signal
+    {
+        public JobRow Apply(JobRow job) => job with { Owner = Owner, OwnerName = OwnerName, Flight = Flight, Leg = Leg };
+    }
 
     internal sealed record LookAgain : Signal
     {
@@ -220,6 +265,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 try
                 {
                     await TellUntoldAsync(null, stopping);
+                    await RetellSilentAsync(stopping);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -254,6 +300,95 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             told |= state.Jobs().FirstOrDefault(j => j.Id == row.Id) is { Told: true };
         }
         return told;
+    }
+
+    /// <summary>
+    /// A told, non-check row whose owner (or its replacement) sits idle and has not acted on the tell for <see cref="RetellAfter"/> is
+    /// told once more, with a lead saying it is a repeat; a further <see cref="RetellAfter"/> of silence rings once. "Acted" is a turn
+    /// after the tell: <see cref="SessionRow.LastResponseAt"/> later than <see cref="JobRow.ToldAt"/>. A tell relayed into a session that
+    /// was mid-turn is only acted on by a turn after that busy turn, whose end is the first response seen after the tell (the node holds
+    /// no per-line transcript here). Owners that ended for good are not retold. Returns whether any row was retold (#756).
+    /// </summary>
+    internal async Task<bool> RetellSilentAsync(CancellationToken cancellationToken)
+    {
+        if (Say is null)
+        {
+            return false;
+        }
+        var retold = false;
+        var now = time.GetUtcNow();
+        foreach (var row in state.Jobs().Where(j => j is { Owner: not null, Told: true, ToldAt: not null, EndedAt: not null, RetellRung: null } && j.Kind != JobKind.Check).ToList())
+        {
+            if (row.ToldWay is "owner-ended" or "gone")
+            {
+                continue;
+            }
+            var sessions = state.Sessions();
+            var ownerRow = OwnerRow(row.Owner!, sessions);
+            if (ownerRow is null)
+            {
+                continue;
+            }
+            var candidates = ownerRow.Role == SessionRole.Worker ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray() : sessions;
+            var replacement = Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates);
+            if (replacement is null && (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true))
+            {
+                continue;
+            }
+            var target = replacement ?? sessions.FirstOrDefault(s => s.Id == WakeTarget(row.Owner!, row.OwnerName)) ?? ownerRow;
+            if (target.State != SessionState.Idle)
+            {
+                continue;
+            }
+            var lastTold = row.RetoldAt ?? row.ToldAt!.Value;
+            var silentSince = lastTold;
+            if (row.RetoldAt is null && row.ToldWhileWorking == true)
+            {
+                if (target.LastResponseAt is not { } responded || responded <= lastTold)
+                {
+                    continue;
+                }
+                silentSince = _busyTurnEnd.GetOrAdd(row.Id, responded);
+            }
+            if (target.LastResponseAt is { } last && last > silentSince)
+            {
+                continue;
+            }
+            if (now - silentSince < RetellAfter)
+            {
+                continue;
+            }
+            if (row.RetoldAt is not null)
+            {
+                state.PutJob(row with { RetellRung = true });
+                state.RaiseCard(CardBin.Ring, UnansweredKind, Verbs.JobTarget(row.Id),
+                    $"{row.Id} ended and {row.OwnerName ?? row.Owner} was told twice but has not acted",
+                    $"told {row.ToldAt:HH:mm:ss} ({row.ToldWay}) and again {row.RetoldAt:HH:mm:ss} ({row.RetoldWay}); its session ({target.Id}) is idle and has not answered either");
+                continue;
+            }
+            var took = row.EndedAt!.Value - row.StartedAt;
+            var how = row.State switch { JobState.Succeeded => "succeeded", JobState.Cancelled => row.Error ?? "was cancelled", _ => $"failed: {row.Error}" };
+            var text = $"Repeat: you were told this {Took(now - row.ToldAt!.Value)} ago and have not acted on it. Your job {row.Id} (`{row.Command}`, in {row.Cwd}) {how}, after {Took(took)}. The whole output is in {row.LogPath}. Carry on from here.";
+            string way;
+            try
+            {
+                var said = await Say(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(target.Id), Args = [text], Who = LegWatch.Who }, cancellationToken);
+                way = said.Ok ? said.Way ?? SayWays.Relayed : $"refused: {LegCommander.OneLine(said.Error ?? "no reason given")}";
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return retold;
+            }
+            catch (Exception ex)
+            {
+                way = $"failed: {ex.GetType().Name}: {ex.Message}";
+            }
+            LogTell(row, target.Id, target, $"retell {way}");
+            // Marked either way, once per row: a refused retell does not go round again, and its silence still rings above.
+            state.PutJob(row with { RetoldAt = now, RetoldWay = way });
+            retold = true;
+        }
+        return retold;
     }
 
     /// <summary>One owner set's untold ended jobs, told now (for an idle check); whether any was told.</summary>
@@ -409,6 +544,11 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     {
         var args = command.Args ?? [];
         // A leading --alone asks for the node to itself (a benchmark); the rest is as for any run.
+        var failFast = args.Length > 0 && args[0] == Verbs.FailFastArg;
+        if (failFast)
+        {
+            args = [.. args.Skip(1)];
+        }
         var alone = args.Length > 0 && args[0] == Verbs.AloneArg;
         if (alone)
         {
@@ -462,6 +602,34 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             return state.Complete(command, $"run takes a session to wake ({Verbs.SessionTargetPrefix}<id>) or the node, not {command.Target}");
         }
 
+        // A session that replaced another of its name and role takes up the predecessor's queued job of the same command in the
+        // same folder, rather than queueing the same work twice (its end already goes to the replacement, #601). A running one only
+        // for a reviewer, which reads the head it was started on: a replacement worker edits the plane, so a run started before
+        // its edits would hand it a stale result.
+        if (owner is not null && !alone)
+        {
+            var sessions = state.Sessions();
+            var inherited = state.Jobs().FirstOrDefault(j => (j.State == JobState.Queued || (j.State == JobState.Running && owner.Role == SessionRole.Reviewer)) && j.Kind == JobKind.Run && j.Owner is { Length: > 0 } && j.Owner != owner.Id
+                && j.Command == line && string.Equals(j.Cwd, cwd, StringComparison.OrdinalIgnoreCase)
+                && sessions.FirstOrDefault(s => s.Id == j.Owner) is { } previous && Sessions.SessionMessenger.ReplacedBy(previous, sessions, state.CurrentWatchtower)?.Id == owner.Id);
+            if (inherited is not null)
+            {
+                // Handed to the dispatcher, which alone writes a queued row: its copy of a waiting job is what its next pass and the start
+                // put, so a row put here would go back to the predecessor at once (or bring back a job it had just cancelled). A running
+                // row is read afresh by every later write, so it takes the new owner now as well.
+                var adopted = new Adopted(inherited.Id, owner.Id, owner.Name, owner.Flight, owner.Leg);
+                lock (_rowLock)
+                {
+                    if (state.Jobs().FirstOrDefault(j => j.Id == inherited.Id) is { State: JobState.Running } current)
+                    {
+                        state.PutJob(adopted.Apply(current));
+                    }
+                }
+                _signals.Writer.TryWrite(adopted);
+                return state.Complete(command, null, way: $"adopted job {inherited.Id}, which your predecessor queued with the same command in the same folder", made: inherited.Id);
+            }
+        }
+
         var jobId = state.NextJobId();
         var folder = Path.Combine(options.DataFolder, "jobs");
         Directory.CreateDirectory(folder);
@@ -482,6 +650,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             Timeout = timeout,
             StartedAt = time.GetUtcNow(),
             MemoryKey = JobKey.Of(line, cwd).ToString(),
+            FailFast = failFast || IsLegCheckOfReviewerOrFixer(owner, line),
         };
         job = job with { QueuedAt = job.StartedAt };
 
@@ -490,6 +659,25 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         state.PutJob(job);
         _signals.Writer.TryWrite(new HandedOver(job));
         return state.Complete(command, null, made: jobId);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="owner"/> is a reviewer or a fixer and <paramref name="command"/>, trimmed, is one of its flight's legs'
+    /// checks (every leg's when its session names no flight, as a PR review's does): such a run stops at its first failed test, as a check does.
+    /// </summary>
+    private bool IsLegCheckOfReviewerOrFixer(SessionRow? owner, string command)
+    {
+        if (owner is null)
+        {
+            return false;
+        }
+        var fixer = owner.Role != SessionRole.Reviewer && state.PrReviews().Any(r => r.Fixer is not null && string.Equals(r.Fixer, owner.Name, StringComparison.Ordinal));
+        if (owner.Role != SessionRole.Reviewer && !fixer)
+        {
+            return false;
+        }
+        var wanted = command.Trim();
+        return state.Legs(owner.Flight).Any(l => l.Check is { } check && string.Equals(check.Trim(), wanted, StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -555,6 +743,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             Command = command,
             Cwd = cwd,
             Kind = JobKind.Check,
+            FailFast = true,
             Flight = flight,
             Leg = leg,
             State = JobState.Queued,
@@ -608,7 +797,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     private volatile bool _stoppingNow;
 
-    private bool NodeStopping => _stoppingNow || _stopping.IsCancellationRequested || Lifetime?.ApplicationStopping.IsCancellationRequested == true;
+    /// <summary>True once the node is stopping (the host's lifetime or this runner's own stop): a cancelled wait is then the node's end, not a caller giving up.</summary>
+    public bool NodeStopping => _stoppingNow || _stopping.IsCancellationRequested || Lifetime?.ApplicationStopping.IsCancellationRequested == true;
 
     // Results of check jobs a carried run ended with no waiter (the worker's finish had not come back yet), kept for that finish.
     private readonly ConcurrentDictionary<string, (JobRow Row, CheckRun Run, DateTimeOffset At)> _keptResults = new(StringComparer.Ordinal);
@@ -721,6 +911,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     internal void Dispatch(Signal signal)
     {
+        if (signal is HandedOver early && _adoptedEarly.Remove(early.Job.Id, out var adoptedFirst))
+        {
+            signal = early with { Job = adoptedFirst.Apply(early.Job) };
+        }
         switch (signal)
         {
             case HandedOver handed when _withdrawnEarly.Remove(handed.Job.Id, out var by):
@@ -750,6 +944,24 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 // Its hand-over is still behind this in the channel: cancel it when it comes.
                 _withdrawnEarly[withdrawn.Id] = (withdrawn.Who, withdrawn.Dropped);
                 break;
+            case Adopted adopted when _queue.FindIndex(j => j.Id == adopted.Id) is var waits and >= 0:
+                // The waiting copy takes its new owner; the pass below puts it, and the start puts it from this copy.
+                _queue[waits] = adopted.Apply(_queue[waits]);
+                break;
+            case Adopted adopted when _running.ContainsKey(adopted.Id):
+                // It started from the copy that still had the predecessor: put the new owner again on the fresh row.
+                lock (_rowLock)
+                {
+                    if (state.Jobs().FirstOrDefault(j => j.Id == adopted.Id) is { State: JobState.Running } row)
+                    {
+                        state.PutJob(adopted.Apply(row));
+                    }
+                }
+                break;
+            case Adopted adopted when state.Jobs().FirstOrDefault(j => j.Id == adopted.Id) is { State: JobState.Queued }:
+                // Its hand-over is still behind this in the channel: apply it when it comes.
+                _adoptedEarly[adopted.Id] = adopted;
+                break;
         }
 
         ReorderQueue();
@@ -768,7 +980,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             var job = _queue[i];
             var why = i > 0 && ranks[i] is { } rank
-                ? JobOrder.WhyHere(job, rank, JobOrder.IsLifted(job, JobOrder.BaseRankOf(job, flights, admission), now), ranks.Take(i).OfType<int>())
+                ? JobOrder.WhyHere(job, rank, JobOrder.LevelsLifted(job, JobOrder.BaseRankOf(job, flights, admission), now), JobOrder.Waited(job, now), ranks.Take(i).OfType<int>())
                 : null;
             var place = why is null ? "" : $" ({why})";
             _queue[i] = job with
@@ -1652,11 +1864,26 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         // The looks at the machine's CPU while this job ran, and how many found it above 90%.
         int looks = 0, hot = 0;
 
+        var failures = new TestFailures();
+        // When a fail-fast job read its first failed test, and the test it was stopped at.
+        DateTimeOffset? failedAt = null;
+        string? stoppedAt = null;
+
         void Follow(bool final)
         {
             foreach (var line in follower.Read(final))
             {
-                tail.Add(line);
+                var failure = failures.Read(line);
+                // A fail-fast job's tail ends with its first failed test's report: what came after is cut short by the stop, and
+                // other tests' reports read in the same look would push why it failed out of the tail.
+                if (!(job.FailFast && failures.PastFirstReport))
+                {
+                    tail.Add(line);
+                }
+                if (failure is { } found)
+                {
+                    NoteFailure(job, found);
+                }
                 // The step, put on the stream now and then: a long run shows it is alive, without a delta per line.
                 var now = time.GetUtcNow();
                 if (now - lastStep >= StepEvery && line.Trim().Length > 0 && !IsShellHeader(line, job))
@@ -1713,6 +1940,23 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     {
                         break;
                     }
+                    var grace = TimeSpan.MaxValue;
+                    if (job.FailFast && failures.FirstTest is { } first && !_cancelled.ContainsKey(job.Id) && TimeLeft(job) > TimeSpan.Zero)
+                    {
+                        // A fail-fast job read its first failed test: once that test's report says why (or the grace is over), its
+                        // whole tree ends, as a timeout ends it, and the queue moves on.
+                        failedAt ??= time.GetUtcNow();
+                        grace = FailFastGrace - (time.GetUtcNow() - failedAt.Value);
+                        if (failures.FirstTestReported || grace <= TimeSpan.Zero)
+                        {
+                            stoppedAt = first;
+                            Kill(job.Id, process);
+                            Tree.KillAll(job.Id, process);
+                            await GoneAsync(process);
+                            exitCode = null;
+                            break;
+                        }
+                    }
                     var left = TimeLeft(job);
                     if (left <= TimeSpan.Zero)
                     {
@@ -1726,9 +1970,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                         exitCode = ReadExit(exitPath);
                         break;
                     }
-                    // Between two looks, or sooner when a cancel says so, or the timeout is due.
+                    // Between two looks, or sooner when a cancel says so, or the timeout or a fail-fast grace is due.
                     using var pause = CancellationTokenSource.CreateLinkedTokenSource(limit.Token);
-                    var tick = Task.Delay(left < FollowEvery ? left : FollowEvery, time, pause.Token);
+                    var wait = left < FollowEvery ? left : FollowEvery;
+                    var tick = Task.Delay(grace < wait ? grace : wait, time, pause.Token);
                     if (await Task.WhenAny(tick, nudge.Task) == tick)
                     {
                         await tick;
@@ -1786,6 +2031,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             ended = latest with { State = JobState.Failed, Error = $"{TimeoutPrefix} of {Took(job.Timeout)}" };
         }
+        else if (stoppedAt is not null)
+        {
+            ended = latest with { State = JobState.Failed, Error = $"stopped at its first failure: {stoppedAt}" };
+        }
         else if (exitCode is { } code)
         {
             ended = code == 0
@@ -1826,6 +2075,74 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         await TellAsync(ended, CancellationToken.None, last);
         process.Child?.Dispose();
+    }
+
+    /// <summary>
+    /// A failed test or build error read in a running job's output: counted on its row now, and the owner told the first one,
+    /// once, at once (a check has no owner, so it only gets the row). A refused say is no card: the end-of-run tell still comes.
+    /// </summary>
+    private void NoteFailure(JobRow job, TestFailures.Failure failure)
+    {
+        JobRow? toTell = null;
+        lock (_rowLock)
+        {
+            if (state.Jobs().FirstOrDefault(j => j.Id == job.Id) is not { State: JobState.Running } current)
+            {
+                return;
+            }
+            var updated = failure.IsBuildError
+                ? current with { BuildErrors = current.BuildErrors + 1, FirstBuildError = current.FirstBuildError ?? failure.Name }
+                : current with { TestsFailed = current.TestsFailed + 1, FirstTestFailed = current.FirstTestFailed ?? failure.Name };
+            // A fail-fast run ends at its first failed test and its end names it at once: an early word would say it twice, the
+            // first time wrongly ("runs on"). A build error does not stop it, so that one is still told early.
+            if (!updated.FailureTold && updated.Owner is not null && updated.Kind != JobKind.Check && !(updated.FailFast && updated.TestsFailed > 0) && Say is not null)
+            {
+                updated = updated with { FailureTold = true };
+                toTell = updated;
+            }
+            state.PutJob(updated);
+        }
+        if (toTell is not null)
+        {
+            _ = TellFirstFailureAsync(toTell, failure);
+        }
+    }
+
+    private async Task TellFirstFailureAsync(JobRow job, TestFailures.Failure failure)
+    {
+        try
+        {
+            var sessions = state.Sessions();
+            var ownerRow = OwnerRow(job.Owner!, sessions);
+            var target = WakeTarget(job.Owner!, job.OwnerName);
+            var handed = "";
+            if (ownerRow is not null)
+            {
+                var candidates = ownerRow.Role == SessionRole.Worker
+                    ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray()
+                    : sessions;
+                if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates, state.CurrentWatchtower) is { } replacement)
+                {
+                    target = replacement.Id;
+                    handed = $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; what it shows so far is passed on to you.\n";
+                }
+                else if (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true)
+                {
+                    return;
+                }
+            }
+            else if (Ledger?.Find([job.Owner!]) is { EndedAt: not null })
+            {
+                return;
+            }
+            var what = failure.IsBuildError ? $"a build error ({failure.Name})" : $"a failed test ({failure.Name})";
+            var text = $"{handed}Your job {job.Id} (`{job.Command}`, in {job.Cwd}) has {what} so far, and runs on. You will be told how it ends; the output so far is in {job.LogPath}.";
+            await Say!(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(target), Args = [text], Who = LegWatch.Who }, _stopping);
+        }
+        catch (Exception)
+        {
+            // Not told early: no card for it, the end of the run is still told.
+        }
     }
 
     private void ReleaseHold(string id)
@@ -1896,6 +2213,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         var sessions = state.Sessions();
         var ownerRow = OwnerRow(job.Owner, sessions);
         var target = WakeTarget(job.Owner, job.OwnerName);
+        string? replacedTo = null;
         if (ownerRow is not null)
         {
             // A session replaced by a later one of its role (a go-around, a restart) hands its jobs on: the end goes to the
@@ -1903,35 +2221,41 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             var candidates = ownerRow.Role == SessionRole.Worker
                 ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray()
                 : sessions;
-            if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates) is { } replacement)
+            if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates, state.CurrentWatchtower) is { } replacement)
             {
                 target = replacement.Id;
+                replacedTo = replacement.Id;
                 text = $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; its result is passed on to you.\n{text}";
             }
             else if (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true)
             {
                 // The owner ended (finished, crashed or stopped) and nothing took its place: nobody is waiting on this job.
-                state.PutJob(job with { Told = true });
+                LogTell(job, target, ownerRow, "owner ended");
+                MarkTold(job, "owner-ended");
                 return;
             }
         }
         else if (Ledger?.Find([job.Owner]) is { EndedAt: not null })
         {
             // No row for the owner, and the ledger says its session ended: nobody is waiting on this job.
-            state.PutJob(job with { Told = true });
+            LogTell(job, target, null, "owner ended");
+            MarkTold(job, "owner-ended");
             return;
         }
+        var targetRow = sessions.FirstOrDefault(s => s.Id == target) ?? ownerRow;
         bool ok;
         string? error;
+        string? way = null;
         var threw = false;
         try
         {
             var said = await Say(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(target), Args = [text], Who = LegWatch.Who }, cancellationToken);
-            (ok, error) = (said.Ok, said.Error);
+            (ok, error, way) = (said.Ok, said.Error, said.Way);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // The node is stopping: the row stays untold for the next node's sweep.
+            LogTell(job, target, targetRow, "node stopping");
             return;
         }
         catch (Exception ex)
@@ -1941,14 +2265,19 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             _tried.TryRemove(job.Id, out _);
             threw = true;
             (ok, error) = (false, $"{ex.GetType().Name}: {ex.Message}");
+            LogTell(job, target, targetRow, $"failed: {error}");
             if (!_rang.TryAdd(job.Id, 0))
             {
                 return;
             }
         }
+        if (!threw)
+        {
+            LogTell(job, target, targetRow, ok ? (replacedTo is null ? way ?? "relayed" : $"{way ?? "relayed"} (replaced-to {replacedTo})") : $"refused: {LegCommander.OneLine(error ?? "no reason given")}");
+        }
         if (ok)
         {
-            state.PutJob(job with { Told = true });
+            MarkTold(job, replacedTo is not null ? $"replaced-to {replacedTo}" : way ?? SayWays.Relayed, targetRow?.State == SessionState.Working);
             // A card an earlier try rang ("could not be told") is out of date now it has been told.
             state.CloseCardsAbout(Verbs.JobTarget(job.Id), "told on a later try", UntoldKind);
         }
@@ -1956,7 +2285,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             // The node has no row for the owner and its session refused the say (it is gone): nobody is waiting on this job.
             // Marked told, quietly, so a session long gone is not rung for again on every node start.
-            state.PutJob(job with { Told = true });
+            MarkTold(job, "gone");
         }
         else
         {

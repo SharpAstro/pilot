@@ -72,7 +72,7 @@ public sealed partial class JobPriorityTests : JobTestsBase
     {
         _jobs.Priority = priority;
 
-        var run = await new JobCheckRunner(_jobs).RunAsync(Probe, _root, Ct, "TIA1", "parser").WaitAsync(TimeSpan.FromSeconds(60), Ct);
+        var run = await new JobCheckRunner(_jobs).RunAsync(Probe, _root, Ct, "TIA1", "parser").WaitAsync(WaitCeiling, Ct);
 
         run.Passed.ShouldBeTrue(run.Tail);
         ShouldRunAt(run.Tail, priority);
@@ -108,7 +108,8 @@ public sealed partial class JobPriorityTests : JobTestsBase
             SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
         });
         var id = runner.Run(new CommandRequest { Verb = Verbs.Run, Target = "session/a1b2c3d4", Args = [node.Folder, "0", Probe], Who = "se1-tia1-parser" }).Made!;
-        for (var i = 0; i < 600; i++)
+        var clock = Stopwatch.StartNew();
+        while (clock.Elapsed < WaitCeiling)
         {
             if (node.State.Jobs().Single(j => j.Id == id) is { EndedAt: not null } job)
             {
@@ -116,9 +117,10 @@ public sealed partial class JobPriorityTests : JobTestsBase
             }
             await Task.Delay(100, Ct);
         }
-        throw new TimeoutException($"job {id} did not end");
+        throw new TimeoutException($"job {id} did not end within {WaitCeiling}");
     }
 
+    // Starts a node of its own and runs a job at Idle priority, which a busy machine starves: it took 19 to 23 s under load.
     [Fact]
     public async Task SettingJobPriorityOnTheNodeChangesTheNextJobAndNormalRestoresNormal()
     {

@@ -14,7 +14,7 @@ public static partial class PilotCommand
             .Where(c => all || c.State == CardState.Open)
             .OrderBy(c => c.State)
             .ThenBy(c => c.Bin)
-            .ThenByDescending(c => c.At)
+            .ThenByDescending(c => c.RungAt)
             .ToList();
         if (cards.Count == 0)
         {
@@ -85,15 +85,65 @@ public static partial class PilotCommand
             var subject = Arg("subject", "What it is about: flight/<code>, flight/<code>/<leg>, session/<id> or node");
             var cardTitle = Arg("title", "The card in a line");
             var detail = new Option<string?>("--detail") { Description = "What else is needed to decide" };
+            var attachment = new Option<string?>("--attachment") { Description = "An image for the card, shown as a thumbnail that opens full size: the <id>.<ext> of a copy the node holds, or the path of an image file (png, jpg, jpeg, gif, webp or bmp, at most 10 MB) that is uploaded first" };
             Command Raise(string verbName, string bin, string description) =>
-                Action(new Command(verbName, description) { Arguments = { subject, cardTitle }, Options = { detail } },
-                    (p, client, ct) => Send(client, Verbs.Raise, p.GetValue(subject)!,
-                        p.GetValue(detail) is { } d ? [bin, p.GetValue(cardTitle)!, d] : [bin, p.GetValue(cardTitle)!], who, ct));
+                Action(new Command(verbName, description) { Arguments = { subject, cardTitle }, Options = { detail, attachment } },
+                    async (p, client, ct) =>
+                    {
+                        string? image = null;
+                        if (p.GetValue(attachment) is { Length: > 0 } named)
+                        {
+                            (image, var problem) = await CardImageAsync(client, named, ct);
+                            if (problem is not null)
+                            {
+                                await error.WriteLineAsync($"pilot: {problem}");
+                                return 2;
+                            }
+                        }
+                        return await Send(client, Verbs.Raise, p.GetValue(subject)!,
+                            p.GetValue(detail) is { } d ? [bin, p.GetValue(cardTitle)!, d] : [bin, p.GetValue(cardTitle)!], who, ct, attachment: image);
+                    });
             var ring = Raise("ring", "ring", "Raise a card that needs the controller and pushes to them");
             var flag = Raise("flag", "for-you", "Raise a card for the controller, without a push");
             var handled = Raise("handled", "handled", "Log a line on what was handled, born closed");
 
             return (cards, answer, dismiss, ring, flag, handled);
+        }
+
+        /// <summary>The image extensions a card's image may have: the ones the node keeps.</summary>
+        private static readonly string[] CardImageExtensions = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+
+        /// <summary>
+        /// What <c>--attachment</c> names, as the <c>&lt;id&gt;.&lt;ext&gt;</c> the node's raise takes: a file (relative to the working
+        /// folder) is checked to be an image of at most <see cref="IdeaImages.MaxBytes"/> and uploaded first; anything else must already be
+        /// the id and extension of a copy the node holds. A problem is said in words and nothing is sent.
+        /// </summary>
+        private async Task<(string? Image, string? Problem)> CardImageAsync(NodeClient client, string named, CancellationToken ct)
+        {
+            var path = Path.GetFullPath(named, cwd);
+            if (!File.Exists(path))
+            {
+                var dot = named.LastIndexOf('.');
+                return dot > 0 && named[..dot].All(char.IsAsciiLetterOrDigit) && CardImageExtensions.Contains(named[(dot + 1)..].ToLowerInvariant())
+                    ? (named, null)
+                    : (null, $"--attachment {named}: there is no such file, and it is not the <id>.<ext> of an image the node holds");
+            }
+            var ext = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
+            if (!CardImageExtensions.Contains(ext))
+            {
+                return (null, $"--attachment {named} is not an image: use a {string.Join(", ", CardImageExtensions)} file");
+            }
+            var length = new FileInfo(path).Length;
+            if (length is 0 or > IdeaImages.MaxBytes)
+            {
+                return (null, length == 0
+                    ? $"--attachment {named} is empty"
+                    : $"--attachment {named} is {length / (1024 * 1024)} MB: a card's image is at most {IdeaImages.MaxBytes / (1024 * 1024)} MB");
+            }
+            var uploaded = await client.UploadAttachmentAsync(await File.ReadAllBytesAsync(path, ct), ext, ct);
+            return uploaded is { Success: true, Response: { Length: > 0 } id }
+                ? ($"{id}.{ext}", null)
+                : (null, $"could not upload {named}: {uploaded.Error}");
         }
     }
 }

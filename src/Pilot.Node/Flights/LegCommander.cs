@@ -94,20 +94,23 @@ public sealed partial class LegCommander(
     public static bool Handles(string verb) =>
         verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.ValidateLeg or Verbs.Check or Verbs.FinishLeg or Verbs.WaitLeg or Verbs.GoAround or Verbs.Merge or Verbs.RerunChecks or Verbs.MoveFlight
             or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review or Verbs.AllowRound or Verbs.Clear
-            or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Touches or Verbs.Fold or Verbs.Separate or Verbs.ConnectOverlap;
+            or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Touches or Verbs.FlightChanges or Verbs.Fold or Verbs.Separate or Verbs.ConnectOverlap;
 
     /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
     public Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken) =>
-        command.Verb == Verbs.Touches
+        command.Verb is Verbs.Touches or Verbs.FlightChanges
             ? RunTouchesAsync(command, cancellationToken)
             : LockWait.RunAsync(_one, state, time, command, token => RunQueuedAsync(command, token), cancellationToken);
 
     // A read of git, the peers and GitHub that changes nothing: it takes no lock, so a busy node answers it, and it holds none while it waits.
+    // flight-changes is the same kind of read, of one flight's plane.
     private async Task<CommandResult> RunTouchesAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         try
         {
-            return state.Complete(command, null, made: await TouchesAsync(command, cancellationToken));
+            return state.Complete(command, null, made: command.Verb == Verbs.FlightChanges
+                ? await FlightChangesAsync(command, cancellationToken)
+                : await TouchesAsync(command, cancellationToken));
         }
         catch (FlightException ex)
         {
@@ -279,6 +282,18 @@ public sealed partial class LegCommander(
             // A repeat of a step already running is no refusal: ok, saying so.
             made = ex.Message;
         }
+        catch (FlightBusyException ex)
+        {
+            // Refused only because the flight had calls out: said so in the way, for a caller that asks again once it is free.
+            error = ex.Message;
+            way = RefusalWays.Busy;
+        }
+        catch (PushRefusedException ex)
+        {
+            // A push refused in a way the caller acts on (PIL836): said so in the way, never left to the refusal's words.
+            error = ex.Message;
+            way = ex.Way;
+        }
         catch (FlightException ex)
         {
             error = ex.Message;
@@ -289,6 +304,8 @@ public sealed partial class LegCommander(
         }
         finally
         {
+            // A push's turning of the review was this command's own write: once its result is recorded, no later command is waved through by it.
+            _queueTurned.TryRemove(CodeOf(command.Target), out _);
             _one.Release();
         }
 
@@ -298,7 +315,7 @@ public sealed partial class LegCommander(
         error ??= notStarted;
 
         // The legs' sub-tasks in the work item follow the verb, outside the lock: the tracker takes as long as it takes, and a refusal is logged, never the verb's.
-        if (error is null && (command.Verb is Verbs.PlanLeg or Verbs.RemoveLeg || command.Verb == Verbs.FinishLeg && (command.Args ?? []).FirstOrDefault() is "done" or "accepted" or "verified"
+        if (error is null && (command.Verb is Verbs.PlanLeg or Verbs.RemoveLeg || command.Verb == Verbs.FinishLeg && (command.Args ?? []).FirstOrDefault() is "done" or "accepted" or "verified" or RetiredOutcome
             || command.Verb == Verbs.FinishLeg && (command.Args ?? []).FirstOrDefault() is "failed" && LegOf(command.Target).Leg.State == LegState.Done))
         {
             await SyncSubTasksAsync(CodeOf(command.Target), removedSubTask, command.Verb == Verbs.FinishLeg ? LegOf(command.Target).Leg.Name : null, cancellationToken);
@@ -323,7 +340,7 @@ public sealed partial class LegCommander(
         // its PR (which starts its review), after this lock is let go. Off, a card offers it, so a flight never just sits.
         // A worker's "failed" that the node finished as done (its plane matched its pushed branch and its check passed) goes on too.
         if (error is null && command.Verb == Verbs.FinishLeg
-            && ((command.Args ?? []).FirstOrDefault() is "done" or "accepted" or "verified" or PushedWithLease or MergedWithOrigin
+            && ((command.Args ?? []).FirstOrDefault() is "done" or "accepted" or "verified" or RetiredOutcome or PushedWithLease or MergedWithOrigin
                 || ((command.Args ?? []).FirstOrDefault() is "failed" && LegOf(command.Target).Leg.State == LegState.Done)))
         {
             // The overlap check of what the plane changed, before the flight goes on: a card it rings holds the next leg through Due().
@@ -390,9 +407,10 @@ public sealed partial class LegCommander(
                 {
                     SetEntry(code, MergeEntryState.Checks, kept is not null ? "brought up to date with its base, its review carried over: merges once GitHub shows the new head" : "brought up to date with its base: waits for a fresh review at its head", awaitsReview: true, head: kept);
                 }
-                if (!conflicting && command.Who == "node" && command.Verb == Verbs.Merge)
+                if (command.Who == "node" && command.Verb == Verbs.Merge)
                 {
-                    // The node's own merge (autopilot, an armed merge at green, a recheck) is not refused for it: the update is what it did.
+                    // The node's own merge (autopilot, an armed merge at green, a recheck) is not refused for it: the update is what it did,
+                    // a conflict GitHub saw that the base merged in cleanly as much as a branch behind its base.
                     made = updated;
                     error = null;
                     way = MergeWays.Updated;
@@ -411,6 +429,13 @@ public sealed partial class LegCommander(
             }
         }
 
+        // A merge refused for a head that moved past the reviewed one drops its row saying what comes next, and starts the review of the
+        // new head as the sweep does, with the lock let go, so a passed flight is never left with an unread head and no reviewer.
+        if (error is not null && command.Verb == Verbs.Merge && HeadMoved(error))
+        {
+            error = await HeadMovedAsync(command, error, cancellationToken);
+        }
+
         // A merge lands its flight through the flight verbs' own lock, after this one's is let go. One that only joined a
         // merge queue, or waits for its checks, is no merge yet: the flight flies on, and lands once GitHub says merged.
         if (error is null && command.Verb == Verbs.Merge && merged)
@@ -419,7 +444,11 @@ public sealed partial class LegCommander(
             state.MarkMerged(command.Target);
             try
             {
-                await flights.LandAfterMergeAsync(FlightOf(command.Target).Code, (command.Args ?? [""])[0].Trim(), cancellationToken);
+                // The head that merged is the review's head: a head re-pinned by the look (moved only by its base) is no longer the one asked for.
+                var asked = (command.Args ?? [""])[0].Trim();
+                var landed = FlightOf(command.Target);
+                var mergedAt = landed.Review?.ReviewedHead is { Length: > 0 } pinned && !pinned.StartsWith(asked, StringComparison.OrdinalIgnoreCase) ? pinned : asked;
+                await flights.LandAfterMergeAsync(landed.Code, mergedAt, cancellationToken);
             }
             catch (FlightException ex)
             {
@@ -461,6 +490,9 @@ public sealed partial class LegCommander(
         }
         finally
         {
+            // A push's turning of the review (EnsureNotQueuedAsync) was this update's own write. RunAsync clears it for a command, but the
+            // sweeps call this on their own, so it is let go here too: no later command is waved through by it.
+            _queueTurned.TryRemove(code, out _);
             await AwaitLaunchesAsync(launches);
         }
     }
@@ -542,13 +574,19 @@ public sealed partial class LegCommander(
                 return (null, null);
             }
             flight = Record(code, f => f with { Base = repaired.Base })!;
+            // kept was decided before the push, on the review as it stood then: a push that took the PR out of the merge queue turned the
+            // passed review back meanwhile, and a review that is no longer passed carries nowhere and offers no PR-ready.
+            if (kept is { Length: > 0 } && flight.Review is not { State: ReviewState.Passed })
+            {
+                kept = null;
+            }
             if (kept is { Length: > 0 })
             {
                 // Its review read this branch before the base was merged in: the merge alone moved it, so the pass goes with it to the
                 // new head (its status and label are set again there), and its PR-ready card offers the merge at that head.
                 flight = Record(code, f => f with { Review = f.Review is { } held ? held with { ReviewedHead = kept, StatusState = null } : null })!;
                 await OffLockAsync(null, () => _marks.ApplyAsync(code, cancellationToken));
-                state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} brought up to date with {flight.Base}; its review carries to {Short(kept)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+                state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} brought up to date with {flight.Base}; its review carries to {CommitRefs.Short(kept)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
                 if (flight.PullRequest is not null)
                 {
                     await RaisePrReadyAsync(flight, "passed, and carried over the clean merge of its base", "Review", cancellationToken);
@@ -628,6 +666,23 @@ public sealed partial class LegCommander(
 
     /// <summary>A leg's worker name, <c>&lt;machine&gt;-&lt;flight&gt;-&lt;leg&gt;</c> in lower case: <c>du1-tia1611-parser</c>.</summary>
     private string ValidatorName(FlightRow flight, LegRow leg) => $"{WorkerName(flight, leg)}-validator";
+
+    /// <summary>The ticking pass's session name, <c>&lt;machine&gt;-&lt;flight&gt;-&lt;leg&gt;-ticker</c> in lower case.</summary>
+    internal string TickerName(FlightRow flight, LegRow leg) => $"{WorkerName(flight, leg)}-ticker";
+
+    // The plane's HEAD sha, or null when it cannot be read (no plane yet, git failed). Run off the lock, as the code around does.
+    private async Task<string?> PlaneHeadAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var head = await git.RunAsync(["rev-parse", "--verify", "--quiet", "HEAD"], flight.Worktree, cancellationToken);
+            return head.Ok && head.Output.Trim() is { Length: > 0 } sha ? sha : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
+    }
 
     private string WorkerName(FlightRow flight, LegRow leg) => $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{leg.Name}";
 

@@ -55,7 +55,7 @@ public sealed partial class LegCommander
                     if (!onto.Ok)
                     {
                         await git.RunAsync(["merge", "--abort"], repaired.Worktree, cancellationToken);
-                        throw new FlightException($"merging {repaired.Base} into {repaired.Code}'s plane conflicts ({onto.Why}): merge it by hand (git merge {repaired.Base}, the earlier PR merged at {mergedHead[..Math.Min(8, mergedHead.Length)]}), then open the PR");
+                        throw new FlightException($"merging {repaired.Base} into {repaired.Code}'s plane conflicts ({onto.Why}): merge it by hand (git merge {repaired.Base}, the earlier PR merged at {CommitRefs.Short(mergedHead)}), then open the PR");
                     }
                 }
                 repaired = repaired with { MergedHead = null };
@@ -94,18 +94,19 @@ public sealed partial class LegCommander
         }
         var (repaired, pr, mergedBase) = opened;
         // A push that moved the head of a holding flight ends the hold: the fresh review and checks gate the merge as for any push.
-        var pushedPastHold = FlightOf(Verbs.FlightTarget(flight.Code)) is { Holding: not null, Review.ReviewedHead: { Length: > 0 } reviewedHead }
-            && !string.Equals(reviewedHead, pr.Head, StringComparison.OrdinalIgnoreCase);
-        Record(flight.Code, f => f with { Base = repaired.Base, PullRequest = pr.Number, PullRequestUrl = pr.Url, MergedHead = mergedBase ? null : f.MergedHead, Holding = pushedPastHold ? null : f.Holding });
-        if (pushedPastHold)
-        {
-            state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "the fixes were pushed", ReviewNotesKind);
-        }
+        var beforeOpen = FlightOf(Verbs.FlightTarget(flight.Code));
+        Record(flight.Code, f => f with { Base = repaired.Base, PullRequest = pr.Number, PullRequestUrl = pr.Url, MergedHead = mergedBase ? null : f.MergedHead });
+        EndHoldPastReview(beforeOpen, pr.Head, "flight pr");
         // The PR opened, so a conflict that held its opening is resolved.
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR opened", PrConflictsKind);
         if (mergedBase)
         {
             state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{repaired.Base} merged into {flight.Code}'s plane; a new PR opens", FlightCommander.MergedUnderLegKind);
+            // The earlier PR merged without these commits: the new PR carries them, and a line links it.
+            state.RaiseCard(CardBin.Handled, FollowUpPrKind, Verbs.FlightTarget(flight.Code),
+                $"{flight.Code}'s commits missed {(beforeOpen.MergedPullRequest is { } missed ? $"#{missed}'s" : "the earlier PR's")} merge: PR #{pr.Number} carries them",
+                $"The earlier PR merged without them, so the node merged {repaired.Base} into the plane, pushed plain and opened PR #{pr.Number}, which is reviewed as any PR. The flight lands when it merges.",
+                link: pr.Url);
         }
 
         // The PR open, a fresh reviewer reads it before the merge is offered. One that cannot start costs the flight
@@ -132,6 +133,8 @@ public sealed partial class LegCommander
         {
             return;
         }
+        // A PR in the merge queue locks its branch (GH006) and merges whatever head it had when it was queued: out first.
+        await EnsureNotQueuedAsync(flight, pr.Number, cancellationToken);
         // Unknown is treated as armed: the disarm is no error when it was not on.
         if (await github.AutoMergeArmedAsync(flight.RepoPath, pr.Number, cancellationToken) == false)
         {
@@ -172,13 +175,11 @@ public sealed partial class LegCommander
         await git.RunAsync(["merge", "--abort"], flight.Worktree, cancellationToken);
         var plane = (await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken)).Output.Trim();
         var theirs = remote.Output.Trim();
-        var why = $"{flight.Branch} is not pushed: origin/{flight.Branch} ({Short(theirs)}) holds commits the plane ({Short(plane)}) lacks, and merging them conflicts";
-        state.RaiseCard(CardBin.Ring, PushDivergedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} was not pushed: the remote branch holds commits it lacks",
+        var why = $"{flight.Branch} is not pushed: origin/{flight.Branch} ({CommitRefs.Short(theirs)}) holds commits the plane ({CommitRefs.Short(plane)}) lacks, and merging them conflicts";
+        state.RaiseCard(CardBin.ForYou, PushDivergedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} was not pushed: the remote branch holds commits it lacks",
             $"{why} ({merge.Why}). Nothing was overwritten. Merge origin/{flight.Branch} into the plane by hand ({flight.Worktree}), resolve the conflicts and commit, then push again.");
         throw new FlightException($"{why}: merge origin/{flight.Branch} ({theirs}) into the plane's head ({plane}) by hand, then push again");
     }
-
-    private static string Short(string sha) => sha[..Math.Min(8, sha.Length)];
 
     /// <summary>
     /// Fetches, takes in what the remote holds that the plane lacks (<see cref="TakeRemoteAsync"/>), then merges the base in
@@ -206,8 +207,9 @@ public sealed partial class LegCommander
     /// was lost to a force push on 2026-10-27. A head that still lacks its base, or whose pushed history is not an ancestor of it, is
     /// refused, and git itself refuses a push that is no fast-forward.
     /// </summary>
+    /// <param name="early">A failed finish's push of the plane's commits: the base is not required, the disarm and the never-overwrite check stay.</param>
     /// <param name="brought">The plane was fetched and has its base merged in already (a leg's finish did it before its check ran): not done again.</param>
-    internal async Task PushAsync(FlightRow flight, CancellationToken cancellationToken, bool brought = false)
+    internal async Task PushAsync(FlightRow flight, CancellationToken cancellationToken, bool brought = false, bool early = false)
     {
         await EnsureNotArmedAsync(flight, cancellationToken);
         // A push after the leg is recorded done sends what the check ran on: a second update here could fail with the leg already done.
@@ -215,8 +217,9 @@ public sealed partial class LegCommander
         {
             await FetchAndMergeBaseAsync(flight, cancellationToken);
         }
-        // The node's push refuses a branch still lacking its base, however it came to be so.
-        if (!(await git.RunAsync(["merge-base", "--is-ancestor", flight.Base, "HEAD"], flight.Worktree, cancellationToken)).Ok)
+        // The node's push refuses a branch still lacking its base, however it came to be so. An early push (#752) does not:
+        // origin/<base> moves on any fetch, so a branch behind it is the usual state, and the work should reach the PR all the same.
+        if (!early && !brought && !(await git.RunAsync(["merge-base", "--is-ancestor", flight.Base, "HEAD"], flight.Worktree, cancellationToken)).Ok)
         {
             throw new FlightException($"{flight.Branch} is not pushed: it is still behind {flight.Base}, which is not an ancestor of its head");
         }
@@ -227,6 +230,18 @@ public sealed partial class LegCommander
             throw new FlightException($"{flight.Branch} is not pushed: origin/{flight.Branch} holds commits its head lacks, and the node never overwrites a pushed branch");
         }
         var push = await git.RunAsync(["push", "-u", "origin", flight.Branch], flight.Worktree, cancellationToken);
+        // Git's whole text is read: GitHub's GH006 line is not always the first of its stderr.
+        if (!push.Ok && PushRefusals.IsProtectedBranch($"{push.Error}\n{push.Output}"))
+        {
+            // GH006 (PIL836): the PR was queued behind the node's back, or merged meanwhile; the PR is read and the push is made once more or handed on.
+            push = await RetryProtectedPushAsync(flight, cancellationToken);
+            // Still locked after the retry: a refusal the node cannot answer, said in its way (the sweep reads that, never the text,
+            // whose GH006 line may sit anywhere in git's output) with GitHub's own line, wherever git printed it.
+            if (!push.Ok && PushRefusals.ProtectedLine($"{push.Error}\n{push.Output}") is { } locked)
+            {
+                throw new PushRefusedException(RefusalWays.ProtectedBranch, $"git could not push {flight.Branch}: {locked}");
+            }
+        }
         if (!push.Ok)
         {
             throw new FlightException($"git could not push {flight.Branch}: {push.Why}");

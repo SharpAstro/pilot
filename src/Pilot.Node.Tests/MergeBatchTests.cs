@@ -88,16 +88,19 @@ public sealed class MergeBatchTests
     private static Task<CommandResult> Merge(NodeHarness node, string code, string method = "merge") =>
         node.Client.SendAsync(new CommandRequest { Verb = Verbs.Merge, Target = Verbs.FlightTarget(code), Args = [PrHead, method], Who = "tests" }, Ct).ContinueWith(t => t.Result.Response.ShouldNotBeNull(), Ct);
 
+    private static bool Has(BatchGit git, string call)
+    {
+        lock (git.Calls)
+        {
+            return git.Calls.Contains(call);
+        }
+    }
+
     private static MergeRow Entry(NodeHarness node, string code) => node.State.Merges().Single(m => m.Flight == code);
 
-    private static async Task Until(Func<bool> condition, string what)
-    {
-        for (var i = 0; i < 400 && !condition(); i++)
-        {
-            await Task.Delay(25, Ct);
-        }
-        condition().ShouldBeTrue(what);
-    }
+    // Waits through the shared Eventually cap; a timeout names what was awaited, each entry of the queue with its state, and how many PRs GitHub merged.
+    private static Task Until(NodeHarness node, Func<bool> condition, string what) =>
+        Eventually.Holds(condition, () => $"{what}: entries [{string.Join(", ", node.State.Merges().Select(m => $"{m.Flight}={m.State}"))}], GitHub merged {node.GitHub.Merged.Count}", Ct);
 
     // A node whose first merge (TIA9, alone) is held at GitHub, so the flights asked of next stand waiting in the queue together;
     // the returned release lets TIA9 go, and the entries behind it are taken. Each of them is asked by merge (the client's Merge by default).
@@ -137,7 +140,7 @@ public sealed class MergeBatchTests
         foreach (var code in codes)
         {
             _ = (merge ?? ((on, c) => Merge(on, c, method)))(node, code);
-            await Until(() => node.State.Merges().Any(m => m.Flight == code), $"{code} joined the queue");
+            await Until(node, () => node.State.Merges().Any(m => m.Flight == code), $"{code} joined the queue");
         }
         return (node, git, release, held, codes);
     }
@@ -152,7 +155,7 @@ public sealed class MergeBatchTests
 
         release.TrySetResult();
         await held;
-        await Until(() => node.State.Merges().All(m => m.State is MergeEntryState.Merging or MergeEntryState.Merged), "every entry merged");
+        await Until(node, () => node.GitHub.Merged.Count == 3 && node.State.Merges().All(m => m.State is MergeEntryState.Merging or MergeEntryState.Merged), "every entry merged");
 
         node.GitHub.Merged.Count.ShouldBe(3);
         git.Calls.ShouldBeEmpty();
@@ -168,7 +171,8 @@ public sealed class MergeBatchTests
 
         release.TrySetResult();
         await held;
-        await Until(() => node.State.Merges().Where(m => m.Flight is "TIA1" or "TIA2").All(m => m.State is MergeEntryState.Merging or MergeEntryState.Merged), "both landed with the batch");
+        await Until(node, () => node.State.Merges().Where(m => m.Flight is "TIA1" or "TIA2").All(m => m.State is MergeEntryState.Merging or MergeEntryState.Merged)
+            && Has(git, $"push --quiet origin --delete {Batch1}") && node.GitHub.ClosedPrs.Count == 1, "both landed with the batch and the batch ended");
 
         // Only TIA9 (alone) went through GitHub's merge: the batch's two PRs landed with the base's push.
         node.GitHub.Merged.ShouldHaveSingleItem().Number.ShouldBe(9);
@@ -213,7 +217,7 @@ public sealed class MergeBatchTests
 
         release.TrySetResult();
         await held;
-        await Until(() => node.GitHub.Merged.Count == 3 && waiting.All(code => Entry(node, code).State is MergeEntryState.Merging or MergeEntryState.Merged), "every PR merged one at a time");
+        await Until(node, () => node.GitHub.Merged.Count == 3 && waiting.All(code => Entry(node, code).State is MergeEntryState.Merging or MergeEntryState.Merged), "every PR merged one at a time");
 
         git.Calls.ShouldBeEmpty();
         node.GitHub.Drafts.ShouldBeEmpty();
@@ -239,8 +243,9 @@ public sealed class MergeBatchTests
 
         release.TrySetResult();
         await held;
-        await Until(() => Entry(node, "TIA2").State is MergeEntryState.Dropped or MergeEntryState.Merging
-            && Entry(node, "TIA1").State == MergeEntryState.Merging && Entry(node, "TIA3").State == MergeEntryState.Merging, "TIA1 and TIA3 landed with the batch, TIA2 on its own");
+        await Until(node, () => Entry(node, "TIA2").State is MergeEntryState.Dropped or MergeEntryState.Merging
+            && Entry(node, "TIA1").State == MergeEntryState.Merging && Entry(node, "TIA3").State == MergeEntryState.Merging
+            && Has(git, $"push --quiet origin {BatchHead}:refs/heads/main") && node.GitHub.Merged.Any(m => m.Number == 11) == (odd == "base"), "TIA1 and TIA3 landed with the batch, TIA2 on its own");
 
         node.GitHub.Drafts.ShouldHaveSingleItem().Title.ShouldBe("pilot merge batch: #10, #12");
         git.Calls.Count(c => c.StartsWith("merge --no-edit ", StringComparison.Ordinal)).ShouldBe(2);
@@ -274,7 +279,7 @@ public sealed class MergeBatchTests
 
         release.TrySetResult();
         await held;
-        await Until(() => node.GitHub.Merged.Count == 3, "every PR merged one at a time, long before the batch's CI budget");
+        await Until(node, () => node.GitHub.Merged.Count == 3 && Has(git, $"push --quiet origin --delete {Batch1}"), "every PR merged one at a time, long before the batch's CI budget, and the batch ended");
 
         clock.Elapsed.ShouldBeLessThan(batcher.CiBudget);
         git.Calls.ShouldNotContain(c => c.EndsWith(":refs/heads/main", StringComparison.Ordinal));
@@ -371,17 +376,17 @@ public sealed class MergeBatchTests
 
         release.TrySetResult();
         await held;
-        await Until(() => Entry(node, "TIA1").State == MergeEntryState.Batched, "the batch waits on its CI");
+        await Until(node, () => Entry(node, "TIA1").State == MergeEntryState.Batched, "the batch waits on its CI");
         Flight(node, "TIA3", 13);
         _ = Merge(node, "TIA3");
-        await Until(() => node.State.Merges().Any(m => m.Flight == "TIA3"), "TIA3 joined the queue");
+        await Until(node, () => node.State.Merges().Any(m => m.Flight == "TIA3"), "TIA3 joined the queue");
 
         await Task.Delay(100, Ct);
         Entry(node, "TIA3").State.ShouldBe(MergeEntryState.Waiting);
         node.GitHub.Merged.ShouldNotContain(p => p.Number == 13);
 
         // The batch's CI never ends inside its budget: the batch falls back and TIA3 then takes its turn.
-        await Until(() => Entry(node, "TIA3").State is MergeEntryState.Merging or MergeEntryState.Merged, "TIA3 merged once the batch ended");
+        await Until(node, () => Entry(node, "TIA3").State is MergeEntryState.Merging or MergeEntryState.Merged, "TIA3 merged once the batch ended");
     }
 
     [Fact]
@@ -394,7 +399,7 @@ public sealed class MergeBatchTests
 
         release.TrySetResult();
         await held;
-        await Until(() => node.GitHub.Merged.Count == 3, "each PR merged as a single entry");
+        await Until(node, () => node.GitHub.Merged.Count == 3 && Has(git, $"push --quiet origin --delete {Batch1}"), "each PR merged as a single entry and the batch ended");
 
         git.Calls.Count(c => c.StartsWith("merge --no-edit ", StringComparison.Ordinal)).ShouldBe(2);
     }
@@ -407,7 +412,7 @@ public sealed class MergeBatchTests
 
         release.TrySetResult();
         await held;
-        await Until(() => node.GitHub.Merged.Count == 3, "every PR merged one at a time");
+        await Until(node, () => node.GitHub.Merged.Count == 3 && Has(git, $"branch -D {Batch1}"), "every PR merged one at a time and the batch ended");
 
         git.Calls.ShouldNotContain(c => c.EndsWith(":refs/heads/main", StringComparison.Ordinal));
         git.Calls.ShouldContain($"push --quiet origin --delete {Batch1}");
@@ -443,12 +448,12 @@ public sealed class MergeBatchTests
         {
             Flight(node, code, number);
             _ = Merge(node, code);
-            await Until(() => node.State.Merges().Any(m => m.Flight == code), $"{code} joined the queue");
+            await Until(node, () => node.State.Merges().Any(m => m.Flight == code), $"{code} joined the queue");
         }
 
         release.TrySetResult();
         await held;
-        await Until(() => node.GitHub.Merged.Count == 2 && node.State.Merges().Where(m => m.Flight is "TIA1" or "TIA2" or "TIA3").All(m => m.State is MergeEntryState.Merging or MergeEntryState.Merged), "TIA2 merged on its own, the others with the batch");
+        await Until(node, () => node.GitHub.Merged.Count == 2 && Has(git, $"push --quiet origin {BatchHead}:refs/heads/main") && node.State.Merges().Where(m => m.Flight is "TIA1" or "TIA2" or "TIA3").All(m => m.State is MergeEntryState.Merging or MergeEntryState.Merged), "TIA2 merged on its own, the others with the batch");
 
         // The batch holds TIA1 and TIA3; TIA2's merge conflicted and was aborted, and it was merged as a single entry.
         git.Calls.ShouldContain("merge --abort");
@@ -531,13 +536,13 @@ public sealed class MergeBatchTests
 
         release.TrySetResult();
         await held;
-        await Until(() => new[] { "TIA1", "TIA2", "TIA3" }.All(code => Entry(node, code).State == MergeEntryState.Batched), "the batch of three waits on its CI");
+        await Until(node, () => new[] { "TIA1", "TIA2", "TIA3" }.All(code => Entry(node, code).State == MergeEntryState.Batched), "the batch of three waits on its CI");
         await giveUp.CancelAsync();
 
         (await Record.ExceptionAsync(() => leader!)).ShouldBeAssignableTo<OperationCanceledException>();
         // The two left are not Batched waiting on each other for good: each takes its turn and merges on its own.
-        await Until(() => node.GitHub.Merged.Count == 3, "TIA2 and TIA3 merged one at a time after TIA9");
-        await Until(() => Entry(node, "TIA2").State == MergeEntryState.Merging && Entry(node, "TIA3").State == MergeEntryState.Merging, "TIA2 and TIA3 merging");
+        await Until(node, () => node.GitHub.Merged.Count == 3 && Entry(node, "TIA2").State == MergeEntryState.Merging && Entry(node, "TIA3").State == MergeEntryState.Merging
+            && Has(git, $"push --quiet origin --delete {Batch1}") && node.GitHub.ClosedPrs.Count == 1, "TIA2 and TIA3 merged one at a time after TIA9, and the batch ended");
         Entry(node, "TIA1").State.ShouldBe(MergeEntryState.Dropped);
         Entry(node, "TIA1").Why.ShouldNotBeNull().ShouldContain("given up");
         git.Calls.ShouldNotContain(c => c.EndsWith(":refs/heads/main", StringComparison.Ordinal));
@@ -619,6 +624,6 @@ public sealed class MergeBatchTests
         };
 
         row.Open.ShouldBeTrue();
-        PilotCommand.MergeLine(row).ShouldBe($"TIA1  #10  tianwen  1  {PrHead[..8]}  batched  · in a batch of 2 PRs: its CI runs once for them");
+        PilotCommand.MergeLine(row).ShouldBe($"TIA1  #10  tianwen  1  {PrHead[..9]}  batched  · in a batch of 2 PRs: its CI runs once for them");
     }
 }

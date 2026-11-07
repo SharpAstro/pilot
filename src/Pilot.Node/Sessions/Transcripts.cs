@@ -320,7 +320,7 @@ internal sealed class TranscriptTail(string path)
     private const int SummaryLength = 200;
 
     // The input keys that say best what a call is about, in the order they are tried.
-    private static readonly string[] SummaryKeys = ["command", "file_path", "path", "pattern", "url", "query", "skill", "description", "prompt"];
+    private static readonly string[] SummaryKeys = ["command", "file_path", "notebook_path", "path", "pattern", "url", "query", "skill", "description", "prompt"];
 
     /// <summary>One line of a call's input: its command, or its file, pattern, …; the first line of it, cut at <see cref="SummaryLength"/>.</summary>
     internal static string? Summarize(string tool, JsonElement input)

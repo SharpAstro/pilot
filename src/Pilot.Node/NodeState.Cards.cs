@@ -10,7 +10,7 @@ public sealed partial class NodeState
     {
         lock (_gate)
         {
-            return [.. _cards.Values.Where(c => !openOnly || c.State == CardState.Open).OrderByDescending(c => c.At).ThenByDescending(c => c.Id, StringComparer.Ordinal)];
+            return [.. _cards.Values.Where(c => !openOnly || c.State == CardState.Open).OrderByDescending(c => c.RungAt).ThenByDescending(c => c.Id, StringComparer.Ordinal)];
         }
     }
 
@@ -19,8 +19,9 @@ public sealed partial class NodeState
     /// that card, not a second one: one event, one card. A Handled card is born closed, a line and nothing to answer.
     /// </summary>
     /// <param name="link">The page the card is about (a flight's PR), opened from the card.</param>
+    /// <param name="attachment">The id of the image the node keeps for the card, with <paramref name="attachmentExt"/> its extension.</param>
     /// <param name="askedBy">The assistant's session an ask card is about (<see cref="CardKinds.AssistantAsk"/>), and <paramref name="why"/> the message it acted on.</param>
-    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null, string? summary = null)
+    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null, string? summary = null, string? attachment = null, string? attachmentExt = null)
     {
         lock (_gate)
         {
@@ -29,6 +30,17 @@ public sealed partial class NodeState
                 return open;
             }
             var now = _time.GetUtcNow();
+            // A landed flight (a folded or moved one lands too) has nothing left to ring about: a leg or worker card for it is a card
+            // about a cause already settled (#799 rule 2, row c3651). It is not stored or published; the caller gets the card it would
+            // have raised, closed. Said nowhere else: a Handled line per look of the watch would only be noise.
+            if (bin != CardBin.Handled && LegFlightOf(subject) is { } landedCode && _flights.TryGetValue(landedCode, out var landed) && landed.State == FlightState.Landed)
+            {
+                return new CardRow
+                {
+                    Id = "c0", Bin = CardBin.Handled, Kind = kind, Subject = subject, Title = title, Detail = detail, Choices = [], At = now,
+                    State = CardState.Closed, Outcome = $"{landedCode} landed already", ClosedBy = "node", ClosedAt = now,
+                };
+            }
             var number = _cards.Count == 0 ? 1 : _cards.Keys.Max(k => int.TryParse(k.AsSpan(1), out var n) ? n : 0) + 1;
             // One PR, one merge card: a pr-ready card replaces an older open merge card of the same subject, however it got there.
             if (bin != CardBin.Handled && kind == LegCommander.PrReady)
@@ -51,14 +63,47 @@ public sealed partial class NodeState
                 Link = link,
                 AskedBy = askedBy,
                 Why = why,
+                Attachment = attachment,
+                AttachmentExt = attachment is null ? null : attachmentExt,
                 At = now,
                 State = bin == CardBin.Handled ? CardState.Closed : CardState.Open,
                 Outcome = bin == CardBin.Handled ? "handled" : null,
                 ClosedBy = bin == CardBin.Handled ? "node" : null,
                 ClosedAt = bin == CardBin.Handled ? now : null,
             };
+            card = card with { Commits = CommitsOf(card, link) };
             Publish(new CardAddedEvent { Seq = _seq + 1, At = now, Card = card });
             return card;
+        }
+    }
+
+    /// <summary>The flight code of a subject naming a leg or anything under one (<c>flight/&lt;code&gt;/&lt;leg&gt;</c>); null for a flight's own subject or any other.</summary>
+    private static string? LegFlightOf(string subject)
+    {
+        if (!subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+        var parts = subject[Verbs.FlightTargetPrefix.Length..].Split('/');
+        return parts.Length >= 2 && parts[0].Length > 0 ? parts[0] : null;
+    }
+
+    /// <summary>
+    /// Rings an open card again where it is (#799 rule 5): one <see cref="CardChangedEvent"/> with <see cref="CardRow.RungAgainAt"/> set to
+    /// now, so it sorts first again on every client and pushes as a change. Its id, kind, choices and <see cref="CardRow.At"/> stay, so
+    /// no second card says what the first already did. False when it is not open.
+    /// </summary>
+    public bool RingAgain(string id)
+    {
+        lock (_gate)
+        {
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open)
+            {
+                return false;
+            }
+            var now = _time.GetUtcNow();
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { RungAgainAt = now } });
+            return true;
         }
     }
 
@@ -112,7 +157,8 @@ public sealed partial class NodeState
             var next = card with { Title = title, Detail = detail, Choices = [.. choices], Link = link, Kind = kind ?? card.Kind, Bin = nextBin };
             // A card that says something new says it in new words: the summary follows the title and kind, as the raiser wrote it or the table has it.
             next = next with { Summary = summary is null && next.Title == card.Title && next.Kind == card.Kind ? card.Summary : CardSummaries.Resolve(summary, detail, next.Kind, next.Subject, next.Title, next.Choices) };
-            if (next.Bin == card.Bin && next.Title == card.Title && next.Detail == card.Detail && next.Link == card.Link && next.Kind == card.Kind && next.Summary == card.Summary
+            next = next with { Commits = CommitsOf(next, link) };
+            if (next.Bin == card.Bin && next.Commits.Count == card.Commits.Count && next.Commits.All(c => card.Commits.TryGetValue(c.Key, out var u) && u == c.Value) && next.Title == card.Title && next.Detail == card.Detail && next.Link == card.Link && next.Kind == card.Kind && next.Summary == card.Summary
                 && next.Choices.SequenceEqual(card.Choices, EqualityComparer<CardChoice>.Create((a, b) => a! with { Args = [] } == b! with { Args = [] } && a.Args.SequenceEqual(b.Args))))
             {
                 return false;
@@ -216,5 +262,22 @@ public sealed partial class NodeState
                 Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { State = CardState.Closed, Outcome = outcome, ClosedBy = closedBy, ClosedAt = now } });
             }
         }
+    }
+
+    /// <summary>The commits a card's text names (title, detail, summary, choice notes), each with its commit page: in the repo of the card's link, of its PR, or of its flight's PR (<see cref="CommitRefs"/>).</summary>
+    private Dictionary<string, string> CommitsOf(CardRow card, string? link)
+    {
+        var repo = CommitRefs.RepoOf(link ?? card.Link);
+        if (repo is null && card.Subject.StartsWith(Verbs.PrTargetPrefix, StringComparison.Ordinal) && card.Subject.LastIndexOf('#') is > 0 and var hash)
+        {
+            var named = card.Subject[Verbs.PrTargetPrefix.Length..hash];
+            repo = named.Contains('/') ? named : null;
+        }
+        if (repo is null && card.Subject.StartsWith("flight/", StringComparison.Ordinal))
+        {
+            var code = card.Subject["flight/".Length..].Split('/')[0];
+            repo = _flights.TryGetValue(code, out var flight) ? CommitRefs.RepoOf(flight.PullRequestUrl) : null;
+        }
+        return CommitRefs.Named(repo, [card.Title, card.Detail, card.Summary, .. card.Choices.Select(c => c.Label), .. card.Choices.Select(c => c.Note)]);
     }
 }
