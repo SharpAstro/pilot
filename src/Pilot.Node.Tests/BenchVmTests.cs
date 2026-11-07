@@ -30,7 +30,7 @@ public sealed class BenchVmTests
     {
         var onVm = Row() with
         {
-            BenchVm = new BenchVm { Size = "Standard_F8s_v2", Image = "Canonical:ubuntu-24_04-lts:server:latest", Region = "westeurope", PricePerHour = 0.07, Minutes = 41.5, Cost = 0.048, Evictions = 1 },
+            BenchVm = new BenchVm { Size = "Standard_F8s_v2", Image = "Canonical:ubuntu-24_04-lts:server:latest", Region = "westeurope", PricePerHour = 0.3, PriceIsUpperBound = true, Minutes = 41.5, Cost = 0.2075, Evictions = 1 },
         };
         var local = Row() with { Local = true, BenchVm = new BenchVm { LocalBecause = "asked for with --local" } };
 
@@ -53,6 +53,17 @@ public sealed class BenchVmTests
 
         (old.Local, old.BenchVm).ShouldBe((false, null));
         old.ShouldBe(Row());
+    }
+
+    [Fact]
+    public void AVmFromBeforeThePriceBoundFieldReadsAsAPriceThatWasRead()
+    {
+        var node = JsonNode.Parse(JsonSerializer.Serialize(Row() with { BenchVm = new BenchVm { Size = "Standard_F8s_v2", PricePerHour = 0.07, PriceIsUpperBound = true } }, PilotJsonContext.Default.JobRow))!.AsObject();
+        node["benchVm"]!.AsObject().Remove("priceIsUpperBound").ShouldBeTrue();
+
+        var old = JsonSerializer.Deserialize(node.ToJsonString(), PilotJsonContext.Default.JobRow).ShouldNotBeNull();
+
+        old.BenchVm.ShouldNotBeNull().PriceIsUpperBound.ShouldBeFalse();
     }
 
     [Fact]
