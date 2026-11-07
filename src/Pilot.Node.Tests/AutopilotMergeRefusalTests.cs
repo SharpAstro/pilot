@@ -223,7 +223,15 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         // The look read the checks as passing; the merge's own read of them says one failed.
         _github.Checks = ChoiceStatus.Passing;
         var (flight, _) = await Passed("51");
-        _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3);
+        // Summary also answers the look's own read of the checks, so it turns failing only once the merge has begun and asks again.
+        _github.OnCall = call =>
+        {
+            if (call == nameof(IGitHub.PullRequestAsync) && _state.Merges().Any(m => m.Open))
+            {
+                _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3);
+            }
+            return Task.CompletedTask;
+        };
 
         await Checks().LookAsync(Ct);
 
