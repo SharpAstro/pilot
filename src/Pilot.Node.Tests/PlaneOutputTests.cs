@@ -348,7 +348,7 @@ public sealed class PlaneOutputTests : JobTestsBase
     [Trait("Category", "Slow")]
     public async Task ANoBuildJobInAPlaneWithNoNodeBuildOpensItsLogWithTheNoticeAndStillEnds()
     {
-        var jobs = Runner(planeOutput: null);
+        var jobs = Runner(planeOutput: true);
         var plane = PlaneIn("pil6");
 
         var first = Hand(jobs, "dotnet test --no-build", plane);
