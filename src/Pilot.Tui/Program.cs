@@ -225,6 +225,22 @@ chrome.Ideas.OnChatAbout = text =>
     chat.SwitchTo(null);
     chat.Prefill(text);
 };
+chat.OnAnswerNow = async sendId =>
+{
+    var refused = await ChatCommands.AnswerNowAsync(client, sendId, Who, stop.Token);
+    Redraw();
+    return refused;
+};
+chat.OnAnswerNowOn = async (node, sendId) =>
+{
+    var refused = clients.For(node) is { } to
+        ? await ChatCommands.AnswerNowAsync(to, sendId, Who, stop.Token)
+        : FleetClients.WatchOnly(node);
+    Redraw();
+    return refused;
+};
+// The node says the chat changed as the watchtower's words stream: read the feed now, not at the page's next look.
+feed.ChatChanged = chat.Refresh;
 chat.OnRestart = async () =>
 {
     var refused = await ChatCommands.RestartWatchtowerAsync(client, Who, stop.Token);

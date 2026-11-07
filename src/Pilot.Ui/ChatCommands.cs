@@ -35,6 +35,17 @@ internal static class ChatCommands
     }
 
     /// <summary>
+    /// Cancels the turn the watchtower is on so the queued message with <paramref name="sendId"/> is answered next (the node's
+    /// <c>chat-now</c>, PIL855). Null when the node did it, else its reason for refusing (nothing is running, the send is not queued,
+    /// others are ahead of it).
+    /// </summary>
+    public static async Task<string?> AnswerNowAsync(NodeClient client, string sendId, string who, CancellationToken cancellationToken)
+    {
+        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.ChatNow, Target = Verbs.WatchtowerTarget, Args = [sendId], Who = who }, cancellationToken);
+        return envelope.Success && envelope.Response is { Ok: true } ? null : $"refused: {envelope.Response?.Error ?? envelope.Error}";
+    }
+
+    /// <summary>
     /// Stops the node's watchtower and starts a fresh one, briefed from the node's state (the node's <c>restart-watchtower</c>).
     /// Null when the node took it, else what it said in refusing it.
     /// </summary>
