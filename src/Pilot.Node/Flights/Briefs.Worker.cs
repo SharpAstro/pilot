@@ -105,6 +105,11 @@ public static partial class Briefs
             text.AppendLine("heading, one list item each: a short title, then a `Do:` line (exactly what to do) and a `Done when:` line (what to look");
             text.AppendLine("for). The reviewer carries them over and the node files each as an issue for the controller. They never fail a leg.");
         }
+        if (PinBumps(flight) is { } bumps)
+        {
+            text.AppendLine();
+            text.AppendLine(bumps);
+        }
         if (flight.SiblingSource)
         {
             text.AppendLine();
@@ -194,5 +199,27 @@ public static partial class Briefs
             text.AppendLine("without them is not a finished leg. Commits with no step ticked and no finish mean the leg is still open.");
         }
         return text.ToString();
+    }
+
+    /// <summary>
+    /// The brief's section for a connected consumer whose producers' packages are up (<see cref="FlightRow.PackagePins"/>): its leg bumps
+    /// each pin to the version found, as a flight builds against the published packages (PIL802). Null when there is none.
+    /// </summary>
+    internal static string? PinBumps(FlightRow flight)
+    {
+        if (flight.PackagePins.Length == 0)
+        {
+            return null;
+        }
+        var text = new StringBuilder();
+        text.AppendLine("## Packages to take");
+        text.AppendLine("This flight builds against the published packages, and the producers it waited for have released. Bump each pin to the");
+        text.AppendLine("version below where this repo pins it (`Directory.Packages.props`, or the project's `PackageReference`), in its own commit,");
+        text.AppendLine("unless it already pins that version or a later one; a restore that fails NU1102 on it is held by the node, not worked round.");
+        foreach (var pin in flight.PackagePins)
+        {
+            text.AppendLine($"- `{pin.Id}` {pin.Version} (from {pin.Producer})");
+        }
+        return text.ToString().TrimEnd();
     }
 }

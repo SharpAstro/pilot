@@ -35,6 +35,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(OverlapRow))]
 [JsonSerializable(typeof(FoldedIssue))]
 [JsonSerializable(typeof(PackageWait))]
+[JsonSerializable(typeof(PackagePin))]
 [JsonSerializable(typeof(PeerConnection))]
 [JsonSerializable(typeof(LegWait))]
 [JsonSerializable(typeof(GoAroundReason))]

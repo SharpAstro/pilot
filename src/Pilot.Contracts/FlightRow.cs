@@ -240,6 +240,18 @@ public sealed record FlightRow
     private readonly PackageWait[]? _packageWaits;
 
     /// <summary>
+    /// The producers' packages that met this flight's waits, each with the version found on nuget.org: the consumer's leg bumps its
+    /// pin to it (PIL802). Optional and additive, so the wire version does not move; null-safe as <see cref="PackageWaits"/>.
+    /// </summary>
+    public PackagePin[] PackagePins
+    {
+        get => _packagePins ?? [];
+        init => _packagePins = value;
+    }
+
+    private readonly PackagePin[]? _packagePins;
+
+    /// <summary>
     /// Where the flight came from when another node handed it over (<c>receive-flight</c>, #376): which node, after which leg,
     /// when. Null for a flight made on this node.
     /// </summary>
@@ -425,6 +437,19 @@ public sealed record PackageWait
 
     /// <summary>The producer's clone, for a producer that is a repo and no flight (<see cref="Producer"/> is then its name); null otherwise.</summary>
     public string? RepoPath { get; init; }
+}
+
+/// <summary>A producer's package a connected consumer now takes: the version the node found on nuget.org when the consumer's wait was met.</summary>
+public sealed record PackagePin
+{
+    /// <summary>The package id.</summary>
+    public required string Id { get; init; }
+
+    /// <summary>The version found on nuget.org, which the consumer's pin is bumped to.</summary>
+    public required string Version { get; init; }
+
+    /// <summary>The code of the producer flight (or the producer repo's name).</summary>
+    public required string Producer { get; init; }
 }
 
 /// <summary>What a held flight waits for, in one place for every client's <c>held, waiting for …</c>.</summary>
