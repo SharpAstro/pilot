@@ -16,9 +16,9 @@ public static class NodeWire
     /// <c>legRemoved</c> event (<c>remove-leg</c>), which a client that does not know it cannot read. 3: the <c>milestonesChanged</c> and
     /// <c>issuesChanged</c> events and the snapshot's milestones and issues (<c>set-milestone</c>). 4: the session ledger's
     /// <see cref="SessionRow.StartReason"/>, <see cref="SessionRow.EndReason"/>, <see cref="SessionRow.EndedAt"/> and
-    /// <see cref="SessionRow.WallSeconds"/> (#542). 5: the <c>decision</c> event (#583), which a client that does not know it cannot read. 6: <see cref="NodeInfo.Ranges"/> and <see cref="SettingRow.Deviations"/>, the role ranges a node runs with and where they differ from the fleet's (#599). 7: <see cref="CommandResult.BreakUp"/> and the <c>break-up-issue</c> and <c>accept-break-up</c> verbs (#656). 8: <see cref="JobKind.Bench"/>, the exclusive job of <c>pilot run --alone</c> (#675), a kind an older client cannot read. 9: <see cref="CardRow.Commits"/>, the commits a card's text names, each linked to its page (#691).
+    /// <see cref="SessionRow.WallSeconds"/> (#542). 5: the <c>decision</c> event (#583), which a client that does not know it cannot read. 6: <see cref="NodeInfo.Ranges"/> and <see cref="SettingRow.Deviations"/>, the role ranges a node runs with and where they differ from the fleet's (#599). 7: <see cref="CommandResult.BreakUp"/> and the <c>break-up-issue</c> and <c>accept-break-up</c> verbs (#656). 8: <see cref="JobKind.Bench"/>, the exclusive job of <c>pilot run --alone</c> (#675), a kind an older client cannot read. 9: <see cref="CardRow.Commits"/>, the commits a card's text names, each linked to its page (#691). 10: the <c>retired</c> outcome of <c>finish-leg</c> (#799), which an older node refuses. (<see cref="CardRow.RungAgainAt"/> of #799 is optional, so it does not raise it.)
     /// </summary>
-    public const int Version = 9;
+    public const int Version = 10;
 
     /// <summary>Which node this is.</summary>
     public const string NodeRoute = "/api/v1/node";

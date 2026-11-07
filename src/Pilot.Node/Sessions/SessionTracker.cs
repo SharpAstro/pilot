@@ -46,6 +46,9 @@ public sealed class SessionTracker : BackgroundService
     /// <summary>Called once when a row first turns ended or failed on its own: the owner ids and why; drops the queued jobs they own.</summary>
     public Action<IReadOnlyCollection<string>, string>? DropJobs { get; set; }
 
+    /// <summary>Whether the commander is replacing the reviewer with this row or session id (its jobs are kept for the replacement).</summary>
+    public Func<string, bool>? IsBeingReplaced { get; set; }
+
     /// <summary>
     /// The node stopped row <paramref name="id"/> and its delivery saw the process gone: the row is ended now, with
     /// <paramref name="why"/>, and stays so while the listing gives its session no process. A resume that does clears it.
@@ -90,6 +93,32 @@ public sealed class SessionTracker : BackgroundService
 
     /// <summary>The hooks sessions post: a row follows its session's latest one while the session runs.</summary>
     public HookBook Hooks { get; init; } = new();
+
+    /// <summary>Claude Code's record of a background job by its short id (state.json); null reads none. Read only for a row with no process, to tell an end by design from a crash.</summary>
+    public Func<string, ClaudeJobRecord?> JobRecord { get; init; } = _ => null;
+
+    // A job with no process does not change its record again: read once, kept by short id (a poll would otherwise read every ended job's file).
+    private readonly Dictionary<string, ClaudeJobRecord> _jobRecords = new Dictionary<string, ClaudeJobRecord>(StringComparer.Ordinal);
+
+    private ClaudeJobRecord? JobRecordOf(ClaudeAgentRow agent)
+    {
+        if (agent.Pid is not null || agent.Kind != "background")
+        {
+            // Running (again): what it left when it last ended is stale by its next end.
+            _jobRecords.Remove(agent.ShortId);
+            return null;
+        }
+        if (_jobRecords.TryGetValue(agent.ShortId, out var known))
+        {
+            return known;
+        }
+        var read = JobRecord(agent.ShortId);
+        if (read is { TurnFinished: true } or { Failed: true })
+        {
+            _jobRecords[agent.ShortId] = read;
+        }
+        return read;
+    }
 
     /// <summary>What sessions reported of their own state (<c>pilot session report</c>); preferred over the listing and transcripts while newest.</summary>
     public ReportBook Reports { get; init; } = new();
@@ -600,7 +629,8 @@ public sealed class SessionTracker : BackgroundService
             var round = joined is { Flight: { } code, Leg: { } leg } ? _state.Legs(code).FirstOrDefault(l => l.Name == leg)?.GoArounds ?? 0 : 0;
             Ledger.Record(agent.SessionId, agent.Name, joined, SpendRoles.Of(agent.Name, joined.Role), round, spend, now);
         }
-        var built = SessionRowBuilder.Build(agent, facts, record, repo, joined, Hooks.Of(agent.SessionId), Reports.Of(agent.SessionId));
+        var built = SessionRowBuilder.Build(agent, facts, record, repo, joined, Hooks.Of(agent.SessionId), Reports.Of(agent.SessionId),
+            JobRecordOf(agent));
         if (renamed is not null)
         {
             built = built with { Name = renamed };
@@ -773,7 +803,10 @@ public sealed class SessionTracker : BackgroundService
             else
             {
                 _justEnded.Remove(id);
-                if (SessionMessenger.ReplacedBy(row, all, _state.CurrentWatchtower) is null)
+                // A reviewer the commander is replacing is not ended for good: its replacement row is not there yet, and its queued jobs
+                // are the replacement's to adopt (the commander drops them itself when the head moved).
+                if (SessionMessenger.ReplacedBy(row, all, _state.CurrentWatchtower) is null
+                    && IsBeingReplaced?.Invoke(row.Id) != true && IsBeingReplaced?.Invoke(row.SessionId) != true)
                 {
                     _confirmedEnded[id] = 0;
                     DropJobs?.Invoke([row.Id, row.SessionId, .. row.EarlierSessionIds ?? []], "its worker ended");
@@ -794,6 +827,7 @@ public sealed class SessionTracker : BackgroundService
         _stopped.Remove(id);
         _given.Remove(id);
         _listedNames.Remove(id);
+        _jobRecords.Remove(id);
         _transcripts.Remove(sessionId);
         foreach (var copy in _rowOf.Where(c => c.Value == id).Select(c => c.Key).ToList())
         {

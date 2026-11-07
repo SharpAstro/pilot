@@ -278,7 +278,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     internal override Action<string>? SelectionCopy => CopyText;
 
-    internal override RectF32 SelectionViewport => _scroll.Viewport;
+    internal override RectF32 PageSelectionViewport => _scroll.Viewport;
 
     internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true };
 
@@ -328,7 +328,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         Machines(blocks, screen);
         var body = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 14f).Stretch();
         var page = Layout.Builder.VStack(Header(screen), body.HStar()).Bg(PageBg).Stretch();
-        page = WithSelection(page);
+        page = WithPageSelection(page);
         return About?.Over(page) ?? page;
     }
 

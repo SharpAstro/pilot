@@ -40,7 +40,7 @@ public sealed class SpendAlertTests : LegHoldTestsBase
         await GoAround();
 
         var ring = Alerts().ShouldHaveSingleItem();
-        ring.Bin.ShouldBe(CardBin.Ring);
+        ring.Bin.ShouldBe(CardBin.ForYou);
         ring.Kind.ShouldBe(LegCommander.SpendAlertKind);
         ring.Title.ShouldStartWith("TIA1/parser has spent 1,000 tokens, 10 % of the 7-day window, before round 2");
         ring.Detail.ShouldNotBeNull().ShouldContain("claude-sonnet-5-5, high");

@@ -17,6 +17,9 @@ internal sealed class AutopilotSwitch
     /// <summary>The word on the switch, lit or not.</summary>
     public const string Label = "Autopilot";
 
+    /// <summary>The word on the switch while the node has a press (the owner, 2026-11-07: "it should show 'Setting...'").</summary>
+    public const string WorkingLabel = "Setting…";
+
     private static RGBAColor32 Bright => Palette.Current.Bright;
     private static RGBAColor32 Dim => Palette.Current.Dim;
 
@@ -101,7 +104,8 @@ internal sealed class AutopilotSwitch
         // As tall as the header's other buttons, its word in their middle.
         var on = Shown;
         var working = Presses.PendingOf(Action) is not null;
-        var button = Layout.Builder.Text(Label, 12f, working ? night?.Dim ?? Dim : on ? Bright : night?.Dim ?? Dim, TextAlign.Center, TextAlign.Center)
+        // While the node has the press the switch says so in words ("Setting…"), then shows the state it took, never "done".
+        var button = Layout.Builder.Text(working ? WorkingLabel : Label, 12f, working ? night?.Dim ?? Dim : on ? Bright : night?.Dim ?? Dim, TextAlign.Center, TextAlign.Center)
             .Pad(10f, 0f)
             .WAuto()
             .HFixed(AboutCard.HeaderButton)
@@ -114,7 +118,8 @@ internal sealed class AutopilotSwitch
         // The asked state, dimmed, with no hit while the node has it: a press that missed would read the same, and no second one is taken.
         return Presses.Button(Action, Action,
             () => button.BgHover(on ? LitHover : night?.ButtonHover ?? PlainHover).Follows(new HitResult.ButtonHit(Action), _ => Press(toggle)),
-            _ => button);
+            _ => button,
+            doneMark: false);
     }
 }
 
