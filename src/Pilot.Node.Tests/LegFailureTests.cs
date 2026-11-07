@@ -206,15 +206,28 @@ public sealed class LegFailureTests : IDisposable
                 var summary = LegCommander.FailedSummary(name, cause, checkFailed, BothNotes);
 
                 summary.Length.ShouldBeLessThanOrEqualTo(240, $"{name} / {cause}");
-                summary.ShouldStartWith($"The worker of {name} stopped");
-                // The notes about the files and main are the facts kept; the cause gives way when something must. (A name so long that
-                // nothing is left for the cause cuts the whole sentence instead.)
-                if (name.Length < 40)
-                {
-                    summary.ShouldContain("main has changed those files");
-                }
+                // The notes about the files and main are the facts kept; the cause gives way first, then the end of a long name
+                // (the card's title keeps the whole name), however long either is.
+                summary.ShouldContain("main has changed those files", customMessage: $"{name} / {cause}");
+                summary.ShouldStartWith(name.Length > 40 ? "The worker of PIL834/" : $"The worker of {name} stopped");
             }
         }
+    }
+
+    [Theory]
+    [InlineData(38)]
+    [InlineData(40)]
+    [InlineData(45)]
+    [InlineData(60)]
+    public void ALegNameOfFortyCharactersOrMoreStillKeepsTheMainNote(int nameLength)
+    {
+        var name = "PIL834/" + new string('n', nameLength - 7);
+
+        var summary = LegCommander.FailedSummary(name, "its check fails building Pilot.Ui and Pilot.Gui", true, BothNotes);
+
+        summary.Length.ShouldBeLessThanOrEqualTo(240);
+        summary.ShouldContain("so taking main may fix it.");
+        summary.ShouldContain("its check fails building Pilot.Ui");
     }
 
     [Fact]

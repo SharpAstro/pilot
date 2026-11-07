@@ -219,6 +219,8 @@ public sealed partial class LegCommander
                 var mainDetail = mainCommits.Count > 0
                     ? $"main has changed the failing files since the flight took it; taking main may fix it:\n{string.Join('\n', mainCommits.Take(5))}{(mainCommits.Count > 5 ? $"\n...and {mainCommits.Count - 5} more" : "")}"
                     : null;
+                // The Detail holds the worker's report and the notes about main, not the tail of the recorded check output: the summary and
+                // the title name the cause, and the leg's report keeps the rest (pilot #844 review, round 3 note 3: left as it is).
                 var detail = string.Join("\n\n", new[] { report, notWhy, mainDetail }.Where(s => !string.IsNullOrEmpty(s)));
                 state.RaiseCard(CardBin.Ring, "leg-failed", Verbs.LegTarget(flight.Code, leg.Name),
                     // "files this leg did not change": what was compared is the failing files and their src/<Project>/ folders, not the leg's code as a whole.
@@ -248,20 +250,40 @@ public sealed partial class LegCommander
 
     /// <summary>
     /// The leg-failed card's summary, never longer than the panel draws (<c>CardsView.SummaryChars</c>, 240): when the sentence is
-    /// too long its cause is cut with an ellipsis, so the notes about the flight's files and main stay whole.
+    /// too long its cause is cut with an ellipsis, then the end of the leg's name (the card's title keeps the whole name), so the
+    /// notes about the flight's files and main stay whole.
     /// </summary>
     internal static string FailedSummary(string name, string reason, bool checkFailed, string notes)
     {
         const int PanelChars = 240;
-        string Build(string cause) => $"The worker of {name} stopped{(checkFailed ? $" and {cause}" : $": {cause}")}.{notes}";
-        var text = Build(reason);
+        // Past these a cause or a name is only an ellipsis: what is left of the sentence is cut instead.
+        const int CauseFloor = 24, NameFloor = 16;
+        string Build(string shownName, string cause) => $"The worker of {shownName} stopped{(checkFailed ? $" and {cause}" : $": {cause}")}.{notes}";
+        static string Elide(string text, int length) => text[..(length - 3)].TrimEnd() + "...";
+        var text = Build(name, reason);
         if (text.Length <= PanelChars)
         {
             return text;
         }
-        var room = reason.Length - (text.Length - PanelChars);
-        // Past this a cause is only an ellipsis: the whole sentence is cut instead.
-        return room >= 12 ? Build(reason[..(room - 3)].TrimEnd() + "...") : text[..(PanelChars - 3)] + "...";
+        var cause = reason;
+        var shownName = name;
+        var over = text.Length - PanelChars;
+        var causeLength = Math.Max(Math.Min(reason.Length, CauseFloor), reason.Length - over);
+        if (causeLength < reason.Length)
+        {
+            cause = Elide(reason, causeLength);
+            over -= reason.Length - cause.Length;
+        }
+        if (over > 0)
+        {
+            var nameLength = Math.Max(Math.Min(name.Length, NameFloor), name.Length - over);
+            if (nameLength < name.Length)
+            {
+                shownName = Elide(name, nameLength);
+            }
+        }
+        text = Build(shownName, cause);
+        return text.Length <= PanelChars ? text : text[..(PanelChars - 3)] + "...";
     }
 
     /// <summary>The outcome of finish-leg for a leg stopped on the controller's or the owner's word: done in the row, its report starting with this.</summary>
