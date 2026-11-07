@@ -109,7 +109,15 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
             ? $"pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {Quote(script)}"
             : $"sh {Quote(script)}";
         var timeout = spec.Timeout == TimeSpan.Zero ? JobRunner.DefaultTimeout : spec.Timeout;
-        var (jobId, ended) = jobs.QueueBench(line, legs[0].Worktree, timeout, owner, spec.Local);
+        // What a spot VM needs to run it instead, if the settings send it there (#823): the commits it benchmarks and the words it runs.
+        var plan = new CloudBenchPlan
+        {
+            RepoPath = repo.Path,
+            Refs = [.. legs.Select(l => new CloudBenchRef(l.Label, l.Ref, l.Sha))],
+            Fetch = spec.Fetch,
+            Command = spec.Command,
+        };
+        var (jobId, ended) = jobs.QueueBench(line, legs[0].Worktree, timeout, owner, spec.Local, plan);
         _ = PostWhenEndedAsync(repo, legs, spec, jobId, ended, script);
         return state.Complete(command, null, made: jobId);
     }
@@ -177,7 +185,7 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
         try
         {
             var job = await ended;
-            var body = Body(repo, legs, job);
+            var body = Body(repo, legs, job, JobRunner.CloudTmpOf(options.DataFolder, jobId));
             var note = "";
             if (spec.Pr is { } pr)
             {
@@ -203,6 +211,8 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
             {
                 await RemoveAsync(repo.Path, leg.Worktree);
             }
+            // The results a VM's bench copied back: on the card now.
+            TryDelete(JobRunner.CloudTmpOf(options.DataFolder, jobId));
             try
             {
                 File.Delete(script);
@@ -238,7 +248,7 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
     }
 
     /// <summary>The card and comment body: per ref a heading with the ref and its short commit and then its tables, after the job's exit and log.</summary>
-    private static string Body(RepoInfo repo, List<Leg> legs, JobRow job)
+    private static string Body(RepoInfo repo, List<Leg> legs, JobRow job, string cloudTmp)
     {
         var text = new StringBuilder();
         text.Append("# Benchmark of ").AppendLine(repo.Name);
@@ -246,10 +256,16 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
         text.Append("Job ").Append(job.Id).Append(' ')
             .Append(job.State == JobState.Succeeded ? "succeeded (exit 0)" : job.ExitCode is { } code ? $"failed (exit {code})" : $"ended: {job.Error ?? job.State.ToString().ToLowerInvariant()}")
             .Append(", log ").AppendLine(job.LogPath);
+        if (WhereItRan(job) is { } where)
+        {
+            text.AppendLine().AppendLine(where);
+        }
+        // On a VM the results were copied back to the job's folder, one per ref; on this machine they are in the ref's worktree.
+        var onVm = job.BenchVm?.Size is not null;
         foreach (var leg in legs)
         {
             text.AppendLine().Append("## ").Append(leg.Label).Append(" `").Append(leg.Ref).Append("` at `").Append(CommitRefs.Short(leg.Sha)).AppendLine("`");
-            var tables = Tables(leg.Worktree);
+            var tables = Tables(onVm ? AzureBench.ResultsFolderOf(cloudTmp, leg.Label) : leg.Worktree);
             if (tables.Count == 0)
             {
                 text.AppendLine().AppendLine("No BenchmarkDotNet results were found (no `*-report-github.md` under `BenchmarkDotNet.Artifacts/results`): see the log.");
@@ -261,6 +277,52 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
             }
         }
         return text.ToString();
+    }
+
+    /// <summary>
+    /// The line of the card that says where the bench ran: the VM's size, image and region with its minutes and cost, and a spot eviction that
+    /// made it start again; or, for a bench kept on this machine, why. Null for a row that has neither.
+    /// </summary>
+    internal static string? WhereItRan(JobRow job)
+    {
+        if (job.BenchVm is not { } vm)
+        {
+            return null;
+        }
+        if (vm.Size is null)
+        {
+            return vm.LocalBecause is { Length: > 0 } because ? $"Ran on this node's machine: {because}." : null;
+        }
+        var line = new StringBuilder($"Ran on a spot VM: `{vm.Size}`, image `{vm.Image}`, region `{vm.Region}`");
+        if (vm.Minutes is { } minutes)
+        {
+            line.Append(CultureInfo.InvariantCulture, $", {minutes:0.#} minutes");
+        }
+        if (vm.Cost is { } cost)
+        {
+            line.Append(vm.PriceIsUpperBound ? ", at most " : ", costing ").Append(CultureInfo.InvariantCulture, $"${cost:0.00##}");
+            if (vm.PricePerHour is { } price)
+            {
+                line.Append(CultureInfo.InvariantCulture, $" at ${price:0.0###} an hour");
+            }
+            if (vm.PriceIsUpperBound)
+            {
+                line.Append(" (the spot price could not be read, so the settings' most is counted)");
+            }
+        }
+        line.Append('.');
+        if (vm.Evictions > 0)
+        {
+            line.Append(vm.Evictions == 1
+                ? " Azure evicted the spot VM once and the bench was re-queued on a new one."
+                : $" Azure evicted the spot VM {vm.Evictions} times; the bench was re-queued once and ended when it was evicted again.");
+        }
+        // Resources a failed delete left behind cost money until a person deletes them: the row says which.
+        if (job.State == JobState.Succeeded && job.Error is { Length: > 0 } left)
+        {
+            line.Append(" **").Append(left).Append("**");
+        }
+        return line.ToString();
     }
 
     private static List<(string Name, string Table)> Tables(string worktree)

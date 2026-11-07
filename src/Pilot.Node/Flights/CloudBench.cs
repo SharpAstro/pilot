@@ -130,6 +130,9 @@ public interface ICloudBench
 
 public static class CloudBenches
 {
+    /// <summary>What the log line that says a spot VM was evicted starts with, so the node's job can tell it from the bench's own output and put it in the step.</summary>
+    public const string EvictedPrefix = "=== the spot VM was evicted by Azure";
+
     /// <summary>
     /// The bench with a spot eviction run again: Azure may take the VM back at any time, which says nothing about the bench, so after one
     /// the node starts it once more (<paramref name="attempts"/> in all) and says so in the log. The VM of the result adds up the minutes, the
@@ -146,7 +149,7 @@ public static class CloudBenches
             {
                 return result with { Vm = total };
             }
-            request.Log($"=== the spot VM was evicted by Azure: starting the benchmark again ({attempt + 1} of {attempts}) ===");
+            request.Log($"{EvictedPrefix}: starting the benchmark again ({attempt + 1} of {attempts}) ===");
             earlier = total;
         }
     }

@@ -439,6 +439,11 @@ public static partial class NodeApp
     /// <summary>The jobs the node runs for a plane.</summary>
     private static void AddJobs(WebApplicationBuilder builder)
     {
+        // A bench on a spot VM (#823): az, ssh and scp for the VM, and Azure's public price list for what it costs. Used only when the cloud
+        // settings are saved and the bench is not --local.
+        builder.Services.AddSingleton<ICloudProcess, SystemCloudProcess>();
+        builder.Services.AddSingleton<IRetailPrices>(_ => new AzureRetailPrices(new HttpClient(new CountingHandler(NodeTraffic.Shared) { InnerHandler = new HttpClientHandler() })));
+        builder.Services.AddSingleton<ICloudBench>(services => new AzureBench(services.GetRequiredService<ICloudProcess>(), services.GetRequiredService<IRetailPrices>(), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton(services =>
         {
             var commands = services.GetRequiredService<NodeCommands>();
@@ -452,6 +457,8 @@ public static partial class NodeApp
                 MinFreeMemory = (long)(Math.Max(0, nodeOptions.JobMemoryGigabytes) * (1L << 30)),
                 Priority = nodeOptions.JobPriority,
                 PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? false,
+                CloudBench = services.GetRequiredService<ICloudBench>(),
+                Git = services.GetRequiredService<IGit>(),
                 EndedForGood = id => services.GetRequiredService<SessionTracker>().IsEndedForGood(id),
                 Lifetime = services.GetService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
             };
