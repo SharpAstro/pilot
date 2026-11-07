@@ -688,11 +688,20 @@ public static class Verbs
 
     /// <summary>
     /// <c>touches flight/&lt;code&gt; &lt;file…&gt;</c>: the planner's overlap check across nodes. Compares the files the flight's legs will
-    /// change with every other not-landed flight of the repo on this node and on each reachable peer (its pushed branch's changed files
-    /// against its base) and with every open PR, and answers a line per flight or PR: the shared files and fold, connect or parallel
-    /// (<c>unknown</c> for one whose branch is not pushed or whose node could not be reached). Reads only; changes nothing.
+    /// change with every other not-landed flight of the repo on this node and on each reachable peer (the files its plane changes against
+    /// its base, asked of its node with <see cref="FlightChanges"/>; its pushed branch's when that node is older) and with every open PR,
+    /// and answers a line per flight or PR: the shared files and fold, connect or parallel (<c>unknown</c> for one whose node did not
+    /// answer, or whose PR gh would not list). Reads only; changes nothing.
     /// </summary>
     public const string Touches = "touches";
+
+    /// <summary>
+    /// <c>flight-changes flight/&lt;code&gt;</c>: what a node's own flight changes against its base, read from the flight's plane itself
+    /// (committed, uncommitted and untracked files), so a peer's <see cref="Touches"/> sees a flight whose branch is not pushed. The answer's
+    /// <see cref="CommandResult.Made"/> is a line per file, <c>&lt;added plus removed lines&gt;&lt;TAB&gt;&lt;path&gt;</c>; a flight that has landed or
+    /// whose plane is gone is refused, saying why. Reads only and changes nothing, so a grant may send it.
+    /// </summary>
+    public const string FlightChanges = "flight-changes";
 
     /// <summary>
     /// <c>overlap flight/&lt;code&gt; &lt;other&gt; [file=&lt;path&gt;…] &lt;why…&gt;</c>: the planner found the flight to look like part of another
