@@ -192,7 +192,7 @@ public sealed class HookInstallerTests
     private static JsonObject Parsed(string text) => JsonNode.Parse(text)!.AsObject();
 
     [Fact]
-    public void InstallAddsAnExecFormHookPerEventAsyncButStopAndKeepsEverythingElse()
+    public void InstallAddsAnExecFormHookPerEventAsyncButStopAndPermissionRequestAndKeepsEverythingElse()
     {
         var installed = Parsed(HookCommands.Install(Theirs, Node, socket: null));
 
@@ -203,8 +203,8 @@ public sealed class HookInstallerTests
         {
             var ours = hooks[name]!.AsArray().Select(e => e!["hooks"]![0]!).Single(h => h["command"]!.GetValue<string>() == Node);
             ours["args"]!.AsArray().Select(a => a!.GetValue<string>()).ShouldBe(["hook"]);
-            // Stop waits for the node's answer, as an async hook's is never read; every other event runs async.
-            if (name == "Stop")
+            // Stop and PermissionRequest wait for the node's answer, as an async hook's is never read; every other event runs async.
+            if (name is "Stop" or "PermissionRequest")
             {
                 ours.AsObject().ContainsKey("async").ShouldBeFalse();
             }
@@ -232,6 +232,26 @@ public sealed class HookInstallerTests
         stop.Count.ShouldBe(2);
         stop[1]["command"]!.GetValue<string>().ShouldBe(@"D:\pilot\pilot-node.exe");
         stop[1]["args"]!.AsArray().Select(a => a!.GetValue<string>()).ShouldBe(["hook", "--node-socket", @"D:\s\node.sock"]);
+    }
+
+    [Fact]
+    public void AnOlderAsyncPermissionRequestEntryIsRewrittenInStepAndRemoveStillFindsIt()
+    {
+        // What an install before the node answered permissions wrote: async, so the node's allow was never read.
+        var older = $$"""
+            { "hooks": { "PermissionRequest": [ { "matcher": "*", "hooks": [ { "type": "command", "command": {{System.Text.Json.JsonSerializer.Serialize(Node)}}, "args": ["hook"], "timeout": 10, "async": true } ] } ] } }
+            """;
+
+        var updated = Parsed(HookCommands.Install(older, Node, socket: null));
+
+        var entries = updated["hooks"]!["PermissionRequest"]!.AsArray();
+        var handler = entries.Single()!["hooks"]![0]!.AsObject();
+        handler.ContainsKey("async").ShouldBeFalse();
+        handler["command"]!.GetValue<string>().ShouldBe(Node);
+        HookCommands.Install(HookCommands.Install(older, Node, socket: null), Node, socket: null).ShouldBe(HookCommands.Install(older, Node, socket: null));
+        Parsed(HookCommands.Remove(HookCommands.Install(older, Node, socket: null))).ContainsKey("hooks").ShouldBeFalse();
+        // The old entry alone is removed as well.
+        Parsed(HookCommands.Remove(older)).ContainsKey("hooks").ShouldBeFalse();
     }
 
     [Fact]
