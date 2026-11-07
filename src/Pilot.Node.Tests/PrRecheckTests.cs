@@ -186,7 +186,10 @@ public abstract class PrRecheckTestsBase : IDisposable
         _github.Pr = Pr("OPEN") with { Head = head };
         _state.PutFlight(_state.Flights().Single() with { PullRequest = 7, PullRequestUrl = "https://github.com/acme/widget/pull/7" });
         _github.Prs["acme/widget#7"] = _github.Pr;
-        await Run(Verbs.Review, "flight/" + flight.Code, _state.Flights().Single().Review!.Reviewer, "pass", "fine");
+        // A reviewer that was held or queued at the open (a loaded machine, a limit) leaves no review: say why, not a null.
+        var opened = _state.Flights().Single();
+        opened.Review.ShouldNotBeNull($"no review after the PR opened; queued: {opened.Queued}; cards: {string.Join("; ", _state.Cards(openOnly: true).Select(c => $"{c.Kind}: {c.Title}"))}");
+        await Run(Verbs.Review, "flight/" + flight.Code, opened.Review.Reviewer, "pass", "fine");
         _github.Labels[7] = [PilotMarks.Recheck];
         return _state.Flights().Single();
     }
