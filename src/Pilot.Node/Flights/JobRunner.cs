@@ -797,7 +797,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     private volatile bool _stoppingNow;
 
-    private bool NodeStopping => _stoppingNow || _stopping.IsCancellationRequested || Lifetime?.ApplicationStopping.IsCancellationRequested == true;
+    /// <summary>True once the node is stopping (the host's lifetime or this runner's own stop): a cancelled wait is then the node's end, not a caller giving up.</summary>
+    public bool NodeStopping => _stoppingNow || _stopping.IsCancellationRequested || Lifetime?.ApplicationStopping.IsCancellationRequested == true;
 
     // Results of check jobs a carried run ended with no waiter (the worker's finish had not come back yet), kept for that finish.
     private readonly ConcurrentDictionary<string, (JobRow Row, CheckRun Run, DateTimeOffset At)> _keptResults = new(StringComparer.Ordinal);

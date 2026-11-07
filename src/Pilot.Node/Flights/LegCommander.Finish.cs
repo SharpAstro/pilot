@@ -128,7 +128,7 @@ public sealed partial class LegCommander
                     }
                 }
                 {
-                    var (checkedFlight, checkedLeg, run, late) = await RerunCheckAsync(flight, leg, cancellationToken);
+                    var (checkedFlight, checkedLeg, run, late) = await RerunCheckAsync(flight, leg, cancellationToken, asked: command.Who is { Length: > 0 } who ? (who, report) : null);
                     (flight, leg) = (checkedFlight, checkedLeg);
                     // A check that failed only on tests the flight's change does not touch passes, with them named (#752).
                     if (run is { Passed: false } && leg.Check is { } ranCheck)
@@ -433,7 +433,7 @@ public sealed partial class LegCommander
     /// timeout is refused rather than running the same check again. A check planned before plan refused wrong paths is written to
     /// find them now, and kept so: else no go-around passes it. The run is null for a leg with no check.
     /// </summary>
-    private async Task<(FlightRow Flight, LegRow Leg, CheckRun? Run, bool Late)> RerunCheckAsync(FlightRow flight, LegRow leg, CancellationToken cancellationToken)
+    private async Task<(FlightRow Flight, LegRow Leg, CheckRun? Run, bool Late)> RerunCheckAsync(FlightRow flight, LegRow leg, CancellationToken cancellationToken, (string By, string Report)? asked = null)
     {
         if (leg.Check is not { Length: > 0 } check)
         {
@@ -462,7 +462,9 @@ public sealed partial class LegCommander
         using (var call = Calling(flight.Code, $"rerunning {leg.Name}'s check since {since.ToLocalTime():HH:mm}",
             "pilot status shows it; end your turn: the node tells you the outcome"))
         {
-            leg = leg with { Recheck = new LegRecheck { Check = check, Since = since } };
+            // A finish a worker asked for keeps what it was asked (its report and who asked), so a node that restarts while this runs
+            // can run that same finish itself and leave its worker with nothing to repeat (pilot #819).
+            leg = leg with { Recheck = new LegRecheck { Check = check, Since = since, By = asked?.By, Report = asked?.Report } };
             state.PutLeg(leg);
             seen = leg;
             HoldForLeg(flight.Code, leg.Name, $"the {leg.Name} leg's check is rerunning since {since.ToLocalTime():HH:mm}");
@@ -477,6 +479,15 @@ public sealed partial class LegCommander
                         ? again with { Tail = $"stopped by its budget twice; the machine was saturated the first time, so it was retried once\n{again.Tail}" }
                         : again;
                 }
+            }
+            catch (OperationCanceledException) when (checks.NodeStopping)
+            {
+                // The node is stopping (an update, a restart), and the wait on the check's job was cancelled with it: the job is left
+                // for the next node, which carries a queued one over or reattaches to a running one. So the recheck stays open (no
+                // outcome, Since and Check kept) for NodeState's restart pass to word as carried or still running, instead of
+                // recording the cancellation as the check having thrown ("could not be run (A task was canceled.)", pilot #819).
+                HoldForLeg(flight.Code, leg.Name);
+                throw;
             }
             catch (Exception ex)
             {
