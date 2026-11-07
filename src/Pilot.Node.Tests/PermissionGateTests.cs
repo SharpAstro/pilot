@@ -58,7 +58,8 @@ public sealed class PermissionGateTests
         };
         if (input is not null)
         {
-            hook["tool_input"] = input;
+            // A JsonNode has one parent: a caller reusing its input across hooks needs a copy each time.
+            hook["tool_input"] = input.DeepClone();
         }
         if (agent is not null)
         {
