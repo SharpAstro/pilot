@@ -146,10 +146,15 @@ public sealed class CardLegLinkTests
             }),
             ("leg-failed", new CardRow
             {
-                Id = "c2", Bin = CardBin.Ring, Kind = "leg-failed", Subject = "flight/PIL355/parser", Title = "PIL355/parser stopped: dotnet test failed with 3 errors in ParserTests",
-                Summary = "The worker of PIL355/parser stopped. Send parser round again starts a fresh worker told why; Accept parser as it stands keeps the failure in its report and the flight goes on.",
-                Detail = "the last worker stopped: dotnet test failed with 3 errors in ParserTests",
-                Choices = [redo, new CardChoice { Label = "Accept parser as it stands, the failure kept in its report", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget("PIL355", "parser"), Args = ["accepted"] }], At = Live.At, State = CardState.Open,
+                Id = "c2", Bin = CardBin.Ring, Kind = "leg-failed", Subject = "flight/PIL355/parser", Title = "PIL355/parser: its check fails 3 tests in ParserTests",
+                Summary = "The worker of PIL355/parser stopped and its check fails 3 tests in ParserTests. Send it round starts a fresh worker, told the whole report, that fixes it and finishes the leg; Accept as it is keeps the failure in the leg's report and the flight goes on with the check still failing.",
+                Detail = "dotnet test failed with 3 errors in ParserTests",
+                Choices =
+                [
+                    new CardChoice { Label = "Send it round: a fresh worker fixes it and finishes", Verb = Verbs.GoAround, Target = Verbs.LegTarget("PIL355", "parser"), Args = ["the last worker stopped: dotnet test failed with 3 errors in ParserTests"] },
+                    new CardChoice { Label = "Accept as it is: the flight goes on with the check failing", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget("PIL355", "parser"), Args = ["accepted"] },
+                ],
+                At = Live.At, State = CardState.Open,
             }),
             ("merge-failed", new CardRow
             {
