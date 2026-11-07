@@ -286,7 +286,7 @@ public sealed class LegTickingPassTests : LegCommanderTestsBase
         failed.Ok.ShouldBeTrue(failed.Error);
         L("parser").State.ShouldBe(LegState.Failed);
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == "leg-failed");
-        (card.Bin, card.Title).ShouldBe((CardBin.Ring, "TIA1/parser stopped: step 2 is not covered by any commit"));
+        (card.Bin, card.Title).ShouldBe((CardBin.Ring, "TIA1/parser: step 2 is not covered by any commit"));
     }
 
     /// <summary>The ticker of the leg ended with step 1 ticked and step 2 not, and no finish.</summary>
