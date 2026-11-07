@@ -61,7 +61,7 @@ public sealed partial class LegCommander
         {
             if (!_calling.TryGetValue(code, out var busy))
             {
-                throw new FlightException($"{code} is being changed already: wait for its answer, then ask again");
+                throw new FlightBusyException(BusyRefusal(code, "being changed", "wait for its answer, then ask again"));
             }
             // The same step asked again while it is live: told it is in progress, nothing refused and nothing touched.
             if (coalesce && busy.What == what && call.At - busy.At < StuckAfter)
@@ -69,10 +69,20 @@ public sealed partial class LegCommander
                 throw new InProgressException($"{code} is {what}");
             }
             busy.Refused = true;
-            throw new FlightException($"{code} is {busy.What} already: {busy.Advice}");
+            throw new FlightBusyException(BusyRefusal(code, busy.What, busy.Advice));
         }
         return call;
     }
+
+    /// <summary>The words of a command refused because the flight has calls out.</summary>
+    internal static string BusyRefusal(string code, string what, string advice) => $"{code} is {what} already: {advice}";
+
+    /// <summary>
+    /// A command refused because another command had calls out for the flight (<see cref="Calling"/>): no verdict on the command's own merits.
+    /// Its result carries <see cref="RefusalWays.Busy"/>, so a caller tells it from any other refusal by that, never by its words, which a
+    /// failed check's output or a step's text could echo.
+    /// </summary>
+    internal sealed class FlightBusyException(string message) : FlightException(message);
 
     /// <summary>True while the flight has a call of <paramref name="what"/> out that is live: out for less than <see cref="StuckAfter"/>. A stuck one is not live, so it is refused and rung as before.</summary>
     internal bool IsCalling(string code, string what) =>

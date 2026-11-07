@@ -319,24 +319,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>
     /// A flying leg whose finish's check rerun ended with an outcome its worker may not have heard (<see cref="LegRecheck.Outcome"/>: the
     /// finish was answered queued, or a retry was refused, or the node restarted): the recheck is cleared first, so it is said once, and the
-    /// worker is told what came of it. Rings when it cannot be told, as a wait that cannot be woken does.
+    /// worker is told what came of it. Rings when it cannot be told, as a wait that cannot be woken does. The node's own finish of a
+    /// restarted rerun (<see cref="ResumeFinishAsync"/>) ends the same way, with its word kept as the outcome, on a leg that may be Done.
     /// </summary>
     private async Task LookAtLegRechecksAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
-        // What the node's own finishes (below) ended with, told here on the watch's own loop, which owns the says.
-        while (_resumeTold.TryDequeue(out var told))
-        {
-            if (told.Leg.WorkerJob is not { } toldJob)
-            {
-                continue;
-            }
-            _wokenAt[toldJob] = now;
-            var said = await SayAsync(toldJob, told.Text, cancellationToken);
-            if (!said.Ok && told.RingIfUnsaid)
-            {
-                Ring(told.Leg, Idle, $"{Name(told.Leg)}'s check rerun ended but its worker could not be told: {Clip(said.Error ?? "no reason given")}", $"the node finished its restarted finish itself and tried to tell it how that ended: {said.Error}", redoWhy: "could not be told how its check rerun ended");
-            }
-        }
         // A rerun the node restarted under and that names who asked: the node runs that same finish itself, once, detached from this loop
         // and under its own stopping token (never a caller's), so the worker has nothing to repeat (pilot #819).
         foreach (var leg in state.Legs().Where(l => l is { State: LegState.Flying, Recheck: { Resume: true, Outcome: null } }))
@@ -346,7 +333,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 _ = Task.Run(() => ResumeFinishAsync(leg, cancellationToken), CancellationToken.None);
             }
         }
-        foreach (var leg in state.Legs().Where(l => l is { State: LegState.Flying, Recheck.Outcome: not null } && !_resuming.ContainsKey(Subject(l))))
+        // A Done leg is told only the word of the node's own finish (ResumeFinishAsync), kept on the leg until told so a node that stops
+        // between that finish and this look still tells it after the restart. Any other outcome a Done leg carries (an accepted finish whose
+        // rerun then ended, say) was written for a worker that is gone, and is not said to anyone.
+        foreach (var leg in state.Legs().Where(l => (l is { State: LegState.Flying, Recheck.Outcome: not null } || IsNodeFinishWord(l)) && !_resuming.ContainsKey(Subject(l))))
         {
             state.PutLeg(leg with { Recheck = null });
             // The ticker's finish is the one being told of when it is the leg's active session (its worker ended).
@@ -356,20 +346,25 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             }
             _wokenAt[job] = now;
             var result = await SayAsync(job, leg.Recheck!.Outcome!, cancellationToken);
-            if (!result.Ok)
+            // A worker whose leg is done is on its way out: no ring that it could not be told.
+            if (!result.Ok && leg.State == LegState.Flying)
             {
                 Ring(leg, Idle, $"{Name(leg)}'s check rerun ended but its worker could not be told: {Clip(result.Error ?? "no reason given")}", $"the node tried to tell it how the rerun ended: {result.Error}", redoWhy: "could not be told how its check rerun ended");
             }
         }
     }
 
+    private static bool IsNodeFinishWord(LegRow leg) =>
+        leg is { State: LegState.Done, Recheck: { Outcome: { } outcome } recheck } && outcome == LegRecheck.NodeFinishedOutcome(recheck.Check);
+
     /// <summary>Completes when the job runner has taken up what a previous node left, so a resumed finish attaches to a carried check job instead of queueing a second; the node sets it.</summary>
     public Task Ready { get; set; } = Task.CompletedTask;
 
-    // The legs (by subject) whose restarted finish the node is running now, so each is resumed once; what the node's finishes ended
-    // with, for the watch's loop to tell.
+    // The legs (by subject) whose restarted finish the node is running now, so each is resumed once.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _resuming = new(StringComparer.Ordinal);
-    private readonly System.Collections.Concurrent.ConcurrentQueue<(LegRow Leg, string Text, bool RingIfUnsaid)> _resumeTold = new();
+
+    /// <summary>How many restarted finishes the node is running now, or has started and that still wait on <see cref="Ready"/>.</summary>
+    public int ResumesInFlight => _resuming.Count;
 
     /// <summary>
     /// Runs the <c>leg finish done</c> a restart interrupted, for the worker that asked it (its report and who, kept on the leg's
@@ -392,6 +387,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 Who = recheck.By!,
             };
             string? error;
+            var busy = false;
             try
             {
                 var result = await run(command, cancellationToken);
@@ -400,6 +396,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     result = await later;
                 }
                 error = result.Ok ? null : result.Error ?? "refused";
+                busy = !result.Ok && result.Way == RefusalWays.Busy;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -410,23 +407,37 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             {
                 error = ex.Message;
             }
-            // Whatever the finish left of the recheck is spent: its outcome is told below, once, in the node's own words, so the leg watch's
-            // generic pass must not say it again. A fresh rerun someone else began meanwhile (no outcome, no mark) is not ours to clear.
             if (state.Legs(leg.Flight).FirstOrDefault(l => l.Name == leg.Name) is not { } now)
             {
                 return;
             }
-            if (now is { State: LegState.Flying, Recheck: { } left } && (left.Resume || left.Outcome is not null))
+            // A refusal because the flight had calls out is no verdict on the leg: another command holds it, in whatever phase (merging the base,
+            // rerunning the check, pushing), and when it is the worker's own finish it answers for itself. Nothing is told or written; a mark
+            // still on the leg is run again by the next look, once the flight is free.
+            if (busy)
             {
-                state.PutLeg(now with { Recheck = null });
+                return;
             }
+            // A fresh open rerun (no outcome, no mark) is another finish's: the worker's own took the call in the gap before this one did
+            // (this one was refused as already rerunning), and it answers for itself. Nothing is told or cleared here.
+            if (now.Recheck is { Resume: false, Outcome: null })
+            {
+                return;
+            }
+            // The node's word is kept on the leg, as the recheck's outcome, and told by the watch's next look (below, in
+            // LookAtLegRechecksAsync): a node that stops before that look is not silent, since the next node's look tells it from the journal.
             if (now.State == LegState.Done && error is null)
             {
-                _resumeTold.Enqueue((now, LegRecheck.NodeFinishedOutcome(recheck.Check), false));
+                state.PutLeg(now with { Recheck = new LegRecheck { Check = recheck.Check, Since = recheck.Since, Outcome = LegRecheck.NodeFinishedOutcome(recheck.Check) } });
             }
             else if (now.State == LegState.Flying && error is not null)
             {
-                _resumeTold.Enqueue((now, LegRecheck.NodeFinishRefusedOutcome(recheck.Check, error), true));
+                state.PutLeg(now with { Recheck = new LegRecheck { Check = recheck.Check, Since = recheck.Since, Outcome = LegRecheck.NodeFinishRefusedOutcome(recheck.Check, error) } });
+            }
+            else if (now is { State: LegState.Flying, Recheck: { } left } && (left.Resume || left.Outcome is not null))
+            {
+                // Whatever the finish left of the recheck is spent, and nothing is told of it.
+                state.PutLeg(now with { Recheck = null });
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
