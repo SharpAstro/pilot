@@ -1015,6 +1015,28 @@ public sealed class Watchtower(
             }
         }
 
+        // Every other live background watchtower the node still has is ended before the launch, not only the row passed as replacing and
+        // not only on a later look (StopOthersAsync): the start at the 'none was running' path passes no replacing, and an idle one left
+        // beside the fresh one is two watchtowers live under one name, so a say to that name is refused as ambiguous (#841). One mid-turn
+        // (Working) keeps the tell-then-grace path of StopOthersAsync once the fresh one has an id; it is marked replaced here all the same.
+        var endedBefore = new List<SessionRow>();
+        foreach (var other in state.Sessions()
+            .Where(r => r.Kind == SessionKind.Background && IsWatchtower(r) && Live(r) && r.Id != replacing?.Id && !_stopped.Contains(r.Id))
+            .OrderBy(r => r.StartedAt)
+            .ToList())
+        {
+            _replaced.Add(other.Id);
+            if (other.State != SessionState.Working && await EndOneAsync(other, $"replaced by a fresh watchtower: {why}", time.GetUtcNow(), cancellationToken))
+            {
+                endedBefore.Add(other);
+            }
+        }
+        if (endedBefore.Count > 0)
+        {
+            state.RaiseCard(CardBin.Handled, "watchtower-duplicate", Verbs.WatchtowerTarget,
+                $"Stopped {(endedBefore.Count == 1 ? "another watchtower" : $"{endedBefore.Count} other watchtowers")} (one per node): {string.Join(", ", endedBefore.Select(r => $"{r.Name} ({r.Id})"))}");
+        }
+
         var folder = options.WatchtowerFolder;
         var attemptedAt = time.GetUtcNow();
         string fingerprint;

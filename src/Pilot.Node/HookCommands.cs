@@ -7,7 +7,7 @@ namespace Pilot.Node;
 
 /// <summary>
 /// The node's two hook commands. <c>pilot-node hook</c> is what Claude Code runs on each hook: it forwards the hook's
-/// stdin to the node, and prints the node's answer when it has one (a Stop it holds, <see cref="Flights.StopGate"/>).
+/// stdin to the node, and prints the node's answer when it has one (a Stop it holds, <see cref="Flights.StopGate"/>; a permission it allows, <see cref="Flights.PermissionGate"/>).
 /// <c>pilot-node hooks install|remove</c> puts those hooks in a Claude Code
 /// settings file, or takes them out, leaving everything else in it as it was.
 /// </summary>
@@ -24,10 +24,10 @@ public static class HookCommands
 
     /// <summary>
     /// Events whose handler runs in step with the session rather than async: Claude Code reads an async hook's output
-    /// never, so a Stop the node holds is only held when the session waits for the answer. It waits at most
+    /// never, so a Stop the node holds, or a permission it allows, only counts when the session waits for the answer. It waits at most
     /// <see cref="HookBudget"/>.
     /// </summary>
-    private static readonly HashSet<string> Answered = ["Stop"];
+    private static readonly HashSet<string> Answered = ["Stop", "PermissionRequest"];
 
     public const string HookArgument = "hook";
 
@@ -37,7 +37,7 @@ public static class HookCommands
     /// <c>pilot-node hook [--node-socket &lt;path&gt;]</c>: posts stdin to the node and returns 0, whatever happened. A hook
     /// runs inside every session on the machine, so it is fail-open by rule: no node, a slow node or a bad payload costs
     /// the session nothing, and it prints nothing, since a SessionStart hook's output would land in the model's context.
-    /// The one exception is the node's own answer (a 200 with a body, which it gives only to a Stop it holds), written to
+    /// The one exception is the node's own answer (a 200 with a body, which it gives only to a Stop it holds or a permission it allows), written to
     /// <paramref name="stdout"/> for Claude Code to read.
     /// </summary>
     /// <param name="budget">How long it waits for the node: <see cref="HookBudget"/> unless a test, which must not depend on how
