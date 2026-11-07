@@ -98,7 +98,7 @@ public sealed record CommandResult
     /// <summary>
     /// Which way a verb that can go more than one way went, when it did: <c>say session</c> answers
     /// <see cref="SayWays.Resumed"/> or <see cref="SayWays.Relayed"/>. Null for a verb that goes one way only. A refusal carries one
-    /// only when it was no verdict on the command: <see cref="RefusalWays.Busy"/>.
+    /// only when it was no verdict on the command, or to say how a push was refused (<see cref="RefusalWays"/>).
     /// </summary>
     public string? Way { get; init; }
 
@@ -688,11 +688,20 @@ public static class Verbs
 
     /// <summary>
     /// <c>touches flight/&lt;code&gt; &lt;file…&gt;</c>: the planner's overlap check across nodes. Compares the files the flight's legs will
-    /// change with every other not-landed flight of the repo on this node and on each reachable peer (its pushed branch's changed files
-    /// against its base) and with every open PR, and answers a line per flight or PR: the shared files and fold, connect or parallel
-    /// (<c>unknown</c> for one whose branch is not pushed or whose node could not be reached). Reads only; changes nothing.
+    /// change with every other not-landed flight of the repo on this node and on each reachable peer (the files its plane changes against
+    /// its base, asked of its node with <see cref="FlightChanges"/>; its pushed branch's when that node is older) and with every open PR,
+    /// and answers a line per flight or PR: the shared files and fold, connect or parallel (<c>unknown</c> for one whose node did not
+    /// answer, or whose PR gh would not list). Reads only; changes nothing.
     /// </summary>
     public const string Touches = "touches";
+
+    /// <summary>
+    /// <c>flight-changes flight/&lt;code&gt;</c>: what a node's own flight changes against its base, read from the flight's plane itself
+    /// (committed, uncommitted and untracked files), so a peer's <see cref="Touches"/> sees a flight whose branch is not pushed. The answer's
+    /// <see cref="CommandResult.Made"/> is a line per file, <c>&lt;added plus removed lines&gt;&lt;TAB&gt;&lt;path&gt;</c>; a flight that has landed or
+    /// whose plane is gone is refused, saying why. Reads only and changes nothing, so a grant may send it.
+    /// </summary>
+    public const string FlightChanges = "flight-changes";
 
     /// <summary>
     /// <c>overlap flight/&lt;code&gt; &lt;other&gt; [file=&lt;path&gt;…] &lt;why…&gt;</c>: the planner found the flight to look like part of another
@@ -890,11 +899,26 @@ public static class MergeWays
     public const string InProgress = "in-progress";
 }
 
-/// <summary>The ways a refused command was refused (<see cref="CommandResult.Way"/>), where the refusal is no verdict on the command itself.</summary>
+/// <summary>
+/// The ways a refused command was refused (<see cref="CommandResult.Way"/>), where the refusal is no verdict on the command itself or
+/// says how a push was refused, so a caller acts on the way and never on the refusal's words.
+/// </summary>
 public static class RefusalWays
 {
     /// <summary>Another command had calls out for the flight (merging its base, rerunning a check, pushing): asked again once it is free, it runs.</summary>
     public const string Busy = "busy";
+
+    /// <summary>
+    /// A push GitHub refused as a protected branch (GH006) that the node could not clear: the PR was not queued, or it was taken out and
+    /// the branch stayed locked, or a ruleset protects it. Asked again unchanged, it is refused again (PIL836).
+    /// </summary>
+    public const string ProtectedBranch = "protected-branch";
+
+    /// <summary>A push that met the flight's PR merged meanwhile: the flight is marked merged under its work, and the commits go to a follow-up PR (PIL836).</summary>
+    public const string HandedOn = "handed-on";
+
+    /// <summary>Whether <paramref name="way"/> is one of these.</summary>
+    public static bool Is(string? way) => way is Busy or ProtectedBranch or HandedOn;
 }
 
 /// <summary>The ways an <c>edit-idea</c> went (<see cref="CommandResult.Way"/>).</summary>
