@@ -265,7 +265,7 @@ public static partial class Briefs
         text.AppendLine("## Getting reviewed work in");
         text.AppendLine("- A conflict with the base (a review or a dropped queue entry says the PR conflicts): the node resolves it itself and rings no one. A worker flying the");
         text.AppendLine("  leg is told to merge the base in; otherwise the last leg is sent round once for each head of the base, told the conflicting files and the base's commits");
-        text.AppendLine("  that touch them; a worker that fails is followed at once by a stronger one. Leave it to the workers. Only if a decision card says the last one could not resolve it, resolve it yourself in the flight's plane:");
+        text.AppendLine("  that touch them; a worker that fails is followed at once by a stronger one. Leave it to the workers. A conflict-decision card (the last worker found the two sides change the same behaviour in opposite ways) is the person's to choose: leave it open. Only if the last worker failed without that report, and its leg-failed card says so, resolve it yourself in the flight's plane:");
         text.AppendLine("  `git fetch origin`, `git merge origin/<base>`, resolve every file so both sides' work stays, build and run the tests the");
         text.AppendLine($"  leg's check names through `{pilot} run`, commit the merge, `git push` (plain, always),");
         text.AppendLine($"  then `{pilot} flight review <code>`.");
