@@ -175,7 +175,7 @@ public sealed partial class CloudBenchJobTests : JobTestsBase, IAsyncDisposable
         var later = Hand(jobs, Echo("later"));
         Row(later).State.ShouldBe(JobState.Queued);
         Row(later).Step.ShouldNotBeNull().ShouldContain("another job is running");
-        Row(later).Step.ShouldNotContain("benchmark");
+        Row(later).Step.ShouldNotBeNull().ShouldNotContain("benchmark");
         // With room it starts beside the VM bench.
         jobs.MaxRunning = 4;
         jobs.Dispatch(JobRunner.LookAgain.Instance);
@@ -235,7 +235,7 @@ public sealed partial class CloudBenchJobTests : JobTestsBase, IAsyncDisposable
         ended.BenchVm.ShouldNotBeNull().ShouldSatisfyAllConditions(
             vm => vm.Evictions.ShouldBe(1),
             vm => vm.Minutes.ShouldBe(42),
-            vm => vm.Cost.ShouldBe(0.049, 1e-9));
+            vm => vm.Cost.ShouldNotBeNull().ShouldBe(0.049, 1e-9));
     }
 
     [Fact]
@@ -251,7 +251,7 @@ public sealed partial class CloudBenchJobTests : JobTestsBase, IAsyncDisposable
         ended.State.ShouldBe(JobState.Failed);
         ended.Error.ShouldNotBeNull().ShouldContain("evicted by Azure twice");
         ended.Error.ShouldContain("re-queued once");
-        ended.BenchVm.ShouldNotBeNull().ShouldSatisfyAllConditions(vm => vm.Evictions.ShouldBe(2), vm => vm.Minutes.ShouldBe(20), vm => vm.Cost.ShouldBe(0.02, 1e-9));
+        ended.BenchVm.ShouldNotBeNull().ShouldSatisfyAllConditions(vm => vm.Evictions.ShouldBe(2), vm => vm.Minutes.ShouldBe(20), vm => vm.Cost.ShouldNotBeNull().ShouldBe(0.02, 1e-9));
     }
 
     [Fact]
@@ -387,7 +387,7 @@ public sealed partial class CloudBenchJobTests : JobTestsBase, IAsyncDisposable
         Row(bench).Local.ShouldBeTrue();
         Row(bench).BenchVm.ShouldNotBeNull().LocalBecause.ShouldBe(JobRunner.AskedLocalBecause);
         Row(bench).Step.ShouldNotBeNull().ShouldContain("a benchmark runs alone: another job is running");
-        Row(bench).Step.ShouldNotContain("runs on this machine:");
+        Row(bench).Step.ShouldNotBeNull().ShouldNotContain("runs on this machine:");
         // It heads the queue, so a job handed over behind it is held by it.
         var later = Hand(jobs, Echo("later"));
         Row(later).Step.ShouldNotBeNull().ShouldContain($"a benchmark ({bench}) holds the node");
