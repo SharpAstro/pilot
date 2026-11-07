@@ -163,22 +163,25 @@ internal sealed class TranscriptEntryView
             acting
                 ? WrappedProse.Of(behind!, 12f, Dim)
                 : Layout.Builder.Text("not read yet: it reads this at its next step", 11f, Faint).Selectable(),
-            .. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim).Selectable()),
+            // With something to act on the message wraps whole (a long one is read in full, not cut at the edge); the plain line keeps its lines.
+            .. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => acting && l.Length > 0
+                ? WrappedProse.Of(l, 13f, Dim)
+                : Layout.Builder.Text(l, 13f, Dim).Selectable()),
         ];
+        // The pill sits under the words, not beside them: beside them it took width from the body, so a line with a pill and one without
+        // started their words at different places.
+        if (aside is not null)
+        {
+            parts.Add(Layout.Builder.HStack(aside, Layout.Builder.Spacer().WStar()).WithGap(0f));
+        }
         if (refusal is not null)
         {
             parts.Add(refusal);
         }
-        var cells = new List<Layout.Node>
-        {
-            Layout.Builder.Text("queued", 12f, acting ? Dim : Faint).Selectable().WStar(LabelWeight, 0f, LabelWidth).Whole("queued"),
-            Layout.Builder.VStack([.. parts]).WStar(BodyWeight),
-        };
-        if (aside is not null)
-        {
-            cells.Add(aside);
-        }
-        return Layout.Builder.HStack([.. cells]).WithGap(10f);
+        return Layout.Builder.HStack(
+                Layout.Builder.Text("queued", 12f, acting ? Dim : Faint).Selectable().WStar(LabelWeight, 0f, LabelWidth).Whole("queued"),
+                Layout.Builder.VStack([.. parts]).WithGap(2f).WStar(BodyWeight))
+            .WithGap(10f);
     }
 
     /// <summary>The least height of the reply in progress (<see cref="Streaming"/>): its first lines, so the words arriving never push the rows under it.</summary>
