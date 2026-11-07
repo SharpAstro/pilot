@@ -612,7 +612,7 @@ public sealed class SettingsPageTests
         Draw(chrome);
         await WaitAsync(() => chrome.Settings.Page is not null && chrome.Settings.Checks is not null);
         var (texts, buttons) = Look(chrome, renderer, now);
-        texts.ShouldNotContain("off…");
+        texts.ShouldNotContain("setting…");
         buttons.ShouldContain("settings:lan:off");
 
         var regions = Regions(chrome);
@@ -620,7 +620,7 @@ public sealed class SettingsPageTests
         // Pressed twice, it is sent once; the value is still the node's.
         Click(regions, "settings:lan:off");
         (texts, buttons) = Look(chrome, renderer, now);
-        texts.ShouldContain("off…");
+        texts.ShouldContain("setting…");
         buttons.ShouldNotContain("settings:lan:off");
         buttons.ShouldContain("settings:lan:on");
         chrome.Settings.Page!.Settings.Single(s => s.Key == "lan").Value.ShouldBe("on");
@@ -630,12 +630,58 @@ public sealed class SettingsPageTests
         reply.SetResult(new SettingsReply("refused: the node's command line gives lan, and wins", ReplyKind.Refused));
         await WaitAsync(() => chrome.Settings.Said!.StartsWith("refused", StringComparison.Ordinal));
         (texts, buttons) = Look(chrome, renderer, now);
-        texts.ShouldNotContain("off…");
+        texts.ShouldNotContain("setting…");
         texts.ShouldContain("off");
         buttons.ShouldContain("settings:lan:off");
         chrome.Settings.Page.Settings.Single(s => s.Key == "lan").Value.ShouldBe("on");
         chrome.Settings.Said.ShouldBe("refused: the node's command line gives lan, and wins");
         Volatile.Read(ref sends).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// A pressed choice reads "setting…" while the node works, the header says what is being set, and the outcome names the setting
+    /// and its value rather than a bare "done". With no answer (the node restarting for the change) the pill keeps saying "setting…"
+    /// until the read that shows the outcome is in.
+    /// </summary>
+    [Fact]
+    public async Task APressedChoiceSaysSettingUntilTheOutcomeIsKnownAndThenNamesIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 2000);
+        var chrome = Chrome(renderer);
+        var now = DateTimeOffset.UtcNow;
+        var reply = new TaskCompletionSource<SettingsReply>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reread = new TaskCompletionSource<SettingsPage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var loads = 0;
+        chrome.Settings.Presses.DoneFor = TimeSpan.Zero;
+        chrome.Settings.Load = _ => Interlocked.Increment(ref loads) == 1 ? Task.FromResult(Sample) : reread.Task;
+        chrome.Settings.LoadChecks = (_, _) => Task.FromResult(Measured(now, TimeSpan.FromSeconds(1)));
+        chrome.Settings.Send = (_, _, _) => reply.Task;
+        chrome.Show(PilotPage.Settings);
+
+        Draw(chrome);
+        await WaitAsync(() => chrome.Settings.Page is not null && chrome.Settings.Checks is not null);
+        var lan = Sample.Settings.Single(s => s.Key == "lan");
+
+        // Done with the row back: the line names the setting and its value.
+        Click(Regions(chrome), "settings:lan:off");
+        var (texts, _) = Look(chrome, renderer, now);
+        texts.ShouldContain(SettingsView<RgbaImage>.SettingWord + "…");
+        chrome.Settings.Said.ShouldBe($"setting {lan.Label} to off…");
+        reply.SetResult(new SettingsReply("done", ReplyKind.Done, lan with { Value = "off", Saved = "off" }));
+        await WaitAsync(() => chrome.Settings.Presses.PendingOf("settings:lan:off") is null);
+        chrome.Settings.Said.ShouldBe($"{lan.Label} set to off");
+
+        // No answer: still setting until the page is read again.
+        reply = new TaskCompletionSource<SettingsReply>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Click(Regions(chrome), "settings:lan:on");
+        reply.SetResult(new SettingsReply("no answer (closed); the node may be restarting", ReplyKind.NoAnswer));
+        await WaitAsync(() => Volatile.Read(ref loads) >= 2);
+        (texts, _) = Look(chrome, renderer, now);
+        texts.ShouldContain(SettingsView<RgbaImage>.SettingWord + "…");
+        reread.SetResult(Sample);
+        await WaitAsync(() => chrome.Settings.Presses.PendingOf("settings:lan:on") is null);
+        (texts, _) = Look(chrome, renderer, now);
+        texts.ShouldNotContain(SettingsView<RgbaImage>.SettingWord + "…");
     }
 
     /// <summary>Captures of the page narrow and wide, checks loading and loaded, with long lines, into the folder named by PILOT_TEST_CAPTURE_DIR (nothing without it).</summary>

@@ -213,7 +213,7 @@ public sealed class CliTests : IAsyncLifetime
         var flight = _node.State.Flights().Single();
         flight.Code.ShouldBe("TIA1611");
         await Ok(_root, "leg", "plan", "TIA1611", "gpu", "--goal", "Draw the planets on the GPU", "--done-when", "The capture shows them",
-            "--check", "dotnet test", "--budget", "4000000", "--item", "Write the shader", "--item", "Capture it");
+            "--check", "dotnet test --filter A", "--budget", "4000000", "--item", "Write the shader", "--item", "Capture it");
         await Ok(_root, "leg", "start", "TIA1611", "gpu");
         var worker = _node.Workers.Started.Single();
         worker.Brief.ShouldContain("check <step number>");

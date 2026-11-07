@@ -115,7 +115,7 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
             handled.AddRange(screen.Handled);
             merged.AddRange(screen.Merged);
         }
-        return new CardsScreen([.. open.OrderBy(c => c.Bin).ThenByDescending(c => c.At)], [.. handled.OrderByDescending(c => c.At).Take(5)], watchtower)
+        return new CardsScreen([.. open.OrderBy(c => c.Bin).ThenByDescending(c => c.RungAt)], [.. handled.OrderByDescending(c => c.At).Take(5)], watchtower)
         {
             _nodes = nodes,
             Merged = [.. merged.OrderByDescending(c => c.ClosedAt)],
@@ -135,7 +135,7 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
             .ThenByDescending(s => s.StartedAt)
             .FirstOrDefault();
         return new CardsScreen(
-            [.. all.Where(c => c.State == CardState.Open).OrderBy(c => c.Bin).ThenByDescending(c => c.At)],
+            [.. all.Where(c => c.State == CardState.Open).OrderBy(c => c.Bin).ThenByDescending(c => c.RungAt)],
             [.. all.Where(c => c.Bin == CardBin.Handled).OrderByDescending(c => c.At).Take(5)],
             watchtower)
         {
@@ -275,14 +275,20 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     public Func<Task<string?>>? OnCleanUp { get; set; }
 
     /// <summary>How long an open card may ring before its row says its age in words (#736); the node's default for its card bound, 2 h.</summary>
-    public TimeSpan StaleCardAfter { get; set; } = TimeSpan.FromHours(2);
+    public TimeSpan StaleCardAfter { get; set; } = DefaultStaleCardAfter;
+
+    /// <summary>The default of <see cref="StaleCardAfter"/>, which the window's frame fingerprint reads too.</summary>
+    internal static readonly TimeSpan DefaultStaleCardAfter = TimeSpan.FromHours(2);
 
     /// <summary>The moment a card's age is read against; a test sets it.</summary>
     public Func<DateTimeOffset> Clock { get; set; } = () => DateTimeOffset.UtcNow;
 
     /// <summary><c>stale 5 h</c> for an open card older than <see cref="StaleCardAfter"/>, else null.</summary>
-    internal string? StaleMark(CardRow card) =>
-        card.State == CardState.Open && card.Bin != CardBin.Handled && Clock() - card.At is var age && age >= StaleCardAfter ? $"stale {Waited.Say(age)}" : null;
+    internal string? StaleMark(CardRow card) => StaleMark(card, Clock(), StaleCardAfter);
+
+    /// <summary>The mark of <see cref="StaleMark(CardRow)"/> at <paramref name="now"/>, so the frame fingerprint counts it from the clock it is given.</summary>
+    internal static string? StaleMark(CardRow card, DateTimeOffset now, TimeSpan after) =>
+        card.State == CardState.Open && card.Bin != CardBin.Handled && now - card.At is var age && age >= after ? $"stale {Waited.Say(age)}" : null;
 
     /// <summary>The key of the foot's Clean up press, for a test or a dump.</summary>
     internal const string CleanUpKey = "cards:cleanup";
@@ -422,7 +428,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     internal override LinkMenu? SelectionLinks => _links;
 
-    internal override RectF32 SelectionViewport => _scroll.Viewport;
+    internal override RectF32 PageSelectionViewport => _scroll.Viewport;
 
     public void Render(CardsScreen screen, RectF32 bounds)
     {
@@ -644,7 +650,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         var stack = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).Stretch();
         // A card's image opens full size over the panel (the page beside it does not draw a second viewer for it).
-        return Gallery.Over(_links.Over(WithSelection(Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch())), panel: true);
+        return Gallery.Over(_links.Over(WithPageSelection(Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch())), panel: true);
     }
 
     /// <summary>The panel's line for a node out of reach: dim, two lines at most, the whole text on hover once it is cut.</summary>
