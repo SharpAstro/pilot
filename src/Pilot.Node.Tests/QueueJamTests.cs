@@ -81,7 +81,9 @@ public sealed class QueueJamTests : JobTestsBase
                 : $"queued, {i} ahead of it; another job is running"));
         }
 
-        var jam = QueueJam.Read(rows, 1, T0.AddMinutes(155), After, Clones).ShouldNotBeNull();
+        // The holder builds a solution of its own, so Clones (which keys on a sleeping holder) would find none: say its two directly.
+        Func<JobRow, IReadOnlyCollection<string>> built = _ => [Path.Combine(_root, "DIR.Lib"), Path.Combine(_root, "Fonts.Lib")];
+        var jam = QueueJam.Read(rows, 1, T0.AddMinutes(155), After, built).ShouldNotBeNull();
 
         jam.Title.ShouldBe("19 jobs have waited up to 2 h 35 m; the queue has not moved since j4131 started");
         jam.Holder!.Id.ShouldBe("j4131");
