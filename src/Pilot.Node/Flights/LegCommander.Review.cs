@@ -477,10 +477,8 @@ public sealed partial class LegCommander
     /// <summary>Every leg done, reviewed, the PR open: the merge is the controller's, a gate before an irreversible step.</summary>
     private async Task RaisePrReadyAsync(FlightRow flight, string review, string reviewed, CancellationToken cancellationToken)
     {
-        var holding = flight.Holding is not null;
-        var holdReason = flight.Holding?.Reason ?? HoldingReason;
-        var pr = await OffLockAsync(null, () => github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken))
-            ?? throw new FlightException($"{flight.Branch} has no PR");
+        var holding = flight.Holding is not null; var holdReason = flight.Holding?.Reason ?? HoldingReason;
+        var pr = await OffLockAsync(null, () => github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken)) ?? throw new FlightException($"{flight.Branch} has no PR");
         var legs = state.Legs(flight.Code);
         state.RaiseCard(MergeCardBin(), PrReady, Verbs.FlightTarget(flight.Code),
             holding ? $"{flight.Code}'s PR #{pr.Number} is holding: {holdReason}" : $"{flight.Code}'s PR #{pr.Number} is ready to merge",
@@ -560,8 +558,7 @@ public sealed partial class LegCommander
                 + $"A fix of your own only for a one-line change in the plane ({flight.Worktree}), then pilot flight pr {flight.Code}.";
         state.RaiseCard(CardBin.ForYou, ReviewNotesKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review passed with notes",
             $"PR #{flight.PullRequest}, head {(flight.Review?.ReviewedHead is { } head ? CommitRefs.Short(head) : "unknown")}. Notes: {string.Join("; ", notes)} {action}",
-            link: flight.PullRequestUrl,
-            summary: CardSummaries.ReviewNotes(flight.Code, notes, fixerLeg),
+            link: flight.PullRequestUrl, summary: CardSummaries.ReviewNotes(flight.Code, notes, fixerLeg),
             // The title is the same for every pass with notes: the head reviewed and the notes are the cause (#853).
             cause: $"{flight.Review?.ReviewedHead}:{string.Join('\n', notes)}");
     }
@@ -844,8 +841,7 @@ public sealed partial class LegCommander
             choices.Add(new CardChoice { Label = Models.SendBackLabel(last, words), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [reason == SendBackReason.Findings ? $"the review asked for changes: {changes}" : changes] });
         }
         choices.Add(new CardChoice { Label = anyway, Verb = Verbs.Review, Target = Verbs.FlightTarget(flight.Code), Args = ["pass", "ready anyway"] });
-        state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), title, detail, choices, link: flight.PullRequestUrl,
-            summary: reason == SendBackReason.ReviewNotStarted || last is null
+        state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), title, detail, choices, link: flight.PullRequestUrl, summary: reason == SendBackReason.ReviewNotStarted || last is null
                 ? $"{said} {(reason == SendBackReason.ReviewNotStarted ? $"{words} starts it again; " : "")}{anyway} takes it as it is."
                 : $"{said} {words} has a worker do it on the leg's work as it stands, nothing thrown away; {anyway} takes it as it is.",
             // Each round on a new head, or after a further send-back, is a new cause even when the first line of the findings reads the same (#853).
