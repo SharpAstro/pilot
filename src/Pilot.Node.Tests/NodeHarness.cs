@@ -131,6 +131,8 @@ internal sealed class NodeHarness : IAsyncDisposable
                 builder.Services.AddSingleton<Pilot.Node.Flights.IGitHub>(github);
                 builder.Services.AddSingleton<Pilot.Node.Flights.INuGetFeed>(nuget);
                 builder.Services.AddSingleton<Pilot.Node.Flights.ISummaryModel>(summary);
+                // The info row's heap is a fixed reading: the live one follows the last GC, so two status calls would differ (#794).
+                builder.Services.AddSingleton(new NodeHeapReader(() => FixedHeap));
                 if (traffic is not null)
                 {
                     builder.Services.AddSingleton(traffic);
@@ -213,6 +215,17 @@ internal sealed class NodeHarness : IAsyncDisposable
 
     /// <summary>How long the test node's stop may take before its hosted services are told to give up.</summary>
     internal static readonly TimeSpan StopCap = TimeSpan.FromSeconds(3);
+
+    /// <summary>The heap a test node reports in its info row, the same on every call.</summary>
+    internal static readonly NodeHeapRow FixedHeap = new()
+    {
+        At = DateTimeOffset.UnixEpoch,
+        HeapBytes = 40L << 20,
+        LohBytes = 1L << 20,
+        PinnedBytes = 1L << 20,
+        CommittedBytes = 60L << 20,
+        WorkingSetBytes = 90L << 20,
+    };
 
     /// <summary>Completes when the planners a create started off its reply have finished starting (a create plans its flight, PIL565).</summary>
     public Task PlannedAsync() => App.Services.GetRequiredService<Pilot.Node.Flights.FlightCommander>().WhenAdvancedAsync();

@@ -52,3 +52,15 @@ public static class NodeHeap
         };
     }
 }
+
+/// <summary>
+/// Where the info row's GC figures come from: the node's own heap, or a fixed reading a test host registers, since the live
+/// figures follow the last collection and two <c>pilot status</c> calls would otherwise differ (#794).
+/// </summary>
+public sealed class NodeHeapReader(Func<NodeHeapRow>? read = null)
+{
+    private readonly Func<NodeHeapRow> _read = read ?? (() => NodeHeap.Read());
+
+    /// <summary>The figures now.</summary>
+    public NodeHeapRow Read() => _read();
+}

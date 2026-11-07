@@ -758,8 +758,12 @@ public sealed class CliTests : IAsyncLifetime
         var (_, auto, _) = await Pilot(_root, "status");
         auto.ShouldContain("TIA1611  Planets on the GPU");
         auto.ShouldNotContain("##");
-        (await Pilot(_root, "status", "--output-format", "rich")).Output.ShouldBe(markdown);
-        (await Pilot(_root, "status", "--output-format", "plain")).Output.ShouldBe(auto);
+        // The commands line is the node's last-hour timings, which every command between two calls moves, so it is left out of
+        // the comparison; the heap is a fixed reading in the test node (#794).
+        static string Steady(string status) =>
+            string.Join('\n', status.Split('\n').Where(l => !l.StartsWith("- **commands**", StringComparison.Ordinal) && !l.StartsWith("commands  ", StringComparison.Ordinal)));
+        Steady((await Pilot(_root, "status", "--output-format", "rich")).Output).ShouldBe(Steady(markdown));
+        Steady((await Pilot(_root, "status", "--output-format", "plain")).Output).ShouldBe(Steady(auto));
 
         var (exit, _, error) = await Pilot(_root, "status", "--output-format", "html");
         exit.ShouldBe(2);

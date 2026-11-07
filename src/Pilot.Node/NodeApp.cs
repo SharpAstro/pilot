@@ -164,7 +164,7 @@ public static partial class NodeApp
         var startedAt = DateTimeOffset.UtcNow;
         var version = typeof(NodeApp).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
-        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower, AdmissionGate slots, NodeTraffic traffic, SendTimings timings, CommandTimings commandTimings) => Results.Json(
+        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower, AdmissionGate slots, NodeTraffic traffic, SendTimings timings, CommandTimings commandTimings, NodeHeapReader heap) => Results.Json(
             ResponseEnvelope<NodeInfo>.Ok(new NodeInfo
             {
                 WireVersion = NodeWire.Version,
@@ -189,7 +189,7 @@ public static partial class NodeApp
                 Traffic = traffic.LastHourRow(),
                 SendTimings = timings.Rows(),
                 CommandTimings = commandTimings.Rows(),
-                Heap = NodeHeap.Read(),
+                Heap = heap.Read(),
             }),
             PilotJsonContext.Default.ResponseEnvelopeNodeInfo));
 

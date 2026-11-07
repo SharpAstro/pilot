@@ -353,6 +353,7 @@ public static partial class NodeApp
         builder.Services.AddSingleton<SendLog>();
         builder.Services.AddSingleton(services => new SendTimings(services.GetRequiredService<TimeProvider>(), logWriter));
         builder.Services.AddSingleton(services => new CommandTimings(services.GetRequiredService<TimeProvider>(), logWriter));
+        builder.Services.AddSingleton(new NodeHeapReader());
         builder.Services.AddSingleton(services => new WatchtowerChat(services.GetRequiredService<Watchtower>(), services.GetRequiredService<TranscriptBook>(), services.GetRequiredService<SendLog>()));
         builder.Services.AddSingleton(services => new Compactor(services.GetRequiredService<NodeState>(), services.GetRequiredService<Watchtower>(),
             services.GetRequiredService<NodeCommands>().RunAsync, services.GetRequiredService<TimeProvider>())
