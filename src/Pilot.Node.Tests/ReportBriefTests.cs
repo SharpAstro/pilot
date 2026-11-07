@@ -43,6 +43,8 @@ public sealed class ReportBriefTests
         brief.ShouldContain("say in your report which option you took and why");
         brief.ShouldContain("Report blocked only when no option meets them, when two do and differ in what the owner gets, or when the choice would change the criteria themselves");
         brief.ShouldContain("Waiting on a job of your own or on the node's check rerun is not a reason to report blocked: end your turn, and the node wakes you when it ends");
+        // The blocked report is the question itself, with its question mark: the node reads a '?' as a wait on a person, which no job of its own silences.
+        brief.ShouldContain("is for a person's decision only, and what you report is that question itself, ending in a question mark");
         // The shared rule every role reads stays as it was: report blocked when the person must decide.
         brief.ShouldContain("When you need the person to decide something and cannot go on, run `pilot session report blocked \"<what you need>\"` and end your turn.");
     }

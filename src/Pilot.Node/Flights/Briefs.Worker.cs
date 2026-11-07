@@ -17,7 +17,8 @@ public static partial class Briefs
         "  option you took and why. Report blocked only when no option meets them, when two do and differ in what the owner gets, or when\n" +
         "  the choice would change the criteria themselves.\n" +
         "- Waiting on a job of your own or on the node's check rerun is not a reason to report blocked: end your turn, and the node wakes you\n" +
-        $"  when it ends. `{run} session report blocked` is for a person's decision only.";
+        $"  when it ends. `{run} session report blocked` is for a person's decision only, and what you report is that question itself, ending\n" +
+        "  in a question mark, so the node can tell a wait on a person from a wait on your own work.";
 
     /// <param name="socket">The node's socket when it is not the default one: the CLI is told it, or it would ask another node.</param>
     public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null, string? resumed = null, string? machine = null, string? update = null, string? pilotMd = null)

@@ -719,9 +719,9 @@ public sealed class LegWatchTests
     }
 
     [Theory]
-    [InlineData("which branch should I use?", null)]
-    [InlineData("permission to use Bash", "Bash: dotnet test")]
-    public async Task AWaitingWorkerThatAsksAPersonStillRingsWhileAJobOfItsOwnRuns(string waitingFor, string? asking)
+    [InlineData("which branch should I use?", null, "TIA1/parser's worker waits on you for which branch should I use?")]
+    [InlineData("permission to use Bash", "Bash: dotnet test", "TIA1/parser's worker wants to run: dotnet test (Bash)")]
+    public async Task AWaitingWorkerThatAsksAPersonStillRingsWhileAJobOfItsOwnRuns(string waitingFor, string? asking, string title)
     {
         // No job answers a question or approves a tool call: the ring stays, as it did before a waiting worker could wait on its own work.
         Worker(SessionState.Waiting, waitingFor: waitingFor);
@@ -736,7 +736,8 @@ public sealed class LegWatchTests
 
         var card = Open().ShouldHaveSingleItem();
         card.Kind.ShouldBe(LegWatch.Waiting);
-        card.Title.ShouldBe($"TIA1/parser's worker waits on you for {waitingFor}");
+        // A question keeps its own words; a permission prompt is said by the call it asks leave for.
+        card.Title.ShouldBe(title);
         Handled().ShouldBeEmpty();
     }
 
