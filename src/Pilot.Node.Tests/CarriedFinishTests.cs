@@ -352,13 +352,15 @@ public sealed class CarriedFinishTests : LegCommanderTestsBase
         var check = Echoing("ok", 0);
         await FlightWithTwoLegs();
         await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        // A done leg goes around when the review asked for changes.
+        _state.PutFlight(_state.Flights().Single() with { Review = new ReviewRow { State = ReviewState.Changes, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow } });
         _state.PutLeg(L("parser") with
         {
             State = LegState.Done,
             Recheck = new LegRecheck { Check = check, Since = DateTimeOffset.UtcNow, Outcome = LegRecheck.NodeFinishedOutcome(check) },
         });
 
-        (await Leg(Verbs.GoAround, "flight/TIA1/parser", "the", "review", "asked")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.GoAround, "flight/TIA1/parser", "the", "review", "asked")).Error.ShouldBeNull();
 
         L("parser").ShouldSatisfyAllConditions(
             l => l.State.ShouldBe(LegState.Flying),
