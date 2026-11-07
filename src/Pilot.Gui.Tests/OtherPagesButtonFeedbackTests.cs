@@ -267,20 +267,20 @@ public sealed class OtherPagesButtonFeedbackTests
         chrome.Render(new SessionsScreen([], "test", Now), null, null, null, null, null, new RectF32(0, 0, 1280, 2000));
         await Until(() => settings.Page is not null);
 
-        // Pressing a choice: the pill reads "off…", dimmed with no hit, and the second press is never sent.
+        // Pressing a choice: the pill reads "setting…", dimmed with no hit, and the second press is never sent.
         Presses(settings).PendingOf("settings:lan:off").ShouldBeNull();
         Click(settings.Tree(Now), "settings:lan:off");
         // The send runs on the thread pool, so it is waited for; the working state is already said.
         await Until(() => node.Asked.Count == 1);
         node.Asked.ShouldBe([$"{Verbs.Set} lan off"]);
-        Words(settings.Tree(Now)).ShouldContain("off…");
+        Words(settings.Tree(Now)).ShouldContain("setting…");
         Has(settings.Tree(Now), "settings:lan:off").ShouldBeFalse();
         Presses(settings).PendingOf("settings:lan:off").ShouldNotBeNull();
 
         node.Answer("the node's command line gives lan, and wins");
         await Until(() => Presses(settings).PendingOf("settings:lan:off") is null);
         settings.Said.ShouldBe("refused: the node's command line gives lan, and wins");
-        Words(settings.Tree(Now)).ShouldNotContain("off…");
+        Words(settings.Tree(Now)).ShouldNotContain("setting…");
         Has(settings.Tree(Now), "settings:lan:off").ShouldBeTrue();
     }
 
