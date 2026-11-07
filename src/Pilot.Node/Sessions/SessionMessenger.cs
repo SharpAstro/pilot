@@ -245,9 +245,17 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         try
         {
             // A fresh look first, as v1's say() does: a session idle a poll ago may be mid-turn now, and stopping it would
-            // cut its turn off.
+            // cut its turn off. At the target alone (its process, record, hooks and transcript), not a poll of every session,
+            // whose listing waited behind every other process start of a loaded node (PIL794); one it cannot read so is polled.
             step.Restart();
-            await tracker.PollAsync(cancellationToken);
+            if (Find(state.Sessions(), id) is { } target)
+            {
+                await tracker.LookAsync(target.Id, cancellationToken);
+            }
+            else
+            {
+                await tracker.PollAsync(cancellationToken);
+            }
             parts.Look = step.Elapsed;
             step.Restart();
             var rows = state.Sessions();
