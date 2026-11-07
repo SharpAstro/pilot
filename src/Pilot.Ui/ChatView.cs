@@ -47,9 +47,16 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     // reads the record it finds, and neither ever waits on the other.
     // Ids is the stable id (TranscriptEntry.Id) of each held entry and the feed index it was read at, kept beside Entries in the
     // same record so the two always agree: the follow keys on the id, since a feed index shifts when the feed gains a divider.
-    private sealed record Held(ImmutableList<TranscriptEntry> Entries, ImmutableDictionary<string, int> Ids, int Total, string? Problem, bool Working, string? Question, string[] Choices, string[] Queued, string?[] QueuedIds)
+    // Epoch names the feed's indexing the entries were read under: a token swapped for a new one whenever the held list's indices
+    // may all have moved (a reread, another node's feed). The render thread's row caches are keyed by feed index, so it forgets
+    // them when the Epoch of the list it is about to draw is not the one it last drew. It travels with the list it belongs to, so
+    // a render that still holds the old list neither takes the signal away from the next render nor draws new rows from old caches.
+    private sealed record Held(ImmutableList<TranscriptEntry> Entries, ImmutableDictionary<string, int> Ids, int Total, string? Problem, bool Working, string? Question, string[] Choices, string[] Queued, string?[] QueuedIds, object Epoch)
     {
-        public static readonly Held Empty = new([], ImmutableDictionary<string, int>.Empty, 0, null, false, null, [], [], []);
+        public static readonly Held Empty = Fresh();
+
+        // An empty list under an epoch of its own.
+        public static Held Fresh() => new([], ImmutableDictionary<string, int>.Empty, 0, null, false, null, [], [], [], new object());
     }
 
     private Held _held = Held.Empty;
@@ -60,8 +67,8 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive, Anchor = ScrollAnchor.Bottom };
     private readonly TranscriptEntryView _entries = new() { PromptLabel = "you", AssistantLabel = "watchtower", AssistantLines = int.MaxValue };
-    // 1 once the follow read the feed again (its indices moved): the next render clears _entries' index-keyed caches first.
-    private int _rowsStale;
+    // The Held.Epoch _entries' index-keyed caches were last built under: a render clears them first when the list it draws has another.
+    private object _rowsEpoch = Held.Empty.Epoch;
     private readonly ChatComposer _composer = new();
 
     // The question card's own scroll, fresh for each question so a new one starts at its top.
@@ -140,7 +147,8 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var open = _following is not null;
         Close();
         Volatile.Write(ref _node, node);
-        Volatile.Write(ref _held, Held.Empty);
+        // Another feed, another indexing: a fresh epoch, so no cache built for the old node's indices is drawn from.
+        Volatile.Write(ref _held, Held.Fresh());
         Volatile.Write(ref _notices, []);
         // What was sent for the old node stays in the outbox and is delivered to it; its page draws only its own entries, so a
         // failed line is back with Retry and Edit when the person returns. Only what is done with (sent) goes.
@@ -376,7 +384,8 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
                 entries.Add(entry);
             }
         }
-        return new Held(entries.ToImmutable(), ids.ToImmutable(), page.Total, null, page.Working, page.PendingQuestion, page.Choices ?? [], page.Queued ?? [], page.QueuedIds ?? []);
+        // A reread may have moved every index: a new epoch tells the render to forget its index-keyed caches.
+        return new Held(entries.ToImmutable(), ids.ToImmutable(), page.Total, null, page.Working, page.PendingQuestion, page.Choices ?? [], page.Queued ?? [], page.QueuedIds ?? [], whole ? new object() : held.Epoch);
     }
 
     private async Task FollowAsync(Func<int, CancellationToken, Task<ChatPage>> load, CancellationToken cancellationToken)
@@ -403,14 +412,13 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
                     page = await load(-1, cancellationToken).ConfigureAwait(false);
                     cancellationToken.ThrowIfCancellationRequested();
                 }
+                // A reread holds the newest TranscriptBook.FirstRead entries the feed gives, as a fresh open does: the entries before
+                // that window are not asked for again, and the folds opened by index cannot be matched to the new indices, so they
+                // close. That is accepted: a feed that shifted (or renumbered) has no older indexing to keep them under.
+                // The row caches (parsed Markdown, opened folds) are keyed by feed index, and every held entry may now sit at another
+                // one: the merged list carries a new epoch (see Held), so the render thread (which owns them) forgets them before it
+                // builds rows from it, and no row is drawn with its neighbour's text.
                 ImmutableInterlocked.Update(ref _held, held => Merge(held, page, reread));
-                if (reread)
-                {
-                    // The row caches (parsed Markdown, opened folds) are keyed by feed index, and every held entry may now sit at
-                    // another one: the render thread forgets them before it builds the rows (it owns them), so no row is drawn
-                    // with its neighbour's text.
-                    Volatile.Write(ref _rowsStale, 1);
-                }
                 Changed?.Invoke();
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -759,7 +767,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : $"held by {WatchtowerOwner}'s watchtower"),
         }, new TopBarParts(null, null, Autopilot, About, Night, NodePills()));
 
-        if (Interlocked.Exchange(ref _rowsStale, 0) == 1)
+        if (!ReferenceEquals(Interlocked.Exchange(ref _rowsEpoch, held.Epoch), held.Epoch))
         {
             _entries.Reset();
         }

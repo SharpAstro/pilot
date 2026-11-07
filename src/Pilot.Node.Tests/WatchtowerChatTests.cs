@@ -169,6 +169,25 @@ public sealed class WatchtowerChatTests : IDisposable
     }
 
     [Fact]
+    public async Task LinesWithoutAUuidThatShareAMessageIdStillGetOneIdEach()
+    {
+        (await _tower.RestartAsync("first", Ct)).ShouldBeNull();
+        Row("job00001", First, SessionState.Idle);
+        // One assistant message written as several lines, none with a uuid: the message id alone would name them all alike.
+        _profile.Append(_profile.TranscriptPath(First),
+            """{"type":"assistant","message":{"id":"m7","role":"assistant","content":[{"type":"text","text":"First part."}]}}""",
+            """{"type":"assistant","message":{"id":"m7","role":"assistant","content":[{"type":"text","text":"Second part."}]}}""",
+            """{"type":"assistant","message":{"id":"m7","role":"assistant","content":[{"type":"text","text":"Third part."}]}}""");
+
+        var entries = _chat.Page(-1).Entries.Where(e => e.Kind == TranscriptKind.Assistant).ToArray();
+        entries.Length.ShouldBe(3);
+        entries.Select(e => e.Id).Distinct().Count().ShouldBe(3);
+
+        // Read again, the same entries carry the same ids: a follow keys on them.
+        _chat.Page(-1).Entries.Where(e => e.Kind == TranscriptKind.Assistant).Select(e => e.Id).ShouldBe(entries.Select(e => e.Id));
+    }
+
+    [Fact]
     public void TheBriefMakesTheChatTheFleetChatPassingWorkOnInTheBackgroundWithLimits()
     {
         var brief = Briefs.Watchtower("du1-watchtower", [], [], [], "pilot", null, "DU1");

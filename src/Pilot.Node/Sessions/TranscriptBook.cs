@@ -205,8 +205,10 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
             try
             {
                 using var doc = JsonDocument.Parse(line);
+                // A uuid names its line. Without one the message id is not enough (the lines of one assistant message share it), so
+                // it is joined with the line's number in the file, which is the same at every read of the file: one id per entry.
                 var lineKey = Str(doc.RootElement, "uuid")
-                    ?? (doc.RootElement.TryGetProperty("message", out var msg) && msg.ValueKind == JsonValueKind.Object ? Str(msg, "id") : null)
+                    ?? (doc.RootElement.TryGetProperty("message", out var msg) && msg.ValueKind == JsonValueKind.Object && Str(msg, "id") is { } messageId ? $"{messageId}@L{lineNo}" : null)
                     ?? $"L{lineNo}";
                 var ordinal = 0;
                 Queue(doc.RootElement);
