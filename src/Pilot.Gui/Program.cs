@@ -614,6 +614,22 @@ if (feed is not null && client is not null && clients is not null)
         Note($"pilot-gui: answer now {sendId} on {node.Name}: {refused ?? "cancelled the turn"}");
         return refused;
     };
+    chrome.Chat.OnAnswerAsk = async (requestId, decision, words) =>
+    {
+        var refused = await ChatCommands.AnswerAskAsync(client, requestId, decision, words, GuiSay.Who, cts.Token);
+        Note($"pilot-gui: answer ask {requestId} ({decision}): {refused ?? "answered"}");
+        return refused;
+    };
+    chrome.Chat.OnAnswerAskOn = async (node, requestId, decision, words) =>
+    {
+        if (clients.For(node) is not { } to)
+        {
+            return FleetClients.WatchOnly(node);
+        }
+        var refused = await ChatCommands.AnswerAskAsync(to, requestId, decision, words, GuiSay.Who, cts.Token);
+        Note($"pilot-gui: answer ask {requestId} ({decision}) on {node.Name}: {refused ?? "answered"}");
+        return refused;
+    };
     // The node says the chat changed as the watchtower's words stream: read the feed now, not at the page's next look.
     feed.ChatChanged = chrome.Chat.Refresh;
     chrome.Chat.OnRestart = async () =>

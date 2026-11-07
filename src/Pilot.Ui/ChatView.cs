@@ -14,7 +14,7 @@ namespace Pilot.Ui;
 /// has its choices as buttons, a click on one saying it. A box at the foot sends through <see cref="OnSend"/>
 /// (the node's tell): Enter sends, Shift+Enter starts a new line. A refusal is said in the chat itself.
 /// </summary>
-internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
+internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     /// <summary>How often an open page asks for what came after.</summary>
     public static readonly TimeSpan Every = TimeSpan.FromSeconds(2);
@@ -55,12 +55,12 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     // may all have moved (a reread, another node's feed). The render thread's row caches are keyed by feed index, so it forgets
     // them when the Epoch of the list it is about to draw is not the one it last drew. It travels with the list it belongs to, so
     // a render that still holds the old list neither takes the signal away from the next render nor draws new rows from old caches.
-    private sealed record Held(ImmutableList<TranscriptEntry> Entries, ImmutableDictionary<string, int> Ids, int Total, string? Problem, bool Working, string? Question, string[] Choices, string[] Queued, string?[] QueuedIds, string? Partial, string? Doing, string[] QueuedBehind, ChatTiming[] Timings, object Epoch)
+    private sealed record Held(ImmutableList<TranscriptEntry> Entries, ImmutableDictionary<string, int> Ids, int Total, string? Problem, bool Working, string? Question, string[] Choices, string[] Queued, string?[] QueuedIds, string? Partial, string? Doing, string[] QueuedBehind, ChatTiming[] Timings, ChatAsk[] Asks, object Epoch)
     {
         public static readonly Held Empty = Fresh();
 
         // An empty list under an epoch of its own.
-        public static Held Fresh() => new([], ImmutableDictionary<string, int>.Empty, 0, null, false, null, [], [], [], null, null, [], [], new object());
+        public static Held Fresh() => new([], ImmutableDictionary<string, int>.Empty, 0, null, false, null, [], [], [], null, null, [], [], [], new object());
     }
 
     private Held _held = Held.Empty;
@@ -406,7 +406,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         }
         // A reread may have moved every index: a new epoch tells the render to forget its index-keyed caches.
         return new Held(entries.ToImmutable(), ids.ToImmutable(), page.Total, null, page.Working, page.PendingQuestion, page.Choices ?? [], page.Queued ?? [], page.QueuedIds ?? [],
-            page.Partial, page.Doing, page.QueuedBehind ?? [], page.Timings ?? [], whole ? new object() : held.Epoch);
+            page.Partial, page.Doing, page.QueuedBehind ?? [], page.Timings ?? [], page.Asks ?? [], whole ? new object() : held.Epoch);
     }
 
     private async Task FollowAsync(Func<int, CancellationToken, Task<ChatPage>> load, CancellationToken cancellationToken)
@@ -863,7 +863,12 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var answeredAlready = held.Entries.Count > 0
             && held.Entries.FindLastIndex(e => e is { Kind: TranscriptKind.User, From: null, Note: false }) is var lastUser and >= 0
             && lastUser > held.Entries.FindLastIndex(e => e.Kind == TranscriptKind.Assistant);
-        if (canSend && !answeredAlready && held.Question is { Length: > 0 } question)
+        // What the stream watchtower waits on the person for (a permission prompt, a question) comes first: it is answered here or on its card.
+        if (canSend && held.Asks.Length > 0)
+        {
+            asked = WaitingOnYou(held.Asks);
+        }
+        else if (canSend && !answeredAlready && held.Question is { Length: > 0 } question)
         {
             // The reply the question ends already says it in the feed: the card then holds only the choices.
             var said = held.Entries.LastOrDefault(e => e.Kind == TranscriptKind.Assistant)?.Text;

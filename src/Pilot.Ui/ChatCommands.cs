@@ -46,6 +46,18 @@ internal static class ChatCommands
     }
 
     /// <summary>
+    /// Answers a permission prompt or a question the watchtower waits on (the node's <c>answer-ask</c>, PIL855): <paramref name="decision"/> is
+    /// <c>allow</c>, <c>deny</c> (with a reason in <paramref name="words"/>) or <c>answer</c> (with the JSON of each question's answer). Null when the
+    /// node took it, else its reason for refusing it (answered already, called off, no such ask).
+    /// </summary>
+    public static async Task<string?> AnswerAskAsync(NodeClient client, string requestId, string decision, string? words, string who, CancellationToken cancellationToken)
+    {
+        var args = words is { Length: > 0 } ? new[] { requestId, decision, words } : [requestId, decision];
+        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.AnswerAsk, Target = Verbs.WatchtowerTarget, Args = args, Who = who }, cancellationToken);
+        return envelope.Success && envelope.Response is { Ok: true } ? null : $"refused: {envelope.Response?.Error ?? envelope.Error}";
+    }
+
+    /// <summary>
     /// Stops the node's watchtower and starts a fresh one, briefed from the node's state (the node's <c>restart-watchtower</c>).
     /// Null when the node took it, else what it said in refusing it.
     /// </summary>
