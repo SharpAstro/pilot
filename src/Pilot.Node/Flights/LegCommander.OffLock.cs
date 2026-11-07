@@ -111,6 +111,33 @@ public sealed partial class LegCommander
     }
 
     /// <summary>
+    /// For a command that is only held back by a step's calls being out for the flight (a push, a check rerun, a merge of the base, the
+    /// node's own sweep): waits, with the lock let go, until the flight has none of a step other than <paramref name="except"/>, which is
+    /// the command's own and coalesces in <see cref="Calling"/>. A call out longer than <see cref="StuckAfter"/> is stuck, not waited for:
+    /// <see cref="Calling"/> then refuses as before, so it rings. To be called under the lock, which is held again on return, so the
+    /// caller reads the flight afresh, as it may have changed while this waited (pilot #871).
+    /// </summary>
+    private async Task WaitForFlightFreeAsync(string code, string except, CancellationToken cancellationToken)
+    {
+        while (_calling.TryGetValue(code, out var busy) && busy.What != except)
+        {
+            var left = StuckAfter - (time.GetUtcNow() - busy.At);
+            if (left <= TimeSpan.Zero)
+            {
+                return;
+            }
+            try
+            {
+                await OffLockAsync(null, () => busy.Free.Task.WaitAsync(left, time, cancellationToken));
+            }
+            catch (TimeoutException)
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>
     /// Runs <paramref name="call"/> (GitHub and git, which take as long as they take) with the lock let go, and takes it again before
     /// it returns, whatever came of it. With <paramref name="seen"/>, the flight is then checked to be as it was (see
     /// <see cref="Moved"/>) and a <see cref="FlightException"/> says it is not, so the caller records nothing over what another

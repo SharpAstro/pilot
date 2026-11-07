@@ -178,6 +178,32 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         (await rebase).ShouldBeNull();
     }
 
+    // Pilot #871: an open-pr that met another step's call out for its flight (the sweep's push, a check rerun, a rebase) was refused as busy,
+    // and failed a loaded run of MergedUnderLegTests; it waits for the flight to be free, as the node's own rebase does, and then opens.
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnOpenPrAskedWhileAnotherStepHasCallsOutForTheFlightWaitsForThemInsteadOfBeingRefusedBusy()
+    {
+        var (flight, _) = await Passed("1");
+        var gate = new Gate();
+        var git = new GatedGit(new GitCli(), gate, args => args is ["fetch", ..]);
+        var legs = Another(git);
+
+        var rebase = legs.BringUpToDateAsync(flight.Code, Ct);
+        await Within(gate.Reached, "the fetch of the update was out");
+
+        var open = legs.RunAsync(new CommandRequest { Verb = Verbs.OpenPr, Target = Verbs.FlightTarget(flight.Code), Who = "controller" }, Ct);
+        // Not answered while the flight's calls are out: a refusal would come back at once.
+        (await Task.WhenAny(open, Task.Delay(Quick, Ct))).ShouldNotBe(open, "the open-pr waited for the flight to be free");
+
+        gate.Open();
+        (await rebase).ShouldBeNull();
+        var done = await open;
+
+        done.Ok.ShouldBeTrue($"{done.Error} (way: {done.Way ?? "none"})");
+        done.Way.ShouldNotBe(RefusalWays.Busy);
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task ALandingHeldInGitLeavesAnotherFlightsCommandsAndACreateAnswering()
