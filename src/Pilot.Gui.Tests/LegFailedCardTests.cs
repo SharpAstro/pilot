@@ -13,7 +13,7 @@ namespace Pilot.Gui.Tests;
 /// The leg-failed card of c78 (PIL834/read-stamps), before and after pilot #844: the old card's title and both buttons began with the first
 /// words of the worker's report ("All 7 steps done and committed; ..."), the new one names what failed and what each button leads to.
 /// Both are drawn on the CPU at a phone-narrow 404 px and at a wide size; the new card's title and labels are drawn whole (or ellipsised with the
-/// whole text on hover), and no text is drawn over other text. The captures are written beside PILOT_TEST_CAPTURE for the PR.
+/// whole text on hover), and no text is drawn over other text. The captures are written into the folder PILOT_TEST_CAPTURE names, for the PR.
 /// </summary>
 public sealed class LegFailedCardTests
 {
@@ -116,14 +116,24 @@ public sealed class LegFailedCardTests
         {
             return;
         }
-        var dir = Path.GetDirectoryName(capture) ?? ".";
-        foreach (var (width, height) in new[] { (404, 900), (1280, 700) })
+        // PILOT_TEST_CAPTURE names the folder the PNGs go into.
+        var dir = capture;
+        Directory.CreateDirectory(dir);
+        foreach (var (width, height) in new[] { (404, 1000), (1600, 800) })
         {
             foreach (var (name, card) in new[] { ("before", Before()), ("after", After()) })
             {
                 using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
                 var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-                chrome.Render(new SessionsScreen([], "test", Live.At), null, CardsScreen.From([card]), new RectF32(0, 0, width, height));
+                void Draw() => chrome.Render(new SessionsScreen([], "test", Live.At), null, CardsScreen.From([card]), new RectF32(0, 0, width, height));
+                Draw();
+                // A window too narrow for the panel beside the page cues the cards on the rail; open them in the page's place, as a click on the cue does.
+                if (chrome.CardsDropped)
+                {
+                    chrome.ToggleCards();
+                    Draw();
+                }
+                chrome.ShowsCards.ShouldBeTrue($"the cards panel is drawn in the {name} capture at {width}");
                 File.WriteAllBytes(Path.Combine(dir, $"leg-failed-{name}-{width}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, height));
             }
         }
