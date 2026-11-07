@@ -200,7 +200,7 @@ internal static class CardKindCatalog
         new("grant-asked", "Ring", ["NodeLan.cs"], "NodeCardTests.AGrantAskIsARingCardWhoseChoicesSaySoInPlainWords", "the asking node's grant is not yet answered in the node's grants", [nameof(Verbs.AnswerGrant)]),
         new("update", "Ring|ForYou|Handled", ["Updates/NodeUpdater.cs"], "UpdateTests.AskRaisesACardWithUpdateOnce", "the published version is newer than the running node's", [nameof(Verbs.Update)]),
         new("restart", "Handled", ["NodeSettingsCommands.cs"], "NodeRestartTests.ARestartStartsTheSuccessorStopsTheNodeAndLogsAHandledLineNamingTheCaller"),
-        new("store", "ForYou", ["NodeState.cs"], SourcePinned),
+        new("store", "Ring|ForYou", ["NodeState.cs", "StoreRecovery.cs"], SourcePinned, "the start could not read the stored files (FileJournal.Load or NodeState's constructor threw), set them aside and started from a backup or an empty store", [nameof(Verbs.NoteIdea)]),
         new("stop-unconfirmed", "Ring", ["Sessions/SessionMessenger.cs"], "SessionEndTests.AStopThatDoesNotTakeRaisesOneRingCardAndIsNotConfirmed", "the session's row still shows it live after the stop was asked", [nameof(Verbs.EndSession)]),
         new("usage-high", "Handled", ["Sessions/UsageReader.cs"], "UsageTests.NearlySpentTheFiveHourWindowRaisesOneCardPerWindow"),
         new("usage-week", "ForYou", ["Flights/StartGate.cs"], "StartGateTests.TheWeekRingsOncePerWindowAndHoldsNothing"),
@@ -270,5 +270,6 @@ internal static class CardKindCatalog
         ("watchtower-started", "Started a fresh watchtower", null),
         ("watchtower-parked", "no flight in the air and no UI connected", null),
         ("store", "could not write its snapshot", null),
+        ("store", "could not be read", "unreadable store"),
     ];
 }

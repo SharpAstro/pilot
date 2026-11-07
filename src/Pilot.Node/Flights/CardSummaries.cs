@@ -166,6 +166,7 @@ public static partial class CardSummaries
             NodeUpdater.Kind => "A new pilot is out, or an update was installed or failed. The card's choice installs it; otherwise nothing to do.",
             NodeLan.AskedKind => "A node on the LAN asks to fly flights here. Allow lets it run any command here until revoked; Refuse turns it away.",
             "restart" => "The node restarted at someone's word. Nothing to do.",
+            NodeState.StoreCardKind when subject.StartsWith(StoreRecovery.SubjectPrefix, StringComparison.Ordinal) => "The node's store could not be read, so it was set aside and the node started from a backup, or from nothing. The title says what was lost; the unreadable files are kept whole in the folder the card names.",
             NodeState.StoreCardKind => "The node's store could not write its snapshot. Every change is still journaled, so a restart loses nothing; fix the folder or the disk.",
             Pilot.Node.Sessions.SessionMessenger.StopUnconfirmedKind => "A session was told to stop and its process may still run. The card's choice ends it again; the title says which session.",
             UsageReader.HighKind => "The 5-hour usage window is nearly spent. Workers stop when it runs out and the node resumes them after the reset; nothing to do.",

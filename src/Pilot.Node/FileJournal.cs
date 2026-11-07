@@ -105,6 +105,9 @@ public sealed class FileJournal : INodeJournal, IDisposable
     public static string RunningVersion { get; } =
         typeof(FileJournal).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
+    /// <summary>The folder the store's files are in.</summary>
+    public string Folder => _folder;
+
     public string RecordPath => Path.Combine(_folder, RecordFile);
 
     public string SnapshotPath => Path.Combine(_folder, SnapshotFile);

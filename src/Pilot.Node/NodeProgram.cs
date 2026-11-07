@@ -79,16 +79,19 @@ public static class NodeProgram
     }
 
     // A node started at logon, or by the update that replaced its predecessor, writes to a pipe nobody reads, so the line is kept in a file too.
-    private static void LogRefusal(NodeOptions options, StoreTooNewException refused)
+    private static void LogRefusal(NodeOptions options, StoreTooNewException refused) =>
+        AppendStartLog(options, $"pilot-node {FileJournal.RunningVersion} did not start: {refused.Message}");
+
+    /// <summary>Appends one dated line to <see cref="StartLogFile"/> in the data folder; a file that cannot be written changes nothing about what the line says.</summary>
+    internal static void AppendStartLog(NodeOptions options, string line)
     {
         try
         {
-            File.AppendAllText(Path.Combine(options.DataFolder, StartLogFile),
-                $"{DateTimeOffset.UtcNow:O} pilot-node {FileJournal.RunningVersion} did not start: {refused.Message}{Environment.NewLine}");
+            File.AppendAllText(Path.Combine(options.DataFolder, StartLogFile), $"{DateTimeOffset.UtcNow:O} {line}{Environment.NewLine}");
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            // The message is in node.log (and on stderr when the log could not take it); a log that cannot be written changes nothing about the refusal.
+            // The line is in node.log (and on stderr when the log could not take it).
         }
     }
 }

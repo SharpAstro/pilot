@@ -43,12 +43,24 @@ public static partial class NodeApp
     {
         // The store: the node's events as files in its data folder, read back on the next start (FileJournal).
         builder.Services.AddSingleton<INodeJournal>(_ => new FileJournal(Path.Combine(options.DataFolder, "store")));
-        builder.Services.AddSingleton(services => new NodeState(
-            services.GetRequiredService<INodeJournal>(), services.GetRequiredService<TimeProvider>(), options.RetainedDeltas)
+        // The state is built on the store here, and a store that cannot be read is set aside and started again from a backup (StoreRecovery).
+        // A store from a newer node still throws StoreTooNewException from here, which NodeProgram turns into its refusal.
+        builder.Services.AddSingleton(services =>
         {
-            Error = logWriter,
-            TokensByFlight = () => services.GetRequiredService<SpendLedger>().TokensByFlight(),
+            var time = services.GetRequiredService<TimeProvider>();
+            var opened = StoreRecovery.Open(
+                services.GetRequiredService<INodeJournal>(),
+                journal => new NodeState(journal, time, options.RetainedDeltas)
+                {
+                    Error = logWriter,
+                    TokensByFlight = () => services.GetRequiredService<SpendLedger>().TokensByFlight(),
+                },
+                time);
+            // With the state up: the line in node.log and node-start.log, and the card, when the start was from a backup.
+            opened.Report(logWriter, line => NodeProgram.AppendStartLog(options, $"pilot-node {FileJournal.RunningVersion} {line}"));
+            return opened;
         });
+        builder.Services.AddSingleton(services => services.GetRequiredService<StoreRecovery>().State);
         builder.Services.AddSingleton<PageViews>();
         builder.Services.AddSingleton<EventHub>();
     }
