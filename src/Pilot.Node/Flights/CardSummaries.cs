@@ -6,9 +6,10 @@ using Pilot.Node.Updates;
 namespace Pilot.Node.Flights;
 
 /// <summary>
-/// The plain sentence every card carries (<see cref="CardRow.Summary"/>): what happened and what the choices do, kept apart from
-/// the raw detail. A raiser that wrote one passes it; any other card gets one here from its kind and subject, and a kind this
-/// table does not know gets a generic line built from the title and the choices. Text that looks like a log is never one.
+/// The plain sentence a card carries (<see cref="CardRow.Summary"/>): what happened and what the choices do, kept apart from
+/// the raw detail. A raiser that wrote one passes it; any other card gets one here from its kind and subject. A line that only
+/// describes the kind (and the generic line for a kind this table does not know, built from the title and the choices) is help:
+/// such a card carries none and shows its own title and detail (<see cref="Resolve"/>). Text that looks like a log is never one.
 /// </summary>
 public static partial class CardSummaries
 {
@@ -30,11 +31,19 @@ public static partial class CardSummaries
     /// <summary>
     /// The summary to keep: the raiser's when it is usable and not just the detail, else the table's line when it is about this card
     /// (it names the card's flight or leg), else none. A line of the table that describes the kind and names nothing of this card
-    /// (<see cref="Describes"/>) is help, not the card's first line (#797 rule 5): the card shows its own title and text.
+    /// (<see cref="Describes"/>) is help, not the card's first line (#797 rule 5): the card shows its own title and text. That help line
+    /// given as the summary (a card an older node stored with it) is dropped the same way.
     /// </summary>
-    public static string? Resolve(string? given, string? detail, string kind, string subject, string title, IReadOnlyList<CardChoice> choices) =>
-        Usable(given) && !string.Equals(given!.Trim(), detail?.Trim(), StringComparison.Ordinal) ? given!.Trim()
-        : Describes(kind, choices) ? null : For(kind, subject, title, choices);
+    public static string? Resolve(string? given, string? detail, string kind, string subject, string title, IReadOnlyList<CardChoice> choices)
+    {
+        var help = Describes(kind, choices);
+        var line = For(kind, subject, title, choices);
+        if (Usable(given) && !string.Equals(given!.Trim(), detail?.Trim(), StringComparison.Ordinal) && !(help && string.Equals(given.Trim(), line, StringComparison.Ordinal)))
+        {
+            return given.Trim();
+        }
+        return help ? null : line;
+    }
 
     private const string ProbeSubject = "flight/ZZ0/zz";
 

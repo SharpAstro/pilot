@@ -129,9 +129,15 @@ public sealed class DesignSettledTests : PrFixTestsBase
         card.Title.Length.ShouldBeLessThan(200);
         card.Title.ShouldNotContain(c => char.IsControl(c));
         card.Choices.ShouldAllBe(c => c.Label.Length <= 60 && !c.Label.Any(char.IsControl));
+        // The options are lettered in the body in the order of their buttons, the recommended first; each button is a short verb and
+        // carries its option's words as the answer, never in its label (#797 rule 4).
         var detail = card.Detail.ShouldNotBeNull();
-        detail.IndexOf("- second", StringComparison.Ordinal).ShouldBeLessThan(detail.IndexOf("- first", StringComparison.Ordinal));
-        card.Choices[0].Label.ShouldBe("second");
+        detail.IndexOf("A. second", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0);
+        detail.IndexOf("A. second", StringComparison.Ordinal).ShouldBeLessThan(detail.IndexOf("B. first", StringComparison.Ordinal));
+        card.Choices[0].Label.ShouldBe("Pick option A");
+        card.Choices[0].Args.ShouldHaveSingleItem().ShouldStartWith("second");
+        card.Choices[1].Label.ShouldBe("Pick option B");
+        card.Choices[1].Args.ShouldHaveSingleItem().ShouldStartWith("first");
     }
 
     [Fact]
