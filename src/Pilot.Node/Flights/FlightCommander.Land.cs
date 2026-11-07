@@ -79,12 +79,18 @@ public sealed partial class FlightCommander
     public FlightRow MarkMergedUnderLeg(FlightRow flight, string mergedHead, string why)
     {
         var number = flight.PullRequest;
-        var marked = flight with
+        // Written on the row as it is at this moment, and only while it still holds the PR that merged: a caller's row may have been
+        // read with the lock let go (a push's retry after GH006), and a whole-row write of it would undo what moved meanwhile.
+        var marked = state.UpdateFlight(flight.Code, f => f.PullRequest != number ? null : f with
         {
             MergedHead = mergedHead, MergedPullRequest = number, PullRequest = null, PullRequestUrl = null, Review = null,
             MergeWhenGreen = null, MergeQueue = null, GitHubHead = null,
-        };
-        state.PutFlight(marked);
+        });
+        if (marked is null)
+        {
+            // The flight moved on from that PR (or is gone): nothing of it is marked, nor carded.
+            return flight;
+        }
         // Its merge entry ends merged too: with the PR let go, no look of the queues sees the flight again to end it.
         state.EndMergeAsMerged(flight.Code, $"#{number} merged without the new leg, whose work goes to a new PR");
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"#{number} merged on GitHub without the new leg", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, "not-landed");

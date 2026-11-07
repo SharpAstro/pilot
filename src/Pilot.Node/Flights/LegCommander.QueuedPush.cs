@@ -43,18 +43,30 @@ public sealed partial class LegCommander
         var target = Verbs.FlightTarget(flight.Code);
         var before = state.Flights().FirstOrDefault(f => f.Code == flight.Code);
         var turned = false;
-        if (before is { Review.State: ReviewState.Passed })
+        var wasPassed = before is { Review.State: ReviewState.Passed };
+        if (wasPassed)
         {
-            // The passed review read a head without the new commits: the PR goes back to draft and the review to Changes, as a new leg's start does.
+            // The passed review read a head without the new commits: the PR goes back to draft, which GitHub will not merge.
             await github.SetDraftAsync(flight.RepoPath, number, draft: true, cancellationToken);
-            var after = Record(flight.Code, f => f with { Review = f.Review is { State: ReviewState.Passed } held ? held with { State = ReviewState.Changes, Report = why, FinishedAt = time.GetUtcNow(), ReviewUrl = null, MarksWhy = null } : f.Review });
-            if (after is not null)
+        }
+        if (wasPassed || before is { MergeWhenGreen: not null })
+        {
+            // The review goes to Changes by the write a new leg's start uses (RecordReviewChanges), and a merge the node armed at green is
+            // let go with it, as TakeMergeBackAsync does: either would otherwise merge, or be offered, the head without the new commits.
+            var after = RecordReviewChanges(flight.Code, why, passedOnly: true, clearMergeWhenGreen: true);
+            if (after is not null && before is not null)
             {
                 _queueTurned[flight.Code] = (before, after);
-                turned = true;
+                turned = wasPassed;
             }
-            await _marks.ApplyAsync(flight.Code, cancellationToken);
+            if (wasPassed)
+            {
+                await _marks.ApplyAsync(flight.Code, cancellationToken);
+            }
         }
+        // The node's own merge entry for the PR goes too, as TakeMergeBackAsync's RemoveMerge ends it; one a merge command is driving is
+        // that command's (a push made from its own bring-up), so only an entry nothing drives ends here.
+        EndLeftQueue(flight.Code, why);
         state.CloseCardsAbout(target, $"{flight.Code}'s PR #{number} was taken out of the merge queue: {why}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
         state.RaiseCard(CardBin.Handled, MergeTakenBackKind, target,
             $"{flight.Code}'s PR #{number} was taken out of the merge queue for new commits",
@@ -65,16 +77,18 @@ public sealed partial class LegCommander
     // The PR of each flight the node itself took out of the queue, and when: its removal is not one GitHub made unmerged.
     private readonly ConcurrentDictionary<string, (int Number, DateTimeOffset At)> _dequeuedByNode = new(StringComparer.Ordinal);
 
-    /// <summary>How far GitHub's removal time may sit before the node's own clock at the dequeue (clock skew) and still be that dequeue.</summary>
+    /// <summary>How far GitHub's removal time may sit from the node's own clock at the dequeue (clock skew and the call's own time) and still be that dequeue.</summary>
     private static readonly TimeSpan DequeueSkew = TimeSpan.FromMinutes(2);
 
     /// <summary>
     /// Whether the removal of PR <paramref name="number"/> from the merge queue at <paramref name="removedAt"/> is the node's own (PIL836):
-    /// the node took that PR out at or after that time, less <see cref="DequeueSkew"/>. Every look until the PR is queued again reads
-    /// the same removal, so the entry is kept until then (<see cref="QueuedAgain"/>): a removal after that is GitHub's to card.
+    /// the node took that PR out within <see cref="DequeueSkew"/> of that time, either way. Every look until the PR is queued again reads
+    /// the same removal, so the entry is kept until then (<see cref="QueuedAgain"/>); a removal later than the window is GitHub's to card,
+    /// so a re-queue and a second drop by GitHub that fall between two looks are not read as the node's own (a re-queue needs a fresh
+    /// review of the new head first, which takes longer than the window).
     /// </summary>
     public bool DequeuedByNode(string code, int number, DateTimeOffset removedAt) =>
-        _dequeuedByNode.TryGetValue(code, out var taken) && taken.Number == number && removedAt >= taken.At - DequeueSkew;
+        _dequeuedByNode.TryGetValue(code, out var taken) && taken.Number == number && (removedAt - taken.At).Duration() <= DequeueSkew;
 
     /// <summary>Lets go of the node's own dequeue of a flight's PR once the PR is queued again: a removal after that is GitHub's.</summary>
     public void QueuedAgain(string code) => _dequeuedByNode.TryRemove(code, out _);
@@ -110,6 +124,9 @@ public sealed partial class LegCommander
             }
             else if (current.MergedPullRequest != merged.Number)
             {
+                // Answered, not changed: a branch whose merged PR is neither the one the flight holds nor the one it already marked
+                // merged is a PR the node never opened for it, and so rare that the generic push-refused card (with its Start choice)
+                // is honest enough; a typed way for it would be code for a case that has not been seen.
                 throw new FlightException($"{said}, and it is not the PR the flight holds: nothing was changed");
             }
             throw new PushRefusedException(RefusalWays.HandedOn, $"{said}: the new commits go to a follow-up PR, which opens by itself once every leg is done");
