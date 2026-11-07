@@ -34,6 +34,9 @@ public sealed class MergeRefusedException(MergeAnswerKind kind, string said, str
     public string Said { get; } = said;
 }
 
+/// <summary>A merge asked of a PR GitHub has merged already: the state the merge wanted, never a refusal to ring (#799).</summary>
+public sealed class AlreadyMergedException(string message) : FlightException(message);
+
 /// <summary>The merge methods a repo allows (<c>allow_squash_merge</c>, <c>allow_rebase_merge</c>, <c>allow_merge_commit</c>).</summary>
 public sealed record AllowedMergeMethods(bool Squash, bool Rebase, bool Merge)
 {

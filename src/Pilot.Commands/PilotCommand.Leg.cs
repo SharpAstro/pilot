@@ -49,6 +49,7 @@ public static partial class PilotCommand
             var doneWhen = new Option<string>("--done-when") { Description = "When it is done, in words", Required = true };
             var check = new Option<string?>("--check") { Description = "A command the node reruns in the plane before it takes the leg as done" };
             var ciDiffers = new Option<string?>("--ci-differs") { Description = "Why the check cannot build the way the repo's CI does (a dotnet build/test without CI's -c is refused otherwise)" };
+            var wholeSuite = new Option<string?>("--whole-suite") { Description = "Why the check runs a whole test project with no --filter (refused otherwise: the whole suite is CI's, on the PR)" };
             var budget = new Option<string?>("--budget") { Description = "Its budget in weighted tokens" };
             var model = new Option<string?>("--model") { Description = "The model its workers run" };
             var effort = new Option<string?>("--effort") { Description = "The effort its workers run at" };
@@ -56,12 +57,12 @@ public static partial class PilotCommand
             var plan = Action(new Command("plan", "Plan a leg at the end of the flight's order")
                 {
                     Arguments = { code, name },
-                    Options = { goal, doneWhen, check, ciDiffers, budget, model, effort, item },
+                    Options = { goal, doneWhen, check, ciDiffers, wholeSuite, budget, model, effort, item },
                 },
                 (p, client, ct) =>
                 {
                     var args = new List<string> { $"name={p.GetValue(name)}", $"goal={p.GetValue(goal)}", $"done-when={p.GetValue(doneWhen)}" };
-                    foreach (var (option, key) in (ReadOnlySpan<(Option<string?>, string)>)[(check, "check"), (ciDiffers, "ci-differs"), (budget, "budget"), (model, "model"), (effort, "effort")])
+                    foreach (var (option, key) in (ReadOnlySpan<(Option<string?>, string)>)[(check, "check"), (ciDiffers, "ci-differs"), (wholeSuite, "whole-suite"), (budget, "budget"), (model, "model"), (effort, "effort")])
                     {
                         if (p.GetValue(option) is { } value)
                         {
@@ -80,8 +81,8 @@ public static partial class PilotCommand
             var remove = Action(new Command("remove", "Take a planned leg out of the flight; the legs after it keep their order") { Arguments = { code, legName, removeWhy } },
                 (p, client, ct) => Send(client, Verbs.RemoveLeg, Verbs.LegTarget(p.GetValue(code)!, p.GetValue(legName)!), p.GetValue(removeWhy) ?? [], who, ct));
 
-            var outcome = Arg("outcome", "done, failed, or accepted (the controller's: a failed leg marked done anyway, its failure kept in its report, so the flight goes on), or verified (anyone's: the node finishes a failed leg only if its plane matches its pushed branch and its check passes); pushed-with-lease and merged-with-origin are the controller's, for a blocked push");
-            outcome.AcceptOnlyFromAmong("done", "failed", "accepted", "verified", "pushed-with-lease", "merged-with-origin");
+            var outcome = Arg("outcome", "done, failed, retired (a leg stopped on the controller's or the owner's word: done in the row, its report starting retired:, no card; never failed), or accepted (the controller's: a failed leg marked done anyway, its failure kept in its report, so the flight goes on), or verified (anyone's: the node finishes a failed leg only if its plane matches its pushed branch and its check passes); pushed-with-lease and merged-with-origin are the controller's, for a blocked push");
+            outcome.AcceptOnlyFromAmong("done", "failed", "retired", "accepted", "verified", "pushed-with-lease", "merged-with-origin");
             var report = Words("report", "A line on what was done, or why not", required: false);
             var finish = Action(new Command("finish", "Finish the leg: done reruns its check; failed rings for a go-around, unless its work is pushed and checks out, when the node finishes it") { Arguments = { outcome, report }, Options = { leg } },
                 (p, client, ct) => OnLeg(p, client, Verbs.FinishLeg, _ => [p.GetValue(outcome)!, .. p.GetValue(report) ?? []], ct));

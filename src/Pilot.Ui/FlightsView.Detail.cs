@@ -241,6 +241,11 @@ internal sealed partial class FlightsView<TSurface>
         page.AddRange(RefusalOf(line));
         page.AddRange(AskRefusalOf(line));
         page.AddRange(WhyRow(line));
+        if (line.ActivityText is { } activity)
+        {
+            // How long ago the flight really moved: here only, so a table row stays clean.
+            page.Add(Prose(activity, 12f, Dim));
+        }
         if (line.StaleSummary is { } staleSummary)
         {
             // What went stale (the timeline and the one-line cause) and the priority raise the node made for it (#736): wrapped, never cut.
@@ -290,11 +295,15 @@ internal sealed partial class FlightsView<TSurface>
         // What stays above the scroll (the head, the buttons, the notes) takes what it needs and no more, and scrolls itself where the room
         // is short (a header that wrapped onto many lines, a leg's long name on a button): it had no scroll, so its end lay past the window's
         // foot and the legs' scroll was left none. The legs' scroll keeps a floor of its own.
-        var sticky = Layout.Builder.VStack([.. page]).WithScroll(_flightHeadScroll).WStar().HStarUpToContent();
+        // The gutters are each scrolled stack's own padding, not the outer stack's. A scrolled stack keeps its scrollbar column free of its rows
+        // but may measure them at the full width and lay them out at the narrower one, so wrapped text comes out taller than its row and runs into
+        // the next. A trailing padding as wide as the bar needs no reserve, so the rows are measured and laid out at one width. The outer stack
+        // has no side padding, so the scrollbar column sits at the page's edge and the text keeps its gutter.
+        var sticky = Layout.Builder.VStack([.. page]).WithScroll(_flightHeadScroll).Pad(Gutter, 0f).WStar().HStarUpToContent();
         return Layout.Builder.VStack(
                 sticky,
-                Layout.Builder.VStack([.. scrolled]).WithGap(10f).WithScroll(_detailScroll).WStar().HStar(1f, ScrolledMinHeight))
-            .Pad(Gutter, 8f)
+                Layout.Builder.VStack([.. scrolled]).WithGap(10f).WithScroll(_detailScroll).Pad(Gutter, 0f).WStar().HStar(1f, ScrolledMinHeight))
+            .Pad(0f, 8f)
             .Stretch();
     }
 
@@ -659,67 +668,6 @@ internal sealed partial class FlightsView<TSurface>
             .HAuto();
         _legBlocks[leg.Name] = block;
         return block;
-    }
-
-    // The node of each leg's block in the page built last, so layout can say where one sits (see RevealLeg).
-    private readonly Dictionary<string, Layout.Node> _legBlocks = [];
-
-    // The leg a card's link asked the page to scroll to, until the layout that knows where its block sits has run.
-    private string? _revealLeg;
-
-    /// <summary>Opens <paramref name="code"/>'s page with leg <paramref name="leg"/>'s block scrolled into view, once layout knows where it sits.</summary>
-    public void OpenDetail(string code, string leg)
-    {
-        OpenDetail(code);
-        _revealLeg = leg;
-    }
-
-    // The arrangement of the page painted last.
-    private ImmutableArray<Layout.ArrangedNode<float>> _arranged;
-
-    /// <summary>Whether the top of <paramref name="leg"/>'s block lies inside the detail viewport as last painted; false when the leg is not on the page.</summary>
-    internal bool LegBlockInView(string leg)
-    {
-        if (!_legBlocks.TryGetValue(leg, out var block) || _arranged.IsDefault)
-        {
-            return false;
-        }
-        foreach (var node in _arranged)
-        {
-            if (ReferenceEquals(node.Node, block))
-            {
-                var (start, _) = _detailScroll.ContentExtentOf(new RectF32(node.Bounds.X, node.Bounds.Y, node.Bounds.Width, node.Bounds.Height));
-                return start >= _detailScroll.Offset - 1f && start < _detailScroll.Offset + _detailScroll.Viewport.Height;
-            }
-        }
-        return false;
-    }
-
-    // Scrolls the asked-for leg to the top of the page's scroll, from the arrangement just made; true when the offset moved and the page wants painting again.
-    private bool RevealLeg(ImmutableArray<Layout.ArrangedNode<float>> arranged)
-    {
-        if (_revealLeg is not { } leg || _openCode is null)
-        {
-            return false;
-        }
-        if (!_legBlocks.TryGetValue(leg, out var block))
-        {
-            // Its page is not on show yet (or the leg is not on it): asked again on the next frame, until the page is closed.
-            return false;
-        }
-        foreach (var node in arranged)
-        {
-            if (ReferenceEquals(node.Node, block))
-            {
-                _revealLeg = null;
-                var before = _detailScroll.AtomOffset;
-                var (start, _) = _detailScroll.ContentExtentOf(new RectF32(node.Bounds.X, node.Bounds.Y, node.Bounds.Width, node.Bounds.Height));
-                // A span as tall as the view aligns by its start: the leg's block at the top.
-                _detailScroll.RevealExtent(start, start + MathF.Max(node.Bounds.Height, _detailScroll.Viewport.Height + 1f));
-                return _detailScroll.AtomOffset != before;
-            }
-        }
-        return false;
     }
 
     private const float DetailLabelWidth = 76f;

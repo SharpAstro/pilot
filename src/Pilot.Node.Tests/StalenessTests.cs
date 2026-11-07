@@ -115,6 +115,43 @@ public class StalenessTests
     }
 
     [Fact]
+    public void ALegPastTheGoAroundLimitIsStaleWithItsLegStaleCardsTableAsItsCause()
+    {
+        var leg = Leg("DIR178", started: Now - TimeSpan.FromHours(1)) with { GoArounds = StaleLegs.MostGoArounds + 1 };
+        var card = Card("c4", "flight/DIR178/main", LegWatch.LegStale, CardBin.Handled, TimeSpan.FromMinutes(5), CardState.Closed) with
+        {
+            Detail = "job | started | duration | result | failed\nj9 | 2026-11-05 19:10 | 4 m | failed | ParserTests.Parses (the flight's)",
+        };
+        var item = Read([Flight(age: TimeSpan.FromHours(2))], [leg], [card]).Stale.ShouldHaveSingleItem();
+        (item.Kind, item.Subject).ShouldBe((StaleKind.Leg, "DIR178/main"));
+        item.Cause.ShouldContain($"go-around {StaleLegs.MostGoArounds + 1}");
+        item.Cause.ShouldContain("card c4");
+        item.Cause.ShouldContain("ParserTests.Parses (the flight's)");
+    }
+
+    [Fact]
+    public void ALegFlyingPastSixHoursIsStaleWithATableBuiltFromItsCheckJobsBeforeAnyCard()
+    {
+        var check = Job("j7", "DIR178", "main", JobState.Failed, TimeSpan.FromHours(7)) with
+        {
+            Kind = JobKind.Check, EndedAt = Now - TimeSpan.FromHours(7) + TimeSpan.FromMinutes(3), FirstTestFailed = "ParserTests.Parses",
+        };
+        var item = Read([Flight(age: TimeSpan.FromHours(8))], [Leg("DIR178", started: Now - TimeSpan.FromHours(5))], jobs: [check])
+            .Stale.Single(i => i.Kind == StaleKind.Leg);
+        item.AgeText.ShouldBe("7 h", "the leg's first start is its earliest check job when that is older than its start");
+        item.Cause.ShouldContain("flying 7 h");
+        item.Cause.ShouldContain("j7");
+        item.Cause.ShouldContain("ParserTests.Parses (the flight's)");
+    }
+
+    [Fact]
+    public void ALegUnderBothStaleLimitsIsNotAStaleLeg()
+    {
+        var leg = Leg("DIR178", started: Now - TimeSpan.FromHours(5)) with { GoArounds = StaleLegs.MostGoArounds };
+        Read([Flight(age: TimeSpan.FromHours(5))], [leg]).Stale.ShouldNotContain(i => i.Kind == StaleKind.Leg);
+    }
+
+    [Fact]
     public void ARingingCardPastItsBoundIsStaleButAHandledOneIsNot()
     {
         var reading = Read(cards: [Card("c1", "flight/DIR178", age: TimeSpan.FromHours(5)), Card("c2", "node", bin: CardBin.Handled, age: TimeSpan.FromHours(9))]);
@@ -266,5 +303,81 @@ public class StalenessTests
 
         Read([Flight(age: TimeSpan.FromHours(13))], [Leg("DIR178", state: LegState.Done)], [Card("c7", "flight/DIR178", age: TimeSpan.FromMinutes(10))])
             .Stale.Single().WaitsOn.ShouldContain("a ringing card (c7");
+    }
+
+    [Fact]
+    public void TheLastMoveIsTheLastRealEventWhateverTheFlightsAge()
+    {
+        var review = new ReviewRow
+        {
+            State = ReviewState.Passed, Reviewer = "DE1-DIR178-review", StartedAt = Now - TimeSpan.FromHours(11), FinishedAt = Now - TimeSpan.FromHours(10),
+        };
+        var flight = Flight(age: TimeSpan.FromHours(30), review: review);
+
+        var last = Staleness.LastMove(flight, [Leg("DIR178", state: LegState.Done) with { StartedAt = Now - TimeSpan.FromHours(20) }], [], null, TimeZoneInfo.Utc).ShouldNotBeNull();
+
+        last.At.ShouldBe(Now - TimeSpan.FromHours(10));
+        last.Text.ShouldBe("review passed");
+    }
+
+    [Fact]
+    public void ACardAnsweredByAPersonIsAMoveButOneTheNodeClosedIsNot()
+    {
+        var answered = Card("c1", "flight/DIR178", state: CardState.Closed) with { ClosedAt = Now - TimeSpan.FromHours(2), ClosedBy = "sebastian" };
+        var swept = Card("c2", "flight/DIR178", state: CardState.Closed) with { ClosedAt = Now - TimeSpan.FromHours(1), ClosedBy = "node" };
+        var flight = Flight(age: TimeSpan.FromHours(30));
+
+        var last = Staleness.LastMove(flight, [], [answered, swept], null, TimeZoneInfo.Utc).ShouldNotBeNull();
+
+        last.At.ShouldBe(Now - TimeSpan.FromHours(2));
+        last.Text.ShouldBe("card c1 answered");
+    }
+
+    [Fact]
+    public void ACardGitHubClosedIsNotAnAnswerSoItIsNotAMove()
+    {
+        var answered = Card("c1", "flight/DIR178", state: CardState.Closed) with { ClosedAt = Now - TimeSpan.FromHours(5), ClosedBy = "gui" };
+        var closedOnGitHub = Card("c2", "flight/DIR178", state: CardState.Closed) with { ClosedAt = Now - TimeSpan.FromHours(1), ClosedBy = "github" };
+
+        var last = Staleness.LastMove(Flight(age: TimeSpan.FromHours(30)), [], [answered, closedOnGitHub], null, TimeZoneInfo.Utc).ShouldNotBeNull();
+
+        last.At.ShouldBe(Now - TimeSpan.FromHours(5));
+        last.Text.ShouldBe("card c1 answered");
+    }
+
+    [Fact]
+    public void APushAndACheckFinishingAreNotMovesBecauseALoopOfFailingChecksIsTheStaleCase()
+    {
+        var review = new ReviewRow { State = ReviewState.Passed, Reviewer = "r", StartedAt = Now - TimeSpan.FromHours(11), FinishedAt = Now - TimeSpan.FromHours(10) };
+        var flight = Flight(age: TimeSpan.FromHours(30), review: review, pr: 12);
+        // The PR was updated (a push, a comment) minutes ago and a check job for the leg ended a minute ago: neither moves the flight.
+        var pr = Pr("DIR178", 12, TimeSpan.FromHours(20)) with { UpdatedAt = Now - TimeSpan.FromMinutes(3) };
+        var check = Job("j1", "DIR178", "main", JobState.Succeeded, TimeSpan.FromMinutes(5)) with { Kind = JobKind.Check, EndedAt = Now - TimeSpan.FromMinutes(1) };
+
+        var last = Staleness.LastMove(flight, [Leg("DIR178", state: LegState.Flying, started: Now - TimeSpan.FromHours(20))], [], Prs(pr), TimeZoneInfo.Utc).ShouldNotBeNull();
+        var item = Read([flight], [Leg("DIR178", state: LegState.Flying, started: Now - TimeSpan.FromHours(20))], jobs: [check], prs: Prs(pr)).Stale.First(i => i.Kind == StaleKind.Flight);
+
+        last.At.ShouldBe(Now - TimeSpan.FromHours(10));
+        last.Text.ShouldBe("review passed");
+        item.Idle.ShouldBe(TimeSpan.FromHours(10));
+    }
+
+    [Fact]
+    public void ALandedFlightHasNoLastMove()
+    {
+        Staleness.LastMove(Flight(state: FlightState.Landed), [], [], null, TimeZoneInfo.Utc).ShouldBeNull();
+    }
+
+    [Fact]
+    public void AStaleLineSaysHowLongTheFlightHasNotMoved()
+    {
+        var review = new ReviewRow
+        {
+            State = ReviewState.Passed, Reviewer = "DE1-DIR178-review", StartedAt = Now - TimeSpan.FromHours(11), FinishedAt = Now - TimeSpan.FromHours(10),
+        };
+        var item = Read([Flight(age: TimeSpan.FromHours(30), review: review)], [Leg("DIR178", state: LegState.Done)]).Stale.ShouldHaveSingleItem();
+
+        item.Idle.ShouldBe(TimeSpan.FromHours(10));
+        StaleSection.Line(item).ShouldContain("no progress for 10 h, waiting on ");
     }
 }

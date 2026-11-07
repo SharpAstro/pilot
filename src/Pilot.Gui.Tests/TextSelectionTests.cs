@@ -138,7 +138,7 @@ public sealed class TextSelectionTests
 
         window.Drag(Start(first), End(last));
 
-        window.Chrome.Flights.Selection.HasSelection.ShouldBeTrue();
+        window.Chrome.Flights.PageSelection.HasSelection.ShouldBeTrue();
         window.Chrome.HandleInput(new InputEvent.KeyDown(InputKey.C, InputModifier.Ctrl)).ShouldBeTrue();
         // The findings as the page shows them: the backticks are the code's colour, not characters, and a break where a finding ends.
         window.Copied.Single().ShouldBe("1. CI is red: LayoutDrivenTests rejects JobsView.cs:680.\n2. The gate takes the smaller of the estimate and job-memory");
@@ -155,7 +155,7 @@ public sealed class TextSelectionTests
         var two = window.Renderer.MeasureText("re", word.FontPath, word.FontSize).Width;
         window.Drag((word.X + two, word.Y + word.Height / 2f), End(word));
 
-        window.Chrome.Flights.Selection.Text.ShouldBe("jects");
+        window.Chrome.Flights.PageSelection.Text.ShouldBe("jects");
     }
 
     [Fact]
@@ -195,17 +195,17 @@ public sealed class TextSelectionTests
         var from = Start(regions.First(r => r.Text == "1."));
         var to = End(regions.First(r => r.Text.StartsWith("rejects", StringComparison.Ordinal)));
         window.Drag(from, to);
-        window.Chrome.Flights.Selection.HasSelection.ShouldBeTrue();
+        window.Chrome.Flights.PageSelection.HasSelection.ShouldBeTrue();
 
         // Empty ground, low on the page.
         window.Send(new InputEvent.MouseDown(1000f, 880f));
         window.Send(new InputEvent.MouseUp(1000f, 880f));
-        window.Chrome.Flights.Selection.HasSelection.ShouldBeFalse();
+        window.Chrome.Flights.PageSelection.HasSelection.ShouldBeFalse();
 
         window.Drag(from, to);
-        window.Chrome.Flights.Selection.HasSelection.ShouldBeTrue();
+        window.Chrome.Flights.PageSelection.HasSelection.ShouldBeTrue();
         window.Chrome.Flights.CloseDetail();
-        window.Chrome.Flights.Selection.HasSelection.ShouldBeFalse();
+        window.Chrome.Flights.PageSelection.HasSelection.ShouldBeFalse();
     }
 
     [Fact]
@@ -217,7 +217,7 @@ public sealed class TextSelectionTests
         window.Send(new InputEvent.MouseDown(word.X + 2f, word.Y + word.Height / 2f));
         window.Send(new InputEvent.MouseUp(word.X + 2f, word.Y + word.Height / 2f));
 
-        window.Chrome.Flights.Selection.HasSelection.ShouldBeFalse();
+        window.Chrome.Flights.PageSelection.HasSelection.ShouldBeFalse();
         // And Ctrl+C then is not taken, so it reaches whatever else wants it.
         window.Chrome.HandleInput(new InputEvent.KeyDown(InputKey.C, InputModifier.Ctrl)).ShouldBeFalse();
         window.Copied.ShouldBeEmpty();
@@ -235,12 +235,12 @@ public sealed class TextSelectionTests
         window.Send(new InputEvent.MouseUp(x, y));
 
         window.Opened.ShouldBe(["https://github.com/x/tianwen/pull/7"]);
-        window.Chrome.Flights.Selection.HasSelection.ShouldBeFalse();
-        window.Chrome.Flights.Selection.Dragging.ShouldBeFalse();
+        window.Chrome.Flights.PageSelection.HasSelection.ShouldBeFalse();
+        window.Chrome.Flights.PageSelection.Dragging.ShouldBeFalse();
         // Dragged from it over the text beside, the link still takes the press: nothing is selected from a button's or a link's press.
         var word = window.Regions.First(r => r.Text.StartsWith("rejects", StringComparison.Ordinal));
         window.Drag((x, y), End(word));
-        window.Chrome.Flights.Selection.HasSelection.ShouldBeFalse();
+        window.Chrome.Flights.PageSelection.HasSelection.ShouldBeFalse();
     }
 
     [Fact]
@@ -258,7 +258,7 @@ public sealed class TextSelectionTests
         window.Send(new InputEvent.MouseDown(x, y));
         window.Send(new InputEvent.MouseUp(x, y));
 
-        window.Chrome.Flights.Selection.HasSelection.ShouldBeFalse();
+        window.Chrome.Flights.PageSelection.HasSelection.ShouldBeFalse();
         Said().ShouldContain("D1");
     }
 
@@ -331,13 +331,13 @@ public sealed class TextSelectionTests
         using var window = new Window(report);
         var word = window.Regions.First(r => r.Text.StartsWith("Finding", StringComparison.Ordinal));
         window.Drag(Start(word), End(word));
-        var text = window.Chrome.Flights.Selection.Text;
+        var text = window.Chrome.Flights.PageSelection.Text;
         text.ShouldBe("Finding");
 
         window.Send(new InputEvent.KeyDown(InputKey.Down, InputModifier.None));
 
         // The same words, further up the window: the selection holds the text, not the place.
-        window.Chrome.Flights.Selection.Text.ShouldBe("Finding");
+        window.Chrome.Flights.PageSelection.Text.ShouldBe("Finding");
     }
 
     private static double Contrast(RGBAColor32 a, RGBAColor32 b)

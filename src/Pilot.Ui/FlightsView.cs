@@ -19,8 +19,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     // Column widths of the list, as they are before a reader drags a divider.
     private const float CodeWidth = 120f;
-    // Wide enough for "stale (DE1 unreachable)" in 11 pt under the code.
-    private const float StaleCodeWidth = 150f;
+    // Wide enough for "stale (DE1 unreachable)" and the longest mark, "stale · no progress for 2 d 23 h · raised to urgent", in 11 pt under the
+    // code (it was 200 and cut the raise at 1400 wide, where the row had room). A narrower page squeezes it (CodeMin) and the mark ends in an ellipsis with the whole text on hover.
+    private const float StaleCodeWidth = 290f;
     // What is dropped once it is this narrow: a title in a sliver of a column was drawn over the State beside it.
     private const float WhatDropBelow = 60f;
     private const float WhereWidth = 140f;
@@ -184,7 +185,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     internal override LinkMenu? SelectionLinks => _links;
 
-    internal override RectF32 SelectionViewport => _detailScroll.Viewport;
+    internal override RectF32 PageSelectionViewport => _detailScroll.Viewport;
 
     // The open flight's page only.
     internal override bool SelectionOn => IsDetailOpen && base.SelectionOn;
