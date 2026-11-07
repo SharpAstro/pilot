@@ -23,6 +23,15 @@ public sealed class MergedUnderLegTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2m-" + Guid.NewGuid().ToString("N")[..8]);
     private string _mergedHead = "";
 
+    /// <summary>The node's git and the test's: <see cref="FakeRepoGit"/>, which models the repo, its origin and the plane (#813). See <see cref="TestGit"/>.</summary>
+    private readonly TestGit _testGit;
+
+    public MergedUnderLegTests()
+    {
+        // The repos are made per test, by Merged, through the helper that asks the model first.
+        _testGit = TestGit.Building(_root, realGit: false, () => { });
+    }
+
     private string Repo => Path.Combine(_root, "tianwen");
 
     private string Plane => Path.Combine(_root, "plane-TIA1");
@@ -44,10 +53,17 @@ public sealed class MergedUnderLegTests : IDisposable
         {
             // A temp folder a scanner still holds is the OS's to clear.
         }
+        _testGit.Release();
+        // A command the model could not answer may have been swallowed by the node's own catch: the test still fails.
+        _testGit.Verify();
     }
 
     private static string Git(string cwd, params string[] args)
     {
+        if (TestGit.Answer(cwd, args) is { } answered)
+        {
+            return answered;
+        }
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
         {
@@ -139,7 +155,7 @@ public sealed class MergedUnderLegTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task PlanLegAfterTheMergeRingsAtOnceAndTheFlightStaysFlying()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _testGit);
         var ready = Merged(node);
 
         await Accepted(node, Verbs.PlanLeg, Subject, Plan);
@@ -155,7 +171,7 @@ public sealed class MergedUnderLegTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task MarkingMergedUnderALegSkipsWriteCardsAndClosingWhenTheRowHoldsAnotherPr()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _testGit);
         var ready = Merged(node);
         var seen = node.State.Flights().Single();
         // The flight moved on to PR #71 after the caller read it at #63.
@@ -179,7 +195,7 @@ public sealed class MergedUnderLegTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task MarkingMergedUnderALegSkipsAFlightWithoutAPr()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _testGit);
         Merged(node);
         var noPr = node.State.Flights().Single() with { PullRequest = null, PullRequestUrl = null };
         node.State.PutFlight(noPr);
@@ -197,7 +213,7 @@ public sealed class MergedUnderLegTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task StartLegAfterTheMergeRingsAtOnce()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _testGit);
         var ready = Merged(node);
         PlanNext(node);
 
@@ -210,7 +226,7 @@ public sealed class MergedUnderLegTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task ADoneLegGoesToANewPrWithTheMergedBaseMergedInAndPushedPlain()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _testGit);
         var ready = Merged(node);
         await Accepted(node, Verbs.PlanLeg, Subject, Plan);
         ShouldHaveRung(node, ready);
@@ -240,7 +256,7 @@ public sealed class MergedUnderLegTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task OpenPrRepeatedAfterAPushThatFailedPastTheBaseMergeMergesTheBaseOnce()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _testGit);
         var ready = Merged(node);
         await Accepted(node, Verbs.PlanLeg, Subject, Plan);
         ShouldHaveRung(node, ready);
@@ -252,11 +268,19 @@ public sealed class MergedUnderLegTests : IDisposable
         Git(Repo, "push", "-q", "origin", "main");
 
         // The first open-pr merges the base into the plane, then its push is refused by the remote.
+        // The origin's pre-receive hook refuses: the model's, or a shell hook on git itself (PILOT_TEST_REAL_GIT=1).
         var hook = Path.Combine(Origin, "hooks", "pre-receive");
-        File.WriteAllText(hook, "#!/bin/sh\nexit 1\n");
-        if (!OperatingSystem.IsWindows())
+        if (_testGit.Fake is { } fake)
         {
-            File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            fake.PreReceive = _ => [];
+        }
+        else
+        {
+            File.WriteAllText(hook, "#!/bin/sh\nexit 1\n");
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
         }
         var refused = await Send(node, Verbs.OpenPr, Subject);
         refused.Error.ShouldNotBeNull(Said(refused));
@@ -265,7 +289,14 @@ public sealed class MergedUnderLegTests : IDisposable
         var mergedOnce = Git(Plane, "rev-parse", "HEAD");
         Git(Plane, "merge-base", "--is-ancestor", "main", "HEAD");
 
-        File.Delete(hook);
+        if (_testGit.Fake is { } open)
+        {
+            open.PreReceive = null;
+        }
+        else
+        {
+            File.Delete(hook);
+        }
         await Accepted(node, Verbs.OpenPr, Subject);
 
         var flight = node.State.Flights().Single();
@@ -283,7 +314,7 @@ public sealed class MergedUnderLegTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task AMergeSeenWhileALegIsPlannedLandsNothingAndRings()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _testGit);
         var ready = Merged(node);
         PlanNext(node);
 
@@ -298,7 +329,7 @@ public sealed class MergedUnderLegTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task AMergeSeenWhileALegFliesLandsNothingAndRings()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _testGit);
         var ready = Merged(node);
         node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "render", Order = 2, Goal = "Draw", DoneWhen = "It draws", State = LegState.Flying });
 
@@ -313,7 +344,7 @@ public sealed class MergedUnderLegTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task AMergeSeenWithUncommittedChangesKeepsThePlaneAndRings()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _testGit);
         Merged(node);
         File.WriteAllText(Path.Combine(Plane, "half.txt"), "not done\n");
 
@@ -328,7 +359,7 @@ public sealed class MergedUnderLegTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task ALandingRefusedAfterTheMergeSaysTheRealReasonAndOffersLandIt()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _testGit);
         Merged(node);
         File.WriteAllText(Path.Combine(Plane, "half.txt"), "not done\n");
 
@@ -364,7 +395,7 @@ public sealed class MergedUnderLegTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task AMergeFailedCardOfAFlightThatLandedCloses()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _testGit);
         var ready = Merged(node);
         // Landed where the node does not look at it (on the node it moved to): the PR-ready card of the flight is still open here.
         node.State.PutFlight(node.State.Flights().Single() with { State = FlightState.Landed, LandedAt = DateTimeOffset.UtcNow, PullRequest = null });
@@ -379,7 +410,7 @@ public sealed class MergedUnderLegTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task AMergedFlightPutAfterStartStaysFlyingPastTheLoopsIntervalUntilATestLooks()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _testGit);
         Merged(node);
 
         // The loop keeps the live 30 s interval, on a clock only the test moves: nothing looks until it does.
@@ -400,7 +431,7 @@ public sealed class MergedUnderLegTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task AMergeSeenWithCommitsPastTheMergedHeadKeepsThePlaneAndRings()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _testGit);
         Merged(node);
         Commit(Plane, "late.txt", "a late commit");
 
@@ -421,7 +452,7 @@ public sealed class MergedUnderLegTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task OnlyTheFlightsOwnCommitThatMissedTheMergeIsNamedAndTheChoiceIsAPrWithIt()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _testGit);
         Merged(node);
         Commit(Repo, "other.txt", "PIL804: another flight's work");
         Git(Repo, "push", "-q", "origin", "main");
@@ -448,7 +479,7 @@ public sealed class MergedUnderLegTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task APlaneThatOnlyTookMainAfterTheMergeLands()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _testGit);
         Merged(node);
         Commit(Repo, "other.txt", "PIL804: another flight's work");
         Git(Repo, "push", "-q", "origin", "main");
@@ -465,7 +496,7 @@ public sealed class MergedUnderLegTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task TheNodesOwnFirstLookIsOverBeforeStartReturnsSoItNeverLandsAStateTheTestPutsAfter()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _testGit);
 
         // The background loop looks once at start; the harness waited for that look, so none is left to come.
         node.App.Services.GetRequiredService<PrChecks>().FirstLook.IsCompletedSuccessfully.ShouldBeTrue();
@@ -484,7 +515,7 @@ public sealed class MergedUnderLegTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task AMergeSeenWithNothingLeftStillLandsTheFlight()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _testGit);
         Merged(node);
 
         await Look(node);
