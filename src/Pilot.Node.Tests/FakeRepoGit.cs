@@ -982,7 +982,7 @@ internal sealed class FakeRepoGit : IGit
         a.Remove(format ?? "");
         var limit = a.FirstOrDefault(x => x.Length > 1 && x[0] == '-' && x[1..].All(char.IsDigit));
         a.Remove(limit ?? "");
-        if (!oneline && format is not ("--format=%h %s" or "--format=%P\t%s") || a.Any(x => x.StartsWith('-') && x != "--not"))
+        if (!oneline && format is not ("--format=%h %s" or "--format=%P\t%s" or "--format=%s") || a.Any(x => x.StartsWith('-') && x != "--not"))
         {
             throw new NotSupportedException("log form");
         }
@@ -997,9 +997,12 @@ internal sealed class FakeRepoGit : IGit
             {
                 commits = [.. commits.Take(int.Parse(limit[1..]))];
             }
-            return Ok(string.Concat(commits.Select(c => format == "--format=%P\t%s"
-                ? $"{string.Join(' ', c.Parents)}\t{FirstLine(c.Message)}\n"
-                : $"{Short(c.Id)} {FirstLine(c.Message)}\n")));
+            return Ok(string.Concat(commits.Select(c => format switch
+            {
+                "--format=%P\t%s" => $"{string.Join(' ', c.Parents)}\t{FirstLine(c.Message)}\n",
+                "--format=%s" => $"{FirstLine(c.Message)}\n",
+                _ => $"{Short(c.Id)} {FirstLine(c.Message)}\n",
+            })));
         }
         catch (FakeGitFailure ex)
         {

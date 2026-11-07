@@ -186,6 +186,8 @@ public sealed class FakeRepoGitTests : IDisposable
         _git.PreReceive = null;
         Run(Plane, "push", "-q", "origin", "HEAD:flight/x");
         Run(Plane, "ls-remote", "origin", "flight/x").ShouldBe($"{Run(Plane, "rev-parse", "HEAD")}\trefs/heads/flight/x");
+        // The origin names the commit it now holds by its subject, as QueuedPushTests reads it there.
+        Run(Path.Combine(_root, "origin.git"), "log", "-1", "--format=%s", "refs/heads/flight/x").ShouldBe("edit a");
     }
 
     [Fact]
