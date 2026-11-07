@@ -27,9 +27,27 @@ public static partial class CardSummaries
         return lines.Length is > 0 and <= 2 && !LooksLikeLog().IsMatch(text);
     }
 
-    /// <summary>The summary to keep: the raiser's when it is usable and not just the detail, else the table's.</summary>
-    public static string Resolve(string? given, string? detail, string kind, string subject, string title, IReadOnlyList<CardChoice> choices) =>
-        Usable(given) && !string.Equals(given!.Trim(), detail?.Trim(), StringComparison.Ordinal) ? given!.Trim() : For(kind, subject, title, choices);
+    /// <summary>
+    /// The summary to keep: the raiser's when it is usable and not just the detail, else the table's line when it is about this card
+    /// (it names the card's flight or leg), else none. A line of the table that describes the kind and names nothing of this card
+    /// (<see cref="Describes"/>) is help, not the card's first line (#797 rule 5): the card shows its own title and text.
+    /// </summary>
+    public static string? Resolve(string? given, string? detail, string kind, string subject, string title, IReadOnlyList<CardChoice> choices) =>
+        Usable(given) && !string.Equals(given!.Trim(), detail?.Trim(), StringComparison.Ordinal) ? given!.Trim()
+        : Describes(kind, choices) ? null : For(kind, subject, title, choices);
+
+    private const string ProbeSubject = "flight/ZZ0/zz";
+
+    /// <summary>
+    /// Whether the table's line for <paramref name="kind"/> only describes the kind: it says nothing of the card's own subject, or it is
+    /// the generic fallback built from the title and the choices. Such a line stays for help and tooltips (<see cref="For"/>), and is
+    /// never put on a card as its first line.
+    /// </summary>
+    public static bool Describes(string kind, IReadOnlyList<CardChoice> choices)
+    {
+        var line = For(kind, ProbeSubject, "\u0001", choices);
+        return !line.Contains("ZZ0/zz", StringComparison.Ordinal) || line.Contains('\u0001');
+    }
 
     /// <summary>The sentence for a card of <paramref name="kind"/> about <paramref name="subject"/>.</summary>
     public static string For(string kind, string subject, string title, IReadOnlyList<CardChoice> choices)
@@ -40,7 +58,7 @@ public static partial class CardSummaries
             LegCommander.ReviewChanges => $"The review of {what} found things to fix. Fix the review's findings has a worker fix them on the leg's work as it stands, nothing thrown away; Land it with the review's findings unfixed takes it as it is.",
             LegCommander.PrReady => $"{what} is reviewed and its PR is ready. Merge lands it; dismissing leaves the PR open.",
             LegCommander.MergeFailed => $"The merge of {what} did not go through. Choose: a fresh worker can fix its last leg, the checks can be run again if they failed, or the merge can be tried once more as the PR stands.",
-            "leg-failed" => $"The worker of {what} stopped. Send it round again starts a fresh worker told why; Accept it as it stands keeps the failure in its report and the flight goes on.",
+            "leg-failed" => $"The worker of {what} stopped. Option A sends it round again with a fresh worker told why; B accepts it as it stands, the failure kept in its report, and the flight goes on.",
             LegCommander.PushBlockedKind => $"{what} is done and its check passes, but its branch was rebased off the pushed one. Push the rebased branch with lease overwrites origin's only if it has not moved; Merge origin's branch into the plane keeps its commits and pushes plain.",
             "pr-checks-failed" => $"The PR of {what} fails its checks and the node could not send the last leg back to fix them. The first choice starts a fresh worker on that leg, told which checks failed and to push a fix; or fix them by hand, then dismiss this.",
             "pr-conflicts" => $"The PR of {what} conflicts with its base and a worker already tried and could not settle it (it stopped, or the same conflict came back). The watchtower resolves it in the plane (merge, check, plain push); Resolve the conflict starts a fresh worker on the last leg.",
@@ -126,7 +144,7 @@ public static partial class CardSummaries
             PrReviews.QueuedKind => "A PR reviewed clean with green checks was queued for merging. Nothing to do; the queue merges it.",
             PrReviews.MergeKind => "A PR is reviewed and green but the node does not merge it by itself. Merge it when you are ready.",
             PrReviews.QueueRefusedKind => "GitHub refused to queue a reviewed PR. Merge it once more after dealing with what the title says.",
-            PrReviews.DesignKind => "The review of a PR asks a question of design, which is the author's to decide. No fixer started; an option or Answer in your own words posts the answer on the PR and starts it.",
+            PrReviews.DesignKind => "The review of a PR asks a question of design, which is the author's to decide. No fixer started; an option (A, B, C) or an answer in your own words posts it on the PR and starts it.",
             PrReviews.DesignSettledKind => "A review's design question stopped ringing because its PR merged or closed, a follow-up flight landed, or it was answered (an answer starts the fixer or sends the flight round, and the notice says which). Nothing to do.",
             PrReviews.FixStartedKind => "A fixer was started on a PR's branch to make the changes its review asked for. Nothing to do.",
             PrReviews.FixOfferKind => "A review asked for changes on someone else's PR. Fix it starts a session on the PR's branch that makes them.",

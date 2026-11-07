@@ -206,13 +206,17 @@ public sealed partial class LegCommander
                 }
                 state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "failed", Wait = null, Recheck = null });
                 var reason = report.Split('\n', 2)[0].Trim() is { Length: > 0 } first ? Clip(first) : "no reason given";
+                // The options are said in full in the body as A and B, and each button is short (#797 rule 4): the reason and the next
+                // worker's round and model are never pasted into a button, where they were cut mid-word. The round and model are detail.
+                var nextWorker = Models.SendBackLabel(leg, "Next worker");
+                var failedDetail = string.Join("\n\n", new[] { report, notWhy, nextWorker == "Next worker" ? null : $"{nextWorker}." }.Where(s => !string.IsNullOrEmpty(s)));
                 state.RaiseCard(CardBin.Ring, "leg-failed", Verbs.LegTarget(flight.Code, leg.Name),
-                    $"{flight.Code}/{leg.Name} stopped: {reason}", report.Length > 0 || notWhy is not null ? string.Join("\n\n", new[] { report, notWhy }.Where(s => !string.IsNullOrEmpty(s))) : null,
+                    $"{flight.Code}/{leg.Name} stopped: {reason}", failedDetail.Length > 0 ? failedDetail : null,
                     [
-                        new CardChoice { Label = Models.SendBackLabel(leg, report.Length > 0 ? $"Send {leg.Name} round again to {reason}" : $"Send {leg.Name} round again"), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker stopped: {(report.Length > 0 ? report : "no reason given")}"] },
-                        new CardChoice { Label = $"Accept {leg.Name} as it stands, the failure kept in its report", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
+                        new CardChoice { Label = "Pick option A", Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker stopped: {(report.Length > 0 ? report : "no reason given")}"] },
+                        new CardChoice { Label = "Pick option B", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
                     ],
-                    summary: $"The worker of {flight.Code}/{leg.Name} stopped. Send {leg.Name} round again starts a fresh worker told why; Accept {leg.Name} as it stands keeps the failure in its report and the flight goes on.");
+                    summary: $"The worker of {flight.Code}/{leg.Name} stopped. A: send {leg.Name} round again with a fresh worker that is told why. B: accept {leg.Name} as it stands, with the failure kept in its report, and the flight goes on.");
                 // The worker the node sent round on the PR open's conflict gave up: the owner is rung about the conflict itself, once.
                 if (_conflictSent.ContainsKey(flight.Code) && flight.PullRequest is null
                     && state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault()?.Name == leg.Name)

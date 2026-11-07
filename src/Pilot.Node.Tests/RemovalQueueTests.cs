@@ -308,7 +308,7 @@ public sealed class RemovalQueueTests : IDisposable
             state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == RemovalQueueStart.Kind);
             time.Advance(TimeSpan.FromHours(25));
             await runner.StartingAsync(Ct);
-            state.Cards(openOnly: true).Where(c => c.Kind == RemovalQueueStart.Kind).ShouldHaveSingleItem().Detail.ShouldNotBeNull().ShouldContain("holder unknown");
+            state.Cards(openOnly: true).Where(c => c.Kind == RemovalQueueStart.Kind).ShouldHaveSingleItem().Detail.ShouldNotBeNull().ShouldContain("held by a process");
         }
     }
 

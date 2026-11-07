@@ -13,19 +13,43 @@ public sealed partial class PrReviews
     /// <summary>Each design question in full with its path:line, and each option with its consequence.</summary>
     private static string DesignDetail(IReadOnlyList<DesignQuestion> questions) =>
         string.Join('\n', questions.Select(q => $"{q.Finding.Path}:{q.Finding.Line} {q.Question}"
-            + string.Concat(q.RecommendedFirst.Select(o => $"\n- {o.Text}{(o.Consequence.Length > 0 ? $": {o.Consequence}" : "")}{(o.Recommended ? " (recommended)" : "")}"))));
+            + string.Concat(q.RecommendedFirst.Select((o, i) => $"\n{(questions.Count == 1 ? $"{OptionLetter(i)}." : "-")} {o.Text}{(o.Consequence.Length > 0 ? $": {o.Consequence}" : "")}{(o.Recommended ? " (recommended)" : "")}"))));
+
+    /// <summary>The letter an option goes by in the card's body and on its button: A for the first (the recommended), B, C and so on.</summary>
+    private static char OptionLetter(int index) => (char)('A' + index);
+
+    /// <summary>The label of the button that picks the option lettered <paramref name="index"/>: <c>Pick option A</c>. The option's own words are in the body, never in the button (#797 rule 4).</summary>
+    private static string PickLabel(int index) => $"Pick option {OptionLetter(index)}";
+
+    /// <summary>
+    /// The design card's first lines: the question, then each option in full as A, B, C with its consequence, in the order of the buttons.
+    /// With several questions, or one that lists no options, which option answers which question would be a guess: the line says to
+    /// answer in words and leaves the full text to the detail. Cut to what a summary can carry.
+    /// </summary>
+    private static string DesignSummary(IReadOnlyList<DesignQuestion> questions, string decides)
+    {
+        var plain = $"The review asks a design question that is yours to decide. {decides}";
+        if (questions.Count != 1 || questions[0].Options.Count == 0)
+        {
+            return plain;
+        }
+        // Whole words, never cut: an option too long for a summary sends the person to the detail, which holds it in full.
+        var options = string.Join(" ", questions[0].RecommendedFirst.Select((o, i) => $"{OptionLetter(i)}: {Clean(o.Text, int.MaxValue)}{(o.Recommended ? " (recommended)." : ".")}"));
+        var text = $"{Clean(questions[0].Question, int.MaxValue)}\n{options}";
+        return CardSummaries.Usable(text) ? text : plain;
+    }
 
     /// <summary>
     /// The design card's choices: one per option, the recommended first, each a <c>review fix</c> whose args are the option's words
-    /// as the answer, then the free-text Answer. Options are offered only when there is one question: with several, which option
-    /// answers which question would be a guess, so each is answered in words.
+    /// as the answer and whose button is <see cref="PickLabel"/>, then the free-text Answer. Options are offered only when there is one
+    /// question: with several, which option answers which question would be a guess, so each is answered in words.
     /// </summary>
     private static List<CardChoice> DesignChoices(string subject, IReadOnlyList<DesignQuestion> questions)
     {
         var choices = new List<CardChoice>();
         if (questions.Count == 1)
         {
-            choices.AddRange(questions[0].RecommendedFirst.Select(o => new CardChoice { Label = Clean(o.Text, 60), Verb = Verbs.FixPr, Target = subject, Args = [o.Answer] }));
+            choices.AddRange(questions[0].RecommendedFirst.Select((o, i) => new CardChoice { Label = PickLabel(i), Verb = Verbs.FixPr, Target = subject, Args = [o.Answer] }));
         }
         choices.Add(AnswerChoice(subject));
         return choices;
@@ -48,14 +72,14 @@ public sealed partial class PrReviews
     /// card dismissed is never raised again from the same review and head, by a recheck, a sweep or a node restart. Null when this
     /// review raised the kind already.
     /// </summary>
-    private CardRow? RaiseOnce(PrRef pr, PrReviewRow review, CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices = null)
+    private CardRow? RaiseOnce(PrRef pr, PrReviewRow review, CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices = null, string? summary = null)
     {
         var current = Of(pr) ?? review;
         if (current.Raised.Contains(kind))
         {
             return null;
         }
-        var card = state.RaiseCard(bin, kind, subject, title, detail, choices, link: review.Url);
+        var card = state.RaiseCard(bin, kind, subject, title, detail, choices, link: review.Url, summary: summary);
         state.PutPrReview(current with { Raised = [.. current.Raised, kind] });
         return card;
     }

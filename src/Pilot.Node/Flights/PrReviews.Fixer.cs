@@ -41,11 +41,11 @@ public sealed partial class PrReviews
             {
                 RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr} ({flight.Code}'s PR): the review asks a question of design{asked}",
                     $"{design}\nNo fixer started: {flight.Code}'s own legs make changes. review fix {pr} <answer> sends its last leg round with the answer, as the card's Answer does.",
-                    choices);
+                    choices, DesignSummary(questions, $"Your answer goes to {flight.Code}'s last leg, which flies round again with it."));
                 return;
             }
             RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design{asked}", $"{design}\nNo fixer started: this is the author's to decide. An option or Answer in your own words posts the answer on the PR and starts the fixer.",
-                choices);
+                choices, DesignSummary(questions, "Your answer is posted on the PR and a fixer starts on it."));
             return;
         }
         var rounds = review.FixRound ?? 0;
@@ -255,7 +255,7 @@ public sealed partial class PrReviews
     {
         var target = Verbs.PrTarget(pr.Repo, pr.Number);
         var options = state.Cards().Where(c => c.Kind == DesignKind && c.Subject == target)
-            .SelectMany(c => c.Choices).Where(c => c.AsksFor is null).Select(c => c.Label).Distinct().ToArray();
+            .SelectMany(c => c.Choices).Where(c => c.AsksFor is null).Select(c => c.Args.FirstOrDefault() ?? c.Label).Distinct().ToArray();
         var answer = (given ?? "").Trim();
         var byKind = command.Autopilot ? DecisionByKinds.Autopilot
             : command.PersonsWord is not null || Standing.Of(command, state, "").Kind == StandingKind.Person ? DecisionByKinds.Person

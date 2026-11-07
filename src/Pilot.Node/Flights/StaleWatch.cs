@@ -164,9 +164,9 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         {
             if (state.Cards(openOnly: true).FirstOrDefault(c => c.Id == item.Subject) is { } card && _acted.TryAdd($"card:{card.Id}", 0))
             {
-                // The card itself rings again, in place: a second card about the first would be a meta-card to answer on top of it (#799 rule 5).
-                state.RingAgain(card.Id);
-                state.RaiseCard(CardBin.Handled, ActedKind, subject, $"{item.Subject} has rung {item.AgeText} unanswered; the node rang it again");
+                // The card itself rings again, in place, sorted first and marked with how long it has waited: a second card or a log line
+                // about the first would be a meta-card on top of it (#799 rule 5, #797 rule 7).
+                state.RingAgain(card.Id, item.AgeText);
             }
             return;
         }

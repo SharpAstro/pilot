@@ -6,8 +6,8 @@ namespace Pilot.Node.Tests;
 /// <summary>A string literal found in the source: its text with every interpolation hole as <c>§</c>, and what follows it in the expression.</summary>
 internal sealed record SourceLiteral(string Template, string After);
 
-/// <summary>One call that puts a card up: where, which kind and bins its text names, and the literal parts of its title.</summary>
-internal sealed record CardCall(string File, int Line, string Form, string KindExpr, string[] Bins, string TitleExpr, IReadOnlyList<SourceLiteral> Title);
+/// <summary>One call that puts a card up: where, which kind and bins its text names, the literal parts of its title, and whether any argument after the title offers a choice.</summary>
+internal sealed record CardCall(string File, int Line, string Form, string KindExpr, string[] Bins, string TitleExpr, IReadOnlyList<SourceLiteral> Title, bool HasChoices = false);
 
 /// <summary>A button's label as the source writes it, with the literal parts of the expression.</summary>
 internal sealed record LabelUse(string File, int Line, string Expr, IReadOnlyList<SourceLiteral> Literals);
@@ -68,7 +68,8 @@ internal static class CardSource
                 {
                     literals = Declared(text, m.Index, titleExpr);
                 }
-                calls.Add(new CardCall(file, LineOf(text, m.Index), form, kind, bins, titleExpr, literals));
+                var after = string.Join(" ", args.Skip(titleAt + 1).Select(a => Slice(text, a)));
+                calls.Add(new CardCall(file, LineOf(text, m.Index), form, kind, bins, titleExpr, literals, Regex.IsMatch(after, @"CardChoice|[Cc]hoices|Verbs\.|Offer")));
             }
         }
         return calls;
@@ -92,6 +93,20 @@ internal static class CardSource
             labels.Add(new LabelUse(file, LineOf(text, m.Index), expr, literals));
         }
         return labels;
+    }
+
+    /// <summary>Every <c>summary: …</c> argument in <paramref name="source"/>: the first line a raiser writes for its card, as the literal parts of the expression.</summary>
+    public static List<LabelUse> Summaries(string file, string source)
+    {
+        var text = Mask(source);
+        var found = new List<LabelUse>();
+        foreach (Match m in Regex.Matches(Mask(source, blankStrings: true), @"\bsummary\s*:\s*(?!:)"))
+        {
+            var start = m.Index + m.Length;
+            var end = ExprEnd(text, start);
+            found.Add(new LabelUse(file, LineOf(text, m.Index), text[start..end].Trim(), Literals(text, start, end, anyDepth: true)));
+        }
+        return found;
     }
 
     /// <summary>The literals of the statement that gives <paramref name="name"/> its value before <paramref name="before"/> (or anywhere in the file, for a constant).</summary>

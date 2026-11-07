@@ -261,7 +261,23 @@ public sealed class StaleWatchTests
 
         _state.Cards().Count(c => c.Kind == "x").ShouldBe(1);
         _state.Cards().Single(c => c.Id == card.Id).RungAgainAt.ShouldBe(_clock.Now);
-        _state.Cards().Count(c => c.Kind == StaleWatch.ActedKind && c.Title.Contains(card.Id)).ShouldBe(1);
+        // The card itself is the only trace: no log line or second card about it, and it says how long it has waited (#797 rule 7).
+        _state.Cards().Count(c => c.Kind == StaleWatch.ActedKind).ShouldBe(0);
+        _state.Cards().Single(c => c.Id == card.Id).Summary.ShouldNotBeNull().ShouldEndWith("Waiting 1 h for you.");
+    }
+
+    [Fact]
+    public async Task ARingAgainCardKeepsOneWaitingMarkAndTheSameTitle()
+    {
+        Fly(TimeSpan.FromHours(1));
+        var card = _state.RaiseCard(CardBin.Ring, "x", Verbs.FlightTarget("DIR178"), "question", summary: "Answer it in the chat.");
+
+        _state.RingAgain(card.Id, "2 h");
+        _state.RingAgain(card.Id, "3 h");
+
+        var rung = _state.Cards().Single(c => c.Id == card.Id);
+        rung.Summary.ShouldBe("Answer it in the chat. Waiting 3 h for you.");
+        rung.Title.ShouldBe("question");
     }
 
     [Fact]

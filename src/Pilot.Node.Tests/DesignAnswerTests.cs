@@ -267,7 +267,7 @@ public sealed class FlightDesignAnswerTests : FlightDesignTestsBase
         var flight = await AskedDesign(DesignAnswerQuestions.WithOptions);
 
         var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.DesignKind).ShouldHaveSingleItem();
-        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library", "Make it a service", PrReviews.AnswerLabel]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Pick option A", "Pick option B", PrReviews.AnswerLabel]);
         var option = card.Choices[0];
 
         (await RunPr(option.Verb, "controller", option.Args)).Error.ShouldBeNull();
@@ -310,7 +310,7 @@ public sealed class DesignOptionsCardTests : PrFixTestsBase
         card.Title.ShouldContain("should this be a service at all?");
         card.Detail.ShouldNotBeNull().ShouldContain("README.md:1 should this be a service at all?");
         card.Detail.ShouldContain("Make it a service: more to run");
-        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library", "Make it a service", PrReviews.AnswerLabel]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Pick option A", "Pick option B", PrReviews.AnswerLabel]);
         card.Choices.Take(2).ShouldAllBe(c => c.Verb == Verbs.FixPr && c.Target == "pr/acme/widget#7" && c.AsksFor == null);
         card.Choices[2].AsksFor.ShouldNotBeNull();
     }

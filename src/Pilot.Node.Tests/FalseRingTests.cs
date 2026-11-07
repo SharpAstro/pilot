@@ -299,7 +299,8 @@ public sealed class FalseRingTests : ReviewTestsBase
         rung.At.ShouldBe(card.At);
         rung.Choices.ShouldBe(card.Choices);
         _state.Cards().ShouldNotContain(c => c.Kind == "stale-card-reminder");
-        _state.Cards().Count(c => c.Kind == StaleWatch.ActedKind && c.Title.Contains(card.Id, StringComparison.Ordinal)).ShouldBe(1);
+        _state.Cards().ShouldNotContain(c => c.Kind == StaleWatch.ActedKind);
+        rung.Summary.ShouldNotBeNull().ShouldContain("Waiting 1 h for you");
     }
 
     [Fact]

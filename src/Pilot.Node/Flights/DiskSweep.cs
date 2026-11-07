@@ -386,6 +386,9 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
         return false;
     }
 
+    /// <summary>The size an item must reach to be named as reclaimable on the disk-low card: 1 GB unless a test says less.</summary>
+    public long BigItem { get; init; } = 1L << 30;
+
     private void RingDisk(List<(string Name, string Path)> items)
     {
         var probe = Repos().FirstOrDefault(Directory.Exists) ?? jobsFolder;
@@ -409,11 +412,14 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
                 reclaimable.Add(($"job scratch {Path.GetFileName(job)}", DiskUsage.UniqueBytes(tmp)));
             }
         }
-        var top = reclaimable.Where(r => r.Bytes > 0).OrderByDescending(r => r.Bytes).Take(5).ToList();
-        var list = top.Count == 0 ? "nothing the node can reclaim by itself" : string.Join("; ", top.Select(r => $"{r.Name} {Size(r.Bytes)}"));
+        // Only what would free real space is a finding (#797 rule 8): a list of items of a few bytes is no answer.
+        var top = reclaimable.Where(r => r.Bytes >= BigItem).OrderByDescending(r => r.Bytes).Take(5).ToList();
+        var list = top.Count == 0
+            ? "Nothing big to reclaim here: the space is used outside pilot."
+            : $"Biggest items to reclaim, by unique bytes: {string.Join("; ", top.Select(r => $"{r.Name} {Size(r.Bytes)}"))}.";
         state.RaiseCard(CardBin.ForYou, DiskLowKind, space.Name,
             $"Drive {space.Name} has {Size(space.Free)} free, below the {Size(threshold)} alert",
-            $"{space.Name} has {Size(space.Free)} free of {Size(space.Total)}; the alert is {Size(threshold)} (setting disk-alert-gb). Biggest reclaimable items by unique bytes: {list}.");
+            $"{space.Name} has {Size(space.Free)} free of {Size(space.Total)}; the alert is {Size(threshold)} (setting disk-alert-gb). {list}");
     }
 
     private static void Remove(string folder, ref int count, ref long bytes)

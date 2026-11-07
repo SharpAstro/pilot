@@ -311,7 +311,7 @@ public sealed class RemovalQueueStart(RemovalQueue queue, NodeState? state = nul
         {
             var holders = Holders(e.Path);
             return $"{e.Path}: {e.OwnerKind} {e.Owner}, queued {e.AddedAt:u}, {e.StartsTried} starts tried, held by "
-                + (holders.Count > 0 ? string.Join(", ", holders) : "holder unknown") + $" ({e.Why})";
+                + (holders.Count > 0 ? string.Join(", ", holders) : "a process (it could not be named)") + $" ({e.Why})";
         });
         state.RaiseCard(CardBin.ForYou, Kind, Verbs.NodeTarget,
             $"{due.Count} folder{(due.Count == 1 ? "" : "s")} Windows still holds open",

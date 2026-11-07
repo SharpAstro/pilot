@@ -366,7 +366,7 @@ public sealed class DiskSweepTests : IDisposable
     {
         var free = 5L << 30;
         var (sweep, _, _) = WorktreeSweep();
-        sweep = new DiskSweep(Jobs, Temp, _state, _time) { DiskAlertGb = () => 20, FreeSpace = _ => (free, 100L << 30, "D:"), Repos = () => [Repo] };
+        sweep = new DiskSweep(Jobs, Temp, _state, _time) { DiskAlertGb = () => 20, FreeSpace = _ => (free, 100L << 30, "D:"), Repos = () => [Repo], BigItem = 1000 };
         var big = Job("bbbbbbbb", TimeSpan.FromMinutes(5));
         File.WriteAllBytes(Path.Combine(big, "tmp", "more.bin"), new byte[9000]);
         Session("bbbbbbbb", "PIL1", SessionState.Working);
@@ -387,6 +387,20 @@ public sealed class DiskSweepTests : IDisposable
         await sweep.SweepAsync(TestContext.Current.CancellationToken);
 
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == DiskSweep.DiskLowKind);
+    }
+
+    [Fact]
+    public async Task FreeSpaceBelowTheThresholdNamesNoItemUnderOneGbAndSaysNothingBigIsToReclaim()
+    {
+        var sweep = new DiskSweep(Jobs, Temp, _state, _time) { DiskAlertGb = () => 20, FreeSpace = _ => (5L << 30, 100L << 30, "D:"), Repos = () => [Repo] };
+        Session("bbbbbbbb", "PIL1", SessionState.Working);
+        File.WriteAllBytes(Path.Combine(Job("bbbbbbbb", TimeSpan.FromMinutes(5)), "tmp", "more.bin"), new byte[721]);
+
+        await sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        var detail = _state.Cards().Single(c => c.Kind == DiskSweep.DiskLowKind).Detail!;
+        detail.ShouldContain("Nothing big to reclaim here: the space is used outside pilot.");
+        detail.ShouldNotContain("bbbbbbbb");
     }
 
     [Fact]
