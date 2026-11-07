@@ -16,6 +16,13 @@ public sealed class QueueJamTests : JobTestsBase
 
     private static readonly TimeSpan After = TimeSpan.FromMinutes(30);
 
+    public QueueJamTests()
+    {
+        // The base starts a runner on the real clock over this same state. Its tick reads the rows these tests date by their fake
+        // clock as days old, so under load it rang the jam card early (j4270) and could close it too. Here the test is the only dispatcher.
+        _jobs.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
+    }
+
     private JobRow Row(string id, JobState state, DateTimeOffset startedAt, DateTimeOffset? queuedAt = null, string command = "dotnet build Pilot.slnx", string? owner = "se1-tia1-parser", int? pid = null, string? step = null, JobKind kind = JobKind.Run) => new()
     {
         Id = id, Command = command, Cwd = _root, OwnerName = owner, Owner = owner is null ? null : "a1b2c3d4", Kind = kind, State = state, Step = step,
