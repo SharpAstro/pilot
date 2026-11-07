@@ -62,8 +62,8 @@ public sealed class WaitingCardTests
 
         var card = Open().ShouldHaveSingleItem();
         (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "session/a1b2c3d4"));
-        card.Title.ShouldBe("pilot-tianwen-2 waits on a permission prompt · since 9 h 37 m");
-        card.Detail.ShouldBe("Bash: git push origin main");
+        card.Title.ShouldBe("pilot-tianwen-2 wants to run: git push origin main (Bash) · since 9 h 37 m");
+        card.Detail.ShouldBe("answering in its own session lets it go on with the call");
         card.Link.ShouldBe(Url);
         card.Choices.ShouldBeEmpty();
 
