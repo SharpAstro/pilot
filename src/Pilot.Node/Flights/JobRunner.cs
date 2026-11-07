@@ -916,6 +916,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         // Benchmarks go by their own rule, so only the other jobs ahead count towards a priority reason.
         // Each wait is worked out once per dispatch and shared by the steps and BehindHeld.
         var whys = _queue.Select(j => WhyWait(j)).ToList();
+        var idleSince = TrackHoldIdle(now);
         var ranks = _queue.Select(j => j.Kind == JobKind.Bench ? (int?)null : JobOrder.RankOf(j, flights, admission, now)).ToList();
         for (var i = 0; i < _queue.Count; i++)
         {
@@ -929,6 +930,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 Step = i == 0 ? $"next in line: {whys[0]}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : BehindHeld(i, whys) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : BuildHold(job) is { } building ? $"queued, {i} ahead of it{place}; {building}" : BehindOwn(i, whys) is { } own ? $"queued, {i} ahead of it{place}; {own}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
                 Slots = MaxRunning,
                 WaitsOnSibling = SiblingHold(job) is not null,
+                HoldIdleSince = idleSince,
             };
             state.PutJob(_queue[i]);
         }
@@ -936,6 +938,28 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         CheckIdle();
         CheckBenchBusy();
     }
+
+    // When the head of the queue began to wait on a sibling or build hold with a slot free; null while no slot stands idle for one.
+    private DateTimeOffset? _holdIdleSince;
+
+    /// <summary>
+    /// Whether a slot stands idle because of a sibling or build hold, and since when: the head of the queue waits only on such a hold
+    /// (so a slot is free and memory is no reason), and <see cref="StartWhatCan"/> found nothing behind it that could start. The time is
+    /// when that first held, kept while it goes on (the head may change, a job may start out of turn) and cleared with the first dispatch
+    /// that finds no slot idle for a hold. Runs on the dispatcher, after the starts.
+    /// </summary>
+    private DateTimeOffset? TrackHoldIdle(DateTimeOffset now) =>
+        _holdIdleSince = _queue.Count > 0 && WaitsOnlyOnAHold(_queue[0]) ? _holdIdleSince ?? now : null;
+
+    /// <summary>
+    /// Whether a job waits on a sibling or build hold and nothing else: no benchmark holds the node, a slot is free and memory allows it.
+    /// A benchmark is never held this way. <see cref="StartWhatCan"/> walks past such a job to start a later one that shares nothing with it.
+    /// </summary>
+    private bool WaitsOnlyOnAHold(JobRow job) =>
+        (SiblingHold(job) is not null || BuildHold(job) is not null)
+        && BenchHold(job) is null
+        && job.Kind != JobKind.Bench
+        && WhyWait(job, ignoreSibling: true, ignoreBuild: true) is null;
 
     /// <summary>
     /// A benchmark at the head of the queue that has waited past <see cref="BenchQuietWait"/> with nothing of pilot's running and the
@@ -1047,7 +1071,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     // A benchmark waiting for outside load to pass holds nothing: the jobs behind it start as usual.
                     continue;
                 }
-                var siblingOnly = why is null || ((SiblingHold(job) is not null || BuildHold(job) is not null) && BenchHold(job) is null && job.Kind != JobKind.Bench && WhyWait(job, ignoreSibling: true, ignoreBuild: true) is null);
+                var siblingOnly = why is null || WaitsOnlyOnAHold(job);
                 if (!siblingOnly)
                 {
                     break;
@@ -1068,7 +1092,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             var step = passed.Count == 0
                 ? null
                 : $"started ahead of {passed.Count} held job{(passed.Count == 1 ? "" : "s")} ({string.Join(", ", passed.Select(j => j.Id))}) because it shares no sibling clone, build or session order with them";
-            if (Start(next with { State = JobState.Running, Step = step, StartedAt = time.GetUtcNow() }) is { } failed)
+            if (Start(next with { State = JobState.Running, Step = step, StartedAt = time.GetUtcNow(), HoldIdleSince = null }) is { } failed)
             {
                 var ended = next with { State = JobState.Failed, Error = $"it did not start: {failed}", EndedAt = time.GetUtcNow() };
                 _tried[next.Id] = 0;

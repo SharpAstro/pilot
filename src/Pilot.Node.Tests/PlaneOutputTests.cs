@@ -188,6 +188,100 @@ public sealed class PlaneOutputTests : JobTestsBase
         JobQueue.SlotsLine([]).ShouldBeNull();
     }
 
+    private static string LocalTime(DateTimeOffset at) => at.ToLocalTime().ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+
+    [Fact]
+    public async Task ASlotTheSiblingHoldLeavesIdleIsSaidSinceWhenAndClearedOnceNoneIs()
+    {
+        var (jobs, clock, _, _) = Idle();
+        jobs.MaxRunning = 3;
+        jobs.PlaneOutput = false;
+        // Two planes build the shared clone, so the second waits on the first; "free" builds nothing and holds nothing.
+        jobs.SiblingsOf = job => job.Command.Contains("free") ? [] : [Path.Combine(Path.GetTempPath(), "org-fake", "DIR.Lib")];
+        var first = Hand(jobs, "echo 'one'; sleep 20", PlaneIn("pil1"));
+        await Until(first, j => j.State == JobState.Running);
+        var began = clock.GetUtcNow();
+        var second = Hand(jobs, "echo 'two'; sleep 20", PlaneIn("pil2"));
+
+        // 1 of 3 slots runs and the head waits only on the hold: 2 stand idle, since the moment it began.
+        Row(second).State.ShouldBe(JobState.Queued);
+        Row(second).HoldIdleSince.ShouldBe(began);
+        JobQueue.SlotsLine(_state.Jobs()).ShouldBe($"1 running of 3 slots, 2 idle behind the sibling hold since {LocalTime(began)}, 1 waiting on a sibling hold");
+
+        // The hold goes on: a later job it shares the clone with joins it, and the time stays the first one.
+        clock.Advance(TimeSpan.FromHours(1));
+        var third = Hand(jobs, "echo 'three'; sleep 20", PlaneIn("pil3"));
+        Row(third).HoldIdleSince.ShouldBe(began);
+        Row(second).HoldIdleSince.ShouldBe(began);
+        JobQueue.SlotsLine(_state.Jobs()).ShouldBe($"1 running of 3 slots, 2 idle behind the sibling hold since {LocalTime(began)}, 2 waiting on a sibling hold");
+
+        // A job that holds no clone starts ahead of the held ones and takes a slot; one idle is still the hold's doing.
+        var free1 = Hand(jobs, "echo 'free1'; sleep 20", PlaneIn("pil4"));
+        await Until(free1, j => j.State == JobState.Running);
+        Row(free1).HoldIdleSince.ShouldBeNull();
+        Row(second).HoldIdleSince.ShouldBe(began);
+        JobQueue.SlotsLine(_state.Jobs()).ShouldBe($"2 running of 3 slots, 1 idle behind the sibling hold since {LocalTime(began)}, 2 waiting on a sibling hold");
+
+        // The last slot is taken: nothing stands idle, so the field is cleared and the line is as it was before.
+        var free2 = Hand(jobs, "echo 'free2'; sleep 20", PlaneIn("pil5"));
+        await Until(free2, j => j.State == JobState.Running);
+        Row(second).HoldIdleSince.ShouldBeNull();
+        Row(third).HoldIdleSince.ShouldBeNull();
+        JobQueue.SlotsLine(_state.Jobs()).ShouldBe("3 running of 3 slots, 2 waiting on a sibling hold");
+
+        // A slot frees while the hold stands: idle again, from now on, not from the first time.
+        clock.Advance(TimeSpan.FromMinutes(5));
+        await CancelAll(jobs, free2);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        Row(second).HoldIdleSince.ShouldBe(clock.GetUtcNow());
+        JobQueue.SlotsLine(_state.Jobs()).ShouldBe($"2 running of 3 slots, 1 idle behind the sibling hold since {LocalTime(clock.GetUtcNow())}, 2 waiting on a sibling hold");
+
+        await CancelAll(jobs, first, free1);
+    }
+
+    [Fact]
+    public async Task WithEverySlotTakenTheSiblingHoldLeavesNoneIdleAndTheLineIsAsBefore()
+    {
+        var (jobs, _, _, _) = Idle();
+        jobs.MaxRunning = 1;
+        jobs.PlaneOutput = false;
+        jobs.SiblingsOf = _ => [Path.Combine(Path.GetTempPath(), "org-fake", "DIR.Lib")];
+        var first = Hand(jobs, "echo 'one'; sleep 20", PlaneIn("pil1"));
+        await Until(first, j => j.State == JobState.Running);
+        // Held by the sibling build, but the one slot is taken anyway: no slot stands idle for the hold.
+        var second = Hand(jobs, "echo 'two'; sleep 20", PlaneIn("pil2"));
+
+        Row(second).State.ShouldBe(JobState.Queued);
+        Row(second).WaitsOnSibling.ShouldBe(true);
+        Row(second).HoldIdleSince.ShouldBeNull();
+        JobQueue.SlotsLine(_state.Jobs()).ShouldBe("1 running of 1 slot, 1 waiting on a sibling hold");
+        await CancelAll(jobs, first);
+    }
+
+    [Fact]
+    public void TheSlotsLineNamesTheBuildHoldWhenNoQueuedJobWaitsOnASibling()
+    {
+        var since = new DateTimeOffset(2026, 11, 7, 22, 43, 0, TimeSpan.Zero);
+        JobRow Make(string id, JobState state, bool? sibling = null, DateTimeOffset? idle = null) => new()
+        {
+            Id = id, Command = "dotnet test X --no-build", Cwd = _root, State = state, LogPath = Path.Combine(_root, id + ".log"), Timeout = TimeSpan.FromMinutes(30),
+            StartedAt = since, Slots = state == JobState.Queued ? 4 : null, WaitsOnSibling = sibling, HoldIdleSince = idle,
+        };
+
+        // Idle slots, a hold that began at 22:43, and every queued job on a sibling hold: the sibling hold, with the count of the waiting.
+        JobQueue.SlotsLine([Make("j1", JobState.Running), Make("j2", JobState.Running), Make("j3", JobState.Queued, true, since), Make("j4", JobState.Queued, true, since)])
+            .ShouldBe($"2 running of 4 slots, 2 idle behind the sibling hold since {LocalTime(since)}, 2 waiting on a sibling hold");
+        // A queued test that waits for its own plane's build only: the build hold, and no sibling count.
+        JobQueue.SlotsLine([Make("j1", JobState.Running), Make("j3", JobState.Queued, false, since.AddMinutes(3)), Make("j4", JobState.Queued, false, since)])
+            .ShouldBe($"1 running of 4 slots, 3 idle behind the build hold since {LocalTime(since)}");
+        // The field says a hold left a slot idle, but none is free by the rows: the old text.
+        JobQueue.SlotsLine([Make("j1", JobState.Running), Make("j2", JobState.Running), Make("j5", JobState.Running), Make("j6", JobState.Running), Make("j3", JobState.Queued, true, since)])
+            .ShouldBe("4 running of 4 slots, 1 waiting on a sibling hold");
+        // A node that does not say it (an older one, or a queue held by memory): the old text.
+        JobQueue.SlotsLine([Make("j1", JobState.Running), Make("j3", JobState.Queued, true)]).ShouldBe("1 running of 4 slots, 1 waiting on a sibling hold");
+        JobQueue.SlotsLine([Make("j1", JobState.Running), Make("j3", JobState.Queued, false)]).ShouldBe("1 running of 4 slots");
+    }
+
     [Fact]
     public void ANoBuildJobInAPlaneWithNoNodeBuildGetsANoticeAndNothingElseDoes()
     {
