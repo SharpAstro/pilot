@@ -403,7 +403,9 @@ public sealed partial class Watchtower : IStreamRoute
                 return running;
             }
         }
-        var start = Prepare(plan.Entry?.Start ?? StreamStartOf("", SessionStartReasons.WatchtowerStart));
+        // The model and effort are the setting's as of now, not those the process ran on: a restart after a changed setting runs on the new ones.
+        var wanted = plan.Entry?.Start ?? StreamStartOf("", SessionStartReasons.WatchtowerStart);
+        var start = Prepare(wanted with { Model = Models.Model(RoleModels.Watchtower) ?? wanted.Model, Effort = Models.Effort(RoleModels.Watchtower) ?? wanted.Effort });
         var fresh = Launch(start, plan.SessionId, plan.RowId, plan.StartedAt, plan.Earlier);
         if (plan.Entry?.Session is { } old)
         {
@@ -415,6 +417,60 @@ public sealed partial class Watchtower : IStreamRoute
         // Up again: whatever was sent while it restarted is written now, in order.
         await fresh.Session!.ReadyAsync(cancellationToken);
         return fresh;
+    }
+
+    /// <summary>
+    /// The model and effort the settings now ask for when the running stream watchtower of <paramref name="row"/> was started on others
+    /// (the setting changed since); null when it runs on them, or is not a stream session.
+    /// </summary>
+    private (string? Model, string? Effort)? StreamSettingDrift(SessionRow row)
+    {
+        var model = Models.Model(RoleModels.Watchtower);
+        var effort = Models.Effort(RoleModels.Watchtower);
+        lock (_streamsLock)
+        {
+            if (!_streams.TryGetValue(row.Id, out var entry) || entry.Session is not { ExitCode: null })
+            {
+                return null;
+            }
+            var modelDrifted = model is not null && !string.Equals(model, entry.Start.Model, StringComparison.Ordinal);
+            var effortDrifted = effort is not null && !string.Equals(effort, entry.Start.Effort, StringComparison.Ordinal);
+            return modelDrifted || effortDrifted ? (model, effort) : null;
+        }
+    }
+
+    /// <summary>
+    /// Restarts an idle stream watchtower on the model and effort of the settings, on <c>--resume</c> of its own session so the conversation
+    /// goes on (a changed setting is no fresh generation). Never mid-turn and never with an ask open; false when it did not, and why in
+    /// <see cref="Error"/>. The one place a setting reaches a running brain.
+    /// </summary>
+    private async Task<bool> RelaunchOnSettingAsync(SessionRow row, string why, CancellationToken cancellationToken)
+    {
+        await _streamGate.WaitAsync(cancellationToken);
+        try
+        {
+            StreamEntry? entry;
+            lock (_streamsLock)
+            {
+                _streams.TryGetValue(row.Id, out entry);
+            }
+            if (entry?.Session is not { ExitCode: null } session || session.Working || session.Starting || session.Pending.Count > 0)
+            {
+                return false;
+            }
+            lock (_streamsLock)
+            {
+                entry.StopReason = why;
+            }
+            // The reader reports the exit as requested before this returns.
+            await session.DisposeAsync();
+            await ResumeLockedAsync(new StreamResume(entry.RowId, session.SessionId, entry.StartedAt, [.. entry.Earlier], entry), why, cancellationToken);
+            return true;
+        }
+        finally
+        {
+            _streamGate.Release();
+        }
     }
 
     /// <inheritdoc />

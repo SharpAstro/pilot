@@ -860,7 +860,28 @@ public sealed partial class Watchtower(
                 }
                 return;
             }
-            if (row.State == SessionState.Idle && Models.Model(RoleModels.Watchtower) is { } setting && Sessions.SessionModelCheck.ModelDiffers(setting, row.Model) && now >= _nextTry)
+            if (Streams is not null && row.State == SessionState.Idle && now >= _nextTry && StreamSettingDrift(row) is { } drift)
+            {
+                // The brain's model or effort changed in Settings: at its next idle it restarts on the new ones, in the same conversation.
+                var change = $"the settings now say {drift.Model ?? "its model"}{(drift.Effort is null ? "" : " at " + drift.Effort)}, it ran on {row.Model}{(row.Effort is null ? "" : " at " + row.Effort)}";
+                if (!Gate.Hold("watchtower", Models.StartLimit, Models.WeekLimit, Waits, Verbs.WatchtowerTarget, "The watchtower waits to restart on its new model"))
+                {
+                    try
+                    {
+                        if (await RelaunchOnSettingAsync(row, change, cancellationToken))
+                        {
+                            await Error.WriteLineAsync($"watchtower: restarted the stream session {row.Id} on its new model and effort: {change}");
+                        }
+                    }
+                    catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+                    {
+                        _nextTry = now + RetryAfter;
+                        RaiseDown($"The watchtower could not be restarted on its new model: {LegCommander.OneLine(ex.Message)}", $"{ex.Message}; the node tries again in {RetryAfter.TotalMinutes:0} minutes");
+                    }
+                }
+                return;
+            }
+            if (Streams is null && row.State == SessionState.Idle && Models.Model(RoleModels.Watchtower) is { } setting && Sessions.SessionModelCheck.ModelDiffers(setting, row.Model) && now >= _nextTry)
             {
                 // Never mid-turn, and never by changing the model of the session: a fresh one on the setting.
                 await StartAsync($"it ran on {row.Model}, the setting says {setting}", cancellationToken, row);
