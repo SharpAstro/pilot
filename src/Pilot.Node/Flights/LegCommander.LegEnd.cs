@@ -671,7 +671,7 @@ public sealed partial class LegCommander
         var named = names.Length > OverlapNamed ? $"{string.Join(", ", names.Take(OverlapNamed))} and {names.Length - OverlapNamed} more" : string.Join(", ", names);
         // The plane holds work, so a fold (which retires it) is never offered. Only flights reach here: a PR is answered by AnswerPrParallel.
         CardChoice connect = new() { Label = $"Connect to {code}", Verb = Verbs.ConnectOverlap, Target = target, Args = [code] };
-        CardChoice parallel = new() { Label = $"Plan {flight.Code} in parallel with {code}", Verb = Verbs.Separate, Target = target, Args = [code] };
+        CardChoice parallel = new() { Label = "Plan both in parallel", Verb = Verbs.Separate, Target = target, Args = [code] };
         List<CardChoice> choices = parallelFirst ? [parallel, connect] : [connect, parallel];
         var at = other.Node is null ? code : $"{code} on {other.Node}";
         var detail = new System.Text.StringBuilder();

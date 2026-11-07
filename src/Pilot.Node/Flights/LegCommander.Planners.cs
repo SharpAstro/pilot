@@ -48,7 +48,8 @@ public sealed partial class LegCommander
             }
             _plannerJobs.TryRemove(flight.Code, out _);
             _plannersStarted.TryRemove(flight.Code, out _);
-            state.RaiseCard(CardBin.Handled, "planner-ended", Verbs.FlightTarget(flight.Code), $"Ended {planner} once planned: {flight.Code}'s first leg is flying, so its plan is done");
+            state.RaiseCard(CardBin.Handled, "planner-ended", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s planner was ended: its plan is done",
+                $"Ended {planner} once planned: {flight.Code}'s first leg is flying, so its plan is done");
         }
     }
 
@@ -104,7 +105,7 @@ public sealed partial class LegCommander
             }
         }
         Launching(PlanKey(flight.Code), $"{planner}, to plan {flight.Code}'s legs", subject,
-            new CardChoice { Label = $"Start {flight.Code}'s planner again", Verb = Verbs.PlanFlight, Target = subject },
+            new CardChoice { Label = "Start the planner again", Verb = Verbs.PlanFlight, Target = subject },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
@@ -197,7 +198,7 @@ public sealed partial class LegCommander
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, Verbs.FlightTarget(flight.Code), $"GitHub refused to mark {flight.Code}'s PR ready",
+            state.RaiseCard(CardBin.Handled, PrMarks.RefusedKind, Verbs.FlightTarget(flight.Code), $"GitHub refused to mark {flight.Code}'s PR ready",
                 $"{ex.Message}. The review itself started.");
         }
     }

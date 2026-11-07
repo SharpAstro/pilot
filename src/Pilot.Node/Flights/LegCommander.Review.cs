@@ -110,7 +110,7 @@ public sealed partial class LegCommander
         var baseMergeOnly = false;
         string? model = null;
         Launching(ReviewKey(flight.Code), $"{reviewer}, to review {flight.Code}", subject,
-            new CardChoice { Label = $"Start {flight.Code}'s reviewer again", Verb = Verbs.StartReview, Target = subject },
+            new CardChoice { Label = "Start the reviewer again", Verb = Verbs.StartReview, Target = subject },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
@@ -225,7 +225,8 @@ public sealed partial class LegCommander
         state.PutFlight(now with { Review = now.Review with { ReviewedHead = head, StatusState = null, MarksWhy = null }, ReviewRounds = rounds });
         var short8 = (string s) => CommitRefs.Short(s);
         state.RaiseCard(CardBin.Handled, "review-kept", Verbs.FlightTarget(flight.Code),
-            $"{flight.Code}: review kept at {short8(head)}; it passed at {short8(old)} and the PR's own diff is the same (only the base came in), so no reviewer started");
+            $"{flight.Code}'s passed review still stands",
+            $"Review kept at {short8(head)}; it passed at {short8(old)} and the PR's own diff is the same (only the base came in), so no reviewer started");
         // No fresh review follows, so the hold (if the leg made one its own) is the watchtower's again.
         HoldForWatchtower(flight.Code, null);
         await _marks.ApplyAsync(flight.Code, cancellationToken);
@@ -486,7 +487,7 @@ public sealed partial class LegCommander
             holding ? $"{flight.Code}'s PR #{pr.Number} is holding: {holdReason}" : $"{flight.Code}'s PR #{pr.Number} is ready to merge",
             $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {CommitRefs.Short(pr.Head)}. {reviewed}: {review}."
                 + (holding ? " The merge is held until the watchtower clears it or the fixes are pushed (a new review then gates it)." : ""),
-            [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url,
+            [new CardChoice { Label = MergeLabel, Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url,
             summary: holding
                 ? $"{flight.Code} passed its review with notes and circles in a holding pattern: {holdReason}. Merge is refused until it is cleared or the fixes are pushed."
                 : $"{flight.Code} is reviewed and its PR #{pr.Number} is ready. Merge lands it; dismissing leaves the PR open.");
@@ -811,22 +812,34 @@ public sealed partial class LegCommander
         var leg = last is null ? flight.Code : $"{flight.Code}/{last.Name}";
         // Each card says what happened, not a review's findings it did not have (the review of #453): a check that failed and a
         // reviewer that never started raise this card too.
-        var firstLine = changes.Split('\n', 2)[0].Trim();
-        var because = firstLine.Length > 0 ? $": {Clip(firstLine)}" : ": nothing was written down, see the PR's review";
-        var (title, words, said, anyway) = reason switch
+        // The title says what happened; what was found (the first line of it, and the rest) is the detail's, where it is read whole.
+        var title = reason switch
         {
-            SendBackReason.ChecksFailed => ($"{flight.Code}'s PR fails its checks{because}", "Fix the failing checks", $"The PR of {leg} fails its checks.", $"Land {flight.Code} with its checks failing"),
-            SendBackReason.ReviewNotStarted => ($"{flight.Code}'s review did not start{because}", $"Start {flight.Code}'s review again", $"The reviewer of {leg} did not start, so nothing was reviewed.", $"Land {flight.Code} without a review"),
-            _ => ($"{flight.Code}'s review asks for changes{because}", "Fix the review's findings", $"The review of {leg} found things to fix.", $"Land {flight.Code} with the review's findings unfixed"),
+            SendBackReason.ChecksFailed => $"{flight.Code}'s PR fails its checks",
+            SendBackReason.ReviewNotStarted => $"{flight.Code}'s review did not start",
+            _ => $"{flight.Code}'s review asks for changes",
+        };
+        var said = reason switch
+        {
+            SendBackReason.ChecksFailed => $"The PR of {leg} fails its checks.",
+            SendBackReason.ReviewNotStarted => $"The reviewer of {leg} did not start, so nothing was reviewed.",
+            _ => $"The review of {leg} found things to fix.",
+        };
+        // The buttons say only what they do, in two to five words.
+        var (words, anyway) = reason switch
+        {
+            SendBackReason.ChecksFailed => ("Fix the failing checks", "Land with checks failing"),
+            SendBackReason.ReviewNotStarted => ("Start the review again", "Land without a review"),
+            _ => ("Fix the review's findings", "Land with findings unfixed"),
         };
         // Said on the card's detail once the watchtower may no longer answer it, so the person sees why it waits on them. Not in
         // the go-around's args, which become the next worker's brief: that worker is told what the review asked, not who decides.
-        var detail = changes;
+        var detail = changes.Trim().Length > 0 ? changes : "nothing was written down, see the PR's review";
         // Not for a review that did not start: nothing is sent round from that card, so there is no round to decide on.
         if (last is { ReviewGoArounds: >= MaxReviewGoArounds } && reason != SendBackReason.ReviewNotStarted)
         {
             // The findings first: a card shows its first lines, and this note there hid the problem it was about (PIL294's #357, 2026-10-27).
-            detail = $"{changes}\n{last.Name} has been sent back {last.ReviewGoArounds} times: this is yours to decide ({words} once more, mark it ready, or change what is asked).";
+            detail = $"{changes}\n{last.Name} has been sent back {last.ReviewGoArounds} times: this is yours to decide (another round, mark it ready, or change what is asked).";
         }
         var choices = new List<CardChoice>();
         if (reason == SendBackReason.ReviewNotStarted)
@@ -837,12 +850,17 @@ public sealed partial class LegCommander
         else if (last is not null)
         {
             // Not "Redo leg": the worker fixes what was found on the leg's work as it stands; nothing is thrown away (the owner, 2026-10-29).
-            choices.Add(new CardChoice { Label = Models.SendBackLabel(last, words), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [reason == SendBackReason.Findings ? $"the review asked for changes: {changes}" : changes] });
+            choices.Add(new CardChoice { Label = words, Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [reason == SendBackReason.Findings ? $"the review asked for changes: {changes}" : changes] });
         }
         choices.Add(new CardChoice { Label = anyway, Verb = Verbs.Review, Target = Verbs.FlightTarget(flight.Code), Args = ["pass", "ready anyway"] });
+        // What the next worker runs on is the detail's, never the button's.
+        if (last is not null && reason != SendBackReason.ReviewNotStarted && Models.NextWorkerNote(last) is { } nextWorker)
+        {
+            detail = $"{detail}\n{nextWorker}";
+        }
         state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), title, detail, choices, link: flight.PullRequestUrl,
             summary: reason == SendBackReason.ReviewNotStarted || last is null
-                ? $"{said} {(reason == SendBackReason.ReviewNotStarted ? $"{words} starts it again; " : "")}{anyway} takes it as it is."
-                : $"{said} {words} has a worker do it on the leg's work as it stands, nothing thrown away; {anyway} takes it as it is.");
+                ? $"{said} {(reason == SendBackReason.ReviewNotStarted ? "It can be started again, or " : "")}the PR can be taken as it is."
+                : $"{said} A worker can do it on the leg's work as it stands, nothing thrown away, or the PR can be taken as it is.");
     }
 }

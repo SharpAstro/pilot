@@ -301,21 +301,15 @@ public sealed partial class RoleModels
     }
 
     /// <summary>
-    /// The choice that starts a fresh worker on <paramref name="leg"/>, naming why the last one is let go (<paramref name="why"/> completes
-    /// "the last one ...": <c>went idle</c>, <c>never showed up</c>); its next worker is attempt go-arounds + 2, numbered as the redo it
-    /// orders (go-arounds + 1) and naming that attempt's model once it is a second redo or later.
+    /// What the next worker of <paramref name="leg"/> will be, for a card's detail: its attempt is go-arounds + 2, numbered as the round it
+    /// orders (go-arounds + 1), with the model and effort it runs on, once it is a second round or later (<c>Next worker (round 3, on Opus at xhigh).</c>);
+    /// null before that. The buttons that start it say only what they do (<see cref="Verbs.FreshWorker"/>, #797), never the round or the model.
     /// </summary>
-    public string RedoLabel(LegRow leg, string why)
+    public string? NextWorkerNote(LegRow leg)
     {
         var (model, effort) = WorkerFor(leg.Model, leg.Effort, leg.GoArounds + 2);
-        return Verbs.FreshWorker(leg.Name, why, leg.GoArounds + 1, model, effort);
-    }
-
-    /// <summary>A send-back button for <paramref name="leg"/> in <paramref name="words"/>, naming the next worker's round and model as <see cref="RedoLabel"/> does.</summary>
-    public string SendBackLabel(LegRow leg, string words)
-    {
-        var (model, effort) = WorkerFor(leg.Model, leg.Effort, leg.GoArounds + 2);
-        return Verbs.SendBack(words, leg.GoArounds + 1, model, effort);
+        var note = Verbs.SendBack("Next worker", leg.GoArounds + 1, model, effort);
+        return note == "Next worker" ? null : $"{note}.";
     }
 
     private static string Step(string? effort, int by, string whenUnset) =>

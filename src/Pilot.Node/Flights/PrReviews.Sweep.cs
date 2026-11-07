@@ -65,7 +65,7 @@ public sealed partial class PrReviews
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
-                state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused taking the {PilotMarks.Reviewing} label off {review.Repo}#{review.Number}: {LegCommander.OneLine(ex.Message)}",
+                state.RaiseCard(CardBin.Handled, PrMarks.RefusedKind, subject, $"GitHub refused taking the {PilotMarks.Reviewing} label off {review.Repo}#{review.Number}: {LegCommander.OneLine(ex.Message)}",
                     $"{ex.Message}. The review itself stands.", link: review.Url);
             }
         }

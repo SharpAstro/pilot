@@ -33,12 +33,12 @@ public sealed partial class LegCommander
     /// <summary>What the node tried for a PR whose failed checks it could not send back, and what each choice does.</summary>
     public string ChecksFailedSummary(string code, int number, string why, IReadOnlyList<CardChoice> choices) =>
         $"The PR #{number} of {code} fails its checks; the node tried to send the last leg back and could not ({OneLine(why)})." +
-        (choices.Count > 0 ? $" {choices[0].Label} starts a fresh worker told what failed." : " Fix them by hand, then dismiss this.");
+        (choices.Count > 0 ? " A fresh worker, told what failed, can fix them." : " Fix them by hand, then dismiss this.");
 
     /// <summary>The choice that sends the flight's last leg round on a PR's failed checks, as the card's one action.</summary>
     public IReadOnlyList<CardChoice> ChecksFailedChoices(string code, string head, int number) =>
         state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is { } last
-            ? [new CardChoice { Label = Models.RedoLabel(last, "left the PR's checks failing"), Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name),
+            ? [new CardChoice { Label = Verbs.FreshWorker, Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name),
                 Args = [$"the PR's checks failed on {CommitRefs.Short(head)}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push"] }]
             : [];
 
@@ -64,11 +64,11 @@ public sealed partial class LegCommander
         if (legs.LastOrDefault() is { } last)
         {
             // Not "Redo leg": a worker sent round resolves it on the leg's work as it stands; nothing is thrown away (the owner, 2026-10-29).
-            choices.Add(new CardChoice { Label = Models.SendBackLabel(last, ResolveConflict), Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name), Args = [ConflictBrief(why)] });
+            choices.Add(new CardChoice { Label = ResolveConflict, Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name), Args = [ConflictBrief(why)] });
         }
         var number = flight.PullRequest is { } n ? $"PR #{n}" : "branch";
         state.RaiseCard(CardBin.Ring, PrConflictsKind, subject, $"{code}'s {number} conflicts with its base",
-            $"{why}. A worker already tried (the node sends one first, and rings only when it stopped or the same conflict came back). The plane is {flight.Worktree}: {ConflictBrief(why)}, then {(flight.PullRequest is null ? $"`pilot flight pr {code}` (or dismiss this card, and the node opens it)" : $"`pilot flight review {code}`")}. {ResolveConflict} starts a fresh worker on the last leg.",
+            $"{why}. A worker already tried (the node sends one first, and rings only when it stopped or the same conflict came back). The plane is {flight.Worktree}: {ConflictBrief(why)}, then {(flight.PullRequest is null ? $"`pilot flight pr {code}` (or dismiss this card, and the node opens it)" : $"`pilot flight review {code}`")}. {ResolveConflict} starts a fresh worker on the last leg.{(legs.LastOrDefault() is { } next && Models.NextWorkerNote(next) is { } note ? $" {note}" : "")}",
             choices, link: flight.PullRequestUrl,
             summary: $"The {number} of {code} conflicts with its base and a worker already tried. The watchtower merges the base into the plane and resolves it; {ResolveConflict} starts a fresh worker.");
         return Task.FromResult<string?>(null);

@@ -431,7 +431,7 @@ public sealed partial class LegCommander
         var split = failure.IndexOf(": ", StringComparison.Ordinal);
         var (title, detail) = split > 0 ? (failure[..split], failure[(split + 2)..]) : (failure, null);
         var subject = Verbs.FlightTarget(flight.Code);
-        CardChoice[] retry = [new CardChoice { Label = "Retry move", Verb = Verbs.MoveFlight, Target = subject }];
+        CardChoice[] retry = [new CardChoice { Label = "Try the move again", Verb = Verbs.MoveFlight, Target = subject }];
         if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == MoveFailedKind && c.Subject == subject) is { } open)
         {
             state.UpdateCard(open.Id, title, detail, retry, open.Link);
@@ -480,7 +480,7 @@ public sealed partial class LegCommander
         }
         catch (FlightException ex)
         {
-            state.RaiseCard(CardBin.ForYou, "plane-left", Verbs.FlightTarget(flight.Code), $"{text}, but its plane folder is still here", $"{ex.Message}; the flight is no longer flown here, so delete the folder by hand");
+            state.RaiseCard(CardBin.Handled, "plane-left", Verbs.FlightTarget(flight.Code), $"{text}, but its plane folder is still here", $"{ex.Message}; the flight is no longer flown here, so delete the folder by hand");
         }
         if (flights.Trackers?.Of(flight.Tracker) is { } tracker)
         {
@@ -490,7 +490,7 @@ public sealed partial class LegCommander
             }
             catch (FlightException ex)
             {
-                state.RaiseCard(CardBin.ForYou, "node-label-refused", Verbs.FlightTarget(flight.Code), $"{PilotMarks.NodeLabel(options.Machine)} is still on {flight.Item.Noun} {flight.Item.Display}", ex.Message);
+                state.RaiseCard(CardBin.Handled, "node-label-refused", Verbs.FlightTarget(flight.Code), $"{PilotMarks.NodeLabel(options.Machine)} is still on {flight.Item.Noun} {flight.Item.Display}", ex.Message);
             }
         }
     }

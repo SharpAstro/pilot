@@ -819,11 +819,13 @@ public static class Verbs
     public static string RedoLeg(string leg) => $"Redo leg {leg}";
 
     /// <summary>
-    /// The button that sends leg <paramref name="leg"/> round with a fresh worker, said as what it does in this case: <c>Start a fresh worker on x
-    /// (the last one went idle)</c>, with the round and the model from the second redo on, as <see cref="RedoLeg(string, int, string?, string?)"/> has it.
+    /// The button that sends a leg round with a fresh worker, whatever the last one did: why it is let go, the round and the model the next
+    /// one runs on belong in the card's detail (<c>RoleModels.NextWorkerNote</c>), never in a button (#797).
     /// </summary>
-    public static string FreshWorker(string leg, string why, int redo, string? model, string? effort = null) =>
-        $"Start a fresh worker on {leg} (the last one {why}{(redo >= 2 && model is not null ? $"; redo {redo}, {OnModel(model, effort)}" : "")})";
+    public const string FreshWorker = "Start a fresh worker";
+
+    /// <summary>The button on a card about a stalled worker that lets it go and starts another from the branch.</summary>
+    public const string RestartWorker = "Restart the worker";
 
     /// <summary>The redo choice naming what the next worker runs on, once it is a second redo or later (<paramref name="redo"/> is go-arounds + 1): <c>Redo leg x (redo 3, on Opus)</c>.</summary>
     public static string RedoLeg(string leg, int redo, string? model, string? effort = null) =>

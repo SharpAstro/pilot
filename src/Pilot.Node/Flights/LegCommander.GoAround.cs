@@ -25,12 +25,12 @@ public sealed partial class LegCommander
         var detail = $"{leg.GoArounds} go-arounds, the cap is {cap}. Each round said:\n{string.Join('\n', rounds)}\nAnother round asked for: {asked}";
         state.RaiseCard(CardBin.Ring, GoAroundCapKind, target,
             $"{flight.Code}/{leg.Name} has gone around {leg.GoArounds} times, the cap is {cap}",
-            detail,
+            Models.NextWorkerNote(leg) is { } note ? $"{detail}\n{note}" : detail,
             [
-                new CardChoice { Label = Models.RedoLabel(leg, "went round past the cap"), Verb = Verbs.GoAround, Target = target, Args = [asked] },
-                new CardChoice { Label = $"Accept {leg.Name} as it stands", Verb = Verbs.FinishLeg, Target = target, Args = ["accepted", $"accepted at the go-around cap ({leg.GoArounds} rounds)"] },
+                new CardChoice { Label = Verbs.FreshWorker, Verb = Verbs.GoAround, Target = target, Args = [asked] },
+                new CardChoice { Label = "Accept the leg as it is", Verb = Verbs.FinishLeg, Target = target, Args = ["accepted", $"accepted at the go-around cap ({leg.GoArounds} rounds)"] },
             ],
-            summary: $"{flight.Code}/{leg.Name} has gone around {leg.GoArounds} times, the cap. The watchtower and the node send it round no more; Go around sends one more, Accept takes the leg as it stands.");
+            summary: $"{flight.Code}/{leg.Name} has gone around {leg.GoArounds} times, the cap. The watchtower and the node send it round no more; one more round, or taking the leg as it stands, is for you to choose.");
     }
 
     private async Task GoAroundAsync(CommandRequest command, CancellationToken cancellationToken, bool openConflict = false)
@@ -147,7 +147,7 @@ public sealed partial class LegCommander
         // The plane's HEAD as this go-around's worker starts, read off the lock with the plane in place; null when it cannot be read.
         string? startHead = null;
         Launching(LegsKey(flight.Code), $"{worker}, going around {flight.Code}/{leg.Name}", target,
-            new CardChoice { Label = Models.RedoLabel(leg, "did not start"), Verb = Verbs.GoAround, Target = target, Args = [why] },
+            new CardChoice { Label = Verbs.FreshWorker, Verb = Verbs.GoAround, Target = target, Args = [why] },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);

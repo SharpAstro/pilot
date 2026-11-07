@@ -208,8 +208,7 @@ public sealed partial class LegCommander
                 var reason = report.Split('\n', 2)[0].Trim() is { Length: > 0 } first ? Clip(first) : "no reason given";
                 // The options are said in full in the body as A and B, and each button is short (#797 rule 4): the reason and the next
                 // worker's round and model are never pasted into a button, where they were cut mid-word. The round and model are detail.
-                var nextWorker = Models.SendBackLabel(leg, "Next worker");
-                var failedDetail = string.Join("\n\n", new[] { report, notWhy, nextWorker == "Next worker" ? null : $"{nextWorker}." }.Where(s => !string.IsNullOrEmpty(s)));
+                var failedDetail = string.Join("\n\n", new[] { report, notWhy, Models.NextWorkerNote(leg) }.Where(s => !string.IsNullOrEmpty(s)));
                 state.RaiseCard(CardBin.Ring, "leg-failed", Verbs.LegTarget(flight.Code, leg.Name),
                     $"{flight.Code}/{leg.Name} stopped: {reason}", failedDetail.Length > 0 ? failedDetail : null,
                     [
@@ -348,13 +347,13 @@ public sealed partial class LegCommander
         var target = Verbs.LegTarget(flight.Code, leg.Name);
         state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "branch needs a force push", Wait = null });
         state.RaiseCard(CardBin.Ring, PushBlockedKind, target,
-            $"{flight.Code}/{leg.Name} is done, but its rebased branch needs a force push with lease or a merge",
-            $"Check passed at {CommitRefs.Short(blocked.Head)}, origin/{flight.Branch} at {CommitRefs.Short(blocked.Origin)} is not an ancestor of it, so a plain push is refused. Nothing was pushed or overwritten.{(report.Length > 0 ? $"\nThe worker said: {report}" : "")}",
+            $"{flight.Code}/{leg.Name} is done, but its branch was rebased and is not pushed",
+            $"Check passed at {CommitRefs.Short(blocked.Head)}, origin/{flight.Branch} at {CommitRefs.Short(blocked.Origin)} is not an ancestor of it, so a plain push is refused. Nothing was pushed or overwritten. Overwriting is a push with lease; the other way merges origin/{flight.Branch} into the plane and pushes plain.{(report.Length > 0 ? $"\nThe worker said: {report}" : "")}",
             [
-                new CardChoice { Label = "Push the rebased branch with lease", Verb = Verbs.FinishLeg, Target = target, Args = [PushedWithLease, blocked.Origin] },
-                new CardChoice { Label = $"Merge origin/{flight.Branch} into the plane and push", Verb = Verbs.FinishLeg, Target = target, Args = [MergedWithOrigin] },
+                new CardChoice { Label = "Overwrite origin's branch", Verb = Verbs.FinishLeg, Target = target, Args = [PushedWithLease, blocked.Origin] },
+                new CardChoice { Label = "Merge origin's branch in", Verb = Verbs.FinishLeg, Target = target, Args = [MergedWithOrigin] },
             ],
-            summary: $"{flight.Code}/{leg.Name} is done and its check passes, but its branch was rebased off origin/{flight.Branch}. Push the rebased branch with lease overwrites origin's only if it is still at {CommitRefs.Short(blocked.Origin)}; Merge origin/{flight.Branch} keeps its commits and pushes plain.");
+            summary: $"{flight.Code}/{leg.Name} is done and its check passes, but its branch was rebased off origin's, so a plain push is refused. Overwriting replaces origin's only if it is still at {CommitRefs.Short(blocked.Origin)}; merging keeps origin's commits and pushes plain.");
         return true;
     }
 
