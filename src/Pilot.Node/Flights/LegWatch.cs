@@ -1597,7 +1597,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             spelled = plane;
         }
-        return $"Claude Code asks before a {tool} only when it does not take the path as inside your folder (a relative path, a `..`, "
+        return $"Claude Code asks before the {tool} tool only when it does not take the path as inside your folder (a relative path, a `..`, "
             + $"another case or a linked folder), so give the {tool} the absolute path spelled from the plane, `{spelled}`, and it runs without asking";
     }
 

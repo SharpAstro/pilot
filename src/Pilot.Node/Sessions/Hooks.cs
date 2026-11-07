@@ -37,7 +37,7 @@ public sealed class HookBook
     /// <param name="at">When it came.</param>
     /// <param name="allowed">The node answered this PermissionRequest itself (<see cref="Pilot.Node.Flights.PermissionGate"/>): the session
     /// runs the call at once and shows no prompt, so it is working, not waiting. Kept as waiting, it stayed so until the session's next hook,
-    /// which can be minutes away (no PostToolUse is followed), and the leg watch sent round a worker the node had just let go on.</param>
+    /// which can be minutes away (no PostToolUse follows), and the leg watch sent round a worker the node had just let go on.</param>
     public string? Apply(JsonElement hook, DateTimeOffset at, bool allowed = false)
     {
         if (hook.ValueKind != JsonValueKind.Object
