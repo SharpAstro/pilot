@@ -248,6 +248,15 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     state.CloseCardsAbout(subject, "working again", Kinds);
                     break;
                 case SessionState.Waiting:
+                    // Waiting on its own work, not on a person (PIL800): a recorded wait, a check rerun not yet told, a check job or a job
+                    // of its own queued or running is a normal wait, as for an idle worker, and the end of that work wakes it. A question or
+                    // a tool call that needs approval is the exception: it waits on a person whatever its jobs are doing.
+                    var own = AsksThePerson(worker) ? OwnWait.None : WaitsOnOwnWork(leg, worker);
+                    if (own != OwnWait.None)
+                    {
+                        NoteWaitingOnOwnWork(leg, own);
+                        break;
+                    }
                     // Waiting on the node, not on a person (#799 rule 3, row c17099): no ring while the node has the next move.
                     if (WaitsOnNode(leg, worker) && await NodeTakesOverAsync(leg, worker, cancellationToken))
                     {
@@ -521,20 +530,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
 
     private async Task IdleAsync(LegRow leg, SessionRow worker, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        // A worker that ended its turn on a wait it recorded (pilot leg wait) is waiting, as it was told to: the wait wakes it.
-        if (leg.Wait is not null)
-        {
-            return;
-        }
-        // Likewise one that ended its turn on a finish whose check is being rerun (the node tells it the outcome, pilot #487).
-        if (leg.Recheck is { Outcome: null })
-        {
-            return;
-        }
-        // Never a nudge to a session that has not taken its first turn (the first-turn check owns it), nor to one whose leg's check is queued or running:
-        // a check job has the flight and leg but no owner, and its end wakes the worker.
-        if (NoTurnYet(worker) || state.Jobs().Any(j => j.Kind == JobKind.Check && j.State is JobState.Running or JobState.Queued
-            && string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase)))
+        // A worker that ended its turn on a wait it recorded (pilot leg wait), on a finish whose check is being rerun (the node tells it
+        // the outcome, pilot #487) or on a leg whose check job is queued or running is waiting, as it was told to: the wait, the
+        // outcome or the job's end wakes it. Never a nudge to a session that has not taken its first turn either (the first-turn
+        // check owns it). A job of its own is read further down, after the tell of an ended job and the grace.
+        if (LegWait(leg) != OwnWait.None || NoTurnYet(worker))
         {
             return;
         }
@@ -772,6 +772,72 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             state.RaiseCard(CardBin.Handled, "worker-told-job", Subject(leg), $"{Name(leg)}'s worker was idle because a job of its own had ended without it being told; the node told it");
         }
         return told;
+    }
+
+    /// <summary>What a worker waits on that is its own work and not a person (PIL800), or <see cref="None"/>.</summary>
+    internal enum OwnWait
+    {
+        None,
+        /// <summary>A wait the leg recorded (<c>pilot leg wait</c>): a file or a time that wakes the worker.</summary>
+        Recorded,
+        /// <summary>The leg's check rerun, or its outcome not yet told to the worker (<see cref="LegRecheck"/>).</summary>
+        Recheck,
+        /// <summary>A check job of the leg, queued or running: it has the flight and leg but no owner, and its end wakes the worker.</summary>
+        CheckJob,
+        /// <summary>A job of the worker's own or of its leg (<see cref="IdleCause.OwnJob"/>), queued or running.</summary>
+        OwnJob,
+    }
+
+    /// <summary>
+    /// The leg-level part of <see cref="WaitsOnOwnWork"/>, read for an idle worker before its grace and for a waiting one at once: a recorded
+    /// wait, a check rerun not yet told, or a check job of the leg queued or running.
+    /// </summary>
+    private OwnWait LegWait(LegRow leg) =>
+        leg.Wait is not null ? OwnWait.Recorded
+        : leg.Recheck is not null ? OwnWait.Recheck
+        : state.Jobs().Any(j => j.Kind == JobKind.Check && j.State is JobState.Running or JobState.Queued
+            && string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase)) ? OwnWait.CheckJob
+        : OwnWait.None;
+
+    /// <summary>
+    /// The one test of whether a worker waits on its own work: the leg's wait, recheck or check job (<see cref="LegWait"/>), else a job of its
+    /// own or of its leg queued or running (<see cref="ClassifyIdle"/>'s <see cref="IdleCause.OwnJob"/>). An idle worker and a waiting one
+    /// are both left alone then, as the work's end wakes them.
+    /// </summary>
+    internal OwnWait WaitsOnOwnWork(LegRow leg, SessionRow worker)
+    {
+        var wait = LegWait(leg);
+        if (wait != OwnWait.None)
+        {
+            return wait;
+        }
+        return ClassifyIdle(leg, worker) == IdleCause.OwnJob ? OwnWait.OwnJob : OwnWait.None;
+    }
+
+    /// <summary>
+    /// A worker that asks a person something: a question (a question mark) or a tool call that needs approval. Its jobs do not answer it,
+    /// so it rings whatever they are doing.
+    /// </summary>
+    private static bool AsksThePerson(SessionRow worker) => worker.WaitingFor?.Contains('?') == true || worker.Asking is not null;
+
+    /// <summary>
+    /// A waiting worker that waits on its own work: an open Waiting card of the leg closes saying so, and a job of its own raises the
+    /// same once-only Handled line as for an idle worker.
+    /// </summary>
+    private void NoteWaitingOnOwnWork(LegRow leg, OwnWait wait)
+    {
+        var what = wait switch
+        {
+            OwnWait.Recorded => "a wait it recorded",
+            OwnWait.Recheck => "its leg's check rerun",
+            OwnWait.CheckJob => "its leg's check job",
+            _ => "a job of its own or of its leg",
+        };
+        state.CloseCardsAbout(Subject(leg), $"it waits on its own work, not on you ({what})", Waiting);
+        if (wait == OwnWait.OwnJob && _ownJobNoted.Add(leg.WorkerJob!))
+        {
+            state.RaiseCard(CardBin.Handled, "worker-waiting-job", Subject(leg), $"{Name(leg)}'s worker is waiting on a job of its own or of its leg; the job wakes it");
+        }
     }
 
     /// <summary>Why an idle worker is idle (pilot #578): its context is full, it waits on a job of its own, or it is idle with room.</summary>
