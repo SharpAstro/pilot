@@ -787,10 +787,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             refused = sent.Error ?? "refused";
         }
         var around = Models.RedoLabel(leg, "its ticker stopped without finishing it");
-        var refusal = refused is null ? "" : $"; the node's go-around was refused: {refused}";
+        var goAroundRefusal = refused is null ? "" : $"; the node's go-around was refused: {refused}";
         // Needs someone: the worker's commits were not ticked and finished by the ticking pass, which is run once, and what covers the steps is the controller's to say.
         state.RaiseCard(CardBin.Ring, Idle, subject, $"{ticker} stopped without finishing the leg: {why}{(refused is null ? "" : $" (go-around refused: {Clip(refused)})")}",
-            $"the worker ended with commits made and {Steps(leg)}, so the node started its ticking pass instead of sending the leg round; {why}, and the node starts no second ticker{refusal}",
+            $"the worker ended with commits made and {Steps(leg)}, so the node started its ticking pass instead of sending the leg round; {why}, and the node starts no second ticker{goAroundRefusal}",
             [new CardChoice { Label = around, Verb = Verbs.GoAround, Target = subject, Args = [$"the last worker ended with steps unticked and its ticker stopped without finishing: {why}"] }],
             summary: $"The ticking pass of {Name(leg)} stopped with the leg unfinished: {why}. {around} starts a fresh worker.");
     }
