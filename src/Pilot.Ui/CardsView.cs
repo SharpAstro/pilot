@@ -543,6 +543,76 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The card's refusal as it stands, for a test or a dump; null when none.</summary>
     public string? RefusedOn(string cardId) => Presses.RefusedOf(cardId);
 
+    // Where each card stood the last time the panel was built: open, with an answer underway, or closed (gone from the open cards, or
+    // held closed under the pointer). A card never seen has no entry. Read and written on the render thread only.
+    private enum CardPhase { Open, Answering, Closed }
+
+    private Dictionary<string, CardPhase> _phases = new(StringComparer.Ordinal);
+
+    // The refusal text drawn on each card the last time it was, by card id. Render thread only.
+    private readonly Dictionary<string, string> _refusalDrawn = new(StringComparer.Ordinal);
+
+    /// <summary>How many cards' last phase <see cref="DropStaleRefusals"/> remembers, closed ones included (so a reopened card is known); past it the closed ones are forgotten.</summary>
+    private const int PhasesKept = 512;
+
+    /// <summary>
+    /// Drops the kept refusal of a card the stream shows has moved on, so none outlives the state it was about (#792: a Merge refused while
+    /// another answer was underway kept "was refused" on a card that then read answered or underway). It is the change that drops it, as
+    /// the panel is built: a card that closed (gone from the open cards, or held closed under the pointer) or took an answer underway loses
+    /// its refusal; so does one that comes back open after being closed, if the refusal was drawn. A refusal not yet drawn is the
+    /// outcome of the press whose answer closed the card and reopened it (the node reopens a card whose choice it refused, and the press's
+    /// answer may land before or after that event), so it is kept to be drawn. Nothing is dropped when an answer ends without closing the
+    /// card (refused, cut off): what the node said then is the refusal. A refusal that lands while the card still reads answering is kept
+    /// too, as the stream may not have shown the answer's end yet; the card does not draw it until it does (see <see cref="Card"/>).
+    /// </summary>
+    private void DropStaleRefusals(CardsScreen screen)
+    {
+        var now = new Dictionary<string, CardPhase>(StringComparer.Ordinal);
+        foreach (var card in screen.Open)
+        {
+            now[card.Id] = _closed.Contains(card) ? CardPhase.Closed : card.Answering is not null ? CardPhase.Answering : CardPhase.Open;
+        }
+        foreach (var card in screen.Merged)
+        {
+            now.TryAdd(card.Id, CardPhase.Closed);
+        }
+        foreach (var id in _phases.Keys)
+        {
+            now.TryAdd(id, CardPhase.Closed);
+        }
+        foreach (var (id, phase) in now)
+        {
+            if (Presses.RefusedOf(id) is not { } refusal)
+            {
+                _refusalDrawn.Remove(id);
+                continue;
+            }
+            if (!_phases.TryGetValue(id, out var before) || before == phase)
+            {
+                continue;
+            }
+            var moved = phase switch
+            {
+                CardPhase.Closed or CardPhase.Answering => true,
+                CardPhase.Open => before == CardPhase.Closed && _refusalDrawn.TryGetValue(id, out var drawn) && drawn == refusal,
+                _ => false,
+            };
+            if (moved)
+            {
+                Presses.NoteRefused(id, null);
+                _refusalDrawn.Remove(id);
+            }
+        }
+        if (now.Count > PhasesKept)
+        {
+            foreach (var id in now.Where(p => p.Value == CardPhase.Closed).Select(p => p.Key).ToList())
+            {
+                now.Remove(id);
+            }
+        }
+        _phases = now;
+    }
+
     /// <summary>The panel's foot, which stays in view while the cards above scroll: the way into the chat with the watchtower.</summary>
     private Layout.Node Foot(CardsScreen screen)
     {
@@ -586,6 +656,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         // Drop the fold state of cards that are gone.
         var here = screen.Open.Concat(screen.Merged).Select(c => c.Id).ToHashSet();
         System.Collections.Immutable.ImmutableInterlocked.Update(ref _detailOpen, open => open.Any(id => !here.Contains(id)) ? open.Intersect(here) : open);
+        DropStaleRefusals(screen);
         var blocks = screen.Watchtower is { } tower ? Watchtower(tower) : NoWatchtower();
         blocks.Add(Layout.Builder.Text("For you", 18f, Bright).Selectable().RowH(30f));
         blocks.Add(_waiting.Count == 0
@@ -838,9 +909,20 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         // What the node said to the last button pressed here, when it refused: on the card, never only in a log.
         var working = Presses.PendingOf(card.Id);
-        if (Presses.RefusalLine(card.Id, 11f, Ring, DetailLines, LineChars) is { } refusal)
+        // An answer to this card that is underway (#792): said where the buttons are, whoever pressed it, and its buttons are dead.
+        var answering = closed || merged ? null : card.Answering;
+        // Not drawn while an answer is underway: the line below says what is going on, and a refusal that landed before the stream showed
+        // the answer's end is drawn once it does.
+        if (answering is null && Presses.RefusalLine(card.Id, 11f, Ring, DetailLines, LineChars) is { } refusal)
         {
             lines.Add(refusal);
+            // Drawn once: from now on a card that moves on (closed, answered) takes it with it (see DropStaleRefusals).
+            _refusalDrawn[card.Id] = Presses.RefusedOf(card.Id) ?? "";
+        }
+        if (answering is not null)
+        {
+            var underway = answering.Line();
+            lines.Add(Whole(WrappedProse.Paragraphs(underway, 11f, Body, DetailLines, LineChars), underway, underway.Length > DetailFits));
         }
 
         // The buttons in order, each with whether its label is long enough to be wrapped inside a button of the panel's width, which then has a row of its own.
@@ -854,8 +936,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         Layout.Node Button(string label, string action, Action onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null) =>
             closed ? Dead(label) : working is not null ? Dead(action == working ? $"{label} …" : label) : Pill(label, action, onClick, tint);
         // A button that asks the node goes through the shared helper, which says it is working and takes no second press.
+        // Dead too while an answer to the card is underway: pressing again would only be joined (or refused), and the line above says why.
         Layout.Node NodeButton(string label, string action, Action onClick) =>
-            closed ? Dead(label) : Presses.Button(card.Id, action, () => Pill(label, action, onClick), pressed => Dead(pressed ? $"{label} …" : label));
+            closed || answering is not null ? Dead(label) : Presses.Button(card.Id, action, () => Pill(label, action, onClick), pressed => Dead(pressed ? $"{label} …" : label));
         var watched = node is { Here: false } && CanSteer?.Invoke(node) == false ? node : null;
         if (watched is not null)
         {
@@ -894,6 +977,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 lines.Add(Layout.Builder.TextInput(words, 14f, Palette.Input).RowH(28f));
                 Put(closed
                     ? DeadChoice(label, false)
+                    : answering is not null
+                        ? DeadChoice(label, answering.Choice == choice.Label)
                     : Presses.Button(card.Id, action, () => ChoicePill(label, false, action, () =>
                     {
                         var typed = words.Text.Trim();
@@ -908,6 +993,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 ? DeadChoice(label, false)
                 : IsChip(choice.Status)
                     ? ChoiceControl(choice, card.Detail, action, () => { }, wrap: true)
+                    : answering is not null
+                        ? DeadChoice(label, answering.Choice == choice.Label)
                     : Presses.Button(card.Id, action, () => ChoiceControl(choice, card.Detail, action, () => OnAnswer?.Invoke(card, number), wrap: true), pressed => DeadChoice(label, pressed)), label);
         }
         // A waiting session is answered where its Remote Control has it: the card's link, one click away.

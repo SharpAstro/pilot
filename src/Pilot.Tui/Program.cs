@@ -166,7 +166,9 @@ async Task CardAsync(string verb, CardRow card, string[] cardArgs)
     }
     var envelope = await to.SendAsync(DashboardCommands.CardRequest(verb, card, cardArgs, Who), stop.Token);
     clients.NoteRefusal(cards.NodeOf(card), envelope);
-    flights.Say(envelope.Success ? $"{verb} {card.Id}: done" : $"{verb} {card.Id}: {envelope.Response?.Error ?? envelope.Error}");
+    flights.Say(envelope.Success
+        ? DashboardCommands.JoinedOf(envelope) is { } joined ? $"{verb} {card.Id}: joined: {joined}" : $"{verb} {card.Id}: done"
+        : $"{verb} {card.Id}: {envelope.Response?.Error ?? envelope.Error}");
     Redraw();
 }
 cards.OnAnswer = (card, number) => _ = CardAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)]);

@@ -510,9 +510,12 @@ if (feed is not null && client is not null && clients is not null)
         clients.NoteRefusal(chrome.Cards.NodeOf(card), result);
         // A refusal is said on the card the button is on, never only here: a Merge pressed again and again on a PR GitHub
         // would not merge showed nothing (SE1, 2026-10-24).
-        var refused = !result.Success ? result.Error : result.Response is { Ok: false } answer ? answer.Error : null;
+        var refused = DashboardCommands.RefusalOf(result);
         chrome.Cards.NoteRefused(card.Id, refused);
-        Note($"pilot-gui: {verb} {card.Id} ({card.Title}): {refused ?? "done"}");
+        // An ok answer is never a refusal. One that joined an answer already underway (or already given) is logged as such, so the log
+        // does not read as a second run: the card itself says who pressed what (#792).
+        var joined = refused is null ? DashboardCommands.JoinedOf(result) : null;
+        Note($"pilot-gui: {verb} {card.Id} ({card.Title}): {refused ?? (joined is null ? "done" : $"joined: {joined}")}");
         loop.RequestRedraw();
     }
     // Every task a click starts goes through the tracker, never `_ =`: it is drained at shutdown and a fault it did not

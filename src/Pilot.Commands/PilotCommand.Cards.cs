@@ -45,6 +45,11 @@ public static partial class PilotCommand
             {
                 text.AppendLine($"      {link}");
             }
+            if (card.State == CardState.Open && card.Answering is { } answering)
+            {
+                // An answer underway (#792): said under the card, as the GUI says it where the buttons are.
+                text.AppendLine($"      {answering.Line()}");
+            }
             if (card.State == CardState.Open)
             {
                 for (var i = 0; i < card.Choices.Length; i++)

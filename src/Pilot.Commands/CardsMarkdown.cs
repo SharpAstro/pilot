@@ -50,6 +50,11 @@ internal static class CardsMarkdown
             {
                 text.AppendLine($"[{Markdown.Text(link)}]({(link.Contains(' ') ? $"<{link}>" : link)})").AppendLine();
             }
+            if (card.State == CardState.Open && card.Answering is { } answering)
+            {
+                // An answer underway (#792): the same line as the plain output and the GUI.
+                text.AppendLine($"**underway**: {Markdown.Text(answering.Line())}").AppendLine();
+            }
             if (card.State == CardState.Open)
             {
                 for (var i = 0; i < card.Choices.Length; i++)

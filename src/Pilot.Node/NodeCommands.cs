@@ -643,7 +643,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
                 return underway is null
                     ? ClosedAlready(command, state.Cards().First(c => c.Id == card.Id), args)
                     : string.Equals(underway.Choice, choice.Label, StringComparison.Ordinal)
-                        ? state.Complete(command, null, made: $"already on its way, started by {underway.By} at {LocalTime(underway.At)}")
+                        ? state.Complete(command, null, made: $"{CardAnswering.JoinedUnderway}, started by {underway.By} at {LocalTime(underway.At)}")
                         : state.Complete(command, $"{choice.Label} was refused: {underway.Choice} is underway on card {card.Id} (pressed by {underway.By} at {LocalTime(underway.At)}): wait for its answer, then ask again");
             }
             answering = taken;
@@ -682,7 +682,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
     internal CommandResult ClosedAlready(CommandRequest command, CardRow card, string[] args) =>
         command.Verb == Verbs.Answer && ChoiceOf(card, args) is { } same && string.Equals(card.Outcome, same.Label, StringComparison.Ordinal)
             && card.ClosedBy is { } by && card.ClosedAt is { } at && Get<TimeProvider>().GetUtcNow() - at <= RepeatAnswerWindow
-            ? state.Complete(command, null, made: $"already answered by {by} at {LocalTime(at)}")
+            ? state.Complete(command, null, made: $"{CardAnswering.JoinedClosed} by {by} at {LocalTime(at)}")
             : state.Complete(command, $"card {card.Id} is closed already ({card.Outcome})");
 
     private static string LocalTime(DateTimeOffset at) => at.ToLocalTime().ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);

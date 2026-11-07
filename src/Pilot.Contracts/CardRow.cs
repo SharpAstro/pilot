@@ -102,6 +102,26 @@ public sealed record CardAnswering
 
     /// <summary>What the answer waits on, in a few words (<c>flight PIL777 being sent round</c>), where the node can tell; null when it simply runs.</summary>
     public string? Waiting { get; init; }
+
+    /// <summary>How the node starts the ok answer to a press of the choice that is already underway (<c>already on its way, started by cli at 20:35</c>).</summary>
+    public const string JoinedUnderway = "already on its way";
+
+    /// <summary>How the node starts the ok answer to a repeat of a choice that closed its card first (<c>already answered by cli at 20:35</c>).</summary>
+    public const string JoinedClosed = "already answered";
+
+    /// <summary>
+    /// Whether <paramref name="made"/>, the <c>Made</c> of an answer the node called ok, says the press joined an answer already
+    /// taken (<see cref="JoinedUnderway"/> or <see cref="JoinedClosed"/>) rather than running one: a client shows it as taken, never as refused.
+    /// </summary>
+    public static bool IsJoined(string? made) =>
+        made is not null && (made.StartsWith(JoinedUnderway, StringComparison.Ordinal) || made.StartsWith(JoinedClosed, StringComparison.Ordinal));
+
+    /// <summary>
+    /// The line a client puts where the card's buttons were: <c>Resolve the conflict: pressed by cli at 20:35, waiting on TIA1 being sent round</c>
+    /// (local time, no waiting part when <see cref="Waiting"/> is null or empty). One wording for the GUI, the TUI and <c>pilot cards</c>.
+    /// </summary>
+    public string Line() =>
+        $"{Choice}: pressed by {By} at {At.ToLocalTime().ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture)}{(Waiting is { Length: > 0 } waiting ? $", waiting on {waiting}" : "")}";
 }
 
 /// <summary>A card's button: what it says, and the command it runs.</summary>
