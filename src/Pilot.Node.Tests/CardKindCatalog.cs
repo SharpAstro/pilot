@@ -96,6 +96,8 @@ internal static class CardKindCatalog
         new("planned", "ForYou", [LegPlanners], "LegTests.APlannerIsStartedInThePlaneAndItsPlannedOffersTheFirstLeg"),
         new("overlap", "Ring", ["Flights/LegCommander.Overlap.cs", "Flights/LegCommander.LegEnd.cs"], "OverlapTests.TheRecordedAnswerSurvivesAReplayOfTheJournal", "the flight's files overlap another flight's and the controller has not answered", [nameof(Verbs.Fold), nameof(Verbs.ConnectOverlap), nameof(Verbs.Separate)]),
         new("overlap-parallel", "Handled", ["Flights/LegCommander.LegEnd.cs"], "LegEndOverlapTests.AnUnforeseenOverlapWithAFlightlessOpenPrIsAnsweredParallelByTheNodeWithAHandledNoteAndNoRing"),
+        new("overlap-connected", "Handled", ["Flights/LegCommander.LegEnd.cs"], "LegEndOverlapTests.AnUnforeseenOverlapWithALocalFlightIsConnectedByTheNodeWithAHandledNoteNoRingAndTheNextLegHeld"),
+        new("overlap-landed", "Handled", ["Flights/LegCommander.LegEnd.cs"], "LegEndOverlapTests.APendingRowWhoseLocalOtherHasLandedIsClosedByTheSweepWithAHandledLineAndTheNextLegStarts"),
         new("flown-elsewhere", "ForYou", [LegPlan], "OneNodePerFlightTests.APlanOfAFlightWhoseBranchAPeerFliesIsRefusedWithARingNamingThePeer"),
         new("pilot-md-too-long", "Ring", [LegAdvance], "PilotMdTests.APilotMdOverTheLimitIsNotQuotedAndRaisesOneCardNamingTheRepoTheFlightAndTheLineCount", "the repo's PILOT.md line count, read from the file, is over the limit", [nameof(Verbs.PlanFlight)]),
         new("stopped-uncommitted", "Ring", ["Flights/StopGate.cs"], "StopGateTests.TheHookPrintsTheNodesDecisionAndNothingOnceLetThrough", "git status of the plane lists files not committed after the worker was told once", [nameof(Verbs.Say)]),

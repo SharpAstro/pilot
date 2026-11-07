@@ -538,6 +538,20 @@ public sealed record OverlapRow
 
     public required OverlapAnswer Answer { get; init; }
 
+    /// <summary>
+    /// Set when the node answered the overlap itself and not the controller: <see cref="AnsweredByNodeConnected"/> (it connected the flight at a
+    /// leg's end) or <see cref="AnsweredByNodeLanded"/> (the other had landed, so there was nothing to wait for). Null for the controller's answer,
+    /// which is what the planner's brief says of every row that has no mark.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? AnsweredByNode { get; init; }
+
+    /// <summary>The node connected the flight to the other itself, for an unforeseen overlap found at a leg's end.</summary>
+    public const string AnsweredByNodeConnected = "connected";
+
+    /// <summary>The node answered connect itself because the other flight had landed: there was nothing to wait for.</summary>
+    public const string AnsweredByNodeLanded = "landed";
+
     /// <summary>When it was asked, then when it was answered.</summary>
     public required DateTimeOffset At { get; init; }
 }
