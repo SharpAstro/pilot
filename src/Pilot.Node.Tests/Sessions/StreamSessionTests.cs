@@ -150,7 +150,8 @@ public sealed class StreamSessionTests
         var id = args[args.ToList().IndexOf("--session-id") + 1];
         Guid.TryParse(id, out _).ShouldBeTrue();
         fresh.Session.SessionId.ShouldBe(id);
-        args.Skip(9).ShouldBe(ClaudeWorkerLauncher.SessionArguments(Watchtower));
+        // Then the shared options, and last the flag that has every permission prompt and question arrive on stdout.
+        args.Skip(9).ShouldBe([.. ClaudeWorkerLauncher.SessionArguments(Watchtower), "--permission-prompt-tool", "stdio"]);
         fresh.Launcher.Folder.ShouldBe("/repo");
 
         await using var resumed = new Rig("0f0f0f0f-aaaa-bbbb-cccc-111122223333");
@@ -432,6 +433,142 @@ public sealed class StreamSessionTests
         var exit = rig.Changes.Last();
         exit.Kind.ShouldBe(StreamChangeKind.Exited);
         exit.Requested.ShouldBeTrue();
+    }
+
+    private static string CanUseTool(string requestId, string tool, object input) =>
+        JsonSerializer.Serialize(new { type = "control_request", request_id = requestId, request = new { subtype = "can_use_tool", tool_name = tool, input, tool_use_id = "toolu_1" } });
+
+    private static readonly object Question = new
+    {
+        questions = new object[]
+        {
+            new { question = "Which repo?", header = "Repo", multiSelect = false, options = new object[] { new { label = "tianwen", description = "the sky" }, new { label = "pilot", description = "this one" } } },
+        },
+    };
+
+    [Fact]
+    public async Task ABashPromptIsListedPendingAndAnsweredOnceWithTheToolsInputAndADuplicateIsRefused()
+    {
+        await using var rig = new Rig();
+        await rig.Session.SendAsync("push it", TestContext.Current.CancellationToken);
+
+        rig.Process.Emit(CanUseTool("req-1", "Bash", new { command = "git push origin main", description = "push" }));
+
+        await Until(() => rig.Session.Pending.Count == 1, "the prompt to be listed");
+        var ask = rig.Session.Pending.Single();
+        (ask.Id, ask.Tool, ask.Summary, ask.IsQuestion, ask.ToolUseId).ShouldBe(("req-1", "Bash", "git push origin main", false, "toolu_1"));
+        rig.Kinds.ShouldContain(StreamChangeKind.Asked);
+        // Nothing is written for it until somebody answers.
+        rig.Process.Written.Length.ShouldBe(1);
+
+        (await rig.Session.AnswerAsync("req-1", AskAnswer.Allowed, TestContext.Current.CancellationToken)).ShouldBeNull();
+
+        rig.Process.Written.Length.ShouldBe(2);
+        var line = JsonDocument.Parse(rig.Process.Written[1]).RootElement;
+        line.GetProperty("type").GetString().ShouldBe("control_response");
+        var response = line.GetProperty("response");
+        response.GetProperty("subtype").GetString().ShouldBe("success");
+        response.GetProperty("request_id").GetString().ShouldBe("req-1");
+        response.GetProperty("response").GetProperty("behavior").GetString().ShouldBe("allow");
+        response.GetProperty("response").GetProperty("updatedInput").GetProperty("command").GetString().ShouldBe("git push origin main");
+        rig.Session.Pending.ShouldBeEmpty();
+        var answered = rig.Changes.Last(c => c.Kind == StreamChangeKind.Answered);
+        (answered.Ask!.Id, answered.Outcome).ShouldBe(("req-1", "allowed"));
+
+        // A second answer to the same request, whichever it is, is refused and writes nothing.
+        (await rig.Session.AnswerAsync("req-1", AskAnswer.Denied("no"), TestContext.Current.CancellationToken)).ShouldNotBeNull().ShouldContain("not waiting");
+        (await rig.Session.AnswerAsync("req-1", AskAnswer.Allowed, TestContext.Current.CancellationToken)).ShouldNotBeNull();
+        rig.Process.Written.Length.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ADeniedPromptIsWrittenAsADenyWithTheReason()
+    {
+        await using var rig = new Rig();
+        rig.Process.Emit(CanUseTool("req-2", "Edit", new { file_path = "/repo/a.cs" }));
+        await Until(() => rig.Session.Pending.Count == 1, "the prompt");
+
+        (await rig.Session.AnswerAsync("req-2", AskAnswer.Denied("not that file"), TestContext.Current.CancellationToken)).ShouldBeNull();
+
+        var decision = JsonDocument.Parse(rig.Process.Written.Single()).RootElement.GetProperty("response").GetProperty("response");
+        decision.GetProperty("behavior").GetString().ShouldBe("deny");
+        decision.GetProperty("message").GetString().ShouldBe("not that file");
+        rig.Changes.Last(c => c.Kind == StreamChangeKind.Answered).Outcome.ShouldBe("denied: not that file");
+    }
+
+    [Fact]
+    public async Task AnAskUserQuestionIsListedWithItsOptionsAndItsAnswerIsTheInputWithAnswers()
+    {
+        await using var rig = new Rig();
+        rig.Process.Emit(CanUseTool("req-3", "AskUserQuestion", Question));
+        await Until(() => rig.Session.Pending.Count == 1, "the question");
+
+        var ask = rig.Session.Pending.Single();
+        ask.IsQuestion.ShouldBeTrue();
+        var question = ask.Questions.ShouldNotBeNull().ShouldHaveSingleItem();
+        (question.Question, question.Header, question.MultiSelect).ShouldBe(("Which repo?", "Repo", false));
+        question.Options.Select(o => (o.Label, o.Description)).ShouldBe([("tianwen", "the sky"), ("pilot", "this one")]);
+
+        // An answer that leaves its question out is refused and the question stays pending.
+        (await rig.Session.AnswerAsync("req-3", new AskAnswer(true, Answers: new Dictionary<string, string>()), TestContext.Current.CancellationToken)).ShouldNotBeNull().ShouldContain("Which repo?");
+        rig.Session.Pending.Count.ShouldBe(1);
+        rig.Process.Written.ShouldBeEmpty();
+
+        (await rig.Session.AnswerAsync("req-3", new AskAnswer(true, Answers: new Dictionary<string, string> { ["Which repo?"] = "pilot" }), TestContext.Current.CancellationToken)).ShouldBeNull();
+
+        var decision = JsonDocument.Parse(rig.Process.Written.Single()).RootElement.GetProperty("response").GetProperty("response");
+        decision.GetProperty("behavior").GetString().ShouldBe("allow");
+        var input = decision.GetProperty("updatedInput");
+        input.GetProperty("questions").GetArrayLength().ShouldBe(1);
+        input.GetProperty("answers").GetProperty("Which repo?").GetString().ShouldBe("pilot");
+        rig.Session.Pending.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AnAskClaudeCallsOffOrATurnThatEndsLeavesTheListAndAnExitCallsOffWhatIsLeft()
+    {
+        await using var rig = new Rig();
+        await rig.Session.SendAsync("go", TestContext.Current.CancellationToken);
+        rig.Process.Emit(CanUseTool("a", "Bash", new { command = "one" }));
+        rig.Process.Emit(CanUseTool("b", "Bash", new { command = "two" }));
+        rig.Process.Emit(CanUseTool("c", "Bash", new { command = "three" }));
+        await Until(() => rig.Session.Pending.Count == 3, "three asks");
+
+        rig.Process.Emit("""{"type":"control_cancel_request","request_id":"b"}""");
+        await Until(() => rig.Session.Pending.Count == 2, "the called off ask to leave");
+        rig.Session.Pending.Select(p => p.Id).ShouldBe(["a", "c"]);
+
+        rig.Process.Emit(Result(10, isError: true));
+        await Until(() => rig.Session.Pending.Count == 0, "the turn's end to leave none");
+        rig.Changes.Where(c => c.Kind == StreamChangeKind.Answered).Select(c => (c.Ask!.Id, c.Outcome)).ShouldBe([("b", "cancelled"), ("a", "cancelled"), ("c", "cancelled")]);
+        (await rig.Session.AnswerAsync("a", AskAnswer.Allowed, TestContext.Current.CancellationToken)).ShouldNotBeNull();
+
+        rig.Process.Emit(CanUseTool("d", "Bash", new { command = "four" }));
+        await Until(() => rig.Session.Pending.Count == 1, "a fourth ask");
+        rig.Process.Exit(1);
+        await Until(() => rig.Session.ExitCode == 1, "the exit");
+        rig.Session.Pending.ShouldBeEmpty();
+        rig.Changes.Last(c => c.Kind == StreamChangeKind.Answered).Outcome.ShouldBe("cancelled");
+        rig.Process.Written.Length.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AToolTheNodeAllowsItselfIsAnsweredAtOnceAndNeverListedAndAQuestionIsNeverAllowedByIt()
+    {
+        await using var rig = new Rig();
+        rig.Session.AutoAnswer = ask => ask.Tool == "Read" || ask.IsQuestion ? AskAnswer.Allowed : null;
+
+        rig.Process.Emit(CanUseTool("safe", "Read", new { file_path = "/repo/a.cs" }));
+        await Until(() => rig.Process.Written.Length == 1, "the node's own answer");
+        JsonDocument.Parse(rig.Process.Written[0]).RootElement.GetProperty("response").GetProperty("request_id").GetString().ShouldBe("safe");
+        rig.Session.Pending.ShouldBeEmpty();
+        rig.Kinds.ShouldNotContain(StreamChangeKind.Asked);
+
+        rig.Process.Emit(CanUseTool("q", "AskUserQuestion", Question));
+        rig.Process.Emit(CanUseTool("risky", "Bash", new { command = "rm -rf x" }));
+        await Until(() => rig.Session.Pending.Count == 2, "a question and a risky call to wait");
+        rig.Session.Pending.Select(p => p.Id).ShouldBe(["q", "risky"]);
+        rig.Process.Written.Length.ShouldBe(1);
     }
 
     [Fact]

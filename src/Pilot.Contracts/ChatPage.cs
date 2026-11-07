@@ -64,6 +64,58 @@ public sealed record ChatPage
     /// whole turn. Null before any, and from an older node.
     /// </summary>
     public ChatTiming[]? Timings { get; init; }
+
+    /// <summary>
+    /// What the watchtower waits on the person for (PIL855), oldest first: each permission prompt (a tool and its input) and each
+    /// <c>AskUserQuestion</c> arrives from its process as a request the person answers with <see cref="Verbs.AnswerAsk"/>. Null with none,
+    /// and from an older node.
+    /// </summary>
+    public ChatAsk[]? Asks { get; init; }
+}
+
+/// <summary>A permission prompt or a question the watchtower waits on the person for.</summary>
+public sealed record ChatAsk
+{
+    /// <summary>The request's id: what <see cref="Verbs.AnswerAsk"/> names.</summary>
+    public required string Id { get; init; }
+
+    /// <summary>The tool's name (<c>Bash</c>, <c>Edit</c>, <c>AskUserQuestion</c>).</summary>
+    public required string Tool { get; init; }
+
+    /// <summary>What it would do in plain words ("run: git push origin main (Bash)"), or, for a question, the first question's words.</summary>
+    public required string Summary { get; init; }
+
+    /// <summary>The tool's input as JSON, shown for a prompt so the person sees exactly what they allow; null for a question.</summary>
+    public string? Input { get; init; }
+
+    /// <summary>The questions of an <c>AskUserQuestion</c>, in the order it put them; null for a permission prompt.</summary>
+    public ChatAskQuestion[]? Questions { get; init; }
+
+    /// <summary>When the request arrived.</summary>
+    public DateTimeOffset At { get; init; }
+}
+
+/// <summary>One question of a <see cref="ChatAsk"/>.</summary>
+public sealed record ChatAskQuestion
+{
+    public required string Question { get; init; }
+
+    /// <summary>A short header the asker gave the question; null with none.</summary>
+    public string? Header { get; init; }
+
+    /// <summary>Whether several options may be chosen (the person ticks boxes) rather than one.</summary>
+    public bool MultiSelect { get; init; }
+
+    /// <summary>The options in the order they were given; the person may always give their own words instead (Other).</summary>
+    public required ChatAskOption[] Options { get; init; }
+}
+
+/// <summary>One option of a <see cref="ChatAskQuestion"/>.</summary>
+public sealed record ChatAskOption
+{
+    public required string Label { get; init; }
+
+    public string? Description { get; init; }
 }
 
 /// <summary>How many chat timings a <see cref="ChatPage"/> carries.</summary>

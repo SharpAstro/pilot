@@ -52,6 +52,16 @@ public enum StreamChangeKind
     TurnEnded,
     /// <summary>The process has ended; <see cref="StreamSessionChange.ExitCode"/> says how.</summary>
     Exited,
+    /// <summary>
+    /// claude asks leave for a tool or puts a question to the person (a <c>can_use_tool</c> control request): <see cref="StreamSessionChange.Ask"/>
+    /// is now in <see cref="StreamSession.Pending"/>, unless the session's <see cref="StreamSession.AutoAnswer"/> answered it at once.
+    /// </summary>
+    Asked,
+    /// <summary>
+    /// An ask left <see cref="StreamSession.Pending"/>: answered (by <see cref="StreamSession.AnswerAsync"/> or by <see cref="StreamSession.AutoAnswer"/>),
+    /// or called off by claude (its turn ended or was interrupted, or the process ended). <see cref="StreamSessionChange.Outcome"/> says which.
+    /// </summary>
+    Answered,
 }
 
 /// <param name="Kind">What changed.</param>
@@ -59,7 +69,68 @@ public enum StreamChangeKind
 /// <param name="ExitCode">The exit code (<see cref="StreamChangeKind.Exited"/> only).</param>
 /// <param name="Requested">True when the node ended it (<see cref="StreamSession.DisposeAsync"/>), false for an unexpected exit.</param>
 /// <param name="Error">The last of its standard error on an exit.</param>
-public sealed record StreamSessionChange(StreamChangeKind Kind, TurnTiming? Turn = null, int? ExitCode = null, bool Requested = false, string? Error = null);
+/// <param name="Ask">The ask that arrived or left (<see cref="StreamChangeKind.Asked"/> and <see cref="StreamChangeKind.Answered"/>).</param>
+/// <param name="Outcome">How an ask left (<see cref="StreamChangeKind.Answered"/>): <c>allowed</c>, <c>denied</c>, <c>answered</c> or <c>cancelled</c>, with the person's words where there are any.</param>
+public sealed record StreamSessionChange(StreamChangeKind Kind, TurnTiming? Turn = null, int? ExitCode = null, bool Requested = false, string? Error = null, PendingAsk? Ask = null, string? Outcome = null);
+
+/// <summary>One option of a question claude asks (<c>AskUserQuestion</c>).</summary>
+public sealed record AskOption(string Label, string? Description);
+
+/// <summary>One question of an <c>AskUserQuestion</c> call: its words, a short header, whether several options may be chosen, and the options.</summary>
+public sealed record AskQuestion(string Question, string? Header, bool MultiSelect, IReadOnlyList<AskOption> Options);
+
+/// <summary>
+/// A <c>can_use_tool</c> control request claude is waiting on: it stops at the tool until the control response with this
+/// <see cref="Id"/> arrives. <see cref="Questions"/> is set for <c>AskUserQuestion</c>, whose answer is the person's choice of options.
+/// </summary>
+/// <param name="Id">The control request's <c>request_id</c>: what the answer names.</param>
+/// <param name="Tool">The tool's name (<c>Bash</c>, <c>Edit</c>, <c>AskUserQuestion</c>).</param>
+/// <param name="Input">The tool's input, cloned off the line so it outlives it.</param>
+/// <param name="ToolUseId">The tool call's id, when claude gave one.</param>
+/// <param name="At">When the request arrived.</param>
+/// <param name="Questions">The questions of an <c>AskUserQuestion</c>; null for any other tool.</param>
+public sealed record PendingAsk(string Id, string Tool, JsonElement Input, string? ToolUseId, DateTimeOffset At, IReadOnlyList<AskQuestion>? Questions)
+{
+    /// <summary>The tool every question comes by.</summary>
+    public const string QuestionTool = "AskUserQuestion";
+
+    /// <summary>Whether this is a question to the person rather than leave for a tool.</summary>
+    public bool IsQuestion => Tool == QuestionTool;
+
+    /// <summary>The one line of the input that says what the tool would act on (its command, file, url, query or pattern); null when it has none.</summary>
+    public string? Summary
+    {
+        get
+        {
+            if (Input.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+            foreach (var name in new[] { "command", "file_path", "notebook_path", "path", "url", "query", "pattern" })
+            {
+                if (Input.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } text)
+                {
+                    return text;
+                }
+            }
+            return null;
+        }
+    }
+}
+
+/// <summary>
+/// The answer to a <see cref="PendingAsk"/>: leave given or refused, with the person's reason on a refusal, and for a question the
+/// option each question's answer is (a multi-select question's several options joined by a comma, an Other box's words as they are).
+/// </summary>
+/// <param name="Allow">True to let the tool run (for a question: to take <paramref name="Answers"/>).</param>
+/// <param name="Message">What claude is told on a refusal.</param>
+/// <param name="Answers">A question's text to the answer given for it.</param>
+public sealed record AskAnswer(bool Allow, string? Message = null, IReadOnlyDictionary<string, string>? Answers = null)
+{
+    public static readonly AskAnswer Allowed = new(true);
+
+    public static AskAnswer Denied(string? why = null) => new(false, why);
+}
 
 /// <summary>How long one turn took.</summary>
 /// <param name="StartedAt">When the turn began: the send, or, for a message held behind another turn, the end of that turn.</param>
@@ -94,6 +165,13 @@ public sealed record TurnTiming(DateTimeOffset StartedAt, TimeSpan? FirstWord, T
 /// <para>The queue (<see cref="Queued"/>) is only for a message sent while the process is starting or restarting (<see cref="Start"/>
 /// with <c>starting</c>, until <see cref="ReadyAsync"/>): nothing can be written to it yet, so it is held and written, in order, once
 /// the process is up.</para>
+/// <para>A permission prompt or an <c>AskUserQuestion</c> arrives, with <c>--permission-prompt-tool stdio</c>, on stdout as
+/// <c>{"type":"control_request","request_id":"&lt;id&gt;","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{...},"tool_use_id":"&lt;id&gt;"}}</c>
+/// and claude waits for <c>{"type":"control_response","response":{"subtype":"success","request_id":"&lt;id&gt;","response":{"behavior":"allow","updatedInput":{...}}}}</c>
+/// (or <c>"behavior":"deny","message":"..."</c>). Each is listed in <see cref="Pending"/> until <see cref="AnswerAsync"/> writes its response, once:
+/// a second answer to the same request is refused. A question's answer is the input again with <c>answers</c> (question text to the chosen label) added.
+/// What <see cref="AutoAnswer"/> allows is answered by the session itself and never listed. Claude calls an ask off with
+/// <c>control_cancel_request</c>, and a turn that ends has none left.</para>
 /// <para>Anything else claude prints is ignored, and logged once per kind.</para>
 /// </remarks>
 public sealed class StreamSession : IAsyncDisposable
@@ -114,6 +192,8 @@ public sealed class StreamSession : IAsyncDisposable
     // Written mid-turn, not yet read at a step.
     private readonly List<(string Text, DateTimeOffset At)> _midTurn = [];
     private readonly Queue<TurnTiming> _timings = new();
+    // can_use_tool requests claude waits on, oldest first, until a control response goes out or claude calls them off.
+    private readonly List<PendingAsk> _pending = [];
     private int _requests;
     private bool _stopping;
     private bool _starting;
@@ -147,7 +227,12 @@ public sealed class StreamSession : IAsyncDisposable
         "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
         resume ? "--resume" : "--session-id", sessionId,
         .. ClaudeWorkerLauncher.SessionArguments(start),
+        // Every permission prompt and every question arrives on stdout as a can_use_tool control request, answered by AnswerAsync.
+        "--permission-prompt-tool", PermissionPromptTool,
     ];
+
+    /// <summary>The value of <c>--permission-prompt-tool</c> that has claude ask on the stream itself.</summary>
+    public const string PermissionPromptTool = "stdio";
 
     /// <summary>
     /// Starts the process in the start's repo folder: a fresh session under a new id, or, with <paramref name="resumeId"/>, that session
@@ -188,6 +273,15 @@ public sealed class StreamSession : IAsyncDisposable
 
     /// <summary>The timings of the last <see cref="TimingsKept"/> turns, oldest first.</summary>
     public IReadOnlyList<TurnTiming> Timings => Read(() => (IReadOnlyList<TurnTiming>)[.. _timings]);
+
+    /// <summary>The asks claude waits on (a permission prompt, a question), oldest first; empty when none.</summary>
+    public IReadOnlyList<PendingAsk> Pending => Read(() => (IReadOnlyList<PendingAsk>)[.. _pending]);
+
+    /// <summary>
+    /// Decides a request before it is listed: an answer here is written at once and the ask is never <see cref="Pending"/> (the node answers the
+    /// safe tools itself); null leaves it to the person. Never asked for a question. Set before the first line is read.
+    /// </summary>
+    public Func<PendingAsk, AskAnswer?>? AutoAnswer { get; set; }
 
     /// <summary>The exit code once the process has ended; null while it runs.</summary>
     public int? ExitCode => Read(() => _exitCode);
@@ -324,6 +418,102 @@ public sealed class StreamSession : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Writes the control response to the pending ask <paramref name="requestId"/>, once. Null when it was written; otherwise why it was
+    /// not: the ask is not pending (answered already, called off, or never asked: a second answer is refused, whoever gives it), the
+    /// session has ended, or a question's answer lacks one of its questions.
+    /// </summary>
+    public async Task<string?> AnswerAsync(string requestId, AskAnswer answer, CancellationToken cancellationToken = default)
+    {
+        PendingAsk ask;
+        lock (_lock)
+        {
+            if (_exitCode is not null)
+            {
+                return $"the session has ended (exit {_exitCode})";
+            }
+            var found = _pending.FindIndex(a => a.Id == requestId);
+            if (found < 0)
+            {
+                return $"ask {requestId} is not waiting: it was answered already, or claude called it off";
+            }
+            ask = _pending[found];
+            if (answer.Allow && ask.IsQuestion && ask.Questions is { Count: > 0 } questions
+                && questions.FirstOrDefault(q => answer.Answers is null || !answer.Answers.ContainsKey(q.Question)) is { } missing)
+            {
+                return $"ask {requestId} needs an answer to \"{missing.Question}\"";
+            }
+            // Taken off the list before the write, under the lock: a second answer arriving meanwhile finds nothing to answer.
+            _pending.RemoveAt(found);
+        }
+        try
+        {
+            await _writes.WaitAsync(cancellationToken);
+            try
+            {
+                await _process.WriteLineAsync(ControlResponseLine(ask, answer), cancellationToken);
+            }
+            finally
+            {
+                _writes.Release();
+            }
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException or OperationCanceledException)
+        {
+            lock (_lock)
+            {
+                if (_exitCode is null)
+                {
+                    _pending.Insert(0, ask);
+                }
+            }
+            return $"the answer to {requestId} could not be written: {ex.Message}";
+        }
+        Raise([new StreamSessionChange(StreamChangeKind.Answered, Ask: ask, Outcome: OutcomeOf(ask, answer))]);
+        return null;
+    }
+
+    private static string OutcomeOf(PendingAsk ask, AskAnswer answer) =>
+        !answer.Allow ? answer.Message is { Length: > 0 } why ? $"denied: {why}" : "denied"
+        : ask.IsQuestion ? "answered: " + string.Join("; ", (answer.Answers ?? new Dictionary<string, string>()).Select(a => $"{a.Key} {a.Value}"))
+        : "allowed";
+
+    /// <summary>
+    /// The control response line for <paramref name="ask"/>: <c>allow</c> with the tool's input as it was (a question's gains its
+    /// <c>answers</c>), or <c>deny</c> with a message claude is told.
+    /// </summary>
+    public static string ControlResponseLine(PendingAsk ask, AskAnswer answer)
+    {
+        JsonObject decision;
+        if (answer.Allow)
+        {
+            var input = JsonNode.Parse(ask.Input.ValueKind == JsonValueKind.Undefined ? "{}" : ask.Input.GetRawText()) as JsonObject ?? new JsonObject();
+            if (ask.IsQuestion)
+            {
+                var answers = new JsonObject();
+                foreach (var (question, chosen) in answer.Answers ?? new Dictionary<string, string>())
+                {
+                    answers[question] = chosen;
+                }
+                input["answers"] = answers;
+            }
+            decision = new JsonObject { ["behavior"] = "allow", ["updatedInput"] = input };
+        }
+        else
+        {
+            decision = new JsonObject
+            {
+                ["behavior"] = "deny",
+                ["message"] = answer.Message is { Length: > 0 } message ? message : ask.IsQuestion ? "The person declined to answer." : "The person denied this call.",
+            };
+        }
+        return new JsonObject
+        {
+            ["type"] = "control_response",
+            ["response"] = new JsonObject { ["subtype"] = "success", ["request_id"] = ask.Id, ["response"] = decision },
+        }.ToJsonString();
+    }
+
     /// <summary>The user message line for <paramref name="text"/>.</summary>
     public static string UserLine(string text) =>
         new JsonObject { ["type"] = "user", ["message"] = new JsonObject { ["role"] = "user", ["content"] = text } }.ToJsonString();
@@ -388,6 +578,7 @@ public sealed class StreamSession : IAsyncDisposable
             _queued.Clear();
             _midTurn.Clear();
             _starting = false;
+            CallOffAll(changes);
             changes.Add(new StreamSessionChange(StreamChangeKind.Exited, ExitCode: code, Requested: requested, Error: requested ? null : _process.ErrorTail));
         }
         Raise(changes);
@@ -415,6 +606,17 @@ public sealed class StreamSession : IAsyncDisposable
             var root = doc.RootElement;
             var type = Str(root, "type");
             var changes = new List<StreamSessionChange>();
+            PendingAsk? arrived = null;
+            if (type == "control_request" && AskOf(root, _time.GetUtcNow()) is { } asked)
+            {
+                // Decided outside the lock: the node's own rules (what only acts inside the plane) answer the safe ones at once.
+                if (!asked.IsQuestion && AutoAnswer?.Invoke(asked) is { } auto)
+                {
+                    _ = Task.Run(() => AnswerAutomaticallyAsync(asked, auto));
+                    return;
+                }
+                arrived = asked;
+            }
             lock (_lock)
             {
                 var now = _time.GetUtcNow();
@@ -471,7 +673,20 @@ public sealed class StreamSession : IAsyncDisposable
                         }
                         break;
                     case "result":
+                        // Claude waits on nothing once the turn is over: what was asked and not answered is moot.
+                        CallOffAll(changes);
                         EndTurn(root, now, changes);
+                        break;
+                    case "control_request" when arrived is not null:
+                        _pending.Add(arrived);
+                        changes.Add(new StreamSessionChange(StreamChangeKind.Asked, Ask: arrived));
+                        break;
+                    case "control_cancel_request":
+                        if (Str(root, "request_id") is { } cancelled && _pending.FindIndex(a => a.Id == cancelled) is >= 0 and var at)
+                        {
+                            changes.Add(new StreamSessionChange(StreamChangeKind.Answered, Ask: _pending[at], Outcome: "cancelled"));
+                            _pending.RemoveAt(at);
+                        }
                         break;
                     case "control_response" or "control_request" or "rate_limit_event":
                         break;
@@ -481,6 +696,71 @@ public sealed class StreamSession : IAsyncDisposable
                 }
             }
             Raise(changes);
+        }
+    }
+
+    // With the lock held.
+    private void CallOffAll(List<StreamSessionChange> changes)
+    {
+        foreach (var ask in _pending)
+        {
+            changes.Add(new StreamSessionChange(StreamChangeKind.Answered, Ask: ask, Outcome: "cancelled"));
+        }
+        _pending.Clear();
+    }
+
+    /// <summary>The ask a <c>can_use_tool</c> control request line is; null for any other control request.</summary>
+    private static PendingAsk? AskOf(JsonElement line, DateTimeOffset now)
+    {
+        if (Str(line, "request_id") is not { Length: > 0 } id || !line.TryGetProperty("request", out var request) || Str(request, "subtype") != "can_use_tool"
+            || Str(request, "tool_name") is not { Length: > 0 } tool)
+        {
+            return null;
+        }
+        var input = request.TryGetProperty("input", out var given) && given.ValueKind == JsonValueKind.Object ? given.Clone() : JsonDocument.Parse("{}").RootElement.Clone();
+        return new PendingAsk(id, tool, input, Str(request, "tool_use_id"), now, tool == PendingAsk.QuestionTool ? QuestionsOf(input) : null);
+    }
+
+    private static IReadOnlyList<AskQuestion> QuestionsOf(JsonElement input)
+    {
+        var questions = new List<AskQuestion>();
+        if (input.TryGetProperty("questions", out var list) && list.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in list.EnumerateArray())
+            {
+                if (Str(item, "question") is not { Length: > 0 } text)
+                {
+                    continue;
+                }
+                var options = new List<AskOption>();
+                if (item.TryGetProperty("options", out var offered) && offered.ValueKind == JsonValueKind.Array)
+                {
+                    options.AddRange(offered.EnumerateArray().Where(o => Str(o, "label") is { Length: > 0 }).Select(o => new AskOption(Str(o, "label")!, Str(o, "description"))));
+                }
+                questions.Add(new AskQuestion(text, Str(item, "header"), item.TryGetProperty("multiSelect", out var multi) && multi.ValueKind == JsonValueKind.True, options));
+            }
+        }
+        return questions;
+    }
+
+    // The node's own answer to a safe tool: written without the person, and never listed.
+    private async Task AnswerAutomaticallyAsync(PendingAsk ask, AskAnswer answer)
+    {
+        try
+        {
+            await _writes.WaitAsync(_stop.Token);
+            try
+            {
+                await _process.WriteLineAsync(ControlResponseLine(ask, answer), _stop.Token);
+            }
+            finally
+            {
+                _writes.Release();
+            }
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException or OperationCanceledException)
+        {
+            _log?.Invoke($"stream session: the answer to {ask.Tool} ({ask.Id}) could not be written: {ex.Message}");
         }
     }
 

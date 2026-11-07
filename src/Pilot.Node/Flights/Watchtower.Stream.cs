@@ -112,7 +112,8 @@ public sealed partial class Watchtower : IStreamRoute
 
     private WorkerStart StreamStartOf(string brief, string reason) =>
         new(Name, options.WatchtowerFolder, null, brief, Model: Models.Model(RoleModels.Watchtower), Effort: Models.Effort(RoleModels.Watchtower),
-            RemoteControl: false, DisallowedTools: ["AskUserQuestion"], Reason: reason);
+            // No disallowed tools: with --permission-prompt-tool stdio an AskUserQuestion reaches the chat as a question the person answers.
+            RemoteControl: false, Reason: reason);
 
     /// <summary>
     /// Starts a fresh stream watchtower with <paramref name="start"/>'s brief as its first message; returns its row id (the first eight
@@ -168,6 +169,9 @@ public sealed partial class Watchtower : IStreamRoute
             entry.Compactions = Generations().Count(g => g.IsCompaction && g.Job.StartsWith(entry.RowId + CompactionMark, StringComparison.Ordinal));
             _streams[entry.RowId] = entry;
         }
+        // What only acts inside the watchtower's own folder is allowed here, as PIL843's gate allows a worker's calls inside its plane;
+        // every other prompt and every question waits on the person.
+        session.AutoAnswer = ask => PermissionGate.SafeInPlane(options.WatchtowerFolder, options.WatchtowerFolder, ask.Tool, ask.Input) ? AskAnswer.Allowed : null;
         session.Changed += change => OnChange(entry, change);
         return entry;
     }
@@ -228,6 +232,12 @@ public sealed partial class Watchtower : IStreamRoute
         {
             case StreamChangeKind.Init or StreamChangeKind.TurnStarted:
                 Publish(e);
+                break;
+            case StreamChangeKind.Asked when change.Ask is { } asked:
+                RaiseAskCard(asked);
+                break;
+            case StreamChangeKind.Answered when change.Ask is { } answered:
+                CloseAskCard(answered, change.Outcome ?? "answered");
                 break;
             case StreamChangeKind.TurnEnded:
                 lock (_streamsLock)

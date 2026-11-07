@@ -196,6 +196,14 @@ public static class Verbs
     public const string ChatNow = "chat-now";
 
     /// <summary>
+    /// <c>answer-ask watchtower &lt;request id&gt; allow|deny|answer [words]</c>: answers a permission prompt or a question the watchtower waits on
+    /// (<see cref="ChatPage.Asks"/>, PIL855): <c>allow</c> lets the tool run, <c>deny</c> refuses it with the words as the reason, and
+    /// <c>answer</c> takes the JSON object of a question's answers (question text to the chosen label; several labels of a multi-select
+    /// question joined by a comma). Answered once: a second answer to the same request is refused. The person's alone, from the chat's panel or the ask's card.
+    /// </summary>
+    public const string AnswerAsk = "answer-ask";
+
+    /// <summary>
     /// <c>compact session/&lt;id&gt; [focus…]</c>: compacts an idle background session's conversation (Claude Code's
     /// <c>/compact</c>, the focus what its summary keeps), resuming it with that as its next turn. A session mid-turn or
     /// interactive is refused.

@@ -77,16 +77,30 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
             Entries = [.. entries],
             Total = total,
             Working = tower.Current() is { State: SessionState.Working },
-            PendingQuestion = latest?.Pending?.Question,
-            Choices = latest?.Pending is { Choices.Length: > 0 } pending ? pending.Choices : null,
+            // A question the stream waits on is shown by Asks, with its own answers; the transcript's reading of the same call is left out.
+            PendingQuestion = stream is { Pending.Count: > 0 } ? null : latest?.Pending?.Question,
+            Choices = stream is { Pending.Count: > 0 } ? null : latest?.Pending is { Choices.Length: > 0 } pending ? pending.Choices : null,
             Queued = queuedLines.Length > 0 ? queuedLines : null,
             QueuedIds = stamps.Queued is { } ids && ids.Any(id => id is not null) ? ids : null,
             Partial = stream is { Working: true } && stream.PartialText is { Length: > 0 } words ? words : null,
             Doing = stream is { Working: true } ? stream.Doing : null,
             QueuedBehind = stream is not null && queuedLines.Length > 0 ? BehindOf(midTurn, queuedLines.Length) : null,
             Timings = stream is { Timings.Count: > 0 } ? [.. stream.Timings.TakeLast(ChatTimings.Kept).Select(TimingOf)] : null,
+            Asks = stream is { Pending.Count: > 0 } ? [.. stream.Pending.Select(AskOf)] : null,
         };
     }
+
+    private static ChatAsk AskOf(PendingAsk ask) => new()
+    {
+        Id = ask.Id,
+        Tool = ask.Tool,
+        Summary = ask.IsQuestion ? ask.Questions is { Count: > 0 } questions ? questions[0].Question : "a question" : PermissionAsks.Describe(ask.Tool, ask.Summary),
+        Input = ask.IsQuestion || ask.Input.ValueKind != System.Text.Json.JsonValueKind.Object ? null : ask.Input.GetRawText(),
+        Questions = ask.Questions is { Count: > 0 } all
+            ? [.. all.Select(q => new ChatAskQuestion { Question = q.Question, Header = q.Header, MultiSelect = q.MultiSelect, Options = [.. q.Options.Select(o => new ChatAskOption { Label = o.Label, Description = o.Description })] })]
+            : null,
+        At = ask.At,
+    };
 
     /// <summary>
     /// What each of <paramref name="count"/> unread lines waits for: the first <paramref name="midTurn"/> were written to the watchtower

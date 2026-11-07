@@ -356,6 +356,14 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             }
             return state.Complete(command, await Get<WatchtowerChat>().AnswerNowAsync(sendId, cancellationToken));
         }
+        if (command.Verb == Verbs.AnswerAsk)
+        {
+            if (command.Target != Verbs.WatchtowerTarget)
+            {
+                return state.Complete(command, $"{Verbs.AnswerAsk} takes the watchtower as its target, not {command.Target}");
+            }
+            return state.Complete(command, await Get<Watchtower>().AnswerAskAsync(command.Args ?? [], cancellationToken));
+        }
         if (command.Verb == Verbs.RestartWatchtower)
         {
             var why = string.Join(' ', command.Args ?? []).Trim();
