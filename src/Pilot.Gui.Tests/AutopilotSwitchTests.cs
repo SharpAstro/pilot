@@ -153,6 +153,46 @@ public sealed class AutopilotSwitchTests
             .Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().ShouldNotContain(b => b.Action == AutopilotSwitch.Action);
     }
 
+    /// <summary>
+    /// While the node has the press the switch reads "Setting…" with no hit; once taken it shows the state the node took, lit, and
+    /// never "done" in its place; a refusal is still marked.
+    /// </summary>
+    [Fact]
+    public async Task APressReadsSettingThenTheNewStateNotDone()
+    {
+        using var renderer = new RgbaImageRenderer(1, 1);
+        var chrome = NewChrome(renderer);
+        var reply = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        chrome.Autopilot.OnToggle = _ => reply.Task;
+        chrome.Autopilot.On = false;
+        static IEnumerable<string> Words(ImmutableArray<Layout.ArrangedNode<int>> arranged) =>
+            arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value);
+        Layout.Node Header() => chrome.Fleet.Tree(new FleetScreen([], Live.At));
+
+        var arranged = Arrange(Header());
+        var found = SwitchIn(arranged);
+        CellLayout.HitTest(arranged, found.Bounds.X + 1, found.Bounds.Y);
+        arranged = Arrange(Header());
+        Words(arranged).ShouldContain(AutopilotSwitch.WorkingLabel);
+        arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().ShouldNotContain(b => b.Action == AutopilotSwitch.Action);
+
+        reply.SetResult(null);
+        await WaitFor(() => chrome.Autopilot.Presses.PendingOf(AutopilotSwitch.Action) is null);
+        arranged = Arrange(Header());
+        Words(arranged).ShouldNotContain("done");
+        Words(arranged).ShouldNotContain(AutopilotSwitch.WorkingLabel);
+        SwitchIn(arranged).Node.Background.ShouldBe(AutopilotSwitch.LitBg);
+    }
+
+    private static async Task WaitFor(Func<bool> condition)
+    {
+        for (var i = 0; i < 200 && !condition(); i++)
+        {
+            await Task.Delay(10, Ct);
+        }
+        condition().ShouldBeTrue();
+    }
+
     /// <summary>A node's row says autopilot on or off from its node envelope; a node not reached says nothing it last said.</summary>
     [Fact]
     public void TheFleetRowSaysAutopilotPerNode()

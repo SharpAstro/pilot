@@ -111,7 +111,7 @@ public sealed class SettingsTests : IDisposable
     [InlineData("machine", "DESKTOP", "machine takes two letters and a number, as in DE1")]
     [InlineData("update-channel", "nightly", "update-channel takes stable or beta")]
     [InlineData("max-jobs", "0", "max-jobs takes a number, 1 to 64")]
-    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, job-priority, job-plane-output, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, max-go-arounds, scratch-days, disk-alert-gb, stale-flight-hours, stale-pr-hours, stale-recheck-hours, stale-card-hours, stale-holds, stale-unreachable-hours, watchtower-range, worker-range, planner-range, reviewer-range, worker-ladder")]
+    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, job-priority, job-plane-output, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, user-skills, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, max-go-arounds, scratch-days, disk-alert-gb, stale-flight-hours, stale-pr-hours, stale-recheck-hours, stale-card-hours, stale-holds, stale-unreachable-hours, watchtower-range, worker-range, planner-range, reviewer-range, worker-ladder")]
     // Invariant: the "colour" case spells out every key, so a filtered check that adds a setting runs it too.
     [Trait("Category", InvariantTraitTests.Invariant)]
     public void ASettingRefusesWhatItDoesNotTake(string key, string value, string error)
@@ -264,6 +264,41 @@ public sealed class SettingsTests : IDisposable
         var commands = new NodeSettingsCommands(node.Options, node.State, services.GetRequiredService<NodeRestarter>(), setup, time,
             services.GetRequiredService<Pilot.Node.Flights.JobRunner>(), services.GetRequiredService<RoleModels>());
         return (commands, () => Volatile.Read(ref runs), time);
+    }
+
+    /// <summary>
+    /// user-skills is applied live, so the setup check follows the file, never the node's start-time snapshot (options.Saved):
+    /// the review of #849 found the checklist offering "Install skills" right after set node user-skills off had taken them out.
+    /// </summary>
+    [Fact]
+    public async Task UserSkillsSetLiveIsWhatTheSetupCheckReads()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var skills = Path.Combine(_root, "skills");
+        var setup = new NodeSetup(node.Options, Path.Combine(_root, "pilot-node.exe"), _root)
+        {
+            Run = (_, _, _) => (1, ""),
+            SkillsFolder = skills,
+            CarriedSkills = () => [new UserSkills.Skill("demo", new Dictionary<string, byte[]> { ["SKILL.md"] = "v1"u8.ToArray() })],
+        };
+        var services = node.App.Services;
+        var commands = new NodeSettingsCommands(node.Options, node.State, services.GetRequiredService<NodeRestarter>(), setup, TimeProvider.System,
+            services.GetRequiredService<Pilot.Node.Flights.JobRunner>(), services.GetRequiredService<RoleModels>());
+        SetupCheck Check() => setup.Checks().Single(c => c.Key == NodeSetup.UserSkillsKey);
+        CommandResult Set(string value) => commands.Set(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.UserSkillsKey, value], Who = "tests" });
+
+        Set("on").Error.ShouldBeNull();
+        Directory.Exists(Path.Combine(skills, "demo")).ShouldBeTrue();
+        (Check().Ok, Check().Fix).ShouldBe((true, null));
+
+        Set("off").Error.ShouldBeNull();
+        Directory.Exists(Path.Combine(skills, "demo")).ShouldBeFalse();
+        var off = Check();
+        (off.Ok, off.Optional, off.Fix).ShouldBe((false, true, null));
+        off.Line.ShouldContain("off");
+
+        Set("on").Error.ShouldBeNull();
+        (Check().Ok, Check().Fix).ShouldBe((true, null));
     }
 
     [Fact]

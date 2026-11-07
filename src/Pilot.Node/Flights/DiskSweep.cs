@@ -485,7 +485,7 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
         }
         var top = reclaimable.Where(r => r.Bytes > 0).OrderByDescending(r => r.Bytes).Take(5).ToList();
         var list = top.Count == 0 ? "nothing the node can reclaim by itself" : string.Join("; ", top.Select(r => $"{r.Name} {Size(r.Bytes)}"));
-        state.RaiseCard(CardBin.Ring, DiskLowKind, space.Name,
+        state.RaiseCard(CardBin.ForYou, DiskLowKind, space.Name,
             $"Drive {space.Name} has {Size(space.Free)} free, below the {Size(threshold)} alert",
             $"{space.Name} has {Size(space.Free)} free of {Size(space.Total)}; the alert is {Size(threshold)} (setting disk-alert-gb). Biggest reclaimable items by unique bytes: {list}.");
     }

@@ -63,6 +63,11 @@ public sealed partial class LegCommander
         }
         if (other.State == FlightState.Landed)
         {
+            if (other is { MovedTo: null, FoldedInto: null })
+            {
+                // Answered at once, no row and no card (PIL824): its work is in, so there is nothing to wait for or to ask.
+                return $"{other.Code} has landed{(node is null ? "" : $" on {node}")}: its work is in, so there is nothing to wait for and no card rings; plan {flight.Code} on top of it";
+            }
             throw new FlightException($"{other.Code} has landed: its work is in, so build on it instead of folding into it");
         }
         var named = args.Skip(1).TakeWhile(a => a.StartsWith(OverlapFileArg, StringComparison.Ordinal) || a.StartsWith(Verbs.OverlapPickArg, StringComparison.Ordinal)).ToArray();
@@ -337,9 +342,51 @@ public sealed partial class LegCommander
         var (flight, leg) = LegOf(Verbs.LegTarget(code, legName));
         if (leg.WorkerJob is { } job)
         {
+            DropQueuedJobsOf(job, "its worker was restarted");
             await StopQuietly(job, cancellationToken);
         }
+        // A ticker of the ticking pass (PIL804) must not outlive the worker it was started for: it could tick or finish the new worker's leg.
+        // TickerJob is cleared as it is stopped, so a restart whose start fails does not leave the leg pointing at it.
+        // The watch calls this off the lock, so the clearing of the stored row takes the lock itself.
+        leg = await StopTickerAsync(leg, "its worker was restarted", cancellationToken, locked: false);
         StartWorker(flight, leg, state.Legs(flight.Code));
+    }
+
+    /// <summary>
+    /// Stops the leg's ticker of the ticking pass (PIL804), if it has one, and clears <see cref="LegRow.TickerJob"/> on the stored row
+    /// at once; returns the leg as it is now. Left set, a replacement worker whose start fails would leave the leg looking as if the
+    /// ticker we just stopped still worked, and the watch would ring for it ending. <paramref name="locked"/> says the caller holds
+    /// the commander's lock (a go-around does); one that does not (the watch's restart) has the row written under it here, so a
+    /// finish or a tick meanwhile is not overwritten by a stale copy.
+    /// </summary>
+    private async Task<LegRow> StopTickerAsync(LegRow leg, string why, CancellationToken cancellationToken, bool locked = true)
+    {
+        if (leg.TickerJob is not { } tickerJob)
+        {
+            return leg;
+        }
+        DropQueuedJobsOf(tickerJob, why);
+        await StopQuietly(tickerJob, cancellationToken);
+        if (!locked)
+        {
+            await _one.WaitAsync(cancellationToken);
+        }
+        try
+        {
+            // Read fresh, and only this ticker cleared: a row that moved on while it was stopped keeps what it has.
+            if (state.Legs(leg.Flight).FirstOrDefault(l => l.Name == leg.Name) is { } stored && string.Equals(stored.TickerJob, tickerJob, StringComparison.Ordinal))
+            {
+                state.PutLeg(stored with { TickerJob = null });
+            }
+        }
+        finally
+        {
+            if (!locked)
+            {
+                _one.Release();
+            }
+        }
+        return leg with { TickerJob = null };
     }
 
     /// <summary>Stops a leg's validator that took no first turn and starts a fresh one in its place.</summary>

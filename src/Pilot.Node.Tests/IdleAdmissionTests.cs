@@ -77,7 +77,7 @@ public sealed class IdleAdmissionTests : LegCommanderTestsBase
     }
 
     [Fact]
-    public async Task AnIdleSessionOwningARunningJobHoldsItsSlotAndTheWhyNamesItAsIdle()
+    public async Task AnIdleSessionOwningARunningJobHoldsNoSlotAndIsPublishedAsWaiting()
     {
         Settings(cap: 1);
         Put("du1-idle-aaaaaaa1", SessionState.Idle);
@@ -89,12 +89,30 @@ public sealed class IdleAdmissionTests : LegCommanderTestsBase
 
         await QueueLeg();
 
-        _workers.Started.ShouldBeEmpty();
-        _state.Legs("TIA1").Single().Queued.ShouldNotBeNull().ShouldContain("du1-idle-aaaaaaa1 (idle, job j12 running)");
+        _workers.Started.ShouldHaveSingleItem($"queued: {_state.Legs("TIA1").Single().Queued}").Name.ShouldBe("du1-tia1-one");
+        _legs.Slots.PublishState();
+        _state.Admission().ShouldNotBeNull().WaitingOnPerson.ShouldHaveSingleItem().ShouldBe("du1-idle-aaaaaaa1 (idle, job j12 running)");
     }
 
     [Fact]
-    public async Task AnIdleSessionWithAnOpenCardItAskedHoldsItsSlotAndPublishedCountedSaysIdle()
+    public async Task AnIdleSessionWithAJobResultNotYetToldStillHoldsItsSlot()
+    {
+        Settings(cap: 1);
+        Put("du1-idle-aaaaaaa1", SessionState.Idle);
+        _state.PutJob(new JobRow
+        {
+            Id = "j13", Command = "dotnet test", Cwd = "/elsewhere", Owner = "aaaaaaa1", State = JobState.Succeeded, LogPath = "/tmp/j13.log",
+            Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow, Told = false,
+        });
+
+        await QueueLeg();
+
+        _workers.Started.ShouldBeEmpty();
+        _state.Legs("TIA1").Single().Queued.ShouldNotBeNull().ShouldContain("du1-idle-aaaaaaa1 (idle, job j13 result to tell)");
+    }
+
+    [Fact]
+    public async Task AnIdleSessionWithAnOpenCardItAskedHoldsNoSlotAndIsPublishedAsWaiting()
     {
         Settings(cap: 1);
         Put("du1-idle-aaaaaaa1", SessionState.Idle);
@@ -102,8 +120,107 @@ public sealed class IdleAdmissionTests : LegCommanderTestsBase
 
         await QueueLeg();
 
-        _workers.Started.ShouldBeEmpty();
+        _workers.Started.ShouldHaveSingleItem($"queued: {_state.Legs("TIA1").Single().Queued}").Name.ShouldBe("du1-tia1-one");
         _legs.Slots.PublishState();
-        _state.Admission().ShouldNotBeNull().Counted.ShouldHaveSingleItem().ShouldBe($"du1-idle-aaaaaaa1 (idle, card {card.Id} open)");
+        var admission = _state.Admission().ShouldNotBeNull();
+        admission.WaitingOnPerson.ShouldHaveSingleItem().ShouldBe($"du1-idle-aaaaaaa1 (idle, card {card.Id} open)");
+        admission.Counted.ShouldNotContain(c => c.StartsWith("du1-idle-aaaaaaa1"));
+    }
+
+    [Fact]
+    public async Task AnIdlePlannerWhoseFlightHasItsPlannedCardOpenHoldsNoSlot()
+    {
+        Settings(cap: 1);
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["2", "Other"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        Put("du1-tia2-planner-aaaaaaa1", SessionState.Idle, flight: "TIA2");
+        _state.PutSession(_state.Sessions().Single(s => s.Name == "du1-tia2-planner-aaaaaaa1") with { Role = SessionRole.Planner });
+        _state.RaiseCard(CardBin.ForYou, LegCommander.PlannedKind, Verbs.FlightTarget("TIA2"), "TIA2: 1 leg planned");
+
+        await QueueLeg();
+
+        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-tia1-one");
+        _legs.Slots.PublishState();
+        _state.Admission().ShouldNotBeNull().WaitingOnPerson.ShouldHaveSingleItem().ShouldContain("du1-tia2-planner-aaaaaaa1");
+    }
+
+    private void PutJob(string id, JobState state, bool told = false) =>
+        _state.PutJob(new JobRow
+        {
+            Id = id, Command = "dotnet test", Cwd = "/elsewhere", Owner = "aaaaaaa1", State = state, LogPath = $"/tmp/{id}.log",
+            Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow, Told = told,
+        });
+
+    [Fact]
+    public void ANodeWhoseOnlySessionIsAWaitingOneStillPublishesItsAdmissionSoTheNotCountedLineAppears()
+    {
+        Settings(cap: 1);
+        Put("du1-idle-aaaaaaa1", SessionState.Idle);
+        PutJob("j12", JobState.Running);
+        _state.Admission().ShouldBeNull();
+
+        _legs.Slots.PublishState();
+
+        // Nothing is counted, no flight has priority and no peer was left out: the waiting list is all the row has to say.
+        var admission = _state.Admission().ShouldNotBeNull();
+        admission.OpusCount.ShouldBe(0);
+        admission.Counted.ShouldBeEmpty();
+        admission.WaitingOnPerson.ShouldHaveSingleItem().ShouldBe("du1-idle-aaaaaaa1 (idle, job j12 running)");
+    }
+
+    [Fact]
+    public void ANodeWithNothingCountedAndNobodyWaitingStillPublishesNoAdmission()
+    {
+        Settings(cap: 1);
+        Put("du1-idle-aaaaaaa1", SessionState.Idle);
+
+        _legs.Slots.PublishState();
+
+        _state.Admission().ShouldBeNull();
+    }
+
+    [Fact]
+    public void AChangeInWhoWaitsIsPublishedWhileTheCountStaysPut()
+    {
+        Settings(cap: 3);
+        Put("du1-busy-aaaaaaa3", SessionState.Working);
+        Put("du1-idle-aaaaaaa1", SessionState.Idle);
+        PutJob("j12", JobState.Running);
+        _legs.Slots.PublishState();
+        var first = _state.Admission().ShouldNotBeNull();
+        first.OpusCount.ShouldBe(1);
+        first.WaitingOnPerson.ShouldHaveSingleItem().ShouldBe("du1-idle-aaaaaaa1 (idle, job j12 running)");
+
+        // The job ends and is told, and the session asks a card instead: one still waits, for something else, and the count did not move.
+        PutJob("j12", JobState.Succeeded, told: true);
+        var card = _state.RaiseCard(CardBin.ForYou, CardKinds.AssistantAsk, "flight/OTHER", "asks", askedBy: "du1-idle-aaaaaaa1");
+        _legs.Slots.PublishState();
+        var second = _state.Admission().ShouldNotBeNull();
+        second.OpusCount.ShouldBe(1);
+        second.Counted.ShouldBe(first.Counted);
+        second.WaitingOnPerson.ShouldHaveSingleItem().ShouldBe($"du1-idle-aaaaaaa1 (idle, card {card.Id} open)");
+
+        // The card is answered: nobody waits now, and the line goes with it.
+        _state.CloseCard(card.Id, "answered", "tests").ShouldBeTrue();
+        _legs.Slots.PublishState();
+        var third = _state.Admission().ShouldNotBeNull();
+        third.OpusCount.ShouldBe(1);
+        third.WaitingOnPerson.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AnIdleSonnetSessionWaitingOnACardIsNotListedAsNotCountedSinceItNeverCounted()
+    {
+        Settings(cap: 1);
+        Put("du1-idle-aaaaaaa1", SessionState.Idle);
+        _state.PutSession(_state.Sessions().Single(s => s.Name == "du1-idle-aaaaaaa1") with { Model = "claude-sonnet-5-5" });
+        Put("du1-idle-aaaaaaa2", SessionState.Idle);
+        _state.RaiseCard(CardBin.ForYou, CardKinds.AssistantAsk, "flight/OTHER", "asks", askedBy: "du1-idle-aaaaaaa1");
+        // A card of the same kind about the same subject is the one already open, so the second asks about another subject.
+        var opusCard = _state.RaiseCard(CardBin.ForYou, CardKinds.AssistantAsk, "flight/ELSE", "asks too", askedBy: "du1-idle-aaaaaaa2");
+        opusCard.AskedBy.ShouldBe("du1-idle-aaaaaaa2");
+
+        _legs.Slots.PublishState();
+
+        _state.Admission().ShouldNotBeNull().WaitingOnPerson.ShouldHaveSingleItem().ShouldBe($"du1-idle-aaaaaaa2 (idle, card {opusCard.Id} open)");
     }
 }

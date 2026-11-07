@@ -377,7 +377,7 @@ public sealed class DiskSweepTests : IDisposable
         await sweep.SweepAsync(TestContext.Current.CancellationToken);
 
         var card = _state.Cards().Single(c => c.Kind == DiskSweep.DiskLowKind);
-        card.Bin.ShouldBe(CardBin.Ring);
+        card.Bin.ShouldBe(CardBin.ForYou);
         card.Title.ShouldContain("D:");
         card.Title.ShouldContain("5.0 GB");
         card.Detail!.ShouldContain("job scratch bbbbbbbb");
