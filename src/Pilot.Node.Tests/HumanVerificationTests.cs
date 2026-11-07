@@ -125,6 +125,14 @@ public sealed class HumanVerificationTests : LegCommanderTestsBase
     }
 
     [Fact]
+    public void TheSiblingSourceLabelIsOneTheNodeReadsFromPeopleAndMakesWithADescription()
+    {
+        PilotMarks.SiblingSource.ShouldBe("pilot: sibling source");
+        PilotMarks.ReadFromPeople.ShouldContain(PilotMarks.SiblingSource);
+        PilotMarks.LabelStyle(PilotMarks.SiblingSource).Description.ShouldBe("this flight builds on the sibling clones' source, not the published packages");
+    }
+
+    [Fact]
     public async Task RepoSetupMakesTheLabel()
     {
         var github = new FakeGitHub();

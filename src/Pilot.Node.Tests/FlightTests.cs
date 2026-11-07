@@ -180,7 +180,7 @@ public sealed class FlightCommanderTests : IDisposable
 
         // The fake's org gets the Priority field at setup, so only the recheck and human-verification labels are made; 'pilot: priority' is made only without the field.
         github.FieldsCreated.ShouldBe(1);
-        github.LabelsEnsured.Select(e => e.Label).ShouldBe([PilotMarks.Recheck, PilotMarks.HumanVerification]);
+        github.LabelsEnsured.Select(e => e.Label).ShouldBe([PilotMarks.Recheck, PilotMarks.HumanVerification, PilotMarks.SiblingSource]);
         github.LabelsEnsured.Select(e => e.Repo).Distinct().Count().ShouldBe(1);
         PilotMarks.LabelStyle(PilotMarks.Priority).Description.ShouldContain("Opus cap");
         PilotMarks.LabelStyle(PilotMarks.Priority).Color.ShouldNotBe(PilotMarks.LabelStyle("pilot: other").Color);

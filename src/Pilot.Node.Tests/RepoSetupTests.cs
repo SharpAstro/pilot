@@ -28,7 +28,7 @@ public sealed class RepoSetupTests
         await Setup();
 
         _github.FieldsCreated.ShouldBe(1);
-        _github.LabelsEnsured.Select(e => e.Label).ShouldBe([PilotMarks.Recheck, PilotMarks.HumanVerification]);
+        _github.LabelsEnsured.Select(e => e.Label).ShouldBe([PilotMarks.Recheck, PilotMarks.HumanVerification, PilotMarks.SiblingSource]);
         _github.LabelsEnsured.ShouldNotContain(e => e.Label == PilotMarks.Priority);
         Titles(RepoSetup.ReportKind).Single().ShouldContain("Priority field");
 
@@ -59,7 +59,7 @@ public sealed class RepoSetupTests
         await Setup();
 
         _github.FieldsCreated.ShouldBe(0);
-        _github.LabelsEnsured.Select(e => e.Label).ShouldBe([PilotMarks.Priority, PilotMarks.Recheck, PilotMarks.HumanVerification]);
+        _github.LabelsEnsured.Select(e => e.Label).ShouldBe([PilotMarks.Priority, PilotMarks.Recheck, PilotMarks.HumanVerification, PilotMarks.SiblingSource]);
         var card = _state.Cards(openOnly: false).Single(c => c.Kind == "node-label-refused");
         card.Bin.ShouldBe(CardBin.Handled);
         card.Title.ShouldContain("TIA1");
@@ -144,7 +144,7 @@ public sealed class RepoSetupTests
         await Setup();
 
         _github.FieldsCreated.ShouldBe(0);
-        _github.LabelsEnsured.Select(e => e.Label).ShouldBe([PilotMarks.Recheck, PilotMarks.HumanVerification]);
+        _github.LabelsEnsured.Select(e => e.Label).ShouldBe([PilotMarks.Recheck, PilotMarks.HumanVerification, PilotMarks.SiblingSource]);
     }
 }
 
