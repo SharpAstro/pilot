@@ -206,7 +206,8 @@ public sealed class StreamingChatTests
         chat.Refresh();
         // The read carries the new words; the list, under the pointer, still shows what it showed when the pointer came.
         await Until(() => chat.Partial == partial);
-        Described(chat).ShouldNotContain("good deal more");
+        var held = Described(chat);
+        held.ShouldNotContain("good deal more", $"pointer {chat.Pointer}, list {chat.PageSelectionViewport}, shows: {held[Math.Max(0, held.IndexOf("writing…", StringComparison.Ordinal))..]}");
 
         chat.Pointer = null;
         Described(chat).ShouldContain("good deal more");
