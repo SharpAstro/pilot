@@ -44,6 +44,14 @@ public sealed record JobRow
     /// <summary>Whether a queued job waits on a sibling hold, a running job's build of a clone it shares; null elsewhere and from an older node.</summary>
     public bool? WaitsOnSibling { get; init; }
 
+    /// <summary>
+    /// <c>true</c> when its command runs a whole test suite (a <c>dotnet test</c> with no <c>--filter</c>, or only negated
+    /// <c>Category</c> ones, as <c>CheckScope.WholeSuite</c> reads it), set by the node when the job is made for any kind and any
+    /// owner; null otherwise and on a row from before the node marked it. So a long whole-suite run on a loaded box is seen,
+    /// with its owner named, in <c>pilot jobs</c> (PIL821, pilot #821). Optional, so the wire version stays.
+    /// </summary>
+    public bool? WholeSuite { get; init; }
+
     /// <summary>Why it failed (its exit code, a timeout); null unless it did.</summary>
     public string? Error { get; init; }
 

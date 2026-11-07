@@ -76,6 +76,28 @@ public sealed class JobShellTests : JobTestsBase
     }
 
     [Fact]
+    public void AWholeSuiteJobSaysSoBesideItsOwnerAndTerminalStaysForOneWithNone()
+    {
+        var started = DateTimeOffset.UtcNow.AddMinutes(-83);
+        var row = new JobRow
+        {
+            Id = "j4037", Command = "dotnet test src/TianWen.Lib.Tests", Cwd = "/r", State = JobState.Running, LogPath = "/l.log", Timeout = TimeSpan.FromHours(2),
+            StartedAt = started, Owner = "s1", OwnerName = "de1-tia2035-worker", WholeSuite = true,
+        };
+
+        global::Pilot.Commands.PilotCommand.JobLine(row).ShouldContain("(whole suite, de1-tia2035-worker, 83m)");
+        global::Pilot.Commands.PilotCommand.JobLine(row with { Owner = null, OwnerName = null }).ShouldContain("(whole suite, terminal, 83m)");
+        // Without the mark the line is what it was: the owner first, and no word about a suite.
+        var plain = global::Pilot.Commands.PilotCommand.JobLine(row with { WholeSuite = null });
+        plain.ShouldContain("(de1-tia2035-worker, 83m)");
+        plain.ShouldNotContain("whole suite");
+        global::Pilot.Commands.PilotCommand.JobLine(row with { WholeSuite = null, Owner = null, OwnerName = null }).ShouldContain("(terminal, 83m)");
+        // An ended job whose owner was not told keeps saying so after the mark.
+        global::Pilot.Commands.PilotCommand.JobLine(row with { State = JobState.Failed, EndedAt = started.AddMinutes(83), Told = false })
+            .ShouldContain("(whole suite, de1-tia2035-worker, 83m, owner not told)");
+    }
+
+    [Fact]
     public void TheWorkerReviewerAndPlannerBriefsCarryTheOneLineJobShellRule()
     {
         var flight = new FlightRow

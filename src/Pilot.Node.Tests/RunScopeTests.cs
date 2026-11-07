@@ -257,6 +257,99 @@ public sealed class RunScopeTests : IDisposable
         _state.Jobs().ShouldBeEmpty();
     }
 
+    private JobRow RowOf(CommandResult result) => _state.Jobs().Single(j => j.Id == result.Made.ShouldNotBeNull());
+
+    [Theory]
+    [InlineData(Unfiltered)]
+    [InlineData("dotnet test Pilot.Node.Tests -c Release --filter Category!=Heavy")]
+    [InlineData("cd src && dotnet build Pilot.slnx -c Release && dotnet test Pilot.Node.Tests -c Release --no-build")]
+    public void ARunOfAWholeSuiteCarriesTheMarkWhoeverHandedItOver(string line)
+    {
+        var watchtower = PutSession("wt1", SessionRole.Watchtower, flight: null);
+
+        // The watchtower and a terminal run (no owner) are let through, and the row still says what the command is.
+        var fromWatchtower = RowOf(RunAs(watchtower, line));
+        fromWatchtower.WholeSuite.ShouldBe(true);
+        fromWatchtower.OwnerName.ShouldBe(watchtower.Name);
+        var fromTerminal = RowOf(Run(Verbs.NodeTarget, line));
+        fromTerminal.WholeSuite.ShouldBe(true);
+        fromTerminal.Owner.ShouldBeNull();
+    }
+
+    [Fact]
+    public void AWorkersOwnPlannedWholeSuiteCheckCarriesTheMark()
+    {
+        PutLegCheck($"cd src && {Unfiltered}");
+        var worker = PutSession("w1", SessionRole.Worker);
+
+        var row = RowOf(RunAs(worker, Unfiltered));
+
+        row.WholeSuite.ShouldBe(true);
+        row.OwnerName.ShouldBe(worker.Name);
+    }
+
+    [Fact]
+    public void ARunOfAFilteredTestOrAnyOtherCommandCarriesNoMark()
+    {
+        var worker = PutSession("w1", SessionRole.Worker);
+        var watchtower = PutSession("wt1", SessionRole.Watchtower, flight: null);
+
+        RowOf(RunAs(worker, "dotnet test Pilot.Node.Tests -c Release --filter FullyQualifiedName~FooTests")).WholeSuite.ShouldBeNull();
+        RowOf(RunAs(worker, "dotnet build Pilot.slnx -c Release")).WholeSuite.ShouldBeNull();
+        RowOf(RunAs(watchtower, "dotnet test Pilot.Node.Tests -c Release --filter Category=Invariant")).WholeSuite.ShouldBeNull();
+        RowOf(Run(Verbs.NodeTarget, "echo hello")).WholeSuite.ShouldBeNull();
+    }
+
+    [Fact]
+    public void AnAloneRunOfAWholeSuiteCarriesTheMarkToo()
+    {
+        var result = _jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = Verbs.NodeTarget, Args = [Verbs.AloneArg, Plane, "0", .. Unfiltered.Split(' ')], Who = "tests" });
+
+        var row = RowOf(result);
+        row.Kind.ShouldBe(JobKind.Bench);
+        row.WholeSuite.ShouldBe(true);
+    }
+
+    [Theory]
+    [InlineData(Unfiltered, true)]
+    [InlineData("dotnet test Pilot.Node.Tests -c Release --filter Category!=Slow&Category!=Heavy", true)]
+    [InlineData("dotnet test Pilot.Node.Tests -c Release --filter FullyQualifiedName~FooTests", false)]
+    [InlineData("dotnet build Pilot.slnx -c Release", false)]
+    public void ALegCheckJobCarriesTheMarkOnlyForAWholeSuite(string check, bool whole)
+    {
+        using var caller = new CancellationTokenSource();
+
+        // The runner is never started: the check job is handed over and stays queued. Its row is put before the wait begins.
+        var waiting = _jobs.RunCheckAsync("TIA1", "parser", check, Plane, TimeSpan.FromMinutes(30), caller.Token);
+
+        var row = _state.Jobs().Single();
+        row.Kind.ShouldBe(JobKind.Check);
+        row.WholeSuite.ShouldBe(whole ? true : null);
+        // A check has no owner, and the mark does not need one.
+        row.Owner.ShouldBeNull();
+        caller.Cancel();
+        _ = waiting.ContinueWith(static t => _ = t.Exception, TaskScheduler.Default);
+    }
+
+    [Fact]
+    public void TheMarkIsOptionalOnTheWireAndReadsBackWhenSet()
+    {
+        var row = RowOf(Run(Verbs.NodeTarget, Unfiltered));
+        var plain = RowOf(Run(Verbs.NodeTarget, "echo hello"));
+
+        var marked = System.Text.Json.JsonSerializer.Serialize(row, PilotJsonContext.Default.JobRow);
+        var unmarked = System.Text.Json.JsonSerializer.Serialize(plain, PilotJsonContext.Default.JobRow);
+
+        marked.ShouldContain("\"wholeSuite\":true");
+        unmarked.ShouldNotContain("\"wholeSuite\":true");
+        System.Text.Json.JsonSerializer.Deserialize(marked, PilotJsonContext.Default.JobRow)!.WholeSuite.ShouldBe(true);
+        System.Text.Json.JsonSerializer.Deserialize(unmarked, PilotJsonContext.Default.JobRow)!.WholeSuite.ShouldBeNull();
+        // A row written before the field existed has no such key at all: it reads with no mark, and the wire version stays (the field is optional).
+        var before = System.Text.Json.JsonSerializer.Serialize(plain, PilotJsonContext.Default.JobRow).Replace(",\"wholeSuite\":null", "").Replace("\"wholeSuite\":null,", "");
+        before.ShouldNotContain("wholeSuite");
+        System.Text.Json.JsonSerializer.Deserialize(before, PilotJsonContext.Default.JobRow)!.WholeSuite.ShouldBeNull();
+    }
+
     private void Write(string relative, string text)
     {
         var path = Path.Combine(Plane, relative);

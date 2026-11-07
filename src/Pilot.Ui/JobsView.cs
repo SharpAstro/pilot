@@ -44,6 +44,9 @@ internal sealed record JobLine
     /// <summary>The failures the node read in a still running job's output (<c>1 failed so far (X)</c>); null when it has none or ended.</summary>
     public string? Failing => Row.State == JobState.Running ? Row.FailuresSoFar() : null;
 
+    /// <summary>Whether its command runs a whole test suite, as the node marked the row when it made the job (PIL821).</summary>
+    public bool WholeSuite => Row.WholeSuite == true;
+
     /// <summary>Whether it may still be cancelled: running or queued.</summary>
     public bool Live => Row.State is JobState.Running or JobState.Queued;
 
@@ -55,7 +58,7 @@ internal sealed record JobLine
         {
             shown = $"{shown} ({detail})";
         }
-        return (Node is { } node ? $"{node.Name} | " : "") + string.Join(" | ", Id, Command, For, shown, Started, Took.Length == 0 ? "-" : Took) + (Untold ? " | owner not told" : "");
+        return (Node is { } node ? $"{node.Name} | " : "") + string.Join(" | ", Id, Command, For, shown, Started, Took.Length == 0 ? "-" : Took) + (WholeSuite ? " | whole suite" : "") + (Untold ? " | owner not told" : "");
     }
 
     /// <summary>The jobs in drawing order: running, then queued in the order they wait, then the ended, last ended first.</summary>
@@ -704,6 +707,11 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             Fact("log", job.LogPath, Dim),
             Fact("timeout", JobLine.Duration(job.Timeout), Dim),
         };
+        // A whole test suite is CI's to run on the PR: a job that runs one says so in the detail, so a long run on a loaded box is seen.
+        if (line.WholeSuite)
+        {
+            facts.Insert(2, Fact("scope", "a whole test suite (no --filter)", Queued));
+        }
         // Which shell ran it (a bash line on Windows is Git Bash, not WSL): the node says so on the row, and the log opens with the same line.
         if (job.Shell is { Length: > 0 } shell)
         {

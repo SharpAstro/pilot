@@ -565,6 +565,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         return CheckScope.RunRefusal(whole, flight is null ? null : SuggestedFilter(flight));
     }
 
+    /// <summary>
+    /// The mark a job row carries when its command runs a whole test suite (<see cref="CheckScope.WholeSuite"/>), whatever its kind and
+    /// owner: <c>true</c>, else null so a row of any other command stays as it was (PIL821, pilot #821: a long whole-suite run on a
+    /// loaded box is seen in <c>pilot jobs</c> with its owner named).
+    /// </summary>
+    internal static bool? WholeSuiteMark(string command) => CheckScope.WholeSuite(command) is null ? null : true;
+
     /// <summary>Whether a run is the leg's check, or one command of it (a check is often <c>cd src &amp;&amp; …</c>, and a run takes its folder separately).</summary>
     private static bool IsPartOf(string line, string check) =>
         line.Trim() == check.Trim() || CheckPaths.Segments(check).Any(s => s.Trim() == line.Trim());
@@ -708,6 +715,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             Timeout = timeout,
             StartedAt = time.GetUtcNow(),
             MemoryKey = JobKey.Of(line, cwd).ToString(),
+            WholeSuite = WholeSuiteMark(line),
             FailFast = failFast || IsLegCheckOfReviewerOrFixer(owner, line),
         };
         job = job with { QueuedAt = job.StartedAt };
@@ -811,6 +819,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             StartedAt = now,
             QueuedAt = now,
             MemoryKey = JobKey.Of(command, cwd).ToString(),
+            WholeSuite = WholeSuiteMark(command),
         };
         _checkWaiters[jobId] = done;
         _mine[jobId] = 0;
@@ -907,6 +916,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             StartedAt = now,
             QueuedAt = now,
             MemoryKey = JobKey.Of(command, cwd).ToString(),
+            WholeSuite = WholeSuiteMark(command),
         };
         var done = new TaskCompletionSource<JobRow>(TaskCreationOptions.RunContinuationsAsynchronously);
         _benchWaiters[jobId] = done;

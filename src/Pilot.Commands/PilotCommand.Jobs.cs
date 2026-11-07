@@ -7,7 +7,11 @@ namespace Pilot.Commands;
 
 public static partial class PilotCommand
 {
-    /// <summary>A job in a line: <c>j3  running  dotnet test  (se1-tia1-parser, 4m)  [pwsh]</c>, the shell that ran it, then its step or how it ended.</summary>
+    /// <summary>
+    /// A job in a line: <c>j3  running  dotnet test  (se1-tia1-parser, 4m)  [pwsh]</c>, the shell that ran it, then its step or how it ended.
+    /// A job whose command runs a whole test suite says so before its owner (<c>(whole suite, se1-tia1-parser, 83m)</c>, <c>(whole suite, terminal, 4m)</c>),
+    /// so a long one on a loaded box is seen and whose it is.
+    /// </summary>
     internal static string JobLine(JobRow job)
     {
         var state = job.State.ToString().ToLowerInvariant();
@@ -22,7 +26,8 @@ public static partial class PilotCommand
         var end = job.Error is { } error ? $": {error}" : job.State == JobState.Running && job.FailuresSoFar() is { } failing ? $" · {failing}" : "";
         var took = (job.EndedAt ?? DateTimeOffset.UtcNow) - job.StartedAt;
         var told = job.EndedAt is not null && job.Owner is not null && !job.Told ? ", owner not told" : "";
-        return $"{job.Id}  {state}{end}  {job.Command}  ({job.OwnerName ?? "terminal"}, {(int)took.TotalMinutes}m{told}){(job.Shell is { Length: > 0 } shell ? $"  [{shell}]" : "")}{(job.Step is { } step ? $"  · {step}" : "")}";
+        var whole = job.WholeSuite == true ? "whole suite, " : "";
+        return $"{job.Id}  {state}{end}  {job.Command}  ({whole}{job.OwnerName ?? "terminal"}, {(int)took.TotalMinutes}m{told}){(job.Shell is { Length: > 0 } shell ? $"  [{shell}]" : "")}{(job.Step is { } step ? $"  · {step}" : "")}";
     }
 
     /// <summary>A merge queue entry in a line: <c>TIA61  #63  tianwen  1  abc1234  checks  · merging when checks pass</c>: flight, PR, repo, place, head, state, then why.</summary>

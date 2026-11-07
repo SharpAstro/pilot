@@ -124,6 +124,33 @@ public sealed class JobsTests
     }
 
     [Fact]
+    public void AWholeSuiteJobSaysSoInItsDumpLineAndItsDetailAndNothingOverlaps()
+    {
+        var whole = Job("j14", JobState.Running, Live.At.AddMinutes(-83), step: "Passed Parser.NestedGroups") with { WholeSuite = true };
+        var line = JobLine.From(whole, Live.At);
+
+        line.WholeSuite.ShouldBeTrue();
+        line.ToDumpLine().ShouldBe("j14 | dotnet test j14 | ORB204/parser | running (Passed Parser.NestedGroups) | 1h ago | 1h 23m | whole suite");
+        // Without the mark the line is as it was, and the detail has no scope.
+        JobLine.From(whole with { WholeSuite = null }, Live.At).WholeSuite.ShouldBeFalse();
+        JobLine.From(whole with { WholeSuite = null }, Live.At).ToDumpLine().ShouldNotContain("whole suite");
+
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var (_, plain) = Chrome(vessel);
+        Cells(plain, new JobsScreen(JobLine.Build([whole with { WholeSuite = null }], Live.At), "live", Live.At)).ShouldNotContain("whole test suite");
+        Cells(plain, new JobsScreen(JobLine.Build([whole], Live.At), "live", Live.At)).ShouldContain("a whole test suite (no --filter)");
+
+        foreach (var width in new[] { 1280u, 700u })
+        {
+            using var renderer = new RgbaImageRenderer(width, 800);
+            var (_, jobs) = Chrome(renderer);
+            var arranged = Layout.Engine.Arrange(jobs.Tree(new JobsScreen([line], "live", Live.At)), new Rect<float>(0, 0, width, 800), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+            arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().ShouldContain(t => t.Value == "a whole test suite (no --filter)");
+            TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
+        }
+    }
+
+    [Fact]
     public void ALegsCheckReadsAsTheLegsCheckAndWakesNobody()
     {
         var check = Job("j20", JobState.Running, Live.At.AddMinutes(-2), owner: null) with { Kind = JobKind.Check, Flight = "ORB204", Leg = "parser" };
