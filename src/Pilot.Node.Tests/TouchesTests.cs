@@ -8,8 +8,8 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// The planner's overlap check across nodes (#375): <c>touches</c> compares the files a flight's legs will change with every other
-/// flight not landed on this node and on each reachable peer (by its pushed branch) and with every open PR, and says fold, connect or parallel
-/// for each, or unknown where it cannot tell.
+/// flight not landed on this node (read from its plane) and on each reachable peer (asked with flight-changes, so a branch not pushed is seen;
+/// an older peer is read by its pushed branch) and with every open PR, and says fold, connect or parallel for each, or unknown where it cannot tell.
 /// </summary>
 public sealed class TouchesTests : IDisposable
 {
@@ -95,10 +95,20 @@ public sealed class TouchesTests : IDisposable
         Base = "origin/main", State = state, CreatedAt = DateTimeOffset.UtcNow,
     };
 
+    // A peer holding the repo and flying these flights; by default it knows no flight-changes (an older node), so its flights are read by their pushed branch.
     private static FakePeer Peer(string name, params FlightRow[] flights) => new(name)
     {
         Flights = flights,
         Repos = [new RepoInfo { Name = "tianwen", Path = "D:/src/tianwen", GitHub = GitHub }],
+        RefusesVerb = true,
+    };
+
+    // A peer that answers flight-changes from `changes`: the lines (added plus removed, a tab, the path) it says for each flight code.
+    private static FakePeer AnsweringPeer(string name, Dictionary<string, string> changes, params FlightRow[] flights) => new(name)
+    {
+        Flights = flights,
+        Repos = [new RepoInfo { Name = "tianwen", Path = "D:/src/tianwen", GitHub = GitHub }],
+        Changes = changes,
     };
 
     private static PullRequestStatus Pr(int number, string title, string head) => new() { Number = number, Title = title, Head = head };
@@ -178,6 +188,117 @@ public sealed class TouchesTests : IDisposable
         var lines = result.Made.ShouldNotBeNull().Split('\n');
         lines.ShouldContain("de1.local:47731: unknown, this node did not answer (connection refused), so its flights are not known");
         lines.ShouldContain("de2.local:47731: unknown, no grant is held for this node, so its flights are not known");
+    }
+
+    [Fact]
+    public async Task AFlightOfAPeerWhoseBranchIsNotPushedIsSeenThroughThePeersAnswerAndNotUnknown()
+    {
+        // The branch was never pushed: only the peer's plane holds what the flight changes.
+        var peer = AnsweringPeer("DE1", new() { ["PIL301"] = "12\tsrc/Parser.cs\n3\tsrc/Other.cs" }, Row("PIL301", 301, "flight/pil301", "D:/src/tianwen"));
+        _fleet.Peers.Add(peer);
+
+        var result = await Touches(Mine);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        var line = result.Made.ShouldNotBeNull();
+        line.ShouldStartWith("PIL301 (DE1): connect, both change src/Parser.cs;");
+        line.ShouldNotContain("unknown");
+        peer.Asked.ShouldBe([Verbs.FlightTarget("PIL301")]);
+    }
+
+    [Fact]
+    public async Task AFlightOfAPeerThatSharesNoFileWithItsPlaneUnpushedIsParallelNotUnknown()
+    {
+        _fleet.Peers.Add(AnsweringPeer("DE1", new() { ["PIL301"] = "4\tdocs/notes.md" }, Row("PIL301", 301, "flight/pil301", "D:/src/tianwen")));
+
+        var result = await Touches(Mine);
+
+        result.Made.ShouldBe("PIL301 (DE1): parallel, no file in common");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task APeerThatDoesNotAnswerTheQuestionStaysUnknownWithWhyEvenWhenItsBranchIsPushed()
+    {
+        // The branch is pushed, but a peer that cannot be asked is not guessed at by it: unknown, and why.
+        Branch("flight/pil301", push: true, "src/Parser.cs");
+        _fleet.Peers.Add(new FakePeer("DE1")
+        {
+            Flights = [Row("PIL301", 301, "flight/pil301", "D:/src/tianwen")],
+            Repos = [new RepoInfo { Name = "tianwen", Path = "D:/src/tianwen", GitHub = GitHub }],
+            FailsToAnswer = true,
+        });
+
+        var result = await Touches(Mine);
+
+        result.Made.ShouldBe("PIL301 (DE1): unknown, DE1 did not answer (connection reset), so what it changes is not known");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task APeerThatRefusesTheVerbIsReadByItsPushedBranchAsBefore()
+    {
+        Branch("flight/pil300", push: true, "src/Parser.cs");
+        var peer = Peer("DE1", Row("PIL300", 300, "flight/pil300", "D:/src/tianwen"), Row("PIL301", 301, "flight/pil301", "D:/src/tianwen"));
+        _fleet.Peers.Add(peer);
+
+        var result = await Touches(Mine);
+
+        var lines = result.Made.ShouldNotBeNull().Split('\n');
+        lines.ShouldContain(l => l.StartsWith("PIL300 (DE1): connect, both change src/Parser.cs;", StringComparison.Ordinal));
+        // A refused verb and a branch not pushed: nothing to read, and the line says so.
+        lines.ShouldContain("PIL301 (DE1): unknown, its branch flight/pil301 is not pushed, so what it changes is not known");
+        peer.Asked.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ThisNodeAnswersTheVerbForItsOwnFlightFromThePlanesCommittedUncommittedAndUntrackedFiles()
+    {
+        var plane = Path.Combine(Repo, ".claude", "worktrees", "pil380");
+        Git(Repo, "worktree", "add", "-q", "-b", "flight/pil380", plane, "origin/main");
+        _state.PutFlight(Row("PIL380", 380, "flight/pil380", Repo));
+        // One committed (2 lines), one uncommitted (1 line added to a tracked file) and one untracked (3 lines); nothing is pushed.
+        File.WriteAllText(Path.Combine(plane, "Done.cs"), "a\nb\n");
+        Git(plane, "add", "Done.cs");
+        Git(plane, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "done");
+        File.WriteAllText(Path.Combine(plane, "README.md"), "hello\nmore\n");
+        Directory.CreateDirectory(Path.Combine(plane, "src"));
+        File.WriteAllText(Path.Combine(plane, "src", "Parser.cs"), "x\ny\nz\n");
+
+        var result = await _legs.RunAsync(new CommandRequest { Verb = Verbs.FlightChanges, Target = Verbs.FlightTarget("PIL380"), Who = "DE1" }, Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        result.Made.ShouldBe("2\tDone.cs\n1\tREADME.md\n3\tsrc/Parser.cs");
+
+        // The planner of PIL375 sees it by touches too, though the branch is not pushed anywhere.
+        var touches = await Touches(Mine);
+        touches.Made.ShouldNotBeNull().ShouldStartWith("PIL380 (SE1): connect, both change src/Parser.cs;");
+    }
+
+    [Fact]
+    public async Task AFlightThatLandedOrWhosePlaneIsGoneAnswersTheVerbWithWhy()
+    {
+        _state.PutFlight(Row("PIL381", 381, "flight/pil381", Repo, FlightState.Landed));
+        _state.PutFlight(Row("PIL382", 382, "flight/pil382", Repo));
+
+        var landed = await _legs.RunAsync(new CommandRequest { Verb = Verbs.FlightChanges, Target = Verbs.FlightTarget("PIL381"), Who = "DE1" }, Ct);
+        var gone = await _legs.RunAsync(new CommandRequest { Verb = Verbs.FlightChanges, Target = Verbs.FlightTarget("PIL382"), Who = "DE1" }, Ct);
+
+        landed.Ok.ShouldBeFalse();
+        landed.Error.ShouldBe("PIL381 has landed; it changes nothing now");
+        gone.Ok.ShouldBeFalse();
+        gone.Error.ShouldNotBeNull().ShouldStartWith("the plane of PIL382 is gone");
+    }
+
+    [Fact]
+    public void AGrantMayAskAFlightsChangesBecauseItOnlyReads()
+    {
+        var command = new CommandRequest { Verb = Verbs.FlightChanges, Target = Verbs.FlightTarget("PIL380"), Who = "DE1", Grant = "DE1" };
+
+        Standing.Of(command, _state, "se1-watchtower").Kind.ShouldBe(StandingKind.Grant);
+        new Standing(StandingKind.Grant).Refusal(command, _state).ShouldBeNull();
+        Standing.YourOnly(command, _state).ShouldBeFalse();
     }
 
     [Fact]
@@ -297,7 +418,34 @@ public sealed class TouchesTests : IDisposable
             return Task.FromResult(new FleetLoad(null, Flights));
         }
 
-        public Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("a peer is only read here, never sent to");
+        /// <summary>What it answers <see cref="Verbs.FlightChanges"/> for each flight code: the file lines, as a node says them.</summary>
+        public Dictionary<string, string> Changes { get; init; } = [];
+
+        /// <summary>It does not know the verb, as an older node does not: a refused result, not an error.</summary>
+        public bool RefusesVerb { get; init; }
+
+        /// <summary>It is reached for its flights but drops the question itself.</summary>
+        public bool FailsToAnswer { get; init; }
+
+        public List<string> Asked { get; } = [];
+
+        public Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken)
+        {
+            command.Verb.ShouldBe(Verbs.FlightChanges, "a peer is only read here, never sent anything else");
+            Asked.Add(command.Target);
+            if (FailsToAnswer)
+            {
+                throw new HttpRequestException("connection reset");
+            }
+            var code = command.Target[(command.Target.LastIndexOf('/') + 1)..];
+            var result = new CommandResult { Verb = command.Verb, Target = command.Target, Who = command.Who, Seq = 0, Ok = true };
+            if (RefusesVerb)
+            {
+                return Task.FromResult(result with { Ok = false, Error = $"The node knows no verb {command.Verb}" });
+            }
+            return Task.FromResult(Changes.TryGetValue(code, out var made)
+                ? result with { Made = made }
+                : result with { Ok = false, Error = $"the plane of {code} is gone" });
+        }
     }
 }

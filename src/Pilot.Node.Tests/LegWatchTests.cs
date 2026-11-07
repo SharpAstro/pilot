@@ -46,6 +46,21 @@ public sealed class LegWatchTests
         return Task.FromResult(_state.Complete(command, _refuse));
     }
 
+    [Fact]
+    public async Task AWaitingWorkerWhosePendingCallIsKnownRingsWithWhatItWantsAndTheToolInBrackets()
+    {
+        Worker(SessionState.Waiting, waitingFor: "permission to use Bash");
+        _state.PutSession(_state.Sessions().Single() with { Asking = "Bash: git push origin main" });
+
+        await _watch.LookAsync(Ct);
+
+        var card = Open().Single(c => c.Kind == LegWatch.Waiting);
+        card.Title.ShouldBe("TIA1/parser's worker wants to run: git push origin main (Bash)");
+        card.Detail.ShouldNotBeNull().ShouldStartWith("it wants to run: git push origin main (Bash);");
+        card.Summary.ShouldNotBeNull().ShouldStartWith("The worker of TIA1/parser wants to run: git push origin main (Bash).");
+        SummaryMatchesChoices(card);
+    }
+
     private void Worker(SessionState state, DateTimeOffset? lastResponse = null, string? apiError = null, DateTimeOffset? resetsAt = null, string? waitingFor = null, long context = 0, string id = "a1b2c3d4") =>
         _state.PutSession(new SessionRow
         {
@@ -1226,6 +1241,8 @@ public sealed class LegWatchTests
         waiting.Choices.ShouldHaveSingleItem();
         SummaryMatchesChoices(waiting);
         waiting.Summary!.ShouldContain("waits on you");
+        waiting.Summary!.ShouldContain("lets this worker go on with the call");
+        waiting.Summary!.ShouldContain("stops this one and starts another on the leg from the branch");
 
         Worker(SessionState.Failed);
         await _watch.LookAsync(Ct);
