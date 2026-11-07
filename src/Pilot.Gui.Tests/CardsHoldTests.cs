@@ -118,6 +118,27 @@ public sealed class CardsHoldTests
         }
     }
 
+    /// <summary>
+    /// A long summary and many cards waiting keep every dot inside the panel: the summary gives way and the dots past a few are
+    /// one "+N" (DE1, c11514: '●' (2869.1,177 21.7x23.4) reached past its scroll, 2430 + 450).
+    /// </summary>
+    [Fact]
+    public void ManyWaitingCardsAndALongSummaryStayInsideThePanel()
+    {
+        using var renderer = new RgbaImageRenderer(450, 800);
+        var view = new CardsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        var shown = Enumerable.Range(1, 9).Select(i => Card($"c{i}", i % 2 == 0 ? CardBin.Ring : CardBin.ForYou, $"TIA18{i} could not start", i)).ToArray();
+        view.Tree(view.Steady(CardsScreen.From(shown), over: false));
+        var raised = Enumerable.Range(20, 5).Select(i => Card($"c{i}", CardBin.Ring, $"PIL{i} could not open its PR", i));
+
+        var held = view.Steady(CardsScreen.From([.. shown, .. raised]), over: true);
+        var arranged = Layout.Engine.Arrange(view.Tree(held), new Rect<float>(0, 0, 450, 800), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1.5f));
+
+        TextOverlap.Faults(arranged).Where(f => f.Kind == TextFaultKind.Outside).Select(f => f.Line).ShouldBeEmpty();
+        Texts([.. arranged]).Count(t => t == "●").ShouldBe(CardsView<RgbaImage>.WaitingDots);
+        Texts([.. arranged]).ShouldContain($"+{5 - CardsView<RgbaImage>.WaitingDots}");
+    }
+
     private static readonly RGBAColor32 FocusBg = new(0x26, 0x33, 0x4a, 0xff);
 
     private static Layout.ArrangedNode<float>[] Arrange(CardsView<RgbaImage> view, CardsScreen screen)
