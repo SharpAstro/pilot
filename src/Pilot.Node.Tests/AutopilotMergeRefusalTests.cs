@@ -22,7 +22,8 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     private void NoRefusalRaised()
     {
         Refused().ShouldBeEmpty();
-        _state.Cards().ShouldNotContain(c => c.Kind is LegCommander.MergeFailed or PrChecks.MergeDropped);
+        // Any(...) rather than ShouldNotContain(...): Shouldly's takes an expression tree, which cannot hold an 'is' pattern.
+        _state.Cards().Any(c => c.Kind is LegCommander.MergeFailed or PrChecks.MergeDropped).ShouldBeFalse();
     }
 
     // A 5xx the node classified as passing, thrown while the merge reads the PR: the first <paramref name="failures"/> asks fail.
