@@ -314,7 +314,7 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
             text.AppendLine("$bad = 0");
             foreach (var leg in legs)
             {
-                text.AppendLine($"Write-Output {PwshQuote($"=== bench {leg.Label}: {leg.Ref} ({CommitRefs.Short(leg.Sha)}) ===")}");
+                text.AppendLine($"Write-Output {PwshQuote(BenchMarkers.Start(leg.Label, leg.Ref, leg.Sha))}");
                 text.AppendLine($"Set-Location -LiteralPath {PwshQuote(leg.Worktree)}");
                 text.AppendLine("$global:LASTEXITCODE = 0");
                 if (fetch is { Length: > 0 })
@@ -330,7 +330,7 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
                 text.AppendLine("if ($fetched) {");
                 text.AppendLine(command);
                 text.AppendLine("if (-not $? -or $LASTEXITCODE) { $bad = if ($LASTEXITCODE) { $LASTEXITCODE } else { 1 } }");
-                text.AppendLine("} else { Write-Output '=== the fetch step failed, the benchmark was not run ==='; $bad = 1 }");
+                text.AppendLine($"}} else {{ Write-Output {PwshQuote(BenchMarkers.FetchFailed)}; $bad = 1 }}");
             }
             text.AppendLine("exit $bad");
         }
@@ -339,7 +339,7 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
             text.AppendLine("bad=0");
             foreach (var leg in legs)
             {
-                text.AppendLine($"echo {ShQuote($"=== bench {leg.Label}: {leg.Ref} ({CommitRefs.Short(leg.Sha)}) ===")}");
+                text.AppendLine($"echo {ShQuote(BenchMarkers.Start(leg.Label, leg.Ref, leg.Sha))}");
                 text.AppendLine($"cd {ShQuote(leg.Worktree)} || bad=1");
                 text.AppendLine("if {");
                 text.AppendLine(fetch is { Length: > 0 } ? fetch : "true");
@@ -349,7 +349,7 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
                 text.AppendLine(command);
                 text.AppendLine(")");
                 text.AppendLine("code=$?; [ $code -ne 0 ] && bad=$code");
-                text.AppendLine("else echo '=== the fetch step failed, the benchmark was not run ==='; bad=1; fi");
+                text.AppendLine($"else echo {ShQuote(BenchMarkers.FetchFailed)}; bad=1; fi");
             }
             text.AppendLine("exit $bad");
         }

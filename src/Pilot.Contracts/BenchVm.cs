@@ -19,6 +19,13 @@ public sealed record BenchVm
     /// <summary>The price of one VM hour, in USD, as it stood when the VM was made; null when it ran local or the price was not read.</summary>
     public double? PricePerHour { get; init; }
 
+    /// <summary>
+    /// True when the retail prices API did not answer, so <see cref="PricePerHour"/> is the most the settings allow (the spot max price) and
+    /// <see cref="Cost"/> is an upper bound, not the price paid. False for a price that was read, and on a row from before this: optional, so
+    /// <see cref="NodeWire.Version"/> stays.
+    /// </summary>
+    public bool PriceIsUpperBound { get; init; }
+
     /// <summary>How long the VM ran, in minutes, evicted attempts included; null until the VM is gone.</summary>
     public double? Minutes { get; init; }
 
