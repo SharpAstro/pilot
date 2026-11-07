@@ -4,6 +4,7 @@ using DIR.Lib;
 using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Shouldly;
+using SharpAstro.Png;
 using Xunit;
 
 namespace Pilot.Gui.Tests;
