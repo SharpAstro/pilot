@@ -153,6 +153,9 @@ public sealed class LegCardTests
             Code = "TIA1", Repo = "tianwen", RepoPath = "/r", Issue = 1, Branch = "flight/tia1", Worktree = "/r/w", Base = "origin/main",
             State = FlightState.Flying, CreatedAt = Start,
         });
+        // A call inside the plane (the Edit, the Read, EnterWorktree into /r/w) first sends the leg round (PermissionGateTests covers
+        // that); with the go-around refused it rings at once, so every row here shows the card's words.
+        _refuse = "the cap is reached";
 
         await _watch.LookAsync(Ct);
 
