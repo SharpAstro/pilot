@@ -44,7 +44,7 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
             {
                 if (first >= from && entries.Count < take && first < from + take)
                 {
-                    entries.Add(DividerOf(segment.Generation, first));
+                    entries.Add(DividerOf(segment.Generation, segment.Session, first));
                 }
                 first++;
             }
@@ -53,7 +53,7 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
             var want = Math.Min(take - entries.Count, segment.Count - local);
             if (want > 0 && transcripts.Window(segment.Session, local, want) is { } read)
             {
-                entries.AddRange(read.Entries.Select((entry, i) => entry with { Index = first + local + i }));
+                entries.AddRange(read.Entries.Select((entry, i) => entry with { Index = first + local + i, Id = $"{segment.Session}:{entry.Id ?? $"i{local + i}"}" }));
             }
         }
 
@@ -145,9 +145,10 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
         return (taken, queued);
     }
 
-    private static TranscriptEntry DividerOf(Watchtower.Generation generation, int index) => new()
+    private static TranscriptEntry DividerOf(Watchtower.Generation generation, string session, int index) => new()
     {
         Index = index,
+        Id = $"divider:{session}",
         Kind = TranscriptKind.Divider,
         At = generation.StartedAt,
         Text = generation.Why is { Length: > 0 } why ? $"A fresh watchtower started: {why}" : "A fresh watchtower started",
