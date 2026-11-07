@@ -81,7 +81,7 @@ public static partial class Briefs
                     OverlapAnswer.Connect when overlap.AnsweredByNode == OverlapRow.AnsweredByNodeConnected =>
                         $"- {at} ({overlap.Why}{files}): the node connected {flight.Code} to it itself: {flight.Code} is held until {overlap.Other} has landed" +
                         (overlap.Node is null ? "" : $" ({overlap.Node} says so)") + ", and branches off main after it. Plan its legs for main as it will be then, building on what " + overlap.Other + " changes in the shared files; do not connect or ask again.",
-                    OverlapAnswer.Connect => $"- {at}({overlap.Why}{files}): the controller chose to connect {flight.Code} to it: {flight.Code} is held until {overlap.Other} has landed" +
+                    OverlapAnswer.Connect => $"- {at} ({overlap.Why}{files}): the controller chose to connect {flight.Code} to it: {flight.Code} is held until {overlap.Other} has landed" +
                         (overlap.Node is null ? "" : $" ({overlap.Node} says so)") + ", and branches off main after it. Plan its legs for main as it will be then, building on what " + overlap.Other + " changes in the shared files; do not connect or ask again.",
                     _ => $"- {overlap.Other} ({overlap.Why}{files}): the controller chose to fold {flight.Code} into it.",
                 });
