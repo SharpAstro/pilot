@@ -225,6 +225,29 @@ public sealed class ConflictEscalationTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AConflictRungCountsAgainstTheOverallGoAroundCapAndThePersonIsRungByTheCapCardNotTheNextRung()
+    {
+        // The overall cap counts conflict rounds on purpose (a main that keeps moving could send a leg round for ever, PIL338): a leg
+        // whose earlier go-arounds already used the cap's room reaches it at a conflict rung, before the ladder's last rung.
+        _legs.Models = new RoleModels(new NodeSettings { MaxGoArounds = 2 });
+        var flight = await FirstWorker("69");
+        ShouldFlyOn(flight.Code, "sonnet", null, 1);
+        await Fail(flight.Code);
+        ShouldFlyOn(flight.Code, "opus", null, 2);
+        Leg(flight.Code).GoArounds.ShouldBe(2);
+        var started = _workers.Started.Count;
+
+        // Rung 3 is a go-around too: the leg is at the cap, so it is refused and the person is rung by the go-around-cap card.
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), Leg(flight.Code).Worker!, "failed", "still wrong")).Error.ShouldBeNull();
+
+        _workers.Started.Count.ShouldBe(started);
+        Leg(flight.Code).GoArounds.ShouldBe(2);
+        Leg(flight.Code).State.ShouldBe(LegState.Failed);
+        Open().Where(c => c.Kind == LegCommander.GoAroundCapKind).ShouldHaveSingleItem().Subject.ShouldBe(Verbs.LegTarget(flight.Code, "parser"));
+        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.ConflictDecisionKind);
+    }
+
+    [Fact]
     public void TheRungsNeverPassTheWorkerRangeMaxAndSayWhenTheyAreClamped()
     {
         var wide = new RoleModels(null);

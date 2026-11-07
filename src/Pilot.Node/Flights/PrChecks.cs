@@ -377,6 +377,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <summary>
     /// <see cref="HandConflictOverAsync"/> for a sweep, which has no caller to refuse: a conflict no worker could be put on is said on the
     /// node's log, never to a person (the conflict is the node's own work), so it is not lost where a sweep would otherwise drop the reason.
+    /// Not retried by the sweep until the PR head moves, even when the cause was transient (a flying worker that could not be told just now):
+    /// the callers' <c>_rebased</c> gate is spent per head on purpose, since a retry on every sweep would fetch and merge-test the plane
+    /// each time and repeat the log line for causes that do not pass (the last leg failed, no flying plane). Other paths do retry: the leg's
+    /// own end (Finish) and a new base head both reach <see cref="LegCommander.ResolveConflictAsync"/> again, which sends once per base head only after a success.
     /// </summary>
     private async Task HandConflictOverInSweepAsync(string code, string why, CancellationToken cancellationToken)
     {
