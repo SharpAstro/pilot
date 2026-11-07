@@ -30,6 +30,27 @@ public static class NodeProgram
 
         using (held)
         {
+            // The skills this release carries, kept current at every start (an update restarts the node), unless the person
+            // turned user-skills off; a hand edit is kept. Never a reason to stop the start.
+            if (options.Saved?.UserSkills ?? true)
+            {
+                IReadOnlyList<string> said;
+                try
+                {
+                    var (lines, problem) = new NodeSetup(options, Environment.ProcessPath ?? "pilot-node", Sessions.SessionTrackerOptions.FromEnvironment().Profile.Root).ApplyUserSkills(on: true);
+                    said = problem is null ? [.. lines.Select(l => $"skill {l}")] : [$"user skills: {problem}"];
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // ApplyUserSkills answers the file errors itself; anything else (a profile path Windows refuses, a resource
+                    // that cannot be read) is said here, and the node starts all the same.
+                    said = [$"user skills: {ex.GetType().Name}: {ex.Message}"];
+                }
+                foreach (var line in said)
+                {
+                    Say($"pilot-node: {line}");
+                }
+            }
             // The start and stop lines are the host's own (NodeLifecycleLog), so a node a test builds says them too.
             try
             {

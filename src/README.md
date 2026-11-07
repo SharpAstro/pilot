@@ -1519,6 +1519,16 @@ file that is not valid JSON (or whose `allow` is not a list) is refused and left
 only lets Claude Code run it: the node still refuses a caller without the role, and merges and a person's cards stay guarded by
 the node and the merge guard.
 
+The optional **User skills** check (`setup node user-skills`) says whether the Claude Code skills the node carries are
+current in the profile's `skills` folder (`~/.claude/skills`, or under `CLAUDE_CONFIG_DIR`). They live in
+`src/Pilot.Node/UserSkills/<name>/`, embedded in the binary (`UserSkills`), today one: `merge-queue`, which reads a PR's place
+in a GitHub merge queue (something `gh pr view --json` cannot see) and says what to do around the merge guard. `pilot-node
+setup` installs them, and so does every node start, so a release that changes a skill reaches the machine with its update.
+Each folder pilot writes carries `.pilot-installed`, the hash of what it wrote: a folder without it is someone else's, and
+one whose files no longer match it was changed by hand; both are kept and named by the check, never overwritten. The
+setting **user-skills** (`set node user-skills on|off`, on by default) turns it off, which also takes out the skills pilot
+wrote and nobody changed.
+
 One more optional check is **Guard hooks** (`setup node guard-hooks`): it says whether three generic guard hooks
 are in `~/.claude/settings.json`: `big_read_guard.sh` (refuses a whole-file `Read` and a bare `cat`),
 `fat_result_notice.sh` (says a tool result was unusually large) and `pgrep_self_match_guard.sh` (refuses an inline
