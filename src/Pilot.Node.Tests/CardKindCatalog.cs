@@ -250,6 +250,7 @@ internal static class CardKindCatalog
         ["Flights/FlightCommander.Receive.cs|card.Title"] = "the card a refused receive carried over from the node that raised it",
         ["Flights/FlightCommander.Receive.cs|way"] = "the line the routing or the move wrote: where the flight went and why",
         ["Flights/FlightCommander.Route.cs|way"] = "the line the routing or the move wrote: where the flight went and why",
+        ["Flights/Watchtower.Asks.cs|title"] = "RaiseAskCard: a prompt's title names the call it asks leave for, a question's its first question",
         ["NodeCommands.cs|title"] = "the title the person, the watchtower or a session gave to pilot raise",
         ["NodeSettingsCommands.cs|line"] = "the line the restart wrote: who restarted the node and how",
         ["Updates/NodeUpdater.cs|line"] = "the line the install wrote: the version installed and the node restarted",
