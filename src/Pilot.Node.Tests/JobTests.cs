@@ -283,15 +283,22 @@ public abstract class JobTestsBase : IDisposable
 
         public async Task<JobRow> UntilAsync(string id, Func<JobRow, bool> condition, CancellationToken cancellationToken)
         {
-            for (var i = 0; i < 400; i++)
+            // Bounded by the clock, not by a count of 50 ms waits: on a loaded machine each wait takes many times its length, so a
+            // count made the ceiling anything from 20 s to minutes (pilot #810, a check that failed after 1 m 47 s of them).
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            JobRow job;
+            while (!condition(job = Job(id)))
             {
-                if (Job(id) is var job && condition(job))
+                if (clock.Elapsed >= WaitCeiling)
                 {
-                    return job;
+                    // The row the wait ended on says why: a job that already ended (a timeout, a start that failed) reads very
+                    // differently from one that never left the queue.
+                    throw new TimeoutException($"job {id} never came to the state awaited within {WaitCeiling}: it is {job.State}"
+                        + $" (error: {job.Error ?? "none"}; step: {job.Step ?? "none"}; started {job.StartedAt:O}; ended {job.EndedAt?.ToString("O") ?? "never"}; told {job.Told})");
                 }
                 await Task.Delay(50, cancellationToken);
             }
-            throw new TimeoutException($"job {id} never came to the state awaited");
+            return job;
         }
 
         /// <summary>The job once it has ended and its owner has been told.</summary>
@@ -1475,6 +1482,74 @@ public sealed class JobTests2 : JobTestsBase
 
         (_state.Jobs().Single().State, _state.Jobs().Single().Error).ShouldBe((JobState.Failed, "ended while the node was down, no exit recorded"));
     }
+
+    // Pilot #810: a recovered job's owner is judged only once the tracker's first poll has listed the sessions (Ready).
+    private void PutDeadJob() => _state.PutJob(new JobRow
+    {
+        Id = "j1", Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = JobState.Running,
+        LogPath = Path.Combine(_root, "j1.log"), Timeout = JobRunner.DefaultTimeout, StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+    });
+
+    private JobRunner RunnerWaitingFor(Func<Task> ready, TimeSpan? budget = null) =>
+        new(_state, new NodeOptions(Path.Combine(_root, "n4.sock"), Path.Combine(_root, "data4")), TimeProvider.System)
+        {
+            Ready = ready,
+            ReadyBudget = budget ?? TimeSpan.FromSeconds(10),
+            Say = (command, _) =>
+            {
+                _said.Enqueue(command);
+                return Task.FromResult(_state.Complete(command, _refuse));
+            },
+        };
+
+    [Fact]
+    public async Task ADeadJobIsNotToldUntilTheTrackersFirstPollIsDone()
+    {
+        PutDeadJob();
+        var firstPoll = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runner = RunnerWaitingFor(() => firstPoll.Task);
+
+        var recovery = runner.RecoverAsync(Ct);
+        await Task.Delay(300, Ct);
+        // Ended from its missing exit file, as ever; but not told, nor judged, while the poll is out.
+        var waiting = _state.Jobs().Single();
+        (waiting.State, waiting.EndedAt is not null, waiting.Told, _said.Count).ShouldBe((JobState.Failed, true, false, 0));
+        recovery.IsCompleted.ShouldBeFalse();
+
+        firstPoll.SetResult();
+        await recovery.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        _state.Jobs().Single().Told.ShouldBeTrue();
+        _said.Single().Args[0].ShouldContain("Your job j1");
+    }
+
+    [Fact]
+    public async Task ADeadJobIsToldAfterTheBudgetWhenTheFirstPollNeverEnds()
+    {
+        PutDeadJob();
+        var runner = RunnerWaitingFor(() => new TaskCompletionSource().Task, TimeSpan.FromMilliseconds(200));
+
+        await runner.RecoverAsync(Ct).WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        _state.Jobs().Single().Told.ShouldBeTrue();
+        _said.Single().Args[0].ShouldContain("Your job j1");
+    }
+
+    [Fact]
+    public async Task ANodeThatStopsBeforeTheFirstPollLeavesTheDeadJobUntold()
+    {
+        PutDeadJob();
+        var runner = RunnerWaitingFor(() => new TaskCompletionSource().Task);
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+
+        var recovery = runner.RecoverAsync(stopping.Token);
+        await Task.Delay(100, Ct);
+        await stopping.CancelAsync();
+        await recovery.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        // Left for the next node's sweep, which tells it: nothing was said and the row is not marked told.
+        (_state.Jobs().Single().Told, _said.Count).ShouldBe((false, 0));
+    }
 }
 
 /// <summary>Part 3 of JobTests: the class is split so its tests run side by side, not one after another.</summary>
@@ -1585,23 +1660,30 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReattachedJobsTimeoutCountsFromItsStartNotFromTheRestart()
     {
+        // The first node enforces the timeout until it is stopped, so the test must see the job Running and stop that node inside
+        // the timeout. Under load the test's own waits run long (pilot #810: a check beside other flights' jobs saw a 3 s window
+        // pass before the test looked), so the window is a wide one; what the count proves is the gap between timeout and restart.
+        const int timeout = 6;
         var first = await Node.StartAsync(_root);
-        var id = first.Run(_root, Sleep(60), timeoutSeconds: 3).Made!;
-        await first.UntilAsync(id, j => j.State == JobState.Running, Ct);
+        var id = first.Run(_root, Sleep(60), timeoutSeconds: timeout).Made!;
+        var started = await first.UntilAsync(id, j => j.State == JobState.Running || j.EndedAt is not null, Ct);
+        (started.State, started.Error).ShouldBe((JobState.Running, null),
+            "the first node ended the job itself before the test could stop it: the machine was too slow for the timeout window");
         await first.StopAsync();
-        await Task.Delay(2000, Ct);
+        await Task.Delay(TimeSpan.FromSeconds(timeout / 2), Ct);
 
         var restarted = DateTimeOffset.UtcNow;
         using var second = await Node.StartAsync(_root);
         var job = await second.EndedAsync(id, Ct);
 
-        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 3s"));
-        // Counted from the start: it had about 1s left when the second node came up. A fresh 3s from the restart would end it no
-        // earlier than restarted + 3s, so ending before that proves the count. Both ends are the job's own row and the test's
-        // restart stamp, not how long the test took to get here.
-        job.EndedAt!.Value.ShouldBeLessThan(restarted + TimeSpan.FromSeconds(3));
+        (job.State, job.Error).ShouldBe((JobState.Failed, $"stopped after its timeout of {timeout}s"));
+        // Counted from the start: it had about half the timeout left when the second node came up. A fresh timeout from the restart
+        // would end it no earlier than restarted + timeout, so ending before that proves the count. Both ends are the job's own row
+        // and the test's restart stamp, not how long the test took to get here.
+        job.EndedAt!.Value.ShouldBeLessThan(restarted + TimeSpan.FromSeconds(timeout));
     }
 
     [Fact]
