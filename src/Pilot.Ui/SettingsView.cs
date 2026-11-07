@@ -784,7 +784,8 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         var row = (stacked
                 ? Layout.Builder.HStack(stripe, Layout.Builder.VStack(title.WStar().HAuto(), body.WStar().HAuto()).WithGap(4f).WStar().HAuto())
                 : Layout.Builder.HStack(stripe, title.WFixed(TitleWidth), body.WStar().HAuto()))
-            .WithGap(14f).Pad(8f, 6f).HAuto();
+            // WStar: the row is Auto wide by default, and an Auto stack counts its Star body as nothing, so it was as wide as the stripe and the title and no more.
+            .WithGap(14f).Pad(8f, 6f).WStar().HAuto();
         return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }
 
