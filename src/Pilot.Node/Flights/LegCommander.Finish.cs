@@ -83,7 +83,7 @@ public sealed partial class LegCommander
             await RecordDoneAsync(flight, leg with { Recheck = null }, retired, push: false, cancellationToken);
             state.RaiseCard(CardBin.Handled, RetiredKind, Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} retired",
                 $"stopped on the word of the controller or the owner, not failed: {why}. The flight goes on with its next leg.");
-            await StopWorkerAfterFinishAsync(leg, command, cancellationToken);
+            await StopWorkerAfterFinishAsync(flight, leg, command, cancellationToken);
             return;
         }
         if (leg.State != LegState.Flying)
@@ -128,7 +128,7 @@ public sealed partial class LegCommander
                     }
                 }
                 {
-                    var (checkedFlight, checkedLeg, run, late) = await RerunCheckAsync(flight, leg, cancellationToken);
+                    var (checkedFlight, checkedLeg, run, late) = await RerunCheckAsync(flight, leg, cancellationToken, asked: command.Who is { Length: > 0 } who ? (who, report) : null);
                     (flight, leg) = (checkedFlight, checkedLeg);
                     // A check that failed only on tests the flight's change does not touch passes, with them named (#752).
                     if (run is { Passed: false } && leg.Check is { } ranCheck)
@@ -224,7 +224,7 @@ public sealed partial class LegCommander
                 throw new FlightException("finish-leg takes done or failed, then a report");
         }
 
-        await StopWorkerAfterFinishAsync(leg, command, cancellationToken);
+        await StopWorkerAfterFinishAsync(flight, leg, command, cancellationToken);
     }
 
     /// <summary>The outcome of finish-leg for a leg stopped on the controller's or the owner's word: done in the row, its report starting with this.</summary>
@@ -239,11 +239,14 @@ public sealed partial class LegCommander
     // A finished leg's worker is done with: the next leg, or a go-around, gets a fresh one. One that finished its own
     // leg (pilot leg finish, from its plane) is given a while to end its turn and say its report, then stopped all
     // the same: an idle background session lingers for good otherwise, holding its plane's folder open (PIL9997's).
-    private async Task StopWorkerAfterFinishAsync(LegRow leg, CommandRequest command, CancellationToken cancellationToken)
+    // The ticking pass (PIL804) finishes the leg for a worker that ended: its own session is stopped after the same grace, and
+    // so is the ended worker's. A ticker's done raises no ring, and the leg's open cards close with it (RecordDoneAsync).
+    private async Task StopWorkerAfterFinishAsync(FlightRow flight, LegRow leg, CommandRequest command, CancellationToken cancellationToken)
     {
-        if (leg.WorkerJob is { } job)
+        var tickerFinished = leg.TickerJob is not null && string.Equals(command.Who, TickerName(flight, leg), StringComparison.Ordinal);
+        foreach (var job in new[] { leg.WorkerJob, leg.TickerJob }.Where(j => j is not null).Select(j => j!).Distinct(StringComparer.Ordinal))
         {
-            if (string.Equals(command.Who, leg.Worker, StringComparison.Ordinal))
+            if (string.Equals(command.Who, leg.Worker, StringComparison.Ordinal) || tickerFinished)
             {
                 _ = Task.Run(async () =>
                 {
@@ -425,7 +428,7 @@ public sealed partial class LegCommander
     /// timeout is refused rather than running the same check again. A check planned before plan refused wrong paths is written to
     /// find them now, and kept so: else no go-around passes it. The run is null for a leg with no check.
     /// </summary>
-    private async Task<(FlightRow Flight, LegRow Leg, CheckRun? Run, bool Late)> RerunCheckAsync(FlightRow flight, LegRow leg, CancellationToken cancellationToken)
+    private async Task<(FlightRow Flight, LegRow Leg, CheckRun? Run, bool Late)> RerunCheckAsync(FlightRow flight, LegRow leg, CancellationToken cancellationToken, (string By, string Report)? asked = null)
     {
         if (leg.Check is not { Length: > 0 } check)
         {
@@ -454,7 +457,9 @@ public sealed partial class LegCommander
         using (var call = Calling(flight.Code, $"rerunning {leg.Name}'s check since {since.ToLocalTime():HH:mm}",
             "pilot status shows it; end your turn: the node tells you the outcome"))
         {
-            leg = leg with { Recheck = new LegRecheck { Check = check, Since = since } };
+            // A finish a worker asked for keeps what it was asked (its report and who asked), so a node that restarts while this runs
+            // can run that same finish itself and leave its worker with nothing to repeat (pilot #819).
+            leg = leg with { Recheck = new LegRecheck { Check = check, Since = since, By = asked?.By, Report = asked?.Report } };
             state.PutLeg(leg);
             seen = leg;
             HoldForLeg(flight.Code, leg.Name, $"the {leg.Name} leg's check is rerunning since {since.ToLocalTime():HH:mm}");
@@ -469,6 +474,15 @@ public sealed partial class LegCommander
                         ? again with { Tail = $"stopped by its budget twice; the machine was saturated the first time, so it was retried once\n{again.Tail}" }
                         : again;
                 }
+            }
+            catch (OperationCanceledException) when (checks.NodeStopping)
+            {
+                // The node is stopping (an update, a restart), and the wait on the check's job was cancelled with it: the job is left
+                // for the next node, which carries a queued one over or reattaches to a running one. So the recheck stays open (no
+                // outcome, Since and Check kept) for NodeState's restart pass to word as carried or still running, instead of
+                // recording the cancellation as the check having thrown ("could not be run (A task was canceled.)", pilot #819).
+                HoldForLeg(flight.Code, leg.Name);
+                throw;
             }
             catch (Exception ex)
             {
