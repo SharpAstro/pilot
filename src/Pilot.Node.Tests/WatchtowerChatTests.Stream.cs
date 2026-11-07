@@ -178,6 +178,8 @@ public sealed partial class WatchtowerChatTests
         var wire = JsonSerializer.Serialize<NodeEvent>(new ChatChangedEvent { Seq = 7, At = Start }, PilotJsonContext.Default.NodeEvent);
         wire.ShouldContain("\"kind\":\"chatChanged\"");
         var mirror = new NodeMirror();
+        // A mirror takes deltas only after a snapshot, so the stream starts from one at seq 6.
+        mirror.Apply(new SnapshotEvent { Seq = 6, At = Start, Stream = "s", Notes = [], Sessions = [] });
         mirror.Apply(JsonSerializer.Deserialize(wire, PilotJsonContext.Default.NodeEvent)!);
         mirror.Seq.ShouldBe(7);
     }
