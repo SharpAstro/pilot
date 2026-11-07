@@ -124,6 +124,44 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     }
 
     [Fact]
+    public async Task APeerThatLandsBetweenTheCheckAndTheConnectIsNotToldAsAWaitAndItsRowSaysNothingIsWaitedFor()
+    {
+        await FlyingAsync("parser.cs", "shared.cs" + Hot);
+        const string gitHub = "SharpAstro/tianwen";
+        Git(Repo, "config", $"url.{Origin.Replace('\\', '/')}.insteadOf", $"https://github.com/{gitHub}.git");
+        Git(Repo, "remote", "set-url", "origin", $"https://github.com/{gitHub}.git");
+        var theirs = _state.Flights().Single() with
+        {
+            Code = "PIL9", Issue = 9, Branch = "flight/pil9", RepoPath = "D:/src/tianwen", Worktree = "D:/src/tianwen/.claude/worktrees/pil9",
+            Overlaps = [], PlannedFiles = null, Connections = [], PeerConnections = [], LastMovedAt = _clock.GetUtcNow().AddMinutes(-5),
+        };
+        var peer = new FakePeer("DE1")
+        {
+            Flights = [theirs],
+            Repos = [new RepoInfo { Name = "tianwen", Path = "D:/src/tianwen", GitHub = gitHub }],
+            Changes = new Dictionary<string, string> { ["PIL9"] = "120\tshared.cs" },
+        };
+        var fleet = new FakeFleet();
+        fleet.Peers.Add(peer);
+        _flights.Fleet = fleet;
+        (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
+        peer.AfterChangesRead = () => peer.Flights = [theirs with { State = FlightState.Landed }];
+
+        await FinishParserAsync();
+
+        var flight = _state.Flights().Single(f => f.Code == "TIA1");
+        flight.PeerConnections.ShouldBeEmpty();
+        var row = flight.Overlaps.Single();
+        row.Answer.ShouldBe(OverlapAnswer.Connect);
+        row.AnsweredByNode.ShouldBe(OverlapRow.AnsweredByNodeLanded);
+        row.Why.ShouldContain("nothing to wait for");
+        var note = _state.Cards().Single(c => c.Kind == LegCommander.OverlapConnectedKind);
+        note.Detail.ShouldContain("nothing to wait for");
+        note.Detail.ShouldNotContain("waits until");
+        flight.State.ShouldNotBe(FlightState.Held);
+    }
+
+    [Fact]
     public async Task AnUnforeseenOverlapWithAPeerFlightIsConnectedByTheNodeToo()
     {
         await FlyingAsync("parser.cs", "shared.cs" + Hot);
@@ -443,6 +481,31 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
         _state.Cards().Single(c => c.Kind == LegCommander.OverlapLandedKind).Title.ShouldBe("TIA1 had landed: TIA2 goes on, no answer needed");
         _state.Flights().Single(f => f.Code == "TIA2").Overlaps.Single().Answer.ShouldBe(OverlapAnswer.Connect);
         await Eventually.Holds(() => _workers.Started.Any(w => w.Name == "du1-tia2-plan"), Ct);
+        // The restarted planner is told the truth: the node closed it, as the other had landed; the controller did not choose a wait.
+        var brief = _workers.Started.Last(w => w.Name == "du1-tia2-plan").Brief;
+        brief.ShouldContain("TIA1 had landed when the overlap was found, so the node closed it itself");
+        brief.ShouldContain("there is nothing to wait for");
+        brief.ShouldNotContain("the controller chose to connect");
+        brief.ShouldNotContain("is held until TIA1 has landed");
+    }
+
+    [Fact]
+    public async Task ThePlannerBriefCreditsAnOverlapTheNodeConnectedItselfToTheNodeNotTheController()
+    {
+        await FlyingAsync("parser.cs");
+        OtherFlight("TIA2", "shared.cs");
+        var tia1 = _state.Flights().Single(f => f.Code == "TIA1");
+        var row = new OverlapRow
+        {
+            Other = "TIA2", Files = ["shared.cs"], Pick = Verbs.OverlapPickConnect, Why = "found at parser", Answer = OverlapAnswer.Connect, AfterLeg = "parser",
+            At = DateTimeOffset.UtcNow, AnsweredByNode = OverlapRow.AnsweredByNodeConnected,
+        };
+        _state.PutFlight(tia1 with { Overlaps = [row] });
+
+        var brief = Briefs.Plan(_state.Flights().Single(f => f.Code == "TIA1"), [], "pilot");
+
+        brief.ShouldContain("the node connected TIA1 to it itself");
+        brief.ShouldNotContain("the controller chose to connect");
     }
 
     [Fact]
@@ -838,6 +901,9 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
 
         public Dictionary<string, string> Changes { get; init; } = [];
 
+        /// <summary>Run once the changes of a flight were read: a race, as the peer's flight landing between that read and the connect.</summary>
+        public Action? AfterChangesRead { get; set; }
+
         public Task<NodeInfo> NodeAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new NodeInfo
             {
@@ -854,6 +920,7 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
             command.Verb.ShouldBe(Verbs.FlightChanges, "a peer is only read here, never sent anything else");
             var code = command.Target[(command.Target.LastIndexOf('/') + 1)..];
             var result = new CommandResult { Verb = command.Verb, Target = command.Target, Who = command.Who, Seq = 0, Ok = true };
+            AfterChangesRead?.Invoke();
             return Task.FromResult(Changes.TryGetValue(code, out var made)
                 ? result with { Made = made }
                 : result with { Ok = false, Error = $"the plane of {code} is gone" });

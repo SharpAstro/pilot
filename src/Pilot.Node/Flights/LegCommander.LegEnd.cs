@@ -471,7 +471,8 @@ public sealed partial class LegCommander
     /// Pending overlap rows whose other flight has landed (PIL824): there is nothing to wait for, so the row is answered (connect, with no wait
     /// recorded), its overlap card closes with the reason, one Handled line says so, and the flight goes on as after any answer (a leg-end row
     /// advances, a planner-asked row has its planner restarted). A local other is read from its row (landed, not moved or folded); a peer's is
-    /// asked of the peers off the lock under their budget, so a slow peer holds nothing and a peer that does not answer leaves the row pending.
+    /// asked of the peers off the lock, one row after another, each under the peers' budget: a slow peer holds no lock, but it delays the rows
+    /// after it and the sweep that called this by up to that budget a row. A peer that does not answer leaves the row pending.
     /// </summary>
     internal async Task AnswerLandedPendingAsync(CancellationToken cancellationToken)
     {
@@ -538,7 +539,7 @@ public sealed partial class LegCommander
     /// <summary>Answers a pending row whose other has landed, closes its card, says so on a Handled line and lets the flight go on. Called under the lock.</summary>
     private async Task AnswerLandedAsync(FlightRow flight, OverlapRow row, string at, CancellationToken cancellationToken)
     {
-        var answered = row with { Answer = OverlapAnswer.Connect, At = time.GetUtcNow() };
+        var answered = row with { Answer = OverlapAnswer.Connect, At = time.GetUtcNow(), AnsweredByNode = OverlapRow.AnsweredByNodeLanded };
         var now = flight with { Overlaps = [.. flight.Overlaps.Select(o => ReferenceEquals(o, row) ? answered : o)] };
         state.PutFlight(now);
         var target = Verbs.FlightTarget(now.Code);
@@ -615,12 +616,19 @@ public sealed partial class LegCommander
             return null;
         }
 
+        // The other may have landed between the check's read of it and the connect (a peer's connect says so and records no wait; a local
+        // one is connected and released by the sweep): then there is no wait, and the card must not say the flight waits for it.
+        var waits = other.Node is null
+            ? state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) is not { State: FlightState.Landed, MovedTo: null, FoldedInto: null }
+            : now.PeerConnections.Any(c => string.Equals(c.Code, code, StringComparison.OrdinalIgnoreCase));
         var union = OverlapChoice.Normalise([.. existing?.Files ?? [], .. files]).Order(StringComparer.OrdinalIgnoreCase).ToArray();
         var connectedRow = new OverlapRow
         {
             Other = code, Node = other.Node, Files = union, Pick = Verbs.OverlapPickConnect,
-            Why = $"after {leg} the plane changes {string.Join(", ", ShortNames(files))}, which {other.Label} changes too and the planner did not foresee; the node connected it, as {code} is moving",
+            Why = $"after {leg} the plane changes {string.Join(", ", ShortNames(files))}, which {other.Label} changes too and the planner did not foresee; "
+                + (waits ? $"the node connected it, as {code} is moving" : $"the node connected it, but {code} landed meanwhile, so there is nothing to wait for"),
             Answer = OverlapAnswer.Connect, AfterLeg = leg, At = time.GetUtcNow(),
+            AnsweredByNode = waits ? OverlapRow.AnsweredByNodeConnected : OverlapRow.AnsweredByNodeLanded,
         };
         now = now with { Overlaps = [.. now.Overlaps.Where(o => !string.Equals(o.Other, code, StringComparison.OrdinalIgnoreCase)), connectedRow] };
         state.PutFlight(now);
@@ -631,9 +639,12 @@ public sealed partial class LegCommander
         state.RaiseCard(CardBin.Handled, OverlapConnectedKind, Verbs.FlightTarget(now.Code),
             $"{now.Code}/{leg} connected to {at} ({named})",
             $"Found at {leg}: {now.Code}'s plane changes {files.Length} file{(files.Length == 1 ? "" : "s")} that {at} changes too, which its plan did not foresee. "
-            + $"{at} is moving, so no card rang: the node connected {now.Code} to it itself. {leg} stays done and the next leg of {now.Code} waits until {code} has landed. "
-            + $"To fly both in parallel instead, disconnect {now.Code} from {code} ({Verbs.AnywayFlag}). Both change: {string.Join(", ", names)}.");
-        Error.WriteLine($"leg-end overlap: {now.Code} shares {string.Join(", ", files)} with {at}; connected by the node, no card rang{(told is null ? "" : $" ({told})")}");
+            + (waits
+                ? $"{at} is moving, so no card rang: the node connected {now.Code} to it itself. {leg} stays done and the next leg of {now.Code} waits until {code} has landed. "
+                  + $"To fly both in parallel instead, disconnect {now.Code} from {code} ({Verbs.AnywayFlag}). Both change: {string.Join(", ", names)}."
+                : $"{at} landed while the node connected {now.Code} to it, so there is nothing to wait for and no card rang. {leg} stays done and {now.Code} goes on. Both change: {string.Join(", ", names)}."));
+        Error.WriteLine($"leg-end overlap: {now.Code} shares {string.Join(", ", files)} with {at}; "
+            + (waits ? "connected by the node" : "landed while it was connected, nothing to wait for") + $", no card rang{(told is null ? "" : $" ({told})")}");
         return now;
     }
 

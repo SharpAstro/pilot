@@ -75,7 +75,13 @@ public static partial class Briefs
                 text.AppendLine(overlap.Answer switch
                 {
                     OverlapAnswer.Separate => $"- {at} ({overlap.Why}{files}): the controller chose to plan {flight.Code} in parallel with it. If it still depends on {overlap.Other}'s work, connect it: `{run} flight connect {flight.Code} {overlap.Other}`.",
-                    OverlapAnswer.Connect => $"- {at} ({overlap.Why}{files}): the controller chose to connect {flight.Code} to it: {flight.Code} is held until {overlap.Other} has landed" +
+                    OverlapAnswer.Connect when overlap.AnsweredByNode == OverlapRow.AnsweredByNodeLanded =>
+                        $"- {at} ({overlap.Why}{files}): {overlap.Other} had landed when the overlap was found, so the node closed it itself: there is nothing to wait for and {flight.Code} is not held. " +
+                        $"Plan its legs for main as it is now, with {overlap.Other}'s changes in the shared files already there; do not connect or ask again.",
+                    OverlapAnswer.Connect when overlap.AnsweredByNode == OverlapRow.AnsweredByNodeConnected =>
+                        $"- {at} ({overlap.Why}{files}): the node connected {flight.Code} to it itself: {flight.Code} is held until {overlap.Other} has landed" +
+                        (overlap.Node is null ? "" : $" ({overlap.Node} says so)") + ", and branches off main after it. Plan its legs for main as it will be then, building on what " + overlap.Other + " changes in the shared files; do not connect or ask again.",
+                    OverlapAnswer.Connect => $"- {at}({overlap.Why}{files}): the controller chose to connect {flight.Code} to it: {flight.Code} is held until {overlap.Other} has landed" +
                         (overlap.Node is null ? "" : $" ({overlap.Node} says so)") + ", and branches off main after it. Plan its legs for main as it will be then, building on what " + overlap.Other + " changes in the shared files; do not connect or ask again.",
                     _ => $"- {overlap.Other} ({overlap.Why}{files}): the controller chose to fold {flight.Code} into it.",
                 });
