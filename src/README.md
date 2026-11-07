@@ -166,6 +166,19 @@ resume their stream, workers, the watchtower and jobs keep running. A GUI or TUI
 binary until it is reopened. At every start the node sweeps each aside it finds (`~old`, `~old<n>` of older installs,
 `~old-<n>`), deleting those nothing holds any more and leaving the held ones for the start after.
 
+**Going back** (`UpdateRollback`). An update to a version that cannot start does not stop the node for good. Before the
+swap an install keeps the release it replaces, the files its `VERSION` marker lists with the marker, in `previous/` beside
+the binaries (the sweep leaves it alone, and the next install replaces it), and writes `update.json` in the data folder:
+from, to and the failed starts so far. A build of one's own has no marker, so nothing is kept and it is never rolled back.
+The new node counts each start of the `to` version before it builds the host, and deletes the record once the host has
+started with the store read. A start that fails with an exception during that trial starts the node once more; the second
+failed start in a row, or a start that finds two counted (a crash nothing caught), puts `previous/` back with the same
+all-or-nothing swap, starts that node and exits, and the failing release's files go aside, not away. A store a newer node
+wrote is not the new version's fault and rolls nothing back. The restored node rings one card, *pilot 2.0.13 did not start
+twice; back on 2.0.12*, with the last error, and auto-update (and `ask`) does not offer that version again; a newer
+release, or `pilot update` by hand, still installs. If `previous/` cannot be written the install is refused, since it
+would have no way back.
+
 The update code (`Pilot.Node/Updates`: `ReleaseFeed`, `ReleaseInstall`, `UpdatePolicy`) holds no pilot type: it began
 as a copy of YtPlayer's self-update and is meant to move to SharpAstro.AppShell once a second app updates itself the
 same way. `NodeUpdater` is pilot's use of it.

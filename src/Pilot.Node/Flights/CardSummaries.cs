@@ -163,6 +163,7 @@ public static partial class CardSummaries
             Compactor.Kind => "The node compacted a session's context, or could not and tries again. Nothing to do.",
             Digest.Kind => "What landed, what was handled and what is parked since the last digest. Read it and dismiss it.",
             StaleWatch.ActedKind => $"The node acted on {what} at half a stale bound (told its worker of an ended job, nudged it, or raised its priority). Nothing to do.",
+            NodeUpdater.Kind when subject.StartsWith(UpdateRollback.SubjectPrefix, StringComparison.Ordinal) => "A new pilot did not start twice, so the node put the last release back and runs on it. The title says why; the new version is not installed again until a newer one is out or pilot update node install is run.",
             NodeUpdater.Kind => "A new pilot is out, or an update was installed or failed. The card's choice installs it; otherwise nothing to do.",
             NodeLan.AskedKind => "A node on the LAN asks to fly flights here. Allow lets it run any command here until revoked; Refuse turns it away.",
             "restart" => "The node restarted at someone's word. Nothing to do.",

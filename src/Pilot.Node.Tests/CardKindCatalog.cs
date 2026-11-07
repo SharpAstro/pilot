@@ -198,7 +198,7 @@ internal static class CardKindCatalog
         new("assistant-ask", "ForYou", ["Autopilot.cs"], "AutopilotTests.ASettingAnAssistantAsksForIsAskedNotSet"),
         new("autopilot-ran", "Handled", ["Autopilot.cs", Checks], "AutopilotTests.WithAutopilotOnTheSameMergeGoesThroughRecordedWithTheSessionAndMessageAndAHandledCardSaysIt"),
         new("grant-asked", "Ring", ["NodeLan.cs"], "NodeCardTests.AGrantAskIsARingCardWhoseChoicesSaySoInPlainWords", "the asking node's grant is not yet answered in the node's grants", [nameof(Verbs.AnswerGrant)]),
-        new("update", "Ring|ForYou|Handled", ["Updates/NodeUpdater.cs"], "UpdateTests.AskRaisesACardWithUpdateOnce", "the published version is newer than the running node's", [nameof(Verbs.Update)]),
+        new("update", "Ring|ForYou|Handled", ["Updates/NodeUpdater.cs", "Updates/UpdateRollback.cs"], "UpdateTests.AskRaisesACardWithUpdateOnce", "the published version is newer than the running node's, or the update record says the new version did not start twice and the node went back", [nameof(Verbs.Update), nameof(Verbs.NoteIdea)]),
         new("restart", "Handled", ["NodeSettingsCommands.cs"], "NodeRestartTests.ARestartStartsTheSuccessorStopsTheNodeAndLogsAHandledLineNamingTheCaller"),
         new("store", "Ring|ForYou", ["NodeState.cs", "StoreRecovery.cs"], SourcePinned, "the start could not read the stored files (FileJournal.Load or NodeState's constructor threw), set them aside and started from a backup or an empty store", [nameof(Verbs.NoteIdea)]),
         new("stop-unconfirmed", "Ring", ["Sessions/SessionMessenger.cs"], "SessionEndTests.AStopThatDoesNotTakeRaisesOneRingCardAndIsNotConfirmed", "the session's row still shows it live after the stop was asked", [nameof(Verbs.EndSession)]),
