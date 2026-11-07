@@ -241,6 +241,41 @@ public sealed class SettingsTests : IDisposable
         return (commands, () => Volatile.Read(ref runs), time);
     }
 
+    /// <summary>
+    /// user-skills is applied live, so the setup check follows the file, never the node's start-time snapshot (options.Saved):
+    /// the review of #849 found the checklist offering "Install skills" right after set node user-skills off had taken them out.
+    /// </summary>
+    [Fact]
+    public async Task UserSkillsSetLiveIsWhatTheSetupCheckReads()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var skills = Path.Combine(_root, "skills");
+        var setup = new NodeSetup(node.Options, Path.Combine(_root, "pilot-node.exe"), _root)
+        {
+            Run = (_, _, _) => (1, ""),
+            SkillsFolder = skills,
+            CarriedSkills = () => [new UserSkills.Skill("demo", new Dictionary<string, byte[]> { ["SKILL.md"] = "v1"u8.ToArray() })],
+        };
+        var services = node.App.Services;
+        var commands = new NodeSettingsCommands(node.Options, node.State, services.GetRequiredService<NodeRestarter>(), setup, TimeProvider.System,
+            services.GetRequiredService<Pilot.Node.Flights.JobRunner>(), services.GetRequiredService<RoleModels>());
+        SetupCheck Check() => setup.Checks().Single(c => c.Key == NodeSetup.UserSkillsKey);
+        CommandResult Set(string value) => commands.Set(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.UserSkillsKey, value], Who = "tests" });
+
+        Set("on").Error.ShouldBeNull();
+        Directory.Exists(Path.Combine(skills, "demo")).ShouldBeTrue();
+        (Check().Ok, Check().Fix).ShouldBe((true, null));
+
+        Set("off").Error.ShouldBeNull();
+        Directory.Exists(Path.Combine(skills, "demo")).ShouldBeFalse();
+        var off = Check();
+        (off.Ok, off.Optional, off.Fix).ShouldBe((false, true, null));
+        off.Line.ShouldContain("off");
+
+        Set("on").Error.ShouldBeNull();
+        (Check().Ok, Check().Fix).ShouldBe((true, null));
+    }
+
     [Fact]
     public async Task TheSettingsPageRunsNoSetupCheck()
     {

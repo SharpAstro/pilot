@@ -291,7 +291,8 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     private SetupCheck UserSkillsCheck()
     {
         const string Title = "User skills";
-        if (!(options.Saved?.UserSkills ?? true))
+        // The file, not options.Saved: set node user-skills is applied live, and Saved is the file as the node started with it.
+        if (!(NodeSettings.Read(options.SettingsFile).UserSkills ?? true))
         {
             return new SetupCheck { Key = UserSkillsKey, Title = Title, Ok = false, Optional = true, Line = "user-skills is off: the node installs none" };
         }

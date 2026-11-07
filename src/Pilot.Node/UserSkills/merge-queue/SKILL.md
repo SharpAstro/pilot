@@ -24,7 +24,7 @@ queued it. Queue state is GraphQL only (`PullRequest.mergeQueueEntry`), and the 
 |---|---|
 | `bash <this skill's folder>/mq.sh status <pr>` | one line: `MERGED at ...`, `QUEUED position N state S since ...`, `AUTO ...` (enters the queue when checks pass), `OPEN not queued; mergeState ... checks ...`, or `CLOSED` |
 | `bash <this skill's folder>/mq.sh queue` | every entry in main's queue, in order |
-| `bash <this skill's folder>/mq.sh watch <pr>` | polls each 60 s until merged or closed; exits 1 with the removal event if the PR LEFT the queue unmerged (a failed queue build) |
+| `bash <this skill's folder>/mq.sh watch <pr>` | polls each 60 s: exit 0 once merged or closed; exit 1 with the removal event if the PR LEFT the queue unmerged (a failed queue build); a failed poll is retried, and exit 3 means five failed in a row, so the PR's state is unknown, never that it left the queue |
 
 The folder is `~/.claude/skills/merge-queue` (or under `CLAUDE_CONFIG_DIR`). An optional last argument
 `owner/repo` targets another repo.

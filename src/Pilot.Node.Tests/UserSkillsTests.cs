@@ -221,8 +221,12 @@ public sealed class UserSkillsTests : IDisposable
         NodeSettings.Read(file).UserSkills.ShouldBe(false);
     }
 
-    private NodeSetup Setup(bool? on) =>
-        new(new NodeOptions("/tmp/n.sock", _root, Saved: new NodeSettings { UserSkills = on }), "pilot-node", Path.Combine(_root, ".claude"))
+    // The check reads the settings file (the setting is applied live), so the setting goes there.
+    private NodeSetup Setup(bool? on)
+    {
+        var options = new NodeOptions("/tmp/n.sock", _root);
+        new NodeSettings { UserSkills = on }.Write(options.SettingsFile);
+        return new NodeSetup(options, "pilot-node", Path.Combine(_root, ".claude"))
         {
             SettingsFile = Path.Combine(_root, ".claude", "settings.json"),
             MachineFolder = Path.Combine(_root, "home"),
@@ -230,6 +234,7 @@ public sealed class UserSkillsTests : IDisposable
             Run = (_, _, _) => (1, ""),
             CarriedSkills = () => [Skill("v1")],
         };
+    }
 
     private static SetupCheck Check(NodeSetup setup) => setup.Checks().Single(c => c.Key == NodeSetup.UserSkillsKey);
 }

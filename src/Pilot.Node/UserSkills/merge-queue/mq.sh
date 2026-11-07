@@ -3,7 +3,8 @@
 #
 #   mq.sh status <pr> [owner/repo]   one line: MERGED / QUEUED / AUTO / OPEN / CLOSED, with the facts behind it
 #   mq.sh queue  [owner/repo]        the queue on main, in order
-#   mq.sh watch  <pr> [owner/repo]   poll every 60 s until the PR is MERGED, CLOSED, or leaves the queue unmerged
+#   mq.sh watch  <pr> [owner/repo]   poll every 60 s until the PR is MERGED or CLOSED (exit 0), leaves the queue unmerged
+#                                    (exit 1), or five polls in a row fail (exit 3: state unknown)
 #
 # Why a script: `gh pr view --json` has NO field for queue membership (mergeStateStatus CLEAN and
 # autoMergeRequest null both describe a PR that is sitting in the queue), so a PR in the queue reads
@@ -51,8 +52,21 @@ case "$cmd" in
       | if length == 0 then "queue empty" else .[] | "\(.position) #\(.pullRequest.number) \(.state) \(.enqueuedAt) \(.pullRequest.title)" end' ;;
   watch)
     seen_queue=0
+    failed=0
     while :; do
-      line=$(status "$pr")
+      # One failed poll (a network blip, a rate limit, a 5xx) is not an answer: say it and poll again. Five in a row
+      # end the watch with exit 3, never 1, which means the PR left the queue.
+      if ! line=$(status "$pr" 2>&1); then
+        failed=$((failed + 1))
+        echo "$(date -u +%H:%M:%SZ) poll failed ($failed in a row): $line" >&2
+        if [ "$failed" -ge 5 ]; then
+          echo "gave up: $failed polls in a row failed; the PR's state is unknown" >&2
+          exit 3
+        fi
+        sleep 60
+        continue
+      fi
+      failed=0
       echo "$(date -u +%H:%M:%SZ) $line"
       case "$line" in
         MERGED*|CLOSED*) exit 0 ;;
