@@ -290,14 +290,14 @@ public sealed class MergeRefusalTests
     [Fact]
     public void AnUnclassifiedRefusalOfTheMergeVerbIsPersonsAndADoneOneIsNone()
     {
-        MergeRefusals.Of(new CommandResult { Ok = false, Error = "x" }).ShouldBe(Persons(MergeAction.None));
-        MergeRefusals.Of(new CommandResult { Ok = true }).ShouldBeNull();
+        MergeRefusals.Of(new CommandResult { Verb = "merge", Target = "flight/TIA1", Who = "node", Seq = 1, Ok = false, Error = "x" }).ShouldBe(Persons(MergeAction.None));
+        MergeRefusals.Of(new CommandResult { Verb = "merge", Target = "flight/TIA1", Who = "node", Seq = 1, Ok = true }).ShouldBeNull();
     }
 
     [Fact]
     public void TheRefusalIsNodeInternalAndNeverOnTheWire()
     {
-        var json = System.Text.Json.JsonSerializer.Serialize(new CommandResult { Ok = false, Error = "x", Refusal = MergeRefusals.NeedsApproval }, PilotJsonContext.Default.CommandResult);
+        var json = System.Text.Json.JsonSerializer.Serialize(new CommandResult { Verb = "merge", Target = "flight/TIA1", Who = "node", Seq = 1, Ok = false, Error = "x", Refusal = MergeRefusals.NeedsApproval }, PilotJsonContext.Default.CommandResult);
         json.ShouldNotContain("Refusal", Case.Insensitive);
     }
 }

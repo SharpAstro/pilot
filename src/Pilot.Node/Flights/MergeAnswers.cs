@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Pilot.Contracts;
 
 namespace Pilot.Node.Flights;
 
