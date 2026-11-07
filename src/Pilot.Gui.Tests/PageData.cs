@@ -64,6 +64,49 @@ internal sealed class PageData
         _ => throw new ArgumentException($"no state '{state}'", nameof(state)),
     };
 
+    /// <summary>The line of pairs a role range row draws, as a node sends it (<c>RoleRange.Line</c>).</summary>
+    internal static readonly string[] RangeLine = ["sonnet-low", "sonnet-medium", "sonnet-high", "sonnet-xhigh", "opus-low", "opus-medium", "opus-high", "opus-xhigh"];
+
+    /// <summary>
+    /// The Settings page <paramref name="state"/> is drawn from (#770), as the node builds it: a few ordinary settings and the four role ranges (the
+    /// watchtower's one built in, the worker's set on this node, the planner's with a fleet value and a node that differs, the reviewer's set by
+    /// the fleet). <b>long</b> lengthens the details and the folders, <b>many</b> adds ordinary rows enough to scroll, and <b>empty</b> sends no page
+    /// (null): the page as it is before the node answers.
+    /// </summary>
+    public static SettingsPage? SettingsFor(string state)
+    {
+        if (state == "empty")
+        {
+            return null;
+        }
+        var lengthen = state == "long";
+        var path = lengthen ? LongPath : @"C:\work\pilot";
+        string Detail(string what) => lengthen ? $"{what}. {LongReport}" : what;
+        SettingRow Range(string role, string value, string source, string? saved = null, string? fleet = null, params SettingDeviation[] deviations) => new()
+        {
+            Key = $"{role}-range", Label = $"{char.ToUpperInvariant(role[0])}{role[1..]} range", Detail = Detail($"The {role}'s range: the pair it starts on and its max, as sonnet-high..opus-medium over the line sonnet-low to opus-xhigh"),
+            Value = value, Saved = saved, Source = source, Choices = RangeLine, FleetValue = fleet, Deviations = deviations,
+        };
+        var settings = new List<SettingRow>
+        {
+            new() { Key = "lan", Label = "LAN", Detail = Detail("Whether other machines may reach this node"), Value = "off", Source = SettingSources.Default, Choices = ["on", "off"] },
+            new() { Key = "update-channel", Label = "Update channel", Detail = Detail("Which releases the node updates to"), Value = "stable", Saved = "stable", Source = SettingSources.File, Choices = ["stable", "beta"] },
+            new() { Key = "repo-roots", Label = "Repo roots", Detail = Detail("The folders the node looks for repos in, one a line"), Value = path, Saved = path, Source = SettingSources.File, Many = true },
+            Range("watchtower", "sonnet..sonnet-high", SettingSources.BuiltIn),
+            Range("worker", "sonnet..opus-xhigh", SettingSources.ThisNode, saved: "sonnet..opus-xhigh"),
+            Range("planner", "sonnet-high..opus-medium", SettingSources.ThisNode, "sonnet-high..opus-medium", "sonnet-medium..opus-xhigh", new SettingDeviation("LE1 · LAPTOP-2", "sonnet-low..opus-low")),
+            Range("reviewer", "opus-medium..opus-xhigh", SettingSources.Fleet, fleet: "opus-medium..opus-xhigh"),
+        };
+        if (state == "many")
+        {
+            settings.AddRange(Enumerable.Range(0, 24).Select(i => new SettingRow
+            {
+                Key = $"option-{i}", Label = $"Option {i}", Detail = $"A setting with a detail of some length, number {i}", Value = i % 2 == 0 ? "on" : "off", Source = SettingSources.Default, Choices = ["on", "off"],
+            }));
+        }
+        return new SettingsPage { File = lengthen ? LongPath + @"\settings.json" : @"C:\Users\ada\AppData\Local\pilot2\settings.json", Settings = [.. settings] };
+    }
+
     /// <summary>
     /// A handful of every row, fixed at <see cref="Now"/>, as the pages show them at <paramref name="at"/>: the same rows a second
     /// or a minute on, for a test of what turns over with the clock alone.
