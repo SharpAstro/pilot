@@ -373,7 +373,7 @@ public sealed partial class LegCommander(
         // A merge refused as not mergeable (conflicting, or behind its base) is never left as a Merge button that refuses again: the
         // entry stays in the queue while the node brings the plane up to date, by plain git (the base merged in, a plain push). A
         // clean merge alone keeps the passed review at the new head, and the merge goes on at it; any other change is reviewed afresh,
-        // and the entry waits for that review to pass. A merge that conflicts leaves the queue, and the watchtower resolves it in the plane
+        // and the entry waits for that review to pass. A merge that conflicts leaves the queue, and a worker resolves it in the plane
         // (SE1, 2026-10-24: a Merge pressed over and over on #195 and #197, each refusal seen nowhere but a log).
         if (error is not null && (command.Verb == Verbs.Merge && Conflicts(error) || command.Verb is Verbs.Merge or Verbs.RerunChecks && Behind(error)))
         {
