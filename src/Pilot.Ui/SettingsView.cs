@@ -595,20 +595,54 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         var state = setting.Source == SettingSources.CommandLine ? "from the node's command line, which wins"
             : setting.Pending ? $"saved as {(setting.Saved ?? "the default")}: applies at the next start"
             : setting.Source == SettingSources.File ? "saved" : "default";
-        var row = Layout.Builder.HStack(
-                Layout.Builder.Spacer().Bg(setting.Pending ? Todo : Faint).WFixed(StripeWidth).HStar(),
-                Layout.Builder.VStack(
-                        Layout.Builder.Text(setting.Label, 14f, Bright).RowH(22f),
-                        Layout.Builder.Text(state, 11f, setting.Pending ? Todo : Dim).RowH(18f))
-                    .WFixed(TitleWidth),
-                Layout.Builder.VStack(
-                        setting.Many ? Editor(setting).HAuto() : Editor(setting).RowH(26f),
-                        Layout.Builder.Text(setting.Detail, 11f, Dim).WithTooltip(setting.Detail).RowH(18f))
-                    .WStar())
-            .WithGap(14f).Pad(8f, 6f);
-        // Repo roots grow a line per folder: their row takes the height its lines ask for.
-        row = setting.Many ? row.HAuto() : row.RowH(RowHeight);
+        // Beside its title when the editor's line fits the room left of it; else under the title with the row's whole width, where
+        // what still does not fit flows onto lines of its own (#770), so no pill or chip is cut by the page's edge.
+        var measure = TextWidth();
+        var need = EditorNeed(setting, measure);
+        var room = PageWidth ?? WideRoom;
+        var stacked = room - SlackAround - 14f - TitleWidth < need;
+        var width = Math.Max(0f, room - SlackAround - (stacked ? 0f : 14f + TitleWidth));
+        var stripe = Layout.Builder.Spacer().Bg(setting.Pending ? Todo : Faint).WFixed(StripeWidth).HStar();
+        var title = Layout.Builder.VStack(
+            Layout.Builder.Text(setting.Label, 14f, Bright).RowH(22f),
+            Layout.Builder.Text(state, 11f, setting.Pending ? Todo : Dim).RowH(18f));
+        var body = Layout.Builder.VStack(
+            Editor(setting, width, need, measure),
+            Layout.Builder.Text(setting.Detail, 11f, Dim).WithTooltip(setting.Detail).RowH(18f));
+        Layout.Node row;
+        if (stacked)
+        {
+            // WStar: as the range row's, the row is Auto wide by default and an Auto stack counts its Star body as nothing.
+            row = Layout.Builder.HStack(stripe, Layout.Builder.VStack(title.WStar().HAuto(), body.WithGap(4f).WStar().HAuto()).WithGap(4f).WStar().HAuto())
+                .WithGap(14f).Pad(8f, 6f).WStar().HAuto();
+        }
+        else
+        {
+            row = Layout.Builder.HStack(stripe, title.WFixed(TitleWidth), body.WStar()).WithGap(14f).Pad(8f, 6f);
+            // Repo roots grow a line per folder: their row takes the height its lines ask for.
+            row = setting.Many ? row.HAuto() : row.RowH(RowHeight);
+        }
         return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
+    }
+
+    // What a setting's editor asks for on one line, in design units: its pills (and the reset after them) or its field. A list is a chip a line,
+    // each cut to the room it has, so it asks for what a chip can read in.
+    private const float EditorGap = 6f;
+    private const float PillPad = 10f;
+    private const float FieldWidth = 220f;
+    private const float ListNeed = 240f;
+
+    private static float EditorNeed(SettingRow setting, Func<string, float, float> measure)
+    {
+        if (setting.Many)
+        {
+            return ListNeed;
+        }
+        float PillOf(string label) => measure(label, 12f) + 2 * PillPad;
+        var width = setting.Choices.Length > 0
+            ? setting.Choices.Sum(c => PillOf(c == "none" ? "default" : c)) + (setting.Choices.Length - 1) * EditorGap
+            : FieldWidth;
+        return setting.Saved is not null && setting.Source != SettingSources.CommandLine ? width + EditorGap + PillOf("reset") : width;
     }
 
     // A role's range (#599): its key ends in -range and its choices are the line of pairs, in order.
@@ -750,13 +784,13 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         {
             pairLines.Add(CaptionLine(captions.Where(c => c.Line == line).Select(c => (c.Text, c.From, c.To)), n, lineWidth, Body, Bright, handle));
         }
-        var scope = Layout.Builder.HStack(
-                Pill("this node", $"settings:{key}:scope:node", () => SetScope(key, false), chosen: !fleet),
-                Pill("fleet", $"settings:{key}:scope:fleet", () => SetScope(key, true), chosen: fleet),
-                Pill("default handle", $"settings:{key}:handle:default", () => SetHandle(key, "default"), chosen: handle == "default"),
-                Pill("max handle", $"settings:{key}:handle:max", () => SetHandle(key, "max"), chosen: handle == "max"),
-                Layout.Builder.Spacer().WStar())
-            .WithGap(6f).HFixed(ControlH);
+        // The four pills flow onto a second line where the row is too narrow for them on one: Auto wide pills in a stack ran past the page's edge (#770).
+        var scope = Layout.Builder.WrapH(
+                Pill("this node", $"settings:{key}:scope:node", () => SetScope(key, false), chosen: !fleet).HFixed(ControlH),
+                Pill("fleet", $"settings:{key}:scope:fleet", () => SetScope(key, true), chosen: fleet).HFixed(ControlH),
+                Pill("default handle", $"settings:{key}:handle:default", () => SetHandle(key, "default"), chosen: handle == "default").HFixed(ControlH),
+                Pill("max handle", $"settings:{key}:handle:max", () => SetHandle(key, "max"), chosen: handle == "max").HFixed(ControlH))
+            .WithGap(6f).WithLineGap(4f).WStar().HAuto();
         var lines = new List<Layout.Node>(pairLines)
         {
             Layout.Builder.Text($"{(fleet ? "setting the fleet's range" : "setting this node's range")}: a press moves {(handle.Length > 0 ? "the " + handle + " handle" : "the nearer handle")}", 11f, Dim).RowH(16f),
@@ -823,8 +857,13 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     }
 
     // How a setting is changed: a pill per choice, a field (Enter saves), or for repo roots each folder with an x and a field to add one.
-    private Layout.Node Editor(SettingRow setting)
+    // It has `width` design units: on one line where its `need` fits, else its pills flow onto lines of their own (#770).
+    private Layout.Node Editor(SettingRow setting, float width, float need, Func<string, float, float> measure)
     {
+        if (setting.Many)
+        {
+            return ListEditor(setting, width, measure).HAuto();
+        }
         var parts = new List<Layout.Node>();
         if (setting.Choices.Length > 0)
         {
@@ -837,13 +876,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
                 parts.Add(NodePill(label, action, () => Act(Verbs.Set, [setting.Key, choice], $"setting {setting.Label} to {label}…", action), chosen, working: SettingWord, doneMark: false));
             }
         }
-        else if (setting.Many)
-        {
-            return ListEditor(setting);
-        }
         else
         {
-            parts.Add(Field(setting, setting.Value, text => [setting.Key, text]).WFixed(220f));
+            parts.Add(Field(setting, setting.Value, text => [setting.Key, text]).WFixed(Math.Min(FieldWidth, width)));
         }
         if (setting.Saved is not null && setting.Source != SettingSources.CommandLine)
         {
@@ -851,8 +886,12 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             // "reset" takes the saved value out (back to what the node does unset); no choice on the row reads the same.
             parts.Add(NodePill("reset", action, () => Act(Verbs.Set, [setting.Key, "default"], $"{setting.Label}: back to the default…", action)));
         }
-        parts.Add(Layout.Builder.Spacer().WStar());
-        return Layout.Builder.HStack([.. parts]).WithGap(6f);
+        if (need <= width)
+        {
+            parts.Add(Layout.Builder.Spacer().WStar());
+            return Layout.Builder.HStack([.. parts]).WithGap(EditorGap).RowH(ControlH);
+        }
+        return Layout.Builder.WrapH([.. parts.Select(p => p.HFixed(ControlH))]).WithGap(EditorGap).WithLineGap(4f).WStar().HAuto();
     }
 
     // The lists of repos (named by folder) offer the node's repos to choose from; repo roots hold folders, which are not repos.
@@ -869,7 +908,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// A list setting: each entry as a chip with a × (the list without it is what is sent), then for a list of repos a choice of
     /// the node's repos by name with an Add (and for repo-trackers the tracker), and a free entry for a folder outside them.
     /// </summary>
-    private Layout.Node ListEditor(SettingRow setting)
+    private Layout.Node ListEditor(SettingRow setting, float width, Func<string, float, float> measure)
     {
         var key = setting.Key;
         var entries = Roots(setting);
@@ -888,7 +927,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         }
         foreach (var entry in entries)
         {
-            stack.Add(Layout.Builder.HStack(Chip(setting, entry, entries), Layout.Builder.Spacer().WStar()).RowH(ControlH));
+            stack.Add(Layout.Builder.HStack(Chip(setting, entry, entries, width, measure), Layout.Builder.Spacer().WStar()).RowH(ControlH));
         }
         var controls = new List<Layout.Node>();
         var offering = IsRepoList(key) && LoadRepos is not null;
@@ -918,7 +957,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             {
                 stack.Add(Layout.Builder.HStack(Offered(key, repos, entries, pick), Layout.Builder.Spacer().WStar()).HAuto());
             }
-            stack.Add(Layout.Builder.HStack(field.WFixed(280f), Layout.Builder.Spacer().WStar()).RowH(ControlH));
+            stack.Add(Layout.Builder.HStack(field.WFixed(Math.Min(280f, width)), Layout.Builder.Spacer().WStar()).RowH(ControlH));
         }
         else
         {
@@ -929,12 +968,14 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     private static bool HasTracker(string text) => text.EndsWith("=github", StringComparison.OrdinalIgnoreCase) || text.EndsWith("=shortcut", StringComparison.OrdinalIgnoreCase);
 
-    // An entry as a chip: its text (a long one elided in the middle, the whole on hover) and the × that sends the list without it.
-    private Layout.Node Chip(SettingRow setting, string entry, string[] entries)
+    // An entry as a chip: its text (a long one elided in the middle to the room the chip has, the whole on hover) and the × that sends the list without it.
+    private Layout.Node Chip(SettingRow setting, string entry, string[] entries, float width, Func<string, float, float> measure)
     {
         var action = $"settings:{setting.Key}:remove:{entry}";
+        // The room the text has: the chip's width less its padding (2 x 8), the × pill and a margin for a measure's rounding.
+        var budget = width - 2 * 8f - (measure("×", 12f) + 2 * PillPad) - TextMargin;
         return Layout.Builder.HStack(
-                Layout.Builder.Text(Elide(entry), 12f, Body, TextAlign.Center).WithTooltip(entry).Pad(8f, 4f).WAuto(),
+                Layout.Builder.Text(ElideToFit(entry, budget, measure), 12f, Body, TextAlign.Center).WithTooltip(entry).Pad(8f, 4f).WAuto(),
                 // The × stays a typeset rune for want of a close glyph: SharpAstro/DIR.Lib#151.
                 NodePill("×", action, () => Act(Verbs.Set, [setting.Key, .. entries.Where(e => e != entry).DefaultIfEmpty("default")], $"{setting.Label}: removing {entry}…", action)))
             .WithGap(0f).Bg(FieldBg).WAuto().HFixed(ControlH);
@@ -993,8 +1034,23 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         System.Collections.Immutable.ImmutableInterlocked.Update(ref _choice, c => c with { Picked = c.Picked.Remove(key) });
 
     // Long text elided in the middle (a path's ends say the most); where it is shown the whole of it is on hover.
-    private static string Elide(string text) =>
-        text.Length <= ChipChars ? text : $"{text[..(ChipChars / 3)]}…{text[^(ChipChars - ChipChars / 3 - 1)..]}";
+    private static string Elide(string text, int chars = ChipChars) =>
+        text.Length <= chars ? text : $"{text[..(chars / 3)]}…{text[^(chars - chars / 3 - 1)..]}";
+
+    // The most a chip's text is cut to (a path's drive and last folders, still), however narrow the room.
+    private const int LeastChars = 9;
+
+    // The text elided as little as the room (design units, at 12 units) allows, never past LeastChars and never longer than ChipChars.
+    private static string ElideToFit(string text, float room, Func<string, float, float> measure)
+    {
+        var chars = Math.Min(text.Length, ChipChars);
+        var fit = Elide(text, chars);
+        while (chars > LeastChars && measure(fit, 12f) > room)
+        {
+            fit = Elide(text, --chars);
+        }
+        return fit;
+    }
 
     // A control that cannot be pressed now, in the shape of a pill.
     private static Layout.Node Idle(string label, string why, RGBAColor32 background) =>
