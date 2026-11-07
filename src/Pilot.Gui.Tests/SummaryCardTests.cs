@@ -494,4 +494,49 @@ public sealed class SummaryCardTests
         empty.Draw();
         File.WriteAllBytes(Path.Combine(dir, "summary-home-empty-1280.png"), PngWriter.Encode(empty.Renderer.Surface.Pixels, 1280, 600));
     }
+
+    // The summary of SE1 on 2026-11-06 as Haiku wrote it (pilot#797): a landed flight asked of the person, each line restating its card's
+    // internal words, and Where it is as one long chain of codes and states.
+    private const string BeforeRules = "## Needs you\n"
+        + "- c3651, ringing: TIA2000's review-notes-2 worker is idle at 0 of 6 steps. Start a fresh worker on review-notes-2. TIA2000 is not one of the eight flights.\n"
+        + "- c3702, ringing: PIL784's worker se1-pil784-job-tests was nudging se1-pilot-node-test-failures (Opus, high) and has 6 of 7 steps ticked; stale bound 45m passed, redo 1, go-around 2.\n"
+        + "- c3710: PIL797 summary-model is flying on Sonnet at medium, 3 of 5 steps ticked.\n\n"
+        + "## Where it is\n"
+        + "PIL784 (flying, leg job-tests, go-around 2, worker se1-pil784-job-tests idle, 6 of 7 ticked), PIL797 (flying, leg summary-plain, redo 0, Sonnet medium, 2 of 7 ticked, worker se1-pil797-summary-plain active), TIA2000 (landed, PR #512 merged), TIA2013 (held, waiting for TIA2000, stale bound 2h), PIL742 (review-notes-2 done, go-around 1, merged), DIR2 (planning, planner Opus high, 0 of 0 steps).";
+
+    // What the new prompt asks for, over the same records: one plain sentence per thing that needs the person, nothing about the landed flight,
+    // and Where it is as a short list, most important first.
+    private const string AfterRules = "## Needs you\n"
+        + "- PIL784's worker has been quiet for 45 minutes with one step left: remind it to finish, or redo the leg.\n"
+        + "- PIL797's PR #801 is ready: merge it once you have read its review.\n\n"
+        + "## Where it is\n"
+        + "- PIL784: its last leg is nearly done.\n"
+        + "- PIL797: the third of five legs is being worked on.\n"
+        + "- TIA2013: waiting for another flight to merge first.\n"
+        + "- DIR2: still being planned.";
+
+    [Fact]
+    public void CapturesOfTheSummaryPanelAt420BeforeAndAfterThePlainWordsRules()
+    {
+        // Where the captures go (docs/captures, for the PR) when a person asks for them; PILOT_SUMMARY_CAPTURE_TAG limits them to "before" or "after".
+        if (Environment.GetEnvironmentVariable("PILOT_SUMMARY_CAPTURES") is not { Length: > 0 } folder)
+        {
+            return;
+        }
+        Directory.CreateDirectory(folder);
+        var only = Environment.GetEnvironmentVariable("PILOT_SUMMARY_CAPTURE_TAG");
+        foreach (var (tag, text) in new[] { ("before", BeforeRules), ("after", AfterRules) })
+        {
+            if (only is { Length: > 0 } && only != tag)
+            {
+                continue;
+            }
+            const int width = 420;
+            const int height = 900;
+            using var window = new Window(width, height);
+            window.Chrome.Summaries.Shelf = Shelf([Here], (Here, Row(SummaryRow.FleetScope, text)));
+            window.Draw();
+            File.WriteAllBytes(Path.Combine(folder, $"summary-plain-{tag}-{width}.png"), PngWriter.Encode(window.Renderer.Surface.Pixels, width, height));
+        }
+    }
 }
