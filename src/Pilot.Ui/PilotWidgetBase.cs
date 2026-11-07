@@ -16,7 +16,7 @@ internal abstract class PilotWidgetBase<TSurface>(Renderer<TSurface> renderer) :
     protected new ImmutableArray<Layout.ArrangedNode<float>> RenderLayout(Layout.Node root, RectF32 bounds, string? fontPath = null,
         DesignScale? scale = null, Action<Layout.Content.Fill, RectF32>? drawFill = null)
     {
-        // The selection's Fill leaf (WithSelection) is painted for every page the same way, after the text it covers.
+        // The selection's Fill leaf (WithPageSelection) is painted for every page the same way, after the text it covers.
         var arranged = base.RenderLayout(root, bounds, fontPath, scale, (fill, rect) =>
         {
             drawFill?.Invoke(fill, rect);
@@ -66,13 +66,16 @@ internal abstract class PilotWidgetBase<TSurface>(Renderer<TSurface> renderer) :
             : page;
 
     // The text selected on the page (its host has a clipboard to copy it to), made on first use: it measures through the renderer.
+    // PageSelection, PageSelectionKey, PageSelectionViewport and WithPageSelection are pilot's own selection, named apart from
+    // DIR.Lib 11.51's PixelWidgetBase selection (Selection, WithSelection, SelectionViewport), which pilot does not opt into:
+    // never call the base's WithSelection, or its InputRouter would also drive a selection. Adopting DIR.Lib's is a follow-up.
     private TextSelection<TSurface>? _selection;
 
     /// <summary>The selection over the page's text; a view has one, as it has one link menu.</summary>
-    internal TextSelection<TSurface> Selection => _selection ??= new TextSelection<TSurface>(Renderer);
+    internal TextSelection<TSurface> PageSelection => _selection ??= new TextSelection<TSurface>(Renderer);
 
     /// <summary>The Fill leaf laid over a page: painted after its text and before the menus over it, it is where the selection is drawn.</summary>
-    private const string SelectionKey = "text-selection";
+    private const string PageSelectionKey = "text-selection";
 
     /// <summary>Puts selected text on the clipboard: the view's own CopyText. Null where the host has no clipboard, and the page then selects nothing.</summary>
     internal virtual Action<string>? SelectionCopy => null;
@@ -81,7 +84,7 @@ internal abstract class PilotWidgetBase<TSurface>(Renderer<TSurface> renderer) :
     internal virtual LinkMenu? SelectionLinks => null;
 
     /// <summary>The rect the page's scrolled part shows through (empty when nothing scrolls), so a selection is cut at its edge.</summary>
-    internal virtual RectF32 SelectionViewport => default;
+    internal virtual RectF32 PageSelectionViewport => default;
 
     /// <summary>Whether the page has text to select now (a flight's page only while it is open).</summary>
     internal virtual bool SelectionOn => SelectionCopy is not null;
@@ -93,7 +96,7 @@ internal abstract class PilotWidgetBase<TSurface>(Renderer<TSurface> renderer) :
     internal void ClearSelection() => _selection?.Clear();
 
     /// <summary><paramref name="page"/> with the selection's Fill leaf laid over it, where the host has a clipboard to copy to; place it after the page's text and before the menus over it.</summary>
-    protected Layout.Node WithSelection(Layout.Node page)
+    protected Layout.Node WithPageSelection(Layout.Node page)
     {
         if (!SelectionOn)
         {
@@ -101,20 +104,20 @@ internal abstract class PilotWidgetBase<TSurface>(Renderer<TSurface> renderer) :
         }
         if (SelectionLinks is { } links)
         {
-            links.SelectedText ??= () => Selection.Text;
+            links.SelectedText ??= () => PageSelection.Text;
         }
-        return Layout.Builder.Overlay(page, Layout.Builder.Fill(key: SelectionKey).Stretch());
+        return Layout.Builder.Overlay(page, Layout.Builder.Fill(key: PageSelectionKey).Stretch());
     }
 
     private void DrawSelection(Layout.Content.Fill fill)
     {
-        if (fill.Key != SelectionKey)
+        if (fill.Key != PageSelectionKey)
         {
             return;
         }
-        Selection.Frame(SelectableTextRegions, SelectionViewport);
+        PageSelection.Frame(SelectableTextRegions, PageSelectionViewport);
         var palette = Palette.Current;
-        Selection.Paint(
+        PageSelection.Paint(
             (text, region, x, y, width, height, color) => DrawText(text, region.FontPath, x, y, width, height, region.FontSize, color, TextAlign.Near, region.VerticalAlign),
             palette.SelectionBg, palette.SelectionText);
     }
@@ -133,10 +136,10 @@ internal abstract class PilotWidgetBase<TSurface>(Renderer<TSurface> renderer) :
         var links = SelectionLinks;
         switch (evt)
         {
-            case InputEvent.KeyDown { Key: InputKey.C, Modifiers: InputModifier.Ctrl } when Selection.Text is { } text:
+            case InputEvent.KeyDown { Key: InputKey.C, Modifiers: InputModifier.Ctrl } when PageSelection.Text is { } text:
                 if (links is not null)
                 {
-                    links.Copy(text, Selection.Pointer.X, Selection.Pointer.Y);
+                    links.Copy(text, PageSelection.Pointer.X, PageSelection.Pointer.Y);
                 }
                 else
                 {
@@ -145,7 +148,7 @@ internal abstract class PilotWidgetBase<TSurface>(Renderer<TSurface> renderer) :
                 return true;
             case InputEvent.MouseDown { Button: MouseButton.Right } right:
                 // A link keeps its own menu (Copy URL, and Copy beside it); the selection's is for the text itself.
-                if (links is null || !Selection.Contains(right.X, right.Y) || Under(right.X, right.Y, r => r is { OnContextMenu: not null }))
+                if (links is null || !PageSelection.Contains(right.X, right.Y) || Under(right.X, right.Y, r => r is { OnContextMenu: not null }))
                 {
                     return false;
                 }
@@ -153,7 +156,7 @@ internal abstract class PilotWidgetBase<TSurface>(Renderer<TSurface> renderer) :
                 return true;
             default:
                 // Property patterns throughout: a region that is not plain chrome, or has anything to do with a press, is not ours.
-                return Selection.HandleInput(evt, (x, y) => !Under(x, y, r => r is not { Result: HitResult.ChromeHit }
+                return PageSelection.HandleInput(evt, (x, y) => !Under(x, y, r => r is not { Result: HitResult.ChromeHit }
                     || r is { OnPress: not null } or { OnActivate: not null } or { OnDoubleClick: not null } or { Opens: not null }
                     or { Dismisses: not null } or { FocusOnOpen: true }));
         }
