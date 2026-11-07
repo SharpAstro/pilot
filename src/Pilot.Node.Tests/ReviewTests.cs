@@ -679,8 +679,8 @@ public sealed class ReviewTests1 : ReviewTestsBase
 
         await checks.LookAsync(Ct);
 
-        // Handed to the watchtower for the conflict, not sent back as changes, and the label says the conflict.
-        F("TIA32").Review!.State.ShouldBe(ReviewState.Passed);
+        // Put to a worker for the conflict (the last leg goes round, which turns the passed review to changes as for any go-around), and the label says the conflict.
+        F("TIA32").Review!.State.ShouldBe(ReviewState.Changes);
         PilotLabels(_github.Labels[number]).ShouldBe(["pilot: conflicts"]);
 
         // GitHub working it out again after a push does not lift it; its saying MERGEABLE does.

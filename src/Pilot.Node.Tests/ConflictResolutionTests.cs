@@ -58,6 +58,7 @@ public sealed class ConflictResolutionTests : ReviewTestsBase
         leg.GoAroundReasons.Single().By.ShouldBe(LegWatch.Who);
         _workers.Started.Count.ShouldBe(startedBefore + 1);
         var brief = _workers.Started.Last().Brief;
+        File.WriteAllText(@"C:\Users\SebastianGodelet\.claude\jobs\9ee28370\tmp\brief.txt", brief);
         brief.ShouldContain("the PR conflicts with its base");
         brief.ShouldContain("conflicts in 1 file");
         brief.ShouldContain("- README.md: this branch added 1 and removed 0 lines; the base added 1 and removed 1 lines");
