@@ -138,8 +138,12 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     {
         Palette.Use(Night);
         BeginFrame();
+        PageWidth = Scale.ToDesignX(bounds.Width);
         RenderLayout(Tree(now), bounds);
     }
+
+    /// <summary>The room's width in design units as the last <see cref="Render"/> had it; null before the first, and in a terminal. A range row lays its captions out against it (#770).</summary>
+    internal float? PageWidth { get; set; }
 
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
     internal Layout.Node Tree(DateTimeOffset now)
@@ -656,14 +660,6 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         return next.Item1 > next.Item2 || next == now ? null : next;
     }
 
-    private static string ShortPair(string pair)
-    {
-        var cut = pair.IndexOf('-');
-        var model = cut < 0 ? pair : pair[..cut];
-        var effort = cut < 0 ? "" : pair[(cut + 1)..];
-        return $"{(model.Length > 0 ? char.ToUpperInvariant(model[0]) : '?')} {(effort == "medium" ? "med" : effort)}".TrimEnd();
-    }
-
     private static string SourceWords(SettingRow setting) => setting.Source switch
     {
         SettingSources.Fleet => "set for the fleet",
@@ -673,15 +669,42 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         _ => setting.Source,
     };
 
+    // What the room around a range row's line of pairs takes, in design units: the page's gutters (2 x 16), the row's padding (2 x 8), the
+    // stripe (4), a gap (14) and a scroll bar's slack, so the width worked out is never more than the line gets.
+    private const float SlackAround = 2 * Gutter + 16f + StripeWidth + 14f + 16f;
+    private const float WideRoom = 900f;
+    private const float PairGap = 2f;
+    private const float TextMargin = 6f;
+
+    // A text's width in design units: measured with the font the page draws with, or a guess where there is none (a terminal, before a first render).
+    private Func<string, float, float> TextWidth()
+    {
+        if (PageWidth is null || string.IsNullOrEmpty(FontPath))
+        {
+            return (text, size) => text.Length * size * 0.6f;
+        }
+        var context = MeasureContext();
+        var scale = Scale.X <= 0f ? 1f : Scale.X;
+        return (text, size) => context.MeasureText(text, size).Width / scale;
+    }
+
     private Layout.Node RangeRowNode(SettingRow setting, int index)
     {
         var key = setting.Key;
         var handle = _handle.GetValueOrDefault(key, "");
         var fleet = _fleetScope.GetValueOrDefault(key);
         var (def, max) = HandlesOf(setting, fleet);
+        var n = setting.Choices.Length;
+        var measure = TextWidth();
+        // Beside its title when the line has room for a cell a pair can read in; else under the title, with the row's whole width.
+        var room = PageWidth ?? WideRoom;
+        var beside = room - SlackAround - 14f - TitleWidth;
+        var stacked = beside < n * 30f;
+        var lineWidth = Math.Max(n * 12f, stacked ? room - SlackAround : beside);
+        var cellWidth = RangeCaptions.Column(n, lineWidth, PairGap);
+        var form = RangeCaptions.LabelForm(setting.Choices, cellWidth - 2 * 2f, TextMargin, text => measure(text, 11f));
         var cells = new List<Layout.Node>();
-        var marks = new List<Layout.Node>();
-        for (var i = 0; i < setting.Choices.Length; i++)
+        for (var i = 0; i < n; i++)
         {
             var pair = setting.Choices[i];
             var at = i;
@@ -689,15 +712,31 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             var inside = i > def && i < max;
             var allowed = PressedRange(setting, EditedText(setting, fleet), i, handle) is not null;
             var action = $"settings:{key}:pair:{pair}";
-            var cell = Layout.Builder.Text(ShortPair(pair), 11f, end ? Bright : allowed || inside ? Body : Faint, TextAlign.Center).Pad(2f, 4f).WStar().HFixed(ControlH)
+            var cell = Layout.Builder.Text(RangeCaptions.Label(pair, form), 11f, end ? Bright : allowed || inside ? Body : Faint, TextAlign.Center).Pad(2f, 4f).WStar().HFixed(ControlH)
                 .Bg(end ? Chosen : inside ? FieldBg : Button).WithTooltip(pair);
             if (allowed)
             {
                 cell = cell.BgHover(end ? Chosen : ButtonHover).Follows(new HitResult.ButtonHit(action), _ => PickPair(setting, at));
             }
             cells.Add(cell);
-            var label = i == def && i == max ? "default · max" : i == def ? "default" : i == max ? "max" : "";
-            marks.Add(Layout.Builder.Text(label, 10f, handle.Length > 0 && label.StartsWith(handle, StringComparison.Ordinal) ? Bright : Body, TextAlign.Center).WStar().HFixed(14f));
+        }
+        var pairLines = new List<Layout.Node>();
+        if (form > 0)
+        {
+            // The effort alone says nothing of the model: it shows once over its run of pairs, in full when the run is wide enough.
+            var models = RangeCaptions.Groups(setting.Choices).Select(g =>
+            {
+                var span = (g.To - g.From + 1) * cellWidth + (g.To - g.From) * PairGap;
+                var name = measure(g.Model, 10f) + TextMargin <= span ? g.Model : g.Model.Length > 0 ? char.ToUpperInvariant(g.Model[0]).ToString() : "?";
+                return (name, g.From, g.To);
+            });
+            pairLines.Add(CaptionLine(models, n, lineWidth, Dim, null, ""));
+        }
+        pairLines.Add(Layout.Builder.HStack([.. cells]).WithGap(PairGap).HFixed(ControlH));
+        var captions = RangeCaptions.Place(n, def, max, lineWidth, PairGap, TextMargin, text => measure(text, 10f));
+        foreach (var line in captions.Select(c => c.Line).Distinct().Order())
+        {
+            pairLines.Add(CaptionLine(captions.Where(c => c.Line == line).Select(c => (c.Text, c.From, c.To)), n, lineWidth, Body, Bright, handle));
         }
         var scope = Layout.Builder.HStack(
                 Pill("this node", $"settings:{key}:scope:node", () => SetScope(key, false), chosen: !fleet),
@@ -706,10 +745,8 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
                 Pill("max handle", $"settings:{key}:handle:max", () => SetHandle(key, "max"), chosen: handle == "max"),
                 Layout.Builder.Spacer().WStar())
             .WithGap(6f).HFixed(ControlH);
-        var lines = new List<Layout.Node>
+        var lines = new List<Layout.Node>(pairLines)
         {
-            Layout.Builder.HStack([.. cells]).WithGap(2f).HFixed(ControlH),
-            Layout.Builder.HStack([.. marks]).WithGap(2f).HFixed(14f),
             Layout.Builder.Text($"{(fleet ? "setting the fleet's range" : "setting this node's range")}: a press moves {(handle.Length > 0 ? "the " + handle + " handle" : "the nearer handle")}", 11f, Dim).RowH(16f),
             scope,
         };
@@ -727,15 +764,25 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             lines.Add(WrappedProse.Paragraphs(text, 11f, Todo, 40));
         }
         lines.Add(Layout.Builder.Text(setting.Detail, 11f, Dim).WithTooltip(setting.Detail).RowH(18f));
-        var row = Layout.Builder.HStack(
-                Layout.Builder.Spacer().Bg(setting.Deviations.Length > 0 ? Todo : Faint).WFixed(StripeWidth).HStar(),
-                Layout.Builder.VStack(
-                        Layout.Builder.Text(setting.Label, 14f, Bright).RowH(22f),
-                        Layout.Builder.Text(SourceWords(setting), 11f, Dim).RowH(18f))
-                    .WFixed(TitleWidth),
-                Layout.Builder.VStack([.. lines]).WithGap(4f).WStar().HAuto())
+        var title = Layout.Builder.VStack(
+            Layout.Builder.Text(setting.Label, 14f, Bright).RowH(22f),
+            Layout.Builder.Text(SourceWords(setting), 11f, Dim).RowH(18f));
+        var body = Layout.Builder.VStack([.. lines]).WithGap(4f);
+        var stripe = Layout.Builder.Spacer().Bg(setting.Deviations.Length > 0 ? Todo : Faint).WFixed(StripeWidth).HStar();
+        var row = (stacked
+                ? Layout.Builder.HStack(stripe, Layout.Builder.VStack(title.WStar().HAuto(), body.WStar().HAuto()).WithGap(4f).WStar().HAuto())
+                : Layout.Builder.HStack(stripe, title.WFixed(TitleWidth), body.WStar().HAuto()))
             .WithGap(14f).Pad(8f, 6f).HAuto();
         return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
+    }
+
+    // One line of captions under (or, for the models, over) the line of pairs: runs over their columns, spacers between, each run as wide as its columns.
+    private static Layout.Node CaptionLine(IEnumerable<(string Text, int From, int To)> runs, int columns, float width, RGBAColor32 colour, RGBAColor32? chosen, string handle)
+    {
+        var parts = RangeCaptions.Segments(runs, columns, width, PairGap).Select(s => s.Text is { } text
+            ? Layout.Builder.Text(text, 10f, chosen is { } bright && handle.Length > 0 && text.StartsWith(handle, StringComparison.Ordinal) ? bright : colour, TextAlign.Center).WStar(s.Width).HFixed(14f)
+            : Layout.Builder.Spacer().WStar(s.Width).HFixed(14f));
+        return Layout.Builder.HStack([.. parts]).HFixed(14f);
     }
 
     private void SetScope(string key, bool fleet)

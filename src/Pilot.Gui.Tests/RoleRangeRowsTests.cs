@@ -69,18 +69,130 @@ public sealed class RoleRangeRowsTests
             using var renderer = new RgbaImageRenderer((uint)width, 1500);
             var chrome = Chrome(renderer);
             await Loaded(chrome, Page(row));
+            chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, width, 1500));
 
             var (texts, faults) = Look(chrome.Settings.Tree(DateTimeOffset.UtcNow), renderer, width);
 
             texts.ShouldContain("set on this node");
             texts.ShouldContain("default");
             texts.ShouldContain("max");
-            texts.ShouldContain("S high");
-            texts.ShouldContain("O xhigh");
+            if (width > 1000)
+            {
+                texts.ShouldContain("S high");
+                texts.ShouldContain("O xhigh");
+            }
+            else
+            {
+                // Too narrow for 'S high': the effort alone, or its first letter, under the model it belongs to.
+                texts.ShouldContain(t => t is "high" or "h");
+                texts.ShouldContain(t => t is "xhigh" or "x");
+                texts.ShouldContain(t => t is "sonnet" or "S");
+            }
             texts.ShouldContain(t => t.Contains("the fleet's range is sonnet-medium..opus-xhigh"));
             texts.ShouldContain("differs");
             texts.ShouldContain("LAPTOP-2");
             faults.ShouldBeEmpty();
+        }
+    }
+
+    public static TheoryData<string, string, int, float> RangeRowCases()
+    {
+        var data = new TheoryData<string, string, int, float>();
+        foreach (var (name, value) in new[]
+        {
+            ("worker", "sonnet..opus-xhigh"), ("watchtower", "sonnet..sonnet-high"),
+            ("adjacent", "sonnet-high..sonnet-xhigh"), ("one stop", "opus-medium..opus-medium"),
+        })
+        {
+            foreach (var width in new[] { 500, 700, 900, 1300, 1900 })
+            {
+                foreach (var dpi in new[] { 1f, 1.5f, 2f })
+                {
+                    data.Add(name, value, width, dpi);
+                }
+            }
+        }
+        return data;
+    }
+
+    private static IEnumerable<Layout.Node> SelfAndDescendants(Layout.Node node) => Descendants(node).Prepend(node);
+
+    // A text run's horizontal extent as drawn: measured, then placed in its leaf by the run's own alignment and the leaf's padding.
+    private static (float Left, float Right) Extent(Layout.Node leaf, Layout.Content.Text text, Rect<float> bounds, float measured, float dpi)
+    {
+        var pad = leaf.Padding * dpi;
+        return text.HAlign switch
+        {
+            TextAlign.Center => (bounds.X + bounds.Width / 2f - measured / 2f, bounds.X + bounds.Width / 2f + measured / 2f),
+            TextAlign.Far => (bounds.X + bounds.Width - pad - measured, bounds.X + bounds.Width - pad),
+            _ => (bounds.X + pad, bounds.X + pad + measured),
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(RangeRowCases))]
+    public async Task NoTwoTextRunsOfARangeRowOverlapByTheirMeasuredWidthAndEveryTextFitsItsLeaf(string name, string value, int width, float dpi)
+    {
+        var row = Range(value, SettingSources.BuiltIn);
+        using var renderer = new RgbaImageRenderer((uint)width, 1500);
+        var chrome = Chrome(renderer);
+        chrome.DpiScale = dpi;
+        await Loaded(chrome, Page(row));
+        chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, width, 1500));
+        var room = chrome.Settings.PageWidth.ShouldNotBeNull();
+
+        var context = new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, dpi);
+        var arranged = Layout.Engine.Arrange(chrome.Settings.Tree(DateTimeOffset.UtcNow), new Rect<float>(0, 0, room * dpi, 6000), context);
+        var bounds = new Dictionary<Layout.Node, Rect<float>>(ReferenceEqualityComparer.Instance);
+        foreach (var a in arranged)
+        {
+            bounds[a.Node] = a.Bounds;
+        }
+
+        // The line of pairs and its captions: what sits in the lines column before the 'setting ...' help line.
+        var column = arranged.Select(a => a.Node).OfType<Layout.Node.Stack>()
+            .First(s => s.Axis == Layout.Axis.Vertical && s.Children.Any(c => TextOf(c)?.StartsWith("setting this node's range", StringComparison.Ordinal) == true));
+        var help = Array.FindIndex([.. column.Children], c => TextOf(c)?.StartsWith("setting this node's range", StringComparison.Ordinal) == true);
+        var runs = column.Children.Take(help).SelectMany(SelfAndDescendants)
+            .Select(n => (Node: n, Text: n is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.Trim().Length > 0 ? (Layout.Content.Text?)t : null))
+            .Where(r => r.Text is not null)
+            .Select(r =>
+            {
+                var b = bounds[r.Node];
+                var measured = context.MeasureText(r.Text!.Value, r.Text.FontSize).Width;
+                var (left, right) = Extent(r.Node, r.Text, b, measured, dpi);
+                return (r.Text.Value, b, measured, left, right);
+            })
+            .ToList();
+        var who = $"{name} {value} at {width} x{dpi} (room {room})";
+        runs.Count.ShouldBeGreaterThanOrEqualTo(9, who);
+
+        foreach (var (text, b, measured, _, _) in runs)
+        {
+            measured.ShouldBeLessThanOrEqualTo(b.Width + 0.5f, $"{who}: '{text.Trim()}' is {measured} wide in a leaf {b.Width} wide");
+        }
+        for (var i = 0; i < runs.Count; i++)
+        {
+            for (var j = i + 1; j < runs.Count; j++)
+            {
+                var (ta, ba, _, la, ra) = runs[i];
+                var (tb, bb, _, lb, rb) = runs[j];
+                var across = Math.Min(ra, rb) - Math.Max(la, lb);
+                var down = Math.Min(ba.Y + ba.Height, bb.Y + bb.Height) - Math.Max(ba.Y, bb.Y);
+                (across > 0.5f && down > 0.5f).ShouldBeFalse($"{who}: '{ta.Trim()}' [{la}..{ra}] meets '{tb.Trim()}' [{lb}..{rb}]");
+            }
+        }
+        var texts = runs.Select(r => r.Value.Trim()).ToList();
+        if (value.StartsWith("opus-medium..opus-medium", StringComparison.Ordinal))
+        {
+            texts.ShouldContain("default = max", who);
+            texts.ShouldNotContain("default", who);
+            texts.ShouldNotContain("max", who);
+        }
+        else
+        {
+            texts.ShouldContain("default", who);
+            texts.ShouldContain("max", who);
         }
     }
 
