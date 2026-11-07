@@ -15,6 +15,48 @@ public sealed class PressesTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    /// <summary>
+    /// A press records its outcome before it stops being pending: a reader that has seen the press pending never then looks and
+    /// finds it neither pending nor taken nor refused (a draw in that gap showed a switch its old state for a frame).
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task APressIsNeverSeenWithNeitherPendingNorItsOutcome(bool refuse)
+    {
+        var presses = new Presses();
+        string? gap = null;
+        for (var i = 0; i < 300 && gap is null; i++)
+        {
+            var key = $"k{i}";
+            using var stop = new CancellationTokenSource();
+            var reader = Task.Run(() =>
+            {
+                while (presses.PendingOf(key) is null && !stop.IsCancellationRequested)
+                {
+                    Thread.SpinWait(10);
+                }
+                while (!stop.IsCancellationRequested)
+                {
+                    var pending = presses.PendingOf(key);
+                    if (pending is null && !presses.IsTaken(key) && presses.RefusedOf(key) is null)
+                    {
+                        return $"{key}: neither pending nor taken nor refused";
+                    }
+                    if (pending is null)
+                    {
+                        return null;
+                    }
+                }
+                return null;
+            }, Ct);
+            await presses.PressAsync(key, "hit", _ => Task.FromResult(refuse ? "no" : (string?)null), Ct);
+            await stop.CancelAsync();
+            gap = await reader.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        }
+        gap.ShouldBeNull();
+    }
+
     private static NodeSummary Summary(string stream, string prefix, string name, RoleRangeInfo range) => new()
     {
         Connected = true, Status = "live", Stream = stream, Account = "ada@example.org", LiveSessions = 1,
