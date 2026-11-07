@@ -33,7 +33,7 @@ public sealed class StoreCompatibilityTests : IDisposable
     }
 
     /// <summary>The versions with a fixture, one folder each.</summary>
-    public static TheoryData<string> Versions => new([.. Directory.EnumerateDirectories(StoreFixtures).Select(d => Path.GetFileName(d)).Order(StringComparer.Ordinal)]);
+    public static TheoryData<string> Versions => new(Directory.EnumerateDirectories(StoreFixtures).Select(d => Path.GetFileName(d)).Order(StringComparer.Ordinal).ToArray());
 
     /// <summary>A store's files as a node left them, copied to a folder of their own to start on (a start stamps <c>store.json</c> and may keep a backup).</summary>
     private string Copy(string version)
