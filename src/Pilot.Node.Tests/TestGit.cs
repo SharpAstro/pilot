@@ -33,6 +33,28 @@ internal sealed class TestGit : IGit
         }
     }
 
+    private TestGit(string root, bool realGit, Action build)
+    {
+        _makeReal = build;
+        if (realGit || Environment.GetEnvironmentVariable("PILOT_TEST_REAL_GIT") == "1")
+        {
+            _inner = new GitCli();
+        }
+        else
+        {
+            _inner = _fake = FakeRepoGit.Empty(root);
+        }
+        // The test's own git helper asks the model first (Answer), so the same build makes the repos in the model or with git itself.
+        build();
+    }
+
+    /// <summary>
+    /// For a class that builds its repos itself, with <c>git init</c>, <c>clone</c>, <c>add</c> and <c>commit</c> through a helper that asks
+    /// <see cref="Answer"/> first: <paramref name="build"/> runs now, on the model unless <paramref name="realGit"/>, and again on git itself if
+    /// a test calls <see cref="UseReal"/>.
+    /// </summary>
+    public static TestGit Building(string root, bool realGit, Action build) => new(root, realGit, build);
+
     /// <summary>Whether this test runs on git itself.</summary>
     public bool IsReal => _fake is null;
 

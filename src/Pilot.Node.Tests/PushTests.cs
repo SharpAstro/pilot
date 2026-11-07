@@ -6,7 +6,7 @@ using Xunit;
 
 namespace Pilot.Node.Tests;
 
-/// <summary>A flight's push never drops commits: fast-forward only, the remote's commits merged in first, a conflict refused with both heads (PIL375).</summary>
+/// <summary>A flight's push never drops commits: fast-forward only, the remote's commits merged in first, a conflict refused with both heads (PIL375). Git is <see cref="FakeRepoGit"/> (#813).</summary>
 public sealed class PushTests : IDisposable
 {
     private const string Branch = "flight/tia9";
@@ -19,7 +19,24 @@ public sealed class PushTests : IDisposable
     private readonly RecordingGit _git;
     private readonly FlightRow _flight;
 
+    /// <summary>The git the node runs here: <see cref="FakeRepoGit"/>, which models the remote, the plane and the other clone (#813). See <see cref="TestGit"/>.</summary>
+    private readonly TestGit _testGit;
+
     public PushTests()
+    {
+        _testGit = TestGit.Building(_root, realGit: false, Build);
+        var git = _git = new RecordingGit(_testGit);
+        var flights = new FlightCommander(_state, new Planes(git), TimeProvider.System);
+        var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
+        _legs = new LegCommander(_state, new FakeWorkers(), new FakeChecks(), new FakeGitHub(), git, new Planes(git), flights, options, TimeProvider.System);
+        _flight = new FlightRow
+        {
+            Code = "TIA9", Repo = "tianwen", RepoPath = Plane, Issue = 9, Branch = Branch, Worktree = Plane, Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow,
+        };
+    }
+
+    /// <summary>The remote, a plane cloned from it on the flight's branch, and a second clone of that branch.</summary>
+    private void Build()
     {
         Directory.CreateDirectory(_root);
         Git(_root, "init", "-q", "--bare", "-b", "main", "remote.git");
@@ -33,15 +50,6 @@ public sealed class PushTests : IDisposable
         Git(Plane, "checkout", "-q", "-b", Branch);
         Git(Plane, "push", "-q", "-u", "origin", Branch);
         Git(_root, "clone", "-q", "-b", Branch, Remote, "other");
-
-        var git = _git = new RecordingGit(new GitCli());
-        var flights = new FlightCommander(_state, new Planes(git), TimeProvider.System);
-        var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
-        _legs = new LegCommander(_state, new FakeWorkers(), new FakeChecks(), new FakeGitHub(), git, new Planes(git), flights, options, TimeProvider.System);
-        _flight = new FlightRow
-        {
-            Code = "TIA9", Repo = "tianwen", RepoPath = Plane, Issue = 9, Branch = Branch, Worktree = Plane, Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow,
-        };
     }
 
     private string Remote => Path.Combine(_root, "remote.git");
@@ -202,11 +210,14 @@ public sealed class PushTests : IDisposable
 
     public void Dispose()
     {
+        _testGit.Release();
         foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
         Directory.Delete(_root, recursive: true);
+        // A command the model could not answer may have been swallowed by the node's own catch: the test still fails.
+        _testGit.Verify();
     }
 
     private static void Commit(string cwd, string message)
@@ -217,6 +228,10 @@ public sealed class PushTests : IDisposable
 
     private static string Git(string cwd, params string[] args)
     {
+        if (TestGit.Answer(cwd, args) is { } answered)
+        {
+            return answered;
+        }
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         start.Environment["GIT_COMMITTER_NAME"] = "t";
         start.Environment["GIT_COMMITTER_EMAIL"] = "t@example.com";
