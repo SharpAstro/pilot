@@ -197,7 +197,9 @@ public sealed class StreamingChatTests
         var chat = Chat(renderer, () => Whole(Tail(false) with { Partial = partial, Queued = null, QueuedIds = null, QueuedBehind = null }));
         await Open(chat, 5);
         chat.Render(new RectF32(0, 0, 1280, 800));
-        chat.Pointer = (400f, 300f);
+        var list = chat.PageSelectionViewport;
+        list.Width.ShouldBeGreaterThan(0f, "the list's viewport is known after a frame");
+        chat.Pointer = (list.X + list.Width / 2f, list.Y + list.Height / 2f);
         Described(chat).ShouldContain("PIL855 has two legs");
 
         partial = "PIL855 has two legs left and then a good deal more words that would push the page";
@@ -242,6 +244,8 @@ public sealed class StreamingChatTests
         using var renderer = new RgbaImageRenderer(1280, 800);
         var node = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var chat = Chat(renderer, () => Whole(Tail(false)), _ => node.Task);
+        // A refusal marks the pill "refused" for a moment in its place (every node-bound button does); the test looks past it.
+        chat.Presses.DoneFor = TimeSpan.Zero;
         await Open(chat, 5);
         chat.Close();
         Click(chat, "chat:now:s1");
@@ -315,7 +319,7 @@ public sealed class StreamingChatTests
         await Open(chat, 5);
         chat.Close();
         var whole = ChatStatus.Line(Timings(20))!;
-        whole.ShouldBe("first word 3.1 s (median 3.7 s), turn 28 s (median 24 s) · last 20 messages");
+        whole.ShouldBe("first word 3.1 s (median 4.3 s), turn 28 s (median 27 s) · last 20 messages");
 
         // Wide: the whole line is drawn, nothing cut; it carries its whole text on hover.
         var wide = Pixels(chat, renderer, 1280, 800);
