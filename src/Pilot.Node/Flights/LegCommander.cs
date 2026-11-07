@@ -154,6 +154,7 @@ public sealed partial class LegCommander(
         }
         await _one.WaitAsync(cancellationToken);
         string? error = null;
+        MergeRefusal? refusal = null;
         string? made = null;
         string? way = null;
         var merged = false;
@@ -297,6 +298,8 @@ public sealed partial class LegCommander(
         catch (FlightException ex)
         {
             error = ex.Message;
+            // The class a merge refusal was given where it was made; the merge verb's result carries it for PrChecks.
+            refusal = command.Verb is Verbs.Merge or Verbs.RerunChecks ? MergeRefusals.Of(ex) : null;
         }
         catch (Exception) when (DropLegEndMarkOnThrow())
         {
@@ -461,7 +464,7 @@ public sealed partial class LegCommander(
         {
             ShowMerge(command.Target, made, way);
         }
-        return state.Complete(command, error, way, made: made);
+        return state.Complete(command, error, way, made: made, refusal: refusal);
     }
 
     /// <summary>Whether a reason <see cref="BringUpToDateAsync"/> gave is a merge that conflicted: the only one the watchtower is told to resolve.</summary>
