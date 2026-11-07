@@ -1097,13 +1097,9 @@ public abstract class LegCommanderTestsBase : IDisposable
     protected LegCommanderTestsBase()
     {
         _state = new NodeState(_journal, TimeProvider.System);
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        // A check that builds or tests needs a solution where it runs (leg plan refuses one that does not): a stub, in the plane's root.
-        File.WriteAllText(Path.Combine(Repo, "Tianwen.slnx"), "<Solution />\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
+        // Copied from a repo built once, not made with four git processes a test: each is a Process.Start (on Windows under the
+        // runtime's one create-process lock) and a thread held until it ends (PIL801).
+        SeedRepo.MakePlain(_root);
         var git = new GitCli();
         _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
@@ -1116,13 +1112,7 @@ public abstract class LegCommanderTestsBase : IDisposable
     {
         // A leg start that pulled a sibling has RepoWatch reading the repos in the background; let it finish before the folders go.
         _legs.SiblingSync?.WatchRefresh.Wait(TimeSpan.FromSeconds(30));
-        try
-        {
-            Git(Repo, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
+        // No `git worktree prune` first: it only tidies the repo's own .git, which goes with the folder below.
         foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
         {
             File.SetAttributes(file, FileAttributes.Normal);

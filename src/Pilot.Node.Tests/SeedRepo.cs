@@ -23,6 +23,33 @@ internal static class SeedRepo
         return Path.Combine(root, name);
     }
 
+    private static readonly Lazy<string> PlainTemplate = new(BuildPlain, LazyThreadSafetyMode.ExecutionAndPublication);
+
+    /// <summary>
+    /// Copies the plain repo into <paramref name="root"/>: <c>root/tianwen</c>, one commit on main (the README and the stub solution),
+    /// no remote and no identity of its own (a commit names one with <c>-c</c>). What <see cref="LegCommanderTestsBase"/> built with
+    /// four git processes in each test's constructor and one more in its Dispose.
+    /// </summary>
+    public static string MakePlain(string root)
+    {
+        CopyTree(PlainTemplate.Value, root);
+        return Path.Combine(root, "tianwen");
+    }
+
+    private static string BuildPlain()
+    {
+        var root = NewTemplateRoot();
+        var repo = Path.Combine(root, "tianwen");
+        Directory.CreateDirectory(repo);
+        Git(repo, "init", "-q", "-b", "main");
+        File.WriteAllText(Path.Combine(repo, "README.md"), "hello\n");
+        // A check that builds or tests needs a solution where it runs (leg plan refuses one that does not): a stub, in the plane's root.
+        File.WriteAllText(Path.Combine(repo, "Tianwen.slnx"), "<Solution />\n");
+        Git(repo, "add", ".");
+        Git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
+        return root;
+    }
+
     private static string Build()
     {
         var root = NewTemplateRoot();
