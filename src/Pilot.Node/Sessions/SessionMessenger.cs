@@ -256,7 +256,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             }
             if (Streams?.Invoke() is { } streams && streams.Handles(row))
             {
-                // The node's own stream session (PIL855): the text is written to its standard input at once, queued behind its turn when
+                // The node's own stream session (PIL855): the text is written to its standard input at once, read at its next step when
                 // it is working, with no stop, no resume and no intercom. A compaction is /compact on that stdin, which only an idle
                 // session takes: said into a turn it would be words.
                 if (compact && row.State != SessionState.Idle)

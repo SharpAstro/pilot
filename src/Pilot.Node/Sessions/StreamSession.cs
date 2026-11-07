@@ -43,7 +43,10 @@ public enum StreamChangeKind
     Text,
     /// <summary>What it is doing changed (<see cref="StreamSession.Doing"/>).</summary>
     Doing,
-    /// <summary>A message was held behind the running turn, or taken from the queue.</summary>
+    /// <summary>
+    /// What is waiting to be read changed: a message was written mid-turn (<see cref="StreamSession.ReadAtNextStep"/>) or read at a step,
+    /// or one was held while the process starts (<see cref="StreamSession.Queued"/>) or written once it is up.
+    /// </summary>
     Queued,
     /// <summary>A turn ended; <see cref="StreamSessionChange.Turn"/> carries its timing.</summary>
     TurnEnded,
@@ -62,7 +65,7 @@ public sealed record StreamSessionChange(StreamChangeKind Kind, TurnTiming? Turn
 /// <param name="StartedAt">When the turn began: the send, or, for a message held behind another turn, the end of that turn.</param>
 /// <param name="FirstWord">From the start to the first text delta; null when the turn said no words (a tool-only turn).</param>
 /// <param name="Length">From the start to the result.</param>
-/// <param name="Waited">How long the message sat in the queue before the turn began (zero when it began at once).</param>
+/// <param name="Waited">How long the message sat unread before the turn began: held while the process started, or written mid-turn and not read at a step (zero when it began at once).</param>
 /// <param name="ClaudeDuration">The <c>duration_ms</c> claude reported for the turn, when it did.</param>
 /// <param name="IsError">The result's <c>is_error</c>.</param>
 public sealed record TurnTiming(DateTimeOffset StartedAt, TimeSpan? FirstWord, TimeSpan Length, TimeSpan Waited, TimeSpan? ClaudeDuration, bool IsError);
@@ -84,8 +87,14 @@ public sealed record TurnTiming(DateTimeOffset StartedAt, TimeSpan? FirstWord, T
 /// <item>Out, a tool's answer, as a <c>user</c> message with a <c>tool_result</c> block: the tool has finished.</item>
 /// <item>Out, the end of a turn: <c>{"type":"result","subtype":"success","is_error":false,"duration_ms":1234,"session_id":"&lt;id&gt;",...}</c>, one per user message, in order.</item>
 /// </list>
-/// <para>A message written while a turn runs is read by claude after that turn's result, so it is held as queued here, and its turn
-/// begins (and is timed from) that result. Anything else claude prints is ignored, and logged once per kind.</para>
+/// <para>A message sent while a turn runs is written to stdin at once, never held: stream-json takes it at the model's next step,
+/// inside the running turn (a message sent during a 20 s tool call is answered in that same turn). It is listed in
+/// <see cref="ReadAtNextStep"/> until a tool's answer (the step boundary) shows claude has taken it. A turn that ends with one still
+/// unread (no step came) hands the turn to it: claude reads it next, so its turn begins (and is timed from) that result.</para>
+/// <para>The queue (<see cref="Queued"/>) is only for a message sent while the process is starting or restarting (<see cref="Start"/>
+/// with <c>starting</c>, until <see cref="ReadyAsync"/>): nothing can be written to it yet, so it is held and written, in order, once
+/// the process is up.</para>
+/// <para>Anything else claude prints is ignored, and logged once per kind.</para>
 /// </remarks>
 public sealed class StreamSession : IAsyncDisposable
 {
@@ -100,10 +109,14 @@ public sealed class StreamSession : IAsyncDisposable
     private readonly CancellationTokenSource _stop = new();
     private readonly Task _reader;
     private readonly HashSet<string> _unknown = [];
+    // Held while the process starts or restarts: not written yet.
     private readonly List<(string Text, DateTimeOffset At)> _queued = [];
+    // Written mid-turn, not yet read at a step.
+    private readonly List<(string Text, DateTimeOffset At)> _midTurn = [];
     private readonly Queue<TurnTiming> _timings = new();
     private int _requests;
     private bool _stopping;
+    private bool _starting;
     private string _sessionId;
     private bool _working;
     private string _partialText = "";
@@ -114,12 +127,13 @@ public sealed class StreamSession : IAsyncDisposable
     private TimeSpan _turnWaited;
     private TimeSpan? _firstWord;
 
-    private StreamSession(IStreamProcess process, string sessionId, TimeProvider time, Action<string>? log)
+    private StreamSession(IStreamProcess process, string sessionId, TimeProvider time, Action<string>? log, bool starting)
     {
         _process = process;
         _sessionId = sessionId;
         _time = time;
         _log = log;
+        _starting = starting;
         _reader = Task.Run(ReadAsync);
     }
 
@@ -138,12 +152,14 @@ public sealed class StreamSession : IAsyncDisposable
     /// <summary>
     /// Starts the process in the start's repo folder: a fresh session under a new id, or, with <paramref name="resumeId"/>, that session
     /// again. Pass the start through <see cref="ClaudeWorkerLauncher.WithMcp"/> first to have the lean MCP config.
+    /// With <paramref name="starting"/> the session holds every message sent to it (<see cref="Queued"/>) until <see cref="ReadyAsync"/>,
+    /// for a caller that has more to do before the process takes input (a fresh start, a restart).
     /// </summary>
-    public static StreamSession Start(WorkerStart start, string? resumeId, IStreamProcessLauncher launcher, TimeProvider? time = null, Action<string>? log = null)
+    public static StreamSession Start(WorkerStart start, string? resumeId, IStreamProcessLauncher launcher, TimeProvider? time = null, Action<string>? log = null, bool starting = false)
     {
         var id = resumeId ?? Guid.NewGuid().ToString();
         var process = launcher.Start(Arguments(start, id, resumeId is not null), start.RepoPath);
-        return new StreamSession(process, id, time ?? TimeProvider.System, log);
+        return new StreamSession(process, id, time ?? TimeProvider.System, log, starting);
     }
 
     /// <summary>Raised, on the thread that saw it and never under a lock, for each change; a handler that throws is logged, not fatal.</summary>
@@ -161,8 +177,14 @@ public sealed class StreamSession : IAsyncDisposable
     /// <summary>What it is doing in plain words ("running pilot status"); null when it is not in a tool.</summary>
     public string? Doing => Read(() => _doing);
 
-    /// <summary>The messages held behind the running turn, oldest first.</summary>
+    /// <summary>The messages held while the process starts or restarts (not written yet), oldest first; empty once it is up.</summary>
     public IReadOnlyList<string> Queued => Read(() => (IReadOnlyList<string>)[.. _queued.Select(q => q.Text)]);
+
+    /// <summary>The messages written to stdin mid-turn that claude has not read yet (it reads them at its next step), oldest first.</summary>
+    public IReadOnlyList<string> ReadAtNextStep => Read(() => (IReadOnlyList<string>)[.. _midTurn.Select(q => q.Text)]);
+
+    /// <summary>True while the session holds messages for a process that is starting or restarting.</summary>
+    public bool Starting => Read(() => _starting);
 
     /// <summary>The timings of the last <see cref="TimingsKept"/> turns, oldest first.</summary>
     public IReadOnlyList<TurnTiming> Timings => Read(() => (IReadOnlyList<TurnTiming>)[.. _timings]);
@@ -183,35 +205,15 @@ public sealed class StreamSession : IAsyncDisposable
 
     /// <summary>
     /// Writes <paramref name="text"/> as a user message at once. It begins a turn when the session is idle; while a turn runs it is
-    /// held as queued, behind what it is doing. Throws when the process has ended.
+    /// written all the same and read by claude at its next step (<see cref="ReadAtNextStep"/>). Only while the process is starting or
+    /// restarting is it held (<see cref="Queued"/>), until <see cref="ReadyAsync"/>. Throws when the process has ended.
     /// </summary>
     public async Task SendAsync(string text, CancellationToken cancellationToken = default)
     {
         await _writes.WaitAsync(cancellationToken);
         try
         {
-            var changes = new List<StreamSessionChange>();
-            lock (_lock)
-            {
-                if (_exitCode is not null)
-                {
-                    throw new InvalidOperationException($"the session has ended (exit {_exitCode})");
-                }
-                var now = _time.GetUtcNow();
-                if (_working)
-                {
-                    _queued.Add((text, now));
-                    changes.Add(new StreamSessionChange(StreamChangeKind.Queued));
-                }
-                else
-                {
-                    BeginTurn(now, TimeSpan.Zero, changes);
-                }
-            }
-            // Written inside the write gate, so lines go out in the order the state saw them. Raised after the write: a handler
-            // never delays the message.
-            await _process.WriteLineAsync(UserLine(text), cancellationToken);
-            Raise(changes);
+            await DeliverAsync(text, null, cancellationToken);
         }
         finally
         {
@@ -219,12 +221,83 @@ public sealed class StreamSession : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// The process is up: the messages held while it started are written now, in order, the first beginning the turn and the rest
+    /// read at its steps. Does nothing when it was not starting.
+    /// </summary>
+    public async Task ReadyAsync(CancellationToken cancellationToken = default)
+    {
+        await _writes.WaitAsync(cancellationToken);
+        try
+        {
+            (string Text, DateTimeOffset At)[] held;
+            lock (_lock)
+            {
+                if (!_starting)
+                {
+                    return;
+                }
+                _starting = false;
+                held = [.. _queued];
+                _queued.Clear();
+            }
+            Raise([new StreamSessionChange(StreamChangeKind.Queued)]);
+            foreach (var (text, at) in held)
+            {
+                await DeliverAsync(text, at, cancellationToken);
+            }
+        }
+        finally
+        {
+            _writes.Release();
+        }
+    }
+
+    // With the write gate held. `heldSince` is when a message held while the process started was sent, for how long it waited.
+    private async Task DeliverAsync(string text, DateTimeOffset? heldSince, CancellationToken cancellationToken)
+    {
+        var changes = new List<StreamSessionChange>();
+        var held = false;
+        lock (_lock)
+        {
+            if (_exitCode is not null)
+            {
+                throw new InvalidOperationException($"the session has ended (exit {_exitCode})");
+            }
+            var now = _time.GetUtcNow();
+            if (_starting)
+            {
+                _queued.Add((text, now));
+                changes.Add(new StreamSessionChange(StreamChangeKind.Queued));
+                held = true;
+            }
+            else if (_working)
+            {
+                _midTurn.Add((text, now));
+                changes.Add(new StreamSessionChange(StreamChangeKind.Queued));
+            }
+            else
+            {
+                BeginTurn(now, heldSince is { } at ? now - at : TimeSpan.Zero, changes);
+            }
+        }
+        if (held)
+        {
+            Raise(changes);
+            return;
+        }
+        // Written inside the write gate, so lines go out in the order the state saw them. Raised after the write: a handler
+        // never delays the message.
+        await _process.WriteLineAsync(UserLine(text), cancellationToken);
+        Raise(changes);
+    }
+
     /// <summary>Writes the interrupt control request: claude ends the running turn with a result, then takes the next queued message.</summary>
     public Task InterruptAsync(CancellationToken cancellationToken = default) => InterruptCoreAsync(null, cancellationToken);
 
     /// <summary>
-    /// The interrupt, written only while a turn runs and <paramref name="queued"/> is the first message held (the one claude takes next),
-    /// so an answer-now never cancels the very turn it asked for when that turn began meanwhile. Returns whether it was written.
+    /// The interrupt, written only while a turn runs and <paramref name="queued"/> is the first message written but not yet read (the one
+    /// claude takes next), so an answer-now never cancels the very turn it asked for when that turn began meanwhile. Returns whether it was written.
     /// </summary>
     public Task<bool> InterruptBeforeAsync(string queued, CancellationToken cancellationToken = default) => InterruptCoreAsync(queued, cancellationToken);
 
@@ -236,7 +309,7 @@ public sealed class StreamSession : IAsyncDisposable
             string id;
             lock (_lock)
             {
-                if (_exitCode is not null || onlyBefore is not null && (!_working || _queued.Count == 0 || _queued[0].Text != onlyBefore))
+                if (_exitCode is not null || onlyBefore is not null && (!_working || _midTurn.Count == 0 || _midTurn[0].Text != onlyBefore))
                 {
                     return false;
                 }
@@ -313,6 +386,8 @@ public sealed class StreamSession : IAsyncDisposable
             _working = false;
             _doing = null;
             _queued.Clear();
+            _midTurn.Clear();
+            _starting = false;
             changes.Add(new StreamSessionChange(StreamChangeKind.Exited, ExitCode: code, Requested: requested, Error: requested ? null : _process.ErrorTail));
         }
         Raise(changes);
@@ -383,11 +458,16 @@ public sealed class StreamSession : IAsyncDisposable
                         }
                         break;
                     case "user":
-                        // A tool's answer: the tool has finished.
+                        // A tool's answer: the tool has finished, and the model's next step reads what was written meanwhile.
                         if (_doing is not null)
                         {
                             _doing = null;
                             changes.Add(new StreamSessionChange(StreamChangeKind.Doing));
+                        }
+                        if (_midTurn.Count > 0 && _working)
+                        {
+                            _midTurn.Clear();
+                            changes.Add(new StreamSessionChange(StreamChangeKind.Queued));
                         }
                         break;
                     case "result":
@@ -421,11 +501,11 @@ public sealed class StreamSession : IAsyncDisposable
             _timings.Dequeue();
         }
         _doing = null;
-        if (_queued.Count > 0)
+        if (_midTurn.Count > 0)
         {
-            // claude takes the next written message now: its turn begins here, and the held message is no longer held.
-            var (_, at) = _queued[0];
-            _queued.RemoveAt(0);
+            // No step came to read it in the turn: claude takes the next written message now. Its turn begins here.
+            var (_, at) = _midTurn[0];
+            _midTurn.RemoveAt(0);
             _working = false;
             changes.Add(new StreamSessionChange(StreamChangeKind.TurnEnded, Turn: timing));
             changes.Add(new StreamSessionChange(StreamChangeKind.Queued));

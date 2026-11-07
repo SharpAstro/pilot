@@ -5,7 +5,7 @@ namespace Pilot.Node.Flights;
 
 /// <summary>
 /// The watchtower on a <see cref="StreamSession"/> (PIL855): one long-lived <c>claude -p --input-format stream-json</c> process the node
-/// owns, so says and tells reach its standard input at once (queued behind its turn when it works) and its prompt cache stays warm.
+/// owns, so says and tells reach its standard input at once (mid-turn too: it reads them at its next step) and its prompt cache stays warm.
 /// A fresh generation starts only on a changed brief (#22) or on request; a crash resumes the same session; a compaction is
 /// <c>/compact</c> on its input, and a generation of its own so the chat shows a divider. Nothing stops or replaces it for being quiet,
 /// for the age of its cache, or after a finished turn.
@@ -129,6 +129,8 @@ public sealed partial class Watchtower : IStreamRoute
             Publish(entry);
             try
             {
+                // Up: anything sent while it started is written now, then the brief as its first message.
+                await entry.Session!.ReadyAsync(cancellationToken);
                 await entry.Session!.SendAsync(start.Brief, cancellationToken);
             }
             catch
@@ -152,7 +154,8 @@ public sealed partial class Watchtower : IStreamRoute
 
     private StreamEntry Launch(WorkerStart start, string? resumeId, string? rowId, DateTimeOffset startedAt, IEnumerable<string> earlier)
     {
-        var session = StreamSession.Start(start, resumeId, Streams ?? throw new InvalidOperationException("no stream launcher"), time, LogStream);
+        // Starting: what is sent to it before the caller has finished its bookkeeping (the row, the ledger) is held, and written by ReadyAsync.
+        var session = StreamSession.Start(start, resumeId, Streams ?? throw new InvalidOperationException("no stream launcher"), time, LogStream, starting: true);
         var entry = new StreamEntry(rowId ?? session.SessionId[..Math.Min(8, session.SessionId.Length)], start, startedAt)
         {
             Session = session,
@@ -355,7 +358,7 @@ public sealed partial class Watchtower : IStreamRoute
             await _streamGate.WaitAsync(cancellationToken);
             try
             {
-                ResumeLocked(dead, dead.Entry is null ? "the node started again" : "crashed");
+                await ResumeLockedAsync(dead, dead.Entry is null ? "the node started again" : "crashed", cancellationToken);
             }
             finally
             {
@@ -381,7 +384,7 @@ public sealed partial class Watchtower : IStreamRoute
             [new CardChoice { Label = "Try now", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = ["tried again from its card"] }]);
 
     /// <summary>Starts the process again on <c>--resume</c> of the same session, in the same row; with <see cref="_streamGate"/> held. The one already running is returned as it is.</summary>
-    private StreamEntry ResumeLocked(StreamResume plan, string why)
+    private async Task<StreamEntry> ResumeLockedAsync(StreamResume plan, string why, CancellationToken cancellationToken)
     {
         lock (_streamsLock)
         {
@@ -399,6 +402,8 @@ public sealed partial class Watchtower : IStreamRoute
         Ledger?.Resumed([plan.SessionId, plan.RowId, .. plan.Earlier], why);
         _job = plan.RowId;
         Publish(fresh);
+        // Up again: whatever was sent while it restarted is written now, in order.
+        await fresh.Session!.ReadyAsync(cancellationToken);
         return fresh;
     }
 
@@ -424,7 +429,7 @@ public sealed partial class Watchtower : IStreamRoute
                 // It ended with nobody asking: a say starts it again on --resume of its session, so a chat never waits for the next look.
                 try
                 {
-                    entry = ResumeLocked(new StreamResume(entry.RowId, row.SessionId, entry.StartedAt, [.. entry.Earlier], entry), "a say reached it after it ended");
+                    entry = await ResumeLockedAsync(new StreamResume(entry.RowId, row.SessionId, entry.StartedAt, [.. entry.Earlier], entry), "a say reached it after it ended", cancellationToken);
                 }
                 catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
                 {

@@ -810,8 +810,8 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             {
                 continue;
             }
-            // "queued behind <what it is doing>" is the node's word for it. Only the line the watchtower takes next can be answered now
-            // (it takes its queue in order), and only while a turn runs: elsewhere the pill could only be refused, so it is not drawn.
+            // "read at its next step" (written mid-turn) or "queued behind its start" is the node's word for it. Only the line the watchtower
+            // reads next can be answered now (it reads in order), and only while a turn runs: elsewhere the pill could only be refused, so it is not drawn.
             var behind = i < held.QueuedBehind.Length ? held.QueuedBehind[i] : null;
             Layout.Node? pill = null;
             Layout.Node? refusal = null;

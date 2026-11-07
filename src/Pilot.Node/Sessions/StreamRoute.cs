@@ -12,7 +12,7 @@ public interface IStreamRoute
     bool Handles(SessionRow row);
 
     /// <summary>
-    /// Writes <paramref name="text"/> to the session's standard input at once, queued behind its turn when it is working. A stream session
+    /// Writes <paramref name="text"/> to the session's standard input at once; one sent while it works is read at its next step. A stream session
     /// that has ended is started again on <c>--resume</c> of the same session first. A <paramref name="compact"/> text is <c>/compact</c>,
     /// which only an idle session takes. Throws <see cref="SessionDeliveryException"/> when it cannot be reached.
     /// </summary>

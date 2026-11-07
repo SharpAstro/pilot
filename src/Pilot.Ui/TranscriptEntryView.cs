@@ -149,8 +149,9 @@ internal sealed class TranscriptEntryView
     internal static Layout.Node Waiting(string text) => Waiting(text, null, null, null);
 
     /// <summary>
-    /// A message handed to the stream watchtower that it has not taken yet (PIL855): what it waits behind in plain words ("queued behind
-    /// running pilot status", from the node's <see cref="ChatPage.QueuedBehind"/>), the message, <paramref name="aside"/> (the Answer now
+    /// A message handed to the stream watchtower that it has not read yet (PIL855): what it waits for in plain words ("read at its next
+    /// step" for a message sent while it works, "queued behind its start" for one held while it starts; the node's
+    /// <see cref="ChatPage.QueuedBehind"/>), the message, <paramref name="aside"/> (the Answer now
     /// pill) beside it and <paramref name="refusal"/> (the node's reason for refusing it) under it. Without <paramref name="behind"/> it is
     /// <see cref="Waiting(string)"/>'s line. The words are <see cref="Dim"/> where there is something to act on: <see cref="Faint"/> is
     /// short of 4.5:1 on the page.
@@ -158,6 +159,7 @@ internal sealed class TranscriptEntryView
     internal static Layout.Node Waiting(string text, string? behind, Layout.Node? aside, Layout.Node? refusal)
     {
         var acting = behind is { Length: > 0 };
+        var label = behind == ChatPage.ReadAtNextStep ? "sent" : "queued";
         List<Layout.Node> parts =
         [
             acting
@@ -179,7 +181,8 @@ internal sealed class TranscriptEntryView
             parts.Add(refusal);
         }
         return Layout.Builder.HStack(
-                Layout.Builder.Text("queued", 12f, acting ? Dim : Faint).Selectable().WStar(LabelWeight, 0f, LabelWidth).Whole("queued"),
+                // A message the watchtower has already (mid-turn) is "sent", read at its next step; only one held while it starts is "queued".
+                Layout.Builder.Text(label, 12f, acting ? Dim : Faint).Selectable().WStar(LabelWeight, 0f, LabelWidth).Whole(label),
                 Layout.Builder.VStack([.. parts]).WithGap(2f).WStar(BodyWeight))
             .WithGap(10f);
     }

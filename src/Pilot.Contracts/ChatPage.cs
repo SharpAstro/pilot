@@ -46,10 +46,18 @@ public sealed record ChatPage
     public string? Doing { get; init; }
 
     /// <summary>
-    /// For each line of <see cref="Queued"/> (same length and order), what it waits behind, in plain words: "queued behind running pilot
-    /// status", "queued behind its answer", "queued behind the message before it". Null with none, and from an older node.
+    /// For each line of <see cref="Queued"/> (same length and order), what it waits for, in plain words: <see cref="ReadAtNextStep"/> for a
+    /// message sent while the watchtower works (already with it, read at its next step: PIL855), "queued behind its start" for one held
+    /// while its process starts, and, from an older node, "queued behind running pilot status" or "queued behind its answer". Null with
+    /// none, and from an older node.
     /// </summary>
     public string[]? QueuedBehind { get; init; }
+
+    /// <summary>What <see cref="QueuedBehind"/> says of a message written to the watchtower mid-turn: it has it, and reads it at its next step.</summary>
+    public const string ReadAtNextStep = "read at its next step";
+
+    /// <summary>What <see cref="QueuedBehind"/> says of a message held while the watchtower's process starts or restarts.</summary>
+    public const string QueuedBehindStart = "queued behind its start";
 
     /// <summary>
     /// How long the last <see cref="ChatTimings.Kept"/> chat messages took the watchtower, oldest first (newest last): the first word and the

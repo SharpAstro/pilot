@@ -60,7 +60,9 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
 
         // The stream session is the authority on what is held and what runs now; a watchtower that is not one has the transcript's say.
         var stream = tower.CurrentStream();
-        string[] queuedLines = stream is not null ? [.. stream.Queued] : latest?.Queued ?? [];
+        // Written mid-turn and not yet read (it reads them at its next step) come first, then any held while its process starts.
+        var midTurn = stream?.ReadAtNextStep.Count ?? 0;
+        string[] queuedLines = stream is not null ? [.. stream.ReadAtNextStep, .. stream.Queued] : latest?.Queued ?? [];
         var stamps = Stamps(segments, queuedLines);
         for (var i = 0; i < entries.Count; i++)
         {
@@ -81,18 +83,22 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
             QueuedIds = stamps.Queued is { } ids && ids.Any(id => id is not null) ? ids : null,
             Partial = stream is { Working: true } && stream.PartialText is { Length: > 0 } words ? words : null,
             Doing = stream is { Working: true } ? stream.Doing : null,
-            QueuedBehind = stream is not null && queuedLines.Length > 0 ? BehindOf(stream.Doing, queuedLines.Length) : null,
+            QueuedBehind = stream is not null && queuedLines.Length > 0 ? BehindOf(midTurn, queuedLines.Length) : null,
             Timings = stream is { Timings.Count: > 0 } ? [.. stream.Timings.TakeLast(ChatTimings.Kept).Select(TimingOf)] : null,
         };
     }
 
-    /// <summary>What each of <paramref name="count"/> queued lines waits behind: the first, what the watchtower is doing (or its answer); the rest, the line before.</summary>
-    internal static string[] BehindOf(string? doing, int count)
+    /// <summary>
+    /// What each of <paramref name="count"/> unread lines waits for: the first <paramref name="midTurn"/> were written to the watchtower
+    /// while it worked and it reads them at its next step (<see cref="ChatPage.ReadAtNextStep"/>, not "queued behind": it has them); the
+    /// rest were held while its process starts (<see cref="ChatPage.QueuedBehindStart"/>).
+    /// </summary>
+    internal static string[] BehindOf(int midTurn, int count)
     {
         var behind = new string[count];
         for (var i = 0; i < count; i++)
         {
-            behind[i] = i > 0 ? "queued behind the message before it" : doing is { Length: > 0 } ? $"queued behind {doing}" : "queued behind its answer";
+            behind[i] = i < midTurn ? ChatPage.ReadAtNextStep : ChatPage.QueuedBehindStart;
         }
         return behind;
     }
@@ -106,10 +112,10 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
     };
 
     /// <summary>
-    /// Cancels the turn the watchtower is on so that the queued message with <paramref name="sendId"/> is answered next (PIL855), the
-    /// <see cref="Verbs.ChatNow"/> verb. Null when it was done; otherwise why it was refused: nothing is running (it is idle, or not a stream
-    /// watchtower), the send id is not queued, or other messages are queued ahead of it (the process takes its queue in order, so
-    /// only the next one can be answered now).
+    /// Cancels the turn the watchtower is on so that the message with <paramref name="sendId"/>, written to it mid-turn and not read yet, is
+    /// answered next (PIL855), the <see cref="Verbs.ChatNow"/> verb. Null when it was done; otherwise why it was refused: nothing is running
+    /// (it is idle, or not a stream watchtower), the send id is not waiting, or other messages are ahead of it (the process reads them in
+    /// order, so only the first can be answered now).
     /// </summary>
     public async Task<string?> AnswerNowAsync(string sendId, CancellationToken cancellationToken)
     {
@@ -125,7 +131,7 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
         }
         if (index > 0)
         {
-            return $"send {sendId} is queued behind {index} other {(index == 1 ? "message" : "messages")} and the watchtower takes its queue in order: answer-now takes only the next one";
+            return $"send {sendId} comes after {index} other unread {(index == 1 ? "message" : "messages")} and the watchtower reads them in order: answer-now takes only the first one";
         }
         if (!await stream.InterruptBeforeAsync(queued[0], cancellationToken))
         {
