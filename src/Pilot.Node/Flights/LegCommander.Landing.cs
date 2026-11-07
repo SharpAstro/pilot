@@ -99,10 +99,15 @@ public sealed partial class LegCommander
     /// What a refusal of the landing is for the merge verb: the FlightException the caller shows, GitHub's whole text kept. A behind
     /// or conflicting answer carries the words the update path (<see cref="Behind"/>, <see cref="Conflicts"/>) acts on.
     /// </summary>
-    private static FlightException RefusalOf(int number, LandOutcome outcome) => outcome.Answer switch
+    private static FlightException RefusalOf(int number, LandOutcome outcome)
     {
-        MergeAnswerKind.Behind => new FlightException($"{BehindText(number)}: {outcome.Said}"),
-        MergeAnswerKind.Conflicts => new FlightException($"#{number} conflicts with its base: {outcome.Said}"),
-        _ => new FlightException(outcome.Said ?? "GitHub refused the merge"),
-    };
+        // The class comes from the sorted answer (MergeAnswers decided its kind): a refusal that carried none is a person's.
+        var refusal = outcome.Answer is { } answer ? MergeRefusals.Of(answer) : MergeRefusals.Unclassified;
+        return outcome.Answer switch
+        {
+            MergeAnswerKind.Behind => new MergeBlockedException(refusal, $"{BehindText(number)}: {outcome.Said}"),
+            MergeAnswerKind.Conflicts => new MergeBlockedException(refusal, $"#{number} conflicts with its base: {outcome.Said}"),
+            _ => new MergeBlockedException(refusal, outcome.Said ?? "GitHub refused the merge"),
+        };
+    }
 }

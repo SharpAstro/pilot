@@ -142,6 +142,13 @@ public sealed record CommandResult
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Autopilot { get; init; }
 
+    /// <summary>
+    /// The class of a refused <c>merge</c> or <c>rerun-checks</c> (<see cref="MergeRefusal"/>), given where the refusal was made; null for
+    /// any other result. Node-internal: never on the wire.
+    /// </summary>
+    [JsonIgnore]
+    public MergeRefusal? Refusal { get; init; }
+
     /// <summary>The message the sender acted on (<see cref="CommandRequest.Why"/>), when it gave one.</summary>
     public string? Why { get; init; }
 
