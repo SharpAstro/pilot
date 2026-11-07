@@ -409,6 +409,8 @@ public static partial class NodeApp
                 },
                 // The repos' drive, else the Claude profile's (one and the same on most machines).
                 DiskPath = () => options.RepoRoots.FirstOrDefault(Directory.Exists) ?? services.GetRequiredService<SessionTrackerOptions>().Profile.Root,
+                // Every 5 s while a GUI or TUI shows Home, where the machine is drawn; every 15 s otherwise.
+                Views = services.GetRequiredService<PageViews>(),
                 Logger = services.GetService<ILogger<MachineSampler>>(),
             };
         });
