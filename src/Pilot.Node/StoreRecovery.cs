@@ -53,8 +53,9 @@ public sealed record StoreRecovered(string AsideFolder, string? Backup, long Sta
 /// compaction (<see cref="FileJournal"/>), the snapshot as it was and the journal up to <c>seq</c>, so the pair is the state at <c>seq</c>. Each is copied
 /// to the live names (the backup stays), given a stream of its own so a client that held the lost seqs takes a snapshot, and loaded. A pair that does not
 /// load is moved aside as it is, with what the attempt made of it.</description></item>
-/// <item><description>Last, an empty store; and if even that cannot start, <c>decisions.jsonl</c> goes aside too, as it is read on every start.</description></item>
+/// <item><description>Last, an empty store.</description></item>
 /// </list>
+/// <para><c>decisions.jsonl</c> is not moved: it is kept whole outside any compaction and has no backup, so a line of it this build cannot read still stops the start.</para>
 /// <para>No file is deleted. When nothing starts, what was moved is put back and the original failure is thrown, so the store is as it was found.</para>
 /// </remarks>
 public sealed class StoreRecovery : IDisposable
@@ -151,16 +152,6 @@ public sealed class StoreRecovery : IDisposable
             if (Attempt(folder, aside, create, null, moved, out var empty, out lastFailure))
             {
                 return Finish(empty!, aside, null, last, error, tried);
-            }
-
-            // Every start reads decisions.jsonl too, and a line of it this build cannot read stops an empty store as much as any.
-            if (File.Exists(Path.Combine(folder, FileJournal.DecisionsFile)))
-            {
-                MoveTo(Path.Combine(folder, FileJournal.DecisionsFile), Path.Combine(aside, FileJournal.DecisionsFile), moved);
-                if (Attempt(folder, aside, create, null, moved, out empty, out lastFailure, label: "attempt-empty-without-decisions"))
-                {
-                    return Finish(empty!, aside, null, last, error, [.. tried, $"an empty store with the decisions: {Describe(lastFailure!)}"]);
-                }
             }
         }
         catch (Exception e) when (e is not OperationCanceledException)
