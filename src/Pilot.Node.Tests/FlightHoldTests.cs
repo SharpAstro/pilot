@@ -190,7 +190,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
         // Hold and unhold comment on the flight's issue (pilot: ...); the review hold's release writes "Review of ..." on the PR.
         var pr = F(flight.Code).PullRequest!.Value;
         bool ReviewNotes((int Number, string Body) c) => c.Body.StartsWith("Review of ", StringComparison.Ordinal);
-        _github.IssueComments.ShouldNotContain(c => ReviewNotes(c));
+        _github.IssueComments.Where(ReviewNotes).ShouldBeEmpty();
         F(flight.Code).Holding.ShouldNotBeNull().Since.ShouldBe(since);
         Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
 
