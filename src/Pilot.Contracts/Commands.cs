@@ -97,7 +97,8 @@ public sealed record CommandResult
 
     /// <summary>
     /// Which way a verb that can go more than one way went, when it did: <c>say session</c> answers
-    /// <see cref="SayWays.Resumed"/> or <see cref="SayWays.Relayed"/>. Null for a verb that goes one way only.
+    /// <see cref="SayWays.Resumed"/> or <see cref="SayWays.Relayed"/>. Null for a verb that goes one way only. A refusal carries one
+    /// only when it was no verdict on the command: <see cref="RefusalWays.Busy"/>.
     /// </summary>
     public string? Way { get; init; }
 
@@ -897,6 +898,13 @@ public static class MergeWays
     /// news about where the first one stands, so a caller leaves its card open and looks again later.
     /// </summary>
     public const string InProgress = "in-progress";
+}
+
+/// <summary>The ways a refused command was refused (<see cref="CommandResult.Way"/>), where the refusal is no verdict on the command itself.</summary>
+public static class RefusalWays
+{
+    /// <summary>Another command had calls out for the flight (merging its base, rerunning a check, pushing): asked again once it is free, it runs.</summary>
+    public const string Busy = "busy";
 }
 
 /// <summary>The ways an <c>edit-idea</c> went (<see cref="CommandResult.Way"/>).</summary>
