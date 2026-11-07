@@ -312,6 +312,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>The entries it holds now, oldest first.</summary>
     public IReadOnlyList<TranscriptEntry> Entries => Volatile.Read(ref _held).Entries;
 
+    /// <summary>The words of the turn the watchtower is on, as the last read carried them (not as the list shows them while held under the pointer); null with none.</summary>
+    internal string? Partial => Volatile.Read(ref _held).Partial;
+
     /// <summary>What a choice or restart was refused with, as the chat shows it, oldest first.</summary>
     public IReadOnlyList<string> Notices => Volatile.Read(ref _notices);
 
