@@ -447,21 +447,6 @@ public sealed partial class LegCommander
         await OffLockAsync(null, () => _marks.ApplyAsync(flight.Code, cancellationToken));
     }
 
-    /// <summary>
-    /// The row's review turned to Changes asking for <paramref name="changes"/>, on the flight as it is now: the one write shared by
-    /// <see cref="TurnToChangesAsync"/> and a push's own turning of a passed review (<see cref="EnsureNotQueuedAsync"/>), so the two never
-    /// differ in what they write. The PR's draft state and the marks are the caller's.
-    /// </summary>
-    private FlightRow? RecordReviewChanges(string code, string changes, bool passedOnly = false, bool clearMergeWhenGreen = false) =>
-        Record(code, f => f with
-        {
-            // A review that stopped being passed meanwhile is left as it is when only a passed one is asked for.
-            Review = f.Review is { } held && (!passedOnly || held.State == ReviewState.Passed)
-                ? held with { State = ReviewState.Changes, Report = changes, FinishedAt = time.GetUtcNow(), ReviewUrl = null, MarksWhy = null }
-                : f.Review,
-            MergeWhenGreen = clearMergeWhenGreen ? null : f.MergeWhenGreen,
-        });
-
     private async Task<string?> SendBackAsync(string code, Func<int, string> changesFor, string closing, CancellationToken cancellationToken, SendBackReason reason = SendBackReason.Findings)
     {
         // The flight is this send-back's while GitHub is asked, as a rebase's: one under way on it is waited for, without the lock.

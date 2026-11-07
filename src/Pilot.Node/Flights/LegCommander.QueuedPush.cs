@@ -74,6 +74,21 @@ public sealed partial class LegCommander
             link: before?.PullRequestUrl ?? flight.PullRequestUrl);
     }
 
+    /// <summary>
+    /// The row's review turned to Changes asking for <paramref name="changes"/>, on the flight as it is now: the one write shared by
+    /// <see cref="TurnToChangesAsync"/> and a push's own turning of a passed review (<see cref="EnsureNotQueuedAsync"/>), so the two never
+    /// differ in what they write. The PR's draft state and the marks are the caller's.
+    /// </summary>
+    private FlightRow? RecordReviewChanges(string code, string changes, bool passedOnly = false, bool clearMergeWhenGreen = false) =>
+        Record(code, f => f with
+        {
+            // A review that stopped being passed meanwhile is left as it is when only a passed one is asked for.
+            Review = f.Review is { } held && (!passedOnly || held.State == ReviewState.Passed)
+                ? held with { State = ReviewState.Changes, Report = changes, FinishedAt = time.GetUtcNow(), ReviewUrl = null, MarksWhy = null }
+                : f.Review,
+            MergeWhenGreen = clearMergeWhenGreen ? null : f.MergeWhenGreen,
+        });
+
     // The PR of each flight the node itself took out of the queue, and when: its removal is not one GitHub made unmerged.
     private readonly ConcurrentDictionary<string, (int Number, DateTimeOffset At)> _dequeuedByNode = new(StringComparer.Ordinal);
 
