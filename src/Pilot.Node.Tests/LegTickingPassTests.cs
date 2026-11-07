@@ -308,4 +308,80 @@ public sealed class LegTickingPassTests : LegCommanderTestsBase
         _workers.Started.Count(w => w.Name == Ticker).ShouldBe(1);
         _said.ShouldBeEmpty();
     }
+
+    /// <summary>The leg in its ticking pass with every step ticked by its ticker, whose session then ended with no finish.</summary>
+    private async Task TickerEndedWithAllTickedAsync()
+    {
+        await FlyingAsync(commit: true);
+        WorkerEnded();
+        await LookUntilTickerAsync();
+        (await AsTicker(Verbs.Check, "1")).Ok.ShouldBeTrue();
+        (await AsTicker(Verbs.Check, "2")).Ok.ShouldBeTrue();
+        _state.PutSession(Session(L("parser").TickerJob!, Ticker, SessionState.Ended, TimeSpan.FromMinutes(5)));
+    }
+
+    [Fact]
+    public async Task A_ticker_that_ended_with_every_step_ticked_and_no_finish_gets_the_leg_finished_done_by_the_node()
+    {
+        await TickerEndedWithAllTickedAsync();
+
+        await _watch.LookAsync(Ct);
+
+        L("parser").State.ShouldBe(LegState.Done);
+        L("parser").Report.ShouldNotBeNull().ShouldContain("finished by the node: its ticker stopped with every step ticked");
+        _checks.Runs.ShouldNotBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegWatch.Idle);
+    }
+
+    [Fact]
+    public async Task A_ticker_that_ended_with_every_step_ticked_whose_finish_the_node_has_refused_rings_once_naming_the_refusal()
+    {
+        await TickerEndedWithAllTickedAsync();
+        _checks.Next = new CheckRun(1, "Parser.Tests: 3 failed");
+
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        await _watch.LookAsync(Ct);
+
+        L("parser").State.ShouldBe(LegState.Flying);
+        var card = _state.Cards(openOnly: true).Single(c => c.Bin == CardBin.Ring);
+        card.Kind.ShouldBe(LegWatch.Idle);
+        card.Title.ShouldContain("ticker stopped with every step ticked, and the node's finish was refused");
+        card.Title.ShouldContain("check");
+        card.Detail.ShouldNotBeNull().ShouldContain("Parser.Tests: 3 failed");
+        // The node asks for the finish once per ticker.
+        _checks.Runs.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task A_ticker_that_ran_finish_and_ended_while_its_check_rerun_is_still_running_is_not_rung_and_the_rerun_finishes_the_leg()
+    {
+        await FlyingAsync(commit: true);
+        WorkerEnded();
+        await LookUntilTickerAsync();
+        (await AsTicker(Verbs.Check, "1")).Ok.ShouldBeTrue();
+        (await AsTicker(Verbs.Check, "2")).Ok.ShouldBeTrue();
+        var gate = new TaskCompletionSource();
+        _checks.OnRun = () => gate.Task;
+        var finishing = AsTicker(Verbs.FinishLeg, "done", "ticked by the ticking pass: The parser covers both steps");
+        await Until(() => L("parser").Recheck is { Outcome: null });
+
+        // The ticker was told its check is rerunning and ended its turn, as told: its session ended, long past the idle grace.
+        _state.PutSession(Session(L("parser").TickerJob!, Ticker, SessionState.Ended, TimeSpan.FromMinutes(5)));
+        await _watch.LookAsync(Ct);
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        await _watch.LookAsync(Ct);
+
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+        _workers.Stopped.ShouldNotContain(L("parser").TickerJob!);
+        // The node's finish is not asked for a second time while the first one's rerun runs.
+        _checks.Runs.Count.ShouldBe(1);
+
+        gate.SetResult();
+        (await finishing).Ok.ShouldBeTrue();
+        L("parser").State.ShouldBe(LegState.Done);
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+    }
 }
