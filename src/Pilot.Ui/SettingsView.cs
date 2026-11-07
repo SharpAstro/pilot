@@ -743,7 +743,8 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             });
             pairLines.Add(CaptionLine(models, n, lineWidth, Dim, null, ""));
         }
-        pairLines.Add(Layout.Builder.HStack([.. cells]).WithGap(PairGap).HFixed(ControlH));
+        // WStar on every line: a stack of Star cells is Auto wide by default, and measures to its gaps alone, so its cells were given no width.
+        pairLines.Add(Layout.Builder.HStack([.. cells]).WithGap(PairGap).WStar().HFixed(ControlH));
         var captions = RangeCaptions.Place(n, def, max, lineWidth, PairGap, TextMargin, text => measure(text, 10f));
         foreach (var line in captions.Select(c => c.Line).Distinct().Order())
         {
@@ -793,7 +794,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         var parts = RangeCaptions.Segments(runs, columns, width, PairGap).Select(s => s.Text is { } text
             ? Layout.Builder.Text(text, 10f, chosen is { } bright && handle.Length > 0 && text.StartsWith(handle, StringComparison.Ordinal) ? bright : colour, TextAlign.Center).WStar(s.Width).HFixed(14f)
             : Layout.Builder.Spacer().WStar(s.Width).HFixed(14f));
-        return Layout.Builder.HStack([.. parts]).HFixed(14f);
+        return Layout.Builder.HStack([.. parts]).WStar().HFixed(14f);
     }
 
     private void SetScope(string key, bool fleet)
