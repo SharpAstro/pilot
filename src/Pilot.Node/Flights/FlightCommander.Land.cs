@@ -78,7 +78,12 @@ public sealed partial class FlightCommander
     /// </summary>
     public FlightRow MarkMergedUnderLeg(FlightRow flight, string mergedHead, string why)
     {
-        var number = flight.PullRequest;
+        // A flight without a PR has none that merged: no caller passes one, but without this its null would match a row holding no PR
+        // too (null equals null below) and write MergedPullRequest = null.
+        if (flight.PullRequest is not { } number)
+        {
+            return flight;
+        }
         // Written on the row as it is at this moment, and only while it still holds the PR that merged: a caller's row may have been
         // read with the lock let go (a push's retry after GH006), and a whole-row write of it would undo what moved meanwhile.
         var marked = state.UpdateFlight(flight.Code, f => f.PullRequest != number ? null : f with

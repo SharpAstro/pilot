@@ -162,6 +162,25 @@ public sealed class MergedUnderLegTests : IDisposable
         node.State.Cards(openOnly: true).ShouldNotContain(c => c.Kind == FlightCommander.MergedUnderLegKind);
     }
 
+    // Review note 4: a flight without a PR has none that merged; its null must not match a row holding no PR and write MergedPullRequest = null.
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task MarkingMergedUnderALegSkipsAFlightWithoutAPr()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Merged(node);
+        var noPr = node.State.Flights().Single() with { PullRequest = null, PullRequestUrl = null };
+        node.State.PutFlight(noPr);
+        var cards = node.State.Cards().Length;
+
+        var returned = node.App.Services.GetRequiredService<FlightCommander>().MarkMergedUnderLeg(noPr, _mergedHead, "a push was refused");
+
+        returned.ShouldBe(noPr);
+        node.State.Flights().Single().ShouldBe(noPr);
+        node.State.Cards().Length.ShouldBe(cards);
+        node.State.Cards(openOnly: true).ShouldNotContain(c => c.Kind == FlightCommander.MergedUnderLegKind);
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task StartLegAfterTheMergeRingsAtOnce()
