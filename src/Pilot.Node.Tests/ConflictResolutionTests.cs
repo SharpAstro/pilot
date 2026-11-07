@@ -58,10 +58,9 @@ public sealed class ConflictResolutionTests : ReviewTestsBase
         leg.GoAroundReasons.Single().By.ShouldBe(LegWatch.Who);
         _workers.Started.Count.ShouldBe(startedBefore + 1);
         var brief = _workers.Started.Last().Brief;
-        File.WriteAllText(@"C:\Users\SebastianGodelet\.claude\jobs\9ee28370\tmp\brief.txt", brief);
         brief.ShouldContain("the PR conflicts with its base");
         brief.ShouldContain("conflicts in 1 file");
-        brief.ShouldContain("- README.md: this branch added 1 and removed 0 lines; the base added 1 and removed 1 lines");
+        brief.ShouldContain("- README.md: this branch added 1 and removed 1 lines; the base added 1 and removed 1 lines");
         brief.ShouldContain(BaseCommit);
         brief.ShouldContain("merge base");
         brief.ShouldContain("git merge --no-edit");
@@ -278,8 +277,13 @@ public sealed class ConflictResolutionTests : ReviewTestsBase
     public async Task AFlyingLegWhoseWorkerIsNotLiveIsNotToldAndNothingRings()
     {
         var flight = await Conflicted("51", openPr: false);
-        // A done leg is put flying again by a go-around (a start is refused for it).
-        (await Run(Verbs.GoAround, Verbs.LegTarget(flight.Code, "parser"), "controller", "redo it")).Error.ShouldBeNull();
+        // The first conflict puts the done leg flying again (the test's workers leave no live session row), then the base moves on.
+        (await _legs.ResolveConflictAsync(flight.Code, "merging origin/main conflicts", Ct)).ShouldBeNull();
+        _state.Legs(flight.Code).Single().State.ShouldBe(LegState.Flying);
+        File.WriteAllText(Path.Combine(Repo, "later.txt"), "later\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "commit", "-qm", "later on main");
+        Git(Repo, "push", "-q", "origin", "main");
         var started = _workers.Started.Count;
         var told = false;
         _legs.Say = (_, _, _) =>
