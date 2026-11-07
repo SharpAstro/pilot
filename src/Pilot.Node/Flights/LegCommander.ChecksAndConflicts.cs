@@ -262,7 +262,7 @@ public sealed partial class LegCommander
                 new CardChoice { Label = Models.SendBackLabel(leg, "Keep the base's behaviour"), Verb = Verbs.GoAround, Target = target, Args = [ConflictKeepBrief("base", decision)] },
                 new CardChoice { Label = Models.SendBackLabel(leg, "Keep the branch's behaviour"), Verb = Verbs.GoAround, Target = target, Args = [ConflictKeepBrief("branch", decision)] },
             ],
-            summary: $"The workers sent to merge {flight.Code}'s PR with its base found the two change the same behaviour in opposite ways in {files}. Keeping the base's behaviour costs: {decision.KeepBaseCosts}. Keeping the branch's behaviour costs: {decision.KeepBranchCosts}. Either choice sends the leg round told which side to keep.");
+            summary: $"The workers sent to merge {flight.Code}'s PR with its base found the two change the same behaviour in opposite ways in {Clip(files)}. Keeping the base's behaviour costs: {Clip(decision.KeepBaseCosts)}. Keeping the branch's: {Clip(decision.KeepBranchCosts)}. Either choice sends the leg round told which side to keep.");
     }
 
     /// <summary>What the leg round a decision card's choice sends is told: the conflict, which side wins, and what the other side's work loses.</summary>

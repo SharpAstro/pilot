@@ -104,6 +104,7 @@ internal static class CardKindCatalog
         new("admission-cycle", "Handled", ["Flights/AdmissionGate.cs"], "LegAdmissionTests.AFlightAdmittedToBreakACycleRaisesOneCardNamingBothFlights"),
         new("spend-alert", "ForYou", [LegStart], "SpendAlertTests.ALegPastTheAlertShareRingsWithItsTokensAndShareBeforeItsNextRoundOncePerRound"),
         new("go-around-cap", "Ring", ["Flights/LegCommander.GoAround.cs"], "GoAroundCapTests.TheSixthGoAroundOfALegIsRefusedAndRaisesTheCardWithEveryRoundsReason", "the leg's go-around count on its row has reached the cap", [nameof(Verbs.FinishLeg)]),
+        new("conflict-decision", "Ring", ["Flights/LegCommander.ChecksAndConflicts.cs"], "ConflictEscalationTests.TheLastRungsDecisionReportRingsOneCardNamingTheFilesTheBehavioursAndWhatEachChoiceKeeps", "the last of three conflict workers failed with a report saying the two sides change the same behaviour in opposite ways (the fixed shape), and the leg's row holds it", [nameof(Verbs.GoAround)]),
         new("review-kept", "Handled", [LegReview], "ReReviewTests.AHeadThatOnlyMergedTheBaseKeepsThePassWithNoReviewerStarted"),
         new("review-notes", "ForYou", [LegReview], "ReviewModelTests.APassWithNotesRaisesTheWatchtowerCardAndSendsNoLegRound"),
         new("human-verification", "ForYou", [HumanVerification], "HumanVerificationFilingTests.AFlaggedPassFilesEachItemInTheMilestoneAndRaisesOneCard"),

@@ -188,7 +188,7 @@ public sealed class ConflictResolutionTests : ReviewTestsBase
     }
 
     [Fact]
-    public async Task AWorkerThatStopsOnTheConflictIsTheLegFailedCardsToSayAndNoConflictCardFollows()
+    public async Task AWorkerThatStopsOnTheConflictIsFollowedByTheNextRungAndNoCardRings()
     {
         var flight = await Conflicted("48", openPr: false);
         await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "alice");
@@ -196,10 +196,13 @@ public sealed class ConflictResolutionTests : ReviewTestsBase
         var started = _workers.Started.Count;
 
         (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), worker, "failed", "could not resolve it")).Error.ShouldBeNull();
+        await Started(_legs, flight.Code);
 
-        Open().Where(c => c.Bin == CardBin.Ring).ShouldHaveSingleItem().Kind.ShouldBe("leg-failed");
+        // The ladder (ConflictEscalationTests): the next worker starts at once on a stronger model, and the conflict is no card.
+        _workers.Started.Count.ShouldBe(started + 1);
+        _workers.Started.Last().Model.ShouldBe("opus");
+        Open().ShouldNotContain(c => c.Bin == CardBin.Ring);
         _state.Cards().ShouldNotContain(c => c.Kind.Contains("conflict", StringComparison.OrdinalIgnoreCase));
-        _workers.Started.Count.ShouldBe(started);
     }
 
     [Fact]
