@@ -19,6 +19,10 @@ public sealed class LegFailureTests : IDisposable
     private const string Report = "All 7 steps done and committed; filtered tests pass (115, run on the plane)";
     private const string SendRound = "Send it round: a fresh worker fixes it and finishes";
 
+    /// <summary>The c78 card's summary (PIL834/read-stamps) as the node raises it with the outside and the main notes; LegFailedCardTests draws the same text.</summary>
+    internal const string C78Summary = "The worker of PIL834/read-stamps stopped and its check fails building Pilot.Ui. The flight changed none of the failing files or their projects. "
+        + "main has changed those files since the flight took it (2 commits), so taking main may fix it.";
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2legfail-" + Guid.NewGuid().ToString("N")[..8]);
@@ -93,9 +97,7 @@ public sealed class LegFailureTests : IDisposable
         card.Choices.ShouldNotContain(c => c.Label.Contains("All 7 steps") || c.Label.Contains("filtered tests"));
         card.Choices.Single(c => c.Verb == Verbs.GoAround).Args.ShouldBe([$"the last worker stopped: {Report}"]);
         card.Summary.ShouldNotBeNull().ShouldContain("its check fails building Pilot.Ui");
-        card.Summary.ShouldContain("outside this leg's code");
-        card.Summary.ShouldContain("Send it round");
-        card.Summary.ShouldContain("Accept as it is");
+        card.Summary.ShouldBe("The worker of TIA9/parser stopped and its check fails building Pilot.Ui. The flight changed none of the failing files or their projects.");
         card.Title.ShouldNotContain("stopped");
         card.Detail.ShouldNotBeNull().ShouldContain(Report);
     }
@@ -124,7 +126,7 @@ public sealed class LegFailureTests : IDisposable
         var card = await FailedCard();
 
         card.Title.ShouldBe("TIA9/parser: its check fails building Pilot.Ui");
-        card.Summary.ShouldNotBeNull().ShouldNotContain("outside this leg's code");
+        card.Summary.ShouldNotBeNull().ShouldNotContain("changed none of the failing files");
     }
 
     [Fact]
@@ -137,7 +139,7 @@ public sealed class LegFailureTests : IDisposable
 
         card.Title.ShouldBe("TIA9/parser: its check fails 2 tests in ParserTests");
         card.Choices.Last().Label.ShouldBe("Accept as it is: the flight goes on with the check failing");
-        card.Summary.ShouldNotBeNull().ShouldNotContain("outside this leg's code");
+        card.Summary.ShouldNotBeNull().ShouldNotContain("changed none of the failing files");
     }
 
     [Fact]
@@ -169,7 +171,11 @@ public sealed class LegFailureTests : IDisposable
 
         var card = await FailedCard();
 
-        card.Summary.ShouldNotBeNull().ShouldContain("main has changed those files since the flight took it (1 commit), so taking main may fix it");
+        card.Summary.ShouldBe("The worker of TIA9/parser stopped and its check fails building Pilot.Ui. The flight changed none of the failing files or their projects. "
+            + "main has changed those files since the flight took it (1 commit), so taking main may fix it.");
+        // The panel draws a summary up to CardsView.SummaryChars (240) only: the c78 card, with a longer name and both notes, fits too.
+        card.Summary.Replace("TIA9/parser", "PIL834/read-stamps").Replace("(1 commit)", "(2 commits)").ShouldBe(C78Summary);
+        C78Summary.Length.ShouldBeLessThanOrEqualTo(240);
         card.Detail.ShouldNotBeNull().ShouldContain("Fix the widget base clash");
     }
 

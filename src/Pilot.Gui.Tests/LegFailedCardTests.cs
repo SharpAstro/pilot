@@ -13,7 +13,8 @@ namespace Pilot.Gui.Tests;
 /// The leg-failed card of c78 (PIL834/read-stamps), before and after pilot #844: the old card's title and both buttons began with the first
 /// words of the worker's report ("All 7 steps done and committed; ..."), the new one names what failed and what each button leads to.
 /// Both are drawn on the CPU at a phone-narrow 404 px and at a wide size; the new card's title and labels are drawn whole (or ellipsised with the
-/// whole text on hover), and no text is drawn over other text. The captures are written into the folder PILOT_TEST_CAPTURE names, for the PR.
+/// whole text on hover), its summary is drawn whole, and no text is drawn over other text. The captures are written beside the file
+/// PILOT_TEST_CAPTURE names, for the PR.
 /// </summary>
 public sealed class LegFailedCardTests
 {
@@ -45,9 +46,9 @@ public sealed class LegFailedCardTests
     {
         Id = "c78", Bin = CardBin.Ring, Kind = "leg-failed", Subject = "flight/PIL834/read-stamps",
         Title = "PIL834/read-stamps: its check fails building Pilot.Ui, outside this leg's code",
-        Summary = "The worker of PIL834/read-stamps stopped and its check fails building Pilot.Ui. The flight changed none of the failing files or their projects, so the failure is outside this leg's code. "
-            + "main has changed those files since the flight took it (2 commits), so taking main may fix it. "
-            + "Send it round starts a fresh worker, told the whole report, that fixes it and finishes the leg; Accept as it is keeps the failure in the leg's report and the flight goes on with the check still failing.",
+        // The same text as LegFailureTests.C78Summary, which pins that the node raises it: within CardsView.SummaryChars, so drawn whole.
+        Summary = "The worker of PIL834/read-stamps stopped and its check fails building Pilot.Ui. The flight changed none of the failing files or their projects. "
+            + "main has changed those files since the flight took it (2 commits), so taking main may fix it.",
         Detail = $"{Report}\n\nmain has changed the failing files since the flight took it; taking main may fix it:\nfaaacbee merge-queue skill: mq.sh enqueue queues a PR (#866)\ndc230bdc A leg whose ticking pass ends unfinished is finished by the node (#859)",
         Choices = [.. NewChoices], At = Live.At, State = CardState.Open,
     };
@@ -61,11 +62,14 @@ public sealed class LegFailedCardTests
 
     /// <summary>The text is drawn whole (its leaves run together read as it), or a tooltip carries all of it.</summary>
     private static bool WholeOrOnHover(ImmutableArray<Layout.ArrangedNode<float>> arranged, string text)
+        => DrawnWhole(arranged, text) || arranged.Select(a => a.Node.Tooltip).OfType<string>().Any(t => t.Contains(text, StringComparison.Ordinal));
+
+    /// <summary>The text is drawn whole on screen: its leaves run together read as it (a tooltip does not count).</summary>
+    private static bool DrawnWhole(ImmutableArray<Layout.ArrangedNode<float>> arranged, string text)
     {
         var drawn = ArrangedText.Concat(arranged);
         var squashed = string.Concat(text.Where(c => !char.IsWhiteSpace(c)));
-        return string.Concat(drawn.Where(c => !char.IsWhiteSpace(c))).Contains(squashed, StringComparison.Ordinal)
-            || arranged.Select(a => a.Node.Tooltip).OfType<string>().Any(t => t.Contains(text, StringComparison.Ordinal));
+        return string.Concat(drawn.Where(c => !char.IsWhiteSpace(c))).Contains(squashed, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -79,6 +83,9 @@ public sealed class LegFailedCardTests
         using var _ = renderer;
 
         WholeOrOnHover(arranged, card.Title).ShouldBeTrue($"title at {width}");
+        // The summary is read on the card itself, to its end: what stopped, that the flight changed none of the files, that main did.
+        card.Summary.ShouldNotBeNull().Length.ShouldBeLessThanOrEqualTo(CardsView<RgbaImage>.SummaryChars);
+        DrawnWhole(arranged, card.Summary).ShouldBeTrue($"summary drawn whole at {width}");
         foreach (var choice in card.Choices)
         {
             WholeOrOnHover(arranged, choice.Label).ShouldBeTrue($"'{choice.Label}' at {width}");
@@ -116,8 +123,8 @@ public sealed class LegFailedCardTests
         {
             return;
         }
-        // PILOT_TEST_CAPTURE names the folder the PNGs go into.
-        var dir = capture;
+        // PILOT_TEST_CAPTURE names a file, as for every other capture test; the PNGs go beside it.
+        var dir = Path.GetDirectoryName(Path.GetFullPath(capture)) ?? ".";
         Directory.CreateDirectory(dir);
         foreach (var (width, height) in new[] { (404, 1000), (1600, 800) })
         {

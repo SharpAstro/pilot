@@ -147,7 +147,7 @@ public sealed class CardLegLinkTests
             ("leg-failed", new CardRow
             {
                 Id = "c2", Bin = CardBin.Ring, Kind = "leg-failed", Subject = "flight/PIL355/parser", Title = "PIL355/parser: its check fails 3 tests in ParserTests",
-                Summary = "The worker of PIL355/parser stopped and its check fails 3 tests in ParserTests. Send it round starts a fresh worker, told the whole report, that fixes it and finishes the leg; Accept as it is keeps the failure in the leg's report and the flight goes on with the check still failing.",
+                Summary = "The worker of PIL355/parser stopped and its check fails 3 tests in ParserTests.",
                 Detail = "dotnet test failed with 3 errors in ParserTests",
                 Choices =
                 [

@@ -212,9 +212,9 @@ public sealed partial class LegCommander
                 state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "failed", Wait = null, Recheck = null });
                 var reason = failure.Cause;
                 var name = $"{flight.Code}/{leg.Name}";
-                var outsideWords = outside ? "The flight changed none of the failing files or their projects, so the failure is outside this leg's code. " : "";
+                var outsideWords = outside ? " The flight changed none of the failing files or their projects." : "";
                 var mainWords = mainCommits.Count > 0
-                    ? $"main has changed those files since the flight took it ({mainCommits.Count} commit{(mainCommits.Count == 1 ? "" : "s")}), so taking main may fix it. "
+                    ? $" main has changed those files since the flight took it ({mainCommits.Count} commit{(mainCommits.Count == 1 ? "" : "s")}), so taking main may fix it."
                     : "";
                 var mainDetail = mainCommits.Count > 0
                     ? $"main has changed the failing files since the flight took it; taking main may fix it:\n{string.Join('\n', mainCommits.Take(5))}{(mainCommits.Count > 5 ? $"\n...and {mainCommits.Count - 5} more" : "")}"
@@ -227,7 +227,9 @@ public sealed partial class LegCommander
                         new CardChoice { Label = Models.SendBackLabel(leg, "Send it round: a fresh worker fixes it and finishes"), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker stopped: {(report.Length > 0 ? report : "no reason given")}"] },
                         new CardChoice { Label = failure.CheckFailed ? "Accept as it is: the flight goes on with the check failing" : "Accept as it is: the flight goes on, the failure kept in its report", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
                     ],
-                    summary: $"The worker of {name} stopped{(failure.CheckFailed ? $" and {reason}" : $": {reason}")}. {outsideWords}{mainWords}Send it round starts a fresh worker, told the whole report, that fixes it and finishes the leg; Accept as it is keeps the failure in the leg's report and the flight goes on{(failure.CheckFailed ? " with the check still failing" : "")}.");
+                    // The panel draws a summary up to CardsView.SummaryChars (240) only, so it says what stopped, whether the flight changed
+                    // the failing files and whether main has; the buttons already say what each leads to (#844 review).
+                    summary: $"The worker of {name} stopped{(failure.CheckFailed ? $" and {reason}" : $": {reason}")}.{outsideWords}{mainWords}");
                 // The worker the node sent round on the PR open's conflict gave up: the owner is rung about the conflict itself, once.
                 if (_conflictSent.ContainsKey(flight.Code) && flight.PullRequest is null
                     && state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault()?.Name == leg.Name)
