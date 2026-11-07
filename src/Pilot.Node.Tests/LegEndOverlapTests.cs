@@ -156,8 +156,9 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
         row.AnsweredByNode.ShouldBe(OverlapRow.AnsweredByNodeLanded);
         row.Why.ShouldContain("nothing to wait for");
         var note = _state.Cards().Single(c => c.Kind == LegCommander.OverlapConnectedKind);
-        note.Detail.ShouldContain("nothing to wait for");
-        note.Detail.ShouldNotContain("waits until");
+        var detail = note.Detail.ShouldNotBeNull();
+        detail.ShouldContain("nothing to wait for");
+        detail.ShouldNotContain("waits until");
         flight.State.ShouldNotBe(FlightState.Held);
     }
 
