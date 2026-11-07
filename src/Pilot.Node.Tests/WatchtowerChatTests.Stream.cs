@@ -15,7 +15,10 @@ namespace Pilot.Node.Tests;
 public sealed partial class WatchtowerChatTests
 {
     private readonly WatchtowerStreamTests.FakeLauncher _launcher = new();
-    private readonly SendLog _sends = new();
+    // On the test's clock: the log keeps sends by it, and a send stamped by the fake clock must not look six hours old to the real one.
+    private SendLog _sends => _sendLog ??= new SendLog(_time);
+
+    private SendLog? _sendLog;
 
     private static string InitLine(string id) => $$"""{"type":"system","subtype":"init","session_id":"{{id}}","model":"sonnet"}""";
 
@@ -140,6 +143,8 @@ public sealed partial class WatchtowerChatTests
             await SayAsync($"s{i}", $"message {i}");
             _time.Advance(TimeSpan.FromMilliseconds(200));
             process.Emit(Delta($"answer {i}"));
+            // The stream reads the delta on its own thread: the clock moves on only once the words are on the page, or its first word would be stamped late.
+            await UntilAsync(() => chat.Page(-1).Partial == $"answer {i}", $"answer {i}'s first word");
             _time.Advance(TimeSpan.FromMilliseconds(300));
             process.Emit(ResultLine);
             await UntilAsync(() => _tower.CurrentStream() is { Working: false } stream && stream.Timings.Count == Math.Min(i + 2, StreamSession.TimingsKept), $"answer {i} to end");

@@ -52,7 +52,8 @@ public sealed class WatchtowerStreamTests : IDisposable
             {
                 lock (_written)
                 {
-                    return [.. _written.Select(Text)];
+                    // (Only the user messages: an interrupt is a control request, which has no message.)
+                    return [.. _written.Where(l => JsonDocument.Parse(l).RootElement.TryGetProperty("message", out _)).Select(Text)];
                 }
             }
         }
