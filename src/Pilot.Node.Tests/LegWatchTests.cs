@@ -410,17 +410,20 @@ public sealed class LegWatchTests
         _state.CloseCardsAbout(Verbs.FlightTarget("TIA1"), "TIA1 landed");
         Flight(FlightState.Landed);
         var said = _said.Count;
-        var cards = _state.Cards().Length;
+        var cards = _state.Cards().Count(c => c.Kind != LegWatch.StraySession);
         foreach (var _ in Enumerable.Range(0, 4))
         {
             _time.Advance(TimeSpan.FromMinutes(10));
             await _watch.LookAsync(Ct);
         }
 
-        Open().ShouldBeEmpty();
-        _state.Cards().Length.ShouldBe(cards);
+        // The worker's session still runs, so the stray watch may offer to stop it: that card is about the session, not the leg.
+        AboutTheFlight().ShouldBeEmpty();
+        _state.Cards().Count(c => c.Kind != LegWatch.StraySession).ShouldBe(cards);
         _said.Count.ShouldBe(said);
     }
+
+    private CardRow[] AboutTheFlight() => Open().Where(c => c.Subject.StartsWith(Verbs.FlightTarget("TIA1"), StringComparison.Ordinal)).ToArray();
 
     [Fact]
     public async Task ACardAboutALegRaisedBeforeItsFlightLandsIsClosedAtTheLandingAndNotRaisedAgain()
@@ -440,7 +443,7 @@ public sealed class LegWatchTests
         await _watch.LookAsync(Ct);
         await _watch.LookAsync(Ct);
 
-        Open().ShouldBeEmpty();
+        AboutTheFlight().ShouldBeEmpty();
     }
 
     [Fact]
