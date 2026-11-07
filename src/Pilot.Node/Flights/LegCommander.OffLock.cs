@@ -88,6 +88,10 @@ public sealed partial class LegCommander
     internal bool IsCalling(string code, string what) =>
         _calling.TryGetValue(code, out var busy) && busy.What == what && time.GetUtcNow() - busy.At < StuckAfter;
 
+    /// <summary>True while the flight has any step's calls out that is live (out for less than <see cref="StuckAfter"/>): what the node's sweep leaves a flight alone for rather than wait inside a command, one flight at a time.</summary>
+    internal bool IsCallingAnything(string code) =>
+        _calling.TryGetValue(code, out var busy) && time.GetUtcNow() - busy.At < StuckAfter;
+
     /// <summary>
     /// Takes the lock and the flight, as <see cref="Calling"/> does, for a call of the node's own (a rebase, a send back for changes):
     /// where a person's command is refused while the flight has calls out, this waits for them, without the lock.

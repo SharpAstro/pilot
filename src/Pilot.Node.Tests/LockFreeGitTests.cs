@@ -16,6 +16,9 @@ public sealed class LockFreeGitTests : ReviewTestsBase
 {
     private static readonly TimeSpan Quick = TimeSpan.FromSeconds(1);
 
+    /// <summary>How long a test lets a command that should wait show that it did not answer: a refusal would have come back in far less.</summary>
+    private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(100);
+
     /// <summary>The longest a held call is held when a test never lets it go, as a gh that hangs.</summary>
     private static readonly TimeSpan Hung = TimeSpan.FromSeconds(30);
 
@@ -193,8 +196,9 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         await Within(gate.Reached, "the fetch of the update was out");
 
         var open = legs.RunAsync(new CommandRequest { Verb = Verbs.OpenPr, Target = Verbs.FlightTarget(flight.Code), Who = "controller" }, Ct);
-        // Not answered while the flight's calls are out: a refusal would come back at once.
-        (await Task.WhenAny(open, Task.Delay(Quick, Ct))).ShouldNotBe(open, "the open-pr waited for the flight to be free");
+        // Not answered while the flight's calls are out: a refusal would come back at once. The pause is only a quick fail for that; the proof
+        // that the open waited is the end below (ok, not busy), which holds however long the pause was, so a loaded machine cannot flip it.
+        (await Task.WhenAny(open, Task.Delay(Settle, Ct))).ShouldNotBe(open, "the open-pr waited for the flight to be free");
 
         gate.Open();
         (await rebase).ShouldBeNull();
@@ -202,6 +206,31 @@ public sealed class LockFreeGitTests : ReviewTestsBase
 
         done.Ok.ShouldBeTrue($"{done.Error} (way: {done.Way ?? "none"})");
         done.Way.ShouldNotBe(RefusalWays.Busy);
+    }
+
+    // Pilot #871: the node's own sweep takes its flights one at a time, so it leaves a flight whose calls are out to the next sweep instead of
+    // waiting inside open-pr with every flight behind it.
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheSweepLeavesAFlightWhoseCallsAreOutToItsNextSweepInsteadOfWaitingInOpenPr()
+    {
+        var (flight, _) = await Passed("1");
+        var gate = new Gate();
+        var git = new GatedGit(new GitCli(), gate, args => args is ["fetch", ..]);
+        var legs = Another(git);
+
+        var rebase = legs.BringUpToDateAsync(flight.Code, Ct);
+        await Within(gate.Reached, "the fetch of the update was out");
+
+        var clock = Stopwatch.StartNew();
+        await legs.AdvanceFlightAsync(flight.Code, Ct);
+        (clock.Elapsed < Quick).ShouldBeTrue("the sweep answered at once");
+        F(flight.Code).PullRequest.ShouldBeNull();
+
+        gate.Open();
+        (await rebase).ShouldBeNull();
+        await legs.AdvanceFlightAsync(flight.Code, Ct);
+        F(flight.Code).PullRequest.ShouldNotBeNull();
     }
 
     [Fact]
