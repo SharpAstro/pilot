@@ -54,6 +54,126 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
 
     private void MarkDone(string leg) => _state.PutLeg(L(leg) with { State = LegState.Done });
 
+    private string RefusedMarker => Path.Combine(_root, "gh006-refused").Replace('\\', '/');
+
+    private string HookPath => Path.Combine(Origin, "hooks", "pre-receive");
+
+    // Origin refuses a push as GitHub does a queued branch: the GH006 line on the hook's stderr (git relays it as "remote: ..."), exit 1.
+    // The marker file says a push was refused; with onlyOnce, the next push passes.
+    private void RefuseWithGh006(FlightRow flight, bool onlyOnce = false)
+    {
+        var refuse = $"touch '{RefusedMarker}'\necho 'error: GH006: Protected branch update failed for refs/heads/{flight.Branch}.' >&2\necho 'error: Cannot change this locked branch because it is in a merge queue.' >&2\nexit 1";
+        File.WriteAllText(HookPath, $"#!/bin/sh\n{(onlyOnce ? $"if [ -f '{RefusedMarker}' ]; then exit 0; fi\n" : "")}{refuse}\n");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(HookPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
+    // The PR is merged on GitHub from the moment a push was refused: what the node reads after the refusal.
+    private void MergeOnceRefused(string head) =>
+        _github.OnCall = call =>
+        {
+            if (call == nameof(IGitHub.PullRequestAsync) && File.Exists(RefusedMarker))
+            {
+                _github.Pr = new PullRequest(63, "MERGED", head, PrUrl);
+            }
+            return Task.CompletedTask;
+        };
+
+    private IEnumerable<CardRow> Rings() => _state.Cards(openOnly: true).Where(c => c.Bin == CardBin.Ring);
+
+    [Fact]
+    public async Task AGh006PushOnAPrThatMergedMeanwhileMarksTheFlightAndTheSweepOpensTheFollowUpWithTheCommit()
+    {
+        var flight = await QueuedWithACommit();
+        _github.Queue = null;
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        var old = Git(Origin, "rev-parse", $"refs/heads/{flight.Branch}");
+        RefuseWithGh006(flight);
+        MergeOnceRefused(old);
+
+        var ex = await Should.ThrowAsync<FlightException>(() => _legs.PushAsync(flight, Ct));
+
+        ex.Message.ShouldContain("GH006");
+        ex.Message.ShouldContain("follow-up PR");
+        var marked = _state.Flights().Single();
+        (marked.PullRequest, marked.MergedPullRequest, marked.MergedHead).ShouldBe((null, 63, old));
+        _github.Dequeued.ShouldBeEmpty();
+        Git(Origin, "rev-parse", $"refs/heads/{flight.Branch}").ShouldBe(old);
+        // Nothing rings: no reviewer start is offered that would be refused again, and no push is retried by force.
+        Rings().ShouldBeEmpty();
+
+        // The last leg is done, and origin lets the branch go as it is no longer locked: the sweep's own step opens the follow-up PR.
+        MarkDone("parser");
+        File.Delete(HookPath);
+        _github.OnCall = null;
+        await _legs.AdvanceFlightAsync("TIA1", Ct);
+
+        var created = _github.Created.ShouldHaveSingleItem();
+        created.Branch.ShouldBe(flight.Branch);
+        Git(Origin, "rev-parse", $"refs/heads/{flight.Branch}").ShouldBe(head);
+        Git(Origin, "log", "-1", "--format=%s", $"refs/heads/{flight.Branch}").ShouldBe("the parser, after it was queued");
+        var opened = _state.Flights().Single();
+        (opened.PullRequest, opened.MergedHead).ShouldBe((71, null));
+        var card = _state.Cards().Single(c => c.Kind == LegCommander.FollowUpPrKind);
+        (card.Bin, card.Link).ShouldBe((CardBin.Handled, "https://github.com/x/tianwen/pull/71"));
+        card.Title.ShouldContain("#63's merge: PR #71");
+        Rings().ShouldBeEmpty();
+
+        // The follow-up merges, and the flight lands.
+        _github.Pr = new PullRequest(71, "MERGED", head, "https://github.com/x/tianwen/pull/71");
+        await _flights.LandAfterMergeAsync("TIA1", head, Ct);
+        _state.Flights().Single().State.ShouldBe(FlightState.Landed);
+    }
+
+    [Fact]
+    public async Task AGh006PushOnAPrThatIsQueuedNowDequeuesItAndPushesAgain()
+    {
+        var flight = await QueuedWithACommit();
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        // The queue took the PR after the node had looked (so the first look found it free), and refuses the first push; the next passes.
+        var queued = _github.Queue;
+        _github.Queue = null;
+        var looks = 0;
+        _github.OnCall = call =>
+        {
+            if (call == nameof(IGitHub.MergeQueueAsync) && ++looks == 2)
+            {
+                _github.Queue = queued;
+            }
+            return Task.CompletedTask;
+        };
+        RefuseWithGh006(flight, onlyOnce: true);
+
+        await _legs.PushAsync(flight, Ct);
+
+        _github.Dequeued.ShouldBe([63]);
+        Git(Origin, "rev-parse", $"refs/heads/{flight.Branch}").ShouldBe(head);
+        _state.Cards().Single(c => c.Kind == LegCommander.MergeTakenBackKind).Bin.ShouldBe(CardBin.Handled);
+        Rings().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AGh006RefusalThePushCannotAnswerIsRefusedWithItsTextAndTheSweepRingsNothingForIt()
+    {
+        var flight = await QueuedWithACommit();
+        _github.Queue = null;
+        MarkDone("parser");
+        RefuseWithGh006(flight);
+
+        var ex = await Should.ThrowAsync<FlightException>(() => _legs.PushAsync(flight, Ct));
+        ex.Message.ShouldContain("GH006");
+
+        // The sweep's unread-head review start meets the same refusal each time; it is no 'could not start its reviewer' ring.
+        foreach (var _ in Enumerable.Range(0, 3))
+        {
+            await _legs.AdvanceFlightAsync("TIA1", Ct);
+        }
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.NextStepKind);
+        _github.Dequeued.ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task ALegThatCommitsWhileItsPrIsQueuedTakesItOutOfTheQueueBeforeThePushAndTheCardSaysWhy()
     {
@@ -94,4 +214,22 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
         L("parser").State.ShouldBe(LegState.Flying);
         _state.Flights().Single().Review!.State.ShouldBe(ReviewState.Passed);
     }
+}
+
+/// <summary>GitHub's refusal of a push to a protected or queued branch is told by name (PIL836).</summary>
+public sealed class PushRefusalTests
+{
+    [Theory]
+    [InlineData("remote: error: GH006: Protected branch update failed for refs/heads/flight/pil819.")]
+    [InlineData("remote: error: GH006: Protected branch update failed for refs/heads/flight/pil819.\nremote: error: Cannot change this locked branch because it is in a merge queue.\nTo https://github.com/SharpAstro/pilot.git\n ! [remote rejected] flight/pil819 -> flight/pil819 (protected branch hook declined)\nerror: failed to push some refs to 'https://github.com/SharpAstro/pilot.git'")]
+    [InlineData("remote: error: Protected branch update failed for refs/heads/main.")]
+    public void GitHubsProtectedBranchRefusalIsRecognised(string text) => PushRefusals.IsProtectedBranch(text).ShouldBeTrue();
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("To origin\n ! [rejected] flight/x -> flight/x (non-fast-forward)\nerror: failed to push some refs")]
+    [InlineData("fatal: unable to access 'https://github.com/SharpAstro/pilot.git/': Could not resolve host: github.com")]
+    [InlineData("remote: error: GH013: Repository rule violations found for refs/heads/main.")]
+    public void AnyOtherRefusalIsNot(string? text) => PushRefusals.IsProtectedBranch(text).ShouldBeFalse();
 }

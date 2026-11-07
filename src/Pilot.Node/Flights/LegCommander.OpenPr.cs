@@ -102,6 +102,11 @@ public sealed partial class LegCommander
         if (mergedBase)
         {
             state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{repaired.Base} merged into {flight.Code}'s plane; a new PR opens", FlightCommander.MergedUnderLegKind);
+            // The earlier PR merged without these commits: the new PR carries them, and a line links it.
+            state.RaiseCard(CardBin.Handled, FollowUpPrKind, Verbs.FlightTarget(flight.Code),
+                $"{flight.Code}'s commits missed {(beforeOpen.MergedPullRequest is { } missed ? $"#{missed}'s" : "the earlier PR's")} merge: PR #{pr.Number} carries them",
+                $"The earlier PR merged without them, so the node merged {repaired.Base} into the plane, pushed plain and opened PR #{pr.Number}, which is reviewed as any PR. The flight lands when it merges.",
+                link: pr.Url);
         }
 
         // The PR open, a fresh reviewer reads it before the merge is offered. One that cannot start costs the flight
@@ -225,6 +230,12 @@ public sealed partial class LegCommander
             throw new FlightException($"{flight.Branch} is not pushed: origin/{flight.Branch} holds commits its head lacks, and the node never overwrites a pushed branch");
         }
         var push = await git.RunAsync(["push", "-u", "origin", flight.Branch], flight.Worktree, cancellationToken);
+        // Git's whole text is read: GitHub's GH006 line is not always the first of its stderr.
+        if (!push.Ok && PushRefusals.IsProtectedBranch($"{push.Error}\n{push.Output}"))
+        {
+            // GH006 (PIL836): the PR was queued behind the node's back, or merged meanwhile; the PR is read and the push is made once more or handed on.
+            push = await RetryProtectedPushAsync(flight, cancellationToken);
+        }
         if (!push.Ok)
         {
             throw new FlightException($"git could not push {flight.Branch}: {push.Why}");

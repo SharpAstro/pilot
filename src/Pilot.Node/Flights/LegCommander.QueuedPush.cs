@@ -57,6 +57,39 @@ public sealed partial class LegCommander
             link: before?.PullRequestUrl ?? flight.PullRequestUrl);
     }
 
+    /// <summary>The Handled line saying a flight's commits that missed an earlier PR's merge went to a new PR.</summary>
+    public const string FollowUpPrKind = "follow-up-pr";
+
+    /// <summary>
+    /// A push GitHub refused with GH006 (a protected branch, as a branch whose PR is queued is): the flight's PR is read. Open or queued,
+    /// it is taken out of the queue and the push made once more (plain, never forced). Merged meanwhile, the flight is marked merged under
+    /// its work (#342) and the push is refused saying so: the commits go to a follow-up PR, which the sweep opens through open-pr once
+    /// every leg is done. Returns the second push's answer; the caller refuses it as any push that failed.
+    /// </summary>
+    private async Task<GitRun> RetryProtectedPushAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+        var current = state.Flights().FirstOrDefault(f => f.Code == flight.Code);
+        if (pr is { State: "MERGED" } merged && current is not null)
+        {
+            var said = $"{flight.Branch} is not pushed: GitHub refused it (GH006) because #{merged.Number} merged meanwhile";
+            if (current.PullRequest == merged.Number)
+            {
+                flights.MarkMergedUnderLeg(current, merged.Head, $"{said}, so the new commits missed the merge");
+            }
+            else if (current.MergedPullRequest != merged.Number)
+            {
+                throw new FlightException($"{said}, and it is not the PR the flight holds: nothing was changed");
+            }
+            throw new FlightException($"{said}: the new commits go to a follow-up PR, which opens by itself once every leg is done");
+        }
+        if (pr is { State: "OPEN" })
+        {
+            await EnsureNotQueuedAsync(flight, pr.Number, cancellationToken);
+        }
+        return await git.RunAsync(["push", "-u", "origin", flight.Branch], flight.Worktree, cancellationToken);
+    }
+
     // Whether the flight moved only by a push's own turning of its review, which is no other command's write.
     private bool MovedByQueuedPush(FlightRow seen, FlightRow now) =>
         _queueTurned.TryGetValue(seen.Code, out var turned)

@@ -292,6 +292,12 @@ public sealed partial class LegCommander
             _missedOnce.TryRemove(current.Code, out _);
             return false;
         }
+        // A push GitHub refused as a protected branch (GH006) was answered by the push itself: the PR was taken out of the queue, or it
+        // merged and the commits go to a follow-up PR. A start offered again would meet the same refusal, so nothing rings (PIL836).
+        if (PushRefusals.IsProtectedBranch(result.Error))
+        {
+            return false;
+        }
         // The first refusal rings nothing: the next sweep asks again, and a second in a row rings.
         if (FirstMiss(current.Code, key))
         {
