@@ -132,7 +132,7 @@ internal static class QueueJam
     /// <summary>The text with no em-dash and no double hyphen, whatever a command or a step carried in.</summary>
     internal static string Plain(string text)
     {
-        text = text.Replace("—", ", ").Replace("–", "-");
+        text = text.Replace(" — ", ", ").Replace("—", ", ").Replace("–", "-");
         while (text.Contains("--", StringComparison.Ordinal))
         {
             text = text.Replace("--", "-");
