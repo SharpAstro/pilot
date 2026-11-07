@@ -550,6 +550,55 @@ public sealed class SayTests : IDisposable
         _delivery.Calls.ShouldBeEmpty();
     }
 
+    private async Task TwoWorkingBackgroundNamesakesAsync()
+    {
+        // The same start time, so neither replaced the other: two live sessions that merely share a name.
+        _agents.Json = AgentRows.List(
+            AgentRows.Background(AgentRows.SessionB, "twin", "working", pid: 4343, status: "busy", cwd: Cwd),
+            AgentRows.Background(AgentRows.SessionC, "twin", "working", pid: 4444, status: "busy", cwd: Cwd));
+        await _tracker.PollAsync(Ct);
+    }
+
+    [Fact]
+    public async Task TheNodesOwnSayToOneOfTwoLiveNamesakesGoesBySessionIdAndIsNotRefused()
+    {
+        await TwoWorkingBackgroundNamesakesAsync();
+
+        var result = await _messenger.SayAsync(Say("c3d4e5f6", "the job ended") with { Who = Flights.LegWatch.Who }, Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        result.Way.ShouldBe(SayWays.Relayed);
+        var relay = _delivery.Relays.ShouldHaveSingleItem();
+        relay.DirectOnly.ShouldBeTrue();
+        relay.SessionId.ShouldBe(AgentRows.SessionC);
+    }
+
+    [Fact]
+    public async Task APersonsSayToTwoLiveBackgroundNamesakesIsStillRefused()
+    {
+        await TwoWorkingBackgroundNamesakesAsync();
+
+        var result = await _messenger.SayAsync(Say("c3d4e5f6", "which one"), Ct);
+
+        result.Ok.ShouldBeFalse();
+        result.Error.ShouldNotBeNull().ShouldContain("2 live sessions are named twin");
+        _delivery.Calls.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TheNodesOwnSayWhoseDirectRelayFailsIsRefusedAndNeverRelayedByName()
+    {
+        await TwoWorkingBackgroundNamesakesAsync();
+        _delivery.RelayFailure = new SessionDeliveryException($"twin ({AgentRows.SessionC}) is reached by its session id only, and that failed: no live process has its session record");
+
+        var result = await _messenger.SayAsync(Say("c3d4e5f6", "the job ended") with { Who = Flights.LegWatch.Who }, Ct);
+
+        result.Ok.ShouldBeFalse();
+        result.Error.ShouldNotBeNull().ShouldContain(AgentRows.SessionC);
+        _delivery.Relays.ShouldHaveSingleItem().DirectOnly.ShouldBeTrue();
+        _delivery.Calls.ShouldBe(["relay twin"]);
+    }
+
     [Fact]
     public async Task AFailedRelayIsTheSaysError()
     {
