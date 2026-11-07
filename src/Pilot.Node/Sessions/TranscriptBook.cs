@@ -137,6 +137,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         private string? _askedIn;
         private bool _nodeSpoke;
         private bool _fedBefore;
+        private int _lines;
 
         public List<TranscriptEntry> Entries { get; } = [];
 
@@ -158,6 +159,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                 {
                     // Rewritten from the start (compacted): read it all again.
                     _offset = 0;
+                    _lines = 0;
                     _partial.Clear();
                     Entries.Clear();
                     Queued.Clear();
@@ -194,6 +196,8 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
 
         private void Line(string line)
         {
+            // The line's number in the file, from 1: the key of a line that has neither uuid nor message id.
+            var lineNo = ++_lines;
             if (line.Length == 0)
             {
                 return;
@@ -201,6 +205,12 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
             try
             {
                 using var doc = JsonDocument.Parse(line);
+                // A uuid names its line. Without one the message id is not enough (the lines of one assistant message share it), so
+                // it is joined with the line's number in the file, which is the same at every read of the file: one id per entry.
+                var lineKey = Str(doc.RootElement, "uuid")
+                    ?? (doc.RootElement.TryGetProperty("message", out var msg) && msg.ValueKind == JsonValueKind.Object && Str(msg, "id") is { } messageId ? $"{messageId}@L{lineNo}" : null)
+                    ?? $"L{lineNo}";
+                var ordinal = 0;
                 Queue(doc.RootElement);
                 Ask(doc.RootElement);
                 if (Fed(doc.RootElement) is { } fed)
@@ -212,7 +222,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                 foreach (var read in Read(doc.RootElement))
                 {
                     var entry = Noted(read);
-                    Entries.Add(entry with { Index = Entries.Count, At = at, Text = Clip(entry.Text), Full = entry.Full is { } full ? Clip(full) : null });
+                    Entries.Add(entry with { Index = Entries.Count, Id = $"{lineKey}:{ordinal++}", At = at, Text = Clip(entry.Text), Full = entry.Full is { } full ? Clip(full) : null });
                 }
             }
             catch (JsonException)
