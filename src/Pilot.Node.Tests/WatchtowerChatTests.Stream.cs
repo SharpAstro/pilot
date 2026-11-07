@@ -124,6 +124,7 @@ public sealed partial class WatchtowerChatTests
         // The turn of the message that waited says how long it did: from the end of the one before.
         _time.Advance(TimeSpan.FromMilliseconds(100));
         process.Emit(Delta("Right."));
+        await UntilAsync(() => chat.Page(-1).Partial == "Right.", "the second turn's first word");
         _time.Advance(TimeSpan.FromMilliseconds(400));
         process.Emit(ResultLine);
         await UntilAsync(() => chat.Page(-1).Timings is { Length: 2 }, "the second timing");

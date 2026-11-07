@@ -156,13 +156,15 @@ public sealed class McpTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ChatNowIsATool_AndARefusalSaysWhyNothingWasCancelled()
+    public async Task ChatNowIsATool_AndAnAssistantsCallWaitsOnThePersonsCardForCancellingTheirTurn()
     {
         var replies = await Serve(Server(), Initialize, Call(2, "chat_now", """{"send-id":"s1"}"""));
 
+        // Cancelling the watchtower's turn is the person's (a your-only verb): an MCP client is an assistant, so its call is a refusal saying it waits on their card.
         var (isError, text) = Result(replies[1]);
         isError.ShouldBeTrue();
-        text.ShouldStartWith("refused: chat-now watchtower: nothing is running");
+        text.ShouldStartWith("refused: chat-now watchtower: chat-now is the person's: it waits on their card");
+        _node.State.Cards(openOnly: true).ShouldHaveSingleItem().Kind.ShouldBe(CardKinds.AssistantAsk);
     }
 
     [Fact]
