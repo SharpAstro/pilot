@@ -103,7 +103,6 @@ public sealed partial class WatchtowerChatTests
         held.Queued.ShouldBe(["one", "two"]);
         held.QueuedIds.ShouldBe(["s1", "s2"]);
         held.QueuedBehind.ShouldBe([ChatPage.ReadAtNextStep, ChatPage.ReadAtNextStep]);
-        held.QueuedBehind.ShouldAllBe(b => !b.Contains("queued behind"));
         held.Partial.ShouldBe("Hello");
 
         // Its result ends the turn with no step having come to read them: the first is the next turn (no words yet, so no partial), the other is still to be read.
