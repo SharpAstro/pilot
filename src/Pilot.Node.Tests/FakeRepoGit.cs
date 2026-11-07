@@ -202,9 +202,9 @@ internal sealed class FakeRepoGit : IGit
                         return Fail("fatal: 'origin' does not appear to be a git repository\nfatal: Could not read from remote repository.", 128);
                 }
             }
-            if (!_hasOrigin && verb is "fetch" or "push" or "ls-remote")
+            if (!Reachable() && verb is "fetch" or "push" or "ls-remote")
             {
-                return Fail($"fatal: unable to access '{_remoteUrl}': Could not resolve host: github.com", 128);
+                return Fail($"fatal: unable to access '{FetchUrl()}': Could not resolve host: github.com", 128);
             }
         }
         return verb switch
@@ -222,6 +222,7 @@ internal sealed class FakeRepoGit : IGit
             "show" => Show(a, wt),
             "cat-file" => CatFile(a, wt),
             "status" => Status(a, wt),
+            "ls-files" => LsFiles(a, wt),
             "add" => Add(a, wt),
             "commit" => CommitCommand(a, wt),
             "merge" => Merge(a, wt),
@@ -432,13 +433,16 @@ internal sealed class FakeRepoGit : IGit
                 _config["remote.origin.url"] = url;
                 WriteConfigFile();
                 return Ok("");
+            case ["set-url", "origin", var url] when !url.StartsWith('-'):
+                // A GitHub URL names the repo as a peer's checkout does; it reaches the bare origin only through a url.<origin>.insteadOf rewrite.
+                _remoteUrl = url;
+                _config["remote.origin.url"] = url;
+                WriteConfigFile();
+                return Ok("");
             case ["get-url", "origin"]:
-                // As git prints it: with the url.<base>.insteadOf rewrites applied.
-                var rewrite = _config.Where(c => c.Key.StartsWith("url.", StringComparison.Ordinal) && c.Key.EndsWith(".insteadOf", StringComparison.Ordinal) && c.Value == _remoteUrl)
-                    .Select(c => c.Key["url.".Length..^".insteadOf".Length]).FirstOrDefault();
-                return Ok((rewrite ?? _remoteUrl) + "\n");
+                return Ok(FetchUrl() + "\n");
             case ["set-head", "origin", "--auto"]:
-                _originHead = _hasOrigin;
+                _originHead = Reachable();
                 return Ok("");
             case ["set-head", "origin", "--delete"]:
                 _originHead = false;
@@ -450,6 +454,19 @@ internal sealed class FakeRepoGit : IGit
                 throw new NotSupportedException("remote form");
         }
     }
+
+    /// <summary>The URL git fetches origin from: the remote's, with a <c>url.&lt;base&gt;.insteadOf</c> rewrite of it applied (as <c>remote get-url</c> prints it).</summary>
+    private string? FetchUrl()
+    {
+        var rewrite = _config.Where(c => c.Key.StartsWith("url.", StringComparison.Ordinal) && c.Key.EndsWith(".insteadOf", StringComparison.Ordinal) && c.Value == _remoteUrl)
+            .Select(c => c.Key["url.".Length..^".insteadOf".Length]).FirstOrDefault();
+        return rewrite ?? _remoteUrl;
+    }
+
+    /// <summary>Whether a fetch or push reaches the modelled bare origin: it exists, and the remote's URL (rewritten) is its folder. A GitHub URL is offline.</summary>
+    private bool Reachable() =>
+        _hasOrigin && FetchUrl() is { } url && !url.Contains("://", StringComparison.Ordinal)
+        && Norm(url).Equals(Norm(_originPath), StringComparison.OrdinalIgnoreCase);
 
     /// <summary><c>git init --bare [-b main] origin.git</c>: the origin the repo's remote can be pointed at.</summary>
     private GitRun Init(List<string> a, string cwd)
@@ -1072,29 +1089,36 @@ internal sealed class FakeRepoGit : IGit
         try
         {
             string from;
-            string to;
+            IReadOnlyDictionary<string, string> toTree;
             if (revs.Count == 2)
             {
                 from = ResolveOrThrow(revs[0], wt);
-                to = ResolveOrThrow(revs[1], wt);
+                toTree = _commits[ResolveOrThrow(revs[1], wt)].Tree;
             }
             else if (revs[0].Contains("...", StringComparison.Ordinal))
             {
                 var parts = revs[0].Split("...");
-                to = ResolveOrThrow(parts[1], wt);
+                var to = ResolveOrThrow(parts[1], wt);
                 from = MergeBase(ResolveOrThrow(parts[0], wt), to) ?? throw new FakeGitFailure("fatal: no merge base");
+                toTree = _commits[to].Tree;
             }
             else if (revs[0].Contains("..", StringComparison.Ordinal))
             {
                 var parts = revs[0].Split("..");
                 from = ResolveOrThrow(parts[0], wt);
-                to = ResolveOrThrow(parts[1], wt);
+                toTree = _commits[ResolveOrThrow(parts[1], wt)].Tree;
+            }
+            else if (wt is not null && wt.Merging is null)
+            {
+                // One commit: the working tree against it, so what is committed since, staged and not staged together (PlaneChangesAsync's question).
+                from = ResolveOrThrow(revs[0], wt);
+                toTree = WorkingTree(wt);
             }
             else
             {
-                throw new NotSupportedException("diff against the working tree");
+                throw new NotSupportedException("diff against the working tree of the origin, or mid-merge");
             }
-            var changes = Changes(_commits[from].Tree, _commits[to].Tree).Where(c => pathspec.Count == 0 || pathspec.Contains(c.Path)).ToList();
+            var changes = Changes(_commits[from].Tree, toTree).Where(c => pathspec.Count == 0 || pathspec.Contains(c.Path)).ToList();
             if (ignoreSpace)
             {
                 changes = [.. changes.Where(c => c.Old is null || c.New is null || Squash(c.Old) != Squash(c.New))];
@@ -1225,6 +1249,36 @@ internal sealed class FakeRepoGit : IGit
     }
 
     private bool Dirty(Worktree wt) => StatusLines(wt).Count > 0;
+
+    /// <summary>
+    /// The tracked files as they are on disk: each path in the index with its content on disk, and none for one deleted there. A file git
+    /// does not track is not in it (git diff leaves it out; <c>ls-files --others</c> names it).
+    /// </summary>
+    private Dictionary<string, string> WorkingTree(Worktree wt)
+    {
+        var disk = Snapshot(wt.Path);
+        return wt.Index.Keys.Where(disk.ContainsKey).ToDictionary(p => p, p => disk[p], StringComparer.Ordinal);
+    }
+
+    /// <summary><c>git ls-files --others --exclude-standard [-z]</c>: the files on disk the index does not hold, by path.</summary>
+    private GitRun LsFiles(List<string> a, Worktree? wt)
+    {
+        var nul = a.Remove("-z");
+        var others = a.Remove("--others") | a.Remove("-o");
+        var standard = a.Remove("--exclude-standard");
+        if (wt is null || !others || a.Count > 0)
+        {
+            throw new NotSupportedException("ls-files form");
+        }
+        var disk = Snapshot(wt.Path);
+        // The model keeps no ignore rules: a .gitignore it would have to read is real git's job.
+        if (standard && disk.Keys.Any(p => p == ".gitignore" || p.EndsWith("/.gitignore", StringComparison.Ordinal)))
+        {
+            throw new NotSupportedException("ls-files with a .gitignore");
+        }
+        var end = nul ? '\0' : '\n';
+        return Ok(string.Concat(disk.Keys.Where(p => !wt.Index.ContainsKey(p)).Order(StringComparer.Ordinal).Select(p => p + end)));
+    }
 
     private List<string> StatusLines(Worktree wt)
     {

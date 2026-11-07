@@ -10,7 +10,7 @@ namespace Pilot.Node.Tests;
 /// the head it was queued at, so work made while the PR is queued would be refused, or left out of the squash merge.
 /// </summary>
 [Trait("Category", "Slow")]
-public sealed class QueuedPushTests : LegCommanderTestsBase
+public sealed class QueuedPushTests() : LegCommanderTestsBase(realGit: true)
 {
     private const string PrUrl = "https://github.com/x/tianwen/pull/63";
 

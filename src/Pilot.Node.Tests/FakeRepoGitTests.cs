@@ -82,6 +82,39 @@ public sealed class FakeRepoGitTests : IDisposable
     }
 
     [Fact]
+    public void ADiffAgainstACommitReadsTheWorkingTreeAndLsFilesNamesWhatIsUntracked()
+    {
+        // PlaneChangesAsync's two questions: the plane against its fork (committed, staged and not), and the files git does not track yet.
+        MakePlane();
+        Commit(Plane, "a.txt", "one\ntwo\nthree\n", "add a");
+        var fork = Run(Plane, "merge-base", "origin/main", "HEAD");
+        File.WriteAllText(Path.Combine(Plane, "a.txt"), "one\n2\nthree\nfour\n");
+        File.WriteAllText(Path.Combine(Plane, "b.txt"), "bee\n");
+        Run(Plane, "add", "b.txt");
+        File.WriteAllText(Path.Combine(Plane, "c.txt"), "sea\n");
+        File.Delete(Path.Combine(Plane, "README.md"));
+
+        Run(Plane, "diff", "--numstat", "--no-renames", fork).ShouldBe("0\t1\tREADME.md\n4\t0\ta.txt\n1\t0\tb.txt");
+        Run(Plane, "diff", "--numstat", "--no-renames", "HEAD").ShouldBe("0\t1\tREADME.md\n2\t1\ta.txt\n1\t0\tb.txt");
+        _git.Run(["ls-files", "--others", "--exclude-standard", "-z"], Plane).Output.ShouldBe("c.txt\0");
+    }
+
+    [Fact]
+    public void AGitHubRemoteReachesTheOriginOnlyThroughAnInsteadOfRewrite()
+    {
+        // As a peer's checkout is told apart: its remote is a GitHub URL, which is offline unless rewritten to the bare origin.
+        const string gitHub = "https://github.com/SharpAstro/tianwen.git";
+        var origin = Path.Combine(_root, "origin.git").Replace('\\', '/');
+        Run(Repo, "remote", "set-url", "origin", gitHub);
+
+        _git.Run(["fetch", "--quiet", "origin"], Repo).Ok.ShouldBeFalse();
+        Run(Repo, "config", $"url.{origin}.insteadOf", gitHub);
+        Run(Repo, "fetch", "--quiet", "origin");
+        Run(Repo, "remote", "get-url", "origin").ShouldBe(origin);
+        File.ReadAllText(Path.Combine(Repo, ".git", "config")).ShouldContain($"url = {gitHub}");
+    }
+
+    [Fact]
     public void ABranchBehindMainTakesItByAMergeAndAConflictIsAbortedBack()
     {
         MakePlane();
@@ -192,6 +225,21 @@ public sealed class FakeRepoGitTests : IDisposable
         Ask("plane", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/main"),
         Ask("plane", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"),
         Do("repo", "remote", "get-url", "origin"),
+        // Work in progress in the plane: an unstaged edit, a staged file and an untracked one, against the base.
+        Write("plane", "a.txt", "one\n2\nthree\nfour\n"),
+        Write("plane", "b.txt", "bee\n"),
+        Do("plane", "add", "b.txt"),
+        Write("plane", "c.txt", "sea\n"),
+        Ask("plane", "diff", "--numstat", "--no-renames", "origin/main"),
+        Ask("plane", "ls-files", "--others", "--exclude-standard", "-z"),
+        Ask("plane", "status", "--porcelain"),
+        Do("plane", "add", "."),
+        Save("plane", "commit", "-q", "-m", "work in progress"),
+        // A GitHub remote, as a peer's checkout has, still reaches the bare origin through an insteadOf rewrite.
+        Do("repo", "config", "url.{origin}.insteadOf", "https://github.com/SharpAstro/tianwen.git"),
+        Do("repo", "remote", "set-url", "origin", "https://github.com/SharpAstro/tianwen.git"),
+        Ask("repo", "remote", "get-url", "origin"),
+        Do("plane", "fetch", "--quiet", "origin"),
         Ask("plane", "worktree", "list", "--porcelain"),
         Write("repo", "later.txt", "later\n"),
         Do("repo", "add", "."),
@@ -286,7 +334,8 @@ public sealed class FakeRepoGitTests : IDisposable
             File.WriteAllText(Path.Combine(cwd, file), step.Text);
             return new GitRun(0, "", "");
         }
-        string[] args = [.. step.Args.Select(a => a.Replace("{plane}", plane, StringComparison.Ordinal))];
+        var origin = Path.Combine(Path.GetDirectoryName(repo)!, "origin.git").Replace('\\', '/');
+        string[] args = [.. step.Args.Select(a => a.Replace("{plane}", plane, StringComparison.Ordinal).Replace("{origin}", origin, StringComparison.Ordinal))];
         return model is not null ? model.Run(args, cwd) : await real!.RunAsync(args, cwd, TestContext.Current.CancellationToken);
     }
 }
