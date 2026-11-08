@@ -62,6 +62,15 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>How long a queued benchmark waits for a quiet CPU before its owner is rung and told why the CPU is busy.</summary>
     public TimeSpan BenchQuietWait { get; set; } = TimeSpan.FromMinutes(30);
 
+    /// <summary>The Ring card for a running job that has held its slot past <see cref="LongJobWindow"/> while others wait behind it (#895).</summary>
+    public const string LongJobKind = "job-long";
+
+    /// <summary>How long a running job (not a benchmark) may hold its slot while another waits before one Ring card offers to cancel it.</summary>
+    public TimeSpan LongJobWindow { get; set; } = TimeSpan.FromMinutes(20);
+
+    // Jobs a long-job card was raised for: once per job.
+    private readonly ConcurrentDictionary<string, byte> _longJobTold = new(StringComparer.Ordinal);
+
     // Benches whose owner has been told they wait for a quiet CPU: once per bench.
     private readonly ConcurrentDictionary<string, byte> _benchBusyTold = new(StringComparer.Ordinal);
 
@@ -1080,6 +1089,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
 
         CheckIdle();
+        CheckLongJob();
         CheckBenchBusy();
     }
 
@@ -1106,6 +1116,42 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         // The repo, heavy and flight holds are holds too: a job behind one of them is walked past, so a light job or another repo's
         // starts in a free slot (review of #924: a held heavy job at the head stopped the queue).
         && WhyWait(job, ignoreSibling: true, ignoreBuild: true, ignoreHolds: true) is null;
+
+    /// <summary>
+    /// A running job (not a benchmark) that has held its slot past <see cref="LongJobWindow"/> while another job is queued raises one
+    /// Ring card, once per job, whose choice cancels it. The card closes when the job ends or the queue empties.
+    /// </summary>
+    private void CheckLongJob()
+    {
+        var now = time.GetUtcNow();
+        foreach (var told in _longJobTold.Keys.Where(id => !_running.ContainsKey(id)).ToList())
+        {
+            _longJobTold.TryRemove(told, out _);
+            state.CloseCardsAbout(Verbs.JobTarget(told), "the job ended", LongJobKind);
+        }
+        if (_queue.Count == 0)
+        {
+            foreach (var told in _longJobTold.Keys)
+            {
+                state.CloseCardsAbout(Verbs.JobTarget(told), "nothing waits behind it now", LongJobKind);
+            }
+            return;
+        }
+        foreach (var id in _running.Keys)
+        {
+            if (state.Jobs().FirstOrDefault(j => j.Id == id) is not { State: JobState.Running, Kind: not JobKind.Bench, PausedAt: null } job
+                || now - job.StartedAt < LongJobWindow
+                || !_longJobTold.TryAdd(id, 0))
+            {
+                continue;
+            }
+            var owner = job.OwnerName ?? job.Owner ?? "the node";
+            var waiting = string.Join(", ", _queue.Select(q => $"{q.Id} ({q.OwnerName ?? q.Owner ?? "the node"})"));
+            state.RaiseCard(CardBin.Ring, LongJobKind, Verbs.JobTarget(id), $"job {id} of {owner} has held the slot for {Took(now - job.StartedAt)} while {_queue.Count} wait",
+                $"`{job.Command}` is run by {owner}; {_queue.Count} wait behind it: {waiting}.",
+                [new CardChoice { Label = $"Cancel job {id}", Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id) }]);
+        }
+    }
 
     /// <summary>
     /// A benchmark at the head of the queue that has waited past <see cref="BenchQuietWait"/> with nothing of pilot's running and the
