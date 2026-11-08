@@ -16,7 +16,7 @@ public sealed class DecisionTests : IDisposable
     {
         if (Directory.Exists(_folder))
         {
-            Directory.Delete(_folder, recursive: true);
+            TestDirs.DeleteTree(_folder);
         }
     }
 

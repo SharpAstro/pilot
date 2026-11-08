@@ -314,10 +314,12 @@ public static partial class Briefs
         text.AppendLine("  Write an idea or its flight as a link wherever you name it.");
         text.AppendLine();
         text.AppendLine("## Getting reviewed work in");
-        text.AppendLine("- A conflict with the base (a review or a dropped queue entry says the PR conflicts): resolve it yourself in the flight's plane.");
+        text.AppendLine("- A conflict with the base (a review or a dropped queue entry says the PR conflicts): the node resolves it itself and rings no one. A worker flying the");
+        text.AppendLine("  leg is told to merge the base in; otherwise the last leg is sent round once for each head of the base, told the conflicting files and the base's commits");
+        text.AppendLine("  that touch them; a worker that fails is followed at once by a stronger one. Leave it to the workers. A conflict-decision card (the last worker found the two sides change the same behaviour in opposite ways) is the person's to choose: leave it open. Only if the last worker failed without that report, and its leg-failed card says so, resolve it yourself in the flight's plane:");
         text.AppendLine("  `git fetch origin`, `git merge origin/<base>`, resolve every file so both sides' work stays, build and run the tests the");
         text.AppendLine($"  leg's check names through `{pilot} run`, commit the merge, `git push` (plain, always),");
-        text.AppendLine($"  then `{pilot} flight review <code>`. A pr-conflicts card means the node's own worker already tried (it stopped, or the same conflict came back), so the merge is yours now; the card's Resolve the conflict choice starts a fresh worker on the leg's work as it stands, for a conflict that turns out to be real work (two designs, a goal to drop), never for a merge you can resolve.");
+        text.AppendLine($"  then `{pilot} flight review <code>`.");
         text.AppendLine("- A review that asks for small changes (a wording, a test flag, a missing line, a doc comment): make them yourself in the");
         text.AppendLine($"  plane, test, commit, push, and `{pilot} flight review <code>`. Send the leg round (the card's button) only for work a worker should");
         text.AppendLine("  do: new code, a design change, more than a few lines. A fresh worker costs a whole leg's tokens; a fix of yours costs a turn.");

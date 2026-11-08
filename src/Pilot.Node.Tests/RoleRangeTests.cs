@@ -11,7 +11,7 @@ public sealed class RoleRangeTests : IDisposable
 
     public RoleRangeTests() => Directory.CreateDirectory(_root);
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose() => TestDirs.DeleteTree(_root);
 
     private NodeSettings ReadOld(string json)
     {

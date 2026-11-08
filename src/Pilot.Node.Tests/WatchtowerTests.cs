@@ -67,7 +67,7 @@ public sealed class WatchtowerTests : IDisposable
     {
         if (Directory.Exists(_data))
         {
-            Directory.Delete(_data, recursive: true);
+            TestDirs.DeleteTree(_data);
         }
     }
 
@@ -888,7 +888,7 @@ public sealed class WatchtowerTests : IDisposable
             _profile.Dispose();
             if (Directory.Exists(_folder))
             {
-                Directory.Delete(_folder, recursive: true);
+                TestDirs.DeleteTree(_folder);
             }
         }
     }

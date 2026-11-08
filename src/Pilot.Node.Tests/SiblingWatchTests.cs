@@ -17,7 +17,7 @@ public sealed class SiblingWatchTests : IDisposable
     {
         if (Directory.Exists(_org))
         {
-            Directory.Delete(_org, recursive: true);
+            TestDirs.DeleteTree(_org);
         }
     }
 

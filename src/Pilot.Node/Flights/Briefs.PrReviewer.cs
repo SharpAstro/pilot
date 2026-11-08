@@ -27,6 +27,7 @@ public static partial class Briefs
         text.AppendLine("Do not edit, commit, push or merge anything, and post nothing to GitHub (no review, no comment): the controller");
         text.AppendLine("reads your verdict and posts it.");
         text.Append(BranchHistoryRule);
+        text.Append(NoSpinRule);
         text.Append(NamingRule(machine, $"review-{review.Number}"));
         text.Append(LfsRule(review.Worktree, "worktree"));
         // As for a flight's review (20 Oct): one session's reading, very light on subagents; its depth follows #74 later.
