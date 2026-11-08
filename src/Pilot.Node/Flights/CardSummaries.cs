@@ -172,6 +172,7 @@ public static partial class CardSummaries
             StartGate.WeekKind => "The 7-day usage window is largely spent. Pause flights by hand if the week should last; nothing is stopped by itself.",
             RemovalQueueStart.Kind => "Folders of landed flights or closed reviews are still held open by Windows. The node removes them once they are let go; close whatever holds them.",
             JobRunner.IdleKind => "A job holds the machine's slot but uses almost no CPU. Cancel it if it is only waiting; its owner can wait with pilot leg wait.",
+            JobRunner.LongJobKind => "A job has held the machine's slot for over 20 minutes while others wait. The card's choice cancels it; leave it if the run is worth the wait.",
             BenchRun.CardKind => "A benchmark ended and its tables are on the card, per ref. Read them, then dismiss it; nothing is waiting on you.",
             JobRunner.BenchBusyKind => "A queued benchmark has waited over half an hour for a quiet CPU. The card names what holds it; cancel the job or let it keep waiting.",
             JobRunner.UntoldKind => "A job ended but its owner's session refused to be told. Tell the owner yourself.",
