@@ -44,8 +44,8 @@ public sealed class StaleCardTests
         Worktree = $"/r/.claude/worktrees/{code}", Base = "origin/main", State = state, CreatedAt = Start - TimeSpan.FromHours(3),
     };
 
-    private CardRow Raise(string kind, string subject = "flight/PIL342", CardBin bin = CardBin.Ring, IReadOnlyList<CardChoice>? choices = null) =>
-        _state.RaiseCard(bin, kind, subject, $"A {kind} card", "Its detail.", choices);
+    private CardRow Raise(string kind, string subject = "flight/PIL342", CardBin bin = CardBin.Ring, IReadOnlyList<CardChoice>? choices = null, string? cause = null) =>
+        _state.RaiseCard(bin, kind, subject, $"A {kind} card", "Its detail.", choices, cause: cause);
 
     private async Task<StaleVerdict> Check(CardRow card, string? about = null) =>
         (await new StaleCards(_state, _github).DismissAsync([card.Id], about, Ct)).ShouldHaveSingleItem();
@@ -496,7 +496,8 @@ public sealed class StaleCardTests
         verdicts.Select(v => (v.Card, v.Dismissed, v.Note)).ShouldBe([("c99", false, "there is no such card"), (closed.Id, false, "it is not open")]);
         _state.Cards().ShouldNotContain(c => c.Kind == StaleCards.HandledKind);
 
-        var open = Raise(LegCommander.PrReady);
+        // A new cause: the card a person dismissed above is not raised again for the same one (#853).
+        var open = Raise(LegCommander.PrReady, cause: "a later head");
         (await Check(open, about: "flight/DIR7")).Note.ShouldBe("it is not about what was summarised");
         Now(open).State.ShouldBe(CardState.Open);
     }

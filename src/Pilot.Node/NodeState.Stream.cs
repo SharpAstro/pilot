@@ -96,7 +96,13 @@ public sealed partial class NodeState
         ApplyToState(delta);
         _seq = delta.Seq;
         Hold(delta.Seq, json);
+        WriteToSinks(json);
+        ReportSnapshotOutcome();
+    }
 
+    /// <summary>Writes one serialized event to every live client; one that cannot keep up is dropped and told. Under the lock.</summary>
+    private void WriteToSinks(byte[] json)
+    {
         for (var i = _sinks.Count - 1; i >= 0; i--)
         {
             var sink = _sinks[i];
@@ -106,8 +112,6 @@ public sealed partial class NodeState
                 sink.Overflowed();
             }
         }
-
-        ReportSnapshotOutcome();
     }
 
     private void Hold(long seq, byte[] json)

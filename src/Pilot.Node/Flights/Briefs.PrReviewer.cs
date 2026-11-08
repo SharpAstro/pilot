@@ -28,6 +28,7 @@ public static partial class Briefs
         text.AppendLine("reads your verdict and posts it.");
         text.Append(BranchHistoryRule);
         text.Append(NoSpinRule);
+        text.Append(CommandShapeRule);
         text.Append(NamingRule(machine, $"review-{review.Number}"));
         text.Append(LfsRule(review.Worktree, "worktree"));
         // As for a flight's review (20 Oct): one session's reading, very light on subagents; its depth follows #74 later.

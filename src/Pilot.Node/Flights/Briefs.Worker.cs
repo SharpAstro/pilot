@@ -176,6 +176,7 @@ public static partial class Briefs
         text.AppendLine("  " + JobShellRule);
         text.Append(BranchHistoryRule);
         text.Append(NoSpinRule);
+        text.Append(CommandShapeRule);
         text.AppendLine();
         text.AppendLine(InvariantRule);
         text.AppendLine("## When you stop");

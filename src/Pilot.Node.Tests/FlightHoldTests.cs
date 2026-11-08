@@ -239,7 +239,8 @@ public sealed class FlightHoldTests : ReviewTestsBase
         new Digest(_state, TimeProvider.System).Compose(DateTimeOffset.UtcNow.AddHours(-1), DateTimeOffset.UtcNow.AddMinutes(1)).Detail.ShouldContain(onHold);
         var brief = Briefs.Watchtower("watchtower", _state.Flights(), _state.Legs(), _state.Cards(), "pilot");
         brief.ShouldContain(onHold);
-        brief.ShouldContain("is the owner's: do nothing about it");
+        // The standing rule lives in the rules file since PIL855, read once per start, not in the brief.
+        Briefs.WatchtowerRules("watchtower", "pilot").ShouldContain("is the owner's: do nothing about it");
         Briefs.FlightStatus(F(flight.Code), _state.Legs()).ShouldContain(onHold);
     }
 
