@@ -33,7 +33,6 @@ internal static class CardKindCatalog
     private const string HumanVerification = "Flights/LegCommander.HumanVerification.cs";
     private const string LegMerge = "Flights/LegCommander.Merge.cs";
     private const string LegQueuedPush = "Flights/LegCommander.QueuedPush.cs";
-    private const string LegChecksAndConflicts = "Flights/LegCommander.ChecksAndConflicts.cs";
     private const string Lay = "Flights/LegCommander.Lay.cs";
     private const string Shape = "Flights/LegCommander.Shape.cs";
     private const string Watch = "Flights/LegWatch.cs";
@@ -54,6 +53,8 @@ internal static class CardKindCatalog
     private const string PrReviewsVerdicts = "Flights/PrReviews.Verdicts.cs";
     private const string Recheck = "Flights/PrRecheck.cs";
     private const string Tower = "Flights/Watchtower.cs";
+    private const string TowerStream = "Flights/Watchtower.Stream.cs";
+    private const string Asks = "Flights/Watchtower.Asks.cs";
 
     public static readonly CardKindEntry[] All =
     [
@@ -66,6 +67,7 @@ internal static class CardKindCatalog
         new("worker-missing", "Ring", [Watch], "LegWatchTests.AFailedWorkerAndOneThatNeverShowedUpRing", "the tracker's listing of sessions never showed the worker the node started", [nameof(Verbs.GoAround)]),
         new("worker-never-turned", "Ring|Handled", [Watch], "LegWatchTests.AWorkerThatNeverTakesATurnIsStoppedAndStartedOnceThenRungWhenTheSecondShowsNothing", "the worker showed no first turn after two starts, read from its session row", [nameof(Verbs.GoAround)]),
         new("worker-nudged", "Handled", [Watch], "LegWaitTests.AnIdleWorkerWhoseLongWaitEndsIsWokenOnceAndNotNudgedOnTopOfIt"),
+        new("ticker-sent-round", "Handled", [Watch], "LegTickingPassTests.A_ticker_that_ended_with_step_two_unticked_sends_the_leg_round_naming_the_step_and_rings_nothing"),
         new("worker-told-job", "Handled", [Watch], "LegWatchTests.AnIdleWorkerWithAnEndedUntoldJobIsToldItAndNeitherNudgedNorRung"),
         new("worker-compacted", "Handled", [Watch], "LegWatchTests.AnIdleWorkerAtNinetyFivePercentIsCompactedAndNotNudged"),
         new("worker-waiting-job", "Handled", [Watch], "LegWatchTests.AnIdleWorkerWaitingOnAJobOfItsOwnRaisesNoRingAndOneHandledLineSayingSo"),
@@ -105,6 +107,7 @@ internal static class CardKindCatalog
         new("admission-cycle", "Handled", ["Flights/AdmissionGate.cs"], "LegAdmissionTests.AFlightAdmittedToBreakACycleRaisesOneCardNamingBothFlights"),
         new("spend-alert", "ForYou", [LegStart], "SpendAlertTests.ALegPastTheAlertShareRingsWithItsTokensAndShareBeforeItsNextRoundOncePerRound"),
         new("go-around-cap", "Ring", ["Flights/LegCommander.GoAround.cs"], "GoAroundCapTests.TheSixthGoAroundOfALegIsRefusedAndRaisesTheCardWithEveryRoundsReason", "the leg's go-around count on its row has reached the cap", [nameof(Verbs.FinishLeg)]),
+        new("conflict-decision", "Ring", ["Flights/LegCommander.ChecksAndConflicts.cs"], "ConflictEscalationTests.TheLastRungsDecisionReportRingsOneCardNamingTheFilesTheBehavioursAndWhatEachChoiceKeeps", "the last of three conflict workers failed with a report saying the two sides change the same behaviour in opposite ways (the fixed shape), and the leg's row holds it", [nameof(Verbs.GoAround)]),
         new("review-kept", "Handled", [LegReview], "ReReviewTests.AHeadThatOnlyMergedTheBaseKeepsThePassWithNoReviewerStarted"),
         new("review-notes", "ForYou", [LegReview], "ReviewModelTests.APassWithNotesRaisesTheWatchtowerCardAndSendsNoLegRound"),
         new("human-verification", "ForYou", [HumanVerification], "HumanVerificationFilingTests.AFlaggedPassFilesEachItemInTheMilestoneAndRaisesOneCard"),
@@ -123,7 +126,6 @@ internal static class CardKindCatalog
         new("lay-failed", "ForYou", [Shape], "RebaseLayFlightTests.AMergeThatIsNotCleanPushesNothingAndRingsOnce"),
         new("drop-unexplained", "Handled|Ring", [Lay], "RebaseLayFlightTests.ADroppedPrWhoseCauseIsNotFoundRingsOnceAndIsNeverQueuedAgain", "a PR the base dropped has no cause the node can find on GitHub", [nameof(Verbs.Merge)]),
         new("pr-ready", "Ring", [LegReview, Lay], "PrFlightReviewTests.AnApproveAtTheFlightsHeadPassesItsReviewAndMarksItsPrReady", "the PR's state on GitHub is open, the review passed at its current head, and its checks are read", [nameof(Verbs.Merge)]),
-        new("pr-conflicts", "Ring", [LegChecksAndConflicts], "NodeCardTests.ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage", "the PR's mergeable state on GitHub is conflicting", [nameof(Verbs.GoAround)]),
         new("pr-checks-failed", "Ring", [Checks, Recheck], "NodeCardTests.ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage", "the PR's checks on GitHub failed at its current head", [nameof(Verbs.FixPr), nameof(Verbs.Merge)]),
         new("merge-taken-back", "Handled", [LegMerge, LegQueuedPush], "MergeTakeBackTests.PlanLegOnAQueuedMergeDequeuesAndTheCardSaysSo"),
         new("merged-under-leg", "ForYou", [FlightCommanderLand], "MergedUnderLegTests.ADoneLegGoesToANewPrWithTheMergedBaseMergedInAndPushedPlain"),
@@ -134,7 +136,7 @@ internal static class CardKindCatalog
         new("queue-dropped", "ForYou|Handled", [Checks], "ReviewTests.APrThatLeftTheMergeQueueUnmergedIsACardSayingWhyWithMergeAgain"),
         new("checks-rerun", "Handled", [Checks], "ReviewTests.OnAutopilotFailedChecksRunAgainOnceAHeadBeforeTheLegIsSentRound"),
         new("merge-dropped", "ForYou", [Checks], "LegTests.AWaitingMergeWhoseChecksFailIsDroppedOnACardThatOffersItAgain"),
-        new("autopilot-merge-refused", "Ring|ForYou", [Checks], "ReviewTests.AnAutopilotMergeRefusedRingsOnceAndItsCardClosesWhenTheBaseIsMergedInAndItsPassCarriedOver", "the PR's state on GitHub is still open (not merged) when the autopilot's merge was refused", [nameof(Verbs.Merge)]),
+        new("autopilot-merge-refused", "Ring|ForYou", [Checks], "AutopilotMergeRefusalTests.AFailedRequiredCheckRingsWithReRunTheFailedCheckAndNoMergeAgain", "the PR's state on GitHub is still open (not merged) and the refusal's class is a person's (or a passing one that failed its third try), with the one action to take", [nameof(Verbs.RerunChecks), nameof(Verbs.OpenPr), nameof(Verbs.Dismiss), nameof(Verbs.Merge)]),
         new("pr-marks-refused", "ForYou", [LegPlanners, "Flights/PrMarks.cs", PrReviewsStatus, PrReviewsSweep], "PrMarksTests.AWriteGitHubRefusesIsACardAndNeverFailsTheReviewOrLosesTheVerdict"),
         new("node-label-refused", "ForYou|Handled", [Move, LegOpenPr, "Flights/RepoSetup.cs", FlightCommanderCreate], "PrMarksTests.ANodeLabelGitHubRefusesOnTheNewPrIsACardNotAFailedPr"),
         new("design-mirror-failed", "ForYou", ["Flights/DesignDecisionMirror.cs"], "DesignDecisionMirrorTests.DesignDecisionMirrorNotesAFailedCommentOnARingCardNamingThePrAndKeepsTheDecision"),
@@ -184,9 +186,10 @@ internal static class CardKindCatalog
         new("card-resolved", "Handled", ["Flights/StaleCards.cs"], "StaleCardTests.ASummaryRunLeavesACardItsCheckContradicts"),
 
         // The node itself, the watchtower and the person's own asks.
-        new("watchtower-down", "Ring", [Tower], "WatchtowerTests.AnUntrustedFolderRingsWithTheFixAndIsTriedAgainLater", "the watchtower's folder is untrusted or its session did not start, read from its row", [nameof(Verbs.RestartWatchtower)]),
+        new("watchtower-down", "Ring", [Tower, TowerStream], "WatchtowerTests.AnUntrustedFolderRingsWithTheFixAndIsTriedAgainLater", "the watchtower's folder is untrusted or its session did not start, read from its row", [nameof(Verbs.RestartWatchtower)]),
         new("watchtower-stopped", "Ring|Handled", [Tower], "WatchtowerTests.OneTheUsageLimitStoppedIsResumedAfterTheReset", "the watchtower's session row is stopped by the API with no reset to resume at", [nameof(Verbs.RestartWatchtower)]),
-        new("watchtower-waits", "Handled", [Tower], "StartGateTests.TheWatchtowerKeptByTheNodeWaitsForTheWindowAndStartsOnceItHasResetButARestartAskedForGoesAhead"),
+        new("watchtower-waits", "Handled", [Tower, TowerStream], "StartGateTests.TheWatchtowerKeptByTheNodeWaitsForTheWindowAndStartsOnceItHasResetButARestartAskedForGoesAhead"),
+        new("watchtower-ask", "ForYou", [Asks], "WatchtowerChatTests.APromptAndAQuestionEachRaiseACardWhoseButtonsAnswerThemAndTheCardClosesOnTheChatsAnswer"),
         new("watchtower-resumed", "Handled", [Tower], SourcePinned),
         new("watchtower-started", "Handled", [Tower], SourcePinned),
         new("watchtower-duplicate", "Handled", [Tower], "OneWatchtowerTests.StartingOneStopsAnotherLiveWatchtowerRowAndSaysSo"),
@@ -246,6 +249,7 @@ internal static class CardKindCatalog
         ["Flights/FlightCommander.Receive.cs|card.Title"] = "the card a refused receive carried over from the node that raised it",
         ["Flights/FlightCommander.Receive.cs|way"] = "the line the routing or the move wrote: where the flight went and why",
         ["Flights/FlightCommander.Route.cs|way"] = "the line the routing or the move wrote: where the flight went and why",
+        ["Flights/Watchtower.Asks.cs|title"] = "RaiseAskCard: a prompt's title names the call it asks leave for, a question's its first question",
         ["NodeCommands.cs|title"] = "the title the person, the watchtower or a session gave to pilot raise",
         ["NodeSettingsCommands.cs|line"] = "the line the restart wrote: who restarted the node and how",
         ["Updates/NodeUpdater.cs|line"] = "the line the install wrote: the version installed and the node restarted",
@@ -261,7 +265,7 @@ internal static class CardKindCatalog
     public static readonly (string Kind, string TitleHas, string? LabelHas)[] SourcePins =
     [
         ("issue-left-open", "is still open", null),
-        ("pr-review-queue-refused", "refused to queue", "once more"),
+        ("pr-review-queue-refused", "refused to queue", "again"),
         ("pr-fix-failed", "the fixer could not start", "Start the fixer on"),
         ("pr-fix-left", "fixer worktree is still there", null),
         ("pr-recheck", "recheck of", null),

@@ -361,13 +361,19 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   a review round starts ready, as the review runs on it; the merge card's merge still refuses a moved head.
 - A passed PR whose checks then fail is taken as changes, once a head: the PR goes back to draft, the merge card
   closes, and the ring, "fails its checks", offers **Fix the failing checks**, told to read the failed checks and make them pass on every runner.
-- A PR that conflicts with its base goes to the **watchtower**, not to a fresh worker. The node's update is
-  `git fetch` + `git merge --no-edit origin/<base>` in the plane, aborted with `git merge --abort` when it conflicts. A Ring `pr-conflicts`
-  card (once a head) names the conflict and the plane and carries the brief the watchtower follows (`LegCommander.UpdateInstruction`, the
-  watchtower's "Getting reviewed work in"): merge the base in there, resolve every file so both sides' work stays, rerun the leg's check
-  and push plain, then `pilot flight review <code>`. The card's **Resolve the conflict** choice (a go-around of the last leg on its work as
-  it stands) is the watchtower's only when it finds the conflict is real work (two designs, a goal to drop); no leg goes round for a conflict
-  by itself, and the review stays as it was.
+- A PR that conflicts with its base is the **node's own work, said to no one**: no card of any kind, no ring, no summary line. The node's
+  update is `git fetch` + `git merge --no-edit origin/<base>` in the plane, aborted with `git merge --abort` when it conflicts, and then
+  `LegCommander.ResolveConflictAsync` (one entry point for the PR sweep, a queue drop, the merge card, a PR recheck, the merge command and a
+  PR open) puts it to a worker, once for each head of the base. A leg flying on the plane with a live worker is **told** to merge the base in
+  and nothing else starts; with none flying, the last leg is **sent round** by the node. Either way the worker gets the conflict brief
+  (`LegCommander.ConflictBrief`): the conflicting files (a test merge, `git merge-tree`), the merge base, what each side added in each file, the
+  base's commits that touch it (`git log --oneline <merge-base>..<base> -- <file>`), and the rule: `git merge --no-edit origin/<base>`, keep both
+  sides' work, on a version pin take the higher, rerun the check, push plain, never `--force`. A conflict round is not counted against the
+  review go-around cap and is not held by the review loop, for a flight with a PR or without, but it does count toward the overall
+  `max-go-arounds` cap (5 by default), so a base that keeps moving ends at the go-around-cap card; a passed review is turned to changes as for any
+  done leg sent round. A worker that fails is followed at once by the next rung of the escalation, and only the last rung's failure reaches the person
+  (one decision card); a worker that stops otherwise is the leg-failed card's to say. When no worker could be put on the conflict at all, a sweep
+  writes why on the node's log and rings no one.
 - **How a flight's branch is brought up to date** (`BringUpToDateAsync`, before every push and before the merge queue) is always a merge,
   in every repo, whatever its merge queue or the node's merge method: `git fetch`, `git merge --no-edit origin/<base>`, a plain push. There is
   no rebase way and no `UpdateWay`; a repaired base (a base that is no branch on the remote) is the remote's default merged in, not rebased onto.
@@ -1492,6 +1498,16 @@ missing and which. Its button (`pilot settings setup claude-permissions`) first 
 file that is not valid JSON (or whose `allow` is not a list) is refused and left byte for byte as it was. Allowing a command
 only lets Claude Code run it: the node still refuses a caller without the role, and merges and a person's cards stay guarded by
 the node and the merge guard.
+
+The optional **User skills** check (`setup node user-skills`) says whether the Claude Code skills the node carries are
+current in the profile's `skills` folder (`~/.claude/skills`, or under `CLAUDE_CONFIG_DIR`). They live in
+`src/Pilot.Node/UserSkills/<name>/`, embedded in the binary (`UserSkills`), today one: `merge-queue`, which reads a PR's place
+in a GitHub merge queue (something `gh pr view --json` cannot see) and says what to do around the merge guard. `pilot-node
+setup` installs them, and so does every node start, so a release that changes a skill reaches the machine with its update.
+Each folder pilot writes carries `.pilot-installed`, the hash of what it wrote: a folder without it is someone else's, and
+one whose files no longer match it was changed by hand; both are kept and named by the check, never overwritten. The
+setting **user-skills** (`set node user-skills on|off`, on by default) turns it off, which also takes out the skills pilot
+wrote and nobody changed.
 
 One more optional check is **Guard hooks** (`setup node guard-hooks`): it says whether three generic guard hooks
 are in `~/.claude/settings.json`: `big_read_guard.sh` (refuses a whole-file `Read` and a bare `cat`),

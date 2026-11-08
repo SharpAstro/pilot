@@ -38,7 +38,7 @@ public sealed class MergedUnderLegTests : IDisposable
             {
                 File.SetAttributes(file, FileAttributes.Normal);
             }
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -103,6 +103,18 @@ public sealed class MergedUnderLegTests : IDisposable
     private static async Task<CommandResult> Send(NodeHarness node, string verb, string target, params string[] args) =>
         (await node.Client.SendAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct)).Response.ShouldNotBeNull();
 
+    /// <summary>
+    /// What <see cref="Send"/> answered, failed with the refusal's error and way in its message: a refusal under load (a flight busy, a git
+    /// step slow) is read from the report, never guessed (pilot #871).
+    /// </summary>
+    private static string Said(CommandResult result) => $"refused: {result.Error} (way: {result.Way ?? "none"})";
+
+    private static async Task Accepted(NodeHarness node, string verb, string target, params string[] args)
+    {
+        var result = await Send(node, verb, target, args);
+        result.Error.ShouldBeNull(Said(result));
+    }
+
     private static Task Look(NodeHarness node) => node.App.Services.GetRequiredService<PrChecks>().LookAsync(Ct);
 
     private static string[] Plan => ["name=render", "goal=Draw the planets", "done-when=The capture shows them"];
@@ -130,7 +142,7 @@ public sealed class MergedUnderLegTests : IDisposable
         await using var node = await NodeHarness.StartAsync(Ct);
         var ready = Merged(node);
 
-        (await Send(node, Verbs.PlanLeg, Subject, Plan)).Error.ShouldBeNull();
+        await Accepted(node, Verbs.PlanLeg, Subject, Plan);
 
         ShouldHaveRung(node, ready);
         node.State.Flights().Single().MergedHead.ShouldBe(_mergedHead);
@@ -189,7 +201,7 @@ public sealed class MergedUnderLegTests : IDisposable
         var ready = Merged(node);
         PlanNext(node);
 
-        (await Send(node, Verbs.StartLeg, "flight/TIA1/render")).Error.ShouldBeNull();
+        await Accepted(node, Verbs.StartLeg, "flight/TIA1/render");
 
         ShouldHaveRung(node, ready);
     }
@@ -200,7 +212,7 @@ public sealed class MergedUnderLegTests : IDisposable
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         var ready = Merged(node);
-        (await Send(node, Verbs.PlanLeg, Subject, Plan)).Error.ShouldBeNull();
+        await Accepted(node, Verbs.PlanLeg, Subject, Plan);
         ShouldHaveRung(node, ready);
 
         // The new leg's work, committed in the plane, and the leg done.
@@ -208,7 +220,7 @@ public sealed class MergedUnderLegTests : IDisposable
         node.State.PutLeg(node.State.Legs("TIA1").Single(l => l.Name == "render") with { State = LegState.Done });
         node.GitHub.Created.Clear();
 
-        (await Send(node, Verbs.OpenPr, Subject)).Error.ShouldBeNull();
+        await Accepted(node, Verbs.OpenPr, Subject);
 
         var flight = node.State.Flights().Single();
         node.GitHub.Created.ShouldHaveSingleItem().Base.ShouldBe("main");
@@ -230,7 +242,7 @@ public sealed class MergedUnderLegTests : IDisposable
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         var ready = Merged(node);
-        (await Send(node, Verbs.PlanLeg, Subject, Plan)).Error.ShouldBeNull();
+        await Accepted(node, Verbs.PlanLeg, Subject, Plan);
         ShouldHaveRung(node, ready);
         Commit(Plane, "render.txt", "the render");
         node.State.PutLeg(node.State.Legs("TIA1").Single(l => l.Name == "render") with { State = LegState.Done });
@@ -246,14 +258,15 @@ public sealed class MergedUnderLegTests : IDisposable
         {
             File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
-        (await Send(node, Verbs.OpenPr, Subject)).Error.ShouldNotBeNull();
+        var refused = await Send(node, Verbs.OpenPr, Subject);
+        refused.Error.ShouldNotBeNull(Said(refused));
         node.State.Flights().Single().MergedHead.ShouldBe(_mergedHead);
         node.GitHub.Created.ShouldBeEmpty();
         var mergedOnce = Git(Plane, "rev-parse", "HEAD");
         Git(Plane, "merge-base", "--is-ancestor", "main", "HEAD");
 
         File.Delete(hook);
-        (await Send(node, Verbs.OpenPr, Subject)).Error.ShouldBeNull();
+        await Accepted(node, Verbs.OpenPr, Subject);
 
         var flight = node.State.Flights().Single();
         node.GitHub.Created.ShouldHaveSingleItem().Base.ShouldBe("main");
@@ -340,7 +353,8 @@ public sealed class MergedUnderLegTests : IDisposable
 
         // Once what stood in the way is dealt with, Land it lands the flight and the ring closes with it.
         File.Delete(Path.Combine(Plane, "half.txt"));
-        (await Send(node, land.Verb, land.Target, land.Args)).Ok.ShouldBeTrue();
+        var landed = await Send(node, land.Verb, land.Target, land.Args);
+        landed.Ok.ShouldBeTrue(Said(landed));
 
         node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
         node.State.Cards(openOnly: true).ShouldNotContain(c => c.Kind == "not-landed");

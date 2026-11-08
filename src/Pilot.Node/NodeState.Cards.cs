@@ -28,6 +28,33 @@ public sealed partial class NodeState
     /// <param name="askedBy">The assistant's session an ask card is about (<see cref="CardKinds.AssistantAsk"/>), and <paramref name="why"/> the message it acted on.</param>
     public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null, string? summary = null, string? attachment = null, string? attachmentExt = null, string? cause = null)
     {
+        // With the brain to ask (PIL855), a card that would ring is first filed in For you, silent, and rings only on the brain's verdict
+        // (RingJudge): the old path, a ring at once, is what runs with no judge, and what the judge itself falls back to.
+        if (bin != CardBin.Ring || RingJudge is not { CanJudge: true } judge || !RingJudge.Wants(kind, choices))
+        {
+            return RaiseCardCore(bin, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, out _);
+        }
+        var card = RaiseCardCore(CardBin.ForYou, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, out var created);
+        // Only a card this call made: an open one of the same kind and subject is returned as it is, and is not judged again.
+        if (created)
+        {
+            judge.Begin(card);
+        }
+        return card;
+    }
+
+    /// <summary>
+    /// How long a person's dismissal keeps the same cause from being raised again (#853): a day. Past it the cause rings again if it is
+    /// still, or once more, there. Not the stale-card hours (2): a dismissed card back every two hours is the nagging #853 set out to end.
+    /// </summary>
+    public TimeSpan DismissalHolds { get; set; } = TimeSpan.FromDays(1);
+
+    /// <summary>The brain's word before a ring (<see cref="Flights.RingJudge"/>); null rings at once, as before.</summary>
+    public RingJudge? RingJudge { get; set; }
+
+    private CardRow RaiseCardCore(CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices, string? link, string? askedBy, string? why, string? summary, string? attachment, string? attachmentExt, string? cause, out bool created)
+    {
+        created = false;
         lock (_gate)
         {
             if (bin != CardBin.Handled && _cards.Values.FirstOrDefault(c => c.State == CardState.Open && c.Kind == kind && c.Subject == subject) is { } open)
@@ -37,7 +64,10 @@ public sealed partial class NodeState
             var now = _time.GetUtcNow();
             // A card a person dismissed for this cause is not raised again by the next look (#853): the caller gets the dismissed card, and
             // nothing is stored, published, rung or said. Read from the cards themselves, so a journal replay or a snapshot restores it.
-            if (bin != CardBin.Handled && _cards.Values.Where(c => IsPersonsDismissal(c) && c.Kind == kind && c.Subject == subject && (c.Cause ?? c.Title) == (cause ?? title))
+            // It holds for DismissalHolds after the dismissal: a cause that comes back later (a watchtower that keeps ending again a week on)
+            // rings again, and one still there is not nagged about inside the window (PIL855's review).
+            if (bin != CardBin.Handled && _cards.Values.Where(c => IsPersonsDismissal(c) && c.Kind == kind && c.Subject == subject && (c.Cause ?? c.Title) == (cause ?? title)
+                    && c.ClosedAt is { } closed && now - closed < DismissalHolds)
                 .OrderByDescending(c => c.ClosedAt).FirstOrDefault() is { } dismissed)
             {
                 return dismissed;
@@ -75,7 +105,9 @@ public sealed partial class NodeState
                 Link = link,
                 AskedBy = askedBy,
                 Why = why,
-                Cause = cause,
+                // The key a dismissal is remembered by, fixed when the card is raised: a later rewording of its title (the brain's, PIL855)
+                // cannot move it, so a dismissed card raised again for the same cause stays dismissed (#853).
+                Cause = cause ?? title,
                 Attachment = attachment,
                 AttachmentExt = attachment is null ? null : attachmentExt,
                 At = now,
@@ -86,6 +118,7 @@ public sealed partial class NodeState
             };
             card = card with { Commits = CommitsOf(card, link) };
             Publish(new CardAddedEvent { Seq = _seq + 1, At = now, Card = card });
+            created = true;
             return card;
         }
     }

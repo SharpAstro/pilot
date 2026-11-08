@@ -92,6 +92,32 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>The session ledger, to tell a session that ended normally from one that was replaced; null where none is kept (#601).</summary>
     public Sessions.SessionLedger? Ledger { get; set; }
 
+    /// <summary>
+    /// Completes when the session tracker has made its first poll (<see cref="Sessions.SessionTracker.FirstPoll"/>), as
+    /// <see cref="Watchtower.Ready"/> does; the node sets it, and null (a bare runner) tells at once. A node that has just started holds the
+    /// session rows its journal restored, and only that poll says which of them are live: a tell that judged its owner (ended, gone,
+    /// replaced) before it could mark a live worker's job told with no say (pilot #810).
+    /// </summary>
+    public Func<Task>? Ready { get; init; }
+
+    /// <summary>How long the tells wait for <see cref="Ready"/> in all, before they judge from the rows there are, as the sessions route does after its first-poll budget.</summary>
+    public TimeSpan ReadyBudget { get; init; } = TimeSpan.FromSeconds(10);
+
+    // The one wait for Ready that every tell shares: a poll that never ends holds the tells for ReadyBudget in all, not for each.
+    private Task? _firstPollSeen;
+
+    private Task FirstPollSeen() => LazyInitializer.EnsureInitialized(ref _firstPollSeen, async () =>
+    {
+        try
+        {
+            await Ready!().WaitAsync(ReadyBudget, time, _stopping);
+        }
+        catch (TimeoutException)
+        {
+            // The rows there are, then: a first poll that does not end is not a reason to hold a job's end for ever.
+        }
+    });
+
     /// <summary>The node log: one line per tell with its outcome and the target session's state (#756).</summary>
     public TextWriter Log { get; init; } = TextWriter.Null;
 
@@ -331,7 +357,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             }
             var candidates = ownerRow.Role == SessionRole.Worker ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray() : sessions;
             var replacement = Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates);
-            if (replacement is null && (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true))
+            if (replacement is null && OwnerEnded(ownerRow, row))
             {
                 continue;
             }
@@ -402,6 +428,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     public async Task RecoverAsync(CancellationToken cancellationToken)
     {
         var left = state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && !_mine.ContainsKey(j.Id)).ToList();
+        // The jobs that ended while no node ran, told once every other job is back in its place: a tell waits for the tracker's
+        // first poll (see TellAsync), and no live job's follow or queued job's turn waits behind it.
+        var toTell = new List<(JobRow Ended, string[] Last)>();
         // A running check is followed like a running job: the stop let go of its kill-on-close hold, so it outlived the node, and the
         // finish that comes back waits on it by id (RunCheckAsync). One with no pid or start time cannot be found again, so it is ended.
         // A queued one has not started, so it stays queued, in its place with the other carried jobs (below) (pilot #737).
@@ -417,13 +446,20 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         foreach (var job in left.Where(j => j.State == JobState.Running))
         {
             _mine[job.Id] = 0;
-            await RecoverRunningAsync(job, cancellationToken);
+            if (RecoverRunning(job) is { } gone)
+            {
+                toTell.Add(gone);
+            }
         }
         // Back on the queue through the dispatcher, which owns it, in the order they were handed over.
         foreach (var job in left.Where(j => j.State == JobState.Queued).OrderBy(j => j.QueuedAt ?? j.StartedAt).ThenBy(j => j.Id, StringComparer.Ordinal))
         {
             _mine[job.Id] = 0;
             _signals.Writer.TryWrite(new HandedOver(job));
+        }
+        foreach (var (ended, last) in toTell)
+        {
+            await TellAsync(ended, cancellationToken, last);
         }
     }
 
@@ -456,7 +492,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
     }
 
-    private async Task RecoverRunningAsync(JobRow job, CancellationToken cancellationToken)
+    /// <summary>Takes up a job a previous node left running; one that ended while no node ran is ended here and returned, for its owner to be told.</summary>
+    private (JobRow Ended, string[] Last)? RecoverRunning(JobRow job)
     {
         var exitPath = job.ExitPath ?? ExitPathOf(job.LogPath);
         // A pid alone proves nothing: a process that took it since has another start time.
@@ -484,7 +521,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 }
             }
             _watches[job.Id] = Task.Run(() => WatchAsync(job, process, fromEnd: true), CancellationToken.None);
-            return;
+            return null;
         }
 
         // A check gone with no exit recorded was ended by the kill-on-close hold of a node that crashed (a graceful stop lets it go,
@@ -493,7 +530,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         if (job.Kind == JobKind.Check && ReadExit(exitPath) is null)
         {
             EndOrphanedCheck(job, "ended while the node was down with no exit recorded (a crash of the node ended it), so the next finish runs it afresh");
-            return;
+            return null;
         }
 
         // Gone: how it ended is what its wrapper wrote.
@@ -519,7 +556,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             Finish(ended, last);
         }
         DetachedShell.DeleteScripts(job.ScriptPath);
-        await TellAsync(ended, cancellationToken, last);
+        return (ended, last);
     }
 
     /// <summary>When a job that ended while the node was down ended: when its exit file was written, else now.</summary>
@@ -2126,7 +2163,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     target = replacement.Id;
                     handed = $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; what it shows so far is passed on to you.\n";
                 }
-                else if (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true)
+                else if (OwnerEnded(ownerRow, job))
                 {
                     return;
                 }
@@ -2210,6 +2247,24 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         };
         var lines = last is { Length: > 0 } ? "\nIts last lines:\n" + string.Join('\n', last.TakeLast(12)) : "";
         var text = $"Your job {job.Id} (`{job.Command}`, in {job.Cwd}) {how}, after {Took(took)}.{lines}\nThe whole output is in {job.LogPath}. Carry on from here.";
+        if (Ready is not null)
+        {
+            // Pilot #810: the judgement of the owner below reads the session rows, and until the tracker's first poll those are the
+            // ones the journal restored, not ones this node has seen. A job that died while no node ran is told right at the node's
+            // start, so it raced that poll: the owner was judged ended or gone from a row nothing had checked, the job marked told
+            // with no say, and a live worker never heard of it. The owner is judged only once the first poll has listed the rows
+            // (bounded by ReadyBudget, and stopping with the node).
+            try
+            {
+                await FirstPollSeen().WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                // The node is stopping before its first poll: the row stays untold for the next node's sweep.
+                LogTell(job, job.Owner, null, "node stopping");
+                return;
+            }
+        }
         var sessions = state.Sessions();
         var ownerRow = OwnerRow(job.Owner, sessions);
         var target = WakeTarget(job.Owner, job.OwnerName);
@@ -2227,9 +2282,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 replacedTo = replacement.Id;
                 text = $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; its result is passed on to you.\n{text}";
             }
-            else if (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true)
+            else if (OwnerEnded(ownerRow, job))
             {
                 // The owner ended (finished, crashed or stopped) and nothing took its place: nobody is waiting on this job.
+                // A finished turn that came while this job was open is not one: the say below resumes the session (#893).
                 LogTell(job, target, ownerRow, "owner ended");
                 MarkTold(job, "owner-ended");
                 return;
@@ -2339,9 +2395,40 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     public Func<string, bool>? EndedForGood { get; set; }
 
+    /// <summary>
+    /// Whether the row ended after a finished turn (a --bg session Claude Code ended by design), as the tracker sees it. Set by the
+    /// node; null in a bare runner, where no end counts so (#893).
+    /// </summary>
+    public Func<string, bool>? EndedAfterTurn { get; set; }
+
+    /// <summary>
+    /// Whether the owner's end was a finished turn that came while <paramref name="job"/> was still queued or running: the job's
+    /// outcome is said to it, which resumes the background session, so it is not "owner ended" for this job (#893).
+    /// A wound-down or stopped owner is not one, and neither is a crash.
+    /// </summary>
+    private bool EndedWhileJobOpen(SessionRow row, JobRow job)
+    {
+        if (EndedAfterTurn?.Invoke(row.Id) != true || WindDown.Why(state, Ledger, row) is not null)
+        {
+            return false;
+        }
+        var entry = Ledger?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []]);
+        if (entry is { EndReason: not null and not SessionEndReasons.Finished })
+        {
+            return false;
+        }
+        // The job was open at the end unless it had ended before it; with no ledger time the row's own end is what is known.
+        var endedAt = entry?.EndedAt ?? row.EndedAt;
+        return endedAt is not { } at || at <= (job.EndedAt ?? time.GetUtcNow());
+    }
+
     private bool EndedNormally(SessionRow row) =>
         WindDown.Why(state, Ledger, row) is not null
         || Ledger?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []]) is { EndReason: SessionEndReasons.Finished };
+
+    /// <summary>The owner ended and nothing took its place, for this job: nobody is waiting on it.</summary>
+    private bool OwnerEnded(SessionRow row, JobRow job) =>
+        !EndedWhileJobOpen(row, job) && (EndedNormally(row) || EndedForGood?.Invoke(row.Id) == true);
 
     internal string WakeTarget(string owner, string? ownerName)
     {

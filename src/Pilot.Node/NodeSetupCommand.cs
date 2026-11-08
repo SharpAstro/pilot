@@ -7,7 +7,8 @@ namespace Pilot.Node;
 /// <summary>
 /// <c>pilot-node setup</c>: one command for a machine joining the fleet, in place of a runbook. It saves the LAN on (and
 /// the prefix, repo roots and channel given) in the settings file, installs the hooks, installs the logon entry (which
-/// carries no options now, the settings file has them) and starts the node, asks for the firewall rule, and prints the
+/// carries no options now, the settings file has them) and starts the node, installs the user skills (<see cref="UserSkills"/>) unless
+/// <c>user-skills</c> is off, asks for the firewall rule, and prints the
 /// checklist: what is left is a person's, and says so.
 /// </summary>
 public static class NodeSetupCommand
@@ -52,6 +53,12 @@ public static class NodeSetupCommand
 
         await Step(NodeSetup.HooksKey, "hooks installed");
         await Step(NodeSetup.MergeGuardKey, "merge guard installed");
+        if (settings.UserSkills ?? true)
+        {
+            var (lines, problem) = setup.ApplyUserSkills(on: true);
+            await output.WriteLineAsync(problem is not null ? $"setup: {NodeSetup.UserSkillsKey}: {problem}"
+                : lines.Count == 0 ? "setup: user skills current" : string.Join('\n', lines.Select(l => $"setup: skill {l}")));
+        }
         // A node already running started before these settings: ask it to restart with them (a set it runs already is a no-op).
         var running = await NodeSocket.IsListeningAsync(socketPath, cancellationToken);
         await Step(NodeSetup.AutostartKey, running ? "starts at logon" : "starts at logon, and started now");

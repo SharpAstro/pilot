@@ -27,6 +27,8 @@ public static partial class Briefs
         }
         text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a redo of the leg (a go-around) makes any change.");
         text.Append(BranchHistoryRule);
+        text.Append(NoSpinRule);
+        text.Append(CommandShapeRule);
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         text.Append(LfsRule(flight.Worktree));
         text.Append(PilotMdSection(pilotMd));

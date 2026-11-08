@@ -48,7 +48,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// </summary>
     public static readonly IReadOnlySet<string> YourOnlyVerbs = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.Merge, Verbs.RerunChecks, Verbs.MoveFlight, Verbs.Land, Verbs.Set, Verbs.Setup, Verbs.AnswerGrant, Verbs.RevokeGrant, Verbs.Update, Verbs.RestartNode, Verbs.RestartWatchtower,
+        Verbs.Merge, Verbs.RerunChecks, Verbs.MoveFlight, Verbs.Land, Verbs.Set, Verbs.Setup, Verbs.AnswerGrant, Verbs.RevokeGrant, Verbs.Update, Verbs.RestartNode, Verbs.RestartWatchtower, Verbs.ChatNow,
     };
 
     /// <summary>
@@ -172,6 +172,9 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
         }
         switch (Kind)
         {
+            // What the watchtower asks leave for is the person's to give: a session that could answer its own prompt would have none.
+            case not StandingKind.Person when command.Verb == Verbs.AnswerAsk:
+                return $"{Verbs.AnswerAsk} is the person's: the watchtower's permission prompts and questions are theirs to answer, from the chat or its card";
             // The lookout may answer a ring card (a stall's Resume, Nudge or Go around): the chosen button's command is run again
             // under its own standing, so one that is the person's (Merge, Fold, Post) is refused there and the card stays open.
             // Dropping an overlap's connection (--anyway) undoes the person's answer, as ConnectOverlap gave it: not the lookout's,

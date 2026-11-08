@@ -96,30 +96,35 @@ internal sealed class Presses
         ImmutableInterlocked.TryRemove(ref _marks, key, out _);
         // Said on the button at once: a press with nothing to show for it reads as a press that missed.
         Changed?.Invoke();
-        string? refused;
+        string? refused = null;
         try
         {
-            refused = await ask(ct);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
-        {
-            refused = ex.Message;
+            try
+            {
+                refused = await ask(ct);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+            {
+                refused = ex.Message;
+            }
+            // The outcome is recorded before the press stops being pending: a draw (or a reader of IsTaken) between the two saw
+            // neither, so a switch read its old state for a frame (AutopilotSwitchTests failed on CI so, #842's queue run).
+            if (refused is null)
+            {
+                NoteTaken(key);
+            }
+            else
+            {
+                refused = say is null ? refused : say(refused);
+                NoteRefused(key, refused);
+            }
+            ImmutableInterlocked.AddOrUpdate(ref _marks, key, new PressMark(hit, refused is not null, System.Diagnostics.Stopwatch.GetTimestamp()), (_, _) =>
+                new PressMark(hit, refused is not null, System.Diagnostics.Stopwatch.GetTimestamp()));
         }
         finally
         {
             ImmutableInterlocked.TryRemove(ref _pending, key, out _);
         }
-        if (refused is null)
-        {
-            NoteTaken(key);
-        }
-        else
-        {
-            refused = say is null ? refused : say(refused);
-            NoteRefused(key, refused);
-        }
-        ImmutableInterlocked.AddOrUpdate(ref _marks, key, new PressMark(hit, refused is not null, System.Diagnostics.Stopwatch.GetTimestamp()), (_, _) =>
-            new PressMark(hit, refused is not null, System.Diagnostics.Stopwatch.GetTimestamp()));
         var changed = Changed;
         changed?.Invoke();
         if (changed is not null && DoneFor > TimeSpan.Zero)

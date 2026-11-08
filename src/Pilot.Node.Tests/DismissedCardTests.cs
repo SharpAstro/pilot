@@ -35,6 +35,24 @@ public sealed class DismissedCardTests : IDisposable
         state.Cards(openOnly: true).ShouldBeEmpty();
     }
 
+    /// <summary>A dismissal holds for a day, not for good: the same cause back after it rings again (PIL855's review).</summary>
+    [Fact]
+    public void ADismissalHoldsForADayAndTheSameCauseRaisedAfterItIsACardAgain()
+    {
+        var time = new Pilot.Node.Tests.Sessions.ManualTime(DateTimeOffset.UnixEpoch.AddYears(56));
+        var state = new NodeState(new InMemoryJournal(), time);
+        var first = state.RaiseCard(CardBin.Ring, Kind, Subject, "TIA1 did not land");
+        state.CloseCard(first.Id, "dismissed: known", "gui").ShouldBeTrue();
+
+        time.Advance(state.DismissalHolds - TimeSpan.FromMinutes(1));
+        state.RaiseCard(CardBin.Ring, Kind, Subject, "TIA1 did not land").State.ShouldBe(CardState.Closed);
+
+        time.Advance(TimeSpan.FromMinutes(2));
+        var back = state.RaiseCard(CardBin.Ring, Kind, Subject, "TIA1 did not land");
+        back.State.ShouldBe(CardState.Open);
+        back.Id.ShouldNotBe(first.Id);
+    }
+
     [Fact]
     public void AKeyedCauseHoldsWhileTheTitleChanges()
     {

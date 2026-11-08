@@ -149,9 +149,15 @@ public sealed partial class LegCommander
         {
             return;
         }
-        // An open that conflicted waits on the watchtower's pr-conflicts card: once that card closes (the base merged in and pushed), the
-        // sweep opens the PR itself, as no ring offers it.
-        if (step.Verb == Verbs.OpenPr && state.Cards(openOnly: true).Any(c => c.Kind == PrConflictsKind && c.Subject == Verbs.FlightTarget(current.Code)))
+        // An open that conflicted was put to a worker (ResolveConflictAsync) and is not tried again at the same plane head and base head: it
+        // would only conflict again. Once the worker has merged the base and pushed, or the base moves, the sweep opens the PR itself.
+        if (step.Verb == Verbs.OpenPr && _conflictOpenTried.TryGetValue(current.Code, out var tried) && tried == await ConflictHeadsAsync(current, cancellationToken))
+        {
+            return;
+        }
+        // Another step's calls are out for the flight (a push, a check rerun, a rebase): open-pr would wait for them, as a person's does, but
+        // the sweep takes its flights one at a time, so it leaves this one to the next sweep rather than hold every flight behind it (pilot #871).
+        if (step.Verb == Verbs.OpenPr && IsCallingAnything(current.Code))
         {
             return;
         }
@@ -177,8 +183,8 @@ public sealed partial class LegCommander
         {
             return;
         }
-        // An open that conflicted has raised the watchtower's pr-conflicts card already: no second ring for the owner, and no latch, so the
-        // sweep opens the PR once that card closes.
+        // An open that conflicted was put to a worker already and rings no one: no ring for the owner, and no latch, so the sweep opens the PR
+        // once the plane or the base has moved.
         if (step.Verb == Verbs.OpenPr && result.Error is { } error && IsConflict(error))
         {
             return;

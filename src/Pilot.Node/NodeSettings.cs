@@ -37,10 +37,13 @@ public sealed record NodeSettings
     public const string SpendAlertKey = "spend-alert";
     public const string WatchtowerCompactShareKey = "watchtower-compact-share";
     public const string WatchtowerChatMessagesKey = "watchtower-chat-messages";
+    public const string WatchtowerCompactIdleKey = "watchtower-compact-idle";
+    public const string WatchtowerCompactAboveKey = "watchtower-compact-above";
     public const string MaintenanceKey = "maintenance";
     public const string AcceptFleetFlightsKey = "accept-fleet-flights";
     public const string AutopilotKey = "autopilot";
     public const string ReviewDeepFirstKey = "review-deep-first";
+    public const string UserSkillsKey = "user-skills";
     public const string ShortcutTokenKey = "shortcut-token";
     public const string RepoTrackersKey = "repo-trackers";
     public const string NoAutoMergeReposKey = "no-auto-merge-repos";
@@ -126,7 +129,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. RoleModels.Roles.Select(RoleModels.RangeKey), WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -154,6 +157,9 @@ public sealed record NodeSettings
 
     /// <summary>Whether the first review of a large diff runs on the deep model (<see cref="ReviewDeepFirstKey"/>); on unless the person saved it off. A re-review never does.</summary>
     public bool? ReviewDeepFirst { get; init; }
+
+    /// <summary>Whether the node installs and keeps current the Claude Code skills it carries (<see cref="UserSkillsKey"/>, <see cref="Node.UserSkills"/>); on unless the person saved it off.</summary>
+    public bool? UserSkills { get; init; }
 
     /// <summary>Whether a leg's fresh worker steps up the model ladder by attempt (<see cref="WorkerLadderKey"/>); on unless set off.</summary>
     public bool? WorkerLadder { get; init; }
@@ -218,6 +224,12 @@ public sealed record NodeSettings
 
     /// <summary>The person messages in a watchtower chat, since its last compaction, after which it is compacted once idle (<see cref="WatchtowerChatMessagesKey"/>); 40 when unset, 0 is off.</summary>
     public int? WatchtowerChatMessages { get; init; }
+
+    /// <summary>How many minutes an idle watchtower (the brain) sits before it is compacted, when its context is over <see cref="WatchtowerCompactAbove"/> (<see cref="WatchtowerCompactIdleKey"/>); 50 when unset.</summary>
+    public int? WatchtowerCompactIdle { get; init; }
+
+    /// <summary>The context, in thousands of tokens, an idle watchtower must hold for the idle compaction to be worth its turn (<see cref="WatchtowerCompactAboveKey"/>); 100 when unset.</summary>
+    public int? WatchtowerCompactAbove { get; init; }
 
     /// <summary>The repos whose flights have runway: they go on past <see cref="StartLimit"/>, up to <see cref="PriorityStartLimit"/>.</summary>
     public IReadOnlyList<string>? PriorityRepos { get; init; }
@@ -362,6 +374,7 @@ public sealed record NodeSettings
                     AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
                     AutopilotKey => JsonValue.Create(Autopilot),
                     ReviewDeepFirstKey => JsonValue.Create(ReviewDeepFirst),
+                    UserSkillsKey => JsonValue.Create(UserSkills),
                     MergeBatchKey => JsonValue.Create(MergeBatch),
                     WorkerLadderKey => JsonValue.Create(WorkerLadder),
                     JobPlaneOutputKey => JsonValue.Create(JobPlaneOutput),
@@ -407,6 +420,7 @@ public sealed record NodeSettings
         AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
         AutopilotKey => Autopilot is { } autopilot ? [autopilot ? "on" : "off"] : null,
         ReviewDeepFirstKey => ReviewDeepFirst is { } deepFirst ? [deepFirst ? "on" : "off"] : null,
+        UserSkillsKey => UserSkills is { } skills ? [skills ? "on" : "off"] : null,
         MergeBatchKey => MergeBatch is { } batch ? [batch ? "on" : "off"] : null,
         WorkerLadderKey => WorkerLadder is { } ladder ? [ladder ? "on" : "off"] : null,
         JobPlaneOutputKey => JobPlaneOutput is { } planeOutput ? [planeOutput ? "on" : "off"] : null,
@@ -432,6 +446,8 @@ public sealed record NodeSettings
         SpendAlertKey => SpendAlert is { } alert ? [alert.ToString(CultureInfo.InvariantCulture)] : null,
         WatchtowerCompactShareKey => WatchtowerCompactShare is { } wcs ? [wcs.ToString(CultureInfo.InvariantCulture)] : null,
         WatchtowerChatMessagesKey => WatchtowerChatMessages is { } wcm ? [wcm.ToString(CultureInfo.InvariantCulture)] : null,
+        WatchtowerCompactIdleKey => WatchtowerCompactIdle is { } wci ? [wci.ToString(CultureInfo.InvariantCulture)] : null,
+        WatchtowerCompactAboveKey => WatchtowerCompactAbove is { } wca ? [wca.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityReposKey => PriorityRepos,
         RepoTrackersKey => RepoTrackers,
         NoAutoMergeReposKey => NoAutoMergeRepos,
@@ -510,6 +526,14 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } deepFirst
                     ? (settings with { ReviewDeepFirst = deepFirst }, null)
                     : (null, "review-deep-first takes on or off");
+            case UserSkillsKey:
+                if (clear)
+                {
+                    return (settings with { UserSkills = null }, null);
+                }
+                return OnOff(One()) is { } userSkills
+                    ? (settings with { UserSkills = userSkills }, null)
+                    : (null, "user-skills takes on or off");
             case MergeBatchKey:
                 if (clear)
                 {
@@ -703,6 +727,22 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var chatMessages) && chatMessages >= 0
                     ? (settings with { WatchtowerChatMessages = chatMessages }, null)
                     : (null, "watchtower-chat-messages takes a count of person messages, 0 or more (0 is off)");
+            case WatchtowerCompactIdleKey:
+                if (clear)
+                {
+                    return (settings with { WatchtowerCompactIdle = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var compactIdle) && compactIdle > 0
+                    ? (settings with { WatchtowerCompactIdle = compactIdle }, null)
+                    : (null, "watchtower-compact-idle takes the minutes an idle watchtower waits before it is compacted, 1 or more");
+            case WatchtowerCompactAboveKey:
+                if (clear)
+                {
+                    return (settings with { WatchtowerCompactAbove = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var compactAbove) && compactAbove >= 0
+                    ? (settings with { WatchtowerCompactAbove = compactAbove }, null)
+                    : (null, "watchtower-compact-above takes the context in thousands of tokens an idle watchtower must hold to be compacted, 0 or more");
             case PriorityReposKey:
             {
                 if (clear)

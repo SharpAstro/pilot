@@ -19,7 +19,7 @@ public sealed class GitOfflineTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_dir, recursive: true);
+        TestDirs.DeleteTree(_dir);
     }
 
     private static Task<GitRun> Git(string cwd, params string[] args) => new GitCli(budget: TimeSpan.FromSeconds(30)).RunAsync(args, cwd, TestContext.Current.CancellationToken);
