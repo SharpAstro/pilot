@@ -357,6 +357,11 @@ public sealed class FailureAlerts(NodeState state, IGitHub github, FailureInvest
                 // Every flight and hand PR the failure hit before this one is on the alert from the start.
                 foreach (var record in investigations.Ledger.Of(site.Name, finding.Signature))
                 {
+                    // A site not held (a leg check the finish passed) is in the ledger from its own investigation, but is not on the alert.
+                    if (!holdSite && record.Flight is { Length: > 0 } recorded && recorded == site.Flight)
+                    {
+                        continue;
+                    }
                     Add(alert, record.Flight, record.Pr, record.Where, record.Head, site.Name);
                 }
             }
