@@ -28,7 +28,7 @@ public sealed partial class LegCommander
             Models.NextWorkerNote(leg) is { } note ? $"{detail}\n{note}" : detail,
             [
                 new CardChoice { Label = Verbs.FreshWorker, Verb = Verbs.GoAround, Target = target, Args = [asked] },
-                new CardChoice { Label = "Accept the leg as it is", Verb = Verbs.FinishLeg, Target = target, Args = ["accepted", $"accepted at the go-around cap ({leg.GoArounds} rounds)"] },
+                new CardChoice { Label = "Accept the leg", Verb = Verbs.FinishLeg, Target = target, Args = ["accepted", $"accepted at the go-around cap ({leg.GoArounds} rounds)"] },
             ],
             summary: $"{flight.Code}/{leg.Name} has gone around {leg.GoArounds} times, the cap. The watchtower and the node send it round no more; one more round, or taking the leg as it stands, is for you to choose.");
     }

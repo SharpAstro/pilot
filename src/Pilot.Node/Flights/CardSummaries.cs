@@ -64,13 +64,13 @@ public static partial class CardSummaries
         var what = Name(subject);
         return kind switch
         {
-            LegCommander.ReviewChanges => $"The review of {what} found things to fix. Fix the review's findings has a worker fix them on the leg's work as it stands, nothing thrown away; Land it with the review's findings unfixed takes it as it is.",
+            LegCommander.ReviewChanges => $"Have a worker fix what the review of {what} found, on the leg's work as it stands, or land the PR without the fixes.",
             LegCommander.PrReady => $"{what} is reviewed and its PR is ready. Merge lands it; dismissing leaves the PR open.",
             LegCommander.MergeFailed => $"The merge of {what} did not go through. Choose: a fresh worker can fix its last leg, the checks can be run again if they failed, or the merge can be tried once more as the PR stands.",
             "leg-failed" => $"The worker of {what} stopped. Sending it round starts a fresh worker, told the whole report, that fixes it and finishes the leg; accepting it keeps the failure in the leg's report and the flight goes on.",
             LegCommander.PushBlockedKind => $"{what} is done and its check passes, but its branch was rebased off the pushed one, so a plain push is refused. Overwriting replaces origin's only if it has not moved; merging keeps origin's commits and pushes plain.",
             "pr-checks-failed" => $"The PR of {what} fails its checks and the node could not send the last leg back to fix them. The first choice starts a fresh worker on that leg, told which checks failed and to push a fix; or fix them by hand, then dismiss this.",
-            "pr-conflicts" => $"The PR of {what} conflicts with its base and a worker already tried and could not settle it (it stopped, or the same conflict came back). The watchtower resolves it in the plane (merge, check, plain push); Resolve the conflict starts a fresh worker on the last leg.",
+            "pr-conflicts" => $"Settle the conflict of {what}'s PR with its base in the plane (merge, check, plain push), or hand the last leg to a fresh worker: the worker sent to it could not (it stopped, or the same conflict came back).",
             LegWatch.Stopped => $"The worker of {what} was stopped by the API and the node cannot resume it by itself. Tell it to carry on, or start a fresh worker on the leg.",
             LegWatch.LimitWait => $"The worker of {what} hit the usage limit. The node resumes it by itself after the window resets; nothing to do.",
             LegWatch.Idle => $"The worker of {what} has been idle with its leg unfinished and the node's nudges did not help. One more push may get it going, or a fresh worker can take over the leg.",

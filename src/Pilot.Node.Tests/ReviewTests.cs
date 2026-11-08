@@ -985,9 +985,9 @@ public sealed class ReviewTests2 : ReviewTestsBase
         await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA71"), "controller");
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
-        card.Title.ShouldStartWith("TIA71's review did not start: ");
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start TIA71's review again", Verbs.StartReview), ("Land TIA71 without a review", Verbs.Review)]);
-        card.Summary.ShouldNotBeNull().ShouldStartWith("The reviewer of TIA71/parser did not start, so nothing was reviewed. Start TIA71's review again starts it again");
+        card.Title.ShouldBe("TIA71's review did not start");
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start the review again", Verbs.StartReview), ("Land without a review", Verbs.Review)]);
+        card.Summary.ShouldBe("Run the review of TIA71 again, or land the PR without one. The reviewer of TIA71/parser did not start, so nothing was reviewed.");
     }
 
     [Fact]

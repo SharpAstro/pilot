@@ -817,7 +817,7 @@ public sealed partial class LegCommander
         {
             SendBackReason.ChecksFailed => $"{flight.Code}'s PR fails its checks",
             SendBackReason.ReviewNotStarted => $"{flight.Code}'s review did not start",
-            _ => $"{flight.Code}'s review asks for changes",
+            _ => $"{flight.Code}'s review found things to fix",
         };
         var said = reason switch
         {
@@ -859,8 +859,11 @@ public sealed partial class LegCommander
             detail = $"{detail}\n{nextWorker}";
         }
         state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), title, detail, choices, link: flight.PullRequestUrl,
-            summary: reason == SendBackReason.ReviewNotStarted || last is null
-                ? $"{said} {(reason == SendBackReason.ReviewNotStarted ? "It can be started again, or " : "")}the PR can be taken as it is."
-                : $"{said} A worker can do it on the leg's work as it stands, nothing thrown away, or the PR can be taken as it is.");
+            // What to do first, then why (#797): the words differ from the buttons', which say it again.
+            summary: reason == SendBackReason.ReviewNotStarted
+                ? $"Run the review of {flight.Code} again, or land the PR without one. {said}"
+                : last is null
+                    ? $"Land the PR of {flight.Code} as it is, or dismiss this and fix it by hand. {said}"
+                    : $"Have a worker on {last.Name} put it right on the leg's work as it stands, or land the PR as it is. {said}");
     }
 }
