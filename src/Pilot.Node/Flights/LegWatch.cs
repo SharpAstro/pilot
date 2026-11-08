@@ -807,7 +807,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         state.RaiseCard(CardBin.Ring, Idle, subject, $"{ticker} stopped without finishing the leg: {why}{(refused is null ? "" : $" (go-around refused: {Clip(refused)})")}",
             $"the worker ended with commits made and {Steps(leg)}, so the node started its ticking pass instead of sending the leg round; {why}, and the node starts no second ticker{goAroundRefusal}",
             [new CardChoice { Label = around, Verb = Verbs.GoAround, Target = subject, Args = [$"the last worker ended with steps unticked and its ticker stopped without finishing: {why}"] }],
-            summary: $"The ticking pass of {Name(leg)} stopped with the leg unfinished: {why}. {around} starts a fresh worker.");
+            summary: $"The ticking pass of {Name(leg)} stopped with the leg unfinished: {why}. {around} starts a fresh worker.",
+            // The title's reason carries an age that changes each look; a go-around or a redo of the leg is a new cause (#853).
+            cause: $"ticker-stopped:{leg.GoArounds}:{leg.ReviewGoArounds}");
     }
 
     /// <summary>The card kind of a leg the node sent round because its ticking pass stopped with steps unticked.</summary>
