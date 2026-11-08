@@ -286,6 +286,8 @@ public sealed class SummaryFollowerTests
         using var client = Attach();
         await _follower.StepAsync(Ct);
         Change();
+        // The look that sees the change starts its quiet spell.
+        await _follower.StepAsync(Ct);
         _brain.FailsWith = "it was busy with another request";
 
         await AfterAsync(SummaryFollower.Quiet + TimeSpan.FromSeconds(1));
