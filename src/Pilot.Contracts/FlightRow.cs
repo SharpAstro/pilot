@@ -324,6 +324,15 @@ public sealed record FlightHolding
 
     /// <summary>Who put the flight in the hold (the node, for a pass with notes); null when not said.</summary>
     public string? By { get; init; }
+
+    /// <summary>
+    /// When the watchtower took the hold: it committed in the plane after the review's head, or said <c>flight hold</c>. Null while
+    /// nobody has: the node releases such a hold after a short grace (or at once with no live watchtower) and the flight merges at
+    /// the reviewed head, its notes left on a For-you card. Only a taken hold keeps the merge held, until it is cleared or rings
+    /// after the holding bound. Optional, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? TakenAt { get; init; }
 }
 
 /// <summary>A move whose outcome is not known yet (<see cref="FlightRow.MoveUnknown"/>).</summary>

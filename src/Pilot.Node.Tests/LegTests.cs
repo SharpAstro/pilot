@@ -636,6 +636,15 @@ internal sealed class FakeGitHub : IGitHub
         return 1;
     }
 
+    /// <summary>The failed run of a PR's own checks, or of its merge queue entry, by PR number and whether it is the queue's; none listed reads as none.</summary>
+    public Dictionary<(int Number, bool MergeGroup), FailedRun> FailedRuns { get; } = [];
+
+    /// <summary>When set, reading a failed run yields nothing, as a gh that could not read it.</summary>
+    public bool FailedRunFails { get; set; }
+
+    public Task<FailedRun?> FailedRunAsync(string repoPath, int number, bool mergeGroup, CancellationToken cancellationToken) =>
+        Task.FromResult(!FailedRunFails && FailedRuns.TryGetValue((number, mergeGroup), out var run) ? run : null);
+
     /// <summary>The workflow runs each commit has, by commit; a commit with none listed has none.</summary>
     public Dictionary<string, WorkflowRun[]> Runs { get; } = new(StringComparer.OrdinalIgnoreCase);
 

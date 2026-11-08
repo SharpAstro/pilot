@@ -107,6 +107,10 @@ public static partial class CardSummaries
             FlightCommander.ReceivedKind => $"{what} was handed over to this node, which made its plane. Nothing to do.",
             LegCommander.FollowUpPrKind => $"The commits of {what} missed the merge of its earlier PR, so a new PR carries them. Nothing to do; it is reviewed as any PR and the flight lands when it merges.",
             FlightCommander.MergedUnderLegKind => $"GitHub merged the PR of {what} before the new leg's work could join it. The new leg's work goes to a new PR once the legs are done; nothing to do.",
+            FailureInvestigations.CardKind => "A test the PR does not touch failed, which is a bug with a cause to find. It is filed as an issue of priority high and a flight investigates it; later occurrences are added to that issue. Nothing to do unless you want to change its priority.",
+            FailureAlerts.AlertKind => "A failure in a test its PRs do not touch came again, so the tower is on alert: the flight that investigates it looks for the cause, and every flight the failure hit is held, with no go-around, re-queue or rerun, until that flight lands. Nothing to do unless the investigation needs help.",
+            FailureAlerts.RetriedKind => "A failure in a test the PR does not touch was retried once (the PR queued again, or its failed jobs run again) so it is not blocked, while its investigation looks for the cause. Nothing to do; if it fails the same way again the tower goes on alert.",
+            FailureAlerts.ReleasedKind => $"The investigation of a failure landed, so {what} is released from its hold and what it was held from is done again: queued, its checks run, or its leg check run. Nothing to do.",
             "checks-rerun" => $"Failed checks of {what}'s PR were run again once before its leg is sent round. Nothing to do unless they fail again.",
             PrChecks.ClosedLanded => $"{what}'s PR was closed without a merge and its plane held nothing of its own, so the flight landed. Nothing to do.",
             PrChecks.ClosedWithWork => $"{what}'s PR was closed without a merge but its plane holds work of its own. Reopen the PR, or open a new one for that work, then land the flight.",
@@ -146,13 +150,13 @@ public static partial class CardSummaries
             LegCommander.SpendAlertKind => "A leg has spent a large share of the 7-day window before its next round. The round still starts; stop the flight by hand if it should not.",
             LegCommander.ConflictDecisionKind => $"The workers sent to merge {what}'s PR with its base, on Sonnet, then Opus, then Opus at xhigh, all failed, and the last found that the two sides change the same behaviour in opposite ways. The detail names the files, both behaviours and what keeping each costs; each choice sends the leg round told which side to keep.",
             LegCommander.GoAroundCapKind => "A leg has gone around as many times as the cap allows, whatever the reasons, and the node and the watchtower send it round no more. Go around sends one more; Accept takes the leg as it stands.",
-            LegCommander.ReviewNotesKind => $"The review of {what} passed with notes that do not block the merge. The merge waits while a review-notes leg makes them (its push ends the hold and a fresh review gates the merge) or the watchtower clears the flight; nothing for you to do.",
+            LegCommander.ReviewNotesKind => $"The review of {what} passed with notes that do not block the merge. The merge waits while a review-notes leg makes them (its push ends the hold and a fresh review gates the merge), or the watchtower works on them in the plane or clears the flight; if none takes them in a few minutes the flight merges with them. Nothing for you to do.",
             LegCommander.HumanVerificationKind => $"The review of {what} noted checks only a person can make, and the node filed each as an issue in the repo's human-verification milestone. Check each by hand and close its issue; dismiss this once read.",
             LegCommander.HumanVerificationRefusedKind => $"GitHub refused some of {what}'s human checks, so they are not filed; the verdict stands. The detail names them; file them by hand.",
-            LegCommander.HoldingClearedKind => "The watchtower or the person cleared a flight held in a holding pattern to land: its merge is no longer held, and autopilot merges it as for any passed review.",
+            LegCommander.HoldingClearedKind => "A flight held in a holding pattern was cleared to land, by the watchtower or the person, or released by the node because the watchtower did not take the hold: its merge is no longer held, and autopilot merges it as for any passed review.",
             LegCommander.HoldReleasedKind => "A flight held in a holding pattern had no watchtower running to make its review's not blocking notes, so the node wrote them on the PR as one comment and released the hold: autopilot merges it as for any passed review. Nothing to do.",
             LegCommander.PrReadyRestoredKind => "A flight's review had passed but no merge card was open (the node restarted between the verdict and the card), so the node raised its PR-ready card again. Nothing to do.",
-            LegCommander.HoldingTimeoutKind => $"{what} has circled in a holding pattern for 30 minutes with no leg making its fixes and a live watchtower not clearing it (a hold with no watchtower running is released by the node itself). Merge as it is lands it at the reviewed head; Wait keeps it holding and asks again later.",
+            LegCommander.HoldingTimeoutKind => $"{what} has circled in a holding pattern for 30 minutes after the watchtower took it, without clearing it, or the watchtower is not live and the node could do nothing. Merge as it is lands it at the reviewed head; Wait keeps it holding and asks again later.",
             LegCommander.ReviewLoopKind => "The review of a flight has asked for changes in three rounds. Pass with notes ends the loop; Allow one more round lets a fourth start.",
             "review-kept" => "A flight's base was merged into its branch and its own diff is unchanged, so its passed review stands and no reviewer started. Nothing to do.",
             LegWatch.StraySession => "A live session that should not be running: one past its purpose (its leg is done or was redone, or its flight landed), or one the node did not start and no role claims. Stop it ends the session; the card closes by itself when the session ends. A role's current session never rings here.",
@@ -232,8 +236,12 @@ public static partial class CardSummaries
         var head = $"The review of {code} passed with {notes.Count} small {(notes.Count == 1 ? "note" : "notes")} that {(notes.Count == 1 ? "does" : "do")} not block the merge{example}.";
         return fixerLeg is not null
             ? $"{head} The fixer leg {fixerLeg} took them; nothing for you to do."
-            : $"{head} The watchtower delegates them to a fixer leg or clears the flight; nothing for you to do.";
+            : $"{head} The watchtower delegates them or clears the flight; else it merges with them. Nothing for you to do.";
     }
+
+    /// <summary>The sentence of a review-notes card whose hold the watchtower did not take: the flight merges with the notes, which stay for a follow-up.</summary>
+    public static string ReviewNotesLeft(string code) =>
+        $"The review of {code} passed with notes that do not block the merge. The watchtower did not take them in time, so the flight merges at the reviewed head; the notes stay here for a follow-up.";
 
     /// <summary>The sentence of the card that names the issues filed for a flight's human checks: what they are and that the controller checks each by hand and closes it.</summary>
     public static string HumanVerification(string code, int count) =>

@@ -52,6 +52,7 @@ public static partial class NodeApp
         AddIdeas(builder, logWriter);
         AddWorkers(builder, options, logWriter);
         AddAdmission(builder, options);
+        AddFailureInvestigations(builder, logWriter, options);
         AddLegs(builder);
         AddPrReviews(builder, logWriter);
         AddCommands(builder, options);

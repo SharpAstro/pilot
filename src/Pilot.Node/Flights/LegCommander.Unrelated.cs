@@ -73,8 +73,30 @@ public sealed partial class LegCommander
             {
                 return (run with { Tail = $"{run.Tail}\nIt failed only on tests outside the flight's change, but {passing}, so it is taken as the flight's." }, null);
             }
+            // With failure investigations (PIL716), each is filed as one, as a failure in CI or the merge queue is: one per signature
+            // across all three, priority high, its flight started and a For-you card. Only an open issue that names the test itself
+            // becomes the investigation; a looser match (the class alone) is no reason to raise it to one.
+            var investigations = Investigations ?? Alerts?.Investigations;
+            var head = investigations is null ? ""
+                : (await OffLockAsync(null, () => git.RunAsync(["rev-parse", "--verify", "--quiet", "HEAD"], flight.Worktree, cancellationToken))) is { Ok: true } rev ? rev.Output.Trim() : "";
             foreach (var (test, job, output) in found)
             {
+                if (investigations is not null)
+                {
+                    var site = new FailureSite(flight.Repo, flight.RepoPath, flight.PullRequest, flight.Code, head, FailureWhere.PassedLegCheck, flight.PullRequestUrl);
+                    var named = UnrelatedFailures.MatchingTest(open, test);
+                    if (await OffLockAsync(null, () => investigations.InvestigateTestAsync(site, test, output, named, cancellationToken)) is { Issue: > 0 } finding)
+                    {
+                        // A repeat of a failure another flight or PR hit is told to the tower, as one read from CI or the queue is. The
+                        // leg passes whatever it answers (the alert holds the flights hit before, not this one), so no go-around is burnt.
+                        if (Alerts is { } alerts && (finding.Others || alerts.HasOpenAlert(site.Name, finding.Signature)))
+                        {
+                            alerts.AlertOnPassedCheck(site, finding);
+                        }
+                        listed.Add((test, finding.Issue));
+                        continue;
+                    }
+                }
                 var issue = UnrelatedFailures.Matching(open, test)
                     ?? await OffLockAsync(null, () => github.CreateIssueAsync(flight.RepoPath, UnrelatedFailures.IssueTitle(test, flight.Code),
                         UnrelatedFailures.IssueBody(test, flight.Code, leg.Name, job, output), cancellationToken));
