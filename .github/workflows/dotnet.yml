@@ -108,6 +108,14 @@ jobs:
     - name: Test the GUI
       # The sessions view rendered on the CPU from the sample snapshot: no display and no GPU needed.
       run: dotnet test Pilot.Gui.Tests -c $BUILD_CONF --no-build --logger "console;verbosity=detailed"
+    - name: Upload the GUI's overlap captures
+      # The frame a text-overlap failure names, so a fault seen only on a runner can be looked at (PIL855's chat, 2026-11-08).
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: gui-text-overlap-${{ matrix.os }}
+        path: src/Pilot.Gui.Tests/bin/${{ env.BUILD_CONF }}/net10.0/text-overlap/
+        if-no-files-found: ignore
 
   # Tests tagged [Trait("Category", "Slow")] are exempt from the time guard and run here, beside the build job rather than
   # after it. On Windows they took 19 of the build job's 26 minutes (3,349 test-seconds; Linux runs them in 3), which put

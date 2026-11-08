@@ -135,6 +135,13 @@ public sealed class SessionTracker : BackgroundService
     /// <summary>Whether a session or row id is one of the node's watchtowers (known by id, not by name); null knows none.</summary>
     public Func<string, bool>? IsWatchtowerId { get; init; }
 
+    /// <summary>
+    /// Whether a session id is one the node runs itself as a stream session (the watchtower, <see cref="StreamSession"/>): the node
+    /// publishes its row from the stream, so a listing of the same session (if Claude Code lists a print-mode process at all) is
+    /// left out here, and never a second writer of the row.
+    /// </summary>
+    public Func<string, bool>? IsStreamSession { get; init; }
+
     /// <summary>Where a model or effort mismatch is said (the node's log, pilot #416); nothing for a tracker built without.</summary>
     public TextWriter Error { get; init; } = TextWriter.Null;
 
@@ -418,7 +425,8 @@ public sealed class SessionTracker : BackgroundService
         var present = new HashSet<string>(StringComparer.Ordinal);
         foreach (var agent in listed)
         {
-            if (_superseded.Contains(agent.SessionId) || _options.IsHidden(agent.Cwd) || RowIdOf(agent, listed) is not { } id)
+            if (_superseded.Contains(agent.SessionId) || _options.IsHidden(agent.Cwd) || IsStreamSession?.Invoke(agent.SessionId) == true
+                || RowIdOf(agent, listed) is not { } id)
             {
                 continue;
             }
@@ -453,6 +461,13 @@ public sealed class SessionTracker : BackgroundService
                 {
                     Put(previous with { EndedBecause = resumed });
                 }
+                continue;
+            }
+
+            if (IsStreamSession?.Invoke(previous.SessionId) == true && _state.Sessions().FirstOrDefault(r => r.Id == id) is { State: not (SessionState.Ended or SessionState.Failed) })
+            {
+                // The node's own stream session, live again (a resume after a restart) under the row this tracker seeded as ended: the node publishes it, and an
+                // ended copy of it here is not to be forgotten, taking the live row with it.
                 continue;
             }
 
@@ -735,19 +750,10 @@ public sealed class SessionTracker : BackgroundService
 
     private void Put(SessionRow row)
     {
-        if (Launched?.Observe(row, _endedAt.TryGetValue(row.Id, out var endedAt) ? endedAt : null) is { } entry)
+        if (Launched is not null)
         {
             // The ledger's account of a session the node launched: what started it, and once it ended, why, when and at what wall time.
-            var ended = entry.EndReason is not null;
-            row = row with
-            {
-                StartReason = entry.StartReason,
-                EndReason = entry.EndReason,
-                EndedAt = ended ? entry.EndedAt : null,
-                WallSeconds = ended ? entry.WallSeconds : null,
-                LastCompactedAt = entry.CompactedAt,
-                CompactedBecause = entry.CompactedBecause,
-            };
+            row = Launched.Stamp(row, _endedAt.TryGetValue(row.Id, out var endedAt) ? endedAt : null);
         }
         var wasEnded = _rows.TryGetValue(row.Id, out var before) && before.State is SessionState.Ended or SessionState.Failed;
         _rows[row.Id] = row;
@@ -782,6 +788,21 @@ public sealed class SessionTracker : BackgroundService
     /// <summary>Whether the row ended on its own, held so for two polls, and no live session replaced it: nobody waits on its jobs (#327).</summary>
     public bool IsEndedForGood(string id) => _confirmedEnded.ContainsKey(id);
 
+    /// <summary>
+    /// Whether the row is ended after its turn finished (a --bg session Claude Code ended by design once its turn was over, PIL815),
+    /// not by a crash: its own job's end is what resumes it (#893). A crash (Failed, or no finished turn) is not one.
+    /// </summary>
+    public bool EndedAfterFinishedTurn(string id) =>
+        _state.Sessions().FirstOrDefault(s => s.Id == id) is { State: SessionState.Ended } row
+        && (row.EndedBecause?.StartsWith(SessionRowBuilder.TurnFinishedEnd, StringComparison.Ordinal) == true
+            || JobRecord(row.Id) is { TurnFinished: true });
+
+    private bool OwnsOpenJob(SessionRow row)
+    {
+        string[] ids = [row.Id, row.SessionId, .. row.EarlierSessionIds ?? []];
+        return _state.Jobs().Any(j => j.State is JobState.Queued or JobState.Running && j.Owner is not null && ids.Contains(j.Owner, StringComparer.Ordinal));
+    }
+
     /// <summary>Drops the queued jobs of rows that ended on their own, unless a live session has taken the row over (a copy Claude Code continued it as): that one owns them now.</summary>
     private void DropJobsOfEnded()
     {
@@ -799,6 +820,12 @@ public sealed class SessionTracker : BackgroundService
             else if (polls + 1 < 2)
             {
                 _justEnded[id] = (row, polls + 1);
+            }
+            // Its open jobs first: a lookup in the state, where EndedAfterFinishedTurn may read the job's record from disk.
+            else if (OwnsOpenJob(now) && EndedAfterFinishedTurn(id))
+            {
+                // Its turn finished and it still owns a queued or running job: it is not ended in the node's eyes. The jobs stay, and
+                // the job's end resumes it with the outcome. Looked at again on later polls; once none is open the rule below applies (#893).
             }
             else
             {

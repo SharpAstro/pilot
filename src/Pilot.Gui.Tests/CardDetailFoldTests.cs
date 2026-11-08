@@ -59,6 +59,23 @@ public sealed class CardDetailFoldTests
         Words(view, renderer, screen).ShouldNotContain("failing tests in WidgetTests");
     }
 
+    /// <summary>
+    /// The card of a watchtower's permission prompt draws its whole command, past any line cap: Allow from the card runs the whole call,
+    /// and this card is the one that rings the phone when the ask has waited (PIL855's review).
+    /// </summary>
+    [Fact]
+    public void AnAskCardDrawsTheWholeCommandItAllows()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1200);
+        var view = NewView(renderer);
+        var command = "{\"command\":\"echo " + string.Join(" ", Enumerable.Range(0, 120).Select(i => $"word{i}")) + " TAILMARKER\"}";
+        var screen = CardsScreen.From([Card("c1", "The watchtower asks leave to run a long echo.", command) with { Kind = CardKinds.WatchtowerAsk }]);
+
+        Toggle(view, screen, "c1");
+
+        Words(view, renderer, screen).ShouldContain("TAILMARKER");
+    }
+
     [Fact]
     public void TheFoldIsPerCard()
     {

@@ -43,11 +43,16 @@ public static partial class NodeApp
     {
         // The store: the node's events as files in its data folder, read back on the next start (FileJournal).
         builder.Services.AddSingleton<INodeJournal>(_ => new FileJournal(Path.Combine(options.DataFolder, "store")));
-        builder.Services.AddSingleton(services => new NodeState(
-            services.GetRequiredService<INodeJournal>(), services.GetRequiredService<TimeProvider>(), options.RetainedDeltas)
+        builder.Services.AddSingleton(services =>
         {
-            Error = logWriter,
-            TokensByFlight = () => services.GetRequiredService<SpendLedger>().TokensByFlight(),
+            var state = new NodeState(services.GetRequiredService<INodeJournal>(), services.GetRequiredService<TimeProvider>(), options.RetainedDeltas)
+            {
+                Error = logWriter,
+                TokensByFlight = () => services.GetRequiredService<SpendLedger>().TokensByFlight(),
+            };
+            // A card about to ring goes to the brain first (PIL855); resolved at the first ring, as the brain needs the watchtower, which needs this state.
+            state.RingJudge = new RingJudge(state, () => services.GetRequiredService<IBrain>()) { Log = line => logWriter.WriteLine(line) };
+            return state;
         });
         builder.Services.AddSingleton<PageViews>();
         builder.Services.AddSingleton<EventHub>();
@@ -81,6 +86,16 @@ public static partial class NodeApp
             GitHub = services.GetService<IGitHub>(),
             Queue = services.GetRequiredService<RemovalQueue>(),
             Repos = () => [.. services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path)],
+        });
+        // The Claude Code jobs pilot started and has as ended or replaced are stopped and removed once the tracker has listed, then hourly (#891).
+        builder.Services.AddSingleton<IClaudeJobs>(services => new ClaudeCliJobs(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")));
+        builder.Services.AddHostedService(services => new ClaudeJobSweep(
+            services.GetRequiredService<NodeState>(), services.GetRequiredService<SessionLedger>(), services.GetRequiredService<IClaudeJobs>(),
+            services.GetRequiredService<IClaudeAgents>(), options.Machine, services.GetRequiredService<TimeProvider>())
+        {
+            Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,
+            CurrentWatchtower = () => services.GetRequiredService<Watchtower>().Current(),
+            Error = logWriter,
         });
         builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>(), services.GetRequiredService<RemovalQueue>()));
         builder.Services.AddSingleton<StopGate>();
@@ -377,9 +392,18 @@ public static partial class NodeApp
                 Error = logWriter,
                 JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
                 Transcripts = services.GetRequiredService<TranscriptBook>(),
+                // The watchtower is one long-lived claude -p stream-json process the node owns (PIL855).
+                Streams = new ClaudeStreamProcessLauncher(),
+                Ledger = services.GetRequiredService<SessionLedger>(),
+                Prepare = start => services.GetRequiredService<ClaudeWorkerLauncher>().WithMcp(start),
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());
+        // The node's thinking (summaries, the verdict before a ring, the plain wording of a card) is asked of the watchtower's own stream (PIL855).
+        builder.Services.AddSingleton<IBrain>(services => new BrainClient(() => services.GetRequiredService<Watchtower>().CurrentStream(), services.GetRequiredService<TimeProvider>())
+        {
+            Log = line => logWriter.WriteLine(line),
+        });
         builder.Services.AddSingleton<SendLog>();
         builder.Services.AddSingleton(services => new SendTimings(services.GetRequiredService<TimeProvider>(), logWriter));
         builder.Services.AddSingleton(services => new WatchtowerChat(services.GetRequiredService<Watchtower>(), services.GetRequiredService<TranscriptBook>(), services.GetRequiredService<SendLog>()));
@@ -484,6 +508,7 @@ public static partial class NodeApp
                 Priority = nodeOptions.JobPriority,
                 PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? false,
                 EndedForGood = id => services.GetRequiredService<SessionTracker>().IsEndedForGood(id),
+                EndedAfterTurn = id => services.GetRequiredService<SessionTracker>().EndedAfterFinishedTurn(id),
                 // A job's end is told to its owner only once the tracker has listed the sessions (pilot #810), as the watchtower waits.
                 Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,
                 Lifetime = services.GetService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
@@ -534,9 +559,11 @@ public static partial class NodeApp
     }
 
     /// <summary>The summaries and the digest.</summary>
-    private static void AddSummaries(WebApplicationBuilder builder, NodeOptions options)
+    private static void AddSummaries(WebApplicationBuilder builder, NodeOptions options, LogWriter logWriter)
     {
-        builder.Services.AddSingleton<ISummaryModel>(_ => new ClaudeSummaryModel(Path.Combine(options.DataFolder, "summary")));
+        // The brain answers a summary; the one-off Haiku call is what runs when it is down (PIL855).
+        builder.Services.AddSingleton<ISummaryModel>(services => new BrainSummaryModel(services.GetRequiredService<IBrain>(), new ClaudeSummaryModel(Path.Combine(options.DataFolder, "summary")),
+            line => logWriter.WriteLine(line)));
         builder.Services.AddSingleton(services => new Summaries(services.GetRequiredService<NodeState>(), services.GetRequiredService<ISummaryModel>(), services.GetRequiredService<TimeProvider>())
         {
             Machine = options.Machine,
@@ -606,6 +633,7 @@ public static partial class NodeApp
             Ledger = services.GetRequiredService<SpendLedger>(),
             Error = logWriter,
             IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
+            IsStreamSession = id => services.GetRequiredService<Watchtower>().OwnsSession(id),
             JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
             // A session that ends on its own takes its queued jobs off the queue (#327).
             DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why),
@@ -627,6 +655,7 @@ public static partial class NodeApp
             CancelJobs = (owners, who) => services.GetRequiredService<JobRunner>().CancelOwnedBy(owners, who),
             Sends = services.GetRequiredService<SendLog>(),
             Timings = services.GetRequiredService<SendTimings>(),
+            Streams = () => services.GetRequiredService<Watchtower>(),
         });
     }
 

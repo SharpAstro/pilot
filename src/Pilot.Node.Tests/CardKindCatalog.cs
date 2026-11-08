@@ -54,6 +54,8 @@ internal static class CardKindCatalog
     private const string PrReviewsVerdicts = "Flights/PrReviews.Verdicts.cs";
     private const string Recheck = "Flights/PrRecheck.cs";
     private const string Tower = "Flights/Watchtower.cs";
+    private const string TowerStream = "Flights/Watchtower.Stream.cs";
+    private const string Asks = "Flights/Watchtower.Asks.cs";
 
     public static readonly CardKindEntry[] All =
     [
@@ -189,9 +191,10 @@ internal static class CardKindCatalog
         new("card-resolved", "Handled", ["Flights/StaleCards.cs"], "StaleCardTests.ASummaryRunLeavesACardItsCheckContradicts"),
 
         // The node itself, the watchtower and the person's own asks.
-        new("watchtower-down", "Ring", [Tower], "WatchtowerTests.AnUntrustedFolderRingsWithTheFixAndIsTriedAgainLater", "the watchtower's folder is untrusted or its session did not start, read from its row", [nameof(Verbs.RestartWatchtower)]),
+        new("watchtower-down", "Ring", [Tower, TowerStream], "WatchtowerTests.AnUntrustedFolderRingsWithTheFixAndIsTriedAgainLater", "the watchtower's folder is untrusted or its session did not start, read from its row", [nameof(Verbs.RestartWatchtower)]),
         new("watchtower-stopped", "Ring|Handled", [Tower], "WatchtowerTests.OneTheUsageLimitStoppedIsResumedAfterTheReset", "the watchtower's session row is stopped by the API with no reset to resume at", [nameof(Verbs.RestartWatchtower)]),
-        new("watchtower-waits", "Handled", [Tower], "StartGateTests.TheWatchtowerKeptByTheNodeWaitsForTheWindowAndStartsOnceItHasResetButARestartAskedForGoesAhead"),
+        new("watchtower-waits", "Handled", [Tower, TowerStream], "StartGateTests.TheWatchtowerKeptByTheNodeWaitsForTheWindowAndStartsOnceItHasResetButARestartAskedForGoesAhead"),
+        new("watchtower-ask", "ForYou", [Asks], "WatchtowerChatTests.APromptAndAQuestionEachRaiseACardWhoseButtonsAnswerThemAndTheCardClosesOnTheChatsAnswer"),
         new("watchtower-resumed", "Handled", [Tower], SourcePinned),
         new("watchtower-started", "Handled", [Tower], SourcePinned),
         new("watchtower-duplicate", "Handled", [Tower], "OneWatchtowerTests.StartingOneStopsAnotherLiveWatchtowerRowAndSaysSo"),
@@ -251,6 +254,7 @@ internal static class CardKindCatalog
         ["Flights/FlightCommander.Receive.cs|card.Title"] = "the card a refused receive carried over from the node that raised it",
         ["Flights/FlightCommander.Receive.cs|way"] = "the line the routing or the move wrote: where the flight went and why",
         ["Flights/FlightCommander.Route.cs|way"] = "the line the routing or the move wrote: where the flight went and why",
+        ["Flights/Watchtower.Asks.cs|title"] = "RaiseAskCard: a prompt's title names the call it asks leave for, a question's its first question",
         ["NodeCommands.cs|title"] = "the title the person, the watchtower or a session gave to pilot raise",
         ["NodeSettingsCommands.cs|line"] = "the line the restart wrote: who restarted the node and how",
         ["Updates/NodeUpdater.cs|line"] = "the line the install wrote: the version installed and the node restarted",

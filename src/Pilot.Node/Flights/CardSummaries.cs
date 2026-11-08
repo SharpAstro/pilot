@@ -194,6 +194,7 @@ public static partial class CardSummaries
             CardKinds.IdeaConflict => "Your edit of an idea contradicts what GitHub holds now. Keep the merge, yours or GitHub's; nothing is written until you choose.",
             CardKinds.IdeaRepo => "A new idea fits more than one repo equally. Choose the repo to file it in; nothing is filed until you do.",
             CardKinds.SessionWaiting =>"A session waits on you for an answer. Open it and reply; it closes by itself once the session moves on.",
+            Watchtower.AskKind => "The watchtower waits on you for leave to run a tool, or for the answer to a question. The buttons answer it, as the chat's panel does; it closes once answered.",
             CardKinds.AssistantAsk => "An assistant asks to run a command only you may run. Allow runs it as you; Deny refuses it.",
             _ => Fallback(title, choices),
         };

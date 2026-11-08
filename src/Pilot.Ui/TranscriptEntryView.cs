@@ -146,14 +146,79 @@ internal sealed class TranscriptEntryView
     private string LabelOf(SubagentRow subagent) => Labels()[Subagents.ToList().IndexOf(subagent)];
 
     /// <summary>A message handed to the session that it has not read yet: last, dim, and saying so.</summary>
-    internal static Layout.Node Waiting(string text) =>
-        Layout.Builder.HStack(
-                Layout.Builder.Text("queued", 12f, Faint).Selectable().WStar(LabelWeight, 0f, LabelWidth).Whole("queued"),
-                Layout.Builder.VStack([
-                    Layout.Builder.Text("not read yet: it reads this at its next step", 11f, Faint).Selectable(),
-                    .. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim).Selectable()),
-                ]).WStar(BodyWeight))
+    internal static Layout.Node Waiting(string text) => Waiting(text, null, null, null);
+
+    /// <summary>
+    /// A message handed to the stream watchtower that it has not read yet (PIL855): what it waits for in plain words ("read at its next
+    /// step" for a message sent while it works, "queued behind its start" for one held while it starts; the node's
+    /// <see cref="ChatPage.QueuedBehind"/>), the message, <paramref name="aside"/> (the Answer now
+    /// pill) beside it and <paramref name="refusal"/> (the node's reason for refusing it) under it. Without <paramref name="behind"/> it is
+    /// <see cref="Waiting(string)"/>'s line. The words are <see cref="Dim"/> where there is something to act on: <see cref="Faint"/> is
+    /// short of 4.5:1 on the page.
+    /// </summary>
+    internal static Layout.Node Waiting(string text, string? behind, Layout.Node? aside, Layout.Node? refusal)
+    {
+        var acting = behind is { Length: > 0 };
+        var label = behind == ChatPage.ReadAtNextStep ? "sent" : "queued";
+        List<Layout.Node> parts =
+        [
+            acting
+                ? WrappedProse.Of(behind!, 12f, Dim)
+                : Layout.Builder.Text("not read yet: it reads this at its next step", 11f, Faint).Selectable(),
+            // With something to act on the message wraps whole (a long one is read in full, not cut at the edge); the plain line keeps its lines.
+            .. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => acting && l.Length > 0
+                ? WrappedProse.Of(l, 13f, Dim)
+                : Layout.Builder.Text(l, 13f, Dim).Selectable()),
+        ];
+        // The pill sits under the words, not beside them: beside them it took width from the body, so a line with a pill and one without
+        // started their words at different places.
+        if (aside is not null)
+        {
+            parts.Add(Layout.Builder.HStack(aside, Layout.Builder.Spacer().WStar()).WithGap(0f));
+        }
+        if (refusal is not null)
+        {
+            parts.Add(refusal);
+        }
+        return Layout.Builder.HStack(
+                // A message the watchtower has already (mid-turn) is "sent", read at its next step; only one held while it starts is "queued".
+                Layout.Builder.Text(label, 12f, acting ? Dim : Faint).Selectable().WStar(LabelWeight, 0f, LabelWidth).Whole(label),
+                Layout.Builder.VStack([.. parts]).WithGap(2f).WStar(BodyWeight))
             .WithGap(10f);
+    }
+
+    /// <summary>The least height of the reply in progress (<see cref="Streaming"/>): its first lines, so the words arriving never push the rows under it.</summary>
+    internal const float StreamingMinHeight = 3 * 20f;
+
+    private (string Text, bool Night, Layout.Node Node)? _streaming;
+
+    /// <summary>
+    /// The watchtower's reply as it is written (PIL855): the words so far as Markdown in the bubble a finished reply has, its label saying it
+    /// is still writing, with room for <see cref="StreamingMinHeight"/> held so the rows after it do not jump as the first lines arrive. The
+    /// tree is parsed again only when the words change.
+    /// </summary>
+    internal Layout.Node Streaming(string text)
+    {
+        var night = ReferenceEquals(Palette.Current, Palette.Night);
+        if (_streaming is not { } cached || cached.Text != text || cached.Night != night)
+        {
+            _streaming = (text, night, SelectableTree.Of(Layout.Builder.Markdown(text, Prose with { OnLink = OpenLink is null ? null : Follow }), breakLongWords: true));
+        }
+        var body = Layout.Builder.HStack(
+                _streaming.Value.Node.WStar(),
+                Layout.Builder.Spacer().WFixed(0f).HFixed(StreamingMinHeight))
+            .WithGap(0f);
+        var label = Layout.Builder.VStack(
+                Layout.Builder.Text(AssistantLabel, 12f, Bright).Selectable().Whole(AssistantLabel),
+                Layout.Builder.Text("writing…", 11f, Dim).Selectable())
+            .WStar(LabelWeight, 0f, LabelWidth);
+        return Layout.Builder.HStack(
+                label,
+                body.WStar(BodyWeight),
+                Layout.Builder.Spacer().WStar(1f, 0f, TimeWidth).CollapseBelow(TimeMin))
+            .WithGap(10f)
+            .Pad(0f, ProseSpace);
+    }
 
     /// <summary>
     /// The entries as rows: a tool call and what it gave back as one, the result folded under the call; a result whose call

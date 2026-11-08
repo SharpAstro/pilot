@@ -210,13 +210,16 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             state.RaiseCard(CardBin.Ring, NotLandedKind, subject, $"{what} of {flight.Code} missed the merge of PR #{number}",
                 $"{ex.Message}. The rest of the flight is in main. Open a PR with {(one ? "it" : "them")}: the node pushes the branch with main merged in and opens the PR, and the flight lands when that PR merges.",
                 [new CardChoice { Label = $"Open a PR with the {(one ? "commit" : "commits")}", Verb = Verbs.OpenPr, Target = subject }],
-                summary: CardSummaries.LeftOut(flight.Code, number, left.Commits));
+                summary: CardSummaries.LeftOut(flight.Code, number, left.Commits),
+                cause: $"left-out:{number}:{mergedHead}:{left.Commits.Count}");
             return;
         }
         state.RaiseCard(CardBin.Ring, NotLandedKind, subject, $"{flight.Code}'s PR #{number} merged on GitHub, but the flight did not land: {LegCommander.OneLine(ex.Message)}",
             $"{ex.Message}. The PR is merged, so its branch is in the base; the flight stays flying until it is landed.",
             [new CardChoice { Label = "Land it", Verb = Verbs.Land, Target = subject, Args = [mergedHead] }],
-            summary: CardSummaries.NotLanded(flight.Code, number, ex.Message, flight.Worktree));
+            summary: CardSummaries.NotLanded(flight.Code, number, ex.Message, flight.Worktree),
+            // The refusal's words in the title can change from look to look; the merge of this head is the cause (#853).
+            cause: $"not-landed:{number}:{mergedHead}");
     }
 
     /// <summary>The landing found the PR merged under a leg and said so on its own ring: no second one.</summary>
