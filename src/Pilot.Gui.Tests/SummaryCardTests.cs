@@ -205,6 +205,19 @@ public sealed class SummaryCardTests
         SummaryCard.Status(Row(SummaryRow.FleetScope), false, null, Now).Text.ShouldBe("made 12m ago · follows changes");
     }
 
+    [Theory]
+    [InlineData("TIA1611")]
+    [InlineData(SummaryRow.AllNodesScope)]
+    public void TheEmptyTextOfAFlightOrAllNodesCardPromisesNoKeptSummary(string scope)
+    {
+        var text = SummaryCard.EmptyText(new SummaryAsk(scope, Here, "x"));
+
+        text.ShouldContain("Press Refresh");
+        text.ShouldNotContain("keeps it current");
+        text.ShouldNotContain("While this window is attached");
+        SummaryCard.EmptyText(new SummaryAsk(SummaryRow.FleetScope, Here, "x")).ShouldContain("keeps it current");
+    }
+
     [Fact]
     public void AFreshRowTheFallbackMadeWhileTheWatchtowerIsDownKeepsTheStatusAndThePriceOnRefresh()
     {

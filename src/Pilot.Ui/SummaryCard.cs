@@ -241,11 +241,20 @@ internal sealed class SummaryCard
             Layout.Builder.HStack([.. head]).WithGap(10f).RowH(HeaderHeight),
             Layout.Builder.HStack(statusLine.WStar().HStar()).RowH(StatusHeight),
             AtReadingWidth(row is null
-                ? WrappedProse.Of("Nothing made yet. While this window is attached, the watchtower makes the summary of what needs you and where each flight is, and keeps it current. Press Refresh to ask for one now.", 13f, p.Body)
+                ? WrappedProse.Of(EmptyText(ask), 13f, p.Body)
                 : Parsed(row.Markdown, p)),
         };
         return Layout.Builder.VStack([.. rows]).WithGap(Gap).Pad(PadX, PadY).Bg(p.PanelBg).WStar().HAuto();
     }
+
+    /// <summary>
+    /// What the card says with no summary kept. Only the node's fleet summary is made and kept current by the watchtower while a window is
+    /// attached; a flight's or all-nodes summary is made only when asked for, so its text promises nothing more.
+    /// </summary>
+    internal static string EmptyText(SummaryAsk ask) =>
+        ask.Scope == SummaryRow.FleetScope
+            ? "Nothing made yet. While this window is attached, the watchtower makes the summary of what needs you and where each flight is, and keeps it current. Press Refresh to ask for one now."
+            : "Nothing made yet. Press Refresh to ask the watchtower for one now; it is not remade by itself.";
 
     // The kept Markdown as a tree, parsed once while it stays the same: the page is built every frame, and a node is immutable.
     private Layout.Node Parsed(string source, Palette p)
