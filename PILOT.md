@@ -32,7 +32,7 @@ is neither built nor tested by CI.
   `SQUASH`). So a branch's own history never matters here: merge commits on it, a merge of main that resolved
   conflicts, many small commits, all land as one commit. A rebase that would conflict is no reason to hold a PR.
 - Take main by a merge (`git fetch origin`, then `git merge origin/main`), never by a rebase, and never push with
-  `--force`. Repos whose queue rebases (tianwen) say so in their own PILOT.md.
+  `--force`. A repo whose queue rebases says so in its own PILOT.md; tianwen's squashes too since 2026-11-08.
 
 ## Sessions and the watchtower
 

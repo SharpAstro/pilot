@@ -52,13 +52,14 @@ public static partial class Briefs
 
     /// <summary>
     /// How a branch takes the base, for the worker and both reviewers: merging it in is the way, and merge commits on a
-    /// working branch are never a finding, because the merge queue rebases each PR and lands it linear. A review that called
+    /// working branch are never a finding, because the merge queue lands each PR linear (squashed, or rebased where the repo's queue rebases; the node reshapes a branch only
+    /// for a rebasing queue). A review that called
     /// them a defect sent TIA1874's worker to rewrite its pushed branch, which then needed a force push only the owner could
     /// allow (DE1, 2026-10-30); TIA1910 and TIA1915 stalled the same way.
     /// </summary>
     internal const string BranchHistoryRule =
         "- A branch takes its base by a merge (`git fetch origin` then `git merge origin/<base>`). Merge commits on a working branch are\n" +
-        "  fine and never a finding: the merge queue rebases each PR, so main stays linear whatever the branch holds. Never rebase a\n" +
+        "  fine and never a finding: the merge queue squashes or rebases each PR, so main stays linear whatever the branch holds. Never rebase a\n" +
         "  pushed branch, never push with --force or --force-with-lease, and never ask for either.\n";
 
     /// <summary>
