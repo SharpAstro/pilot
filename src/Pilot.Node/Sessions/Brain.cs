@@ -209,12 +209,22 @@ public sealed class BrainClient(Func<StreamSession?> session, TimeProvider time)
     public static bool IsAnswer(string text) => text.Contains(AnswerMarker + " ", StringComparison.Ordinal);
 
     /// <summary>
+    /// The person's part of <paramref name="text"/>: the words before the brain's answer to the node, when it holds one, else all of it. A
+    /// request read mid-turn is answered in the turn that is answering the person, so one turn can hold both: their reply stays theirs.
+    /// </summary>
+    public static string ForPerson(string text)
+    {
+        var at = text.IndexOf(AnswerMarker + " ", StringComparison.Ordinal);
+        return at < 0 ? text : text[..at].TrimEnd();
+    }
+
+    /// <summary>
     /// Whether a transcript entry is one side of a brain exchange: a request (read as a note, its <see cref="NodeVoice.Prefix"/> cut off)
     /// or the answer to one. Neither is the person's conversation.
     /// </summary>
     public static bool IsBrainExchange(TranscriptEntry entry) =>
         entry.Kind == TranscriptKind.User ? entry.Note && entry.Text.StartsWith(RequestPrefix[NodeVoice.Prefix.Length..], StringComparison.Ordinal)
-        : entry.Kind == TranscriptKind.Assistant && IsAnswer(entry.Text);
+        : entry.Kind == TranscriptKind.Assistant && IsAnswer(entry.Text) && ForPerson(entry.Text).Length == 0;
 
     /// <summary>The message written to the brain's stdin for request <paramref name="id"/>.</summary>
     public static string Message(string id, string kind, string request) => $"""

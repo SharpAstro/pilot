@@ -83,8 +83,8 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
             Choices = stream is { Pending.Count: > 0 } ? null : latest?.Pending is { Choices.Length: > 0 } pending ? pending.Choices : null,
             Queued = queuedLines.Length > 0 ? queuedLines : null,
             QueuedIds = stamps.Queued is { } ids && ids.Any(id => id is not null) ? ids : null,
-            // A turn that answers the node's request is the node's: its words are not written in the person's chat as they come.
-            Partial = stream is { Working: true } && stream.PartialText is { Length: > 0 } words && !BrainClient.IsAnswer(words) ? words : null,
+            // The person's part of the turn as it comes: the brain's answer to the node, and anything after it, is not written in their chat.
+            Partial = stream is { Working: true } && BrainClient.ForPerson(stream.PartialText) is { Length: > 0 } words ? words : null,
             Doing = stream is { Working: true } ? stream.Doing : null,
             QueuedBehind = stream is not null && queuedLines.Length > 0 ? BehindOf(midTurn, queuedLines.Length) : null,
             // The person's turns only: a turn that answered the node's brain request (a verdict, a wording, a summary) is not how fast it answers them.

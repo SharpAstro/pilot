@@ -156,6 +156,12 @@ public static class CardKinds
     public const string AssistantAsk = "assistant-ask";
 
     /// <summary>
+    /// The card of a permission prompt or a question the stream watchtower waits on (PIL855). Its detail is the whole tool input, drawn
+    /// whole: Allow from the card runs the whole call, so no line of it is cut.
+    /// </summary>
+    public const string WatchtowerAsk = "watchtower-ask";
+
+    /// <summary>
     /// An edit of an idea that contradicts what GitHub has got since (<see cref="Verbs.EditIdea"/>): a For-you card naming the idea
     /// (<c>I381: title</c>) with both versions in its detail, offering <c>Keep mine</c>, <c>Keep GitHub's</c> and <c>Keep the merge</c>
     /// (the default, first). Its subject is the idea's target; nothing is written until it is answered.

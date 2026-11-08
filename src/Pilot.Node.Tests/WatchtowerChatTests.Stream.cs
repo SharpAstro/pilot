@@ -261,8 +261,8 @@ public sealed partial class WatchtowerChatTests
     }
 
     /// <summary>
-    /// The node's requests of its brain are not the person's messages (PIL855's review): one written mid-turn is not shown as waiting, and a
-    /// turn that streams the brain's answer, even after a few words of lead-in, is not written into the person's chat as it comes.
+    /// The node's requests of its brain are not the person's messages (PIL855's review): one written mid-turn is not shown as waiting, and the
+    /// brain's answer is not written into the person's chat as it streams. A turn that also answers the person keeps their part.
     /// </summary>
     [Fact]
     public async Task ABrainRequestIsNotShownAsQueuedAndItsAnswerIsNotShownAsItStreams()
@@ -276,17 +276,24 @@ public sealed partial class WatchtowerChatTests
         page.Queued.ShouldBe(["and the docs?"]);
         page.QueuedBehind.ShouldBe([ChatPage.ReadAtNextStep]);
 
-        // Escaped as it is on the wire: the words are a JSON string inside the stream line.
-        process.Emit(Delta("Judging it. NODE-ANSWER n1 {\\\"ring\\\": tr"));
+        // A turn that is only the answer: nothing of it in the chat. Escaped as on the wire: the words are a JSON string in the stream line.
+        process.Emit(Delta("NODE-ANSWER n1 {\\\"ring\\\": tr"));
         await UntilAsync(() => _tower.CurrentStream()!.PartialText.Contains("NODE-ANSWER", StringComparison.Ordinal), "the answer's words");
         chat.Page(-1).Partial.ShouldBeNull();
-        BrainClient.IsAnswer("Judging it. NODE-ANSWER n1 {}").ShouldBeTrue();
 
         // The turn that answered the node is not one of the person's in the chat's figures.
         process.Emit(ResultLine);
         await UntilAsync(() => _tower.CurrentStream()!.Timings.Count == 1, "the brain turn's timing");
         _tower.CurrentStream()!.Timings.Single().ForNode.ShouldBeTrue();
         chat.Page(-1).Timings.ShouldBeNull();
+
+        // A turn answering the person that also holds the answer: their words stay, the node's line goes.
+        process.Emit(Delta("The docs are in README.md. NODE-ANSWER n1 {}"));
+        await UntilAsync(() => _tower.CurrentStream()!.PartialText.Contains("README", StringComparison.Ordinal), "the reply's words");
+        chat.Page(-1).Partial.ShouldBe("The docs are in README.md.");
+        process.Emit(ResultLine);
+        await UntilAsync(() => _tower.CurrentStream()!.Timings.Count == 2, "the reply's timing");
+        _tower.CurrentStream()!.Timings[1].ForNode.ShouldBeFalse();
     }
 
     /// <summary>The panel is sent the whole of a long command: Allow runs all of it (PIL855's review).</summary>

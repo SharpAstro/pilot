@@ -13,7 +13,7 @@ namespace Pilot.Node.Flights;
 public sealed partial class Watchtower
 {
     /// <summary>The kind of the For-you card of a permission prompt or a question the watchtower waits on.</summary>
-    public const string AskKind = "watchtower-ask";
+    public const string AskKind = CardKinds.WatchtowerAsk;
 
     /// <summary>The words of a card's button that refuses a call or declines a question.</summary>
     public const string DeclineLabel = "Decline to answer";

@@ -228,6 +228,11 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                     {
                         continue;
                     }
+                    // A reply to the person that also answers the node keeps only their part.
+                    if (entry.Kind == TranscriptKind.Assistant && BrainClient.IsAnswer(entry.Text))
+                    {
+                        entry = entry with { Text = BrainClient.ForPerson(entry.Text) };
+                    }
                     Entries.Add(entry with { Index = Entries.Count, Id = $"{lineKey}:{ordinal++}", At = at, Text = Clip(entry.Text), Full = entry.Full is { } full ? Clip(full) : null });
                 }
             }

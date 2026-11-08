@@ -107,8 +107,12 @@ public sealed class ClaudeJobSweep(NodeState state, SessionLedger ledger, IClaud
 
         var sessions = state.Sessions();
         // A job folder is named by the session id current when it started, so every id a row ever had counts (a resume only replaces SessionId).
-        var live = sessions.Where(s => s.State is not (SessionState.Ended or SessionState.Failed)).SelectMany(JobFolderNames).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var ended = sessions.Where(s => s.State is SessionState.Ended or SessionState.Failed).SelectMany(JobFolderNames).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // A row that ended after its finished turn while it owns a queued or running pilot job is not done: the job's end resumes it (#893),
+        // so it counts as live and its Claude Code job is left alone until then.
+        var owners = state.Jobs().Where(j => j.State is JobState.Queued or JobState.Running && j.Owner is not null).Select(j => j.Owner!).ToHashSet(StringComparer.Ordinal);
+        bool Waits(SessionRow s) => owners.Contains(s.Id) || owners.Contains(s.SessionId) || (s.EarlierSessionIds ?? []).Any(owners.Contains);
+        var live = sessions.Where(s => s.State is not (SessionState.Ended or SessionState.Failed) || Waits(s)).SelectMany(JobFolderNames).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var ended = sessions.Where(s => s.State is SessionState.Ended or SessionState.Failed && !Waits(s)).SelectMany(JobFolderNames).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var watchtower = CurrentWatchtower() is { } current ? JobFolderNames(current).ToHashSet(StringComparer.OrdinalIgnoreCase) : [];
         var entries = ledger.All();
 

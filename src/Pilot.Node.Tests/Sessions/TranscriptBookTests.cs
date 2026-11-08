@@ -192,12 +192,14 @@ public sealed class TranscriptBookTests : IDisposable
             """{"type":"user","message":{"role":"user","content":"is PIL575 done?"}}""",
             """{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Yes, it landed."}]}}""",
             """{"type":"user","message":{"role":"user","content":""" + Json(BrainClient.Message("n1", "ring", "A card is about to ring.")) + "}}",
-            """{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"NODE-ANSWER n1 {\"ring\": false, \"action\": \"\", \"reason\": \"It settles.\"}"}]}}""");
+            """{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"NODE-ANSWER n1 {\"ring\": false, \"action\": \"\", \"reason\": \"It settles.\"}"}]}}""",
+            // A reply to the person that also answers the node keeps only their part.
+            """{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"It is merged. NODE-ANSWER n2 {}"}]}}""");
         var book = new TranscriptBook(_profile.Profile);
 
         var entries = book.Read(Session, -1).ShouldNotBeNull().Entries;
 
-        entries.Select(e => e.Text).ShouldBe(["is PIL575 done?", "Yes, it landed."]);
+        entries.Select(e => e.Text).ShouldBe(["is PIL575 done?", "Yes, it landed.", "It is merged."]);
         book.PersonMessages(Session).ShouldBe(1);
     }
 

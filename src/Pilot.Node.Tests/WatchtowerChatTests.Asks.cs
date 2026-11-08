@@ -72,10 +72,6 @@ public sealed partial class WatchtowerChatTests
         _state.Cards().Single(c => c.Subject == Watchtower.AskSubject("outside")).Outcome.ShouldBe("cancelled");
     }
 
-    /// <summary>
-    /// PIL855's review: an ask nobody answers leaves the watchtower blocked with nothing else to show it. Its card waits in For you while
-    /// the person may be at the chat, and rings once the wait passes the ring time, as any session waiting on them does.
-    /// </summary>
     /// <summary>The card of a permission prompt carries the whole command it allows: nothing past 1,500 characters is cut (PIL855's review).</summary>
     [Fact]
     public async Task APromptsCardCarriesTheWholeCommandItAllows()
@@ -88,6 +84,10 @@ public sealed partial class WatchtowerChatTests
         _state.Cards(openOnly: true).Single(c => c.Subject == Watchtower.AskSubject("big")).Detail.ShouldNotBeNull().ShouldContain(" TAIL");
     }
 
+    /// <summary>
+    /// PIL855's review: an ask nobody answers leaves the watchtower blocked with nothing else to show it. Its card waits in For you while
+    /// the person may be at the chat, and rings once the wait passes the ring time, as any session waiting on them does.
+    /// </summary>
     [Fact]
     public async Task AnAskNobodyAnswersRingsOnceItHasWaitedPastTheRingTime()
     {

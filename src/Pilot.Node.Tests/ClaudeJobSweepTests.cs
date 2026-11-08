@@ -106,6 +106,22 @@ public sealed class ClaudeJobSweepTests : IDisposable
         _jobs.Calls.ShouldBe(["rm bbbb2222"]);
     }
 
+    /// <summary>
+    /// #893 with #891: a session that ended after its finished turn while it owns a running pilot job is resumed by that job's end, so its
+    /// Claude Code job is not swept until then (PIL855's review).
+    /// </summary>
+    [Fact]
+    public async Task An_ended_row_that_owns_a_running_job_keeps_its_claude_job()
+    {
+        Job("bbbb3333", "stopped", "se1-pil891-review", TimeSpan.FromMinutes(5));
+        Row("bbbb3333", "se1-pil891-review", SessionState.Ended);
+        _state.PutJob(new JobRow { Id = "j1", Command = "dotnet build", Cwd = _root, State = JobState.Running, Owner = "bbbb3333", LogPath = Path.Combine(_root, "j1.log"), Timeout = TimeSpan.FromMinutes(30), StartedAt = Start });
+
+        await Sweep().SweepAsync(Ct);
+
+        _jobs.Calls.ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task A_ledger_job_is_known_by_the_first_eight_characters_of_a_later_session_id()
     {
