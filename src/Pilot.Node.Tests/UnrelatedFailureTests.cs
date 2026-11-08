@@ -119,7 +119,7 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
         _github.IssuePriorities[4].ShouldBe(IssuePriority.High);
         made.ShouldHaveSingleItem().Args[0].ShouldBe("4");
         _state.Cards().ShouldContain(c => c.Kind == FailureInvestigations.CardKind && c.Bin == CardBin.ForYou);
-        investigations.Ledger.All().ShouldHaveSingleItem().Where.ShouldBe(FailureWhere.LegCheck);
+        investigations.Ledger.All().ShouldHaveSingleItem().Where.ShouldBe(FailureWhere.PassedLegCheck);
         L("parser").State.ShouldBe(LegState.Done);
         L("parser").Report.ShouldBe("parsed\nnot this flight's: BarTests.Breaks (#4)");
 
@@ -180,6 +180,32 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
         _state.Cards(openOnly: true).ShouldContain(c => c.Kind == FailureAlerts.AlertKind && c.Bin == CardBin.Ring);
         made.ShouldHaveSingleItem();
         _github.IssuesCreated.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ALaterAlertDoesNotHoldAFlightWhoseLegCheckFailureTheFinishPassed()
+    {
+        var flight = await Flying();
+        var (investigations, _) = Investigating();
+        var alerts = new FailureAlerts(_state, _github, investigations, TimeProvider.System);
+        _legs.Alerts = alerts;
+        _checks.Script.Enqueue(new CheckRun(1, Failing("Pilot.Tests.BarTests.Breaks")));
+        _checks.Script.Enqueue(new CheckRun(0, "all green"));
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed")).Ok.ShouldBeTrue();
+        alerts.Open().ShouldBeEmpty();
+        OtherFlight("TIA2", flight);
+        OtherFlight("TIA3", flight);
+
+        // Two other flights' PRs then hit the same failure in CI: the alert opens, and holds them, not TIA1 whose leg passed.
+        foreach (var (pr, code) in new[] { (2, "TIA2"), (3, "TIA3") })
+        {
+            _github.FailedRuns[(pr, false)] = new FailedRun(600 + pr, $"https://github.com/x/tianwen/actions/runs/{600 + pr}", ["build"], Failing("Pilot.Tests.BarTests.Breaks"));
+            await alerts.LookAtRunAsync(new FailureSite(flight.Repo, flight.RepoPath, pr, code, new string((char)('a' + pr), 40), FailureWhere.Ci), mergeGroup: false, Ct);
+        }
+
+        alerts.HoldOf("TIA1").ShouldBeNull();
+        alerts.Open().ShouldHaveSingleItem().Holds.Select(h => h.Flight).ShouldNotContain("TIA1");
     }
 
     [Fact]

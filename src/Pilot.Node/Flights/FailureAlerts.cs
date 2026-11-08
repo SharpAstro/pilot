@@ -278,6 +278,9 @@ public sealed class FailureAlerts(NodeState state, IGitHub github, FailureInvest
         return Alert(site, finding, holdSite: false);
     }
 
+    /// <summary>Whether an alert is open for <paramref name="signature"/> in <paramref name="repo"/>.</summary>
+    public bool HasOpenAlert(string repo, string signature) => OpenAlertFor(repo, signature) is not null;
+
     private FailureAlert? OpenAlertFor(string repo, string signature)
     {
         lock (_lock)
@@ -317,7 +320,7 @@ public sealed class FailureAlerts(NodeState state, IGitHub github, FailureInvest
     private static string Where(string where) => where switch
     {
         FailureWhere.Queue => "in the merge queue",
-        FailureWhere.LegCheck => "in a leg check",
+        FailureWhere.LegCheck or FailureWhere.PassedLegCheck => "in a leg check",
         _ => "in the PR's checks",
     };
 
@@ -357,8 +360,8 @@ public sealed class FailureAlerts(NodeState state, IGitHub github, FailureInvest
                 // Every flight and hand PR the failure hit before this one is on the alert from the start.
                 foreach (var record in investigations.Ledger.Of(site.Name, finding.Signature))
                 {
-                    // A site not held (a leg check the finish passed) is in the ledger from its own investigation, but is not on the alert.
-                    if (!holdSite && record.Flight is { Length: > 0 } recorded && recorded == site.Flight)
+                    // A leg check the finish passed is in the ledger as an occurrence, but its flight was not hit: it is not on the alert.
+                    if (record.Where == FailureWhere.PassedLegCheck)
                     {
                         continue;
                     }

@@ -31,6 +31,12 @@ public static class FailureWhere
 
     /// <summary>A leg's check, run by the node when the leg was finished.</summary>
     public const string LegCheck = "leg check";
+
+    /// <summary>
+    /// A leg's check whose failure the finish passed (#752: a test the leg does not touch). It is on record as an investigation's occurrence,
+    /// but its flight is not hit: the leg passed, so an alert never holds it.
+    /// </summary>
+    public const string PassedLegCheck = "leg check passed";
 }
 
 /// <summary>

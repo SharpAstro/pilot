@@ -325,7 +325,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
     private static string WhereWords(string where) => where switch
     {
         FailureWhere.Queue => "in the merge queue",
-        FailureWhere.LegCheck => "in a leg check",
+        FailureWhere.LegCheck or FailureWhere.PassedLegCheck => "in a leg check",
         _ => "in the PR's checks",
     };
 

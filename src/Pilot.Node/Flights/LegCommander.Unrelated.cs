@@ -83,13 +83,13 @@ public sealed partial class LegCommander
             {
                 if (investigations is not null)
                 {
-                    var site = new FailureSite(flight.Repo, flight.RepoPath, flight.PullRequest, flight.Code, head, FailureWhere.LegCheck, flight.PullRequestUrl);
+                    var site = new FailureSite(flight.Repo, flight.RepoPath, flight.PullRequest, flight.Code, head, FailureWhere.PassedLegCheck, flight.PullRequestUrl);
                     var named = UnrelatedFailures.MatchingTest(open, test);
                     if (await OffLockAsync(null, () => investigations.InvestigateTestAsync(site, test, output, named, cancellationToken)) is { Issue: > 0 } finding)
                     {
                         // A repeat of a failure another flight or PR hit is told to the tower, as one read from CI or the queue is. The
                         // leg passes whatever it answers (the alert holds the flights hit before, not this one), so no go-around is burnt.
-                        if (Alerts is { } alerts && (finding.Others || alerts.Open().Any(a => a.Signature == finding.Signature)))
+                        if (Alerts is { } alerts && (finding.Others || alerts.HasOpenAlert(site.Name, finding.Signature)))
                         {
                             alerts.AlertOnPassedCheck(site, finding);
                         }
