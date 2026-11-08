@@ -146,8 +146,9 @@ public sealed partial class LegCommander(
         var launches = _launched.Value = [];
         // Asked of the peers before the lock is taken: a slow one holds up this command, not the others.
         var peerRefusal = await PeerRefusalAsync(command, cancellationToken);
-        // The flight's issue label for admission, read at the start and without the lock too.
-        if (command.Verb is Verbs.StartLeg or Verbs.ValidateLeg or Verbs.PlanFlight or Verbs.StartReview
+        // The flight's issue label for admission, read at the start and without the lock too. Opening a PR and merging read it as well, the
+        // outward steps that matter most: a hold put on GitHub while this node was down holds them on a wake, before the repo sweep's first read.
+        if (command.Verb is Verbs.StartLeg or Verbs.ValidateLeg or Verbs.PlanFlight or Verbs.StartReview or Verbs.OpenPr or Verbs.Merge
             && state.Flights().FirstOrDefault(f => string.Equals(f.Code, CodeOf(command.Target), StringComparison.OrdinalIgnoreCase)) is { } starting)
         {
             await PrimeAsync(starting, cancellationToken);

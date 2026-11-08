@@ -147,7 +147,7 @@ public sealed partial class LegCommander
             }
             return;
         }
-        if (step.Verb is Verbs.StartLeg or Verbs.StartReview)
+        if (step.Verb is Verbs.StartLeg or Verbs.StartReview or Verbs.OpenPr or Verbs.Merge)
         {
             await PrimeAsync(current, cancellationToken);
             // The prime reads the issue's labels, and a hold on GitHub it found is the owner's hold now (#771): nothing to gate or ring about.

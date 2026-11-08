@@ -41,7 +41,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     {
         var error = result.Error.ShouldNotBeNull();
         error.ShouldContain($"on hold by {by}: {why}");
-        error.ShouldContain("unhold");
+        error.ShouldContain("unground");
     }
 
     [Fact]
@@ -265,7 +265,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
             new CardChoice { Label = "Release", Verb = Verbs.Unground, Target = target },
         ]);
         card.Title.ShouldContain(on(flight));
-        card.Detail.ShouldNotBeNull().ShouldContain("unhold");
+        card.Detail.ShouldNotBeNull().ShouldContain("unground");
         // Every choice is kept (a card raised once, an overlap's Connect and Plan, is not raised again on the release); the gate refuses
         // the ones that are an outward step with the hold's words, and a plain finish (a report) still goes through.
         card.Choices.Select(c => c.Label).ShouldBe(["Merge", "Push the rebased branch with lease", "Merge origin into the plane and push", "Mark done anyway", "Release"]);
@@ -299,6 +299,25 @@ public sealed class FlightHoldTests : ReviewTestsBase
         (held.By, held.Reason, held.Labelled).ShouldBe(("seb", "parked by hand", true));
         _state.Legs(flight.Code).Single().State.ShouldBe(LegState.Planned);
         HeldCards().ShouldHaveSingleItem();
+    }
+
+    /// <summary>Opening a PR and merging read the issue's label too (#898's review): a woken node opens no PR and merges nothing for a flight held on GitHub.</summary>
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AHoldOnTheIssueIsReadBeforeAPrIsOpenedOrAMergeSoAWokenNodeTakesNoOutwardStep()
+    {
+        var flight = await NewFlight("19", "parser");
+        await Fly(flight, "parser");
+        _github.IssueLabels[flight.Issue] = [PilotMarks.Hold];
+        _github.PrConversation.Add((flight.Issue, new PrComment("seb", $"{PilotMarks.HoldCommentStart} by seb from SE1: parked by hand", DateTimeOffset.UtcNow)));
+        F(flight.Code).OnHold.ShouldBeNull();
+
+        var opened = await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "node");
+
+        ShouldNameTheHold(opened, "seb", "parked by hand");
+        F(flight.Code).PullRequest.ShouldBeNull();
+        F(flight.Code).OnHold.ShouldNotBeNull().Labelled.ShouldBe(true);
+        (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "node")).Error.ShouldNotBeNull().ShouldContain("on hold");
     }
 
     [Fact]
