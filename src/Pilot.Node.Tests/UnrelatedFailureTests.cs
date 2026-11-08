@@ -235,8 +235,8 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
 
         var filed = _github.IssuesCreated.ShouldHaveSingleItem();
         filed.Title.ShouldContain("cause unknown");
-        L("parser").Report.ShouldBe($"parsed\nnot this flight's: BarTests.Breaks (#6)");
-        L("parser").Report.ShouldNotContain("(#5)");
+        // Its own investigation (#6), not the class-only issue #5 that #752 alone would have listed.
+        L("parser").Report.ShouldBe("parsed\nnot this flight's: BarTests.Breaks (#6)");
         made.ShouldHaveSingleItem();
     }
 
