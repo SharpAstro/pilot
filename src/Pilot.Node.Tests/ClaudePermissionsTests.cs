@@ -54,13 +54,15 @@ public sealed class ClaudePermissionsTests : IDisposable
         var cli = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(NodePath))!, "pilot");
         Rules.ShouldContain($"Bash({cli}:*)");
         Rules.ShouldContain($"PowerShell({cli}:*)");
-        Rules.Count.ShouldBe((16 + 2) * 2);
+        Rules.ShouldContain($"Bash(\"{cli}\":*)");
+        Rules.ShouldContain($"PowerShell(\"{NodePath}\":*)");
+        Rules.Count.ShouldBe((16 + 2 + 2) * 2);
         Rules.Distinct().Count().ShouldBe(Rules.Count);
     }
 
     [Fact]
     public void ABinaryNamedPilotIsNotRuledTwice() =>
-        ClaudePermissions.Rules("/bin/pilot").Count.ShouldBe((16 + 1) * 2);
+        ClaudePermissions.Rules("/bin/pilot").Count.ShouldBe((16 + 1 + 1) * 2);
 
     [Theory]
     [InlineData("")]

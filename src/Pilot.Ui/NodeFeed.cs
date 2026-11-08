@@ -160,6 +160,12 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// <summary>Where the feed says its connection changes (connected, dropped, resyncing, retrying); null says nothing.</summary>
     public Action<string>? Log { get; set; }
 
+    /// <summary>
+    /// Called, on the feed thread, when the node says the watchtower's chat changed (a <see cref="ChatChangedEvent"/>: words as they
+    /// stream, a tool, a queue move, a turn's end): the Chat page reads its feed at once instead of at its next look (PIL855).
+    /// </summary>
+    public Action? ChatChanged { get; set; }
+
     public void Start() => _run ??= Task.Run(() => RunAsync(_stop.Token));
 
     // The page this window shows (ClientPages) and the stream it is said over now, if one is open: the node forgets a page when
@@ -424,6 +430,10 @@ internal sealed class NodeFeed : IAsyncDisposable
     private void Apply(NodeEvent next)
     {
         _mirror.Apply(next);
+        if (next is ChatChangedEvent)
+        {
+            ChatChanged?.Invoke();
+        }
         if (next is DecisionEvent decided)
         {
             Volatile.Write(ref _lastDecision, decided.Decision);

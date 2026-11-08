@@ -535,6 +535,30 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>How long an idle watchtower waits before it is compacted when its context is over <see cref="WatchtowerCompactAbove"/> (<see cref="NodeSettings.WatchtowerCompactIdleKey"/>); 50 minutes by default.</summary>
+    public TimeSpan WatchtowerCompactIdle
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return TimeSpan.FromMinutes(_settings.WatchtowerCompactIdle ?? 50);
+            }
+        }
+    }
+
+    /// <summary>The context, in tokens, an idle watchtower must hold to be compacted for being idle (<see cref="NodeSettings.WatchtowerCompactAboveKey"/>); 100k by default.</summary>
+    public long WatchtowerCompactAbove
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return (_settings.WatchtowerCompactAbove ?? 100) * 1000L;
+            }
+        }
+    }
+
     /// <summary>The most Opus sessions the fleet runs at once (<see cref="NodeSettings.OpusCapKey"/>); 3 unless the settings say otherwise, 0 for no cap.</summary>
     public int OpusCap
     {

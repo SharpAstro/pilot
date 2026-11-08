@@ -121,6 +121,20 @@ public sealed partial class NodeState
     }
 
     /// <summary>
+    /// Tells every live client the watchtower's chat changed (a <see cref="ChatChangedEvent"/>): partial words, a tool, a queue move, a turn's end.
+    /// It changes no state and carries nothing; a client reads the chat feed. So it is not numbered, journalled or held: it goes to the
+    /// clients connected now, carrying the number of the last delta, and a client takes it without moving its own number. Words nudge
+    /// about ten times a second, and as deltas they filled the journal and pushed real deltas out of the held ones (PIL855's review).
+    /// </summary>
+    public void NotifyChatChanged()
+    {
+        lock (_gate)
+        {
+            WriteToSinks(Serialize(new ChatChangedEvent { Seq = _seq, At = _time.GetUtcNow() }));
+        }
+    }
+
+    /// <summary>
     /// Records a decision: a <see cref="DecisionEvent"/> on the stream, kept whole by the journal. Under the lock, as
     /// <see cref="Complete"/> is.
     /// </summary>
