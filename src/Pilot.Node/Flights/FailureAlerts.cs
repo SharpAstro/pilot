@@ -403,13 +403,14 @@ public sealed class FailureAlerts(NodeState state, IGitHub github, FailureInvest
         lines.Add("");
         lines.Add($"When {alert.Investigation} lands each hold is released: a queue removal is re-queued, failed CI is run again, a leg check is run again.");
         var detail = string.Join('\n', lines);
-        var summary = $"{alert.Short} has failed in more than one PR that does not touch it. {alert.Investigation} looks for the cause; the flights it hit are held, with no go-around, re-queue or rerun, until it lands. Nothing to do unless the investigation needs help.";
+        var summary = $"{alert.Short} has failed in more than one PR that does not touch it. {alert.Investigation} looks for the cause; the flights it hit are held, with no go-around, re-queue or rerun, until it lands. Nothing to do unless the investigation should come first: Make it urgent says so.";
         if (!opened && state.Cards(openOnly: true).FirstOrDefault(c => c.Id == alert.Card) is { } card)
         {
             state.UpdateCard(card.Id, title, detail, card.Choices, card.Link, summary: summary);
             return;
         }
-        alert.Card = state.RaiseCard(CardBin.Ring, AlertKind, subject, title, detail, summary: summary, link: site.PrUrl is { } url && url.LastIndexOf("/pull/", StringComparison.Ordinal) is var at and > 0
+        CardChoice[] choices = [new CardChoice { Label = $"Make {alert.Investigation} urgent", Verb = Verbs.FlightPriority, Target = subject, Args = ["urgent"] }];
+        alert.Card = state.RaiseCard(CardBin.Ring, AlertKind, subject, title, detail, choices, summary: summary, link: site.PrUrl is { } url && url.LastIndexOf("/pull/", StringComparison.Ordinal) is var at and > 0
             ? $"{url[..at]}/issues/{alert.Issue.ToString(CultureInfo.InvariantCulture)}" : null).Id;
     }
 

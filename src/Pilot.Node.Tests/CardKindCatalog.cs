@@ -136,7 +136,7 @@ internal static class CardKindCatalog
         new("closed-with-work", "Ring", [Checks], "ReviewTests.AFlightWhosePrWasClosedWithWorkOfItsOwnRingsOnceAndStaysFlying", "the PR's state on GitHub is closed unmerged and the plane holds work of its own", [nameof(Verbs.Land)]),
         new("queue-dropped", "ForYou|Handled", [Checks], "ReviewTests.APrThatLeftTheMergeQueueUnmergedIsACardSayingWhyWithMergeAgain"),
         new("failure-investigation", "ForYou", ["Flights/FailureInvestigations.cs"], "FailureInvestigationTests.AFirstFailureInATestThePrDoesNotTouchIsFiledAsOneInvestigationWithItsFlightAndCard"),
-        new("failure-alert", "Ring", ["Flights/FailureAlerts.cs"], "RetryAndHoldTests.TheSameHeadFailingAgainAfterItsCiRetryRaisesOneAlertCardAndHoldsTheFlightWithNoGoAround"),
+        new("failure-alert", "Ring", ["Flights/FailureAlerts.cs"], "RetryAndHoldTests.TheSameHeadFailingAgainAfterItsCiRetryRaisesOneAlertCardAndHoldsTheFlightWithNoGoAround", "the same untouched-test failure signature failed a second time, in a PR after its retry or in another flight, read from the failure ledger", [nameof(Verbs.FlightPriority)]),
         new("failure-retried", "Handled", ["Flights/FailureAlerts.cs"], "RetryAndHoldTests.AFirstUntouchedQueueRemovalIsQueuedAgainOnceAtTheSameHeadWithALineNamingTheInvestigation"),
         new("failure-released", "Handled", ["Flights/FailureAlerts.cs"], "RetryAndHoldTests.AFailureInALegCheckOfASecondFlightHoldsItAndLandingTheInvestigationReleasesEveryHoldAndDoesWhatEachWasHeldFrom"),
         new("checks-rerun", "Handled", [Checks], "ReviewTests.OnAutopilotFailedChecksRunAgainOnceAHeadBeforeTheLegIsSentRound"),
