@@ -872,6 +872,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             var live = WatchtowerLive?.Invoke() ?? true;
+            // A hold a leg made (its By names a leg, flying, planned or stopped) is taken by definition: only a hold waiting on the watchtower can go untaken.
+            var legHeld = holding.By is { Length: > 0 } heldBy && heldBy != "node";
             if (!live)
             {
                 // Told, and given the bound to take it up (a tell resumes or starts the watchtower); then the node does what a watchtower would not be there to.
@@ -887,12 +889,12 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             else
             {
-                if (holding.TakenAt is null && legs is not null)
+                if (holding.TakenAt is null && !legHeld && legs is not null)
                 {
                     // A commit in the plane past the reviewed head is the watchtower at work: the hold is taken.
                     holding = await legs.NoteHoldTakenAsync(flight.Code, cancellationToken) ?? holding;
                 }
-                if (holding.TakenAt is null)
+                if (holding.TakenAt is null && !legHeld)
                 {
                     if (legs is not null && now - holding.Since >= HoldingTakeBound)
                     {

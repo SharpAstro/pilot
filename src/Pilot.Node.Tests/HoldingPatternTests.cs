@@ -319,6 +319,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         AutopilotOn();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("10", Notes);
+        await WithoutTheFixerLeg(flight.Code);
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
         var checks = TimedChecks(clock, live: true);
 
@@ -378,6 +379,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         AutopilotOn();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("12", Notes);
+        await WithoutTheFixerLeg(flight.Code);
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
 
         await TimedChecks(clock, live: false).LookAsync(Ct);
@@ -396,6 +398,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         AutopilotOn();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("13", Notes);
+        await WithoutTheFixerLeg(flight.Code);
         var first = TimedChecks(new ManualTime(F(flight.Code).Holding!.Since), live: true);
         CommitInPlane(flight);
 
@@ -424,6 +427,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         AutopilotOn();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("14", Notes);
+        await WithoutTheFixerLeg(flight.Code);
         await TakeByHold(flight, "renaming x");
         F(flight.Code).Holding!.Reason.ShouldContain("renaming x");
         var clock = new ManualTime(F(flight.Code).Holding!.TakenAt!.Value);
@@ -600,7 +604,8 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     {
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("26", Notes);
-        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        await TakeByHold(flight);
+        var clock = new ManualTime(F(flight.Code).Holding!.TakenAt!.Value);
         var checks = TimedChecks(clock, live: true);
         clock.Advance(TimeSpan.FromMinutes(31));
         await checks.LookAsync(Ct);
