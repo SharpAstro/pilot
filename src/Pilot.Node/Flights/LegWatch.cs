@@ -1056,7 +1056,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     new CardChoice { Label = "Start without validation", Verb = Verbs.StartLeg, Target = subject, Args = ["anyway"] },
                     new CardChoice { Label = "Remove the leg", Verb = Verbs.RemoveLeg, Target = subject, Args = ["its validation stalled"] },
                 ],
-                summary: $"The check of {leg.Flight}/{leg.Name} against the tree never answered, so the leg cannot start. Fly it unchecked, or drop the leg.");
+                summary: $"The check of {leg.Flight}/{leg.Name} against the tree never answered, so the leg cannot start. Fly it unchecked, or take the leg off the flight.");
             }
         }
     }

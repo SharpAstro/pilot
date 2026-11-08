@@ -156,11 +156,14 @@ public sealed class ValidatorTests : IDisposable
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.NoGoKind);
         (card.Bin, card.Subject).ShouldBe((CardBin.Ring, Render));
         card.Detail.ShouldBe("Planet.cs is gone: ls src/Planet.cs");
+        // The golden card (#797): what happened, what to do, and short verbs.
+        card.Title.ShouldBe("TIA1/render cannot start: its brief no longer fits the tree");
+        card.Summary.ShouldBe("The check of TIA1/render against the tree found its brief out of date. Fly it unchanged, drop it, or replan the flight.");
         card.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe(
         [
-            ("Start render as the tree is", Verbs.StartLeg, Render),
-            ("Drop render from TIA1", Verbs.RemoveLeg, Render),
-            ("Plan TIA1 again", Verbs.PlanFlight, "flight/TIA1"),
+            ("Start it as it is", Verbs.StartLeg, Render),
+            ("Remove the leg", Verbs.RemoveLeg, Render),
+            ("Plan the flight again", Verbs.PlanFlight, "flight/TIA1"),
         ]);
         card.Choices[0].Args.ShouldBe(["anyway"]);
     }

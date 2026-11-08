@@ -69,7 +69,6 @@ public sealed class CardLintTests
         "pr-review-waiting: Ring or ForYou kind with no action",
         "queue-dropped: title over 70 characters",
         "removal-held: Ring or ForYou kind with no action",
-        "review-changes: choice prose repeats the buttons",
         "session-compacted: title over 70 characters",
         "stale-acted: banned word 'half a stale bound'",
         "stale-acted: banned word 'stale bound'",

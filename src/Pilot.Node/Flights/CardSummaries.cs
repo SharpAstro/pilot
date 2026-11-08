@@ -80,7 +80,7 @@ public static partial class CardSummaries
             LegWatch.OverBudget => $"The worker of {what} is past its budget but keeps working. Let it spend more, or start a fresh worker on the leg.",
             LegWatch.LegStale => $"{what} has gone past two go-arounds or six hours flying. The detail lists its check runs and whether each failure was the flight's. Nothing to do unless the cause is yours to fix.",
             LegWatch.ReviewStalled => $"The reviewer of {what} stalled twice. Start a fresh reviewer, or dismiss this once it moves.",
-            LegWatch.ValidationStalled => $"The validator of {what} stalled, so the leg cannot start. Fly it unchecked, or drop it.",
+            LegWatch.ValidationStalled => $"The validator of {what} stalled, so the leg cannot start. Fly it unchecked, or take it off the flight.",
             LegCommander.NoGoKind => $"The validator of {what} reports the tree is not as its brief assumes. Fly it unchanged, drop it, or replan the flight.",
             LegCommander.WaitLateKind => $"{what} waits on a file that has not come in time. Look at what it waits for, or start a fresh worker on the leg.",
             LegCommander.NextStepKind => $"The node tried {what}'s next step and was refused. Do the step now to ask it again.",

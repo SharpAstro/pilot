@@ -81,9 +81,10 @@ public sealed class PushBlockedTests : IDisposable
         var card = await Blocked();
 
         (card.Bin, card.Kind, card.Subject).ShouldBe((CardBin.Ring, LegCommander.PushBlockedKind, Target));
-        card.Title.ShouldBe("TIA9/parser is done, but its rebased branch needs a force push with lease or a merge");
+        card.Title.ShouldBe("TIA9/parser is done, but its branch was rebased and is not pushed");
+        card.Summary.ShouldBe($"TIA9/parser is done and its check passes, but its branch was rebased off origin's, so a plain push is refused. Overwriting replaces origin's only if it is still at {CommitRefs.Short(_origin)}; merging keeps origin's commits and pushes plain.");
         card.Detail.ShouldNotBeNull().Split('\n')[0].ShouldBe($"Check passed at {_head[..9]}, origin/{Branch} at {_origin[..9]} is not an ancestor of it, so a plain push is refused. Nothing was pushed or overwritten.");
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Push the rebased branch with lease", Verbs.FinishLeg), ($"Merge origin/{Branch} into the plane and push", Verbs.FinishLeg)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Overwrite origin's branch", Verbs.FinishLeg), ("Merge origin's branch in", Verbs.FinishLeg)]);
         card.Choices.ShouldNotContain(c => c.Label.Contains("Mark done anyway") || c.Label.Contains("Accept"));
         Git(Remote, "rev-parse", Branch).ShouldBe(_origin);
         Parser.State.ShouldBe(LegState.Failed);
@@ -106,7 +107,7 @@ public sealed class PushBlockedTests : IDisposable
     {
         var card = await Blocked();
         var runs = _checks.Runs.Count;
-        var push = card.Choices.Single(c => c.Label == "Push the rebased branch with lease");
+        var push = card.Choices.Single(c => c.Label == "Overwrite origin's branch");
         push.Args.ShouldBe([LegCommander.PushedWithLease, _origin]);
 
         (await Run("controller", push.Args)).Error.ShouldBeNull();
@@ -137,7 +138,7 @@ public sealed class PushBlockedTests : IDisposable
     public async Task MergingOriginsBranchPushesPlainKeepsItsCommitsAndFinishesTheLeg()
     {
         var card = await Blocked();
-        var merge = card.Choices.Single(c => c.Label == $"Merge origin/{Branch} into the plane and push");
+        var merge = card.Choices.Single(c => c.Label == "Merge origin's branch in");
 
         (await Run("controller", merge.Args)).Error.ShouldBeNull();
 

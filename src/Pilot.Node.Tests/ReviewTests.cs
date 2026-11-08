@@ -542,7 +542,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.MergeDropped);
         var card = Open().ShouldHaveSingleItem();
         card.Kind.ShouldBe(LegCommander.ReviewChanges);
-        card.Title.ShouldStartWith($"{flight.Code}'s PR fails its checks: the PR's checks failed on ");
+        card.Title.ShouldBe($"{flight.Code}'s PR fails its checks");
         card.Detail.ShouldNotBeNull().ShouldStartWith("the PR's checks failed on ");
         (await Run(Verbs.GoAround, $"flight/{flight.Code}/parser", "controller", "fix the checks")).Error.ShouldBeNull();
     }
@@ -1010,7 +1010,9 @@ public sealed class ReviewTests2 : ReviewTestsBase
         _github.DraftCalls.ShouldContain((_github.Pr!.Number, true));
         var card = Open().ShouldHaveSingleItem();
         card.Kind.ShouldBe(LegCommander.ReviewChanges);
-        card.Title.ShouldStartWith("TIA7's PR fails its checks: ");
+        card.Title.ShouldBe("TIA7's PR fails its checks");
+        card.Summary.ShouldBe("Have a worker on parser put it right on the leg's work as it stands, or land the PR as it is. The PR of TIA7/parser fails its checks.");
+        card.Choices.Select(c => c.Label).ShouldBe(["Fix the failing checks", "Land with checks failing"]);
         card.Detail.ShouldNotBeNull().ShouldStartWith("the PR's checks failed on ");
         // The ring's go-around is the way round for the done leg, as for a review's changes.
         (await Run(Verbs.GoAround, "flight/TIA7/parser", "controller", "fix the checks")).Error.ShouldBeNull();
@@ -1774,9 +1776,14 @@ public sealed class ReviewTests5 : ReviewTestsBase
         var card = Open().ShouldHaveSingleItem();
         card.Kind.ShouldBe(LegCommander.ReviewChanges);
         var fix = card.Choices.Single(c => c.Verb == Verbs.GoAround);
-        // The round and the model, never "redo": the work is kept (the owner, 2026-10-29).
-        fix.Label.ShouldBe("Fix the review's findings (round 3, on Opus at xhigh)");
-        fix.Label.ShouldContain("Opus");
+        // The round and the model, never "redo": the work is kept (the owner, 2026-10-29). They are the detail's, the button says only
+        // what it does (#797).
+        fix.Label.ShouldBe("Fix the review's findings");
+        card.Detail.ShouldNotBeNull().ShouldEndWith("Next worker (round 3, on Opus at xhigh).");
+        // The golden card: what happened, what to do first, and short verbs.
+        card.Title.ShouldBe("TIA2's review found things to fix");
+        card.Summary.ShouldBe("Have a worker on parser put it right on the leg's work as it stands, or land the PR as it is. The review of TIA2/parser found things to fix.");
+        card.Choices.Select(c => c.Label).ShouldBe(["Fix the review's findings", "Land with findings unfixed"]);
     }
 
     [Fact]

@@ -1494,7 +1494,9 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         _workers.Started.ShouldHaveSingleItem();
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.SiblingBehindKind);
         (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "flight/TIA1/parser"));
-        card.Title.ShouldBe("TIA1/parser compiles against a sibling clone behind origin");
+        card.Title.ShouldBe("TIA1/parser builds on a sibling clone that is behind");
+        card.Summary.ShouldBe("TIA1/parser started on a sibling clone older than origin, which the node could not pull. Pull it by hand and try again, or let the leg run as it is.");
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Pull the clones again", Verbs.SyncRepos)]);
         card.Detail.ShouldBe($"DIR.Lib is 3 commits behind its origin: git -C {Path.Combine(_root, "DIR.Lib")} pull --ff-only");
 
         _state.Cards().Count(c => c.Kind == LegCommander.SiblingBehindKind).ShouldBe(1);
@@ -2397,9 +2399,12 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         _state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.NextStepKind).ShouldBeEmpty();
         await _legs.AdvanceAllAsync(Ct);
         var rung = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.NextStepKind);
-        rung.Title.ShouldStartWith("TIA1 could not open its PR: ");
+        // The golden card (#797): what happened in the title, why in the detail, a short verb on the button.
+        rung.Title.ShouldBe("TIA1 could not open its PR");
+        rung.Detail.ShouldNotBeNull().ShouldStartWith("The node tried to open its PR as the flight's next step and was refused, and it will not try again by itself: ");
+        rung.Summary.ShouldBe("The node tried TIA1's next step and was refused. Do the step now to ask it again.");
         rung.Bin.ShouldBe(CardBin.Ring);
-        rung.Choices.Single().Label.ShouldBe("Open TIA1's PR now, asking the node again");
+        rung.Choices.Single().Label.ShouldBe("Try that step again");
         rung.Choices.Single().Verb.ShouldBe(Verbs.OpenPr);
         await _legs.AdvanceAllAsync(Ct);
         _state.Cards(openOnly: true).Count(c => c.Kind == LegCommander.NextStepKind).ShouldBe(1);
