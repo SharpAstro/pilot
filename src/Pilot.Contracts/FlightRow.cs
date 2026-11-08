@@ -267,9 +267,9 @@ public sealed record FlightRow
     public FlightHolding? Holding { get; init; }
 
     /// <summary>
-    /// The owner's hold (<c>flight hold</c>, #771): while it stands the node starts nothing for the flight and takes no outward
+    /// The owner's hold (<c>flight ground</c>, #771): while it stands the node starts nothing for the flight and takes no outward
     /// step (no leg, worker, planner, reviewer, go-around, base merge, push, PR open or merge), from the autopilot, the sweeps, the
-    /// watchtower or a card's button alike, until <c>flight unhold</c>. Not <see cref="Holding"/> (the review-notes holding pattern, which
+    /// watchtower or a card's button alike, until <c>flight unground</c>. Not <see cref="Holding"/> (the review-notes holding pattern, which
     /// only holds the merge) and not <see cref="LegRow.Hold"/> (a leg's wait for a package). Null while the flight is not held.
     /// Optional, so the wire version does not move.
     /// </summary>
@@ -334,6 +334,15 @@ public sealed record FlightHolding
 
     /// <summary>Who put the flight in the hold (the node, for a pass with notes); null when not said.</summary>
     public string? By { get; init; }
+
+    /// <summary>
+    /// When the watchtower took the hold: it committed in the plane after the review's head, or said <c>flight hold</c>. Null while
+    /// nobody has: the node releases such a hold after a short grace (or at once with no live watchtower) and the flight merges at
+    /// the reviewed head, its notes left on a For-you card. Only a taken hold keeps the merge held, until it is cleared or rings
+    /// after the holding bound. Optional, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? TakenAt { get; init; }
 }
 
 /// <summary>The owner's hold on a flight (<see cref="FlightRow.OnHold"/>): why, since when, and who put it on.</summary>

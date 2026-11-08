@@ -106,7 +106,7 @@ internal static class LabelHold
         state.CloseCardsAbout(target, $"{code} is on hold by {by}", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, LegCommander.NextStepKind);
         state.CloseCardsAbout(target, "on hold", LegCommander.OnHoldKind);
         state.RaiseCard(CardBin.Handled, LegCommander.OnHoldKind, target, $"{code} is on hold by {by}: {why}",
-            $"{PilotMarks.Hold} was put on {held.Item.Noun} {held.Item.Display} on GitHub. The node starts nothing for {code} and takes no outward step until the label is taken off (or `pilot flight unhold {code}`). "
+            $"{PilotMarks.Hold} was put on {held.Item.Noun} {held.Item.Display} on GitHub. The node starts nothing for {code} and takes no outward step until the label is taken off (or `pilot flight unground {code}`). "
             + RunningNote
             + (took.Count > 0 ? $" {string.Join(", ", took)}." : "")
             + (problem is not null ? $" {problem}." : ""));

@@ -5,7 +5,7 @@ namespace Pilot.Node.Flights;
 /// <summary>
 /// The owner's hold on a flight (#771): <c>hold</c> records <see cref="FlightRow.OnHold"/>, and while it stands the node starts nothing
 /// for the flight and takes no outward step (no leg, worker, planner, validator, reviewer, fixer, go-around, base merge, push, PR open
-/// or merge), whoever asks: the autopilot, the sweeps, the watchtower or a card's button. <c>unhold</c> releases it and the flight takes
+/// or merge), whoever asks: the autopilot, the sweeps, the watchtower or a card's button. <c>unground</c> releases it and the flight takes
 /// its next due step. Apart from <see cref="FlightRow.Holding"/> (the review-notes holding pattern, which holds the merge only) and
 /// <see cref="LegRow.Hold"/> (a leg's wait for a package). A session already running is not stopped. A worker finishes its turn and
 /// reports (finish-leg, wait-leg, check and add-artifact are let through), and nothing follows it. A reviewer or planner already running
@@ -21,7 +21,7 @@ public sealed partial class LegCommander
     /// <see cref="PushedWithLease"/> and <see cref="MergedWithOrigin"/>) is an outward step, so it is not taken.
     /// </summary>
     internal static bool TakenOnHold(string verb, string[]? args = null) =>
-        verb is Verbs.Hold or Verbs.Unhold or Verbs.WaitLeg or Verbs.Check or Verbs.AddArtifact
+        verb is Verbs.Ground or Verbs.Unground or Verbs.WaitLeg or Verbs.Check or Verbs.AddArtifact
         || (verb == Verbs.FinishLeg && args is not [PushedWithLease or MergedWithOrigin, ..]);
 
     /// <summary>Who a hold names when the person gave no name of their own: a hold is the person's alone (<see cref="Standing.YourOnlyVerbs"/>).</summary>
@@ -37,7 +37,7 @@ public sealed partial class LegCommander
     /// <summary>The words that refuse a step on a flight on the owner's hold; null when it is not held. The one predicate every gate asks.</summary>
     private static string? OnHoldRefusal(FlightRow flight) =>
         flight.OnHold is { } hold
-            ? $"{flight.Code} is on hold by {hold.By}: {hold.Reason}; pilot flight unhold {flight.Code} releases it"
+            ? $"{flight.Code} is on hold by {hold.By}: {hold.Reason}; pilot flight unground {flight.Code} releases it"
             : null;
 
     /// <summary>Whether the flight is on the owner's hold now (by the row as it is kept, not a copy read earlier).</summary>
@@ -69,7 +69,7 @@ public sealed partial class LegCommander
     }
 
     /// <summary>
-    /// <c>hold flight/&lt;code&gt; &lt;why…&gt;</c>: records the hold, lets go of a merge the flight armed (GitHub's auto-merge disarmed, the
+    /// <c>ground flight/&lt;code&gt; &lt;why…&gt;</c>: records the hold, lets go of a merge the flight armed (GitHub's auto-merge disarmed, the
     /// queued PR taken out of the merge queue) and says so on a Handled card. A repeat updates the why. Under the lock.
     /// </summary>
     private async Task<string> HoldAsync(CommandRequest command, CancellationToken cancellationToken)
@@ -86,7 +86,7 @@ public sealed partial class LegCommander
         }
         if (why.Length == 0)
         {
-            throw new FlightException($"hold needs why: `pilot flight hold {flight.Code} <why...>`");
+            throw new FlightException($"ground needs why: `pilot flight ground {flight.Code} <why...>`");
         }
         var target = Verbs.FlightTarget(flight.Code);
         var repeat = flight.OnHold is not null;
@@ -145,7 +145,7 @@ public sealed partial class LegCommander
         // The cards that offer the merge or a step close: the hold refuses each button, and a release brings the due ones back.
         state.CloseCardsAbout(target, $"{flight.Code} is on hold by {by}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, NextStepKind);
         state.CloseCardsAbout(target, repeat ? "the hold's reason was updated" : "on hold", OnHoldKind);
-        var detail = $"{by}: {why}. The node starts nothing for {flight.Code} and takes no outward step (no leg, worker, planner, reviewer, go-around, base merge, push, PR open or merge) until `pilot flight unhold {flight.Code}`. "
+        var detail = $"{by}: {why}. The node starts nothing for {flight.Code} and takes no outward step (no leg, worker, planner, reviewer, go-around, base merge, push, PR open or merge) until `pilot flight unground {flight.Code}`. "
             + LabelHold.RunningNote
             + (took.Count > 0 ? $" {string.Join(", ", took)}." : "")
             + (problem is not null ? $" {problem}." : "")
@@ -185,7 +185,7 @@ public sealed partial class LegCommander
         }
         if (hold && why.Length == 0)
         {
-            throw new FlightException($"hold needs why: `pilot flight hold {code} <why...>`");
+            throw new FlightException($"ground needs why: `pilot flight ground {code} <why...>`");
         }
         if (flights.Trackers?.Of(TrackerKind.GitHub) is not { } tracker)
         {
@@ -216,7 +216,7 @@ public sealed partial class LegCommander
     }
 
     /// <summary>
-    /// <c>unhold flight/&lt;code&gt; [why…]</c>: releases the hold and says so on a Handled card; the caller lets the flight advance once the lock is let go.
+    /// <c>unground flight/&lt;code&gt; [why…]</c>: releases the hold and says so on a Handled card; the caller lets the flight advance once the lock is let go.
     /// </summary>
     private async Task<string> UnholdAsync(CommandRequest command, CancellationToken cancellationToken)
     {

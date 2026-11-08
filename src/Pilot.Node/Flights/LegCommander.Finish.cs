@@ -760,6 +760,7 @@ public sealed partial class LegCommander
         leg = leg with { Recheck = null };
         if (run is { Passed: false })
         {
+            await OffLockAsync(null, () => InvestigateCheckAsync(flight, run.Tail, cancellationToken));
             return (false, $"The node did not finish it itself, though its plane matched origin/{flight.Branch} at {CommitRefs.Short(head)}: its check `{leg.Check}` failed ({run.ExitCode}). Last of its output:\n{run.Tail}", true);
         }
         var pushes = await ReviewBehindPlaneAsync(flight, cancellationToken)

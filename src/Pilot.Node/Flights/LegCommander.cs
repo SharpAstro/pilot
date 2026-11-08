@@ -93,7 +93,7 @@ public sealed partial class LegCommander(
 
     public static bool Handles(string verb) =>
         verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.ValidateLeg or Verbs.Check or Verbs.FinishLeg or Verbs.WaitLeg or Verbs.GoAround or Verbs.Merge or Verbs.RerunChecks or Verbs.MoveFlight
-            or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review or Verbs.AllowRound or Verbs.Clear or Verbs.Hold or Verbs.Unhold
+            or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review or Verbs.AllowRound or Verbs.Clear or Verbs.Hold or Verbs.Ground or Verbs.Unground
             or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Touches or Verbs.FlightChanges or Verbs.Fold or Verbs.Separate or Verbs.ConnectOverlap;
 
     /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
@@ -185,10 +185,10 @@ public sealed partial class LegCommander(
             }
             switch (command.Verb)
             {
-                case Verbs.Hold:
+                case Verbs.Ground:
                     made = await HoldAsync(command, cancellationToken);
                     break;
-                case Verbs.Unhold:
+                case Verbs.Unground:
                     made = await UnholdAsync(command, cancellationToken);
                     break;
                 case Verbs.MoveFlight:
@@ -277,6 +277,9 @@ public sealed partial class LegCommander(
                     break;
                 case Verbs.Clear:
                     ClearHolding(command);
+                    break;
+                case Verbs.Hold:
+                    TakeHolding(command);
                     break;
                 case Verbs.Review:
                     await ReviewAsync(command, cancellationToken);
@@ -379,7 +382,7 @@ public sealed partial class LegCommander(
 
         // A flight released from its hold goes on to what is due, as a resumed leg does.
         // (A code this node has no flight for only had its issue's label taken off.)
-        if (error is null && command.Verb == Verbs.Unhold && FlightNamed(command.Target) is { } released)
+        if (error is null && command.Verb == Verbs.Unground && FlightNamed(command.Target) is { } released)
         {
             await AdvanceAsync(released, cancellationToken);
         }

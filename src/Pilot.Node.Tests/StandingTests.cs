@@ -320,7 +320,7 @@ public sealed class StandingTests
         var lookout = Lookout(node);
         Fly(node, "TIA1", worker);
 
-        foreach (var verb in new[] { Verbs.Hold, Verbs.Unhold })
+        foreach (var verb in new[] { Verbs.Ground, Verbs.Unground })
         {
             // The watchtower on its own and a flight's session are refused, and nothing is held.
             (await Error(node, Command(verb, "flight/TIA1", lookout, true, "the owner is away"))).ShouldBe($"{verb} is the controller's, not the watchtower's: leave its card open for them");
@@ -329,19 +329,19 @@ public sealed class StandingTests
         node.State.Flights().Single().OnHold.ShouldBeNull();
 
         // An assistant's hold waits on a card with the autopilot off, and runs with it on.
-        (await Error(node, Command(Verbs.Hold, "flight/TIA1", "pilot-33", true, "the owner is away"))).ShouldNotBeNull().ShouldContain("waits on their card");
+        (await Error(node, Command(Verbs.Ground, "flight/TIA1", "pilot-33", true, "the owner is away"))).ShouldNotBeNull().ShouldContain("waits on their card");
         node.State.Flights().Single().OnHold.ShouldBeNull();
         (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "on"))).ShouldBeNull();
-        (await Error(node, Command(Verbs.Hold, "flight/TIA1", "pilot-33", true, "the owner is away"))).ShouldBeNull();
+        (await Error(node, Command(Verbs.Ground, "flight/TIA1", "pilot-33", true, "the owner is away"))).ShouldBeNull();
         node.State.Flights().Single().OnHold.ShouldNotBeNull().By.ShouldBe("pilot-33");
-        (await Error(node, Command(Verbs.Unhold, "flight/TIA1", "pilot-33", true))).ShouldBeNull();
+        (await Error(node, Command(Verbs.Unground, "flight/TIA1", "pilot-33", true))).ShouldBeNull();
         node.State.Flights().Single().OnHold.ShouldBeNull();
 
         // The person holds and releases as they please, with the autopilot off too.
         (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "off"))).ShouldBeNull();
-        (await Error(node, Command(Verbs.Hold, "flight/TIA1", "gui", false, "back on", "Monday"))).ShouldBeNull();
+        (await Error(node, Command(Verbs.Ground, "flight/TIA1", "gui", false, "back on", "Monday"))).ShouldBeNull();
         node.State.Flights().Single().OnHold.ShouldNotBeNull().Reason.ShouldBe("back on Monday");
-        (await Error(node, Command(Verbs.Unhold, "flight/TIA1", "gui"))).ShouldBeNull();
+        (await Error(node, Command(Verbs.Unground, "flight/TIA1", "gui"))).ShouldBeNull();
         node.State.Flights().Single().OnHold.ShouldBeNull();
     }
 

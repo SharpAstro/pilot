@@ -69,6 +69,12 @@ public sealed partial class LegCommander
         {
             throw new FlightException($"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}");
         }
+        // A flight held for an investigation (the same failure hit more than one PR) is sent round by nobody until it lands: the failure
+        // is not its work's, and a round would only burn a go-around on a bug with a cause to find. The person's word passes.
+        if (Alerts?.HoldOf(flight.Code) is { } failureHold && !IsPerson(flight, command.Who) && command.PersonsWord is null)
+        {
+            throw new FlightException($"{flight.Code} is {failureHold.Reason}: no go-around is sent until that investigation lands, as the failure is not in its work. Leave it held");
+        }
         // A review that keeps asking may be asking for what no worker can do (an edit to the PR itself, a decision): past
         // MaxReviewGoArounds the watchtower sends the leg round no more, and the card is the person's. Only the go-arounds
         // the review asked for count: a leg that failed and went round again says nothing about what its review wants.

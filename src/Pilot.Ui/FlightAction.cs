@@ -45,7 +45,7 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
         // On the owner's hold (#771) the node refuses everything but the release, so that is all that is offered, and the waits it may drop.
         if (flight.OnHold is not null)
         {
-            actions.Add(new FlightAction("Release", Verbs.Unhold, target, []));
+            actions.Add(new FlightAction("Release", Verbs.Unground, target, []));
             foreach (var other in flight.Connections.Concat(flight.PeerConnections.Select(c => c.Code)).Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 actions.Add(new FlightAction($"Remove wait for {other}", Verbs.Disconnect, target, [other]));
@@ -121,7 +121,7 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
                 actions.Add(new FlightAction("Priority: none", Verbs.FlightPriority, target, ["none"]));
             }
         }
-        actions.Add(new FlightAction("Hold", Verbs.Hold, target, []) { WhyPrompt = $"why hold {code}?" });
+        actions.Add(new FlightAction("Hold", Verbs.Ground, target, []) { WhyPrompt = $"why hold {code}?" });
         return [.. actions.Select(a => a with { Node = line.Node })];
     }
 }

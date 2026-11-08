@@ -241,7 +241,7 @@ public sealed class StaleFlightTests : IAsyncDisposable
         var chrome = Chrome(renderer);
         // Both flights have a leg flying, so both offer a Go around: SE1's is a button, DE1's (down) is not.
         // And Hold, as every flight not landed has (#771): a command to the node, so dead on the stale one too.
-        FlightAction.For(Of(pages, "ORB2")).Select(a => a.Verb).ShouldBe([Verbs.GoAround, Verbs.RemoveLeg, Verbs.Hold]);
+        FlightAction.For(Of(pages, "ORB2")).Select(a => a.Verb).ShouldBe([Verbs.GoAround, Verbs.RemoveLeg, Verbs.Ground]);
 
         var stale = ButtonsOf(chrome, pages, "ORB2");
         var texts = Texts(chrome.Flights.Tree(pages.Flights), renderer, 1600f);
@@ -256,7 +256,7 @@ public sealed class StaleFlightTests : IAsyncDisposable
         texts.ShouldContain("Remove render");
         stale.ShouldNotContain($"flight:ORB2:{Verbs.GoAround}");
         stale.ShouldNotContain($"flight:ORB2:{Verbs.RemoveLeg}");
-        stale.ShouldNotContain($"flight:ORB2:{Verbs.Hold}");
+        stale.ShouldNotContain($"flight:ORB2:{Verbs.Ground}");
         // The page's own buttons stay: Back is not a command to the node.
         chrome.Flights.IsDetailOpen.ShouldBeTrue();
         ButtonsOf(chrome, pages, "TIA1").ShouldContain($"flight:TIA1:{Verbs.GoAround}");

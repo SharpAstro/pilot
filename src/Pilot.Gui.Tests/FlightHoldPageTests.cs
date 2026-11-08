@@ -46,9 +46,9 @@ public sealed class FlightHoldPageTests
         (line.State, line.StateDetail).ShouldBe(("on hold", $"by seb: {Why}"));
         var actions = FlightAction.For(line);
         actions.Select(a => a.Label).ShouldContain("Release");
-        actions.Single(a => a.Label == "Release").Verb.ShouldBe(Verbs.Unhold);
+        actions.Single(a => a.Label == "Release").Verb.ShouldBe(Verbs.Unground);
         var verbs = actions.Select(a => a.Verb).ToList();
-        foreach (var refused in new[] { Verbs.StartLeg, Verbs.OpenPr, Verbs.Merge, Verbs.GoAround, Verbs.StartReview, Verbs.Hold })
+        foreach (var refused in new[] { Verbs.StartLeg, Verbs.OpenPr, Verbs.Merge, Verbs.GoAround, Verbs.StartReview, Verbs.Ground })
         {
             verbs.ShouldNotContain(refused);
         }
@@ -113,9 +113,9 @@ public sealed class FlightHoldPageTests
     {
         var line = FlightLine.Build([Flight(false)], [], Live.At).Single();
 
-        var hold = FlightAction.For(line).Single(a => a.Verb == Verbs.Hold);
+        var hold = FlightAction.For(line).Single(a => a.Verb == Verbs.Ground);
         (hold.Label, hold.WhyPrompt).ShouldBe(("Hold", "why hold PIL771?"));
-        FlightAction.For(line).ShouldNotContain(a => a.Verb == Verbs.Unhold);
+        FlightAction.For(line).ShouldNotContain(a => a.Verb == Verbs.Unground);
     }
 
     [Theory]

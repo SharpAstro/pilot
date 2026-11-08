@@ -35,7 +35,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     private CardRow[] HeldCards() => [.. _state.Cards(openOnly: false).Where(c => c.Kind == LegCommander.OnHoldKind && c.Title.Contains("is on hold"))];
 
     private Task<CommandResult> Hold(FlightRow flight, string who = "me", string why = Why) =>
-        Run(Verbs.Hold, Verbs.FlightTarget(flight.Code), who, why.Split(' '));
+        Run(Verbs.Ground, Verbs.FlightTarget(flight.Code), who, why.Split(' '));
 
     private static void ShouldNameTheHold(CommandResult result, string by = "me", string why = Why)
     {
@@ -50,7 +50,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     {
         var flight = await NewFlight("1", "parser");
 
-        (await Run(Verbs.Hold, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldNotBeNull().ShouldContain("needs why");
+        (await Run(Verbs.Ground, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldNotBeNull().ShouldContain("needs why");
         F(flight.Code).OnHold.ShouldBeNull();
 
         (await Hold(flight)).Error.ShouldBeNull();
@@ -110,7 +110,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
         F(flight.Code).PullRequest.ShouldBeNull();
         _github.Pr.ShouldBeNull();
 
-        (await Run(Verbs.Unhold, Verbs.FlightTarget(flight.Code), "me", "go")).Error.ShouldBeNull();
+        (await Run(Verbs.Unground, Verbs.FlightTarget(flight.Code), "me", "go")).Error.ShouldBeNull();
         F(flight.Code).OnHold.ShouldBeNull();
         _state.Cards(openOnly: false).ShouldContain(c => c.Kind == LegCommander.OnHoldKind && c.Title.Contains("off hold"));
         Open().ShouldNotContain(c => c.Kind == LegCommander.OnHoldKind);
@@ -118,7 +118,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
         // The unhold itself advanced the flight: its PR is open.
         await Started(_legs, flight.Code);
         F(flight.Code).PullRequest.ShouldNotBeNull();
-        (await Run(Verbs.Unhold, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldNotBeNull().ShouldContain("not on hold");
+        (await Run(Verbs.Unground, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldNotBeNull().ShouldContain("not on hold");
     }
 
     [Fact]
@@ -139,7 +139,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
         Open().ShouldNotContain(c => c.Kind == LegCommander.PrReady);
         ShouldNameTheHold(await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head));
 
-        (await Run(Verbs.Unhold, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldBeNull();
+        (await Run(Verbs.Unground, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldBeNull();
         await Checks().LookAsync(Ct);
         await Checks().LookAsync(Ct);
         _github.Merged.ShouldHaveSingleItem();
@@ -194,7 +194,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
         F(flight.Code).Holding.ShouldNotBeNull().Since.ShouldBe(since);
         Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
 
-        (await Run(Verbs.Unhold, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldBeNull();
+        (await Run(Verbs.Unground, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldBeNull();
         await checks.LookAsync(Ct);
 
         F(flight.Code).Holding.ShouldBeNull();
@@ -262,7 +262,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
             new CardChoice { Label = "Push the rebased branch with lease", Verb = Verbs.FinishLeg, Target = leg, Args = [LegCommander.PushedWithLease, "abc1234"] },
             new CardChoice { Label = "Merge origin into the plane and push", Verb = Verbs.FinishLeg, Target = leg, Args = [LegCommander.MergedWithOrigin] },
             new CardChoice { Label = "Mark done anyway", Verb = Verbs.FinishLeg, Target = leg, Args = ["accepted"] },
-            new CardChoice { Label = "Release", Verb = Verbs.Unhold, Target = target },
+            new CardChoice { Label = "Release", Verb = Verbs.Unground, Target = target },
         ]);
         card.Title.ShouldContain(on(flight));
         card.Detail.ShouldNotBeNull().ShouldContain("unhold");
@@ -274,7 +274,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
         ShouldNameTheHold(await Run(Verbs.FinishLeg, leg, "controller", LegCommander.MergedWithOrigin));
 
         // The release takes the on-hold note off the card and leaves it open with every choice, as it was raised.
-        (await Run(Verbs.Unhold, target, "me")).Error.ShouldBeNull();
+        (await Run(Verbs.Unground, target, "me")).Error.ShouldBeNull();
         var released = _state.Cards().Single(c => c.Id == card.Id);
         released.State.ShouldBe(CardState.Open);
         released.Title.ShouldBe("something to decide");
@@ -372,8 +372,8 @@ public sealed class FlightHoldTests : ReviewTestsBase
         (await Should.ThrowAsync<FlightException>(() => _legs.RestartWorkerAsync(never.Code, "parser", Ct))).Message.ShouldContain($"on hold by me: {Why}");
         _workers.Stopped.Count.ShouldBe(stopped);
 
-        (await Run(Verbs.Unhold, Verbs.FlightTarget(idle.Code), "me")).Error.ShouldBeNull();
-        (await Run(Verbs.Unhold, Verbs.FlightTarget(never.Code), "me")).Error.ShouldBeNull();
+        (await Run(Verbs.Unground, Verbs.FlightTarget(idle.Code), "me")).Error.ShouldBeNull();
+        (await Run(Verbs.Unground, Verbs.FlightTarget(never.Code), "me")).Error.ShouldBeNull();
         time.Advance(TimeSpan.FromMinutes(1));
         await watch.LookAsync(Ct);
         await Started(_legs, never.Code);

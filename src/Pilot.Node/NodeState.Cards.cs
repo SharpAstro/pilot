@@ -133,7 +133,7 @@ public sealed partial class NodeState
     }
 
     private const string HeldLead = "The flight is ";
-    private const string HeldLeadMiddle = " The node takes no step for it until it is released (pilot flight unhold ";
+    private const string HeldLeadMiddle = " The node takes no step for it until it is released (pilot flight unground ";
     private const string HeldLeadEnd = "); a choice below that would is refused with the hold's words.";
 
     /// <summary>
@@ -356,6 +356,20 @@ public sealed partial class NodeState
     /// </summary>
     public void CloseCardsAbout(string subject, string outcome, params string[] kinds)
         => CloseCardsAboutBy("node", subject, outcome, kinds);
+
+    /// <summary>Closes every open card about <paramref name="subject"/> (and its legs) except those of the kinds in <paramref name="keep"/>, which stay open.</summary>
+    public void CloseCardsAboutExcept(string subject, string outcome, params string[] keep)
+    {
+        lock (_gate)
+        {
+            var kinds = _cards.Values.Where(c => c.State == CardState.Open && (c.Subject == subject || c.Subject.StartsWith(subject + "/", StringComparison.Ordinal)) && !keep.Contains(c.Kind))
+                .Select(c => c.Kind).Distinct(StringComparer.Ordinal).ToArray();
+            if (kinds.Length > 0)
+            {
+                CloseCardsAboutBy("node", subject, outcome, kinds);
+            }
+        }
+    }
 
     /// <summary>As above, closed by <paramref name="closedBy"/> (an override names its session, not the node).</summary>
     public void CloseCardsAboutBy(string closedBy, string subject, string outcome, params string[] kinds)

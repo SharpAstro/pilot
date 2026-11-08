@@ -246,6 +246,28 @@ public static partial class NodeApp
         });
     }
 
+    /// <summary>
+    /// The failures looked into: a failure in a test the PR does not touch is filed as an investigation. Its ledger is kept in the
+    /// node's data folder, so a restart keeps which failure already has its investigation.
+    /// </summary>
+    private static void AddFailureInvestigations(WebApplicationBuilder builder, LogWriter logWriter, NodeOptions options)
+    {
+        builder.Services.AddSingleton(_ => new FailureLedger(FailureLedger.FileIn(options.DataFolder)) { Error = logWriter });
+        builder.Services.AddSingleton(services => new FailureInvestigations(services.GetRequiredService<NodeState>(), services.GetRequiredService<IGitHub>(),
+            services.GetRequiredService<FailureLedger>(), services.GetRequiredService<TimeProvider>())
+        {
+            Error = logWriter,
+            CreateFlight = (command, token) => services.GetRequiredService<FlightCommander>().RunAsync(command, token),
+        });
+        // What a failure under investigation does to its PR: retried once, then the tower on alert and the flights held. Its alerts are kept
+        // in the data folder too, so a restart keeps the holds.
+        builder.Services.AddSingleton(services => new FailureAlerts(services.GetRequiredService<NodeState>(), services.GetRequiredService<IGitHub>(),
+            services.GetRequiredService<FailureInvestigations>(), services.GetRequiredService<TimeProvider>(), FailureAlerts.FileIn(options.DataFolder))
+        {
+            Error = logWriter,
+        });
+    }
+
     /// <summary>The leg commander.</summary>
     private static void AddLegs(WebApplicationBuilder builder)
     {
@@ -263,6 +285,10 @@ public static partial class NodeApp
             // Read as it is when a finish's check ends: a finish that outlasts the command route's deadline was answered queued.
             legs.ReplyDeadline = () => services.GetRequiredService<NodeCommands>().ReplyDeadline;
             legs.Error = services.GetRequiredService<LogWriter>();
+            legs.Investigations = services.GetRequiredService<FailureInvestigations>();
+            // The alerts run a held leg check through the commander, which refuses the go-around of a held flight: set here, as it needs both.
+            legs.Alerts = services.GetRequiredService<FailureAlerts>();
+            legs.Alerts.Legs = legs;
             // A PR's conflict with its base is put to the flight's flying worker as a line from the node, as a landing tells its sessions.
             legs.Say = async (id, text, ct) =>
                 (await services.GetRequiredService<NodeCommands>().RunAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = LegWatch.Who }, ct)).Ok;
@@ -284,6 +310,8 @@ public static partial class NodeApp
             reviews.Models = services.GetRequiredService<RoleModels>();
             reviews.Slots = services.GetRequiredService<AdmissionGate>();
             reviews.Error = logWriter;
+            reviews.Investigations = services.GetRequiredService<FailureInvestigations>();
+            reviews.Alerts = services.GetRequiredService<FailureAlerts>();
             reviews.DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why);
             reviews.TakeFlightVerdict = services.GetRequiredService<LegCommander>().TakePrVerdictAsync;
             reviews.SendFlightRound = services.GetRequiredService<LegCommander>().AnsweredDesignAsync;
@@ -522,6 +550,8 @@ public static partial class NodeApp
             checks.RerunFirst = true;
             checks.WatchtowerLive = () => services.GetRequiredService<Watchtower>().IsLive();
             checks.Recheck = services.GetRequiredService<PrRecheck>();
+            checks.Investigations = services.GetRequiredService<FailureInvestigations>();
+            checks.Alerts = services.GetRequiredService<FailureAlerts>();
             checks.Error = logWriter;
             return checks;
         });

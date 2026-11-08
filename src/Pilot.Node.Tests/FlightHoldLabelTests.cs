@@ -15,7 +15,7 @@ public sealed class FlightHoldLabelTests : ReviewTestsBase
     private const string Why = "waiting for the release";
 
     private Task<CommandResult> Hold(string code, string who = "me", string why = Why) =>
-        Run(Verbs.Hold, Verbs.FlightTarget(code), who, why.Split(' '));
+        Run(Verbs.Ground, Verbs.FlightTarget(code), who, why.Split(' '));
 
     [Fact]
     [Trait("Category", "Slow")]
@@ -36,7 +36,7 @@ public sealed class FlightHoldLabelTests : ReviewTestsBase
         comment.ShouldContain("DU1");
         comment.ShouldContain(Why);
 
-        (await Run(Verbs.Unhold, Verbs.FlightTarget(flight.Code), "me", "go")).Error.ShouldBeNull();
+        (await Run(Verbs.Unground, Verbs.FlightTarget(flight.Code), "me", "go")).Error.ShouldBeNull();
         F(flight.Code).OnHold.ShouldBeNull();
         _github.IssueLabels[flight.Issue].ShouldNotContain(PilotMarks.Hold);
     }
@@ -57,7 +57,7 @@ public sealed class FlightHoldLabelTests : ReviewTestsBase
             .ShouldContain("sweep tries the label again");
         (await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, "parser"), "node")).Error.ShouldNotBeNull().ShouldContain("on hold");
 
-        (await Run(Verbs.Unhold, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldBeNull();
+        (await Run(Verbs.Unground, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldBeNull();
         F(flight.Code).OnHold.ShouldBeNull();
     }
 
@@ -69,7 +69,7 @@ public sealed class FlightHoldLabelTests : ReviewTestsBase
         (await Hold(flight.Code)).Error.ShouldBeNull();
         _github.IssueLabelFails = "no permission";
 
-        (await Run(Verbs.Unhold, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldNotBeNull().ShouldContain("stays on hold");
+        (await Run(Verbs.Unground, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldNotBeNull().ShouldContain("stays on hold");
         F(flight.Code).OnHold.ShouldNotBeNull();
     }
 
@@ -81,7 +81,7 @@ public sealed class FlightHoldLabelTests : ReviewTestsBase
         var prefix = FlightCodes.PrefixOf(flight.Code);
         var other = $"{prefix}2000a";
 
-        var held = await Run(Verbs.Hold, Verbs.FlightTarget(other), "me", Why.Split(' '));
+        var held = await Run(Verbs.Ground, Verbs.FlightTarget(other), "me", Why.Split(' '));
 
         held.Error.ShouldBeNull();
         held.Made.ShouldBe($"{other} is not flown here; its issue {flight.Repo}#2000 now carries pilot: hold, which the node flying it reads on its next repo sweep");
@@ -89,7 +89,7 @@ public sealed class FlightHoldLabelTests : ReviewTestsBase
         _github.IssueComments.ShouldContain(c => c.Number == 2000 && c.Body.Contains(Why));
         _state.Flights().ShouldNotContain(f => f.Code == other);
 
-        (await Run(Verbs.Unhold, Verbs.FlightTarget(other), "me")).Error.ShouldBeNull();
+        (await Run(Verbs.Unground, Verbs.FlightTarget(other), "me")).Error.ShouldBeNull();
         _github.IssueLabels[2000].ShouldNotContain(PilotMarks.Hold);
     }
 
@@ -99,11 +99,11 @@ public sealed class FlightHoldLabelTests : ReviewTestsBase
     {
         await NewFlight("5", "parser");
 
-        var refused = await Run(Verbs.Hold, Verbs.FlightTarget("ZZZ12"), "me", Why.Split(' '));
+        var refused = await Run(Verbs.Ground, Verbs.FlightTarget("ZZZ12"), "me", Why.Split(' '));
 
         refused.Error.ShouldNotBeNull().ShouldContain("no flight of this node has the prefix ZZZ");
         _github.IssueLabels.ShouldNotContainKey(12);
-        (await Run(Verbs.Hold, Verbs.FlightTarget("12"), "me", Why.Split(' '))).Error.ShouldNotBeNull();
+        (await Run(Verbs.Ground, Verbs.FlightTarget("12"), "me", Why.Split(' '))).Error.ShouldNotBeNull();
     }
 
     /// <summary>The repo sweep reads the label off a local flight's issue (PIL771).</summary>
