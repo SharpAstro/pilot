@@ -87,6 +87,16 @@ public static partial class NodeApp
             Queue = services.GetRequiredService<RemovalQueue>(),
             Repos = () => [.. services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path)],
         });
+        // The Claude Code jobs pilot started and has as ended or replaced are stopped and removed once the tracker has listed, then hourly (#891).
+        builder.Services.AddSingleton<IClaudeJobs>(services => new ClaudeCliJobs(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")));
+        builder.Services.AddHostedService(services => new ClaudeJobSweep(
+            services.GetRequiredService<NodeState>(), services.GetRequiredService<SessionLedger>(), services.GetRequiredService<IClaudeJobs>(),
+            services.GetRequiredService<IClaudeAgents>(), options.Machine, services.GetRequiredService<TimeProvider>())
+        {
+            Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,
+            CurrentWatchtower = () => services.GetRequiredService<Watchtower>().Current(),
+            Error = logWriter,
+        });
         builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>(), services.GetRequiredService<RemovalQueue>()));
         builder.Services.AddSingleton<StopGate>();
         builder.Services.AddSingleton<PermissionGate>();
