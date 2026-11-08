@@ -324,7 +324,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         var checks = TimedChecks(clock, live: true);
 
         // Inside the grace the hold stays, and nothing merges.
-        clock.Advance(TimeSpan.FromMinutes(9));
+        clock.Advance(TimeSpan.FromMinutes(4));
         await checks.LookAsync(Ct);
         F(flight.Code).Holding.ShouldNotBeNull();
         _github.Merged.ShouldBeEmpty();
@@ -337,7 +337,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         F(flight.Code).State.ShouldBe(FlightState.Landed);
         var released = _state.Cards(openOnly: false).Single(c => c.Kind == LegCommander.HoldingClearedKind);
         released.Bin.ShouldBe(CardBin.Handled);
-        released.Title.ShouldContain("did not take it within 10 minutes");
+        released.Title.ShouldContain("did not take it within 5 minutes");
         var notes = Open().Single(c => c.Kind == LegCommander.ReviewNotesKind);
         notes.Bin.ShouldBe(CardBin.ForYou);
         notes.Detail.ShouldNotBeNull().ShouldContain("rename `x` to `count`");
@@ -374,20 +374,23 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task ANotLiveWatchtowerReleasesAnUntakenHoldAtOnceAndTheFlightMerges()
+    public async Task ANotLiveWatchtowerReleasesAnUntakenHoldOnceTheTakeBoundPassesAndTheFlightMerges()
     {
         AutopilotOn();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("12", Notes);
         await WithoutTheFixerLeg(flight.Code);
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        // Told, and given the take bound to start the watchtower; then the node releases the hold itself.
+        clock.Advance(TimeSpan.FromMinutes(6));
 
         await TimedChecks(clock, live: false).LookAsync(Ct);
 
         F(flight.Code).Holding.ShouldBeNull();
         _github.Merged.ShouldHaveSingleItem();
-        _state.Cards(openOnly: false).Single(c => c.Kind == LegCommander.HoldingClearedKind).Title.ShouldContain("no live watchtower");
-        Open().ShouldContain(c => c.Kind == LegCommander.ReviewNotesKind);
+        _state.Cards(openOnly: false).Single(c => c.Kind == LegCommander.HoldReleasedKind).Detail.ShouldNotBeNull().ShouldContain("no watchtower was running");
+        // The node writes the notes on the PR as one comment (PIL815), so the review-notes card closes with the hold.
+        Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewNotesKind);
         _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
     }
 
