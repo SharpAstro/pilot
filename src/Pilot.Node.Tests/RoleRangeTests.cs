@@ -74,7 +74,8 @@ public sealed class RoleRangeTests : IDisposable
     public void TheRoleKeysAreRangesAndTheOldKeysAreGone()
     {
         NodeSettings.Keys.Where(k => k.EndsWith("-range", StringComparison.Ordinal)).ShouldBe(["watchtower-range", "worker-range", "planner-range", "reviewer-range"]);
-        NodeSettings.Keys.ShouldNotContain(k => k.EndsWith("-model", StringComparison.Ordinal) || k.EndsWith("-effort", StringComparison.Ordinal) || k.Contains("-max", StringComparison.Ordinal) || k.StartsWith("reviewer-deep", StringComparison.Ordinal));
+        // The summary's model is one model, not a role's range (#797): the one -model key that is not an old one.
+        NodeSettings.Keys.Where(k => k != NodeSettings.SummaryModelKey).ShouldNotContain(k => k.EndsWith("-model", StringComparison.Ordinal) || k.EndsWith("-effort", StringComparison.Ordinal) || k.Contains("-max", StringComparison.Ordinal) || k.StartsWith("reviewer-deep", StringComparison.Ordinal));
         NodeSettings.With(new NodeSettings(), "worker-model", ["opus"]).Error.ShouldNotBeNull().ShouldStartWith("there is no setting worker-model");
     }
 
