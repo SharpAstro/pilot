@@ -84,8 +84,10 @@ public sealed class StandingOrderTests : IDisposable
 
         var brief = Pilot.Node.Flights.Briefs.Watchtower("wt", [], [], [], "pilot", orders: state.StandingOrders());
 
-        brief.ShouldContain("o1 (from gui): " + new string('x', 500) + "...");
-        brief.ShouldNotContain(new string('x', 501));
+        // The short brief (PIL855) keeps an order to MaxOrderText characters, so ten of them still fit its 6,000.
+        var cap = Pilot.Node.Flights.Briefs.MaxOrderText;
+        brief.ShouldContain("o1 (from gui): " + new string('x', cap) + "...");
+        brief.ShouldNotContain(new string('x', cap + 1));
         brief.ShouldContain("more orders stand than fit here");
     }
 

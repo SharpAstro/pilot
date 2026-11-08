@@ -6,7 +6,7 @@ namespace Pilot.Node.Flights;
 
 public static partial class Briefs
 {
-    private const int MaxOrderText = 300;
+    internal const int MaxOrderText = 300;
     private const int MaxOrdersListed = 10;
     private const int MaxOrdersTotal = 1000;
     private const int MaxHeldListed = 5;

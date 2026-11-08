@@ -821,7 +821,8 @@ public sealed class SessionTracker : BackgroundService
             {
                 _justEnded[id] = (row, polls + 1);
             }
-            else if (EndedAfterFinishedTurn(id) && OwnsOpenJob(now))
+            // Its open jobs first: a lookup in the state, where EndedAfterFinishedTurn may read the job's record from disk.
+            else if (OwnsOpenJob(now) && EndedAfterFinishedTurn(id))
             {
                 // Its turn finished and it still owns a queued or running job: it is not ended in the node's eyes. The jobs stay, and
                 // the job's end resumes it with the outcome. Looked at again on later polls; once none is open the rule below applies (#893).
