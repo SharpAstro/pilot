@@ -233,7 +233,8 @@
       "buildErrors": 0,
       "firstBuildError": null,
       "failureTold": false,
-      "failFast": false
+      "failFast": false,
+      "wholeSuite": null
     },
     {
       "id": "j15",
@@ -278,7 +279,8 @@
       "buildErrors": 0,
       "firstBuildError": null,
       "failureTold": false,
-      "failFast": false
+      "failFast": false,
+      "wholeSuite": null
     },
     {
       "id": "j13",
@@ -323,7 +325,8 @@
       "buildErrors": 0,
       "firstBuildError": null,
       "failureTold": false,
-      "failFast": false
+      "failFast": false,
+      "wholeSuite": null
     },
     {
       "id": "j12",
@@ -368,7 +371,8 @@
       "buildErrors": 0,
       "firstBuildError": null,
       "failureTold": false,
-      "failFast": false
+      "failFast": false,
+      "wholeSuite": null
     }
   ],
   "merges": [],
