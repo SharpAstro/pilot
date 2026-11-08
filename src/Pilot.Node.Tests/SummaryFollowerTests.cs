@@ -224,7 +224,7 @@ public sealed class SummaryFollowerTests
         await _follower.StepAsync(Ct);
         Change();
 
-        var result = await _summaries.RunAsync(new CommandRequest { Verb = Verbs.Summarise, Target = Verbs.NodeTarget }, Ct);
+        var result = await _summaries.RunAsync(new CommandRequest { Verb = Verbs.Summarise, Target = Verbs.NodeTarget, Who = "tests" }, Ct);
 
         result.Ok.ShouldBeTrue();
         _brain.Asked.ShouldBe(["summary"]);
@@ -239,7 +239,7 @@ public sealed class SummaryFollowerTests
     {
         _brain.Unavailable = "it is starting";
 
-        var result = await _summaries.RunAsync(new CommandRequest { Verb = Verbs.Summarise, Target = Verbs.NodeTarget }, Ct);
+        var result = await _summaries.RunAsync(new CommandRequest { Verb = Verbs.Summarise, Target = Verbs.NodeTarget, Who = "tests" }, Ct);
 
         result.Ok.ShouldBeTrue();
         _old.Calls.ShouldBe(1);
