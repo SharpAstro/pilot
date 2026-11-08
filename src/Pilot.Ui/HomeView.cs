@@ -66,7 +66,8 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
         {
             var rings = Cards.Open.Count(c => c.Bin == CardBin.Ring);
             var forYou = Cards.Open.Count(c => c.Bin == CardBin.ForYou);
-            var held = Flights.Lines.Count(l => l.Stale is null && l.Row.State == FlightState.Held);
+            // One count with the Flights header and the Fleet line: a flight on the owner's hold is counted there, once, not as held.
+            var held = FlightCounts.Of(Flights.Lines.Where(l => l.Stale is null).Select(l => l.Row)).Held;
             var cleared = Cards.Open.Count(c => c.Choices.Any(ch => ch.Status == ChoiceStatus.Passing));
             // A move that failed leaves the flight here until the person retries it (or the node does): it waits on them.
             var moves = Flights.Lines.Count(l => l.MoveMark is not null);
@@ -528,10 +529,17 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     // hover has the whole of it.
     private const int ChipFits = 30;
 
+    /// <summary>
+    /// A chip's colour from its tone. A flight on the owner's hold (<c>on hold</c>, #771) is in the held amber, as its row, stripe and page
+    /// are: never the green of a flying flight.
+    /// </summary>
+    internal static (RGBAColor32 Bg, RGBAColor32 Hover) TintOf(string? tone) =>
+        tone switch { "held" or "on hold" or "queued" => Amber, "stale" => Stale, "failed" => FailedChip, _ => Green };
+
     private Layout.Node Chip(HomeChip chip)
     {
         var label = CardsView<TSurface>.Ellipsize(chip.Label, ChipFits);
-        var tint = chip.Tone switch { "held" or "queued" => Amber, "stale" => Stale, "failed" => FailedChip, _ => Green };
+        var tint = TintOf(chip.Tone);
         var pill = chip.Kind switch
         {
             // A failed move's chip is red, its words on it Bright (8:1); its reason is the band under the chips, and in its brief.

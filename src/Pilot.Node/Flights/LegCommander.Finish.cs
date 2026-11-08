@@ -767,8 +767,10 @@ public sealed partial class LegCommander
             await OffLockAsync(null, () => InvestigateCheckAsync(flight, run.Tail, cancellationToken));
             return (false, $"The node did not finish it itself, though its plane matched origin/{flight.Branch} at {CommitRefs.Short(head)}: its check `{leg.Check}` failed ({run.ExitCode}). Last of its output:\n{run.Tail}", true);
         }
+        // On the owner's hold (#771) a finish the node makes itself changes nothing on GitHub either, as a worker's finish (above).
         var pushes = await ReviewBehindPlaneAsync(flight, cancellationToken)
-            && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name);
+            && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name)
+            && !IsOnHold(flight.Code);
         if (pushes)
         {
             await OffLockAsync(flight, () => EnsureNotArmedAsync(flight, cancellationToken));

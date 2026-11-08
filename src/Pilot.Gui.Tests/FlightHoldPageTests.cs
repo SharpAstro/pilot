@@ -136,6 +136,14 @@ public sealed class FlightHoldPageTests
         // The count Home says for flights flying is the same one.
         var home = new HomeScreen(screen, new SessionsScreen([], "test", Live.At), new JobsScreen([], "test", Live.At), CardsScreen.Empty);
         home.Flying.ShouldBe("1 flight flying");
+        // Home's chip of a flight on hold is amber like its row, not the green of a flying one.
+        var chip = home.FlightChips.Single(c => c.Flight!.Code == "PIL771");
+        chip.Tone.ShouldBe("on hold");
+        HomeView<RgbaImage>.TintOf(chip.Tone).ShouldBe(HomeView<RgbaImage>.TintOf("held"));
+        HomeView<RgbaImage>.TintOf(chip.Tone).ShouldNotBe(HomeView<RgbaImage>.TintOf("flying"));
+        // What waits on you counts a flight on hold and also Held (waiting on a connection) once, with the header: not as a held flight.
+        var both = new FlightsScreen([.. FlightLine.Build([Flight(true, code: "PIL776") with { State = FlightState.Held }], [], Live.At)], "test", Live.At);
+        new HomeScreen(both, new SessionsScreen([], "test", Live.At), new JobsScreen([], "test", Live.At), CardsScreen.Empty).Waiting.ShouldNotContain("held");
     }
 
     [Fact]
