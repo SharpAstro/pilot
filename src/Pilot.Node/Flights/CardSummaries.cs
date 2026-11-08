@@ -12,7 +12,7 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public static partial class CardSummaries
 {
-    // Well above the longest sentence a raiser writes (the pr-conflicts one, about 200 with a long code), so none is thrown away;
+    // Well above the longest sentence a raiser writes (about 200 with a long code), so none is thrown away;
     // text taken from a detail is far longer than a sentence and still fails.
     private const int MaxLength = 600;
 
@@ -43,7 +43,6 @@ public static partial class CardSummaries
             "leg-failed" => $"The worker of {what} stopped. Send it round starts a fresh worker, told the whole report, that fixes it and finishes the leg; Accept as it is keeps the failure in the leg's report and the flight goes on.",
             LegCommander.PushBlockedKind => $"{what} is done and its check passes, but its branch was rebased off the pushed one. Push the rebased branch with lease overwrites origin's only if it has not moved; Merge origin's branch into the plane keeps its commits and pushes plain.",
             "pr-checks-failed" => $"The PR of {what} fails its checks and the node could not send the last leg back to fix them. The first choice starts a fresh worker on that leg, told which checks failed and to push a fix; or fix them by hand, then dismiss this.",
-            "pr-conflicts" => $"The PR of {what} conflicts with its base and a worker already tried and could not settle it (it stopped, or the same conflict came back). The watchtower resolves it in the plane (merge, check, plain push); Resolve the conflict starts a fresh worker on the last leg.",
             LegWatch.Stopped => $"The worker of {what} was stopped by the API and the node cannot resume it by itself. Tell it to carry on, or start a fresh worker on the leg.",
             LegWatch.LimitWait => $"The worker of {what} hit the usage limit. The node resumes it by itself after the window resets; nothing to do.",
             LegWatch.Idle => $"The worker of {what} has been idle with its leg unfinished and the node's nudges did not help. Nudge it to finish or say why not, or start a fresh worker on the leg.",
@@ -145,6 +144,7 @@ public static partial class CardSummaries
             PrReviews.PushedUnreviewedKind => "A fixer pushed to a PR but the review of that push could not start. The push stands; Start the review of the fixer's push runs it.",
             AdmissionGate.CycleKind => "Two flights each waited on the other under the admission rules, so the node admitted one to break the wait. Nothing to do.",
             LegCommander.SpendAlertKind => "A leg has spent a large share of the 7-day window before its next round. The round still starts; stop the flight by hand if it should not.",
+            LegCommander.ConflictDecisionKind => $"The workers sent to merge {what}'s PR with its base, on Sonnet, then Opus, then Opus at xhigh, all failed, and the last found that the two sides change the same behaviour in opposite ways. The detail names the files, both behaviours and what keeping each costs; each choice sends the leg round told which side to keep.",
             LegCommander.GoAroundCapKind => "A leg has gone around as many times as the cap allows, whatever the reasons, and the node and the watchtower send it round no more. Go around sends one more; Accept takes the leg as it stands.",
             LegCommander.ReviewNotesKind => $"The review of {what} passed with notes that do not block the merge. The merge waits while a review-notes leg makes them (its push ends the hold and a fresh review gates the merge) or the watchtower clears the flight; nothing for you to do.",
             LegCommander.HumanVerificationKind => $"The review of {what} noted checks only a person can make, and the node filed each as an issue in the repo's human-verification milestone. Check each by hand and close its issue; dismiss this once read.",
