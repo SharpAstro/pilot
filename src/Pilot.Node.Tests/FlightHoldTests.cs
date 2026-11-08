@@ -245,7 +245,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AHeldFlightIsNotStaleForBeingStillAndACardAboutItSaysSoAndOffersNoChoiceTheGateRefuses()
+    public async Task AHeldFlightIsNotStaleForBeingStillAndACardAboutItSaysSoKeepsItsChoicesTheGateRefusesAndLosesTheNoteOnRelease()
     {
         var flight = await NewFlight("8", "parser");
         (await Hold(flight)).Error.ShouldBeNull();
@@ -265,10 +265,51 @@ public sealed class FlightHoldTests : ReviewTestsBase
         ]);
         card.Title.ShouldContain(on(flight));
         card.Detail.ShouldNotBeNull().ShouldContain("unhold");
-        // A finish that pushes is an outward step: neither offered nor taken; a plain finish (a report) still is.
-        card.Choices.Select(c => c.Label).ShouldBe(["Mark done anyway", "Release"]);
+        // Every choice is kept (a card raised once, an overlap's Connect and Plan, is not raised again on the release); the gate refuses
+        // the ones that are an outward step with the hold's words, and a plain finish (a report) still goes through.
+        card.Choices.Select(c => c.Label).ShouldBe(["Merge", "Push the rebased branch with lease", "Merge origin into the plane and push", "Mark done anyway", "Release"]);
+        ShouldNameTheHold(await Run(Verbs.Merge, target, "controller", "abc1234"));
         ShouldNameTheHold(await Run(Verbs.FinishLeg, leg, "controller", LegCommander.PushedWithLease, "abc1234"));
         ShouldNameTheHold(await Run(Verbs.FinishLeg, leg, "controller", LegCommander.MergedWithOrigin));
+
+        // The release takes the on-hold note off the card and leaves it open with every choice, as it was raised.
+        (await Run(Verbs.Unhold, target, "me")).Error.ShouldBeNull();
+        var released = _state.Cards().Single(c => c.Id == card.Id);
+        released.State.ShouldBe(CardState.Open);
+        released.Title.ShouldBe("something to decide");
+        released.Detail.ShouldBe("words");
+        released.Choices.Select(c => c.Label).ShouldBe(card.Choices.Select(c => c.Label));
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AHoldOnTheIssueIsReadAtAStartBeforeItIsGatedSoAWokenNodeStartsNothing()
+    {
+        var flight = await NewFlight("9", "parser");
+        // Put on GitHub while this node was down: no sweep has read the repo yet.
+        _github.IssueLabels[flight.Issue] = [PilotMarks.Hold];
+        _github.PrConversation.Add((flight.Issue, new PrComment("seb", $"{PilotMarks.HoldCommentStart} by seb from SE1: parked by hand", DateTimeOffset.UtcNow)));
+        F(flight.Code).OnHold.ShouldBeNull();
+
+        var started = await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, "parser"), "node");
+
+        ShouldNameTheHold(started, "seb", "parked by hand");
+        var held = F(flight.Code).OnHold.ShouldNotBeNull();
+        (held.By, held.Reason, held.Labelled).ShouldBe(("seb", "parked by hand", true));
+        _state.Legs(flight.Code).Single().State.ShouldBe(LegState.Planned);
+        HeldCards().ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AStartThatCannotReadTheIssueLabelsNeverPutsAHoldOnOrTakesOneOff()
+    {
+        var flight = await NewFlight("11", "parser");
+        _github.IssueLabelsReadFails = "gh exited 1";
+
+        (await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, "parser"), "node")).Error.ShouldBeNull();
+
+        F(flight.Code).OnHold.ShouldBeNull();
     }
 
     private string on(FlightRow flight) => FlightWaiting.OnHoldText(F(flight.Code))!;

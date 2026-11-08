@@ -297,19 +297,6 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
         };
     }
 
-    /// <summary>Who a hold comment names, from its head (<c>pilot: on hold by seb from SE1</c>); null when it names nobody.</summary>
-    private static string? HoldCommentBy(string head)
-    {
-        const string lead = PilotMarks.HoldCommentStart + " by ";
-        if (!head.StartsWith(lead, StringComparison.Ordinal))
-        {
-            return null;
-        }
-        var rest = head[lead.Length..];
-        var from = rest.LastIndexOf(" from ", StringComparison.Ordinal);
-        return (from >= 0 ? rest[..from] : rest).Trim() is { Length: > 0 } named ? named : null;
-    }
-
     /// <summary>
     /// The owner's hold on GitHub (#771): <c>pilot: hold</c> on a local flight's issue holds the flight (by the label, the why from the newest
     /// hold comment pilot wrote); a hold that had been labelled whose label is gone is released; a hold whose label write failed gets it again.
@@ -331,8 +318,9 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
             {
                 continue;
             }
-            // Confirmed on a fresh read; one that fails leaves the row as it was.
-            var fresh = await read($"labels of #{issue.Number}", async () => await github.IssueLabelsAsync(repo.Path, issue.Number, cancellationToken));
+            // Confirmed on a fresh read that throws when gh fails (the plain read answers no labels then, which would read as a label
+            // taken off); one that fails leaves the row as it was.
+            var fresh = await read($"labels of #{issue.Number}", async () => await github.IssueLabelsOrThrowAsync(repo.Path, issue.Number, cancellationToken));
             if (fresh is null)
             {
                 continue;
@@ -345,30 +333,19 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
             var target = Verbs.FlightTarget(current.Code);
             if (labelled && current.OnHold is null)
             {
-                var why = "held on GitHub";
-                var by = LegCommander.TheOwner;
-                var comments = await read($"comments of #{issue.Number}", async () =>
-                    [.. (await github.IssueCommentsAsync(repo.Path, issue.Number, cancellationToken))
-                        .Where(c => c.Body.StartsWith(PilotMarks.HoldCommentStart, StringComparison.Ordinal))
-                        .OrderBy(c => c.CreatedAt).Select(c => c.Body)]);
-                if (comments is { Length: > 0 } && comments[^1] is var newest && newest.IndexOf(": ", PilotMarks.HoldCommentStart.Length, StringComparison.Ordinal) is var colon and >= 0
-                    && newest[(colon + 2)..].Trim() is { Length: > 0 } said)
-                {
-                    why = said;
-                    by = HoldCommentBy(newest[..colon]) ?? by;
-                }
-                state.PutFlight(current with { OnHold = new FlightOnHold { Reason = why, Since = time.GetUtcNow(), By = by, Labelled = true } });
-                state.CloseCardsAbout(target, $"{current.Code} is on hold by {by}", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, LegCommander.NextStepKind);
-                state.CloseCardsAbout(target, "on hold", LegCommander.OnHoldKind);
-                state.RaiseCard(CardBin.Handled, LegCommander.OnHoldKind, target, $"{current.Code} is on hold by {by}: {why}",
-                    $"{PilotMarks.Hold} was put on {current.Item.Noun} {current.Item.Display} on GitHub. The node starts nothing for {current.Code} and takes no outward step until the label is taken off (or `pilot flight unhold {current.Code}`).");
+                // The comments come from a gh call; the hold is then put on the row as it stands, not on the copy read before it.
+                var comments = await read($"comments of #{issue.Number}", async () => await LabelHold.CommentsAsync(github, repo.Path, issue.Number, cancellationToken));
+                await LabelHold.ApplyAsync(state, github, time, current.Code, comments, cancellationToken);
             }
             else if (!labelled && current.OnHold is { Labelled: true } held)
             {
-                state.PutFlight(current with { OnHold = null });
-                state.CloseCardsAbout(target, $"{PilotMarks.Hold} was taken off {current.Item.Display}", LegCommander.OnHoldKind);
-                state.RaiseCard(CardBin.Handled, LegCommander.OnHoldKind, target, $"{current.Code} is off hold",
-                    $"{PilotMarks.Hold} was taken off {current.Item.Noun} {current.Item.Display} on GitHub, so the hold by {held.By} ({held.Reason}) ends. The node takes its next due step.");
+                if (state.UpdateFlight(current.Code, f => f.OnHold is { Labelled: true } ? f with { OnHold = null } : null) is not null)
+                {
+                    state.CloseCardsAbout(target, $"{PilotMarks.Hold} was taken off {current.Item.Display}", LegCommander.OnHoldKind);
+                    state.LiftHoldFromCards(current.Code);
+                    state.RaiseCard(CardBin.Handled, LegCommander.OnHoldKind, target, $"{current.Code} is off hold",
+                        $"{PilotMarks.Hold} was taken off {current.Item.Noun} {current.Item.Display} on GitHub, so the hold by {held.By} ({held.Reason}) ends. The node takes its next due step.");
+                }
             }
             else if (!labelled && current.OnHold is { Labelled: false } retry)
             {
@@ -378,16 +355,16 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
                     await github.AddIssueLabelAsync(repo.Path, issue.Number, PilotMarks.Hold, cancellationToken);
                     return Array.Empty<string>();
                 });
-                if (state.Flights().FirstOrDefault(f => f.Code == local.Code) is { OnHold: { } now } after && now == retry
-                    && (await read($"labels of #{issue.Number}", async () => await github.IssueLabelsAsync(repo.Path, issue.Number, cancellationToken))) is { } again
+                if (state.Flights().FirstOrDefault(f => f.Code == local.Code) is { OnHold: { } now } && now == retry
+                    && (await read($"labels of #{issue.Number}", async () => await github.IssueLabelsOrThrowAsync(repo.Path, issue.Number, cancellationToken))) is { } again
                     && again.Contains(PilotMarks.Hold, StringComparer.OrdinalIgnoreCase))
                 {
-                    state.PutFlight(after with { OnHold = now with { Labelled = true } });
+                    state.UpdateFlight(local.Code, f => f.OnHold == retry ? f with { OnHold = retry with { Labelled = true } } : null);
                 }
             }
             else if (labelled && current.OnHold is { Labelled: not true } known)
             {
-                state.PutFlight(current with { OnHold = known with { Labelled = true } });
+                state.UpdateFlight(local.Code, f => f.OnHold == known ? f with { OnHold = known with { Labelled = true } } : null);
             }
         }
     }

@@ -206,11 +206,14 @@ internal sealed record FlightLine
             Code = flight.Code,
             Title = flight.Title ?? flight.Item.Noun,
             Where = $"{flight.Repo} {flight.Item.Display}",
-            State = flight.State switch { FlightState.Flying => "flying", FlightState.Held => "held", _ => flight.MovedTo is null ? "landed" : "moved" },
+            // The owner's hold is the state a person sees (#771): the flight still flies as far as the row goes, but nothing is done for it.
+            State = flight is { OnHold: not null, State: not FlightState.Landed } ? "on hold"
+                : flight.State switch { FlightState.Flying => "flying", FlightState.Held => "held", _ => flight.MovedTo is null ? "landed" : "moved" },
             StateDetail = flight.State switch
             {
                 // The owner's hold comes ahead of every other stage (#771).
-                not FlightState.Landed when FlightWaiting.OnHoldText(flight) is { } onHold => onHold,
+                // The state says "on hold"; the detail says who and why, without saying it twice.
+                not FlightState.Landed when flight.OnHold is { } onHold => $"by {onHold.By}: {onHold.Reason}",
                 FlightState.Held => $"waiting for {FlightWaiting.For(flight)}",
                 FlightState.Landed when flight.MovedTo is { } to => to.Text,
                 FlightState.Landed when flight.LandedAt is { } at => SessionLine.Ago(now - at),

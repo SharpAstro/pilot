@@ -205,6 +205,72 @@ public sealed class FlightHoldLabelTests : ReviewTestsBase
 
         [Fact]
         [Trait("Category", "Slow")]
+        public async Task ALabelledHoldIsNotReleasedByAConfirmingReadThatFailedOnlyByOneThatSawNoLabel()
+        {
+            var repo = Clone();
+            _github.Issues[1] = "labelled hold, the list read before the label went on";
+            // The list shows no label, and the confirming read fails: gh answering nothing is not the label taken off.
+            _github.IssueLabels[1] = ["pilot node: DE1"];
+            Fly(repo, 1, Held(true));
+            _github.IssueLabelsReadFails = "gh exited 1";
+
+            var status = (await Look(repo)).Single();
+
+            F(1).OnHold.ShouldNotBeNull();
+            status.Errors.ShouldContain(e => e.Contains("gh exited 1"));
+            _state.Cards(openOnly: false).ShouldNotContain(c => c.Title.Contains("TIA1 is off hold"));
+
+            // Read again, and the label is really not there: now it is released.
+            _github.IssueLabelsReadFails = null;
+            await Look(repo);
+            F(1).OnHold.ShouldBeNull();
+        }
+
+        [Fact]
+        [Trait("Category", "Slow")]
+        public async Task ASweepThatPutsAHoldOnKeepsWhatACommandRecordedWhileItsGhCallWasOut()
+        {
+            var repo = Clone();
+            _github.Issues[1] = "labelled";
+            _github.IssueLabels[1] = [PilotMarks.Hold, "pilot node: DE1"];
+            Fly(repo, 1);
+            // While the hold comments are read, a command records a PR and a queue wait on the flight.
+            _github.OnIssueComments = () => _state.UpdateFlight("TIA1", f => f with { PullRequest = 77, Queued = "waiting for a slot" });
+
+            await Look(repo);
+
+            var row = F(1);
+            row.OnHold.ShouldNotBeNull();
+            row.PullRequest.ShouldBe(77);
+            row.Queued.ShouldBe("waiting for a slot");
+        }
+
+        [Fact]
+        [Trait("Category", "Slow")]
+        public async Task AHoldReadFromTheLabelLetsGoOfTheMergeTheFlightArmedLikeHoldDoes()
+        {
+            var repo = Clone();
+            _github.Issues[1] = "labelled, merge armed";
+            _github.IssueLabels[1] = [PilotMarks.Hold, "pilot node: DE1"];
+            var flight = Fly(repo, 1);
+            var pr = new PullRequest(7, "OPEN", "abc12345abc12345", "https://github.com/SharpAstro/tianwen/pull/7");
+            _github.PrOf[flight.Branch] = pr;
+            _github.AutoMergeArmed.Add((7, pr.Head, "squash"));
+            _github.Queue = new MergeQueueState("OPEN", pr.Head, Queued: true, Position: 1);
+            _state.PutFlight(F(1) with { PullRequest = 7, MergeWhenGreen = ["abc12345", "now", LegCommander.ArmedByGitHub] });
+
+            await Look(repo);
+
+            F(1).OnHold.ShouldNotBeNull();
+            F(1).MergeWhenGreen.ShouldBeNull();
+            _github.AutoMergeDisarmed.ShouldContain(7);
+            _github.Dequeued.ShouldContain(7);
+            _state.Cards(openOnly: false).Single(c => c.Kind == LegCommander.OnHoldKind && c.Title.Contains("TIA1 is on hold")).Detail.ShouldNotBeNull()
+                .ShouldContain("taken out of the merge queue");
+        }
+
+        [Fact]
+        [Trait("Category", "Slow")]
         public async Task AHoldWhoseLabelWriteFailedStaysHeldAndTheSweepPutsTheLabelOnAgain()
         {
             var repo = Clone();

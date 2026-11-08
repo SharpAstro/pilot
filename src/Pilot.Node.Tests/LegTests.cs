@@ -868,7 +868,13 @@ internal sealed class FakeGitHub : IGitHub
     public List<(int Number, string Body)> IssueComments { get; } = [];
 
     public Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult(IssueLabels.TryGetValue(number, out var labels) ? labels.ToArray() : []);
+        Task.FromResult(IssueLabelsReadFails is null && IssueLabels.TryGetValue(number, out var labels) ? labels.ToArray() : []);
+
+    /// <summary>When set, a label read that must tell failure from absence (<see cref="IGitHub.IssueLabelsOrThrowAsync"/>) fails with it, as gh exiting non-zero; the plain read answers none, as the real one does.</summary>
+    public string? IssueLabelsReadFails { get; set; }
+
+    public Task<string[]> IssueLabelsOrThrowAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        IssueLabelsReadFails is { } why ? Task.FromException<string[]>(new FlightException(why)) : IssueLabelsAsync(repoPath, number, cancellationToken);
 
     /// <summary>When set, adding or removing an issue label fails with it, as GitHub refusing it.</summary>
     public string? IssueLabelFails { get; set; }
@@ -1006,8 +1012,14 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>The conversation comments of PRs, by number, as PrCommentsAsync lists them; a comment made through CommentIssueAsync lands here too.</summary>
     public List<(int Number, PrComment Comment)> PrConversation { get; } = [];
 
-    public Task<IReadOnlyList<PrComment>> IssueCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        PrCommentsAsync(repoPath, number, cancellationToken);
+    /// <summary>Run as an issue's comments are read, before they are listed: what another command records while a gh call of the sweep is out.</summary>
+    public Action? OnIssueComments { get; set; }
+
+    public Task<IReadOnlyList<PrComment>> IssueCommentsAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        OnIssueComments?.Invoke();
+        return PrCommentsAsync(repoPath, number, cancellationToken);
+    }
 
     public Task<IReadOnlyList<PrComment>> PrCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<PrComment>>([.. PrConversation.Where(c => c.Number == number).Select(c => c.Comment)]);

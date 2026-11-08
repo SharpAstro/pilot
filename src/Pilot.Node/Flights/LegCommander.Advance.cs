@@ -150,8 +150,13 @@ public sealed partial class LegCommander
         if (step.Verb is Verbs.StartLeg or Verbs.StartReview)
         {
             await PrimeAsync(current, cancellationToken);
+            // The prime reads the issue's labels, and a hold on GitHub it found is the owner's hold now (#771): nothing to gate or ring about.
+            if (state.Flights().FirstOrDefault(f => f.Code == current.Code) is { OnHold: not null })
+            {
+                return;
+            }
         }
-        var label = step.Verb == Verbs.StartLeg ? $"start {step.Target.Split('/')[^1]}" : step.Verb == Verbs.StartReview ? "start its reviewer" : "open its PR";
+        var label =step.Verb == Verbs.StartLeg ? $"start {step.Target.Split('/')[^1]}" : step.Verb == Verbs.StartReview ? "start its reviewer" : "open its PR";
         if (Gate.Hold($"{step.Verb} {step.Target}", Models.StartLimitFor(current.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} waits to {label}", Models.WeekPaceFor(current.Repo)))
         {
             return;

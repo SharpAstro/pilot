@@ -328,6 +328,14 @@ public interface IGitHub
     /// <summary>The labels issue <paramref name="number"/> carries; empty when gh cannot say.</summary>
     Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The labels issue <paramref name="number"/> carries, as <see cref="IssueLabelsAsync"/> reads them, but a gh failure throws instead of
+    /// reading as no labels: a caller that acts on a label's absence (the hold sweep releasing a hold) must tell a failed read from a missing label.
+    /// </summary>
+    /// <exception cref="FlightException">gh could not read the issue.</exception>
+    Task<string[]> IssueLabelsOrThrowAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        IssueLabelsAsync(repoPath, number, cancellationToken);
+
     /// <summary>Adds <paramref name="label"/> to issue <paramref name="number"/>, creating it in the repo when it has none like it.</summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task AddIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken);

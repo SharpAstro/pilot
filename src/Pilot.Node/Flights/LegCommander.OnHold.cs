@@ -7,8 +7,9 @@ namespace Pilot.Node.Flights;
 /// for the flight and takes no outward step (no leg, worker, planner, validator, reviewer, fixer, go-around, base merge, push, PR open
 /// or merge), whoever asks: the autopilot, the sweeps, the watchtower or a card's button. <c>unhold</c> releases it and the flight takes
 /// its next due step. Apart from <see cref="FlightRow.Holding"/> (the review-notes holding pattern, which holds the merge only) and
-/// <see cref="LegRow.Hold"/> (a leg's wait for a package). A session already running is not stopped: it finishes its turn and
-/// reports (finish-leg, wait-leg, check and add-artifact are let through), and nothing follows it.
+/// <see cref="LegRow.Hold"/> (a leg's wait for a package). A session already running is not stopped. A worker finishes its turn and
+/// reports (finish-leg, wait-leg, check and add-artifact are let through), and nothing follows it. A reviewer or planner already running
+/// is refused its report (review, plan-leg and planned are not let through): its work is run again after the release.
 /// </summary>
 public sealed partial class LegCommander
 {
@@ -130,42 +131,11 @@ public sealed partial class LegCommander
         // A merge the flight armed is let go: GitHub's auto-merge would merge it with the node down, and a queued PR would land.
         var took = new List<string>();
         string? problem = null;
-        if (flight.PullRequest is { } number)
+        if (flight.PullRequest is not null)
         {
-            try
-            {
-                using var call = Calling(flight.Code, "being put on hold");
-                var queuedGone = await OffLockAsync(null, async () =>
-                {
-                    var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
-                    if (pr is not { State: "OPEN" } || pr.Number != number)
-                    {
-                        return new List<string>();
-                    }
-                    var done = new List<string>();
-                    var queued = await github.MergeQueueAsync(flight.RepoPath, number, cancellationToken) is { State: "OPEN", Queued: true };
-                    var armedSaid = await github.AutoMergeArmedAsync(flight.RepoPath, number, cancellationToken);
-                    if (armedSaid != false || flight.MergeWhenGreen?.ElementAtOrDefault(2) == ArmedByGitHub)
-                    {
-                        await github.DisarmAutoMergeAsync(flight.RepoPath, number, cancellationToken);
-                        if (armedSaid == true)
-                        {
-                            done.Add("GitHub's auto-merge turned off");
-                        }
-                    }
-                    if (queued)
-                    {
-                        await github.DequeueAsync(flight.RepoPath, number, cancellationToken);
-                        done.Add("taken out of the merge queue");
-                    }
-                    return done;
-                });
-                took.AddRange(queuedGone);
-            }
-            catch (FlightException ex)
-            {
-                problem = $"its merge could not be let go of on GitHub ({ex.Message}): switch off auto-merge and leave the merge queue on the PR page";
-            }
+            using var call = Calling(flight.Code, "being put on hold");
+            var kept = flight;
+            (took, problem) = await OffLockAsync(null, () => LabelHold.LetGoOfMergeAsync(github, kept, cancellationToken));
         }
         state.RemoveMerge(flight.Code);
         if (Record(flight.Code, f => f with { MergeWhenGreen = null }) is { } cleared)
@@ -176,7 +146,7 @@ public sealed partial class LegCommander
         state.CloseCardsAbout(target, $"{flight.Code} is on hold by {by}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, NextStepKind);
         state.CloseCardsAbout(target, repeat ? "the hold's reason was updated" : "on hold", OnHoldKind);
         var detail = $"{by}: {why}. The node starts nothing for {flight.Code} and takes no outward step (no leg, worker, planner, reviewer, go-around, base merge, push, PR open or merge) until `pilot flight unhold {flight.Code}`. "
-            + "A worker or reviewer already running finishes its turn, but nothing follows it."
+            + LabelHold.RunningNote
             + (took.Count > 0 ? $" {string.Join(", ", took)}." : "")
             + (problem is not null ? $" {problem}." : "")
             + (labelNote is not null ? $" {labelNote}." : "");
@@ -289,6 +259,7 @@ public sealed partial class LegCommander
         Record(flight.Code, f => f with { OnHold = null });
         var said = $"released by {by}{(why.Length > 0 ? $": {why}" : "")}";
         state.CloseCardsAbout(target, $"{flight.Code} {said}", OnHoldKind);
+        state.LiftHoldFromCards(flight.Code);
         state.RaiseCard(CardBin.Handled, OnHoldKind, target, $"{flight.Code} is off hold",
             $"{said}. It was on hold by {flight.OnHold.By} since {flight.OnHold.Since.ToLocalTime():yyyy-MM-dd HH:mm} ({flight.OnHold.Reason}). The node takes its next due step.");
         return $"{flight.Code} is off hold";

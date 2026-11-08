@@ -3,6 +3,7 @@ using DIR.Lib;
 using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Pilot.Ui;
+using SharpAstro.Png;
 using Shouldly;
 using Xunit;
 
@@ -13,9 +14,11 @@ public sealed class FlightHoldPageTests
 {
     private const string Why = "waiting for the release";
 
-    private static FlightRow Flight(bool held) => new()
+    private const string LongWhy = "waiting for the release train to leave and for the vendor to answer the question about the signing key, which will not be before the next planning meeting on Thursday";
+
+    private static FlightRow Flight(bool held, string why = Why, string code = "PIL771") => new()
     {
-        Code = "PIL771",
+        Code = code,
         Repo = "pilot",
         RepoPath = "/r/pilot",
         Issue = 771,
@@ -26,7 +29,7 @@ public sealed class FlightHoldPageTests
         Base = "origin/main",
         State = FlightState.Flying,
         CreatedAt = Live.At.AddMinutes(-5),
-        OnHold = held ? new FlightOnHold { Reason = Why, Since = Live.At.AddMinutes(-1), By = "seb" } : null,
+        OnHold = held ? new FlightOnHold { Reason = why, Since = Live.At.AddMinutes(-1), By = "seb" } : null,
     };
 
     private static LegRow Leg(LegState state, int order) => new()
@@ -39,7 +42,8 @@ public sealed class FlightHoldPageTests
     {
         var line = FlightLine.Build([Flight(true)], [], Live.At, [Leg(LegState.Done, 1), Leg(LegState.Planned, 2)]).Single();
 
-        line.StateDetail.ShouldBe($"on hold by seb: {Why}");
+        // The state says on hold (not flying), and the detail who and why, without saying it twice.
+        (line.State, line.StateDetail).ShouldBe(("on hold", $"by seb: {Why}"));
         var actions = FlightAction.For(line);
         actions.Select(a => a.Label).ShouldContain("Release");
         actions.Single(a => a.Label == "Release").Verb.ShouldBe(Verbs.Unhold);
@@ -47,6 +51,60 @@ public sealed class FlightHoldPageTests
         foreach (var refused in new[] { Verbs.StartLeg, Verbs.OpenPr, Verbs.Merge, Verbs.GoAround, Verbs.StartReview, Verbs.Hold })
         {
             verbs.ShouldNotContain(refused);
+        }
+    }
+
+    [Fact]
+    public void AHeldFlightIsNotShownAsFlyingAndALandedOneNeverAsHeld()
+    {
+        FlightLine.From(Flight(true), [], Live.At).State.ShouldBe("on hold");
+        FlightLine.From(Flight(false), [], Live.At).State.ShouldBe("flying");
+        FlightLine.From(Flight(true) with { State = FlightState.Landed }, [], Live.At).State.ShouldBe("landed");
+    }
+
+    [Theory]
+    [InlineData(700)]
+    [InlineData(1400)]
+    public void ALongWhyOnTheListRowEndsInAnEllipsisWithTheWholeTextOnHoverNeverSilentlyCut(int width)
+    {
+        var line = FlightLine.Build([Flight(true, LongWhy)], [], Live.At, [Leg(LegState.Planned, 1)]).Single();
+        using var vessel = new RgbaImageRenderer((uint)width, 900);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath };
+        var flights = chrome.Flights;
+        flights.Mode = FlightsViewMode.List;
+        flights.CanCommand = true;
+        flights.OnAction = _ => Task.FromResult<string?>(null);
+        var screen = new FlightsScreen([line], "test", Live.At);
+        flights.Render(screen, new RectF32(0, 0, width, 900));
+        var arranged = Layout.Engine.Arrange(flights.Tree(screen), new Rect<float>(0, 0, width, 900), new PixelMeasureContext<RgbaImage>(vessel, SessionsCapture.FontPath, 1f));
+
+        var detail = $"by seb: {LongWhy}";
+        arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value)
+            .ShouldContain(t => t.Contains("on hold", StringComparison.Ordinal));
+        arranged.Select(a => a.Node).ShouldContain(n => n.Tooltip == detail);
+        TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
+    }
+
+    /// <summary>Captures of the list at a narrow and a wide window with a flying row, a held one and one held with a long why (set PILOT_TEST_CAPTURE to a file in the folder they go to).</summary>
+    [Fact]
+    public void CapturesOfTheFlightsListWithAHeldFlightAtNarrowAndWideWindows()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var dir = Path.GetDirectoryName(capture) ?? ".";
+        var tag = Path.GetFileNameWithoutExtension(capture);
+        foreach (var width in new[] { 700, 1400 })
+        {
+            var lines = FlightLine.Build([Flight(false, code: "PIL770"), Flight(true), Flight(true, LongWhy, "PIL772")], [], Live.At, [Leg(LegState.Planned, 1)]);
+            using var vessel = new RgbaImageRenderer((uint)width, 420);
+            var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath };
+            chrome.Flights.Mode = FlightsViewMode.List;
+            chrome.Flights.CanCommand = true;
+            chrome.Flights.OnAction = _ => Task.FromResult<string?>(null);
+            chrome.Flights.Render(new FlightsScreen([.. lines], "test", Live.At), new RectF32(0, 0, width, 420));
+            File.WriteAllBytes(Path.Combine(dir, $"{tag}-{width}.png"), PngWriter.Encode(vessel.Surface.Pixels, width, 420));
         }
     }
 
@@ -97,7 +155,7 @@ public sealed class FlightHoldPageTests
         {
             if (detail)
             {
-                string.Join(" ", text).Replace("  ", " ").ShouldContain($"on hold by seb: {Why}");
+                string.Join(" ", text).Replace("  ", " ").ShouldContain($"on hold (by seb: {Why})");
             }
             else
             {
