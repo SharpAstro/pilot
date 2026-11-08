@@ -273,6 +273,17 @@ public sealed record NodeNote
     public required string Who { get; init; }
 
     public required string Text { get; init; }
+
+    /// <summary>
+    /// Set on a standing order (<c>order node &lt;text&gt;</c>), as <c>o1</c>, <c>o2</c>: the id <c>order-done</c> retires it by. A
+    /// plain note has none. A later <see cref="NoteAddedEvent"/> with the same id replaces the order (that is how it is retired).
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? Id { get; init; }
+
+    /// <summary>When a standing order was retired; null while it stands.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? RetiredAt { get; init; }
 }
 
 /// <summary>A flight was created.</summary>

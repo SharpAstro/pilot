@@ -58,7 +58,7 @@ public sealed class OneNodePerFlightTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private static string Git(string cwd, params string[] args)
@@ -154,7 +154,7 @@ public sealed class OneNodePerFlightTests : IDisposable
         result.Error!.ShouldContain("on DE1");
         result.Error!.ShouldContain("PEER7");
         var card = _state.Cards().Single(c => c.Kind == LegCommander.FlownElsewhereKind);
-        (card.Bin, card.Subject).ShouldBe((CardBin.Ring, Verbs.FlightTarget(flight.Code)));
+        (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, Verbs.FlightTarget(flight.Code)));
         card.Title.ShouldContain("DE1");
     }
 
@@ -170,7 +170,7 @@ public sealed class OneNodePerFlightTests : IDisposable
 
         result.Ok.ShouldBeFalse();
         result.Error!.ShouldContain("on DE1");
-        _state.Cards().Single(c => c.Kind == LegCommander.FlownElsewhereKind).Bin.ShouldBe(CardBin.Ring);
+        _state.Cards().Single(c => c.Kind == LegCommander.FlownElsewhereKind).Bin.ShouldBe(CardBin.ForYou);
         _state.Legs(flight.Code).Single().State.ShouldBe(LegState.Planned);
     }
 

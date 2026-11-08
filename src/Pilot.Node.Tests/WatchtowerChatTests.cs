@@ -41,7 +41,7 @@ public sealed class WatchtowerChatTests : IDisposable
         _profile.Dispose();
         if (Directory.Exists(_data))
         {
-            Directory.Delete(_data, recursive: true);
+            TestDirs.DeleteTree(_data);
         }
     }
 
@@ -119,6 +119,72 @@ public sealed class WatchtowerChatTests : IDisposable
         // The running one says more: the same index carries on.
         _profile.Append(_profile.TranscriptPath(Second), Said("assistant", "Anything else?"));
         _chat.Page(4).Entries.Select(e => (e.Index, e.Text)).ShouldBe([(5, "Anything else?")]);
+    }
+
+    private static string SaidWithUuid(string who, string text, string uuid)
+    {
+        var content = who == "user" ? $"\"{text}\"" : "[{\"type\":\"text\",\"text\":\"" + text + "\"}]";
+        return $$"""{"type":"{{who}}","uuid":"{{uuid}}","timestamp":"2026-10-20T09:00:00Z","message":{"role":"{{who}}","content":""" + content + "}}";
+    }
+
+    [Fact]
+    public async Task EveryEntryKeepsItsIdWhileItsIndexShiftsAsAWindowGrowsAndAFreshWatchtowerStarts()
+    {
+        const string third = "cccc0003-0000-4000-8000-000000000003";
+        await TwoWatchtowersAsync();
+        _profile.Append(_profile.TranscriptPath(Second), SaidWithUuid("assistant", "Done with the card.", "u-second-3"));
+
+        var before = _chat.Page(-1).Entries;
+        before.Select(e => e.Id).ShouldAllBe(id => !string.IsNullOrEmpty(id));
+        before.Select(e => e.Id).Distinct().Count().ShouldBe(before.Length);
+        before[2].Id.ShouldBe($"divider:{Second}");
+        before[5].Id.ShouldBe($"{Second}:u-second-3:0");
+        var idOf = before.ToDictionary(e => e.Text, e => (e.Id, e.Index));
+
+        // An earlier generation's transcript grows (its window changes length), and a third watchtower starts.
+        _profile.Append(_profile.TranscriptPath(First), Said("assistant", "Late word from the first."));
+        _time.Advance(TimeSpan.FromHours(1));
+        (await _tower.RestartAsync("again", Ct)).ShouldBeNull();
+        Row("job00002", Second, SessionState.Ended);
+        Row("job00003", third, SessionState.Idle);
+        _profile.Append(_profile.TranscriptPath(third), Said("user", "[node] Another card"), Said("assistant", "Seen."));
+
+        var after = _chat.Page(-1).Entries;
+        after.Select(e => e.Id).ShouldAllBe(id => !string.IsNullOrEmpty(id));
+        after.Select(e => e.Id).Distinct().Count().ShouldBe(after.Length);
+        after.Single(e => e.Kind == TranscriptKind.Divider && e.Text.Contains("again")).Id.ShouldBe($"divider:{third}");
+
+        var moved = 0;
+        foreach (var entry in after.Where(e => idOf.ContainsKey(e.Text)))
+        {
+            var (id, index) = idOf[entry.Text];
+            entry.Id.ShouldBe(id);
+            if (entry.Index != index)
+            {
+                moved++;
+            }
+        }
+        moved.ShouldBeGreaterThan(0);
+        after.Select(e => e.Text).ShouldContain("Late word from the first.");
+    }
+
+    [Fact]
+    public async Task LinesWithoutAUuidThatShareAMessageIdStillGetOneIdEach()
+    {
+        (await _tower.RestartAsync("first", Ct)).ShouldBeNull();
+        Row("job00001", First, SessionState.Idle);
+        // One assistant message written as several lines, none with a uuid: the message id alone would name them all alike.
+        _profile.Append(_profile.TranscriptPath(First),
+            """{"type":"assistant","message":{"id":"m7","role":"assistant","content":[{"type":"text","text":"First part."}]}}""",
+            """{"type":"assistant","message":{"id":"m7","role":"assistant","content":[{"type":"text","text":"Second part."}]}}""",
+            """{"type":"assistant","message":{"id":"m7","role":"assistant","content":[{"type":"text","text":"Third part."}]}}""");
+
+        var entries = _chat.Page(-1).Entries.Where(e => e.Kind == TranscriptKind.Assistant).ToArray();
+        entries.Length.ShouldBe(3);
+        entries.Select(e => e.Id).Distinct().Count().ShouldBe(3);
+
+        // Read again, the same entries carry the same ids: a follow keys on them.
+        _chat.Page(-1).Entries.Where(e => e.Kind == TranscriptKind.Assistant).Select(e => e.Id).ShouldBe(entries.Select(e => e.Id));
     }
 
     [Fact]

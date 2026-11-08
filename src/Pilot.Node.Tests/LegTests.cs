@@ -85,6 +85,11 @@ internal sealed class FakeChecks : ICheckRunner
     /// <summary>Awaited as each run begins: a check that takes as long as the test says. Null answers at once.</summary>
     public Func<Task>? OnRun { get; set; }
 
+    /// <summary>What the node says about its own stopping, as a real runner reads it from its lifetime (pilot #819).</summary>
+    public bool Stopping { get; set; }
+
+    public bool NodeStopping => Stopping;
+
     public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null)
     {
         Runs.Add((command, cwd));
@@ -700,12 +705,16 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, DequeueAsync fails with it.</summary>
     public string? DequeueFails { get; set; }
 
+    /// <summary>Run as a dequeue is made, before it is recorded: what a test reads of the world at that moment (PIL836: whether the push came first).</summary>
+    public Action? OnDequeued { get; set; }
+
     public Task DequeueAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
         if (DequeueFails is { } why)
         {
             return Task.FromException(new FlightException(why));
         }
+        OnDequeued?.Invoke();
         Dequeued.Add(number);
         // The queue lets it go: the PR is not queued any more, and GitHub says it was removed by hand.
         if (Queue is { Queued: true } queued)
@@ -1087,7 +1096,9 @@ public abstract class LegCommanderTestsBase : IDisposable
     private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2l-" + Guid.NewGuid().ToString("N")[..8]);
-    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    /// <summary>The state's journal, so a test can load what it holds into a fresh state as a restart does.</summary>
+    private protected readonly InMemoryJournal _journal = new();
+    private protected readonly NodeState _state;
     private protected readonly FakeWorkers _workers = new();
     private protected readonly FakeChecks _checks = new();
     private protected readonly FakeGitHub _github = new();
@@ -1098,6 +1109,7 @@ public abstract class LegCommanderTestsBase : IDisposable
 
     protected LegCommanderTestsBase()
     {
+        _state = new NodeState(_journal, TimeProvider.System);
         Directory.CreateDirectory(Repo);
         Git(Repo, "init", "-q", "-b", "main");
         File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
@@ -1150,11 +1162,14 @@ public abstract class LegCommanderTestsBase : IDisposable
 
     private protected LegRow L(string name) => _state.Legs("TIA1").Single(l => l.Name == name);
 
+    /// <summary>The parser leg's check as <see cref="FlightWithTwoLegs"/> plans it: its filter widened to the invariant guards.</summary>
+    private protected const string PlannedCheck = "dotnet test --filter '(A)|Category=Invariant'";
+
     private protected async Task<FlightRow> FlightWithTwoLegs()
     {
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Parse the ephemeris", "done-when=The parser tests pass",
-            "check=dotnet test", "budget=4_000_000", "model=sonnet", "item=Write the parser", "item=Test it")).Ok.ShouldBeTrue();
+            "check=dotnet test --filter A", "budget=4_000_000", "model=sonnet", "item=Write the parser", "item=Test it")).Ok.ShouldBeTrue();
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=render", "goal=Draw the planets", "done-when=The capture shows them")).Ok.ShouldBeTrue();
         return _state.Flights().Single();
     }
@@ -1370,7 +1385,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         _state.Legs("TIA1").Select(l => (l.Name, l.Order)).ShouldBe([("parser", 1), ("render", 2)]);
         var parser = L("parser");
         parser.Checklist.Select(i => i.Text).ShouldBe(["Write the parser", "Test it"]);
-        (parser.Budget, parser.Model, parser.Check, parser.State).ShouldBe((4_000_000L, "sonnet", "dotnet test", LegState.Planned));
+        (parser.Budget, parser.Model, parser.Check, parser.State).ShouldBe((4_000_000L, "sonnet", PlannedCheck, LegState.Planned));
 
         // Planned again: replaced in its place.
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Parse it better", "done-when=The parser tests pass")).Ok.ShouldBeTrue();
@@ -1638,7 +1653,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         start.Brief.ShouldContain("Leave nothing behind in the plane: every change is committed before you finish");
         start.Brief.ShouldContain("1. [ ] Write the parser");
         start.Brief.ShouldContain("The parser tests pass");
-        start.Brief.ShouldContain("reruns `dotnet test`");
+        start.Brief.ShouldContain($"reruns `{PlannedCheck}`");
         start.Brief.ShouldContain(flight.Branch);
         // A leg fails only for what stops its Done-when (PIL277 failed a finished leg over a capture it could not attach).
         start.Brief.ShouldContain("Fail only for what stops the Done-when");
@@ -1677,7 +1692,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         await Leg(Verbs.Check, "flight/TIA1/parser", "2");
         _checks.Next = new CheckRun(1, "Failed: 2, Passed: 40");
         var failed = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "all good");
-        failed.Error.ShouldNotBeNull().ShouldContain("check `dotnet test` failed (1)");
+        failed.Error.ShouldNotBeNull().ShouldContain($"check `{PlannedCheck}` failed (1)");
         L("parser").State.ShouldBe(LegState.Flying);
         L("parser").Report.ShouldNotBeNull().ShouldContain("Failed: 2");
         Path.GetFullPath(_checks.Runs.Single().Cwd).ShouldBe(Path.GetFullPath(flight.Worktree));
@@ -1782,7 +1797,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         // The rerun is on the leg while it runs, so pilot status and the windows show it; the refusal says since when, where, and
         // that the worker ends its turn (pilot #487). The refused retry leaves the recording as the running finish made it.
         var recheck = L("parser").Recheck.ShouldNotBeNull();
-        (recheck.Check, recheck.Outcome).ShouldBe(("dotnet test", null));
+        (recheck.Check, recheck.Outcome).ShouldBe((PlannedCheck, null));
         var since = $"{recheck.Since.ToLocalTime():HH:mm}";
         FlightWaiting.LegState(L("parser")).ShouldBe($"rechecking since {since}");
         retry.Error.ShouldContain($"since {since} already");
@@ -1880,7 +1895,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         _checks.Next = new CheckRun(1, "Failed: 2, Passed: 40");
         var failed = await FinishWhileRunning(failing);
         failing.SetResult();
-        (await failed).Error.ShouldNotBeNull().ShouldContain("check `dotnet test` failed (1)");
+        (await failed).Error.ShouldNotBeNull().ShouldContain($"check `{PlannedCheck}` failed (1)");
         (L("parser").State, L("parser").Recheck).ShouldBe((LegState.Flying, null));
 
         // The leg changes meanwhile (sent round): the finish records nothing, and the recheck does not outlive it.
@@ -1933,7 +1948,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     {
         var result = await FailingFinishAsync(TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(50));
 
-        result.Error.ShouldNotBeNull().ShouldContain("check `dotnet test` failed (1)");
+        result.Error.ShouldNotBeNull().ShouldContain($"check `{PlannedCheck}` failed (1)");
         var recheck = L("parser").Recheck.ShouldNotBeNull();
         recheck.Outcome.ShouldNotBeNull().ShouldContain("failed (1)");
         recheck.Outcome.ShouldContain("Failed: 2, Passed: 40");
@@ -1957,7 +1972,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     {
         var result = await FailingFinishAsync(TimeSpan.FromMilliseconds(20), TimeSpan.FromMinutes(5));
 
-        result.Error.ShouldNotBeNull().ShouldContain("check `dotnet test` failed (1)");
+        result.Error.ShouldNotBeNull().ShouldContain($"check `{PlannedCheck}` failed (1)");
         (L("parser").State, L("parser").Recheck).ShouldBe((LegState.Flying, null));
     }
 
@@ -2029,9 +2044,9 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         (await Run(Verbs.FinishLeg, "flight/TIA1/parser", "du1-tia1-parser", "failed", "no ephemeris here")).Ok.ShouldBeTrue();
         var failed = _state.Cards(openOnly: true).ShouldHaveSingleItem();
         (failed.Bin, failed.Kind, failed.Subject, failed.Detail).ShouldBe((CardBin.Ring, "leg-failed", "flight/TIA1/parser", "no ephemeris here"));
-        failed.Title.ShouldBe("TIA1/parser stopped: no ephemeris here");
+        failed.Title.ShouldBe("TIA1/parser: no ephemeris here");
         failed.Title.ShouldNotContain("gave up");
-        failed.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Send parser round again to no ephemeris here", Verbs.GoAround), ("Accept parser as it stands, the failure kept in its report", Verbs.FinishLeg)]);
+        failed.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Send it round: a fresh worker fixes it and finishes", Verbs.GoAround), ("Accept as it is: the flight goes on, the failure kept in its report", Verbs.FinishLeg)]);
         failed.Choices.ShouldNotContain(c => c.Label.Contains("Mark done anyway"));
 
         _workers.Stopped.ShouldBeEmpty();
@@ -2113,7 +2128,9 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "late read");
         _github.Pr = new PullRequest(63, "OPEN", pushed, "https://github.com/x/tianwen/pull/63");
-        (await Leg(Verbs.Merge, "flight/TIA1", pushed[..8])).Error.ShouldBe("TIA1's plane holds 1 commit past #63's head: open the PR again (flight pr) to push it, and review what is new before it lands");
+        var unpushedRefusal = await Leg(Verbs.Merge, "flight/TIA1", pushed[..8]);
+        unpushedRefusal.Error.ShouldBe("TIA1's plane holds 1 commit past #63's head: open the PR again (flight pr) to push it, and review what is new before it lands");
+        unpushedRefusal.Refusal.ShouldBe(MergeRefusals.Unpushed);
         var tip = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
         _github.Pr = new PullRequest(63, "OPEN", tip, "https://github.com/x/tianwen/pull/63");
 

@@ -88,8 +88,9 @@ public static class MergeKinds
 /// <param name="Reason">What blocks it, in words, when <see cref="MergeKinds.Blocked"/>; what an <see cref="MergeKinds.Armed"/> merge waits for once its checks are green (<c>a review</c>), when it does.</param>
 /// <param name="FailedName">The first failed check, and <paramref name="FailedLink"/> its page.</param>
 /// <param name="DroppedFromQueue">Why GitHub took it out of the queue unmerged, when it did and it is not queued again.</param>
+/// <param name="Draft">The PR is a draft: the <see cref="MergeKinds.Blocked"/> that is cleared by marking it ready for review, not by an approval.</param>
 /// <param name="AwaitsCheck">A <see cref="MergeKinds.Pending"/> with every check shown green: GitHub says BLOCKED because a required check has yet to be created (a gate job starts only once the builds finish), the gap between the last build and it.</param>
-public sealed record MergeState(string Kind, int Done = 0, int Total = 0, int? Position = null, string? Reason = null, string? FailedName = null, string? FailedLink = null, string? DroppedFromQueue = null, bool AwaitsCheck = false)
+public sealed record MergeState(string Kind, int Done = 0, int Total = 0, int? Position = null, string? Reason = null, string? FailedName = null, string? FailedLink = null, string? DroppedFromQueue = null, bool AwaitsCheck = false, bool Draft = false)
 {
     /// <summary>The checks' progress as the card says it: <c>6 of 7</c>; null with no checks.</summary>
     public string? Progress => Total > 0 ? ArmedProgress.Say(Done, Total) : null;

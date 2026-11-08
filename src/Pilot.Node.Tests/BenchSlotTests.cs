@@ -237,23 +237,29 @@ public sealed class BenchSlotTests : JobTestsBase
     }
 
     [Fact]
-    public async Task ALegWorkerStartIsHeldWhileABenchIsQueuedOrRunningAndAdmittedAfter()
+    public async Task ALegWorkerAndReviewerAreAdmittedWhileABenchIsQueuedAndWhileItRunsButAJobStillWaits()
     {
         var (jobs, _, _, gone) = Idle(() => _cpu);
         var roomy = new RoleModels(NodeSettings.With(new NodeSettings(), "opus-cap", ["5"]).Settings!);
         var gate = new AdmissionGate(_state, () => roomy, "DE1");
-        gate.Ask(AdmissionRole.Worker, null, null).ShouldBeOfType<AdmissionDecision.Admit>();
 
         var first = Hand(jobs, Sleep(30));
         await Until(first, j => j.State == JobState.Running);
-        var bench = HandBench(jobs, Echo("bench"));
+        var bench = HandBench(jobs, Sleep(30));
         Row(bench).State.ShouldBe(JobState.Queued);
-        gate.Ask(AdmissionRole.Worker, null, null).ShouldBeOfType<AdmissionDecision.Wait>().Why.ShouldContain($"a benchmark ({bench}) holds the node");
-        gate.Ask(AdmissionRole.Reviewer, null, null).ShouldBeOfType<AdmissionDecision.Wait>();
+        gate.Ask(AdmissionRole.Worker, null, null).ShouldBeOfType<AdmissionDecision.Admit>();
+        gate.Ask(AdmissionRole.Reviewer, null, null).ShouldBeOfType<AdmissionDecision.Admit>();
 
         await gone(first);
         Look(jobs);
-        await Until(bench, j => j.EndedAt is not null);
+        await Until(bench, j => j.State == JobState.Running);
         gate.Ask(AdmissionRole.Worker, null, null).ShouldBeOfType<AdmissionDecision.Admit>();
+        gate.Ask(AdmissionRole.Reviewer, null, null).ShouldBeOfType<AdmissionDecision.Admit>();
+
+        var later = Hand(jobs, Echo("later"));
+        Row(later).State.ShouldBe(JobState.Queued);
+        Row(later).Step.ShouldNotBeNull().ShouldContain($"a benchmark ({bench}) holds the node");
+
+        await gone(bench);
     }
 }

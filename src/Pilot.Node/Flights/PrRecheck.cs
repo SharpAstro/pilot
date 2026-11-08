@@ -413,9 +413,9 @@ public sealed class PrRecheck : IHostedService
                     : Now(code)?.Review?.ReviewedHead is { Length: > 0 } read ? $"review restarted at {CommitRefs.Short(read)}" : "its review has not started yet";
                 return await FinishAsync(entry, pr, $"brought up to date with {onto}, {restarted}", LabelOf(code), cancellationToken);
             }
-            // A merge that conflicts goes to the watchtower as PrChecks hands it, and the Handled line says so too.
-            var notSent = await legs.ConflictsAsync(code, why, cancellationToken);
-            return await FinishAsync(entry, pr, $"{why}{(notSent is null ? ": the watchtower is told to resolve it in the plane" : $" ({notSent})")}", LabelOf(code), cancellationToken);
+            // A merge that conflicts is a worker's to resolve as PrChecks hands it (told if a leg flies, else the last leg goes round), and the Handled line says so too.
+            var notSent = await legs.ResolveConflictAsync(code, why, cancellationToken);
+            return await FinishAsync(entry, pr, $"{why}{(notSent is null ? $": {LegCommander.WorkerResolves}" : $" ({notSent})")}", LabelOf(code), cancellationToken);
         }
 
         if (checks == ChoiceStatus.Failing && flight.Review is { State: ReviewState.Passed })

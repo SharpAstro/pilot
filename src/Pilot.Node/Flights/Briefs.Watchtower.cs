@@ -6,15 +6,47 @@ namespace Pilot.Node.Flights;
 
 public static partial class Briefs
 {
+    private const int MaxOrderText = 500;
+    private const int MaxOrdersListed = 20;
+    private const int MaxOrdersTotal = 4000;
+
     /// <summary>
     /// What the watchtower is told when it starts: its job, what it may and may not do, the commands it does it with,
     /// and where every flight and open card stands now. Briefed from the node's state, never an earlier watchtower's
     /// conversation, so a fresh one picks up where the last left off (#36).
     /// </summary>
     /// <param name="model">The model the watchtower runs on, when the node chose one (#114): said, so a lighter model rings for a judgement rather than makes it.</param>
-    public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot, string? model = null, string? machine = null, IReadOnlySet<string>? alreadyTold = null, IReadOnlyList<StaleItem>? stale = null)
+    public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot, string? model = null, string? machine = null, IReadOnlySet<string>? alreadyTold = null, IReadOnlyList<StaleItem>? stale = null, IReadOnlyList<NodeNote>? orders = null)
     {
         var text = new StringBuilder(WatchtowerTemplate(name, pilot, model, machine));
+        // Before everything that changes: an order the controller gave an earlier watchtower (a hold, a scope rule) outlives it (#782).
+        // Not part of the fingerprint: adding an order must never replace the live watchtower.
+        text.AppendLine("## Standing orders");
+        text.AppendLine("Read these before acting: they are the controller's, kept by the node, and bind you as they bound the watchtower before you.");
+        var standing = orders?.Where(o => o.Id is { Length: > 0 } && o.RetiredAt is null).ToList() ?? [];
+        if (standing.Count == 0)
+        {
+            text.AppendLine("None stand now.");
+        }
+        // Capped: the brief is a first prompt on a command line, and a pasted paragraph kept as an order must not fail every later start.
+        var listed = 0;
+        var count = 0;
+        foreach (var order in standing)
+        {
+            var line = order.Text.ReplaceLineEndings(" ");
+            line = line.Length > MaxOrderText ? line[..MaxOrderText] + "..." : line;
+            if (count >= MaxOrdersListed || listed + line.Length > MaxOrdersTotal)
+            {
+                text.AppendLine($"(more orders stand than fit here: `{pilot} orders` lists them all)");
+                break;
+            }
+            count++;
+            listed += line.Length;
+            text.AppendLine($"- {order.Id} (from {order.Who}): {line}");
+        }
+        text.AppendLine($"When the controller gives you an order that should outlast your session (a hold on a flight or repo, a scope rule), record it with `{pilot} order \"<their words>\"`;");
+        text.AppendLine($"`{pilot} orders` lists them, and `{pilot} order done <id>` retires one when they lift it. Never retire one on your own say-so.");
+        text.AppendLine();
         if (stale is { Count: > 0 })
         {
             text.AppendLine($"## {StaleSection.Heading}");
@@ -231,10 +263,12 @@ public static partial class Briefs
         text.AppendLine("  Write an idea or its flight as a link wherever you name it.");
         text.AppendLine();
         text.AppendLine("## Getting reviewed work in");
-        text.AppendLine("- A conflict with the base (a review or a dropped queue entry says the PR conflicts): resolve it yourself in the flight's plane.");
+        text.AppendLine("- A conflict with the base (a review or a dropped queue entry says the PR conflicts): the node resolves it itself and rings no one. A worker flying the");
+        text.AppendLine("  leg is told to merge the base in; otherwise the last leg is sent round once for each head of the base, told the conflicting files and the base's commits");
+        text.AppendLine("  that touch them; a worker that fails is followed at once by a stronger one. Leave it to the workers. A conflict-decision card (the last worker found the two sides change the same behaviour in opposite ways) is the person's to choose: leave it open. Only if the last worker failed without that report, and its leg-failed card says so, resolve it yourself in the flight's plane:");
         text.AppendLine("  `git fetch origin`, `git merge origin/<base>`, resolve every file so both sides' work stays, build and run the tests the");
         text.AppendLine($"  leg's check names through `{pilot} run`, commit the merge, `git push` (plain, always),");
-        text.AppendLine($"  then `{pilot} flight review <code>`. A pr-conflicts card means the node's own worker already tried (it stopped, or the same conflict came back), so the merge is yours now; the card's Resolve the conflict choice starts a fresh worker on the leg's work as it stands, for a conflict that turns out to be real work (two designs, a goal to drop), never for a merge you can resolve.");
+        text.AppendLine($"  then `{pilot} flight review <code>`.");
         text.AppendLine("- A review that asks for small changes (a wording, a test flag, a missing line, a doc comment): make them yourself in the");
         text.AppendLine($"  plane, test, commit, push, and `{pilot} flight review <code>`. Send the leg round (the card's button) only for work a worker should");
         text.AppendLine("  do: new code, a design change, more than a few lines. A fresh worker costs a whole leg's tokens; a fix of yours costs a turn.");
@@ -242,15 +276,21 @@ public static partial class Briefs
         text.AppendLine("  and raises a go-around-cap card listing each round's reason: that card is the person's, so say so on it and leave it to them.");
         text.AppendLine("- A review loop is your job. At a PR's third review round with changes the node sends no leg round and starts no reviewer: it");
         text.AppendLine("  raises a review-loop card with each round's findings, and a fourth round starts only on your word. Read the findings of every round.");
-        text.AppendLine("  Findings that repeat, or that are not blocking, you pass with them noted (the card's Pass with notes) and make the small ones");
-        text.AppendLine("  yourself in the plane. A real disagreement between the reviewer and the worker you settle in the plane: read both, decide which is");
+        text.AppendLine("  Findings that repeat, or that are not blocking, you pass with them noted (the card's Pass with notes); the notes then go to a fixer leg as the");
+        text.AppendLine("  hold rule below says, not to your own hands. A real disagreement between the reviewer and the worker you settle in the plane: read both, decide which is");
         text.AppendLine($"  right, and commit the fix or the note. Only what you cannot settle rings the controller. For one more round give your word with");
         text.AppendLine($"  `{pilot} flight allow-round <code> <why>`, which lets exactly one more go-around or reviewer start; without it the node refuses a fourth round.");
-        text.AppendLine("- A review that passes with notes puts its flight in a holding pattern for a few minutes (about 10): autopilot's merge and the card's Merge are held");
-        text.AppendLine($"  only while you work on it. Take the hold with `{pilot} flight hold <code> [why]`, or by committing in the plane, and make the small fixes, then");
-        text.AppendLine($"  either `{pilot} flight clear <code> [why]` (the flight may land as it is) or push them with `{pilot} flight pr <code>` (the push ends the hold,");
-        text.AppendLine("  and its CI and review gate the merge as for any push). A hold you took is kept, and rings the person after 30 minutes. Leave it alone and");
-        text.AppendLine("  the node releases it: the flight merges at the reviewed head with the notes on a For-you card, to be done in a follow-up.");
+        text.AppendLine("- A review that passes with notes puts its flight in a holding pattern: autopilot's merge and the card's Merge are held. A hold's notes");
+        text.AppendLine($"  go to a fixer worker by default: within a few minutes of the hold, plan and start a review-notes leg carrying the notes (`{pilot} leg plan`,");
+        text.AppendLine($"  then `{pilot} leg start`; the finished leg's push ends the hold and the review runs again), or clear the flight with");
+        text.AppendLine($"  `{pilot} flight clear <code> <why>` when the notes are not worth a round. Say which you did on the review-notes card. A fix of your own");
+        text.AppendLine($"  only for a one-line change: take the hold with `{pilot} flight hold <code> [why]` (or commit in the plane), make it, then `{pilot} flight pr <code>`.");
+        text.AppendLine("  With the autopilot on the node has planned the review-notes leg itself (the card names it): there is nothing to do but watch it.");
+        text.AppendLine("  A hold holds only while it is being worked on: a hold no leg and no `flight hold` or commit in the plane takes within a few minutes is");
+        text.AppendLine("  released, and the flight merges at the reviewed head with the notes on a For-you card, to be done in a follow-up. A hold you took and left");
+        text.AppendLine("  rings the person after 30 minutes. With no watchtower running (it ends by design after a reply), five minutes after the hold the node pushes");
+        text.AppendLine("  any commits left in the plane past the reviewed head (as `flight pr` does, so a fresh review gates the merge), or posts the notes on the PR as");
+        text.AppendLine("  one comment and releases the hold. So make or clear the fixes in the turn you take the card.");
         text.AppendLine("- A failure in a test a PR does not touch is a bug with a cause to find, and the node files it as an investigation (an issue, priority high, and a");
         text.AppendLine("  flight). The first time it hits a PR the node retries once (queues it again, or runs its failed jobs again). When it comes again, in the same PR or");
         text.AppendLine("  in another flight, a Ring card puts the tower on alert: it names the failure, the investigation and the flights hit, which the node holds (the");

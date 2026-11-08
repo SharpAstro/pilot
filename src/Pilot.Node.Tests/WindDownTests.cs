@@ -58,8 +58,14 @@ public sealed class WindDownTests : IDisposable
 
     private string Repo => Path.Combine(_root, "pilot");
 
+    private readonly string _data = Path.Combine(Path.GetTempPath(), "pilot-tower-" + Guid.NewGuid().ToString("N"));
+
     public void Dispose()
     {
+        if (Directory.Exists(_data))
+        {
+            TestDirs.DeleteTree(_data);
+        }
         try
         {
             Git(Repo, "worktree", "prune");
@@ -71,7 +77,7 @@ public sealed class WindDownTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private static string Git(string cwd, params string[] args)
@@ -149,7 +155,7 @@ public sealed class WindDownTests : IDisposable
         _state.PutSession(Row("rev11111", "du1-pil542-review", SessionRole.Reviewer, flight.Code, SessionState.Idle));
         _state.PutJob(new JobRow { Id = "j1", Command = "dotnet test", Cwd = "/work", Owner = "rev11111", State = JobState.Running, LogPath = "/tmp/j1.log", StartedAt = Start, Timeout = TimeSpan.FromHours(1) });
         var compacted = new List<CommandRequest>();
-        var compactor = new Compactor(_state, new Watchtower(_state, _workers, Run, new NodeOptions("/tmp/n.sock", "/tmp/pilot2", MachinePrefix: "DU1"), _time),
+        var compactor = new Compactor(_state, new Watchtower(_state, _workers, Run, new NodeOptions("/tmp/n.sock", _data, MachinePrefix: "DU1"), _time),
             (c, _) => { compacted.Add(c); return Task.FromResult(_state.Complete(c, null)); }, _time) { Ledger = _ledger };
         _time.Advance(TimeSpan.FromHours(2));
 

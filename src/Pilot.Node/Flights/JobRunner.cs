@@ -92,6 +92,32 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>The session ledger, to tell a session that ended normally from one that was replaced; null where none is kept (#601).</summary>
     public Sessions.SessionLedger? Ledger { get; set; }
 
+    /// <summary>
+    /// Completes when the session tracker has made its first poll (<see cref="Sessions.SessionTracker.FirstPoll"/>), as
+    /// <see cref="Watchtower.Ready"/> does; the node sets it, and null (a bare runner) tells at once. A node that has just started holds the
+    /// session rows its journal restored, and only that poll says which of them are live: a tell that judged its owner (ended, gone,
+    /// replaced) before it could mark a live worker's job told with no say (pilot #810).
+    /// </summary>
+    public Func<Task>? Ready { get; init; }
+
+    /// <summary>How long the tells wait for <see cref="Ready"/> in all, before they judge from the rows there are, as the sessions route does after its first-poll budget.</summary>
+    public TimeSpan ReadyBudget { get; init; } = TimeSpan.FromSeconds(10);
+
+    // The one wait for Ready that every tell shares: a poll that never ends holds the tells for ReadyBudget in all, not for each.
+    private Task? _firstPollSeen;
+
+    private Task FirstPollSeen() => LazyInitializer.EnsureInitialized(ref _firstPollSeen, async () =>
+    {
+        try
+        {
+            await Ready!().WaitAsync(ReadyBudget, time, _stopping);
+        }
+        catch (TimeoutException)
+        {
+            // The rows there are, then: a first poll that does not end is not a reason to hold a job's end for ever.
+        }
+    });
+
     /// <summary>The node log: one line per tell with its outcome and the target session's state (#756).</summary>
     public TextWriter Log { get; init; } = TextWriter.Null;
 
@@ -190,6 +216,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     // Cancels that reached the dispatcher before their job did (Run puts the row, then hands the job over, and a cancel
     // can land between the two): the job is cancelled before its turn when it arrives. The dispatcher's alone.
     private readonly Dictionary<string, (string Who, string? Dropped)> _withdrawnEarly = new(StringComparer.Ordinal);
+    // Adoptions that reached the dispatcher before their job did (the same race as a cancel): applied when the job arrives.
+    private readonly Dictionary<string, Adopted> _adoptedEarly = new(StringComparer.Ordinal);
     // Read-modify-write of a running job's row (pause, resume, the step): one at a time, so none loses another's change.
     private readonly object _rowLock = new();
     // The checks a caller awaits (RunCheckAsync), by job id: completed when the job ends however it ends.
@@ -215,6 +243,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     internal sealed record HandedOver(JobRow Job) : Signal;
 
     internal sealed record Withdrawn(string Id, string Who, string? Dropped = null) : Signal;
+
+    /// <summary>A job re-owned by its owner's replacement (#777): the dispatcher's own copy takes the new owner, so its next write keeps it.</summary>
+    internal sealed record Adopted(string Id, string? Owner, string? OwnerName, string? Flight, string? Leg) : Signal
+    {
+        public JobRow Apply(JobRow job) => job with { Owner = Owner, OwnerName = OwnerName, Flight = Flight, Leg = Leg };
+    }
 
     internal sealed record LookAgain : Signal
     {
@@ -394,6 +428,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     public async Task RecoverAsync(CancellationToken cancellationToken)
     {
         var left = state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && !_mine.ContainsKey(j.Id)).ToList();
+        // The jobs that ended while no node ran, told once every other job is back in its place: a tell waits for the tracker's
+        // first poll (see TellAsync), and no live job's follow or queued job's turn waits behind it.
+        var toTell = new List<(JobRow Ended, string[] Last)>();
         // A running check is followed like a running job: the stop let go of its kill-on-close hold, so it outlived the node, and the
         // finish that comes back waits on it by id (RunCheckAsync). One with no pid or start time cannot be found again, so it is ended.
         // A queued one has not started, so it stays queued, in its place with the other carried jobs (below) (pilot #737).
@@ -409,13 +446,20 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         foreach (var job in left.Where(j => j.State == JobState.Running))
         {
             _mine[job.Id] = 0;
-            await RecoverRunningAsync(job, cancellationToken);
+            if (RecoverRunning(job) is { } gone)
+            {
+                toTell.Add(gone);
+            }
         }
         // Back on the queue through the dispatcher, which owns it, in the order they were handed over.
         foreach (var job in left.Where(j => j.State == JobState.Queued).OrderBy(j => j.QueuedAt ?? j.StartedAt).ThenBy(j => j.Id, StringComparer.Ordinal))
         {
             _mine[job.Id] = 0;
             _signals.Writer.TryWrite(new HandedOver(job));
+        }
+        foreach (var (ended, last) in toTell)
+        {
+            await TellAsync(ended, cancellationToken, last);
         }
     }
 
@@ -448,7 +492,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
     }
 
-    private async Task RecoverRunningAsync(JobRow job, CancellationToken cancellationToken)
+    /// <summary>Takes up a job a previous node left running; one that ended while no node ran is ended here and returned, for its owner to be told.</summary>
+    private (JobRow Ended, string[] Last)? RecoverRunning(JobRow job)
     {
         var exitPath = job.ExitPath ?? ExitPathOf(job.LogPath);
         // A pid alone proves nothing: a process that took it since has another start time.
@@ -476,7 +521,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 }
             }
             _watches[job.Id] = Task.Run(() => WatchAsync(job, process, fromEnd: true), CancellationToken.None);
-            return;
+            return null;
         }
 
         // A check gone with no exit recorded was ended by the kill-on-close hold of a node that crashed (a graceful stop lets it go,
@@ -485,7 +530,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         if (job.Kind == JobKind.Check && ReadExit(exitPath) is null)
         {
             EndOrphanedCheck(job, "ended while the node was down with no exit recorded (a crash of the node ended it), so the next finish runs it afresh");
-            return;
+            return null;
         }
 
         // Gone: how it ended is what its wrapper wrote.
@@ -511,7 +556,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             Finish(ended, last);
         }
         DetachedShell.DeleteScripts(job.ScriptPath);
-        await TellAsync(ended, cancellationToken, last);
+        return (ended, last);
     }
 
     /// <summary>When a job that ended while the node was down ended: when its exit file was written, else now.</summary>
@@ -592,6 +637,34 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         else if (command.Target != Verbs.NodeTarget)
         {
             return state.Complete(command, $"run takes a session to wake ({Verbs.SessionTargetPrefix}<id>) or the node, not {command.Target}");
+        }
+
+        // A session that replaced another of its name and role takes up the predecessor's queued job of the same command in the
+        // same folder, rather than queueing the same work twice (its end already goes to the replacement, #601). A running one only
+        // for a reviewer, which reads the head it was started on: a replacement worker edits the plane, so a run started before
+        // its edits would hand it a stale result.
+        if (owner is not null && !alone)
+        {
+            var sessions = state.Sessions();
+            var inherited = state.Jobs().FirstOrDefault(j => (j.State == JobState.Queued || (j.State == JobState.Running && owner.Role == SessionRole.Reviewer)) && j.Kind == JobKind.Run && j.Owner is { Length: > 0 } && j.Owner != owner.Id
+                && j.Command == line && string.Equals(j.Cwd, cwd, StringComparison.OrdinalIgnoreCase)
+                && sessions.FirstOrDefault(s => s.Id == j.Owner) is { } previous && Sessions.SessionMessenger.ReplacedBy(previous, sessions, state.CurrentWatchtower)?.Id == owner.Id);
+            if (inherited is not null)
+            {
+                // Handed to the dispatcher, which alone writes a queued row: its copy of a waiting job is what its next pass and the start
+                // put, so a row put here would go back to the predecessor at once (or bring back a job it had just cancelled). A running
+                // row is read afresh by every later write, so it takes the new owner now as well.
+                var adopted = new Adopted(inherited.Id, owner.Id, owner.Name, owner.Flight, owner.Leg);
+                lock (_rowLock)
+                {
+                    if (state.Jobs().FirstOrDefault(j => j.Id == inherited.Id) is { State: JobState.Running } current)
+                    {
+                        state.PutJob(adopted.Apply(current));
+                    }
+                }
+                _signals.Writer.TryWrite(adopted);
+                return state.Complete(command, null, way: $"adopted job {inherited.Id}, which your predecessor queued with the same command in the same folder", made: inherited.Id);
+            }
         }
 
         var jobId = state.NextJobId();
@@ -761,7 +834,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     private volatile bool _stoppingNow;
 
-    private bool NodeStopping => _stoppingNow || _stopping.IsCancellationRequested || Lifetime?.ApplicationStopping.IsCancellationRequested == true;
+    /// <summary>True once the node is stopping (the host's lifetime or this runner's own stop): a cancelled wait is then the node's end, not a caller giving up.</summary>
+    public bool NodeStopping => _stoppingNow || _stopping.IsCancellationRequested || Lifetime?.ApplicationStopping.IsCancellationRequested == true;
 
     // Results of check jobs a carried run ended with no waiter (the worker's finish had not come back yet), kept for that finish.
     private readonly ConcurrentDictionary<string, (JobRow Row, CheckRun Run, DateTimeOffset At)> _keptResults = new(StringComparer.Ordinal);
@@ -874,6 +948,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     internal void Dispatch(Signal signal)
     {
+        if (signal is HandedOver early && _adoptedEarly.Remove(early.Job.Id, out var adoptedFirst))
+        {
+            signal = early with { Job = adoptedFirst.Apply(early.Job) };
+        }
         switch (signal)
         {
             case HandedOver handed when _withdrawnEarly.Remove(handed.Job.Id, out var by):
@@ -902,6 +980,24 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             case Withdrawn withdrawn when state.Jobs().FirstOrDefault(j => j.Id == withdrawn.Id) is { State: JobState.Queued }:
                 // Its hand-over is still behind this in the channel: cancel it when it comes.
                 _withdrawnEarly[withdrawn.Id] = (withdrawn.Who, withdrawn.Dropped);
+                break;
+            case Adopted adopted when _queue.FindIndex(j => j.Id == adopted.Id) is var waits and >= 0:
+                // The waiting copy takes its new owner; the pass below puts it, and the start puts it from this copy.
+                _queue[waits] = adopted.Apply(_queue[waits]);
+                break;
+            case Adopted adopted when _running.ContainsKey(adopted.Id):
+                // It started from the copy that still had the predecessor: put the new owner again on the fresh row.
+                lock (_rowLock)
+                {
+                    if (state.Jobs().FirstOrDefault(j => j.Id == adopted.Id) is { State: JobState.Running } row)
+                    {
+                        state.PutJob(adopted.Apply(row));
+                    }
+                }
+                break;
+            case Adopted adopted when state.Jobs().FirstOrDefault(j => j.Id == adopted.Id) is { State: JobState.Queued }:
+                // Its hand-over is still behind this in the channel: apply it when it comes.
+                _adoptedEarly[adopted.Id] = adopted;
                 break;
         }
 
@@ -2062,7 +2158,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 var candidates = ownerRow.Role == SessionRole.Worker
                     ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray()
                     : sessions;
-                if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates) is { } replacement)
+                if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates, state.CurrentWatchtower) is { } replacement)
                 {
                     target = replacement.Id;
                     handed = $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; what it shows so far is passed on to you.\n";
@@ -2151,6 +2247,24 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         };
         var lines = last is { Length: > 0 } ? "\nIts last lines:\n" + string.Join('\n', last.TakeLast(12)) : "";
         var text = $"Your job {job.Id} (`{job.Command}`, in {job.Cwd}) {how}, after {Took(took)}.{lines}\nThe whole output is in {job.LogPath}. Carry on from here.";
+        if (Ready is not null)
+        {
+            // Pilot #810: the judgement of the owner below reads the session rows, and until the tracker's first poll those are the
+            // ones the journal restored, not ones this node has seen. A job that died while no node ran is told right at the node's
+            // start, so it raced that poll: the owner was judged ended or gone from a row nothing had checked, the job marked told
+            // with no say, and a live worker never heard of it. The owner is judged only once the first poll has listed the rows
+            // (bounded by ReadyBudget, and stopping with the node).
+            try
+            {
+                await FirstPollSeen().WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                // The node is stopping before its first poll: the row stays untold for the next node's sweep.
+                LogTell(job, job.Owner, null, "node stopping");
+                return;
+            }
+        }
         var sessions = state.Sessions();
         var ownerRow = OwnerRow(job.Owner, sessions);
         var target = WakeTarget(job.Owner, job.OwnerName);
@@ -2162,7 +2276,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             var candidates = ownerRow.Role == SessionRole.Worker
                 ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray()
                 : sessions;
-            if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates) is { } replacement)
+            if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates, state.CurrentWatchtower) is { } replacement)
             {
                 target = replacement.Id;
                 replacedTo = replacement.Id;

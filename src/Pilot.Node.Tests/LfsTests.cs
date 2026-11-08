@@ -22,7 +22,7 @@ public sealed class LfsTests : IDisposable
         try
         {
             ClearReadOnly(_root);
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
         catch (IOException)
         {

@@ -350,7 +350,8 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (command.Verb == Verbs.RestartWatchtower)
         {
             var why = string.Join(' ', command.Args ?? []).Trim();
-            return state.Complete(command, await Get<Watchtower>().RestartAsync(why.Length > 0 ? $"restarted by {command.Who}: {why}" : $"restarted by {command.Who}", cancellationToken));
+            var restarted = await Get<Watchtower>().RestartWithWayAsync(why.Length > 0 ? $"restarted by {command.Who}: {why}" : $"restarted by {command.Who}", cancellationToken);
+            return state.Complete(command, restarted.Error, restarted.Way);
         }
         if (command.Verb == Verbs.Raise)
         {
@@ -621,9 +622,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         // go-around closes the flight's cards itself once it has started the worker.
         // A move again from the move-failed card stays open as it runs too, so a failure rewrites that card rather than doubling it.
         var inProgress = choice.Verb is Verbs.Merge or Verbs.RerunChecks or Verbs.GoAround && card.Kind is LegCommander.PrReady or LegCommander.MergeFailed
-            || choice.Verb == Verbs.MoveFlight
-            // The conflict card's Resolve the conflict: the go-around reads the open card to know it is for a conflict, then closes it.
-            || choice.Verb == Verbs.GoAround && card.Kind == LegCommander.PrConflictsKind;
+            || choice.Verb == Verbs.MoveFlight;
         // Any other choice closes the card by the answer before it runs: it lands its flight, and landing closes the flight's
         // cards, this one included, as landed rather than as the answer it was. Refused, it opens again.
         if (!inProgress)

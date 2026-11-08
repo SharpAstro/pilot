@@ -90,6 +90,8 @@ public sealed partial class LegCommander
         }
         // Two flights that each hold an overlap card on the other are planned in parallel by the node itself (PIL664).
         await AnswerMutualPendingAsync(cancellationToken);
+        // A pending overlap whose other flight has landed has nothing to wait for: closed by the node, no card (PIL824).
+        await AnswerLandedPendingAsync(cancellationToken);
         // A planner whose plan is done is ended, so it frees its slot before the starts below ask for one.
         await EndPlannedPlannersAsync(cancellationToken);
         // The starts admission holds go first, in the order it gives, so a freed slot goes to the one it ranks first.
@@ -147,9 +149,15 @@ public sealed partial class LegCommander
         {
             return;
         }
-        // An open that conflicted waits on the watchtower's pr-conflicts card: once that card closes (the base merged in and pushed), the
-        // sweep opens the PR itself, as no ring offers it.
-        if (step.Verb == Verbs.OpenPr && state.Cards(openOnly: true).Any(c => c.Kind == PrConflictsKind && c.Subject == Verbs.FlightTarget(current.Code)))
+        // An open that conflicted was put to a worker (ResolveConflictAsync) and is not tried again at the same plane head and base head: it
+        // would only conflict again. Once the worker has merged the base and pushed, or the base moves, the sweep opens the PR itself.
+        if (step.Verb == Verbs.OpenPr && _conflictOpenTried.TryGetValue(current.Code, out var tried) && tried == await ConflictHeadsAsync(current, cancellationToken))
+        {
+            return;
+        }
+        // Another step's calls are out for the flight (a push, a check rerun, a rebase): open-pr would wait for them, as a person's does, but
+        // the sweep takes its flights one at a time, so it leaves this one to the next sweep rather than hold every flight behind it (pilot #871).
+        if (step.Verb == Verbs.OpenPr && IsCallingAnything(current.Code))
         {
             return;
         }
@@ -175,8 +183,8 @@ public sealed partial class LegCommander
         {
             return;
         }
-        // An open that conflicted has raised the watchtower's pr-conflicts card already: no second ring for the owner, and no latch, so the
-        // sweep opens the PR once that card closes.
+        // An open that conflicted was put to a worker already and rings no one: no ring for the owner, and no latch, so the sweep opens the PR
+        // once the plane or the base has moved.
         if (step.Verb == Verbs.OpenPr && result.Error is { } error && IsConflict(error))
         {
             return;
@@ -291,6 +299,22 @@ public sealed partial class LegCommander
         {
             _missedOnce.TryRemove(current.Code, out _);
             return false;
+        }
+        // A push that met a merged PR was answered by the push itself: the commits go to a follow-up PR, and a start offered again would
+        // meet the same refusal, so nothing rings (PIL836). Decided from what the push did (the result's way), never from the refusal's text.
+        if (result.Way == RefusalWays.HandedOn)
+        {
+            return false;
+        }
+        // A GH006 the push could not answer (the PR was taken out of the queue and the branch is still locked, or a ruleset protects
+        // it): one card says so and what to do, with no reviewer start to offer, and the sweep stops asking.
+        if (result.Way == RefusalWays.ProtectedBranch)
+        {
+            _rung[current.Code] = key;
+            var locked = result.Error is { Length: > 0 } text ? text : "no reason given";
+            state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code}'s new head cannot be pushed: GitHub locks {current.Branch}",
+                $"GitHub refused the push of {current.Branch} as a protected branch (GH006) and the node could not clear it: the PR was not in the merge queue, or it was taken out and the branch stayed locked, or a ruleset protects the branch. The node will not try again by itself. On GitHub, take the PR out of the queue or lift what protects the branch, then start the reviewer again: {locked}");
+            return true;
         }
         // The first refusal rings nothing: the next sweep asks again, and a second in a row rings.
         if (FirstMiss(current.Code, key))

@@ -11,7 +11,7 @@ namespace Pilot.Node.Tests;
 /// until when, fail-open without fresh figures, and a priority repo's own limit. The compactor and the watchtower, whose
 /// starts it also holds, are tried here; the planner's and the reviewer's are in the leg and review tests, on real planes.
 /// </summary>
-public sealed class StartGateTests
+public sealed class StartGateTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -22,10 +22,12 @@ public sealed class StartGateTests
     private readonly StartGate _gate;
     private readonly FakeWorkers _workers = new();
     private readonly List<CommandRequest> _said = [];
-    private readonly NodeOptions _options = new("/tmp/n.sock", "/tmp/pilot2", MachinePrefix: "DU1");
+    private readonly string _data = Path.Combine(Path.GetTempPath(), "pilot-tower-" + Guid.NewGuid().ToString("N"));
+    private readonly NodeOptions _options;
 
     public StartGateTests()
     {
+        _options = new NodeOptions("/tmp/n.sock", _data, MachinePrefix: "DU1");
         _state = new NodeState(new InMemoryJournal(), _time);
         _gate = new StartGate(_state, _time);
         // Something to watch: a flight in the air with a leg flying.
@@ -35,6 +37,14 @@ public sealed class StartGateTests
             State = FlightState.Flying, CreatedAt = Start,
         });
         _state.PutLeg(new LegRow { Flight = "TIA9", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, WorkerJob = "w0000001" });
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_data))
+        {
+            TestDirs.DeleteTree(_data);
+        }
     }
 
     private Task<CommandResult> Run(CommandRequest command, CancellationToken cancellationToken)
@@ -102,7 +112,7 @@ public sealed class StartGateTests
         _gate.Hold("k", 90, 90, "kind", "flight/TIA9", "x").ShouldBeFalse();
 
         var ring = Cards(StartGate.WeekKind).ShouldHaveSingleItem();
-        (ring.Bin, ring.Title).ShouldBe((CardBin.Ring, $"The 7-day window is 99 % spent; it resets {_time.GetUtcNow().AddDays(3).ToLocalTime():ddd HH:mm}"));
+        (ring.Bin, ring.Title).ShouldBe((CardBin.ForYou, $"The 7-day window is 99 % spent; it resets {_time.GetUtcNow().AddDays(3).ToLocalTime():ddd HH:mm}"));
 
         // Under its limit, it rings nothing.
         _gate.RingWeek(100);
@@ -200,6 +210,8 @@ public sealed class StartGateTests
 
         // A person's restart is theirs: it goes ahead over a spent window.
         Usage(99, resetsIn: TimeSpan.FromHours(5));
+        // The first start's session is listed by now, so this is a restart and not a join of a start in flight.
+        _time.Advance(tower.ShowUpGrace + TimeSpan.FromSeconds(1));
         (await tower.RestartAsync("by hand", Ct)).ShouldBeNull();
         _workers.Started.Count.ShouldBe(2);
     }
