@@ -764,7 +764,7 @@ if (feed is not null && client is not null && clients is not null)
         return refused;
     };
     chrome.Flights.OnOpen = location => OpenAway(location, () => chrome.Flights.Say($"could not open {location}"));
-    // The Summary cards on Home and on a flight's page: Summarise is a verb on the node the summary is of, and the card shows
+    // The Summary cards on Home and on a flight's page: Refresh sends the Summarise verb to the node the summary is of, and the card shows
     // it running until the node answers. The row it then shows is the node's own, from the stream, never this answer's.
     chrome.Summaries.Track = (run, what) => tracker.Run(run, what);
     chrome.Summaries.Changed = loop.RequestRedraw;

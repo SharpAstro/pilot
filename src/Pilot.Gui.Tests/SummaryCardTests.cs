@@ -10,8 +10,9 @@ namespace Pilot.Gui.Tests;
 
 /// <summary>
 /// The Summary card (PIL221): Needs you and Where it is as the node kept them, at the top of Home and on a flight's page, with
-/// when it was made and what it used, an empty state, and a Summarise button that says what a press costs, sends
-/// <c>summarise</c> and shows it running until the node answers. PILOT_TEST_CAPTURE keeps the frames.
+/// when it was made and that it follows changes (or why it does not), an empty state, and a Refresh button that sends
+/// <c>summarise</c> and shows it running until the node answers, and names a price only while the watchtower is down.
+/// PILOT_TEST_CAPTURE keeps the frames.
 /// </summary>
 public sealed class SummaryCardTests
 {
@@ -25,8 +26,8 @@ public sealed class SummaryCardTests
         + "## Where it is\n"
         + "TIA1611 landed its parser leg; the **render** leg is flying and has ticked 2 of 3 steps. TIA9 is held for TIA1611.";
 
-    private static SummaryRow Row(string scope, string markdown = Kept, long tokens = 8213, double? cost = 0.0041, int minutes = 12) =>
-        new() { Scope = scope, Markdown = markdown, MadeAt = Now.AddMinutes(-minutes), Tokens = tokens, Cost = cost };
+    private static SummaryRow Row(string scope, string markdown = Kept, long tokens = 8213, double? cost = 0.0041, int minutes = 12, string? notFollowing = null) =>
+        new() { Scope = scope, Markdown = markdown, MadeAt = Now.AddMinutes(-minutes), Tokens = tokens, Cost = cost, NotFollowing = notFollowing };
 
     private static SummaryShelf Shelf(NodeMark[] marks, params (NodeMark Node, SummaryRow Row)[] rows) =>
         new(marks, rows.ToDictionary(r => (r.Node.Key, r.Row.Scope), r => r.Row));
@@ -171,26 +172,60 @@ public sealed class SummaryCardTests
     }
 
     [Fact]
-    public void ItSaysWhenItWasMadeAndWhatItUsed()
+    public void WithTheWatchtowerUpItSaysWhenItWasMadeAndThatItFollowsChangesAndNamesNoCostOrButtonWithAPrice()
     {
         using var window = new Window(1280, 2400);
         window.Chrome.Summaries.Shelf = Shelf([Here], (Here, Row(SummaryRow.FleetScope)));
+        window.Draw();
 
-        window.Words(window.Chrome.Home.Tree(Home())).ShouldContain("made 12m ago · 8.21k tokens · $0.0041");
+        var words = window.Words(window.Chrome.Home.Tree(Home()));
+
+        words.ShouldContain("made 12m ago · follows changes");
+        words.ShouldContain("Refresh");
+        words.ShouldNotContain("Summarise");
+        words.ShouldNotContain("tokens");
+        words.ShouldNotContain("$");
+        words.ShouldNotContain("Haiku");
+        // The tooltips say the watchtower makes it, and name no price either.
+        var tips = window.Arrange(window.Chrome.Home.Tree(Home())).Select(a => a.Node.Tooltip).OfType<string>().ToList();
+        tips.ShouldNotBeEmpty();
+        tips.ShouldAllBe(t => !t.Contains('$') && !t.Contains("Haiku") && !t.Contains("tokens"));
+        tips.ShouldContain(t => t.Contains("Asks the watchtower", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void WithTheWatchtowerDownTheStatusSaysFromWhenAndWhyAndRefreshNamesThePrice()
+    {
+        using var window = new Window(1280, 2400);
+        const string why = "the watchtower is down (no running process)";
+        var row = Row(SummaryRow.FleetScope, minutes: 29, notFollowing: why);
+        window.Chrome.Summaries.Shelf = Shelf([Here], (Here, row));
+        window.Draw();
+
+        var words = window.Words(window.Chrome.Home.Tree(Home()));
+
+        words.ShouldContain($"from {row.MadeAt.ToLocalTime():HH:mm}; {why}");
+        words.ShouldNotContain("follows changes");
+        words.ShouldContain("Refresh · ~$0.0041");
+        words.ShouldNotContain("Summarise");
+        window.Arrange(window.Chrome.Home.Tree(Home())).Select(a => a.Node.Tooltip).OfType<string>()
+            .ShouldContain(t => t.Contains("The watchtower is down, so a press makes one Haiku call", StringComparison.Ordinal) && t.Contains("8.21k tokens · $0.0041", StringComparison.Ordinal));
         SummaryCard.Used(Row("*", cost: null, tokens: 8213)).ShouldBe("8.21k tokens");
         SummaryCard.Used(Row("*", tokens: 0, cost: null)).ShouldBe("no call made");
     }
 
     [Fact]
-    public void WithNoSummaryYetItSaysSoAndOffersTheFirstOne()
+    public void WithNoSummaryYetItSaysSoAndOffersARefresh()
     {
         using var window = new Window(1280, 2400);
 
         var words = window.Words(window.Chrome.Home.Tree(Home()));
 
         words.ShouldContain("none yet");
-        words.ShouldContain("Press Summarise");
-        words.ShouldContain("Summarise · one Haiku call");
+        words.ShouldContain("Press Refresh to ask for one now");
+        words.ShouldContain("the watchtower makes the summary");
+        words.ShouldNotContain("Summarise");
+        words.ShouldNotContain("Haiku");
         words.ShouldNotContain("Where it is");
     }
 
@@ -198,11 +233,13 @@ public sealed class SummaryCardTests
     [InlineData(8213L, 0.0041, " · ~$0.0041")]
     [InlineData(8213L, 0.1234, " · ~$0.12")]
     [InlineData(8213L, null, " · ~8.21k tokens")]
-    [InlineData(0L, null, "")]
-    public void TheButtonSaysWhatThePressCostFromTheLastRun(long tokens, double? cost, string label)
+    [InlineData(0L, null, " · one Haiku call")]
+    public void OnlyWhileTheWatchtowerIsDownTheButtonSaysWhatThePressCostsFromTheLastRun(long tokens, double? cost, string label)
     {
-        SummaryCard.CostLabel(Row("*", tokens: tokens, cost: cost)).ShouldBe(label);
-        SummaryCard.CostLabel(null).ShouldBe(" · one Haiku call");
+        SummaryCard.CostLabel(Row("*", tokens: tokens, cost: cost, notFollowing: "the watchtower is down (x)")).ShouldBe(label);
+        // Following, or nothing kept yet: the watchtower makes it, and a press costs no call.
+        SummaryCard.CostLabel(Row("*", tokens: tokens, cost: cost)).ShouldBe("");
+        SummaryCard.CostLabel(null).ShouldBe("");
     }
 
     [Fact]
@@ -222,7 +259,7 @@ public sealed class SummaryCardTests
         Says(window.Sent[0].Request("gui"), Verbs.NodeTarget, []);
         window.Draw();
         window.HasButton(window.Chrome.Home).ShouldBeFalse();
-        window.Words(window.Chrome.Home.Tree(Home())).ShouldContain("Summarising…");
+        window.Words(window.Chrome.Home.Tree(Home())).ShouldContain("Refreshing…");
         window.Words(window.Chrome.Home.Tree(Home())).ShouldContain("the node is making the first one");
         // Nothing to press while it runs, and a press that did reach the board (a key, a stale region) sends nothing either.
         board.Press(window.Sent[0]);
@@ -250,7 +287,7 @@ public sealed class SummaryCardTests
         await window.AnswerAsync("The fleet is being summarised already");
 
         var words = window.Words(window.Chrome.Home.Tree(Home()));
-        words.ShouldContain("The node did not make one: The fleet is being summarised already. Press Summarise to try again.");
+        words.ShouldContain("The node did not make one: The fleet is being summarised already. Press Refresh to try again.");
         words.ShouldContain("Needs you");
         window.Draw();
         window.Button(window.Chrome.Home).IsDisabled.ShouldBeFalse();
@@ -355,7 +392,7 @@ public sealed class SummaryCardTests
         window.Chrome.Summaries.Shelf = Shelf([Here], (Here, Row(SummaryRow.FleetScope)));
         var words = window.Words(window.Chrome.Home.Tree(Home()));
         words.ShouldContain("Needs you");
-        words.ShouldNotContain("Summarise");
+        words.ShouldNotContain("Refresh");
     }
 
     // WCAG 2.x relative luminance and contrast ratio, as TranscriptPaneTests measures.
@@ -414,7 +451,7 @@ public sealed class SummaryCardTests
         (title.Bounds.Y + title.Bounds.Height / 2).ShouldBe(button.Bounds.Y + button.Bounds.Height / 2, 1.0);
         // Running takes the button's place at its own size, so nothing beside it moves.
         window.Button(window.Chrome.Home).OnClick!.Invoke(InputModifier.None);
-        var running = window.Arrange(window.Chrome.Home.Tree(Home())).Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "Summarising…" } });
+        var running = window.Arrange(window.Chrome.Home.Tree(Home())).Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "Refreshing…" } });
         (running.Bounds.X, running.Bounds.Y, running.Bounds.Width, running.Bounds.Height).ShouldBe((button.Bounds.X, button.Bounds.Y, button.Bounds.Width, button.Bounds.Height));
         // The reading width: a paragraph is never longer than ProseWidth, however wide the window.
         var below = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "Nothing is flying" or "1 flight flying" } }).Bounds.Y;
@@ -440,6 +477,31 @@ public sealed class SummaryCardTests
         }
     }
 
+    [Theory]
+    [InlineData(1280u, null)]
+    [InlineData(520u, null)]
+    [InlineData(520u, "the watchtower is down (no running process)")]
+    [InlineData(1280u, "the watchtower is down (the watchtower did not answer within 3 minutes, and it has been quiet since 09:12 this morning)")]
+    public void TheRefreshButtonKeepsItsFixedWidthAndOneMiddleWithAndWithoutAPriceAndTheStatusStaysWithinTheWindow(uint width, string? notFollowing)
+    {
+        using var window = new Window(width, 1600);
+        window.Chrome.Summaries.Shelf = Shelf([Here], (Here, Row(SummaryRow.FleetScope, notFollowing: notFollowing)));
+        window.Draw();
+
+        var arranged = window.Arrange(window.Chrome.Home.Tree(Home()));
+        var title = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "Summary" } });
+        var button = arranged.Single(a => a.Node.Hit is HitResult.ButtonHit b && b.Action.StartsWith("summary:", StringComparison.Ordinal));
+        button.Bounds.Width.ShouldBe(SummaryCard.ButtonWidth);
+        button.Bounds.Height.ShouldBe(SummaryCard.HeaderHeight);
+        (title.Bounds.Y + title.Bounds.Height / 2).ShouldBe(button.Bounds.Y + button.Bounds.Height / 2, 1.0);
+        var label = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v.StartsWith("Refresh", StringComparison.Ordinal));
+        label.Bounds.Width.ShouldBeLessThanOrEqualTo(SummaryCard.ButtonWidth);
+        // The status line stays inside the window; what the row says in full is on its hover.
+        var status = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && (v.StartsWith("made ", StringComparison.Ordinal) || v.StartsWith("from ", StringComparison.Ordinal)));
+        (status.Bounds.X + status.Bounds.Width).ShouldBeLessThanOrEqualTo(width + 0.5f);
+        status.Node.Tooltip.ShouldNotBeNull().ShouldStartWith(((Layout.Content.Text)((Layout.Node.Leaf)status.Node).Content).Value);
+    }
+
     [Fact]
     public async Task ALongRefusalIsCutWithAnEllipsisAndCarriesItsWholeTextOnHover()
     {
@@ -450,7 +512,7 @@ public sealed class SummaryCardTests
         var why = "the node on LE1 (192.168.1.20:47731) could not be reached: " + new string('x', 160);
         await window.AnswerAsync(why);
 
-        var whole = $"The node did not make one: {why}. Press Summarise to try again.";
+        var whole = $"The node did not make one: {why}. Press Refresh to try again.";
         window.Arrange(window.Chrome.Home.Tree(Home())).Select(a => a.Node.Tooltip).OfType<string>().ShouldContain(whole);
     }
 
