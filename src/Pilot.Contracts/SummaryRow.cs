@@ -2,8 +2,10 @@ namespace Pilot.Contracts;
 
 /// <summary>
 /// The summary the node last made of one scope, kept in its state and sent on the feed so every client shows the same one:
-/// this node's flights (<see cref="FleetScope"/>), every node's (<see cref="AllNodesScope"/>) or one flight's (its code). One Haiku call makes it, only when someone asks
-/// (<see cref="Verbs.Summarise"/>); a newer one replaces the older of its scope, whole.
+/// this node's flights (<see cref="FleetScope"/>), every node's (<see cref="AllNodesScope"/>) or one flight's (its code). The fleet's summary follows changes through the
+/// watchtower while a client is attached to the node's feed (a quiet spell after a change, at most one ask per few minutes, never
+/// with no client, never a paid call on a change); <c>pilot summarise</c> and the GUI's Refresh ask at once, the watchtower first and the
+/// old one-off Haiku call only when it is down. A newer one replaces the older of its scope, whole.
 /// </summary>
 public sealed record SummaryRow
 {
@@ -30,6 +32,12 @@ public sealed record SummaryRow
 
     /// <summary>What the call cost in US dollars, as Claude Code reported it; null when it did not say, or no call was made.</summary>
     public double? Cost { get; init; }
+
+    /// <summary>
+    /// Why this summary is not following the node's changes (the watchtower is down, or did not answer), set by the node while a change
+    /// is waiting and it cannot be asked; null when the summary follows, or was just made. A fresh summary clears it.
+    /// </summary>
+    public string? NotFollowing { get; init; }
 }
 
 /// <summary>A summary was made: the row replaces the one of its <see cref="SummaryRow.Scope"/>, whole.</summary>
