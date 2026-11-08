@@ -124,21 +124,21 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         var checks = Checks(clock);
 
         await checks.LookAsync(Ct);
-        asked.ShouldBe(1);
+        thrown().ShouldBe(1);
         NoRefusalRaised();
 
         // Asked again only when the backoff has run out: a look a moment later does not ask.
         await checks.LookAsync(Ct);
-        asked.ShouldBe(1);
+        thrown().ShouldBe(1);
 
         clock.Advance(PrChecks.PassingBackoff[0] + TimeSpan.FromSeconds(1));
         await checks.LookAsync(Ct);
-        asked.ShouldBe(2);
+        thrown().ShouldBe(2);
         NoRefusalRaised();
 
         clock.Advance(PrChecks.PassingBackoff[1] + TimeSpan.FromSeconds(1));
         await checks.LookAsync(Ct);
-        asked.ShouldBe(3);
+        thrown().ShouldBe(3);
 
         var card = Refused().ShouldHaveSingleItem();
         card.Bin.ShouldBe(CardBin.Ring);
@@ -151,7 +151,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         // Not asked a fourth time: the person's card is the answer now, however long it waits.
         clock.Advance(TimeSpan.FromHours(1));
         await checks.LookAsync(Ct);
-        asked.ShouldBe(3);
+        thrown().ShouldBe(3);
     }
 
     [Fact]
@@ -166,7 +166,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         var checks = Checks(clock);
 
         await checks.LookAsync(Ct);
-        asked.ShouldBe(1);
+        thrown().ShouldBe(1);
         NoRefusalRaised();
 
         clock.Advance(PrChecks.PassingBackoff[0] + TimeSpan.FromSeconds(1));
@@ -376,7 +376,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         // A conflict ask also has the node try the branch update, which reads the PR again: each ask throws more than once.
-        asked.ShouldBeGreaterThanOrEqualTo(3);
+        thrown().ShouldBeGreaterThanOrEqualTo(3);
         var card = Refused().ShouldHaveSingleItem();
         card.Bin.ShouldBe(CardBin.Ring);
         card.Detail.ShouldNotBeNull().ShouldContain("conflicts with its base");
