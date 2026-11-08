@@ -89,7 +89,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         }
         // A role's range is read when a session of it starts: in force for the next one, no restart.
         if (NodeSettings.IsRoleKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey
-            or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DiskAlertGbKey || NodeSettings.StaleKeys.Contains(key))
+            or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.AdoptAfterKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DiskAlertGbKey || NodeSettings.StaleKeys.Contains(key))
         {
             roles.Apply(updated);
             // The cap and the repo mode are one value for the fleet, held by the node that keeps the Opus count: a set here goes there too (one sent from there is not sent back).
@@ -99,7 +99,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
                 return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now; {held}");
             }
             return state.Complete(command, null, setting: Row(key, updated), way: key == NodeSettings.MergeMethodKey ? $"{key} saved as {value}; the next merge uses it"
-                : key is NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.PrWatchIdleKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DiskAlertGbKey || NodeSettings.StaleKeys.Contains(key) ? $"{key} saved as {value}, and in force now"
+                : key is NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.PrWatchIdleKey or NodeSettings.AdoptAfterKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DiskAlertGbKey || NodeSettings.StaleKeys.Contains(key) ?$"{key} saved as {value}, and in force now"
                 : key is NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey ? $"{key} saved as {value}, and in force now"
                 : key is NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey ? $"{key} saved as {value}; the next start the node makes by itself weighs it"
                 : $"{key} saved as {value}; the next session of that kind starts with it");
@@ -259,6 +259,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.JobMemoryKey => (jobs.MinFreeMemory / (double)(1L << 30)).ToString(CultureInfo.InvariantCulture),
         NodeSettings.MergeMethodKey => roles.MergeMethod,
         NodeSettings.PrWatchIdleKey => NodeSettings.DurationText(roles.PrWatchIdle),
+        NodeSettings.AdoptAfterKey => NodeSettings.DurationText(roles.AdoptAfter),
         NodeSettings.MaxGoAroundsKey => roles.MaxGoArounds.ToString(CultureInfo.InvariantCulture),
         NodeSettings.ScratchDaysKey => roles.ScratchDays.ToString(CultureInfo.InvariantCulture),
         NodeSettings.DiskAlertGbKey => roles.DiskAlertGb.ToString(CultureInfo.InvariantCulture),
@@ -284,7 +285,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     /// method, the start limits, the priority repos, the job limits, maintenance and whether fleet flights are accepted.</summary>
     private static bool Live(string key) => NodeSettings.IsRoleKey(key)
         || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey
-            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.JobPriorityKey or NodeSettings.JobPlaneOutputKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.UserSkillsKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DiskAlertGbKey || NodeSettings.StaleKeys.Contains(key);
+            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.JobPriorityKey or NodeSettings.JobPlaneOutputKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.UserSkillsKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.AdoptAfterKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DiskAlertGbKey || NodeSettings.StaleKeys.Contains(key);
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
     private static string Join(string key, IReadOnlyList<string> values) => string.Join(key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey ? '\n' : ' ', values);
@@ -317,6 +318,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.PriorityStartLimitKey => "98",
         NodeSettings.WeekLimitKey => "90",
         NodeSettings.PrWatchIdleKey => NodeSettings.DurationText(NodeSettings.DefaultPrWatchIdle),
+        NodeSettings.AdoptAfterKey => NodeSettings.DurationText(NodeSettings.DefaultAdoptAfter),
         NodeSettings.MaxGoAroundsKey => NodeSettings.DefaultMaxGoArounds.ToString(CultureInfo.InvariantCulture),
         NodeSettings.ScratchDaysKey => NodeSettings.DefaultScratchDays.ToString(CultureInfo.InvariantCulture),
         NodeSettings.DiskAlertGbKey => NodeSettings.DefaultDiskAlertGb.ToString(CultureInfo.InvariantCulture),
@@ -363,6 +365,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.StartLimitKey => ("Start limit", "A session the node starts by itself (a leg, a planner, a reviewer, the watchtower, a compaction) goes ahead until the account's 5-hour window is this spent, in percent; then it waits for the reset", ["80", "90", "95", "100"]),
         NodeSettings.WeekLimitKey => ("Week limit", "How far into the 7-day window the node rings, once per window, as it starts sessions; it rings and does not wait, in percent", ["80", "90", "95", "100"]),
         NodeSettings.PrWatchIdleKey => ("Pull requests idle read", "How long the node waits between reads of the open PRs while no window shows the Pull requests page (it reads every minute while one does, and at once when one opens it)", ["5m", "15m", "30m", "1h"]),
+        NodeSettings.AdoptAfterKey => ("Adopt after", "How long a peer node must have been unheard before this node may take over a flight it flew from the pushed branch (pilot flight adopt); the old node stands down when it returns", ["30m", "1h", "2h", "6h"]),
         NodeSettings.MaxGoAroundsKey => ("Go-around cap", "How many times a leg may go around, whatever the reason (a failed check, a conflict, red CI, a review). Past it the watchtower and the node send it round no more and a card lists what each round said; only you can send it round again or accept it as it stands", ["3", "5", "8", "12"]),
         NodeSettings.DiskAlertGbKey => ("Disk alert", "Free gigabytes on the repos' drive below which the node rings, naming the biggest reclaimable items by unique bytes", ["10", "20", "50"]),
         NodeSettings.ScratchDaysKey => ("Scratch days", "How many days a job's scratch folder (~/.claude/jobs/<id>/tmp) may sit, by its newest write, before the node's disk sweep deletes it. The scratch of a landed flight's ended sessions goes at once; state.json and the timeline are kept", ["1", "2", "7", "14"]),
