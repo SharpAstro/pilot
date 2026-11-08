@@ -23,6 +23,27 @@ public sealed partial class NodeState
     /// <param name="askedBy">The assistant's session an ask card is about (<see cref="CardKinds.AssistantAsk"/>), and <paramref name="why"/> the message it acted on.</param>
     public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null, string? summary = null, string? attachment = null, string? attachmentExt = null)
     {
+        // With the brain to ask (PIL855), a card that would ring is first filed in For you, silent, and rings only on the brain's verdict
+        // (RingJudge): the old path, a ring at once, is what runs with no judge, and what the judge itself falls back to.
+        if (bin != CardBin.Ring || RingJudge is not { } judge || !RingJudge.Wants(kind))
+        {
+            return RaiseCardCore(bin, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, out _);
+        }
+        var card = RaiseCardCore(CardBin.ForYou, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, out var created);
+        // Only a card this call made: an open one of the same kind and subject is returned as it is, and is not judged again.
+        if (created)
+        {
+            judge.Begin(card);
+        }
+        return card;
+    }
+
+    /// <summary>The brain's word before a ring (<see cref="Flights.RingJudge"/>); null rings at once, as before.</summary>
+    public RingJudge? RingJudge { get; set; }
+
+    private CardRow RaiseCardCore(CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices, string? link, string? askedBy, string? why, string? summary, string? attachment, string? attachmentExt, out bool created)
+    {
+        created = false;
         lock (_gate)
         {
             if (bin != CardBin.Handled && _cards.Values.FirstOrDefault(c => c.State == CardState.Open && c.Kind == kind && c.Subject == subject) is { } open)
@@ -73,6 +94,7 @@ public sealed partial class NodeState
             };
             card = card with { Commits = CommitsOf(card, link) };
             Publish(new CardAddedEvent { Seq = _seq + 1, At = now, Card = card });
+            created = true;
             return card;
         }
     }

@@ -43,11 +43,16 @@ public static partial class NodeApp
     {
         // The store: the node's events as files in its data folder, read back on the next start (FileJournal).
         builder.Services.AddSingleton<INodeJournal>(_ => new FileJournal(Path.Combine(options.DataFolder, "store")));
-        builder.Services.AddSingleton(services => new NodeState(
-            services.GetRequiredService<INodeJournal>(), services.GetRequiredService<TimeProvider>(), options.RetainedDeltas)
+        builder.Services.AddSingleton(services =>
         {
-            Error = logWriter,
-            TokensByFlight = () => services.GetRequiredService<SpendLedger>().TokensByFlight(),
+            var state = new NodeState(services.GetRequiredService<INodeJournal>(), services.GetRequiredService<TimeProvider>(), options.RetainedDeltas)
+            {
+                Error = logWriter,
+                TokensByFlight = () => services.GetRequiredService<SpendLedger>().TokensByFlight(),
+            };
+            // A card about to ring goes to the brain first (PIL855); resolved at the first ring, as the brain needs the watchtower, which needs this state.
+            state.RingJudge = new RingJudge(state, () => services.GetRequiredService<IBrain>()) { Log = line => logWriter.WriteLine(line) };
+            return state;
         });
         builder.Services.AddSingleton<PageViews>();
         builder.Services.AddSingleton<EventHub>();
@@ -353,6 +358,11 @@ public static partial class NodeApp
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());
+        // The node's thinking (summaries, the verdict before a ring, the plain wording of a card) is asked of the watchtower's own stream (PIL855).
+        builder.Services.AddSingleton<IBrain>(services => new BrainClient(() => services.GetRequiredService<Watchtower>().CurrentStream(), services.GetRequiredService<TimeProvider>())
+        {
+            Log = line => logWriter.WriteLine(line),
+        });
         builder.Services.AddSingleton<SendLog>();
         builder.Services.AddSingleton(services => new SendTimings(services.GetRequiredService<TimeProvider>(), logWriter));
         builder.Services.AddSingleton(services => new WatchtowerChat(services.GetRequiredService<Watchtower>(), services.GetRequiredService<TranscriptBook>(), services.GetRequiredService<SendLog>()));
@@ -503,9 +513,11 @@ public static partial class NodeApp
     }
 
     /// <summary>The summaries and the digest.</summary>
-    private static void AddSummaries(WebApplicationBuilder builder, NodeOptions options)
+    private static void AddSummaries(WebApplicationBuilder builder, NodeOptions options, LogWriter logWriter)
     {
-        builder.Services.AddSingleton<ISummaryModel>(_ => new ClaudeSummaryModel(Path.Combine(options.DataFolder, "summary")));
+        // The brain answers a summary; the one-off Haiku call is what runs when it is down (PIL855).
+        builder.Services.AddSingleton<ISummaryModel>(services => new BrainSummaryModel(services.GetRequiredService<IBrain>(), new ClaudeSummaryModel(Path.Combine(options.DataFolder, "summary")),
+            line => logWriter.WriteLine(line)));
         builder.Services.AddSingleton(services => new Summaries(services.GetRequiredService<NodeState>(), services.GetRequiredService<ISummaryModel>(), services.GetRequiredService<TimeProvider>())
         {
             Machine = options.Machine,
