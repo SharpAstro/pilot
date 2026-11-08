@@ -111,7 +111,7 @@ public static partial class CardSummaries
             FailureAlerts.AlertKind => "A failure in a test its PRs do not touch came again, so the tower is on alert: the flight that investigates it looks for the cause, and every flight the failure hit is held, with no go-around, re-queue or rerun, until that flight lands. Nothing to do unless the investigation needs help.",
             FailureAlerts.RetriedKind => "A failure in a test the PR does not touch was retried once (the PR queued again, or its failed jobs run again) so it is not blocked, while its investigation looks for the cause. Nothing to do; if it fails the same way again the tower goes on alert.",
             FailureAlerts.ReleasedKind => $"The investigation of a failure landed, so {what} is released from its hold and what it was held from is done again: queued, its checks run, or its leg check run. Nothing to do.",
-            "checks-rerun" =>$"Failed checks of {what}'s PR were run again once before its leg is sent round. Nothing to do unless they fail again.",
+            "checks-rerun" => $"Failed checks of {what}'s PR were run again once before its leg is sent round. Nothing to do unless they fail again.",
             PrChecks.ClosedLanded => $"{what}'s PR was closed without a merge and its plane held nothing of its own, so the flight landed. Nothing to do.",
             PrChecks.ClosedWithWork => $"{what}'s PR was closed without a merge but its plane holds work of its own. Reopen the PR, or open a new one for that work, then land the flight.",
             PrChecks.QueueDropped => $"GitHub took the PR of {what} out of the merge queue. The card's choice queues it again once the cause is dealt with.",

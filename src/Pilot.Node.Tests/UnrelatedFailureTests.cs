@@ -82,6 +82,75 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
         L("parser").Report.ShouldBe("parsed\nnot this flight's: BarTests.Breaks (#4)");
     }
 
+    /// <summary>The leg's failure investigations (PIL716), as the node wires them: flights made for them are counted, not flown.</summary>
+    private (FailureInvestigations Investigations, List<CommandRequest> Made) Investigating()
+    {
+        var made = new List<CommandRequest>();
+        var investigations = new FailureInvestigations(_state, _github, new FailureLedger(), TimeProvider.System)
+        {
+            CreateFlight = (command, _) =>
+            {
+                made.Add(command);
+                return Task.FromResult(new CommandResult { Seq = 0, Verb = command.Verb, Target = command.Target, Who = command.Who, Ok = true, Made = $"TIA{900 + made.Count}" });
+            },
+        };
+        _legs.Investigations = investigations;
+        return (investigations, made);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnUntouchedFailureOnTheFinishIsFiledAsTheInvestigationThatALaterCiFailureJoins()
+    {
+        var flight = await Flying();
+        var (investigations, made) = Investigating();
+        _github.Issues[3] = "Something else entirely";
+        _checks.Script.Enqueue(new CheckRun(1, Failing("Pilot.Tests.BarTests.Breaks")));
+        _checks.Script.Enqueue(new CheckRun(0, "all green"));
+        _checks.Script.Enqueue(new CheckRun(1, Failing("Pilot.Tests.BarTests.Breaks")));
+
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed")).Ok.ShouldBeTrue();
+
+        // The finish files the investigation, not #752's plain issue: priority high, its flight made and a For-you card.
+        var filed = _github.IssuesCreated.ShouldHaveSingleItem();
+        filed.Title.ShouldContain("BarTests.Breaks");
+        filed.Title.ShouldContain("cause unknown");
+        filed.Title.ShouldNotContain(UnrelatedFailures.TitleMark);
+        _github.IssuePriorities[4].ShouldBe(IssuePriority.High);
+        made.ShouldHaveSingleItem().Args[0].ShouldBe("4");
+        _state.Cards().ShouldContain(c => c.Kind == FailureInvestigations.CardKind && c.Bin == CardBin.ForYou);
+        investigations.Ledger.All().ShouldHaveSingleItem().Where.ShouldBe(FailureWhere.LegCheck);
+        L("parser").State.ShouldBe(LegState.Done);
+        L("parser").Report.ShouldBe("parsed\nnot this flight's: BarTests.Breaks (#4)");
+
+        // The same failure later in another PR's CI joins that investigation: a comment, no second issue or flight.
+        _github.FailedRuns[(77, false)] = new FailedRun(555, "https://github.com/x/tianwen/actions/runs/555", ["build"], Failing("Pilot.Tests.BarTests.Breaks"));
+        var look = await investigations.LookAtRunAsync(new FailureSite(flight.Repo, flight.RepoPath, 77, "TIA77", new string('c', 40), FailureWhere.Ci), mergeGroup: false, Ct);
+
+        look.Untouched.ShouldHaveSingleItem().Issue.ShouldBe(4);
+        _github.IssuesCreated.Count.ShouldBe(1);
+        made.Count.ShouldBe(1);
+        _github.IssueComments.ShouldContain(c => c.Number == 4 && c.Body.Contains("run 555"));
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnIssueTheFinishFiledEarlierBecomesTheInvestigationOfALaterCiFailure()
+    {
+        var flight = await Flying();
+        var (investigations, made) = Investigating();
+        _github.Issues[6] = UnrelatedFailures.IssueTitle("Pilot.Tests.BarTests.Breaks", "TIA0");
+        _github.FailedRuns[(77, false)] = new FailedRun(555, "https://github.com/x/tianwen/actions/runs/555", ["build"], Failing("Pilot.Tests.BarTests.Breaks"));
+
+        var look = await investigations.LookAtRunAsync(new FailureSite(flight.Repo, flight.RepoPath, 77, "TIA77", new string('c', 40), FailureWhere.Ci), mergeGroup: false, Ct);
+
+        look.Untouched.ShouldHaveSingleItem().Issue.ShouldBe(6);
+        _github.IssuesCreated.ShouldBeEmpty();
+        _github.IssuePriorities[6].ShouldBe(IssuePriority.High);
+        made.ShouldHaveSingleItem().Args[0].ShouldBe("6");
+        _github.IssueComments.ShouldContain(c => c.Number == 6 && c.Body.Contains("now the investigation"));
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task AnUntouchedClassWithNoIssueThatPassesOnTheBaseFailsTheLeg()

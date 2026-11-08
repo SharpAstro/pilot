@@ -99,6 +99,48 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
         }
     }
 
+    /// <summary>
+    /// One failing test of a leg check that the finish (#752) found outside the flight's change, filed as an investigation as a failure
+    /// read from a run is: one per signature, so a later failure of it in CI or the merge queue joins it. <paramref name="open"/> is an
+    /// open issue already named for the test (one #752 filed earlier): it becomes the investigation, with no second issue filed. Null
+    /// when nothing could be filed (GitHub not answering); never throws bar a cancellation.
+    /// </summary>
+    public async Task<FailureFinding?> InvestigateTestAsync(FailureSite site, string test, string output, IssueInfo? open, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var name = FailureSignature.NameOf(test);
+            var read = FailureSignature.Tests(output).FirstOrDefault(t => FailureSignature.NameOf(t.Test) is var n && (n == name || n.EndsWith("." + name, StringComparison.Ordinal)));
+            var full = read?.Test ?? test;
+            var message = read?.Message is { Length: > 0 } said ? said : "its output named no assertion message";
+            var failure = new Found(full, message, FailureSignature.Of(new FailureSignature.TestFailure(full, message)));
+            var others = ledger.OnAnother(site.Name, failure.Signature, site.Flight, site.Pr);
+            if (ledger.Has(site.Name, site.Pr, site.Flight, site.Head, site.Where, failure.Signature))
+            {
+                return ledger.InvestigationOf(site.Name, failure.Signature) is { } known
+                    ? new FailureFinding(failure.Test, failure.Message, failure.Signature, known.Investigation, known.Issue, 0, others) : null;
+            }
+            return await FileAsync(site, 0, null, [], failure, cancellationToken, open) is { } filed
+                ? new FailureFinding(failure.Test, failure.Message, failure.Signature, filed.Code, filed.Issue, 0, others) : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await Error.WriteLineAsync($"failures: {site.Name}: could not file {test} as an investigation: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// An open issue the finish (#752) filed for <paramref name="test"/>, its title made by <see cref="UnrelatedFailures.IssueTitle"/>:
+    /// the failure is already filed there, so it becomes the investigation instead of a second issue. Null when there is none.
+    /// </summary>
+    internal static IssueInfo? FiledByFinish(IEnumerable<IssueInfo> open, string test)
+    {
+        var name = FailureSignature.NameOf(test);
+        return open.FirstOrDefault(i => i.Title.IndexOf(UnrelatedFailures.TitleMark, StringComparison.Ordinal) is > 0 and var at
+            && i.Title[..at].Trim() is var named && named.Length > 0 && (named == name || name.EndsWith("." + named, StringComparison.Ordinal)));
+    }
+
     /// <summary>One failure found in a log, ready to be filed.</summary>
     private sealed record Found(string Test, string Message, string Signature);
 
@@ -153,7 +195,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
         return new FailureLook(true, findings);
     }
 
-    private async Task<(string Code, int Issue)?> FileAsync(FailureSite site, long runId, string? runUrl, string[] jobs, Found failure, CancellationToken cancellationToken)
+    private async Task<(string Code, int Issue)?> FileAsync(FailureSite site, long runId, string? runUrl, string[] jobs, Found failure, CancellationToken cancellationToken, IssueInfo? open = null)
     {
         var existing = ledger.InvestigationOf(site.Name, failure.Signature);
         var run = runId > 0 ? $"run {runId}{(runUrl is { Length: > 0 } ? $" ({runUrl})" : "")}" : "its leg check";
@@ -173,12 +215,32 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
             return (existing.Investigation, existing.Issue);
         }
         var title = failure.Test.Length > 0
-            ? $"{FailureSignature.ShortOf(FailureSignature.NameOf(failure.Test))} fails intermittently, cause unknown"
-            : $"{LegCommander.OneLine(failure.Message)}: fails intermittently, cause unknown";
+            ? $"{FailureSignature.ShortOf(FailureSignature.NameOf(failure.Test))} failed {WhereWords(site.Where)}, cause unknown"
+            : $"{LegCommander.OneLine(failure.Message)}: failed {WhereWords(site.Where)}, cause unknown";
+        if (open is null && failure.Test.Length > 0)
+        {
+            // An issue the finish (#752) filed for the test before: the failure is filed already, so that issue is the investigation.
+            try
+            {
+                open = FiledByFinish(await github.IssuesAsync(site.RepoPath, cancellationToken), failure.Test);
+            }
+            catch (FlightException ex)
+            {
+                await Error.WriteLineAsync($"failures: {site.Name}: the open issues could not be read, so a new one is filed: {ex.Message}");
+            }
+        }
         IssueInfo issue;
         try
         {
-            issue = await github.CreateIssueAsync(site.RepoPath, title, Body(site, run, jobs, failure), cancellationToken);
+            if (open is { } adopted)
+            {
+                issue = adopted;
+                await github.CommentIssueAsync(site.RepoPath, issue.Number, $"{Body(site, run, jobs, failure)}\n\nThis issue is now the investigation of this failure, with priority high.", cancellationToken);
+            }
+            else
+            {
+                issue = await github.CreateIssueAsync(site.RepoPath, title, Body(site, run, jobs, failure), cancellationToken);
+            }
         }
         catch (FlightException ex)
         {
@@ -224,7 +286,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
         var test = failure.Test.Length > 0 ? FailureSignature.ShortOf(FailureSignature.NameOf(failure.Test)) : LegCommander.OneLine(failure.Message);
         var subject = code.Length > 0 ? Verbs.FlightTarget(code) : $"{Verbs.RepoTargetPrefix}{site.RepoPath}";
         state.RaiseCard(CardBin.ForYou, CardKind, subject,
-            $"{site.Name}#{issue.Number}: {test} fails intermittently in a PR that does not touch it, {(code.Length > 0 ? $"{code} investigates" : "no flight could be made for it")}",
+            $"{site.Name}#{issue.Number}: {test} failed in a PR that does not touch it, {(code.Length > 0 ? $"{code} investigates" : "no flight could be made for it")}",
             $"{Place(site)}: {run}, {WhereWords(site.Where)}.\n\nTest: {(failure.Test.Length > 0 ? failure.Test : "none, an error line")}\nAssertion message: {failure.Message}\n\nIt is a bug with a cause to find, filed as {site.Name}#{issue.Number} with priority high."
             + (notes.Count > 0 ? $"\n\nNot done: {string.Join("; ", notes)}." : ""),
             link: IssueLink(site, issue.Number));

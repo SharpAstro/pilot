@@ -387,7 +387,7 @@ public sealed class FailureAlerts(NodeState state, IGitHub github, FailureInvest
             + (alert.Listed.Count > 0 ? $", {alert.Listed.Count} hand {(alert.Listed.Count == 1 ? "PR" : "PRs")} listed" : "");
         var lines = new List<string>
         {
-            $"{alert.Short} failed a second time in a PR that does not touch it ({Where(site.Where)}), so it is no chance failure: the cause is being looked for in {alert.Investigation} ({alert.Repo}#{alert.Issue}, priority high).",
+            $"{alert.Short} failed a second time in a PR that does not touch it ({Where(site.Where)}), so the tower is on alert: the cause is being looked for in {alert.Investigation} ({alert.Repo}#{alert.Issue}, priority high).",
             "",
             $"Test: {(alert.Test.Length > 0 ? alert.Test : "none, an error line")}",
             $"Assertion message: {alert.Message}",

@@ -74,7 +74,8 @@ public sealed class FailureInvestigationTests
         var (repo, title, body) = OneIssue();
         repo.ShouldBe("/r/tianwen");
         title.ShouldContain("NodePlanetaryTests.ARefusedStartSaysWhyAndHoldsNothing");
-        title.ShouldContain("fails intermittently, cause unknown");
+        title.ShouldContain("cause unknown");
+        title.ShouldNotContain("intermittent");
         body.ShouldNotBeNull().ShouldContain($"run {run}");
         body.ShouldContain(Test);
         body.ShouldContain(Message);

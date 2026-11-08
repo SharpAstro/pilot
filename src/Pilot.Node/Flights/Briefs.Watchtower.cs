@@ -348,8 +348,8 @@ public static partial class Briefs
         text.AppendLine("  one comment and releases the hold. So make or clear the fixes in the turn you take the card.");
         text.AppendLine("- A failure in a test a PR does not touch is a bug with a cause to find, and the node files it as an investigation (an issue, priority high, and a");
         text.AppendLine("  flight). The first time it hits a PR the node retries once (queues it again, or runs its failed jobs again). When it comes again, in the same PR or");
-        text.AppendLine("  in another flight, a Ring card puts the tower on alert: it names the failure, the investigation and the flights hit, which the node holds (the");
-        text.AppendLine("  flight reads `held for <code>: <test>`) with no go-around, re-queue or rerun until the investigation flight lands, when it releases them itself.");
+        text.AppendLine("  in another flight, a Ring card puts the tower on alert: it names the failure, the investigation and the flights hit, which the node holds (its");
+        text.AppendLine("  release card names each `held for <code>: <test>`) with no go-around, re-queue or rerun until the investigation flight lands, when it releases them itself.");
         text.AppendLine("  Do not send a held flight round and do not call the failure chance. Help the investigation flight land, and tell the person if it needs them.");
         text.AppendLine("- A flight in `pilot status` whose legs are all done, whose PR carries `pilot: changes` and whose PR head is not the head its");
         text.AppendLine("  review read (Summary prints that one as `read head`): no review has read this work. The node's sweep should have started one");
