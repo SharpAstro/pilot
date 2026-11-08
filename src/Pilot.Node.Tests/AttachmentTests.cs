@@ -32,7 +32,7 @@ public sealed class AttachmentTests : IAsyncDisposable
         }
         if (Directory.Exists(_plane))
         {
-            Directory.Delete(_plane, recursive: true);
+            TestDirs.DeleteTree(_plane);
         }
     }
 

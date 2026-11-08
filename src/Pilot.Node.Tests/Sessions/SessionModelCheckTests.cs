@@ -171,7 +171,7 @@ public sealed class SessionModelCheckTests : IDisposable
         {
             if (Directory.Exists(_data))
             {
-                Directory.Delete(_data, recursive: true);
+                TestDirs.DeleteTree(_data);
             }
         }
     }

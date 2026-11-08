@@ -32,7 +32,7 @@ public sealed class PullRequestsTests : IDisposable
                 {
                     File.SetAttributes(file, FileAttributes.Normal);
                 }
-                Directory.Delete(_root, recursive: true);
+                TestDirs.DeleteTree(_root);
                 return;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

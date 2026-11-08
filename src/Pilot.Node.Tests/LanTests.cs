@@ -298,7 +298,7 @@ public sealed class GrantAskCardTests : IDisposable
 {
     private readonly string _data = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "p2g-" + Guid.NewGuid().ToString("N")[..8])).FullName;
 
-    public void Dispose() => Directory.Delete(_data, recursive: true);
+    public void Dispose() => TestDirs.DeleteTree(_data);
 
     [Fact]
     public void AnAskThatLapsedClosesItsCardAndANewerAskGetsACardOfItsOwn()

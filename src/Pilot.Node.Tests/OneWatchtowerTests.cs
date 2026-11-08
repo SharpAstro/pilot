@@ -39,7 +39,7 @@ public sealed class OneWatchtowerTests : IDisposable
     {
         if (Directory.Exists(_data))
         {
-            Directory.Delete(_data, recursive: true);
+            TestDirs.DeleteTree(_data);
         }
     }
 

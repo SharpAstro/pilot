@@ -56,7 +56,7 @@ public sealed class SiblingReachTests : IDisposable
     {
         try
         {
-            Directory.Delete(_org, recursive: true);
+            TestDirs.DeleteTree(_org);
         }
         catch (IOException)
         {

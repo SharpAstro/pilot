@@ -41,7 +41,7 @@ public sealed class WatchtowerChatTests : IDisposable
         _profile.Dispose();
         if (Directory.Exists(_data))
         {
-            Directory.Delete(_data, recursive: true);
+            TestDirs.DeleteTree(_data);
         }
     }
 
