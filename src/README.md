@@ -708,7 +708,7 @@ pilot say-all <text…> [--all] [--role worker|planner|reviewer|pilot|adHoc|watc
 pilot compact <session> [focus…]               # an idle background session's /compact, as its next turn (see Compaction)
 pilot note <text…>
 pilot summary [<code>] [--fresh] [--fleet]     # the kept summary (Needs you, Where it is) with its age, tokens and cost; made when none or --fresh (see The summary)
-pilot summarise [<code>]                       # one Haiku call now over the flights in play (or one flight); keeps and prints the answer
+pilot summarise [<code>]                       # asks the watchtower now for a new summary of the flights in play (or one flight), one Haiku call only when it is down; keeps and prints the answer
 pilot review-cost [--since <date>] [--until <date>] [--repo <repo>]   # per landed flight: its reviewer sessions (round, model, head) and their tokens, with totals and an average; pilot-node review-cost reads the data folder with no node
 pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
 pilot node restart [why…]                      # the node restarts in place: its successor starts, jobs carry on and are counted in the answer
@@ -731,11 +731,21 @@ when its node is not on the default socket. Exit codes: 0 done, 1 refused by the
 
 `pilot summary` answers "where are we" in two sections: `## Needs you` (what stays stuck unless the person acts, or the
 word *Nothing*) and `## Where it is`. The node makes it from what it holds, as plain records of each flight (legs with
-state, checklist and go-arounds, its PR and review, its open cards, the sessions on it), with one Haiku call (no tools,
-no MCP, no saved session; never run by itself), and keeps the latest per scope with when it was made, its tokens and its
-cost, on the feed for every client. So `pilot summary` costs nothing when a summary is kept: it prints that one and
-says its age (`made 5 min ago (2026-10-28 09:00 UTC) · 1,234 tokens · $0.0021`), and it makes one, as `pilot summarise`
-does, when there is none yet or `--fresh` asks. `pilot summary <code>` is the same for one flight.
+state, checklist and go-arounds, its PR and review, its open cards, the sessions on it) and keeps the latest per scope
+with when it was made, its tokens and its cost, on the feed for every client.
+
+**How it is kept current.** While a client is attached (a window, a TUI, a stream), the node asks the watchtower to
+remake the fleet summary after the fleet changes, and keeps the answer; the watchtower's work is part of its own
+session, so it adds no Haiku call. With no client attached nothing is asked and nothing is spent. A person can ask at
+once: the **Refresh** button on the Summary panel and `pilot summarise` both ask the watchtower now and replace the kept
+summary for everyone. Only when the watchtower is down does the node make it itself, with one Haiku call (no tools, no
+MCP, no saved session); the row then says why it is not following (`SummaryRow.NotFollowing`), the panel reads `from
+09:12; the watchtower is down`, and Refresh names the price of the press. The panel otherwise reads `made 3 min ago ·
+follows changes` and shows no cost.
+
+So `pilot summary` costs nothing when a summary is kept: it prints that one and says its age (`made 5 min ago
+(2026-10-28 09:00 UTC) · 1,234 tokens · $0.0021`), and it makes one, as `pilot summarise` does, when there is none yet
+or `--fresh` asks. `pilot summary <code>` is the same for one flight.
 
 `--fleet` covers every node this machine holds a grant for (`pilot connect`) as well as this one: the node asks each of
 them for its records (`records node`, a read that makes no call and keeps nothing), puts each node's under its own
