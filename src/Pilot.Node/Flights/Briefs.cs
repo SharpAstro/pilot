@@ -57,6 +57,16 @@ public static partial class Briefs
     /// them a defect sent TIA1874's worker to rewrite its pushed branch, which then needed a force push only the owner could
     /// allow (DE1, 2026-10-30); TIA1910 and TIA1915 stalled the same way.
     /// </summary>
+    /// <summary>
+    /// The owner's hard rule, in every brief that writes or reviews code: nothing busy-spins. A leaked test fixture spun a core on SE1
+    /// for four days (busy.ps1, 2026-11-04 to 11-08, about 52 h of CPU).
+    /// </summary>
+    internal const string NoSpinRule =
+        "- NO BUSY SPINNING, anywhere in the code base, tests and scripts included: no loop on the CPU waiting for a condition, and no\n" +
+        "  SpinWait, SpinUntil or SpinOnce. Wait on an event, a task, a process exit or a timer (await Task.Delay, Start-Sleep, sleep), and give\n" +
+        "  every waiting loop a deadline so it ends with its owner. A unit test runs in milliseconds, in memory, against fakes: no real\n" +
+        "  process, no network, no wall-clock wait. A review finds any spin a blocking finding.\n";
+
     internal const string BranchHistoryRule =
         "- A branch takes its base by a merge (`git fetch origin` then `git merge origin/<base>`). Merge commits on a working branch are\n" +
         "  fine and never a finding: the merge queue squashes or rebases each PR, so main stays linear whatever the branch holds. Never rebase a\n" +
