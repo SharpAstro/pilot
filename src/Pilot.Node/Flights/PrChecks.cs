@@ -438,7 +438,15 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// </summary>
     private async Task MergeWhenGreenAsync(CancellationToken cancellationToken)
     {
-        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, MergeWhenGreen: [_, _, ..], PullRequest: not null }))
+        var armedFlights = state.Flights().Where(f => f is { State: FlightState.Flying, MergeWhenGreen: [_, _, ..], PullRequest: not null }).ToList();
+        // The tries of an armed head are kept only while that head is still armed: one that moved, landed or was dropped has no later
+        // look to remove its key, so it is pruned here rather than kept for the life of the node.
+        var live = armedFlights.Select(f => $"armed {f.Code} {f.MergeWhenGreen![0]}").ToHashSet(StringComparer.Ordinal);
+        foreach (var stale in _mergeTries.Keys.Where(k => k.StartsWith("armed ", StringComparison.Ordinal) && !live.Contains(k)).ToList())
+        {
+            _mergeTries.Remove(stale);
+        }
+        foreach (var flight in armedFlights)
         {
             var (head, method) = (flight.MergeWhenGreen![0], flight.MergeWhenGreen[1]);
             var how = flight.MergeWhenGreen.ElementAtOrDefault(2) is { Length: > 0 } who ? who : null;

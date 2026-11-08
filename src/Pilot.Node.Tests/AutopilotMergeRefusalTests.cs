@@ -124,21 +124,21 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         var checks = Checks(clock);
 
         await checks.LookAsync(Ct);
-        thrown().ShouldBe(1);
+        asked.ShouldBe(1);
         NoRefusalRaised();
 
         // Asked again only when the backoff has run out: a look a moment later does not ask.
         await checks.LookAsync(Ct);
-        thrown().ShouldBe(1);
+        asked.ShouldBe(1);
 
         clock.Advance(PrChecks.PassingBackoff[0] + TimeSpan.FromSeconds(1));
         await checks.LookAsync(Ct);
-        thrown().ShouldBe(2);
+        asked.ShouldBe(2);
         NoRefusalRaised();
 
         clock.Advance(PrChecks.PassingBackoff[1] + TimeSpan.FromSeconds(1));
         await checks.LookAsync(Ct);
-        thrown().ShouldBe(3);
+        asked.ShouldBe(3);
 
         var card = Refused().ShouldHaveSingleItem();
         card.Bin.ShouldBe(CardBin.Ring);
@@ -151,7 +151,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         // Not asked a fourth time: the person's card is the answer now, however long it waits.
         clock.Advance(TimeSpan.FromHours(1));
         await checks.LookAsync(Ct);
-        thrown().ShouldBe(3);
+        asked.ShouldBe(3);
     }
 
     [Fact]
@@ -166,7 +166,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         var checks = Checks(clock);
 
         await checks.LookAsync(Ct);
-        thrown().ShouldBe(1);
+        asked.ShouldBe(1);
         NoRefusalRaised();
 
         clock.Advance(PrChecks.PassingBackoff[0] + TimeSpan.FromSeconds(1));
@@ -376,7 +376,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         // A conflict ask also has the node try the branch update, which reads the PR again: each ask throws more than once.
-        thrown().ShouldBeGreaterThanOrEqualTo(3);
+        asked.ShouldBeGreaterThanOrEqualTo(3);
         var card = Refused().ShouldHaveSingleItem();
         card.Bin.ShouldBe(CardBin.Ring);
         card.Detail.ShouldNotBeNull().ShouldContain("conflicts with its base");
@@ -424,11 +424,10 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         await checks.LookAsync(Ct);
         F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
         _github.Checks = ChoiceStatus.Passing;
-        // The armed loop reads the PR itself before it asks the merge, and a failure there is no refusal: only the merge verb's own
-        // read of the PR (made while the merge command is under way) fails, as the passing refusal the verb throws. A 5xx answer to the merge call is
-        // no refusal either: the verb arms the merge again on it.
+        // Only the merge verb's own read of the PR fails, as the passing refusal the verb throws: a failure in the armed loop's own read
+        // is no refusal, and a 5xx answer to the merge call is none either (the verb arms the merge again on it). The verb's read is told
+        // from the loop's by the flight's merge command being under way (IsMerging), not by which read comes first.
         var asked = 0;
-        // The verb's own read is the one made while the flight's merge command is under way: the armed loop reads before it asks.
         _github.OnCall = call =>
         {
             if (call == nameof(IGitHub.PullRequestAsync) && _legs.IsMerging(flight.Code))
@@ -438,26 +437,25 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
             }
             return Task.CompletedTask;
         };
-        Func<int> thrown = () => asked;
 
         await checks.LookAsync(Ct);
-        thrown().ShouldBe(1);
+        asked.ShouldBe(1);
         F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
         NoRefusalRaised();
 
         // Asked again only when the backoff has run out.
         await checks.LookAsync(Ct);
-        thrown().ShouldBe(1);
+        asked.ShouldBe(1);
 
         clock.Advance(PrChecks.PassingBackoff[0] + TimeSpan.FromSeconds(1));
         await checks.LookAsync(Ct);
-        thrown().ShouldBe(2);
+        asked.ShouldBe(2);
         F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
         NoRefusalRaised();
 
         clock.Advance(PrChecks.PassingBackoff[1] + TimeSpan.FromSeconds(1));
         await checks.LookAsync(Ct);
-        thrown().ShouldBe(3);
+        asked.ShouldBe(3);
 
         // The third failure lets the merge go and rings, once, with the failure's words and the merge again as the one choice.
         F(flight.Code).MergeWhenGreen.ShouldBeNull();
@@ -471,7 +469,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
 
         clock.Advance(TimeSpan.FromHours(1));
         await checks.LookAsync(Ct);
-        thrown().ShouldBe(3);
+        asked.ShouldBe(3);
         Refused().ShouldHaveSingleItem();
     }
 }
