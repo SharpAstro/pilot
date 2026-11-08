@@ -190,8 +190,10 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
         var (investigations, _) = Investigating();
         var alerts = new FailureAlerts(_state, _github, investigations, TimeProvider.System);
         _legs.Alerts = alerts;
+        _github.Issues[3] = "Something else entirely";
         _checks.Script.Enqueue(new CheckRun(1, Failing("Pilot.Tests.BarTests.Breaks")));
         _checks.Script.Enqueue(new CheckRun(0, "all green"));
+        _checks.Script.Enqueue(new CheckRun(1, Failing("Pilot.Tests.BarTests.Breaks")));
         (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed")).Ok.ShouldBeTrue();
         alerts.Open().ShouldBeEmpty();
         OtherFlight("TIA2", flight);
