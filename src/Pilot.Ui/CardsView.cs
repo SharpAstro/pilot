@@ -186,6 +186,26 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
     // A held panel's summary: the cards as they are, not as held.
     private string? _summary;
 
+    /// <summary>The ids of the open cards <see cref="Without"/> took off this panel: they are not closed, only hidden, so a read of this screen must not take their absence for a close.</summary>
+    internal IReadOnlySet<string> Hidden { get; private init; } = new HashSet<string>();
+
+    /// <summary>
+    /// This panel without the open cards of <paramref name="ids"/> (cards a person dismissed that the node has not yet closed): the
+    /// rest as they are, in their order, with their nodes. A held panel's summary stays as it was held; otherwise it counts what is left.
+    /// </summary>
+    internal CardsScreen Without(IReadOnlySet<string> ids)
+    {
+        if (ids.Count == 0 || !Open.Any(c => ids.Contains(c.Id)))
+        {
+            return this;
+        }
+        return new CardsScreen([.. Open.Where(c => !ids.Contains(c.Id))], Handled, Watchtower)
+        {
+            _nodes = _nodes, _summary = _summary, Merged = Merged, Held = Held,
+            Hidden = new HashSet<string>(Hidden.Concat(Open.Where(c => ids.Contains(c.Id)).Select(c => c.Id))),
+        };
+    }
+
     /// <summary>Whether the panel has anything to show: the watchtower, an open card or a handled line. Empty, it takes no room.</summary>
     public bool HasAny => Watchtower is not null || Open.Count > 0 || Handled.Count > 0 || Merged.Count > 0 || Held.Count > 0;
 
@@ -448,6 +468,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary><paramref name="screen"/>, or, with the pointer <paramref name="over"/> the panel, the panel held as it stood when the pointer came.</summary>
     internal CardsScreen Steady(CardsScreen screen, bool over)
     {
+        // A card dismissed here is off the panel before the hold reads it: it is then a card closed meanwhile, which Tree takes off the held row.
+        screen = Visible(screen);
         if (!over)
         {
             (_held, _waiting, _closed) = (null, [], new HashSet<CardRow>());
@@ -461,6 +483,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The panel as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
     internal Layout.Node Tree(CardsScreen screen)
     {
+        // Also after the hold: a held panel keeps the dismissed card's row in its place, which a person who asked for it gone does not want kept.
+        screen = Visible(screen);
         _shown = screen;
         return Build(screen);
     }
@@ -522,11 +546,54 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     // What a button's press is doing, by card id: working with the node, refused in its words. One helper for every button that asks the node.
     internal Presses Presses { get; } = new();
 
+    // The cards whose Dismiss was clicked and the node has not yet closed, by id. The row leaves the panel on the click: a snapshot
+    // taken before the node's close still lists the card open, and would bring it back for a moment (PIL853). Swapped whole, as the presses are.
+    private System.Collections.Immutable.ImmutableHashSet<string> _dismissed = System.Collections.Immutable.ImmutableHashSet<string>.Empty;
+
+    /// <summary>Whether card <paramref name="cardId"/> was dismissed here and is hidden until the node closes it or refuses, for a test or a dump.</summary>
+    public bool DismissedPending(string cardId) => Volatile.Read(ref _dismissed).Contains(cardId);
+
+    /// <summary>Hides card <paramref name="cardId"/> from the click of its Dismiss, until the node's close of it is read or <see cref="NoteRefused"/> brings it back.</summary>
+    public void NoteDismissed(string cardId)
+    {
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _dismissed, d => d.Add(cardId));
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// <paramref name="screen"/> as the panel and the flight page show it: without the cards dismissed here (<see cref="NoteDismissed"/>).
+    /// A card the screen no longer lists open is closed, so its mark is dropped (the node's close arrived). Cheap and idempotent: the panel and
+    /// the flight page both call it, whatever the other has done.
+    /// </summary>
+    internal CardsScreen Visible(CardsScreen screen)
+    {
+        var marked = Volatile.Read(ref _dismissed);
+        if (marked.IsEmpty)
+        {
+            return screen;
+        }
+        var listed = screen.Open.Select(c => c.Id).Concat(screen.Hidden).ToHashSet();
+        if (marked.Any(id => !listed.Contains(id)))
+        {
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _dismissed, d => d.Intersect(listed));
+            marked = Volatile.Read(ref _dismissed);
+        }
+        return screen.Without(marked);
+    }
+
     /// <summary>
     /// What the node said when it refused a button on card <paramref name="cardId"/>, shown on the card in red until the
-    /// card changes or closes; null clears it (the next press that went through).
+    /// card changes or closes; null clears it (the next press that went through). A refusal of a Dismiss brings the card back
+    /// (<see cref="NoteDismissed"/>) with the reason on it.
     /// </summary>
-    public void NoteRefused(string cardId, string? why) => Presses.NoteRefused(cardId, why);
+    public void NoteRefused(string cardId, string? why)
+    {
+        Presses.NoteRefused(cardId, why);
+        if (why is not null)
+        {
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _dismissed, d => d.Remove(cardId));
+        }
+    }
 
     /// <summary>
     /// Marks the button <paramref name="action"/> (its hit id, <c>card:c9:1</c>) of card <paramref name="cardId"/> as with the
@@ -939,7 +1006,15 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         if (watched is null && !merged)
         {
             // Dismiss (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            Put(NodeButton("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
+            Put(NodeButton("Dismiss", $"card:{card.Id}:dismiss", () =>
+            {
+                // The row leaves on the click, not when the node's close reaches the stream.
+                if (OnDismiss is { } dismiss)
+                {
+                    NoteDismissed(card.Id);
+                    dismiss(card);
+                }
+            }));
         }
         lines.Add(Layout.Builder.Spacer().RowH(6f));
         // Wrapping: a waiting session's card has up to four buttons, more than one line of the panel holds.

@@ -1149,7 +1149,7 @@ internal sealed class PilotChrome<TSurface>
         Cards.IdeaLinks = (ideas ?? IdeasScreen.Empty).LinksIn;
         ShowsCards = cards is { HasAny: true } || (cards is not null && Cards.CanTell && !Cards.OnChatPage);
         // The page's flight lights its cards in the panel, and the flight's own page offers the merge its card does.
-        Flights.Cards = cards;
+        Flights.Cards = cards is null ? null : Cards.Visible(cards);
         // A flight with a PR says where it stands in the chip the Pull requests page has, and a click on it opens that row.
         Flights.PullRequests = pullRequests?.Row;
         Cards.PullRequests = pullRequests?.Row;
