@@ -144,7 +144,7 @@ public sealed class RingJudge(NodeState state, Func<IBrain?> brain)
         {
             text.AppendLine("Detail:").AppendLine(Clip(card.Detail, DetailLength));
         }
-        if (card.Choices.Count > 0)
+        if (card.Choices.Length > 0)
         {
             text.AppendLine("It offers: " + string.Join("; ", card.Choices.Select(c => c.Label)));
         }
