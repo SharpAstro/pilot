@@ -415,10 +415,11 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
         await TimedChecks(clock, live: true).LookAsync(Ct);
 
-        // Not taken: the grace passed, so the node released the hold and the flight merged, as for a watchtower that never came.
+        // Not taken: the grace passed, so the node released the hold as for a watchtower that never came (its own merge in the plane
+        // is no commit of the watchtower's). The merge itself is not asserted: the plane holds an unpushed merge past the reviewed head.
         F(flight.Code).Holding.ShouldBeNull();
-        _github.Merged.ShouldHaveSingleItem();
-        _state.Cards(openOnly: false).ShouldContain(c => c.Kind == LegCommander.HoldReleasedKind);
+        _state.Cards(openOnly: false).ShouldContain(c => c.Kind == LegCommander.HoldingClearedKind && c.Title.Contains("did not take it"));
+        _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
     }
 
     [Fact]
