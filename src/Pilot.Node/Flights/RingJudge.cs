@@ -49,6 +49,12 @@ public sealed class RingJudge(NodeState state, Func<IBrain?> brain)
     public static bool Wants(string kind) =>
         kind is not (Watchtower.AskKind or Watchtower.Down or Watchtower.Stopped or Watchtower.Waits or CardKinds.AssistantAsk);
 
+    /// <summary>
+    /// Whether a ring can wait for the brain now: a brain there and able to answer. When it cannot, the card rings at once, as before, with
+    /// no moment in For you (a ringing card's rules, such as an assistant's dismiss needing an ask, hold from the start).
+    /// </summary>
+    public bool CanJudge => brain() is { Unavailable: null };
+
     /// <summary>Starts the verdict of <paramref name="card"/>, a card just filed in For you on its way to the ring; once per card, whatever the caller does.</summary>
     public void Begin(CardRow card)
     {

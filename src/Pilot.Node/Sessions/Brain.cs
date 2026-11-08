@@ -31,6 +31,9 @@ public interface IBrain
     /// does not answer in time, or does not answer in a form the node can read: never blocks past the timeout.
     /// </summary>
     Task<BrainReply> AskAsync(string kind, string request, TimeSpan timeout, CancellationToken cancellationToken);
+
+    /// <summary>Why the brain cannot be asked right now (no process, starting, waiting on the person); null when it can.</summary>
+    string? Unavailable => null;
 }
 
 /// <summary>
@@ -41,6 +44,9 @@ public interface IBrain
 /// </summary>
 public sealed class BrainClient(Func<StreamSession?> session, TimeProvider time) : IBrain
 {
+    /// <inheritdoc />
+    public string? Unavailable => Reason(session());
+
     /// <summary>How many timings are kept.</summary>
     public const int TimingsKept = 20;
 

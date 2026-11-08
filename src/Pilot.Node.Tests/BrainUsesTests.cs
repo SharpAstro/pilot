@@ -16,9 +16,11 @@ public sealed class BrainUsesTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     /// <summary>A brain that answers each kind of request from a table, or is down.</summary>
-    private sealed class FakeBrain(Dictionary<string, string>? answers = null, string? down = null) : IBrain
+    private sealed class FakeBrain(Dictionary<string, string>? answers = null, string? down = null, string? unavailable = null) : IBrain
     {
         public List<(string Kind, string Request)> Asked { get; } = [];
+
+        public string? Unavailable => unavailable;
 
         public Task<BrainReply> AskAsync(string kind, string request, TimeSpan timeout, CancellationToken cancellationToken)
         {
@@ -46,10 +48,10 @@ public sealed class BrainUsesTests
         }
     }
 
-    private static (NodeState State, FakeBrain Brain) Judged(Dictionary<string, string>? answers = null, string? down = null, bool noBrain = false)
+    private static (NodeState State, FakeBrain Brain) Judged(Dictionary<string, string>? answers = null, string? down = null, bool noBrain = false, string? unavailable = null)
     {
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
-        var brain = new FakeBrain(answers, down);
+        var brain = new FakeBrain(answers, down, unavailable);
         state.RingJudge = new RingJudge(state, () => noBrain ? null : brain);
         return (state, brain);
     }
@@ -120,17 +122,28 @@ public sealed class BrainUsesTests
         brain.Asked.Select(a => a.Kind).ShouldBe(["ring", "wording"]);
     }
 
-    [Theory]
-    [InlineData(false, "the brain is not running")]
-    [InlineData(true, null)]
-    public async Task WithTheBrainDownOrAbsentACardRingsAsItWouldHaveAndKeepsItsWords(bool noBrain, string? down)
+    [Fact]
+    public async Task ABrainThatFailsWhenAskedLeavesTheCardRingingWithItsOwnWords()
     {
-        var (state, _) = Judged(down: down ?? "unused", noBrain: noBrain);
+        var (state, _) = Judged(down: "it did not answer in time");
 
         var card = await RaiseAndSettle(state);
 
         card.Bin.ShouldBe(CardBin.Ring);
         card.Title.ShouldBe("TIA1/parser stopped: the check fails");
+    }
+
+    [Theory]
+    [InlineData(true, null)]
+    [InlineData(false, "it is waiting on the person")]
+    public void WithNoBrainOrOneThatCannotBeAskedNowTheCardRingsAtOnceWithNoMomentInForYou(bool noBrain, string? unavailable)
+    {
+        var (state, brain) = Judged(noBrain: noBrain, unavailable: unavailable);
+
+        var card = state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA1/parser", "TIA1/parser stopped: the check fails");
+
+        card.Bin.ShouldBe(CardBin.Ring);
+        brain.Asked.ShouldBeEmpty();
     }
 
     [Fact]
