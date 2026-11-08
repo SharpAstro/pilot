@@ -202,8 +202,11 @@ public sealed class BrainClient(Func<StreamSession?> session, TimeProvider time)
     /// </summary>
     public static bool IsRequest(string text) => text.StartsWith(RequestPrefix, StringComparison.Ordinal);
 
-    /// <summary>Whether <paramref name="text"/>, the brain's words so far, is its answer to a request: kept out of the person's chat.</summary>
-    public static bool IsAnswer(string text) => text.TrimStart().StartsWith(AnswerMarker + " ", StringComparison.Ordinal);
+    /// <summary>
+    /// Whether <paramref name="text"/>, the brain's words so far or one entry of them, holds its answer to a request: kept out of the person's
+    /// chat. Anywhere in it, as <see cref="Extract"/> finds it, so an answer after a few words of lead-in is kept out too.
+    /// </summary>
+    public static bool IsAnswer(string text) => text.Contains(AnswerMarker + " ", StringComparison.Ordinal);
 
     /// <summary>
     /// Whether a transcript entry is one side of a brain exchange: a request (read as a note, its <see cref="NodeVoice.Prefix"/> cut off)

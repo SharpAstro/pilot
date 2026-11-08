@@ -139,7 +139,9 @@ public sealed record AskAnswer(bool Allow, string? Message = null, IReadOnlyDict
 /// <param name="Waited">How long the message sat unread before the turn began: held while the process started, or written mid-turn and not read at a step (zero when it began at once).</param>
 /// <param name="ClaudeDuration">The <c>duration_ms</c> claude reported for the turn, when it did.</param>
 /// <param name="IsError">The result's <c>is_error</c>.</param>
-public sealed record TurnTiming(DateTimeOffset StartedAt, TimeSpan? FirstWord, TimeSpan Length, TimeSpan Waited, TimeSpan? ClaudeDuration, bool IsError);
+/// <param name="ForNode">The turn answered one of the node's requests of its brain (its words hold a <see cref="BrainClient.AnswerMarker"/> line):
+/// not a reply to the person, so the chat's figures of how fast it answers them leave it out.</param>
+public sealed record TurnTiming(DateTimeOffset StartedAt, TimeSpan? FirstWord, TimeSpan Length, TimeSpan Waited, TimeSpan? ClaudeDuration, bool IsError, bool ForNode = false);
 
 /// <summary>
 /// A node-owned, long-lived Claude Code process that takes messages on stdin and streams its words on stdout
@@ -774,7 +776,7 @@ public sealed class StreamSession : IAsyncDisposable
             ? TimeSpan.FromMilliseconds(d)
             : null;
         var isError = result.TryGetProperty("is_error", out var err) && err.ValueKind == JsonValueKind.True;
-        var timing = new TurnTiming(_turnStarted, _firstWord, now - _turnStarted, _turnWaited, reported, isError);
+        var timing = new TurnTiming(_turnStarted, _firstWord, now - _turnStarted, _turnWaited, reported, isError, BrainClient.IsAnswer(_partialText));
         _timings.Enqueue(timing);
         while (_timings.Count > TimingsKept)
         {

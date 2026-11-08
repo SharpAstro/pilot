@@ -43,6 +43,12 @@ public sealed partial class NodeState
         return card;
     }
 
+    /// <summary>
+    /// How long a person's dismissal keeps the same cause from being raised again (#853): a day. Past it the cause rings again if it is
+    /// still, or once more, there. Not the stale-card hours (2): a dismissed card back every two hours is the nagging #853 set out to end.
+    /// </summary>
+    public TimeSpan DismissalHolds { get; set; } = TimeSpan.FromDays(1);
+
     /// <summary>The brain's word before a ring (<see cref="Flights.RingJudge"/>); null rings at once, as before.</summary>
     public RingJudge? RingJudge { get; set; }
 
@@ -58,7 +64,10 @@ public sealed partial class NodeState
             var now = _time.GetUtcNow();
             // A card a person dismissed for this cause is not raised again by the next look (#853): the caller gets the dismissed card, and
             // nothing is stored, published, rung or said. Read from the cards themselves, so a journal replay or a snapshot restores it.
-            if (bin != CardBin.Handled && _cards.Values.Where(c => IsPersonsDismissal(c) && c.Kind == kind && c.Subject == subject && (c.Cause ?? c.Title) == (cause ?? title))
+            // It holds for DismissalHolds after the dismissal: a cause that comes back later (a watchtower that keeps ending again a week on)
+            // rings again, and one still there is not nagged about inside the window (PIL855's review).
+            if (bin != CardBin.Handled && _cards.Values.Where(c => IsPersonsDismissal(c) && c.Kind == kind && c.Subject == subject && (c.Cause ?? c.Title) == (cause ?? title)
+                    && c.ClosedAt is { } closed && now - closed < DismissalHolds)
                 .OrderByDescending(c => c.ClosedAt).FirstOrDefault() is { } dismissed)
             {
                 return dismissed;

@@ -250,13 +250,57 @@ public sealed partial class WatchtowerChatTests
 
         // The first at once, one more (trailing) for what came after it: the last words are announced, but 50 deltas are not 50 events.
         await UntilAsync(() => sink.Chat - before >= 2, "the leading and the trailing event");
-        await Task.Delay(400, TestContext.Current.CancellationToken);
+        // Past the throttle on the fake clock, with no real wait: no more nudges came for the 50 deltas.
+        _time.Advance(TimeSpan.FromSeconds(1));
         (sink.Chat - before).ShouldBeInRange(2, 4);
 
         // A turn's end is announced at once, whatever the throttle says.
         var atEnd = sink.Chat;
         process.Emit(ResultLine);
         await UntilAsync(() => sink.Chat > atEnd, "the turn's end");
+    }
+
+    /// <summary>
+    /// The node's requests of its brain are not the person's messages (PIL855's review): one written mid-turn is not shown as waiting, and a
+    /// turn that streams the brain's answer, even after a few words of lead-in, is not written into the person's chat as it comes.
+    /// </summary>
+    [Fact]
+    public async Task ABrainRequestIsNotShownAsQueuedAndItsAnswerIsNotShownAsItStreams()
+    {
+        var process = await StreamWorkingAsync();
+        var chat = StreamChat();
+
+        await _tower.CurrentStream().ShouldNotBeNull().SendAsync(BrainClient.Message("n1", "ring", "A card is about to ring."), Ct);
+        await SayAsync("s1", "and the docs?");
+        var page = chat.Page(-1);
+        page.Queued.ShouldBe(["and the docs?"]);
+        page.QueuedBehind.ShouldBe([ChatPage.ReadAtNextStep]);
+
+        // Escaped as it is on the wire: the words are a JSON string inside the stream line.
+        process.Emit(Delta("Judging it. NODE-ANSWER n1 {\\\"ring\\\": tr"));
+        await UntilAsync(() => _tower.CurrentStream()!.PartialText.Contains("NODE-ANSWER", StringComparison.Ordinal), "the answer's words");
+        chat.Page(-1).Partial.ShouldBeNull();
+        BrainClient.IsAnswer("Judging it. NODE-ANSWER n1 {}").ShouldBeTrue();
+
+        // The turn that answered the node is not one of the person's in the chat's figures.
+        process.Emit(ResultLine);
+        await UntilAsync(() => _tower.CurrentStream()!.Timings.Count == 1, "the brain turn's timing");
+        _tower.CurrentStream()!.Timings.Single().ForNode.ShouldBeTrue();
+        chat.Page(-1).Timings.ShouldBeNull();
+    }
+
+    /// <summary>The panel is sent the whole of a long command: Allow runs all of it (PIL855's review).</summary>
+    [Fact]
+    public void APermissionAskCarriesTheWholeCommandToThePanel()
+    {
+        var command = "git commit -m \"" + new string('x', 900) + " TAIL\"";
+        using var input = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(new { command }));
+        var ask = new PendingAsk("r1", "Bash", input.RootElement.Clone(), "t1", Start, null);
+
+        var shown = WatchtowerChat.AskOf(ask);
+
+        shown.Input.ShouldNotBeNull().ShouldContain(" TAIL");
+        System.Text.Json.JsonDocument.Parse(shown.Input).RootElement.GetProperty("command").GetString().ShouldBe(command);
     }
 
     private static string Interrupt(WatchtowerStreamTests.FakeProcess process) =>

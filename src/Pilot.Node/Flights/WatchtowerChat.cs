@@ -84,15 +84,16 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
             Queued = queuedLines.Length > 0 ? queuedLines : null,
             QueuedIds = stamps.Queued is { } ids && ids.Any(id => id is not null) ? ids : null,
             // A turn that answers the node's request is the node's: its words are not written in the person's chat as they come.
-            Partial = stream is { Working: true } && stream.PartialText is { Length: > 0 } words && !words.Contains(BrainClient.AnswerMarker, StringComparison.Ordinal) ? words : null,
+            Partial = stream is { Working: true } && stream.PartialText is { Length: > 0 } words && !BrainClient.IsAnswer(words) ? words : null,
             Doing = stream is { Working: true } ? stream.Doing : null,
             QueuedBehind = stream is not null && queuedLines.Length > 0 ? BehindOf(midTurn, queuedLines.Length) : null,
-            Timings = stream is { Timings.Count: > 0 } ? [.. stream.Timings.TakeLast(ChatTimings.Kept).Select(TimingOf)] : null,
+            // The person's turns only: a turn that answered the node's brain request (a verdict, a wording, a summary) is not how fast it answers them.
+            Timings = stream?.Timings.Where(t => !t.ForNode).TakeLast(ChatTimings.Kept).Select(TimingOf).ToArray() is { Length: > 0 } timings ? timings : null,
             Asks = stream is { Pending.Count: > 0 } ? [.. stream.Pending.Select(AskOf)] : null,
         };
     }
 
-    private static ChatAsk AskOf(PendingAsk ask) => new()
+    internal static ChatAsk AskOf(PendingAsk ask) => new()
     {
         Id = ask.Id,
         Tool = ask.Tool,

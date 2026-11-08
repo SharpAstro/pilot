@@ -87,9 +87,10 @@ public sealed record CardRow
     public string? AttachmentExt { get; init; }
 
     /// <summary>
-    /// What the card is about, as the raiser keys it, when its title carries a part that changes for the same cause (an age, a count): the
-    /// node remembers a person's dismissal by kind, subject and this key, so the next watch pass does not raise the same cause again (#853).
-    /// Null when the title is the key. A card an older node wrote has none; an older client ignores it.
+    /// What the card is about: the node remembers a person's dismissal by kind, subject and this key, so the next watch pass does not raise
+    /// the same cause again (#853). The raiser's key where its title carries a part that changes for the same cause (an age, a count), else
+    /// the title the card was raised with, fixed then, so a later rewording of the title (the brain's, PIL855) cannot move it. A card an
+    /// older node wrote has none, and its title is the key; an older client ignores it.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Cause { get; init; }

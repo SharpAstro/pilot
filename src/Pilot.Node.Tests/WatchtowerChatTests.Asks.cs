@@ -71,4 +71,26 @@ public sealed partial class WatchtowerChatTests
         _state.Cards(openOnly: true).Where(c => c.Kind == "watchtower-ask").ShouldBeEmpty();
         _state.Cards().Single(c => c.Subject == Watchtower.AskSubject("outside")).Outcome.ShouldBe("cancelled");
     }
+
+    /// <summary>
+    /// PIL855's review: an ask nobody answers leaves the watchtower blocked with nothing else to show it. Its card waits in For you while
+    /// the person may be at the chat, and rings once the wait passes the ring time, as any session waiting on them does.
+    /// </summary>
+    [Fact]
+    public async Task AnAskNobodyAnswersRingsOnceItHasWaitedPastTheRingTime()
+    {
+        var process = await StreamIdleAsync();
+        process.Emit(CanUse("long", "Read", """{"file_path":"/somewhere/else.md"}"""));
+        await UntilAsync(() => _state.Cards(openOnly: true).Any(c => c.Subject == Watchtower.AskSubject("long")), "its card");
+
+        _time.Advance(TimeSpan.FromMinutes(5));
+        await _tower.LookAsync(Ct);
+        _state.Cards(openOnly: true).Single(c => c.Subject == Watchtower.AskSubject("long")).Bin.ShouldBe(CardBin.ForYou);
+
+        _time.Advance(_tower.AskRingAfter);
+        await _tower.LookAsync(Ct);
+        var card = _state.Cards(openOnly: true).Single(c => c.Subject == Watchtower.AskSubject("long"));
+        card.Bin.ShouldBe(CardBin.Ring);
+        card.Detail.ShouldNotBeNull().ShouldStartWith("It has waited on you for over");
+    }
 }

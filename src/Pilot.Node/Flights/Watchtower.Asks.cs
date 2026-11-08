@@ -58,6 +58,31 @@ public sealed partial class Watchtower
         state.RaiseCard(CardBin.ForYou, AskKind, AskSubject(ask.Id), title, detail is { Length: > 0 } ? detail : null, choices);
     }
 
+    /// <summary>
+    /// How long an ask waits in For you before its card rings: as long as any session waiting on the person waits before it rings
+    /// (<see cref="LegWatch.RingAfter"/>). While the person is at the chat they answer it in the panel long before; past it nobody is, and
+    /// the watchtower is blocked with nothing else to show it (PIL855's review).
+    /// </summary>
+    public TimeSpan AskRingAfter { get; set; } = TimeSpan.FromMinutes(15);
+
+    /// <summary>Rings the card of every ask the stream watchtower has waited on for longer than <see cref="AskRingAfter"/>, once each.</summary>
+    private void RingLongAsks(DateTimeOffset now)
+    {
+        if (CurrentStream() is not { Pending.Count: > 0 } stream)
+        {
+            return;
+        }
+        var open = state.Cards(openOnly: true).Where(c => c.Kind == AskKind && c.Bin == CardBin.ForYou).ToDictionary(c => c.Subject, StringComparer.Ordinal);
+        foreach (var ask in stream.Pending.Where(a => now - a.At > AskRingAfter))
+        {
+            if (open.TryGetValue(AskSubject(ask.Id), out var card))
+            {
+                state.UpdateCard(card.Id, card.Title, $"It has waited on you for over {Waited.Say(AskRingAfter)}, and the watchtower does nothing else until it is answered."
+                    + (card.Detail is { Length: > 0 } detail ? "\n\n" + detail : ""), card.Choices, card.Link, bin: CardBin.Ring);
+            }
+        }
+    }
+
     private void CloseAskCard(PendingAsk ask, string outcome)
     {
         if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == AskKind && c.Subject == AskSubject(ask.Id)) is { } card)

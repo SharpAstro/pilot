@@ -19,8 +19,6 @@ internal sealed partial class ChatView<TSurface>
     /// <summary>The panel's share of the page's height, as the question card's.</summary>
     private const float WaitWeight = 45f;
 
-    private const int InputShown = 600;
-
     /// <summary>
     /// Answers the ask with the given id (<c>allow</c>, <c>deny</c> or <c>answer</c>, then the words: a reason, or the JSON of each question's answer;
     /// the node's <c>answer-ask</c>): null when the node did it, else what it said in refusing it. Null leaves the panel without its buttons.
@@ -132,7 +130,8 @@ internal sealed partial class ChatView<TSurface>
             if (ask.Input is { Length: > 0 } raw)
             {
                 body.Add(Layout.Builder.Text(ask.Tool, 11f, Body).Selectable());
-                body.Add(WrappedProse.Of(raw.Length > InputShown ? raw[..(InputShown - 1)] + "…" : raw, 12f, Dim, lineChars: 60));
+                // Whole as well: Allow runs the whole call, so the person sees all of it (a long heredoc or a gh body scrolls here).
+                body.Add(WrappedProse.Of(raw, 12f, Dim));
             }
             actions.Add(AskButton(key, ask.Id, "allow", "Allow", () => AnswerAsk(ask.Id, "allow", null, $"{key}:allow")));
             actions.Add(AskButton(key, ask.Id, "deny", "Deny", () => AnswerAsk(ask.Id, "deny", null, $"{key}:deny")));

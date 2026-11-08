@@ -710,6 +710,7 @@ public sealed partial class Watchtower(
             // Kept every look, so a row archived before anyone asked for the chat is still known by its session.
             Generations();
             KeepChurnCard(Health());
+            RingLongAsks(now);
             var watching = Keeping();
             NoteHeld();
             if (watching is not null || _watchingAt is null)

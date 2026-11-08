@@ -152,6 +152,21 @@ public sealed class WaitingOnYouTests
         chat.Presses.PendingOf("chat:ask:p1").ShouldBeNull();
     }
 
+    /// <summary>Allow runs the whole call, so the panel shows the whole of a long command (PIL855's review): nothing past 600 characters is cut.</summary>
+    [Fact]
+    public async Task ALongCommandIsShownWholeWithItsTail()
+    {
+        var command = "git commit -m \"" + string.Join(" ", Enumerable.Range(0, 200).Select(i => $"word{i}")) + " TAILMARKER\"";
+        command.Length.ShouldBeGreaterThan(600);
+        var ask = Prompt(false) with { Input = JsonSerializer.Serialize(new { command }) };
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chat = Chat(renderer, () => Page(ask), []);
+        await Open(chat);
+
+        // Laid out at a page tall enough that the capped panel holds it all: nothing cut, the tail is there.
+        Described(chat, 1280, 4000).ShouldContain("TAILMARKER");
+    }
+
     [Fact]
     public async Task ADeniedPromptAndARefusedAnswerAreSaidUnderTheButtons()
     {
