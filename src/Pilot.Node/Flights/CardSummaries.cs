@@ -236,7 +236,7 @@ public static partial class CardSummaries
         var head = $"The review of {code} passed with {notes.Count} small {(notes.Count == 1 ? "note" : "notes")} that {(notes.Count == 1 ? "does" : "do")} not block the merge{example}.";
         return fixerLeg is not null
             ? $"{head} The fixer leg {fixerLeg} took them; nothing for you to do."
-            : $"{head} The watchtower hands them to a fixer leg or clears the flight; else it merges with them. Nothing for you to do.";
+            : $"{head} The watchtower fixes them or clears the flight; else it merges with them. Nothing for you to do.";
     }
 
     /// <summary>The sentence of a review-notes card whose hold the watchtower did not take: the flight merges with the notes, which stay for a follow-up.</summary>

@@ -29,6 +29,7 @@ internal static class CardKindCatalog
     private const string LegOpenPr = "Flights/LegCommander.OpenPr.cs";
     private const string LegPlanners = "Flights/LegCommander.Planners.cs";
     private const string LegReview = "Flights/LegCommander.Review.cs";
+    private const string LegReviewHold = "Flights/LegCommander.ReviewHold.cs";
     private const string LegHoldRelease = "Flights/LegCommander.HoldRelease.cs";
     private const string HumanVerification = "Flights/LegCommander.HumanVerification.cs";
     private const string LegMerge = "Flights/LegCommander.Merge.cs";
@@ -113,7 +114,7 @@ internal static class CardKindCatalog
         new("review-notes", "ForYou", [LegReview], "ReviewModelTests.APassWithNotesRaisesTheWatchtowerCardAndSendsNoLegRound"),
         new("human-verification", "ForYou", [HumanVerification], "HumanVerificationFilingTests.AFlaggedPassFilesEachItemInTheMilestoneAndRaisesOneCard"),
         new("human-verification-refused", "Handled", [HumanVerification], "HumanVerificationFilingTests.ARefusedGhCallKeepsTheVerdictAndRaisesAHandledCard"),
-        new("holding-cleared", "Handled", [LegReview], "HoldingPatternTests.ClearByTheWatchtowerLetsAutopilotMergeIt"),
+        new("holding-cleared", "Handled", [LegReviewHold], "HoldingPatternTests.ClearByTheWatchtowerLetsAutopilotMergeIt"),
         new("hold-released", "Handled", [LegHoldRelease], "HoldingPatternTests.AHoldWhoseWatchtowerEndedIsReleasedWithItsNotesOnThePrAndMergesOnAutopilot"),
         new("pr-ready-restored", "Handled", [LegReview], "PassedWithoutCardTests.AFlightPassedWithNoCardGetsOneAndAutopilotMergesIt"),
         new("holding-timeout", "Ring", [Checks], "HoldingPatternTests.PastTheBoundTheTimeoutCardRingsAndMergeAsItIsMerges", "the flight's holding pattern on its row is past its timeout and its PR is still open on GitHub", [nameof(Verbs.Merge), nameof(Verbs.Land)]),
