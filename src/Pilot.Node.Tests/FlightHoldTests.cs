@@ -226,6 +226,63 @@ public sealed class FlightHoldTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task AGoAroundsFinishOnAHeldFlightMergesNoBaseAndTouchesNothingOnGitHubAndTheReleaseBringsTheBaseInAndPushes()
+    {
+        SweepsAdvance();
+        _github.AutoMergeAllowed = true;
+        var flight = await NewFlight("12", "parser");
+        var code = flight.Code;
+        await Fly(flight, "parser");
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget(code), "controller")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", "naming")).Ok.ShouldBeTrue();
+        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges).Choices[0];
+        (await Run(card.Verb, card.Target, "controller", card.Args)).Error.ShouldBeNull();
+        var worker = _state.Legs(code).Single().Worker!;
+        var pr = F(code).PullRequest!.Value;
+        var pushedBefore = Git(Repo, "ls-remote", "origin", flight.Branch);
+
+        // The go-around's fix is committed in the plane while main moves on a file of its own, then the owner holds the flight.
+        File.WriteAllText(Path.Combine(flight.Worktree, "fix12.txt"), "fixed\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix the naming");
+        File.WriteAllText(Path.Combine(Repo, "later12.txt"), "later\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "commit", "-q", "-m", "later on main");
+        Git(Repo, "push", "-q", "origin", "main");
+        // The plane's own view of origin/main has moved, so "has not seen main" below is about the merge, not a stale ref.
+        Git(flight.Worktree, "fetch", "-q", "origin");
+        (await Hold(flight)).Error.ShouldBeNull();
+        var fixedHead = Git(flight.Worktree, "rev-parse", "HEAD");
+        var reviewsBefore = _workers.Started.Count(s => s.Name == Reviewer(code));
+        var disarmedBefore = _github.AutoMergeDisarmed.Count;
+
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(code, "parser"), worker, "done", "fixed")).Error.ShouldBeNull();
+
+        // The leg is recorded done and nothing else moved: the plane has no merge commit and has not seen main, origin's branch is where it
+        // was, no reviewer started, and GitHub's auto-merge was not asked about.
+        _state.Legs(code).Single().State.ShouldBe(LegState.Done);
+        Git(flight.Worktree, "rev-parse", "HEAD").ShouldBe(fixedHead);
+        Should.Throw<InvalidOperationException>(() => Git(flight.Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD"));
+        Git(Repo, "ls-remote", "origin", flight.Branch).ShouldBe(pushedBefore);
+        _workers.Started.Count(s => s.Name == Reviewer(code)).ShouldBe(reviewsBefore);
+        F(code).Review!.State.ShouldBe(ReviewState.Changes);
+        _github.AutoMergeDisarmed.Count.ShouldBe(disarmedBefore);
+
+        // The release's next due step (the sweep's unread-head push) brings the base in, pushes and starts the review at the new head.
+        (await Run(Verbs.Unground, Verbs.FlightTarget(code), "me")).Error.ShouldBeNull();
+        await _legs.AdvanceAllAsync(Ct);
+        await Started(_legs, code);
+        var pushed = Git(flight.Worktree, "rev-parse", "HEAD");
+        pushed.ShouldNotBe(fixedHead);
+        Git(flight.Worktree, "merge-base", "--is-ancestor", "origin/main", pushed);
+        Git(Repo, "ls-remote", "origin", flight.Branch).ShouldStartWith(pushed);
+        _workers.Started.Count(s => s.Name == Reviewer(code)).ShouldBe(reviewsBefore + 1);
+        F(code).Review!.State.ShouldBe(ReviewState.Reviewing);
+        F(code).PullRequest.ShouldBe(pr);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task AHeldFlightIsSaidOnHoldAheadOfEveryOtherStageInStatusMarkdownSummaryDigestAndTheWatchtowerBrief()
     {
         var flight = await NewFlight("7", "parser");
@@ -280,6 +337,37 @@ public sealed class FlightHoldTests : ReviewTestsBase
         released.Title.ShouldBe("something to decide");
         released.Detail.ShouldBe("words");
         released.Choices.Select(c => c.Label).ShouldBe(card.Choices.Select(c => c.Label));
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task APersonsDismissalOfACardHoldsAcrossTheHoldAndTheReleaseForTheSameCause()
+    {
+        var flight = await NewFlight("10", "parser");
+        var target = Verbs.FlightTarget(flight.Code);
+        const string kind = "test-dismiss";
+        CardRow[] Raised() => [.. _state.Cards(openOnly: false).Where(c => c.Kind == kind)];
+
+        // Dismissed before the hold: the hold's words on the title do not make the same cause a new one.
+        var before = _state.RaiseCard(CardBin.Ring, kind, target, "cause before the hold");
+        _state.CloseCard(before.Id, "dismissed: known", "gui").ShouldBeTrue();
+        (await Hold(flight)).Error.ShouldBeNull();
+        var duringHold = _state.RaiseCard(CardBin.Ring, kind, target, "cause before the hold");
+        duringHold.Id.ShouldBe(before.Id);
+        duringHold.State.ShouldBe(CardState.Closed);
+        Raised().ShouldHaveSingleItem();
+
+        // Raised and dismissed during the hold: still dismissed once it is released, and the key is the plain title, not the decorated one.
+        var held = _state.RaiseCard(CardBin.Ring, kind, target, "cause during the hold");
+        held.Title.ShouldContain(on(flight));
+        held.Cause.ShouldBe("cause during the hold");
+        _state.CloseCard(held.Id, "dismissed: known", "gui").ShouldBeTrue();
+        (await Run(Verbs.Unground, target, "me")).Error.ShouldBeNull();
+        var afterRelease = _state.RaiseCard(CardBin.Ring, kind, target, "cause during the hold");
+        afterRelease.Id.ShouldBe(held.Id);
+        afterRelease.State.ShouldBe(CardState.Closed);
+        _state.RaiseCard(CardBin.Ring, kind, target, "cause before the hold").Id.ShouldBe(before.Id);
+        Raised().Length.ShouldBe(2);
     }
 
     [Fact]

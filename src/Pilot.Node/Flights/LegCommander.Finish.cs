@@ -115,8 +115,12 @@ public sealed partial class LegCommander
                 // The go-around's push comes next when it is the last leg. The plane is brought up to date with its base first, so the
                 // check below runs on what is pushed; a conflict is undone and refused, the leg left flying for its worker to resolve.
                 // A review that passed at an earlier head asks the same once the leg's commits moved the plane past it (a review-notes leg).
+                // On the owner's hold (#771) a finish is let through so a running worker can report, but it brings nothing up to date and
+                // changes nothing on GitHub: no base merge into the plane, no auto-merge disarmed. The leg is recorded done and the release's
+                // next sweep (ReviewUnreadHeadAsync) merges the base, pushes and starts the review.
                 var pushes = await ReviewBehindPlaneAsync(flight, cancellationToken)
-                    && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name);
+                    && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name)
+                    && !IsOnHold(flight.Code);
                 if (pushes)
                 {
                     using (Calling(flight.Code, "being brought up to date"))

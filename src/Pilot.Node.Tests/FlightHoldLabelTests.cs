@@ -187,6 +187,29 @@ public sealed class FlightHoldLabelTests : ReviewTestsBase
 
         [Fact]
         [Trait("Category", "Slow")]
+        public async Task ALabelPutOnByHandAfterAReleaseReadsAsHeldOnGitHubByTheOwnerNotByTheEarlierHoldCommentsPerson()
+        {
+            var repo = Clone();
+            _github.Issues[1] = "held and released by pilot, label put back by hand";
+            _github.Issues[2] = "held, released, held again by pilot";
+            _github.IssueLabels[1] = [PilotMarks.Hold, "pilot node: DE1"];
+            _github.IssueLabels[2] = [PilotMarks.Hold, "pilot node: DE1"];
+            _github.PrConversation.Add((1, new PrComment("seb", "pilot: on hold by seb from SE1: the earlier reason", DateTimeOffset.UtcNow.AddMinutes(-9))));
+            _github.PrConversation.Add((1, new PrComment("seb", "pilot: off hold, released by seb from SE1", DateTimeOffset.UtcNow.AddMinutes(-5))));
+            _github.PrConversation.Add((2, new PrComment("seb", "pilot: on hold by seb from SE1: the earlier reason", DateTimeOffset.UtcNow.AddMinutes(-9))));
+            _github.PrConversation.Add((2, new PrComment("seb", "pilot: off hold, released by seb from SE1", DateTimeOffset.UtcNow.AddMinutes(-5))));
+            _github.PrConversation.Add((2, new PrComment("ana", "pilot: on hold by ana from DE1: the newer reason", DateTimeOffset.UtcNow.AddMinutes(-1))));
+            Fly(repo, 1);
+            Fly(repo, 2);
+
+            await Look(repo);
+
+            (F(1).OnHold!.By, F(1).OnHold!.Reason).ShouldBe((LegCommander.TheOwner, "held on GitHub"));
+            (F(2).OnHold!.By, F(2).OnHold!.Reason).ShouldBe(("ana", "the newer reason"));
+        }
+
+        [Fact]
+        [Trait("Category", "Slow")]
         public async Task ALabelledHoldWhoseLabelIsGoneIsReleasedAndAHoldWithoutTheLabelStays()
         {
             var repo = Clone();

@@ -61,6 +61,9 @@ public sealed partial class NodeState
             {
                 return open;
             }
+            // The key a dismissal is remembered by, taken before the hold's words decorate the title: a card dismissed before the hold, one
+            // raised during it and one raised after the release all share it, so the hold neither breaks a dismissal nor ends one (#853).
+            var key = cause ?? title;
             if (bin != CardBin.Handled && OnHoldOf(subject) is { } onHold)
             {
                 // The owner's hold (#771): the card says so. Its choices are all kept, never stripped: a card raised once (an overlap's Connect
@@ -75,7 +78,7 @@ public sealed partial class NodeState
             // nothing is stored, published, rung or said. Read from the cards themselves, so a journal replay or a snapshot restores it.
             // It holds for DismissalHolds after the dismissal: a cause that comes back later (a watchtower that keeps ending again a week on)
             // rings again, and one still there is not nagged about inside the window (PIL855's review).
-            if (bin != CardBin.Handled && _cards.Values.Where(c => IsPersonsDismissal(c) && c.Kind == kind && c.Subject == subject && (c.Cause ?? c.Title) == (cause ?? title)
+            if (bin != CardBin.Handled && _cards.Values.Where(c => IsPersonsDismissal(c) && c.Kind == kind && c.Subject == subject && (c.Cause ?? c.Title) == key
                     && c.ClosedAt is { } closed && now - closed < DismissalHolds)
                 .OrderByDescending(c => c.ClosedAt).FirstOrDefault() is { } dismissed)
             {
@@ -116,7 +119,7 @@ public sealed partial class NodeState
                 Why = why,
                 // The key a dismissal is remembered by, fixed when the card is raised: a later rewording of its title (the brain's, PIL855)
                 // cannot move it, so a dismissed card raised again for the same cause stays dismissed (#853).
-                Cause = cause ?? title,
+                Cause = key,
                 Attachment = attachment,
                 AttachmentExt = attachment is null ? null : attachmentExt,
                 At = now,

@@ -458,6 +458,41 @@ public sealed record PackageWait
     public string? RepoPath { get; init; }
 }
 
+/// <summary>
+/// How many flights fly, wait held and are on the owner's hold (<see cref="FlightRow.OnHold"/>), each counted once: the one count the
+/// Flights header, Home, the Fleet line and the digest all read. A flight on the owner's hold keeps its <see cref="FlightRow.State"/>
+/// (Flying or Held as far as its legs go) but is not flying: only the owner's release moves it, so it counts as on hold and in no
+/// other column. A landed flight is none of the three.
+/// </summary>
+public readonly record struct FlightCounts(int Flying, int Held, int OnHold)
+{
+    /// <summary>Counts <paramref name="flights"/>, each in one column.</summary>
+    public static FlightCounts Of(IEnumerable<FlightRow> flights)
+    {
+        int flying = 0, held = 0, onHold = 0;
+        foreach (var flight in flights)
+        {
+            if (flight.State == FlightState.Landed)
+            {
+                continue;
+            }
+            if (flight.OnHold is not null)
+            {
+                onHold++;
+            }
+            else if (flight.State == FlightState.Flying)
+            {
+                flying++;
+            }
+            else if (flight.State == FlightState.Held)
+            {
+                held++;
+            }
+        }
+        return new FlightCounts(flying, held, onHold);
+    }
+}
+
 /// <summary>What a held flight waits for, in one place for every client's <c>held, waiting for …</c>.</summary>
 public static class FlightWaiting
 {

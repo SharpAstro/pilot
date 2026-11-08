@@ -87,7 +87,7 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
         var onHold = flights.Where(f => f.State != FlightState.Landed && f.OnHold is not null).ToList();
         var held = flights.Where(f => f.State == FlightState.Held && f.OnHold is null).ToList();
         var failed = state.Legs().Where(l => l.State == LegState.Failed).ToList();
-        var flying = flights.Count(f => f.State == FlightState.Flying);
+        var flying = FlightCounts.Of(flights).Flying;
 
         var stale = StaleSection.Read(state, now, Bounds(), time.LocalTimeZone);
         var title = $"Digest: {Count(landed.Count, "landed", "landed")}, {flying} flying, {Count(open.Count, "card open", "cards open")}{(stale.Count > 0 ? $", {stale.Count} gone stale" : "")}";

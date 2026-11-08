@@ -105,7 +105,62 @@ public sealed class FlightHoldPageTests
             chrome.Flights.OnAction = _ => Task.FromResult<string?>(null);
             chrome.Flights.Render(new FlightsScreen([.. lines], "test", Live.At), new RectF32(0, 0, width, 420));
             File.WriteAllBytes(Path.Combine(dir, $"{tag}-{width}.png"), PngWriter.Encode(vessel.Surface.Pixels, width, 420));
+
+            // The detail page of a held flight with no legs: the hold said, Release offered, no Plan it.
+            var detailLines = FlightLine.Build([Flight(true)], [], Live.At);
+            var detailScreen = new FlightsScreen([.. detailLines], "test", Live.At);
+            using var page = new RgbaImageRenderer((uint)width, 520);
+            var detailChrome = new PilotChrome<RgbaImage>(page, new SessionsView<RgbaImage>(page)) { FontPath = SessionsCapture.FontPath };
+            detailChrome.Flights.Mode = FlightsViewMode.List;
+            detailChrome.Flights.CanCommand = true;
+            detailChrome.Flights.OnAction = _ => Task.FromResult<string?>(null);
+            detailChrome.Flights.Render(detailScreen, new RectF32(0, 0, width, 520));
+            detailChrome.Flights.OpenDetail("PIL771");
+            detailChrome.Flights.Render(detailScreen, new RectF32(0, 0, width, 520));
+            File.WriteAllBytes(Path.Combine(dir, $"{tag}-detail-{width}.png"), PngWriter.Encode(page.Surface.Pixels, width, 520));
         }
+    }
+
+    [Fact]
+    public void TheHeaderCountsAFlightOnHoldAsOnHoldAndNotAsFlyingAndHomeAndFleetAndTheDigestAgree()
+    {
+        var lines = FlightLine.Build([Flight(false, code: "PIL770"), Flight(true), Flight(true, LongWhy, "PIL772")], [], Live.At, [Leg(LegState.Planned, 1)]);
+        var screen = new FlightsScreen([.. lines], "test", Live.At);
+
+        // The two rows that say "on hold" are not in the flying count above them.
+        screen.Counts.ShouldBe("3 flights · 1 flying · 2 on hold");
+        screen.Summary.ShouldBe("3 flights · 1 flying · 2 on hold");
+        // A landed flight on hold is landed, not on hold; a flight on hold and Held (waiting on a connection) is counted once, as on hold.
+        var rows = new[] { Flight(true) with { State = FlightState.Landed }, Flight(true, code: "PIL773") with { State = FlightState.Held }, Flight(false, code: "PIL774") with { State = FlightState.Held }, Flight(false, code: "PIL775") };
+        FlightCounts.Of(rows).ShouldBe(new FlightCounts(Flying: 1, Held: 1, OnHold: 1));
+        // The count Home says for flights flying is the same one.
+        var home = new HomeScreen(screen, new SessionsScreen([], "test", Live.At), new JobsScreen([], "test", Live.At), CardsScreen.Empty);
+        home.Flying.ShouldBe("1 flight flying");
+    }
+
+    [Fact]
+    public void AHeldFlightWithNoLegsSaysItIsOnHoldAndOffersNoPlanIt()
+    {
+        var line = FlightLine.Build([Flight(true)], [], Live.At).Single();
+        using var vessel = new RgbaImageRenderer(1000, 900);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath };
+        var flights = chrome.Flights;
+        flights.Mode = FlightsViewMode.List;
+        flights.CanCommand = true;
+        flights.OnAction = _ => Task.FromResult<string?>(null);
+        var screen = new FlightsScreen([line], "test", Live.At);
+        flights.Render(screen, new RectF32(0, 0, 1000, 900));
+        flights.OpenDetail("PIL771");
+        flights.Render(screen, new RectF32(0, 0, 1000, 900));
+        var arranged = Layout.Engine.Arrange(flights.Tree(screen), new Rect<float>(0, 0, 1000, 900), new PixelMeasureContext<RgbaImage>(vessel, SessionsCapture.FontPath, 1f));
+        var text = arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value).ToList();
+
+        var said = string.Join(" / ", text);
+        string.Join(" ", text).Replace("  ", " ").ShouldContain($"on hold by seb: {Why}");
+        text.ShouldContain(t => t.Contains("Release", StringComparison.Ordinal), said);
+        // The node refuses a plan while the hold stands (PlanFlight is not let through), and the page said "not planned yet: no planner is running".
+        text.ShouldNotContain(t => t.Contains("Plan it", StringComparison.Ordinal) || t.Contains("Plan a leg", StringComparison.Ordinal) || t.Contains("not planned yet", StringComparison.Ordinal), said);
+        TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
     }
 
     [Fact]

@@ -504,6 +504,9 @@ public static class PilotMarks
     /// <summary>What the comment that says a flight was put on hold starts with, so a sweep finds the newest one pilot wrote.</summary>
     public const string HoldCommentStart = "pilot: on hold";
 
+    /// <summary>What the comment that says a flight was released from its hold starts with: a hold comment older than the newest of these is spent.</summary>
+    public const string OffHoldCommentStart = "pilot: off hold";
+
     /// <summary>Put on a flight's issue by a person: the flight's live behaviour needs a person's check, so its briefs say how to note such checks and the node files each as an issue for the controller.</summary>
     public const string HumanVerification = LabelPrefix + "human verification";
 

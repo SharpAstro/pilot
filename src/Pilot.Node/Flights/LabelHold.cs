@@ -29,12 +29,20 @@ internal static class LabelHold
         return (from >= 0 ? rest[..from] : rest).Trim() is { Length: > 0 } named ? named : null;
     }
 
-    /// <summary>The bodies of the hold comments pilot wrote on the flight's issue, oldest first.</summary>
+    /// <summary>
+    /// The bodies of the hold comments pilot wrote on the flight's issue since its newest release, oldest first. A hold comment older than
+    /// the newest <see cref="PilotMarks.OffHoldCommentStart"/> comment is spent: a label put on by hand after a release has no comment of
+    /// pilot's to say who or why, so it reads as held on GitHub by the owner, not as held by the earlier person for the earlier reason.
+    /// </summary>
     /// <exception cref="FlightException">GitHub refused the read.</exception>
-    public static async Task<string[]> CommentsAsync(IGitHub github, string repoPath, int issue, CancellationToken cancellationToken) =>
-        [.. (await github.IssueCommentsAsync(repoPath, issue, cancellationToken))
-            .Where(c => c.Body.StartsWith(PilotMarks.HoldCommentStart, StringComparison.Ordinal))
-            .OrderBy(c => c.CreatedAt).Select(c => c.Body)];
+    public static async Task<string[]> CommentsAsync(IGitHub github, string repoPath, int issue, CancellationToken cancellationToken)
+    {
+        var all = (await github.IssueCommentsAsync(repoPath, issue, cancellationToken)).OrderBy(c => c.CreatedAt).ToList();
+        var released = all.LastOrDefault(c => c.Body.StartsWith(PilotMarks.OffHoldCommentStart, StringComparison.Ordinal))?.CreatedAt;
+        return [.. all
+            .Where(c => c.Body.StartsWith(PilotMarks.HoldCommentStart, StringComparison.Ordinal) && (released is null || c.CreatedAt > released))
+            .Select(c => c.Body)];
+    }
 
     /// <summary>
     /// A merge the flight armed is let go of: GitHub's auto-merge would merge it with the node down, and a queued PR would land.

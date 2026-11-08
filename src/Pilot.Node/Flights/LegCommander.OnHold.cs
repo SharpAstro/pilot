@@ -204,7 +204,7 @@ public sealed partial class LegCommander
                 else
                 {
                     await tracker.RemoveLabelAsync(known.RepoPath, issue, PilotMarks.Hold, cancellationToken);
-                    await tracker.CommentAsync(known.RepoPath, issue, $"pilot: off hold, released by {by} from {options.Machine}{(why.Length > 0 ? $": {why}" : "")}", cancellationToken);
+                    await tracker.CommentAsync(known.RepoPath, issue, $"{PilotMarks.OffHoldCommentStart}, released by {by} from {options.Machine}{(why.Length > 0 ? $": {why}" : "")}", cancellationToken);
                 }
             });
         }
@@ -243,7 +243,7 @@ public sealed partial class LegCommander
                     await tracker.RemoveLabelAsync(flight.RepoPath, flight.Issue, PilotMarks.Hold, cancellationToken);
                     try
                     {
-                        await tracker.CommentAsync(flight.RepoPath, flight.Issue, $"pilot: off hold, released by {by} from {options.Machine}{(why.Length > 0 ? $": {why}" : "")}", cancellationToken);
+                        await tracker.CommentAsync(flight.RepoPath, flight.Issue, $"{PilotMarks.OffHoldCommentStart}, released by {by} from {options.Machine}{(why.Length > 0 ? $": {why}" : "")}", cancellationToken);
                     }
                     catch (FlightException)
                     {
