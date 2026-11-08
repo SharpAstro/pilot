@@ -77,7 +77,7 @@ public sealed class LongJobRingTests : JobTestsBase
 
         // The waiting job leaves; nothing waits any more, so the card closes, and a new waiter does not raise it again.
         jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(second), Who = "controller" });
-        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        jobs.Dispatch(new JobRunner.Withdrawn(second, "controller"));
         LongCards().ShouldBeEmpty();
         Hand(jobs, Echo("again"));
         jobs.Dispatch(JobRunner.LookAgain.Instance);
