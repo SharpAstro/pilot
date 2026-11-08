@@ -788,6 +788,21 @@ public sealed class SessionTracker : BackgroundService
     /// <summary>Whether the row ended on its own, held so for two polls, and no live session replaced it: nobody waits on its jobs (#327).</summary>
     public bool IsEndedForGood(string id) => _confirmedEnded.ContainsKey(id);
 
+    /// <summary>
+    /// Whether the row is ended after its turn finished (a --bg session Claude Code ended by design once its turn was over, PIL815),
+    /// not by a crash: its own job's end is what resumes it (#893). A crash (Failed, or no finished turn) is not one.
+    /// </summary>
+    public bool EndedAfterFinishedTurn(string id) =>
+        _state.Sessions().FirstOrDefault(s => s.Id == id) is { State: SessionState.Ended } row
+        && (row.EndedBecause?.StartsWith(SessionRowBuilder.TurnFinishedEnd, StringComparison.Ordinal) == true
+            || JobRecord(row.Id) is { TurnFinished: true });
+
+    private bool OwnsOpenJob(SessionRow row)
+    {
+        string[] ids = [row.Id, row.SessionId, .. row.EarlierSessionIds ?? []];
+        return _state.Jobs().Any(j => j.State is JobState.Queued or JobState.Running && j.Owner is not null && ids.Contains(j.Owner, StringComparer.Ordinal));
+    }
+
     /// <summary>Drops the queued jobs of rows that ended on their own, unless a live session has taken the row over (a copy Claude Code continued it as): that one owns them now.</summary>
     private void DropJobsOfEnded()
     {
@@ -805,6 +820,11 @@ public sealed class SessionTracker : BackgroundService
             else if (polls + 1 < 2)
             {
                 _justEnded[id] = (row, polls + 1);
+            }
+            else if (EndedAfterFinishedTurn(id) && OwnsOpenJob(now))
+            {
+                // Its turn finished and it still owns a queued or running job: it is not ended in the node's eyes. The jobs stay, and
+                // the job's end resumes it with the outcome. Looked at again on later polls; once none is open the rule below applies (#893).
             }
             else
             {
