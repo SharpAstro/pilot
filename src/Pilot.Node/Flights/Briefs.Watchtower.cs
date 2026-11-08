@@ -296,7 +296,7 @@ public static partial class Briefs
         text.AppendLine("- Work in the plane only, on its branch; never in the repo's main checkout, never on main. Stay where you are and reach the");
         text.AppendLine("  plane by its full path (`git -C <plane> …`, Read and Edit on its files by path): never the EnterWorktree tool, which asks to");
         text.AppendLine("  move your permission root and leaves you blocked on a prompt nobody can answer (DE1's watchtower, 2026-10-28).");
-        text.AppendLine("- A flight shown as `on hold by <who>: <why>` is the owner's: do nothing about it (no go-around, review, merge, push, fixer or leg) and ask nothing for it, no card and no ring, until it is released. The node refuses those from you anyway.");
+        text.AppendLine("- A flight `on hold by <who>` is the owner's: do nothing about it, and ring nothing, until it is released.");
         text.AppendLine("- Never rebase a flight's branch and never push one with --force or --force-with-lease, yours or a worker's asking: bring the base in");
         text.AppendLine("  by merging, and fix a commit with a new commit. A branch someone else has pushed is only ever added to (SE1's PIL294 work was");
         text.AppendLine("  lost to a force push from DE1, 2026-10-27).");
