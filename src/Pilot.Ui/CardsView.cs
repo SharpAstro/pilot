@@ -180,7 +180,7 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
                 nodes[card] = node;
             }
         }
-        return (new CardsScreen(open, Handled, Watchtower) { _nodes = nodes, _summary = Summary, Merged = Merged, Held = Held }, waiting, closed);
+        return (new CardsScreen(open, Handled, Watchtower) { _nodes = nodes, _summary = Summary, Merged = Merged, Held = Held, Hidden = Hidden }, waiting, closed);
     }
 
     // A held panel's summary: the cards as they are, not as held.
@@ -477,7 +477,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         _held ??= _shown;
         (var held, _waiting, _closed) = screen.HeldTo(_held);
-        return held;
+        // The held panel may still carry the dismissed card's row (it was shown when the pointer came): the clicked row may go, the others keep their place.
+        return Visible(held);
     }
 
     /// <summary>The panel as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>

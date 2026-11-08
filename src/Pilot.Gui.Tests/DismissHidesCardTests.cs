@@ -176,7 +176,7 @@ public sealed class DismissHidesCardTests
         PageButtonFeedbackTests.Click(view.Tree(screen), "card:c2:dismiss");
         Shoot("after", screen);
 
-        view.NoteRefused("c2", "the node refused: card c2 is held by a leg that is still flying, so it cannot be dismissed until the leg lands or is retired");
+        view.NoteRefused("c2", "the node refused: card c2 is held by a leg that is still flying");
         Shoot("refused", screen);
 
         // The refused card is drawn whole: its refusal wraps inside the panel, past no edge.
