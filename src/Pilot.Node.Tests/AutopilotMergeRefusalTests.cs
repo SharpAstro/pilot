@@ -424,10 +424,11 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         await checks.LookAsync(Ct);
         F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
         _github.Checks = ChoiceStatus.Passing;
-        // Only the merge verb's own read of the PR fails, as the passing refusal the verb throws: a failure in the armed loop's own read
-        // is no refusal, and a 5xx answer to the merge call is none either (the verb arms the merge again on it). The verb's read is told
-        // from the loop's by the flight's merge command being under way (IsMerging), not by which read comes first.
+        // The armed loop reads the PR itself before it asks the merge, and a failure there is no refusal: only the merge verb's own
+        // read of the PR (made while the merge command is under way) fails, as the passing refusal the verb throws. A 5xx answer to the merge call is
+        // no refusal either: the verb arms the merge again on it.
         var asked = 0;
+        // The verb's own read is the one made while the flight's merge command is under way: the armed loop reads before it asks.
         _github.OnCall = call =>
         {
             if (call == nameof(IGitHub.PullRequestAsync) && _legs.IsMerging(flight.Code))
@@ -437,25 +438,26 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
             }
             return Task.CompletedTask;
         };
+        Func<int> thrown = () => asked;
 
         await checks.LookAsync(Ct);
-        asked.ShouldBe(1);
+        thrown().ShouldBe(1);
         F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
         NoRefusalRaised();
 
         // Asked again only when the backoff has run out.
         await checks.LookAsync(Ct);
-        asked.ShouldBe(1);
+        thrown().ShouldBe(1);
 
         clock.Advance(PrChecks.PassingBackoff[0] + TimeSpan.FromSeconds(1));
         await checks.LookAsync(Ct);
-        asked.ShouldBe(2);
+        thrown().ShouldBe(2);
         F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
         NoRefusalRaised();
 
         clock.Advance(PrChecks.PassingBackoff[1] + TimeSpan.FromSeconds(1));
         await checks.LookAsync(Ct);
-        asked.ShouldBe(3);
+        thrown().ShouldBe(3);
 
         // The third failure lets the merge go and rings, once, with the failure's words and the merge again as the one choice.
         F(flight.Code).MergeWhenGreen.ShouldBeNull();
@@ -469,7 +471,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
 
         clock.Advance(TimeSpan.FromHours(1));
         await checks.LookAsync(Ct);
-        asked.ShouldBe(3);
+        thrown().ShouldBe(3);
         Refused().ShouldHaveSingleItem();
     }
 }

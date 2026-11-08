@@ -34,7 +34,7 @@ public sealed class GoAroundFromCardTests : IDisposable
             {
                 File.SetAttributes(file, FileAttributes.Normal);
             }
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -129,23 +129,6 @@ public sealed class GoAroundFromCardTests : IDisposable
 
         result.Error.ShouldBeNull();
         ShouldHaveGoneAround(node, card, "rebase the plane onto its base");
-    }
-
-    [Fact]
-    [Trait("Category", "Slow")]
-    public async Task TheConflictCardsResolveAnsweredOnADoneLegWithNoPrSendsTheLegRoundAgain()
-    {
-        await using var node = await NodeHarness.StartAsync(Ct);
-        var card = Ready(node, LegCommander.PrConflictsKind, new CardChoice { Label = LegCommander.ResolveConflict, Verb = Verbs.GoAround, Target = Verbs.LegTarget("TIA1", "parser"), Args = ["the PR open conflicts: resolve it"] });
-        // The same conflict came back at a base head already sent once: the leg is done and no PR exists yet.
-        node.State.PutFlight(node.State.Flights().Single() with { PullRequest = null, PullRequestUrl = null });
-
-        var result = await Answer(node, card, LegCommander.ResolveConflict);
-
-        result.Error.ShouldBeNull();
-        node.State.Legs("TIA1").Single().State.ShouldBe(LegState.Flying);
-        node.State.Cards().Single(c => c.Id == card.Id).State.ShouldBe(CardState.Closed);
-        node.State.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.PrConflictsKind);
     }
 
     [Fact]

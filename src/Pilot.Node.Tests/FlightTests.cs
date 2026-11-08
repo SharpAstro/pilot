@@ -105,7 +105,7 @@ public sealed class FlightCommanderTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private static string Git(string cwd, params string[] args)
@@ -178,9 +178,9 @@ public sealed class FlightCommanderTests : IDisposable
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "52", "two")).Ok.ShouldBeTrue();
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "sc-53", "story")).Ok.ShouldBeTrue();
 
-        // The fake's org gets the Priority field at setup, so only the recheck and human-verification labels are made; 'pilot: priority' is made only without the field.
+        // The fake's org gets the Priority field at setup, so only the recheck, hold and human-verification labels are made; 'pilot: priority' is made only without the field.
         github.FieldsCreated.ShouldBe(1);
-        github.LabelsEnsured.Select(e => e.Label).ShouldBe([PilotMarks.Recheck, PilotMarks.HumanVerification]);
+        github.LabelsEnsured.Select(e => e.Label).ShouldBe([PilotMarks.Recheck, PilotMarks.Hold, PilotMarks.HumanVerification]);
         github.LabelsEnsured.Select(e => e.Repo).Distinct().Count().ShouldBe(1);
         PilotMarks.LabelStyle(PilotMarks.Priority).Description.ShouldContain("Opus cap");
         PilotMarks.LabelStyle(PilotMarks.Priority).Color.ShouldNotBe(PilotMarks.LabelStyle("pilot: other").Color);
@@ -437,7 +437,7 @@ public sealed class FlightStoreTests : IDisposable
     {
         if (Directory.Exists(_folder))
         {
-            Directory.Delete(_folder, recursive: true);
+            TestDirs.DeleteTree(_folder);
         }
     }
 
@@ -514,7 +514,7 @@ public sealed class PlaneSettingsTests : IDisposable
 {
     private readonly string _plane = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "p2p-" + Guid.NewGuid().ToString("N")[..8])).FullName;
 
-    public void Dispose() => Directory.Delete(_plane, recursive: true);
+    public void Dispose() => TestDirs.DeleteTree(_plane);
 
     [Fact]
     public void ThePlanesLocalSettingsDisableTheRepoMcpServersAndKeepTheRest()

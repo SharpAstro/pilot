@@ -53,4 +53,38 @@ public class BranchHistoryBriefTests
             brief.ShouldContain("never push with --force or --force-with-lease, and never ask for either.");
         }
     }
+
+    /// <summary>
+    /// #896: a chained, quoted or variable call of pilot misses the allow rules and goes to the auto-mode classifier, which denied the
+    /// watchtower's card answers. Every session that runs pilot is told to run it alone, as written, and to keep notes through the node.
+    /// </summary>
+    [Fact]
+    public void EverySessionThatRunsPilotIsToldToRunItAloneAsWrittenAndNeverToWriteUnderClaude()
+    {
+        string[] briefs =
+        [
+            Briefs.For(Flight, Leg, [Leg]),
+            Briefs.Review(Flight, [Leg], Plane, "pilot"),
+            Briefs.ReviewPr(Review, Plane, null, "pilot"),
+            Briefs.WatchtowerRules("wt", "pilot"),
+        ];
+
+        foreach (var brief in briefs)
+        {
+            brief.ShouldContain(Briefs.CommandShapeRule);
+            brief.ShouldContain("no `cd … &&` before it");
+            brief.ShouldContain("`git -C <folder> …`");
+            brief.ShouldContain("never as a\n  file under ~/.claude");
+        }
+    }
+
+    /// <summary>#896: the watchtower answers and dismisses a card through pilot's MCP tools, with no shell for a rule to miss.</summary>
+    [Fact]
+    public void PilotsMcpServerOffersAnswerAndDismiss()
+    {
+        var tools = Pilot.Commands.McpServer.Tools(Pilot.Commands.PilotCommand.Build(Path.GetTempPath(), TextWriter.Null, TextWriter.Null, "mcp", agent: true));
+
+        tools.Keys.ShouldContain("answer");
+        tools.Keys.ShouldContain("dismiss");
+    }
 }

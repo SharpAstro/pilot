@@ -193,14 +193,23 @@ public static partial class UnrelatedFailures
     public static IssueInfo? Matching(IEnumerable<IssueInfo> issues, string test)
     {
         var list = issues as IReadOnlyCollection<IssueInfo> ?? [.. issues];
+        return MatchingTest(list, test) ?? list.FirstOrDefault(i => Word(i.Title, ClassOf(test)));
+    }
+
+    /// <summary>The open issue whose title names <paramref name="test"/> itself (its whole name, or its class and method); null when none does.</summary>
+    public static IssueInfo? MatchingTest(IEnumerable<IssueInfo> issues, string test)
+    {
+        var list = issues as IReadOnlyCollection<IssueInfo> ?? [.. issues];
         var method = test.LastIndexOf('.') is > 0 and var dot ? test[(dot + 1)..] : test;
         return list.FirstOrDefault(i => i.Title.Contains(test, StringComparison.Ordinal))
-            ?? list.FirstOrDefault(i => Word(i.Title, ClassOf(test)) && Word(i.Title, method))
-            ?? list.FirstOrDefault(i => Word(i.Title, ClassOf(test)));
+            ?? list.FirstOrDefault(i => Word(i.Title, ClassOf(test)) && Word(i.Title, method));
     }
 
     /// <summary>The title of the issue filed for a test that failed outside a flight's change.</summary>
-    public static string IssueTitle(string test, string flight) => $"{test} fails outside the flight's change ({flight})";
+    public static string IssueTitle(string test, string flight) => $"{test}{TitleMark} ({flight})";
+
+    /// <summary>What follows the test's name in <see cref="IssueTitle"/>, which tells an issue the finish filed.</summary>
+    public const string TitleMark = " fails outside the flight's change";
 
     /// <summary>The body of that issue: the test, the leg, the job and the last of its output.</summary>
     public static string IssueBody(string test, string flight, string leg, string? job, string output) =>

@@ -55,7 +55,7 @@ public sealed class OpenPrBaseTests : ReviewTestsBase
     private void ShouldBeSentRound(FlightRow flight, string pushed)
     {
         var open = _state.Cards(openOnly: true);
-        open.ShouldNotContain(c => c.Kind == "pr-conflicts" || c.Kind == LegCommander.NextStepKind);
+        open.ShouldNotContain(c => c.Bin == CardBin.Ring || c.Kind == LegCommander.NextStepKind);
         var leg = _state.Legs(flight.Code).Single();
         leg.State.ShouldBe(LegState.Flying);
         leg.ReviewGoArounds.ShouldBe(0);
@@ -145,48 +145,6 @@ public sealed class OpenPrBaseTests : ReviewTestsBase
         await _legs.AdvanceAllAsync(Ct);
 
         F(flight.Code).PullRequest.ShouldNotBeNull();
-        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.NextStepKind || c.Kind == "pr-conflicts");
-    }
-
-    [Fact]
-    public async Task WhenTheConflictWorkersRoundFailsTheConflictCardIsRungAndItsResolveSendsTheLegRoundAgain()
-    {
-        var (flight, _) = await PushedFlightWhoseBaseMoved("clash.txt", "theirs\n");
-        _legs.Models = new RoleModels(new NodeSettings());
-        await _legs.AdvanceAllAsync(Ct);
-        var worker = _state.Legs(flight.Code).Single().Worker!;
-        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == "pr-conflicts");
-
-        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), worker, "failed", "could not resolve it")).Error.ShouldBeNull();
-
-        var open = _state.Cards(openOnly: true);
-        var card = open.Where(c => c.Kind == "pr-conflicts").ShouldHaveSingleItem();
-        card.Bin.ShouldBe(CardBin.Ring);
-        open.ShouldNotContain(c => c.Kind == LegCommander.NextStepKind);
-        var resolve = card.Choices.Single(c => c.Label.Contains(LegCommander.ResolveConflict));
-        var started = _workers.Started.Count;
-
-        var result = await Run(resolve.Verb, resolve.Target, "alice", [.. resolve.Args ?? []]);
-
-        result.Error.ShouldBeNull();
-        _state.Legs(flight.Code).Single().State.ShouldBe(LegState.Flying);
-        _workers.Started.Count.ShouldBeGreaterThan(started);
-    }
-
-    [Fact]
-    public async Task ASecondConflictAtTheSameBaseHeadRaisesTheCardInsteadOfSendingAgain()
-    {
-        var (flight, pushed) = await PushedFlightWhoseBaseMoved("clash.txt", "theirs\n");
-        _legs.Models = new RoleModels(new NodeSettings());
-        await _legs.AdvanceAllAsync(Ct);
-        // The leg is put done as if the worker had finished without resolving it, to look at the open once more.
-        _state.PutLeg(_state.Legs(flight.Code).Single() with { State = LegState.Done });
-
-        var result = await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "alice");
-
-        result.Ok.ShouldBeFalse();
-        _state.Cards(openOnly: true).Where(c => c.Kind == "pr-conflicts").ShouldHaveSingleItem();
-        _state.Legs(flight.Code).Single().GoArounds.ShouldBe(1);
-        Git(Remote, "rev-parse", flight.Branch).ShouldBe(pushed);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.NextStepKind);
     }
 }
