@@ -135,7 +135,9 @@ public sealed partial class LegCommander
         if (flight.Review?.ReviewedHead is { Length: > 0 } reviewed
             && (await git.RunAsync(["rev-parse", "--verify", "--quiet", $"{reviewed}^{{commit}}"], flight.Worktree, cancellationToken)).Ok)
         {
-            var past = await git.RunAsync(["rev-list", "--count", $"{reviewed}..HEAD"], flight.Worktree, cancellationToken);
+            // First parent, no merges: the node's own merge of the base into the plane, and the base's commits it brings in, are no sign
+            // the watchtower is making the notes' fixes; only the plane's own commits are.
+            var past = await git.RunAsync(["rev-list", "--first-parent", "--no-merges", "--count", $"{reviewed}..HEAD"], flight.Worktree, cancellationToken);
             return past.Ok && int.TryParse(past.Output.Trim(), out var count) && count > 0;
         }
         var last = await git.RunAsync(["log", "-1", "--format=%ct", "HEAD"], flight.Worktree, cancellationToken);

@@ -396,6 +396,33 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task ABaseMergeTheNodeMadeInThePlaneIsNotTheWatchtowerTakingTheHold()
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("26", Notes);
+        await WithoutTheFixerLeg(flight.Code);
+        var reviewed = F(flight.Code).Review!.ReviewedHead!;
+        // The node brings the base into the plane by a merge: a commit past the reviewed head, and the base's own commit beside it.
+        Git(flight.Worktree, "checkout", "-q", "-b", "base-side", reviewed);
+        File.WriteAllText(Path.Combine(flight.Worktree, "from-base.txt"), "base\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "a commit on the base");
+        Git(flight.Worktree, "checkout", "-q", $"flight/{flight.Code.ToLowerInvariant()}");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "merge", "--no-ff", "-q", "-m", "Merge origin/main", "base-side");
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        clock.Advance(TimeSpan.FromMinutes(6));
+
+        await TimedChecks(clock, live: true).LookAsync(Ct);
+
+        // Not taken: the grace passed, so the node released the hold and the flight merged, as for a watchtower that never came.
+        F(flight.Code).Holding.ShouldBeNull();
+        _github.Merged.ShouldHaveSingleItem();
+        _state.Cards(openOnly: false).ShouldContain(c => c.Kind == LegCommander.HoldReleasedKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task AHoldTakenByACommitInThePlaneKeepsHoldingPastTheGraceAndRingsAfterTheBound()
     {
         AutopilotOn();

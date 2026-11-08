@@ -257,6 +257,27 @@ public sealed class FailureAlerts(NodeState state, IGitHub github, FailureInvest
         return new FailureDecision(site.Where == FailureWhere.LegCheck ? FailureAnswer.Unknown : FailureAnswer.Retry, look.Untouched[0]);
     }
 
+    /// <summary>
+    /// A failure of a leg check that the finish passed (#752: a test the leg does not touch), told to the tower when it is a repeat: an
+    /// alert is open for it, or another flight or PR hit it before. The alert opens or is joined, holding the flights it hit before, but
+    /// not this one: its leg passed, so there is nothing of it to hold or to run again. No alert when nobody live would be named on it.
+    /// </summary>
+    public FailureDecision AlertOnPassedCheck(FailureSite site, FailureFinding finding)
+    {
+        if (OpenAlertFor(site.Name, finding.Signature) is null)
+        {
+            // A first alert names the flights and hand PRs the failure hit before; with none of them still live it would ring for nothing.
+            if (!finding.Others || !investigations.Ledger.Of(site.Name, finding.Signature).Any(r =>
+                r.Flight is { Length: > 0 } code
+                    ? code != finding.Investigation && code != site.Flight && state.Flights().FirstOrDefault(f => f.Code == code) is { State: not FlightState.Landed }
+                    : r.Pr is not null))
+            {
+                return new FailureDecision(FailureAnswer.Unknown, finding);
+            }
+        }
+        return Alert(site, finding, holdSite: false);
+    }
+
     private FailureAlert? OpenAlertFor(string repo, string signature)
     {
         lock (_lock)
@@ -313,7 +334,7 @@ public sealed class FailureAlerts(NodeState state, IGitHub github, FailureInvest
     // The investigation's flight, if the node knows it: landed means the failure is no longer under investigation.
     private FlightRow? InvestigationFlight(string code) => state.Flights().FirstOrDefault(f => f.Code == code);
 
-    private FailureDecision Alert(FailureSite site, FailureFinding finding)
+    private FailureDecision Alert(FailureSite site, FailureFinding finding, bool holdSite = true)
     {
         var flightSite = site.Flight is { Length: > 0 };
         // Nothing to hold the flights for: no investigation flight could be made, or it landed already. Today's handling goes on.
@@ -339,7 +360,10 @@ public sealed class FailureAlerts(NodeState state, IGitHub github, FailureInvest
                     Add(alert, record.Flight, record.Pr, record.Where, record.Head, site.Name);
                 }
             }
-            Add(alert, site.Flight, site.Pr, site.Where, site.Head, site.Name);
+            if (holdSite)
+            {
+                Add(alert, site.Flight, site.Pr, site.Where, site.Head, site.Name);
+            }
             if (finding.RunId > 0)
             {
                 alert.Run = finding.RunId;
@@ -347,7 +371,7 @@ public sealed class FailureAlerts(NodeState state, IGitHub github, FailureInvest
             Save(store);
             Say(alert, opened, site);
         }
-        return new FailureDecision(flightSite ? FailureAnswer.Held : FailureAnswer.Listed, finding);
+        return new FailureDecision(!holdSite ? FailureAnswer.Unknown : flightSite ? FailureAnswer.Held : FailureAnswer.Listed, finding);
     }
 
     // A flight that is still flying is held; a hand PR is listed. The alert's investigation flight is neither.

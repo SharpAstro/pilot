@@ -393,6 +393,20 @@ public sealed class RetryAndHoldTests : IDisposable
 
         (await _legs.RerunHeldCheckAsync("TIA78", Ct)).ShouldContain("no failed leg");
     }
+
+    [Fact]
+    public async Task TheRealRerunOfAHeldLegCheckAsksTheNodeToVerifyTheFailedLegAndSaysItStaysFailedWhenItCannot()
+    {
+        // The real routine, not the fake RerunLegCheck: it finds the failed leg that has a check and asks the finish to verify it. The
+        // plane's folder does not exist here, so the verify is refused, and the line for the release says the leg stays failed and why.
+        Flight("TIA79", 79, leg: LegState.Failed);
+
+        var said = await _legs.RerunHeldCheckAsync("TIA79", Ct);
+
+        said.ShouldContain("a's check was run again and the leg stays failed");
+        said.ShouldContain("plane's folder does not exist");
+        _state.Legs("TIA79").Single().State.ShouldBe(LegState.Failed);
+    }
 }
 
 /// <summary>

@@ -257,7 +257,14 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
             notes.Add($"its priority could not be set to high: {ex.Message}");
         }
         var code = "";
-        if (CreateFlight is { } create)
+        // An issue adopted as the investigation may be flown already (a person's, or a flight made for it earlier): its flight is the
+        // investigation, as create-flight would make a second one beside it.
+        if (open is not null && state.Flights().FirstOrDefault(f => f.Issue == issue.Number && f.Tracker == TrackerKind.GitHub
+            && string.Equals(f.Repo, site.Name, StringComparison.OrdinalIgnoreCase) && f.State != FlightState.Landed) is { } flying)
+        {
+            code = flying.Code;
+        }
+        else if (CreateFlight is { } create)
         {
             try
             {
