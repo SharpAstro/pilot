@@ -27,7 +27,7 @@ public sealed class PullRequestWatchPaceTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     // What a test needs of the watch: it, its clock, GitHub (3 points a search), its log and the pages its clients show.

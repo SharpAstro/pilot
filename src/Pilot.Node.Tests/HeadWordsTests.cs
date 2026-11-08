@@ -34,7 +34,7 @@ public sealed class HeadWordsTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_dir, recursive: true);
+        TestDirs.DeleteTree(_dir);
     }
 
     private string G(params string[] args)

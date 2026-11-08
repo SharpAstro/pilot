@@ -47,6 +47,25 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     // A flight and head the autopilot has asked to merge: once, not every look.
     private readonly HashSet<string> _autoMerged = new(StringComparer.Ordinal);
 
+    // Each ask the autopilot made of a flight and head (by the same key as _autoMerged), when, and the next one a passing refusal
+    // allows: the node's own backoff on its TimeProvider, so no job sleeps for it (PIL864).
+    private readonly Dictionary<string, MergeTries> _mergeTries = new(StringComparer.Ordinal);
+
+    // The card of a refusal a person acts on outside the node (approve on GitHub), by the key above: once it is closed the autopilot asks again.
+    private readonly Dictionary<string, string> _refusedCards = new(StringComparer.Ordinal);
+
+    private sealed record MergeTries(List<DateTimeOffset> At, DateTimeOffset NextTry);
+
+    /// <summary>
+    /// The waits between the asks (the autopilot's, and an armed merge's) while GitHub's refusal passes by itself (a 5xx, a busy
+    /// queue, a branch to bring up to date): one after the first failure, one after the second. The third ask that still fails is a
+    /// person's, so there is no wait after it: <see cref="PassingTriesBeforeRing"/>.
+    /// </summary>
+    public static readonly TimeSpan[] PassingBackoff = [TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(4)];
+
+    /// <summary>The asks of a passing refusal after which the node rings: the third that still fails, one more than there are waits.</summary>
+    public static readonly int PassingTriesBeforeRing = PassingBackoff.Length + 1;
+
     /// <summary>How long the loop waits between looks.</summary>
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(30);
 
@@ -287,8 +306,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     }
                     if (await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } notUpdated)
                     {
-                        // Resolved by the watchtower in the plane, not by a worker the node sends: a conflict is a merge (#344 rang for one, 2026-10-27).
-                        await HandConflictOverAsync(flight.Code, notUpdated, cancellationToken);
+                        // A worker resolves it and nothing rings: a flying leg's worker is told, else the last leg goes round with the brief (#344 rang for one, 2026-10-27).
+                        await HandConflictOverInSweepAsync(flight.Code, notUpdated, cancellationToken);
                     }
                     else
                     {
@@ -340,36 +359,53 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <summary>
     /// A flight's PR that conflicts with its base, whatever its review said and with no merge card open (those are updated
     /// from the card): the base merged in by the node, once a head, while no leg flies and no reviewer reads; a merge that conflicts
-    /// goes to the watchtower to resolve in the plane. Only a passed PR's card did this, so a PR that conflicted under a review
-    /// asking for changes, or still flying, sat DIRTY until someone said so (#339, #340, 2026-10-27).
+    /// is a worker's to resolve (<see cref="HandConflictOverAsync"/>), and so is a conflict found while a leg flies: its worker is told to
+    /// merge the base in, as the node merges nothing into a plane a worker is changing. Only a passed PR's card did this, so a PR that
+    /// conflicted under a review asking for changes, or still flying, sat DIRTY until someone said so (#339, #340, 2026-10-27).
     /// </summary>
     private async Task ResolveConflictsAsync(string code, PullRequest pr, CancellationToken cancellationToken)
     {
         if (legs is null || pr.Mergeable != "CONFLICTING"
             || state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying, Review: { State: not ReviewState.Reviewing }, PullRequest: { } number } flight
             || number != pr.Number
-            || state.Legs(code) is not { Length: > 0 } flown || flown.Any(l => l.State != LegState.Done)
+            || state.Legs(code) is not { Length: > 0 } flown || flown.Any(l => l.State is not (LegState.Done or LegState.Flying))
             || state.Cards(openOnly: true).Any(c => c.Kind is LegCommander.PrReady or LegCommander.MergeFailed && c.Subject == Verbs.FlightTarget(code))
             || !_rebased.Add($"{code} {pr.Head}"))
         {
             return;
         }
+        if (flown.Any(l => l.State == LegState.Flying))
+        {
+            await HandConflictOverInSweepAsync(code, $"GitHub reports the PR conflicting with {flight.Base}", cancellationToken);
+            return;
+        }
         if (await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } why)
         {
-            await HandConflictOverAsync(code, why, cancellationToken);
+            await HandConflictOverInSweepAsync(code, why, cancellationToken);
         }
     }
 
     /// <summary>
-    /// The node's merge of the base into a flight conflicted: the watchtower is told to resolve it in the plane (a card), merge the
-    /// base in, rerun the check and push plain. The last leg goes round only if the watchtower says the conflict is real work, so a
-    /// merge is never a fresh worker's whole leg of tokens.
+    /// The node's merge of the base into a flight conflicted: a worker resolves it and nothing rings. A leg flying on the plane is told
+    /// to merge the base in; with none flying, the last leg goes round with the conflict brief (<see cref="LegCommander.ResolveConflictAsync"/>,
+    /// once for each head of the base). Null when a worker is on it; else why none could be.
     /// </summary>
-    private async Task HandConflictOverAsync(string code, string why, CancellationToken cancellationToken)
+    private async Task<string?> HandConflictOverAsync(string code, string why, CancellationToken cancellationToken) =>
+        legs is not null ? await legs.ResolveConflictAsync(code, why, cancellationToken) : "this node holds no way to resolve a conflict";
+
+    /// <summary>
+    /// <see cref="HandConflictOverAsync"/> for a sweep, which has no caller to refuse: a conflict no worker could be put on is said on the
+    /// node's log, never to a person (the conflict is the node's own work), so it is not lost where a sweep would otherwise drop the reason.
+    /// Not retried by the sweep until the PR head moves, even when the cause was transient (a flying worker that could not be told just now):
+    /// the callers' <c>_rebased</c> gate is spent per head on purpose, since a retry on every sweep would fetch and merge-test the plane
+    /// each time and repeat the log line for causes that do not pass (the last leg failed, no flying plane). Other paths do retry: the leg's
+    /// own end (Finish) and a new base head both reach <see cref="LegCommander.ResolveConflictAsync"/> again, which sends once per base head only after a success.
+    /// </summary>
+    private async Task HandConflictOverInSweepAsync(string code, string why, CancellationToken cancellationToken)
     {
-        if (legs is not null)
+        if (await HandConflictOverAsync(code, why, cancellationToken) is { } noWorker)
         {
-            await legs.ConflictsAsync(code, why, cancellationToken);
+            await Error.WriteLineAsync($"pr checks: no worker could be put on {code}'s conflict with its base: {noWorker}");
         }
     }
 
@@ -454,7 +490,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             // queue cleared is told only that it was.
             string Said(string line) => merge?.DroppedFromQueue is not { } thrownOut ? line
                 : thrownOut.Contains("conflict", StringComparison.OrdinalIgnoreCase) && method.Equals("rebase", StringComparison.OrdinalIgnoreCase)
-                    ? $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass, and drops it again until the conflict is gone. The watchtower merges the base into the plane to resolve it; a merge queue that merges by rebase may still drop a branch brought up to date that way."
+                    ? $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass, and drops it again until the conflict is gone. A worker merges the base into the plane to resolve it; a merge queue that merges by rebase may still drop a branch brought up to date that way."
                     : $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass.";
             if (dropped is null && merge is { AwaitsCheck: true } && checks?.Status != ChoiceStatus.Failing)
             {
@@ -527,7 +563,37 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             var armed = state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady && c.Subject == subject && c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Status == ChoiceStatus.Armed)).Select(c => c.Id).ToList();
             if (dropped is null && legs is not null)
             {
+                // A passing refusal's backoff has not run out: the merge stays armed and is asked at the look after it.
+                var armedKey = $"armed {flight.Code} {head}";
+                if (_mergeTries.TryGetValue(armedKey, out var armedEarlier) && time.GetUtcNow() < armedEarlier.NextTry)
+                {
+                    continue;
+                }
                 var result = await legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = subject, Args = [head, method], Who = "node" }, cancellationToken);
+                var refusal = MergeRefusals.Of(result);
+                if (refusal is { Class: MergeRefusalClass.NodeWait })
+                {
+                    // The node's own wait: the merge stays armed and is asked again at a later look. Nothing is dropped and no card is raised (PIL864).
+                    continue;
+                }
+                if (refusal is { Class: MergeRefusalClass.Passing })
+                {
+                    // A refusal that passes by itself (GitHub's 5xx, a busy queue, a branch the node brings up to date): asked again on the
+                    // same backoff as the autopilot's own merge, so a stuck merge is not unnoticed. The third failure lets the merge go and rings.
+                    var tries = _mergeTries.TryGetValue(armedKey, out var armedBefore) ? new List<DateTimeOffset>(armedBefore.At) : new List<DateTimeOffset>();
+                    tries.Add(time.GetUtcNow());
+                    if (tries.Count < PassingTriesBeforeRing)
+                    {
+                        _mergeTries[armedKey] = new MergeTries(tries, time.GetUtcNow() + PassingBackoff[tries.Count - 1]);
+                        continue;
+                    }
+                    _mergeTries.Remove(armedKey);
+                    state.PutFlight(flight with { MergeWhenGreen = null });
+                    legs.DropMerge(flight.Code, $"#{number}'s merge was refused {tries.Count} times: {LegCommander.OneLine(result.Error ?? "no reason given")}");
+                    RaiseMergeRefused(flight, new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [head, method] }, result, refusal, tries, armedKey, "armed");
+                    continue;
+                }
+                _mergeTries.Remove(armedKey);
                 dropped = result.Ok ? null : $"its checks passed, but the merge was refused: {result.Error}";
                 if (result.Ok && result.Way is null)
                 {
@@ -880,7 +946,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             // Reviewed and passed, but no longer merging into its base: main moved. The base is merged in by itself, once a head, and
-            // it is reviewed afresh; a merge that conflicts goes to the watchtower. The card says so meanwhile, offering the go-around
+            // it is reviewed afresh; a merge that conflicts is put to a worker. The card says so meanwhile, offering the go-around
             // that does it by hand, not a Merge GitHub would refuse.
             var conflicts = pr is { Mergeable: "CONFLICTING" } && pr.Number == number || merge is { Kind: MergeKinds.Conflicts };
             if (conflicts || merge is { Kind: MergeKinds.Behind })
@@ -888,14 +954,14 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 if (legs is not null && _rebased.Add($"{flight.Code} {head}")
                     && await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } why)
                 {
-                    await HandConflictOverAsync(flight.Code, why, cancellationToken);
+                    await HandConflictOverInSweepAsync(flight.Code, why, cancellationToken);
                 }
                 // The update closes the card when it starts a fresh review; one still open says what is wrong and offers the go-around.
                 if (legs is not null && state.Cards(openOnly: true).Any(c => c.Id == card.Id))
                 {
                     var what = conflicts ? "conflicts with its base" : "is behind its base";
                     legs.ShowMergeFailed(flight.Code, head, "", $"{flight.Code}'s PR #{number} {what}",
-                        conflicts ? $"GitHub cannot merge it until the conflict is resolved. The node merges the base in by itself, once a head; one that conflicts goes to the watchtower to resolve in the plane."
+                        conflicts ? $"GitHub cannot merge it until the conflict is resolved. The node merges the base in by itself, once a head; one that conflicts is put to a worker to resolve in the plane."
                             : $"GitHub will not merge it until it is up to date with its base. The node merges the base in by itself, once a head; redoing the leg (a go-around) does it by hand.",
                         pr?.Url ?? card.Link, rerun: false,
                         goAroundWhy: $"the PR {what}: {LegCommander.UpdateInstruction}",
@@ -969,8 +1035,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// With the autopilot on, a flight whose review passed is merged by the node itself, from its PR-ready card, once its checks
     /// are not failing: green, or still running, when the merge waits for them (<see cref="FlightRow.MergeWhenGreen"/>). The
     /// autopilot was read as "an assistant's merge runs at once", and the watchtower may never merge, so the night's passed
-    /// PRs sat for seven hours with the autopilot on until the person pressed Merge (SE1, 2026-10-26). Tried once a head: a
-    /// refusal rings with why and Merge, rather than being tried every look.
+    /// PRs sat for seven hours with the autopilot on until the person pressed Merge (SE1, 2026-10-26). A refusal is acted on by its
+    /// class (PIL864): the node's own wait is no card and the head is asked again once it ends; a refusal that passes by itself is
+    /// asked again on <see cref="PassingBackoff"/> and rings only at the <see cref="PassingTriesBeforeRing"/>th failure; only a
+    /// person's refusal rings at once, naming what failed, what was tried and the one thing to do.
     /// </summary>
     private async Task MergeOnAutopilotAsync(CardRow card, FlightRow flight, string? status, CancellationToken cancellationToken)
     {
@@ -984,18 +1052,45 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             || card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { } merge
             // Another merge of its repo holds the turn: asked at a later look, and only an ask made marks the head as tried.
             || legs.TurnHeld(flight.Repo)
-            || merge.Args is [{ } droppedHead, ..] && legs.DroppedForConflict(flight.Code, droppedHead)
-            || !_autoMerged.Add($"{flight.Code} {string.Join(' ', merge.Args ?? [])}"))
+            || merge.Args is [{ } droppedHead, ..] && legs.DroppedForConflict(flight.Code, droppedHead))
+        {
+            return;
+        }
+        var key = $"{flight.Code} {string.Join(' ', merge.Args ?? [])}";
+        // A refusal the person acted on outside the node (approved on GitHub) and closed its card: the head is asked again.
+        if (_refusedCards.TryGetValue(key, out var shown) && !state.Cards(openOnly: true).Any(c => c.Id == shown))
+        {
+            _refusedCards.Remove(key);
+            _autoMerged.Remove(key);
+            _mergeTries.Remove(key);
+        }
+        // A passing refusal's backoff has not run out: asked at the look after it.
+        if (_mergeTries.TryGetValue(key, out var earlier) && time.GetUtcNow() < earlier.NextTry || !_autoMerged.Add(key))
         {
             return;
         }
         var result = await legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = merge.Target, Args = merge.Args ?? [], Who = "node" }, cancellationToken);
+        var refusal = MergeRefusals.Of(result);
+        if (refusal is { Class: MergeRefusalClass.NodeWait })
+        {
+            // The node's own wait (a merge under way, the head to look at again, a review not passed): no card, no decision, and the head
+            // is not marked as tried, so a later look asks again once the wait ends.
+            _autoMerged.Remove(key);
+            return;
+        }
         var rule = $"autopilot on, review passed, checks {status ?? "unknown"}";
+        var asked = _mergeTries.TryGetValue(key, out var before) ? new List<DateTimeOffset>(before.At) : new List<DateTimeOffset>();
+        if (refusal is not null)
+        {
+            asked.Add(time.GetUtcNow());
+        }
+        var retry = refusal is { Class: MergeRefusalClass.Passing } && asked.Count < PassingTriesBeforeRing;
         // One row per attempt, its choice saying what happened; a merge already running is no new attempt.
         if (!result.Ok || result.Way != MergeWays.InProgress)
         {
             var (choice, reason) = !result.Ok
-                ? ("Wait", $"{rule}; the merge was refused: {LegCommander.OneLine(result.Error ?? "no reason given")}")
+                ? ("Wait", $"{rule}; the merge was refused: {LegCommander.OneLine(result.Error ?? "no reason given")}"
+                    + (retry ? $"; it passes by itself, so the node asks again in {PassingBackoff[asked.Count - 1].TotalMinutes:0} min (try {asked.Count} of {PassingTriesBeforeRing})" : ""))
                 : result.Way switch
                 {
                     MergeWays.Armed => ("Arm the merge", $"{rule}: armed to merge when they pass"),
@@ -1005,6 +1100,18 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 };
             state.RecordDecision(Verbs.FlightTarget(flight.Code), DecisionKinds.Merge, $"Merge {flight.Code}'s PR #{flight.PullRequest} now, or wait?",
                 ["Merge", "Arm the merge", "Join the merge queue", "Bring the branch up to date", "Wait"], choice, "node", DecisionByKinds.Autopilot, reason);
+        }
+        if (retry)
+        {
+            // Passes by itself: the node asks again on its backoff, no card until the third try fails.
+            _mergeTries[key] = new MergeTries(asked, time.GetUtcNow() + PassingBackoff[asked.Count - 1]);
+            _autoMerged.Remove(key);
+            return;
+        }
+        if (result.Ok)
+        {
+            // A success on a retry closes nothing new: the tries are over.
+            _mergeTries.Remove(key);
         }
         if (result.Ok && result.Way == MergeWays.Updated)
         {
@@ -1026,10 +1133,57 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 $"{flight.Code}'s PR #{flight.PullRequest} {(result.Made is { Length: > 0 } ? "is merging" : "merged")} on autopilot", result.Made);
             return;
         }
-        // A merge of a PR that is merged lands the flight and never reaches here (#799 rule 6); one closed unmerged has nothing to merge:
-        // no card offers a Merge on a PR that is merged or closed. With no choice left it is not a ring (nothing to press): it is filed For you.
-        var closed = result.Error?.EndsWith(", not open", StringComparison.Ordinal) == true;
-        state.RaiseCard(closed ? CardBin.ForYou : CardBin.Ring, AutopilotMergeRefused, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s merge on autopilot was refused: {LegCommander.OneLine(result.Error ?? "no reason given")}",
-            result.Error, closed ? [] : [merge with { Status = null, Label = $"Try merging PR #{flight.PullRequest} again" }], link: flight.PullRequestUrl);
+        _mergeTries[key] = new MergeTries(asked, time.GetUtcNow());
+        RaiseMergeRefused(flight, merge, result, refusal!, asked, key, "on autopilot");
+    }
+
+    /// <summary>
+    /// The card of a refusal only a person can clear (or a passing one that did not pass in <see cref="PassingTriesBeforeRing"/> tries):
+    /// what failed (GitHub's or the node's words, whole), what the node tried and when, and the one thing to do. Its one choice names
+    /// that action, never a merge again while the cause holds. With no action to take (a closed PR, GitHub's own text) it is a fact to
+    /// read, filed For you with no choice when it is a closed PR, and a ring when the node simply could not classify it (an unknown
+    /// failure is not quieter than a known one). <paramref name="how"/> says how the merge was asked: <c>on autopilot</c>, or <c>armed</c>.
+    /// </summary>
+    private void RaiseMergeRefused(FlightRow flight, CardChoice merge, CommandResult result, MergeRefusal refusal, List<DateTimeOffset> asked, string key, string how)
+    {
+        var error = result.Error ?? "no reason given";
+        var subject = Verbs.FlightTarget(flight.Code);
+        var number = flight.PullRequest;
+        var times = string.Join(", ", asked.Select(t => t.ToLocalTime().ToString("HH:mm")));
+        var tried = asked.Count == 1 ? $"asked GitHub to merge once, at {times}"
+            : $"asked GitHub to merge {asked.Count} times, at {times}";
+        var passing = refusal.Class == MergeRefusalClass.Passing;
+        // A passing refusal that is a conflict says so, not that GitHub did not answer.
+        var conflicting = passing && refusal.Action == MergeAction.ResolveConflict;
+        // The one action: its words for the body, its button, and whether pressing it only says "done" (it is done on GitHub or another card).
+        var (todo, label, verb, args, doneElsewhere) = refusal.Action switch
+        {
+            MergeAction.ApproveOnGitHub => ("Approve the PR on GitHub (branch protection needs an approving review), then press the button: the node asks again.", "Approve on GitHub", Verbs.Dismiss, new[] { "approved on GitHub; the node asks again" }, true),
+            MergeAction.ReadChanges => ("Read the changes a review on GitHub asks for and push them or answer them, then press the button: the node asks again.", "Read the requested changes", Verbs.Dismiss, new[] { "read on GitHub; the node asks again" }, true),
+            MergeAction.AnswerDesignQuestion => ("Answer the design question on its card, or dismiss it there, then press the button: the node asks again.", "Answer the design question", Verbs.Dismiss, new[] { "answered; the node asks again" }, true),
+            MergeAction.RerunFailedCheck => ("Re-run the failed check; if it was no flake, redo the leg.", "Re-run the failed check", Verbs.RerunChecks, merge.Args, false),
+            MergeAction.OpenPrAgain => ("Open the PR again so the commits the plane holds are pushed and reviewed before it lands.", "Open the PR again", Verbs.OpenPr, Array.Empty<string>(), false),
+            MergeAction.MarkReadyOnGitHub => ("The PR is a draft: mark it ready for review on GitHub, then press the button: the node asks again.", "Mark ready on GitHub", Verbs.Dismiss, new[] { "marked ready on GitHub; the node asks again" }, true),
+            MergeAction.ResolveConflict => ("The PR conflicts with its base and the node's update of the branch did not clear it, so this is no failure of GitHub's: resolve the conflict in the plane (merge the base in), push, and review it again. Merging again does not help while the conflict stands.", "", "", Array.Empty<string>(), false),
+            MergeAction.PrClosed => ("Nothing to merge: the PR is closed. Open a new PR from the plane if the work is still wanted.", "", "", Array.Empty<string>(), false),
+            _ when passing => ($"GitHub did not take it in {PassingTriesBeforeRing} tries: look at GitHub, and merge again once it answers.", $"Merge PR #{number} again", Verbs.Merge, merge.Args, false),
+            _ => ("Read what GitHub or the node said above; nothing the node can press fixes it.", "", "", Array.Empty<string>(), false),
+        };
+        var detail = $"{error}\n\nWhat the node tried: {tried}.\nWhat to do: {todo}";
+        var title = passing ? $"{flight.Code}'s merge {how} was refused {asked.Count} times: {LegCommander.OneLine(error)}"
+            : $"{flight.Code}'s merge {how} was refused: {LegCommander.OneLine(error)}";
+        var summary = $"The node tried to merge {flight.Code}'s PR and {(conflicting ? $"it still conflicted with its base after {asked.Count} tries" : passing ? $"GitHub did not take it in {asked.Count} tries" : "was refused")}: {LegCommander.OneLine(error)} {todo}";
+        var choices = label.Length == 0 ? [] : new List<CardChoice> { new() { Label = label, Verb = verb, Target = verb == Verbs.Dismiss ? "" : subject, Args = args } };
+        // A closed PR is a fact to read (For you); anything else a person must see rings, with a choice or without one.
+        var raised = state.RaiseCard(refusal.Action == MergeAction.PrClosed ? CardBin.ForYou : CardBin.Ring, AutopilotMergeRefused, subject, title, detail, choices, link: flight.PullRequestUrl, summary: summary);
+        if (choices.Count == 1 && verb == Verbs.Dismiss)
+        {
+            // Done on GitHub or on another card: pressing says so and closes this one, and the autopilot asks again at the next look.
+            state.UpdateChoices(raised.Id, [choices[0] with { Target = Verbs.CardTarget(raised.Id) }]);
+        }
+        if (doneElsewhere)
+        {
+            _refusedCards[key] = raised.Id;
+        }
     }
 }

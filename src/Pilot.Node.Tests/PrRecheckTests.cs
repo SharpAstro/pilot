@@ -186,7 +186,10 @@ public abstract class PrRecheckTestsBase : IDisposable
         _github.Pr = Pr("OPEN") with { Head = head };
         _state.PutFlight(_state.Flights().Single() with { PullRequest = 7, PullRequestUrl = "https://github.com/acme/widget/pull/7" });
         _github.Prs["acme/widget#7"] = _github.Pr;
-        await Run(Verbs.Review, "flight/" + flight.Code, _state.Flights().Single().Review!.Reviewer, "pass", "fine");
+        // A reviewer that was held or queued at the open (a loaded machine, a limit) leaves no review: say why, not a null.
+        var opened = _state.Flights().Single();
+        opened.Review.ShouldNotBeNull($"no review after the PR opened; queued: {opened.Queued}; cards: {string.Join("; ", _state.Cards(openOnly: true).Select(c => $"{c.Kind}: {c.Title}"))}");
+        await Run(Verbs.Review, "flight/" + flight.Code, opened.Review.Reviewer, "pass", "fine");
         _github.Labels[7] = [PilotMarks.Recheck];
         return _state.Flights().Single();
     }
@@ -668,7 +671,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
 {
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AFlightsPrWhoseBaseMergeConflictsIsHandedToTheWatchtowerAndTheHandledLineSaysSo()
+    public async Task AFlightsPrWhoseBaseMergeConflictsSendsTheLastLegRoundAndTheHandledLineSaysSo()
     {
         await PassedFlightAsync(readme: "theirs\n");
         MainMoves("README.md", "ours\n");
@@ -676,14 +679,13 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
 
         await LookAsync();
 
-        // No go-around: the review stays passed and the watchtower is told by a ring card.
-        _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        // The last leg went round once with the conflict (a review round it is not), and nothing rings: the Handled line says a worker has it.
         var said = Handled().ShouldHaveSingleItem();
         said.ShouldStartWith("recheck of widget#7: merging ");
         said.ShouldContain("conflicts");
-        said.ShouldContain("the watchtower is told");
-        _state.Legs(_state.Flights().Single().Code).ShouldAllBe(l => l.GoArounds == 0);
-        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.PrConflictsKind && c.Bin == CardBin.Ring);
+        said.ShouldContain(LegCommander.WorkerResolves);
+        _state.Legs(_state.Flights().Single().Code).ShouldAllBe(l => l.GoArounds == 1 && l.ReviewGoArounds == 0 && l.State == LegState.Flying);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Bin == CardBin.Ring);
     }
 
     [Fact]

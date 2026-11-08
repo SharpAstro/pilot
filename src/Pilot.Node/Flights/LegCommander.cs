@@ -154,6 +154,7 @@ public sealed partial class LegCommander(
         }
         await _one.WaitAsync(cancellationToken);
         string? error = null;
+        MergeRefusal? refusal = null;
         string? made = null;
         string? way = null;
         var merged = false;
@@ -308,6 +309,8 @@ public sealed partial class LegCommander(
         catch (FlightException ex)
         {
             error = ex.Message;
+            // The class a merge refusal was given where it was made; the merge verb's result carries it for PrChecks.
+            refusal = command.Verb is Verbs.Merge or Verbs.RerunChecks ? MergeRefusals.Of(ex) : null;
         }
         catch (Exception) when (DropLegEndMarkOnThrow())
         {
@@ -391,7 +394,7 @@ public sealed partial class LegCommander(
         // A merge refused as not mergeable (conflicting, or behind its base) is never left as a Merge button that refuses again: the
         // entry stays in the queue while the node brings the plane up to date, by plain git (the base merged in, a plain push). A
         // clean merge alone keeps the passed review at the new head, and the merge goes on at it; any other change is reviewed afresh,
-        // and the entry waits for that review to pass. A merge that conflicts leaves the queue, and the watchtower resolves it in the plane
+        // and the entry waits for that review to pass. A merge that conflicts leaves the queue, and a worker resolves it in the plane
         // (SE1, 2026-10-24: a Merge pressed over and over on #195 and #197, each refusal seen nowhere but a log).
         if (error is not null && (command.Verb == Verbs.Merge && Conflicts(error) || command.Verb is Verbs.Merge or Verbs.RerunChecks && Behind(error)))
         {
@@ -412,7 +415,8 @@ public sealed partial class LegCommander(
                 {
                     DropMerge(code, why);
                 }
-                error = $"{error}; {why}{(!IsConflict(why) ? "" : await ConflictsAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : ": the watchtower is told to resolve it in the plane")}";
+                // The command's lock was let go above (as BringUpToDateKeepingAsync, which takes it itself, relies on), so the round goes by the command route.
+                error = $"{error}; {why}{(!IsConflict(why) ? "" : await ResolveConflictAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : $": {WorkerResolves}")}";
             }
             else
             {
@@ -479,10 +483,10 @@ public sealed partial class LegCommander(
         {
             ShowMerge(command.Target, made, way);
         }
-        return state.Complete(command, error, way, made: made);
+        return state.Complete(command, error, way, made: made, refusal: refusal);
     }
 
-    /// <summary>Whether a reason <see cref="BringUpToDateAsync"/> gave is a merge that conflicted: the only one the watchtower is told to resolve.</summary>
+    /// <summary>Whether a reason <see cref="BringUpToDateAsync"/> gave is a merge that conflicted: the only one put to a worker to resolve.</summary>
     private static bool IsConflict(string why) => why.Contains(" conflicts (", StringComparison.Ordinal);
 
     /// <summary>

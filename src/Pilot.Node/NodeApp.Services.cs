@@ -248,6 +248,9 @@ public static partial class NodeApp
             // Read as it is when a finish's check ends: a finish that outlasts the command route's deadline was answered queued.
             legs.ReplyDeadline = () => services.GetRequiredService<NodeCommands>().ReplyDeadline;
             legs.Error = services.GetRequiredService<LogWriter>();
+            // A PR's conflict with its base is put to the flight's flying worker as a line from the node, as a landing tells its sessions.
+            legs.Say = async (id, text, ct) =>
+                (await services.GetRequiredService<NodeCommands>().RunAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = LegWatch.Who }, ct)).Ok;
             // A flight another node hands over goes on by the normal advance, as the sweep takes every flying flight's.
             services.GetRequiredService<FlightCommander>().Advance = legs.AdvanceFlightAsync;
             // A flight made here is planned at once: the create starts its planner, so no further plan-flight is needed.
@@ -453,6 +456,8 @@ public static partial class NodeApp
                 Priority = nodeOptions.JobPriority,
                 PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? false,
                 EndedForGood = id => services.GetRequiredService<SessionTracker>().IsEndedForGood(id),
+                // A job's end is told to its owner only once the tracker has listed the sessions (pilot #810), as the watchtower waits.
+                Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,
                 Lifetime = services.GetService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
             };
         });

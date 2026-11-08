@@ -15,7 +15,7 @@ public sealed class SessionStartLogTests : IDisposable
 
     public SessionStartLogTests() => Directory.CreateDirectory(_jobs);
 
-    public void Dispose() => Directory.Delete(_jobs, recursive: true);
+    public void Dispose() => TestDirs.DeleteTree(_jobs);
 
     private LoggingWorkerLauncher Launcher() => new(_inner, _log, new ClaudeJobState(_jobs), TimeProvider.System);
 
