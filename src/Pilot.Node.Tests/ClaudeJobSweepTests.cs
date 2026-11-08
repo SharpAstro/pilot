@@ -1,3 +1,4 @@
+using Pilot.Node.Flights;
 using Pilot.Contracts;
 using Pilot.Node.Sessions;
 using Pilot.Node.Tests.Sessions;
@@ -85,7 +86,7 @@ public sealed class ClaudeJobSweepTests : IDisposable
         Ledgered("aaaa1111", "se1-pil891-job-sweep", SessionEndReasons.Landed);
         Process("aaaa1111", "se1-pil891-job-sweep");
 
-        var result = await Sweep().SweepAsync();
+        var result = await Sweep().SweepAsync(TestContext.Current.CancellationToken);
 
         _jobs.Calls.ShouldBe(["stop aaaa1111", "rm aaaa1111"]);
         result.Removed.ShouldBe(1);
@@ -99,7 +100,7 @@ public sealed class ClaudeJobSweepTests : IDisposable
         Job("bbbb2222", "stopped", "se1-pil891-nudge", TimeSpan.FromMinutes(5));
         Row("bbbb2222", "se1-pil891-nudge", SessionState.Ended);
 
-        await Sweep().SweepAsync();
+        await Sweep().SweepAsync(TestContext.Current.CancellationToken);
 
         _jobs.Calls.ShouldBe(["rm bbbb2222"]);
     }
@@ -116,7 +117,7 @@ public sealed class ClaudeJobSweepTests : IDisposable
             ContextTokens = 0, ContextWindow = 1, State = SessionState.Ended, SpendWeighted = 0, StartedAt = Start,
         }, Start);
 
-        await Sweep().SweepAsync();
+        await Sweep().SweepAsync(TestContext.Current.CancellationToken);
 
         _jobs.Calls.ShouldBe(["rm cccc3333"]);
     }
@@ -128,7 +129,7 @@ public sealed class ClaudeJobSweepTests : IDisposable
     {
         Job("dddd4444", "blocked", name, Old);
 
-        await Sweep().SweepAsync();
+        await Sweep().SweepAsync(TestContext.Current.CancellationToken);
 
         _jobs.Calls.ShouldBe(["rm dddd4444"]);
     }
@@ -138,7 +139,7 @@ public sealed class ClaudeJobSweepTests : IDisposable
     {
         Job("eeee5555", "blocked", "se1-aaa123-leg", TimeSpan.FromHours(23));
 
-        await Sweep().SweepAsync();
+        await Sweep().SweepAsync(TestContext.Current.CancellationToken);
 
         _jobs.Calls.ShouldBeEmpty();
     }
@@ -149,7 +150,7 @@ public sealed class ClaudeJobSweepTests : IDisposable
         Job("ffff6666", "blocked", "se1-aaa123-leg", Old);
         Process("ffff6666", "se1-aaa123-leg");
 
-        await Sweep().SweepAsync();
+        await Sweep().SweepAsync(TestContext.Current.CancellationToken);
 
         _jobs.Calls.ShouldBeEmpty();
     }
@@ -164,7 +165,7 @@ public sealed class ClaudeJobSweepTests : IDisposable
         Row("33330000", "se1-bbb456-leg", SessionState.Idle, earlier: [Full("22220000")]);
         Ledgered("11110000", "se1-aaa123-leg", SessionEndReasons.Finished);
 
-        await Sweep().SweepAsync();
+        await Sweep().SweepAsync(TestContext.Current.CancellationToken);
 
         _jobs.Calls.ShouldBeEmpty();
     }
@@ -177,7 +178,7 @@ public sealed class ClaudeJobSweepTests : IDisposable
         Ledgered("44440000", "se1-watchtower", SessionEndReasons.Finished);
         _watchtower = _state.Sessions().Single();
 
-        await Sweep().SweepAsync();
+        await Sweep().SweepAsync(TestContext.Current.CancellationToken);
 
         _jobs.Calls.ShouldBeEmpty();
     }
@@ -191,7 +192,7 @@ public sealed class ClaudeJobSweepTests : IDisposable
         Row("66660000", "se1-watchtower", SessionState.Idle);
         _watchtower = _state.Sessions().Single(s => s.Id == "66660000");
 
-        await Sweep().SweepAsync();
+        await Sweep().SweepAsync(TestContext.Current.CancellationToken);
 
         _jobs.Calls.ShouldBe(["rm 55550000"]);
     }
@@ -206,7 +207,7 @@ public sealed class ClaudeJobSweepTests : IDisposable
         Job("77770000", "blocked", name, Old);
         Row("77770000", name, SessionState.Ended);
 
-        await Sweep().SweepAsync();
+        await Sweep().SweepAsync(TestContext.Current.CancellationToken);
 
         _jobs.Calls.ShouldBeEmpty();
     }
@@ -220,7 +221,7 @@ public sealed class ClaudeJobSweepTests : IDisposable
         Ledgered("88880000", "se1-aaa123-leg", SessionEndReasons.Landed);
         Process("88880000", "se1-aaa123-leg");
 
-        var first = await Sweep().SweepAsync();
+        var first = await Sweep().SweepAsync(TestContext.Current.CancellationToken);
 
         _jobs.Calls.ShouldBe(["stop 88880000"]);
         first.Kept.ShouldBe(1);
@@ -228,7 +229,7 @@ public sealed class ClaudeJobSweepTests : IDisposable
         Directory.Delete(plane);
         _processes.Clear();
         _agents.Json = "[]";
-        await Sweep().SweepAsync();
+        await Sweep().SweepAsync(TestContext.Current.CancellationToken);
 
         _jobs.Calls.ShouldBe(["stop 88880000", "rm 88880000"]);
     }
@@ -254,7 +255,7 @@ public sealed class ClaudeJobSweepTests : IDisposable
         _jobs.Failing.Add("stop 99990000");
         _jobs.Failing.Add("rm 99991111");
 
-        var result = await Sweep().SweepAsync();
+        var result = await Sweep().SweepAsync(TestContext.Current.CancellationToken);
 
         _jobs.Calls.ShouldContain("rm 99992222");
         _jobs.Calls.ShouldNotContain("rm 99990000");
@@ -269,7 +270,7 @@ public sealed class ClaudeJobSweepTests : IDisposable
         Job("aaaa0000", "blocked", "se1-aaa123-leg", Old);
         _agents.Failure = new InvalidOperationException("claude agents exited 1");
 
-        await Sweep().SweepAsync();
+        await Sweep().SweepAsync(TestContext.Current.CancellationToken);
 
         _jobs.Calls.ShouldBeEmpty();
     }
@@ -281,17 +282,17 @@ public sealed class ClaudeJobSweepTests : IDisposable
         var ready = new TaskCompletionSource();
         var sweep = new ClaudeJobSweep(_state, _ledger, _jobs, _agents, "se1", _time) { Ready = () => ready.Task, Error = _log };
 
-        await sweep.StartAsync(CancellationToken.None);
-        await Task.Delay(100);
+        await sweep.StartAsync(TestContext.Current.CancellationToken);
+        await Task.Delay(100, TestContext.Current.CancellationToken);
         _jobs.Calls.ShouldBeEmpty();
 
         ready.SetResult();
         var until = DateTime.UtcNow.AddSeconds(3);
         while (_jobs.Calls.Count == 0 && DateTime.UtcNow < until)
         {
-            await Task.Delay(10);
+            await Task.Delay(10, TestContext.Current.CancellationToken);
         }
-        await sweep.StopAsync(CancellationToken.None);
+        await sweep.StopAsync(TestContext.Current.CancellationToken);
 
         _jobs.Calls.ShouldBe(["rm bbbb0000"]);
     }
