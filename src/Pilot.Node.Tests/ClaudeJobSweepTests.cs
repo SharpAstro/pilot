@@ -32,7 +32,7 @@ public sealed class ClaudeJobSweepTests : IDisposable
 
     private string Jobs => Path.Combine(_root, "jobs");
 
-    public void Dispose() => RemovalQueue.TryDelete(_root, out _);
+    public void Dispose() => TestDirs.DeleteTree(_root);
 
     private ClaudeJobSweep Sweep() => new(_state, _ledger, _jobs, _agents, "se1", _time)
     {

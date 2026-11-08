@@ -32,9 +32,9 @@ public sealed partial class NodeState
         // (RingJudge): the old path, a ring at once, is what runs with no judge, and what the judge itself falls back to.
         if (bin != CardBin.Ring || RingJudge is not { CanJudge: true } judge || !RingJudge.Wants(kind))
         {
-            return RaiseCardCore(bin, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, out _);
+            return RaiseCardCore(bin, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, out _);
         }
-        var card = RaiseCardCore(CardBin.ForYou, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, out var created);
+        var card = RaiseCardCore(CardBin.ForYou, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, out var created);
         // Only a card this call made: an open one of the same kind and subject is returned as it is, and is not judged again.
         if (created)
         {
@@ -46,7 +46,7 @@ public sealed partial class NodeState
     /// <summary>The brain's word before a ring (<see cref="Flights.RingJudge"/>); null rings at once, as before.</summary>
     public RingJudge? RingJudge { get; set; }
 
-    private CardRow RaiseCardCore(CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices, string? link, string? askedBy, string? why, string? summary, string? attachment, string? attachmentExt, out bool created)
+    private CardRow RaiseCardCore(CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices, string? link, string? askedBy, string? why, string? summary, string? attachment, string? attachmentExt, string? cause, out bool created)
     {
         created = false;
         lock (_gate)
