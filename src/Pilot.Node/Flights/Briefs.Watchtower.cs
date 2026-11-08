@@ -84,7 +84,7 @@ public static partial class Briefs
         {
             var held = flying.Where(f => f.State == FlightState.Held).ToList();
             var flightLegs = legs.Where(l => flying.Any(f => f.Code == l.Flight)).ToList();
-            text.AppendLine($"{flying.Count} flight{(flying.Count == 1 ? "" : "s")} not landed ({flying.Count - held.Count} flying, {held.Count} held), {flightLegs.Count} leg{(flightLegs.Count == 1 ? "" : "s")} ({flightLegs.Count(l => l.State == LegState.Flying)} flying). `{pilot} status` lists them.");
+            text.AppendLine($"{flying.Count} flight{(flying.Count == 1 ? "" : "s")} not landed ({flying.Count - held.Count} flying, {held.Count} held), {flightLegs.Count} leg{(flightLegs.Count == 1 ? "" : "s")} ({flightLegs.Count(l => l.State == LegState.Flying)} flying, {flightLegs.Count(l => l.Hold is not null)} held for a package). `{pilot} status` lists them.");
             foreach (var flight in held.Take(MaxHeldListed))
             {
                 text.AppendLine($"- {flight.Code}: {Short(flight.Title ?? flight.Item.Noun, 60)} ({flight.Repo} {flight.Item.Display}, held, waiting for {FlightWaiting.For(flight)})");
@@ -382,6 +382,7 @@ public static partial class Briefs
         text.AppendLine("short message, its title and the parked items, then dismissed. Never push the same card twice.");
         text.AppendLine();
         text.AppendLine("## Commands");
+        text.Append(CommandShapeRule);
         text.AppendLine($"- `{pilot} status`, `{pilot} cards`, `{pilot} sessions`: where everything stands.");
         text.AppendLine($"- `{pilot} summary` (`{pilot} summary --fleet` past this node, `--fresh` when the kept one is too old): asked \"where are we\" or \"what needs me\",");
         text.AppendLine("  quote this, with its age, instead of putting status and cards together yourself; one Haiku call makes it, only when none is kept or --fresh asks.");
