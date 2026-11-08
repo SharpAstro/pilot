@@ -193,7 +193,8 @@ internal sealed class SummaryCard
         var exact = row.MadeAt.ToLocalTime().ToString("ddd d MMM yyyy HH:mm:ss zzz", CultureInfo.InvariantCulture);
         return row.NotFollowing is { Length: > 0 } why
             ? ($"from {row.MadeAt.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture)}; {why}", exact, StatusKind.NotFollowing)
-            : ($"made {SessionLine.Ago(now - row.MadeAt)} · follows changes", exact, StatusKind.Quiet);
+            // Only the node's fleet summary is remade by the follower; a flight's or all-nodes row stays as it was made until asked for again.
+            : ($"made {SessionLine.Ago(now - row.MadeAt)}{(row.Scope == SummaryRow.FleetScope ? " · follows changes" : "")}", exact, StatusKind.Quiet);
     }
 
     internal enum StatusKind
@@ -269,7 +270,8 @@ internal sealed class SummaryCard
                 : row switch
                 {
                     { NotFollowing: not null } => $"The watchtower is down, so a press makes one Haiku call over what the node holds. The last one used {Used(row)}. It replaces this summary for everyone.",
-                    _ => "Asks the watchtower for a new summary now, which replaces this one for everyone. The node also remakes it by itself after changes while a window is attached.",
+                    { Scope: SummaryRow.FleetScope } => "Asks the watchtower for a new summary now, which replaces this one for everyone. The node also remakes it by itself after changes while a window is attached.",
+                    _ => "Asks the watchtower for a new summary now, which replaces this one for everyone. This one is not remade by itself.",
                 };
         var enabled = steerable && !running;
         var node = Layout.Builder.Text(label, 12f, enabled ? p.Bright : p.Body, TextAlign.Center, TextAlign.Center)

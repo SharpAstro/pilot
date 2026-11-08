@@ -280,6 +280,31 @@ public sealed class SummaryFollowerTests
     }
 
     [Fact]
+    public async Task AFlightRowTheFallbackMadeWhileTheWatchtowerWasDownLosesTheNoticeOnceItIsBack()
+    {
+        _brain.Unavailable = "it is starting";
+        using var client = Attach();
+        await _follower.StepAsync(Ct);
+
+        var (row, error) = await _summaries.MakeAsync("TIA1611", Ct);
+        error.ShouldBeNull();
+        row.ShouldNotBeNull().NotFollowing.ShouldNotBeNull().ShouldContain("it is starting");
+        var all = await _summaries.MakeAsync(SummaryRow.AllNodesScope, Ct);
+        all.Error.ShouldBeNull();
+        _old.Calls.ShouldBe(2);
+
+        // Still down: the look keeps what is true on every kept row.
+        await AfterAsync(TimeSpan.FromSeconds(10));
+        _state.Summaries().ShouldAllBe(s => s.NotFollowing != null);
+
+        // Back up: the follower never remakes these rows, so the look is what clears the notice, and Refresh stops naming a price.
+        _brain.Unavailable = null;
+        await AfterAsync(TimeSpan.FromSeconds(10));
+        _state.Summaries().ShouldNotBeEmpty();
+        _state.Summaries().ShouldAllBe(s => s.NotFollowing == null);
+    }
+
+    [Fact]
     public async Task AWatchtowerAskThatFailsWhileItIsUpIsNotSaidAsNotFollowing()
     {
         await _summaries.MakeAsync(SummaryRow.FleetScope, Ct);

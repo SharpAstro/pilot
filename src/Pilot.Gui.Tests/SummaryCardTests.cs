@@ -193,6 +193,18 @@ public sealed class SummaryCardTests
         tips.ShouldContain(t => t.Contains("Asks the watchtower", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("TIA1611")]
+    [InlineData(SummaryRow.AllNodesScope)]
+    public void ARowTheNodeDoesNotRemakeSaysWhenItWasMadeAndNeverThatItFollowsChanges(string scope)
+    {
+        var (text, _, kind) = SummaryCard.Status(Row(scope, minutes: 12), running: false, refused: null, now: Now);
+
+        text.ShouldBe("made 12m ago");
+        kind.ShouldBe(SummaryCard.StatusKind.Quiet);
+        SummaryCard.Status(Row(SummaryRow.FleetScope), false, null, Now).Text.ShouldBe("made 12m ago · follows changes");
+    }
+
     [Fact]
     public void AFreshRowTheFallbackMadeWhileTheWatchtowerIsDownKeepsTheStatusAndThePriceOnRefresh()
     {

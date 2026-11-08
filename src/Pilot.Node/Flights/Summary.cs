@@ -580,12 +580,14 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
     }
 
     /// <summary>
-    /// Says on the kept fleet summary why it is not following the node's changes (null clears it): one delta, and none when the row
-    /// already says so or none is kept.
+    /// Says on every kept summary why the watchtower is down (null clears it): one delta per row that changes, and none for a row that
+    /// already says so. Every scope, not the fleet's alone: a flight's or all-nodes row the paid fallback made while the watchtower was
+    /// down carries the notice (its Refresh names the price), and only a look that clears it when the watchtower is up keeps it from
+    /// staying for good. Only the fleet's row is one the follower remakes.
     /// </summary>
     public void SetNotFollowing(string? why)
     {
-        if (state.Summaries().FirstOrDefault(s => s.Scope == SummaryRow.FleetScope) is { } row && row.NotFollowing != why)
+        foreach (var row in state.Summaries().Where(s => s.NotFollowing != why).ToList())
         {
             state.PutSummary(row with { NotFollowing = why });
         }
