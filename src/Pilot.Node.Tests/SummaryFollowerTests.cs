@@ -128,7 +128,8 @@ public sealed class SummaryFollowerTests
         // A burst every ten seconds keeps the quiet spell from ever ending, so nothing is asked in the middle of it...
         for (var i = 0; i < 20; i++)
         {
-            Change($"Change {i}");
+            // A new flight each time: every one is a change in what the summary reads.
+            _state.PutFlight(Flight($"TIA{2000 + i}"));
             await AfterAsync(TimeSpan.FromSeconds(10));
         }
         _brain.Asked.Count.ShouldBe(1);
