@@ -102,6 +102,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     {
         var view = Volatile.Read(ref _view);
         var usage = view.Usage;
+        var counts = FlightCounts.Of(view.Flights);
         return new NodeSummary
         {
             Connected = view.Connected,
@@ -114,8 +115,9 @@ internal sealed class NodeFeed : IAsyncDisposable
             Usage = usage is { HasFigures: true } ? usage.Line(now, TimeZoneInfo.Local) : null,
             LiveSessions = view.Sessions.Count(s => s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle),
             WaitingOnYou = view.Sessions.Count(s => s.State == SessionState.Waiting),
-            Flying = view.Flights.Count(f => f.State == FlightState.Flying),
-            Held = view.Flights.Count(f => f.State == FlightState.Held),
+            Flying = counts.Flying,
+            Held = counts.Held,
+            OnHold = counts.OnHold,
             JobsRunning = view.Jobs.Count(j => j.State == JobState.Running),
             JobsQueued = view.Jobs.Count(j => j.State == JobState.Queued),
             JobHolder = JobQueue.HolderLine(view.Jobs, now),

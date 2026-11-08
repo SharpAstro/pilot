@@ -82,12 +82,13 @@ public static partial class Briefs
         }
         else
         {
-            var held = flying.Where(f => f.State == FlightState.Held).ToList();
+            // Held counts both kinds: a flight waiting on another, and one the owner put on hold (#771), which says who holds it.
+            var held = flying.Where(f => f.State == FlightState.Held || f.OnHold is not null).ToList();
             var flightLegs = legs.Where(l => flying.Any(f => f.Code == l.Flight)).ToList();
             text.AppendLine($"{flying.Count} flight{(flying.Count == 1 ? "" : "s")} not landed ({flying.Count - held.Count} flying, {held.Count} held), {flightLegs.Count} leg{(flightLegs.Count == 1 ? "" : "s")} ({flightLegs.Count(l => l.State == LegState.Flying)} flying, {flightLegs.Count(l => l.Hold is not null)} held for a package). `{pilot} status` lists them.");
             foreach (var flight in held.Take(MaxHeldListed))
             {
-                text.AppendLine($"- {flight.Code}: {Short(flight.Title ?? flight.Item.Noun, 60)} ({flight.Repo} {flight.Item.Display}, held, waiting for {FlightWaiting.For(flight)})");
+                text.AppendLine($"- {flight.Code}: {Short(flight.Title ?? flight.Item.Noun, 60)} ({flight.Repo} {flight.Item.Display}, {FlightWaiting.OnHoldText(flight) ?? $"held, waiting for {FlightWaiting.For(flight)}"})");
             }
             if (held.Count > MaxHeldListed)
             {
@@ -358,6 +359,7 @@ public static partial class Briefs
         text.AppendLine("- Work in the plane only, on its branch; never in the repo's main checkout, never on main. Stay where you are and reach the");
         text.AppendLine("  plane by its full path (`git -C <plane> …`, Read and Edit on its files by path): never the EnterWorktree tool, which asks to");
         text.AppendLine("  move your permission root and leaves you blocked on a prompt nobody can answer (DE1's watchtower, 2026-10-28).");
+        text.AppendLine("- A flight `on hold by <who>` is the owner's: do nothing about it, and ring nothing, until it is released.");
         text.AppendLine("- Never rebase a flight's branch and never push one with --force or --force-with-lease, yours or a worker's asking: bring the base in");
         text.AppendLine("  by merging, and fix a commit with a new commit. A branch someone else has pushed is only ever added to (SE1's PIL294 work was");
         text.AppendLine("  lost to a force push from DE1, 2026-10-27).");
@@ -414,7 +416,7 @@ public static partial class Briefs
     public static string FlightStatus(FlightRow flight, IReadOnlyList<LegRow> legs)
     {
         var text = new StringBuilder();
-        var state = flight.State == FlightState.Held ? $"held, waiting for {FlightWaiting.For(flight)}" : flight.State.ToString().ToLowerInvariant();
+        var state = FlightWaiting.OnHoldText(flight) ?? (flight.State == FlightState.Held ? $"held, waiting for {FlightWaiting.For(flight)}" : flight.State.ToString().ToLowerInvariant());
         text.Append($"{flight.Code}: {flight.Title ?? flight.Item.Noun} ({flight.Repo} {flight.Item.Display}, {state})");
         text.Append(flight.PullRequestUrl is { } url ? $", PR {url}" : ", no PR yet");
         text.Append(flight.Review is { } review ? $", review {review.State.ToString().ToLowerInvariant()}" : ", no review yet");

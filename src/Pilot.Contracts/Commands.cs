@@ -450,6 +450,16 @@ public static class Verbs
     public const string Hold = "hold";
 
     /// <summary>
+    /// <c>ground flight/&lt;code&gt; &lt;why…&gt;</c>: the owner's hold on a flight (#771); not <see cref="Hold"/>, the holding pattern's. While it stands the node starts nothing for the flight
+    /// and takes no outward step (no leg, worker, planner, reviewer, go-around, base merge, push, PR open or merge); an armed merge
+    /// is disarmed and a queued PR taken out of the merge queue. The person's alone: not the watchtower's, not a flight session's.
+    /// </summary>
+    public const string Ground = "ground";
+
+    /// <summary><c>unground flight/&lt;code&gt; [why…]</c>: releases the owner's hold (<see cref="Ground"/>); the flight takes its next due step.</summary>
+    public const string Unground = "unground";
+
+    /// <summary>
     /// <c>review flight/&lt;code&gt; pass|changes &lt;report…&gt;</c>: the reviewer's verdict. A pass offers the merge; changes
     /// ring with a go-around. The controller may pass a review that asked for changes ("ready anyway").
     /// </summary>

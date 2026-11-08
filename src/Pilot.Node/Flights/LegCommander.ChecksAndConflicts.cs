@@ -60,6 +60,10 @@ public sealed partial class LegCommander
         {
             return $"{code} is not a flight";
         }
+        if (OnHoldRefusal(flight) is { } onHold)
+        {
+            return onHold;
+        }
         if (flight.State != FlightState.Flying || !Directory.Exists(flight.Worktree))
         {
             return $"{code} is not a flying flight with a plane";

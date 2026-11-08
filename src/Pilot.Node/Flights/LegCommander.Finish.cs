@@ -115,8 +115,12 @@ public sealed partial class LegCommander
                 // The go-around's push comes next when it is the last leg. The plane is brought up to date with its base first, so the
                 // check below runs on what is pushed; a conflict is undone and refused, the leg left flying for its worker to resolve.
                 // A review that passed at an earlier head asks the same once the leg's commits moved the plane past it (a review-notes leg).
+                // On the owner's hold (#771) a finish is let through so a running worker can report, but it brings nothing up to date and
+                // changes nothing on GitHub: no base merge into the plane, no auto-merge disarmed. The leg is recorded done and the release's
+                // next sweep (ReviewUnreadHeadAsync) merges the base, pushes and starts the review.
                 var pushes = await ReviewBehindPlaneAsync(flight, cancellationToken)
-                    && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name);
+                    && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name)
+                    && !IsOnHold(flight.Code);
                 if (pushes)
                 {
                     using (Calling(flight.Code, "being brought up to date"))
@@ -346,6 +350,11 @@ public sealed partial class LegCommander
     /// </summary>
     private async Task<string> PushEarlyAsync(FlightRow flight, CancellationToken cancellationToken)
     {
+        // A finish is let through on the owner's hold (#771), so a running worker can report; its push is an outward step, and is not taken.
+        if (IsOnHold(flight.Code))
+        {
+            return $"\nThe branch was not pushed early: {flight.Code} is on hold.";
+        }
         try
         {
             var ahead = await OffLockAsync(null, () => git.RunAsync(["rev-list", "--count", $"{flight.Base}..HEAD"], flight.Worktree, cancellationToken));
@@ -614,7 +623,8 @@ public sealed partial class LegCommander
         {
             HoldForWatchtower(flight.Code, leg.Name);
         }
-        if (behind && state.Legs(flight.Code).All(l => l.State == LegState.Done))
+        // On the owner's hold (#771) the fixed branch is neither pushed nor reviewed: the leg is recorded done and nothing follows.
+        if (behind && state.Legs(flight.Code).All(l => l.State == LegState.Done) && OnHoldRefusal(flight) is null)
         {
             if (push)
             {
@@ -757,8 +767,10 @@ public sealed partial class LegCommander
             await OffLockAsync(null, () => InvestigateCheckAsync(flight, run.Tail, cancellationToken));
             return (false, $"The node did not finish it itself, though its plane matched origin/{flight.Branch} at {CommitRefs.Short(head)}: its check `{leg.Check}` failed ({run.ExitCode}). Last of its output:\n{run.Tail}", true);
         }
+        // On the owner's hold (#771) a finish the node makes itself changes nothing on GitHub either, as a worker's finish (above).
         var pushes = await ReviewBehindPlaneAsync(flight, cancellationToken)
-            && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name);
+            && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name)
+            && !IsOnHold(flight.Code);
         if (pushes)
         {
             await OffLockAsync(flight, () => EnsureNotArmedAsync(flight, cancellationToken));

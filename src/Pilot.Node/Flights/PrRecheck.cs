@@ -381,6 +381,12 @@ public sealed class PrRecheck : IHostedService
             Fail(entry, "this node holds no way to move a flight's PR", listed.Url);
             return Outcome.Kept;
         }
+        if (FlightWaiting.OnHoldText(flight) is { } onHold)
+        {
+            // The owner's hold (#771): the node takes no step for the flight, a recheck included.
+            Fail(entry, $"{flight.Code} is {onHold}; pilot flight unground {flight.Code} releases it", listed.Url);
+            return Outcome.Kept;
+        }
         var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
         if (pr is null || pr.Number != entry.Number)
         {

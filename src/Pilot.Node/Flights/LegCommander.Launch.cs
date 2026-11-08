@@ -346,6 +346,23 @@ public sealed partial class LegCommander
             {
                 var read = await tracker.PriorityAsync(flight.RepoPath, flight.Issue, cancellationToken);
                 var labels = await tracker.LabelsAsync(flight.RepoPath, flight.Issue, cancellationToken);
+                // A hold put on GitHub while this node was down (or from another node) is read here, before the start is gated: the same hold
+                // row the repo sweep writes, so a held flight starts nothing on a wake before the sweep's first read has got to its repo.
+                // Only a label seen holds: a read that failed answers no labels, and a hold is never released from it.
+                if (flight.Tracker == TrackerKind.GitHub && labels.Contains(PilotMarks.Hold, StringComparer.OrdinalIgnoreCase)
+                    && state.Flights().FirstOrDefault(f => f.Code == flight.Code) is { State: not FlightState.Landed, OnHold: null })
+                {
+                    string[]? comments = null;
+                    try
+                    {
+                        comments = await LabelHold.CommentsAsync(github, flight.RepoPath, flight.Issue, cancellationToken);
+                    }
+                    catch (FlightException)
+                    {
+                        // The why is not read; the hold stands as "held on GitHub".
+                    }
+                    await LabelHold.ApplyAsync(state, github, time, flight.Code, comments, cancellationToken);
+                }
                 var hasLabel = labels.Contains(PilotMarks.Priority, StringComparer.OrdinalIgnoreCase);
                 var level = read.Level;
                 if (read.HasField && hasLabel)

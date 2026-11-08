@@ -36,6 +36,10 @@ public sealed partial class LegCommander
     private async Task GoAroundAsync(CommandRequest command, CancellationToken cancellationToken, bool conflictRound = false, ConflictRung? rung = null)
     {
         var (flight, leg) = LegOf(command.Target);
+        if (OnHoldRefusal(flight) is { } onHold)
+        {
+            throw new FlightException(onHold);
+        }
         RefuseIfStarting(LegsKey(flight.Code), $"a session on {flight.Code}'s plane");
         var why = string.Join(' ', command.Args ?? []).Trim();
         if (why.Length == 0)

@@ -342,6 +342,14 @@ public interface IGitHub
     /// <summary>The labels issue <paramref name="number"/> carries; empty when gh cannot say.</summary>
     Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The labels issue <paramref name="number"/> carries, as <see cref="IssueLabelsAsync"/> reads them, but a gh failure throws instead of
+    /// reading as no labels: a caller that acts on a label's absence (the hold sweep releasing a hold) must tell a failed read from a missing label.
+    /// </summary>
+    /// <exception cref="FlightException">gh could not read the issue.</exception>
+    Task<string[]> IssueLabelsOrThrowAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        IssueLabelsAsync(repoPath, number, cancellationToken);
+
     /// <summary>Adds <paramref name="label"/> to issue <paramref name="number"/>, creating it in the repo when it has none like it.</summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task AddIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken);
@@ -357,6 +365,11 @@ public interface IGitHub
     /// <summary>Comments on issue <paramref name="number"/> in the controller's name.</summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken);
+
+    /// <summary>The comments of issue <paramref name="number"/>, oldest first; none by default.</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<IReadOnlyList<PrComment>> IssueCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<PrComment>>([]);
 
     /// <summary>The conversation comments of PR <paramref name="number"/> (not its review comments), oldest first; none by default.</summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
@@ -480,7 +493,19 @@ public static class PilotMarks
     public const string Recheck = LabelPrefix + "recheck";
 
     /// <summary>The labels the node reads from a person; each is made in a repo when the node labels a flight item there. A later one is added here.</summary>
-    public static readonly string[] ReadFromPeople = [Priority, Recheck, HumanVerification];
+    public static readonly string[] ReadFromPeople = [Priority, Recheck, Hold, HumanVerification];
+
+    /// <summary>
+    /// The owner's hold on a flight (#771), on its issue only: every node reads it from GitHub on its repo sweep. Never put on a PR,
+    /// since a PR's <c>pilot: </c> labels are replaced as a set by a review's label change.
+    /// </summary>
+    public const string Hold = LabelPrefix + "hold";
+
+    /// <summary>What the comment that says a flight was put on hold starts with, so a sweep finds the newest one pilot wrote.</summary>
+    public const string HoldCommentStart = "pilot: on hold";
+
+    /// <summary>What the comment that says a flight was released from its hold starts with: a hold comment older than the newest of these is spent.</summary>
+    public const string OffHoldCommentStart = "pilot: off hold";
 
     /// <summary>Put on a flight's issue by a person: the flight's live behaviour needs a person's check, so its briefs say how to note such checks and the node files each as an issue for the controller.</summary>
     public const string HumanVerification = LabelPrefix + "human verification";
@@ -520,6 +545,7 @@ public static class PilotMarks
         Recheck => ("1d76db", "ask pilot to look at this PR again"),
         Pinned => ("fbca04", "pinned to the top of its section in pilot's Ideas pane"),
         Priority => ("e99695", "pilot: its starts bypass the Opus cap and the repo hold"),
+        Hold => ("b60205", "the owner holds this flight: no pilot node acts on it"),
         HumanVerification => ("c5def5", "a person must check this flight's live behaviour; pilot files those checks as issues"),
         _ => ("ededed", "set by pilot"),
     };

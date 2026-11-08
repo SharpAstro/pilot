@@ -6,9 +6,7 @@ using Pilot.Node.Sessions;
 
 namespace Pilot.Node.Flights;
 
-/// <summary>
-/// The review of a flight: the reviewer, its verdicts, the rounds of changes and the review loop.
-/// </summary>
+/// <summary>The review of a flight: the reviewer, its verdicts, the rounds of changes and the review loop.</summary>
 public sealed partial class LegCommander
 {
     /// <summary>The leg name reserved for the flight's reviewer: <c>&lt;machine&gt;-&lt;flight&gt;-review</c>.</summary>
@@ -457,6 +455,7 @@ public sealed partial class LegCommander
             {
                 return $"{code} is not a flying flight with a passed review";
             }
+            RefuseIfOnHold(code);
             var changes = changesFor(number);
             await TurnToChangesAsync(flight, changes, cancellationToken);
             state.CloseCardsAbout(Verbs.FlightTarget(code), closing, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
