@@ -194,6 +194,7 @@ public static partial class Briefs
     /// <summary>The line the worker is told: run the check and the classes touched, never the whole suite, which CI runs on the PR.</summary>
     internal const string WorkerScopeRule =
         "Run the check and the test classes you touch, never the whole suite: CI runs the whole suite on the PR, and an unrelated failure in it is not this leg's. " +
+        "The node refuses a `pilot run` of a `dotnet test` with no --filter (it names the filter it suggests); only `pilot run --whole-suite \"<why>\" -- <command>` runs one, and the why is kept on the job. " +
         "A check that fails only in tests your change does not touch (their test file, the class of a source you changed, or a name in the check's filter) is passed by the node, which matches each to an open issue or files one and reports it as not this flight's: do not chase it.";
 
     /// <summary>The line the planner is told: a check runs in the plane's root, so write it as CI runs it, working-directory included.</summary>
