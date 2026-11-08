@@ -574,8 +574,8 @@ public sealed class ReviewTests1 : ReviewTestsBase
         var ready = Open().Single(c => c.Kind == LegCommander.PrReady);
         _github.Checks = ChoiceStatus.Passing;
         _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
-        // The PR moved past the head the card offers, so the merge is refused as an unread head.
-        _github.Pr = _github.Pr! with { Head = "beef0000beef0000" };
+        // GitHub refuses the merge in words only a person can clear (a head that moved is the node's own wait now, and rings nothing: PIL864).
+        _github.MergeAnswers = "gh: Required status check build is expected";
         var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
 
         await checks.LookAsync(Ct);

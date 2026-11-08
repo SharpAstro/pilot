@@ -155,6 +155,12 @@ public sealed partial class LegCommander
         {
             return;
         }
+        // Another step's calls are out for the flight (a push, a check rerun, a rebase): open-pr would wait for them, as a person's does, but
+        // the sweep takes its flights one at a time, so it leaves this one to the next sweep rather than hold every flight behind it (pilot #871).
+        if (step.Verb == Verbs.OpenPr && IsCallingAnything(current.Code))
+        {
+            return;
+        }
         var result = await RunAsync(step, cancellationToken);
         if (result.Ok)
         {

@@ -181,6 +181,15 @@ public class StalenessTests
     };
 
     [Fact]
+    public void AHoldOnANodeThatIsNotAKnownPeerIsNeverAnUnreachableItemHoweverOldItIs_780()
+    {
+        // AnswerAsync sets no UnreachableSince on a wait whose node is not a peer this one holds a grant for, so the node is not called unreachable.
+        var reading = Read([Flight(state: FlightState.Held, peers: [Peer(null)])]);
+        reading.Stale.ShouldNotContain(i => i.Kind == StaleKind.Unreachable);
+        reading.Nearing.ShouldNotContain(i => i.Kind == StaleKind.Unreachable);
+    }
+
+    [Fact]
     public void AHoldOnAnUnreachableNodePastAnHourIsStaleNamingTheNode_753()
     {
         var reading = Read([Flight(state: FlightState.Held, peers: [Peer(TimeSpan.FromMinutes(90))])]);

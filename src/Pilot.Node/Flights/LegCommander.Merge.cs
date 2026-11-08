@@ -46,7 +46,7 @@ public sealed partial class LegCommander
                 // The repeat's own head and method are ignored: the first merge's stand. Its Way says "not merged, no news" to callers.
                 return (false, AlreadyInProgress, MergeWays.InProgress);
             }
-            throw new FlightException($"{asked.Code} is being merged already: wait for its answer, then ask again");
+            throw new MergeBlockedException(MergeRefusals.NodeWait, $"{asked.Code} is being merged already: wait for its answer, then ask again");
         }
         // The turn is the command's before its entry is put: a journal that cannot write the entry (a full disk) throws out of Enqueue
         // with the flight already among those under way, and only the command's end gives it back.
@@ -139,11 +139,12 @@ public sealed partial class LegCommander
         // that is neither queued nor waiting on checks is refused as dropped (the mark outlives a requeue by hand or a re-run).
         if (DroppedForConflict(flight.Code, pr.Head) && mergeState?.Kind != MergeKinds.Queued && checks?.Status != ChoiceStatus.Pending)
         {
-            throw new FlightException($"GitHub's merge queue dropped #{pr.Number} at {CommitRefs.Short(pr.Head)} for a conflict: it is queued again once its head moves");
+            // The conflict is the update's to clear (the node merges the base in, the watchtower resolves what conflicts): it passes by itself.
+            throw new MergeBlockedException(MergeRefusals.Passing, $"GitHub's merge queue dropped #{pr.Number} at {CommitRefs.Short(pr.Head)} for a conflict: it is queued again once its head moves");
         }
         if (checks?.Status == ChoiceStatus.Failing)
         {
-            throw new FlightException($"#{pr.Number}'s checks fail: it merges once they pass");
+            throw new MergeBlockedException(MergeRefusals.FailedCheck, $"#{pr.Number}'s checks fail: it merges once they pass");
         }
         // What GitHub says about the PR is what the button does: a PR in the queue is not queued twice, one behind its base or
         // with changes requested is refused with that said, as GitHub's own button would not be there (pilot #244).
@@ -152,11 +153,13 @@ public sealed partial class LegCommander
             case MergeKinds.Queued:
                 return (false, QueuedLine(flight.Code, mergeState.Place is { } place ? $"in the merge queue, {place}" : "in the merge queue"), MergeWays.Queued);
             case MergeKinds.Behind:
-                throw new FlightException(BehindText(pr.Number));
+                throw new MergeBlockedException(MergeRefusals.Passing, BehindText(pr.Number));
             case MergeKinds.ChangesRequested:
-                throw new FlightException($"#{pr.Number} has changes requested on GitHub: they are read first, then it merges");
+                throw new MergeBlockedException(MergeRefusals.ChangesRequested, $"#{pr.Number} has changes requested on GitHub: they are read first, then it merges");
             case MergeKinds.Blocked when mergeState.Reason is { } why && mergeState.FailedName is null:
-                throw new FlightException($"#{pr.Number} is blocked on GitHub: {why}");
+                // A draft is marked ready for review, not approved; blocked with no failed check named and no draft: what branch
+                // protection waits for is an approval.
+                throw new MergeBlockedException(mergeState.Draft || pr.Draft ? MergeRefusals.Draft : MergeRefusals.NeedsApproval, $"#{pr.Number} is blocked on GitHub: {why}");
         }
         if (checks?.Status == ChoiceStatus.Pending)
         {
@@ -301,24 +304,24 @@ public sealed partial class LegCommander
         var method = args.Length > 1 ? args[1] : Models.MergeMethod;
         if (head.Length < 7)
         {
-            throw new FlightException("merge needs the head commit you reviewed (7 characters at least): the merge is refused if the PR has moved past it");
+            throw new MergeBlockedException(MergeRefusals.Unclassified, "merge needs the head commit you reviewed (7 characters at least): the merge is refused if the PR has moved past it");
         }
         if (method is not ("squash" or "rebase" or "merge"))
         {
-            throw new FlightException($"merge takes squash, rebase or merge, not {method}");
+            throw new MergeBlockedException(MergeRefusals.Unclassified, $"merge takes squash, rebase or merge, not {method}");
         }
         if (flight.State != FlightState.Flying)
         {
-            throw new FlightException($"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}");
+            throw new MergeBlockedException(MergeRefusals.Unclassified, $"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}");
         }
         if (state.Legs(flight.Code).Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is { Count: > 0 } open)
         {
-            throw new FlightException($"{flight.Code} has legs not done: {string.Join(", ", open)}");
+            throw new MergeBlockedException(MergeRefusals.NodeWait, $"{flight.Code} has legs not done: {string.Join(", ", open)}");
         }
 
         if (flight.Review is not { State: ReviewState.Passed })
         {
-            throw new FlightException(flight.Review is null
+            throw new MergeBlockedException(MergeRefusals.NodeWait, flight.Review is null
                 ? $"{flight.Code} has not been reviewed; open its PR with the node (flight pr), which starts the review"
                 : $"{flight.Code}'s review is {flight.Review.State.ToString().ToLowerInvariant()}, not passed");
         }
@@ -329,13 +332,13 @@ public sealed partial class LegCommander
         }
         if (flight.Holding is { } holding)
         {
-            throw new FlightException($"{flight.Code} is in a holding pattern since {holding.Since.ToLocalTime():HH:mm}: {holding.Reason}; the watchtower clears it (`flight clear {flight.Code}`) or pushes its fixes (`flight pr {flight.Code}`)");
+            throw new MergeBlockedException(MergeRefusals.NodeWait, $"{flight.Code} is in a holding pattern since {holding.Since.ToLocalTime():HH:mm}: {holding.Reason}; the watchtower clears it (`flight clear {flight.Code}`) or pushes its fixes (`flight pr {flight.Code}`)");
         }
         // A question of design the review asked of this PR and nobody has answered holds the merge: answer it or dismiss it first.
         if (PrRef.Parse(flight.PullRequestUrl) is { } own
             && state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == PrReviews.DesignKind && c.Subject == Verbs.PrTarget(own.Repo, own.Number)) is { } design)
         {
-            throw new FlightException($"{flight.Code}'s PR {own} has an open design question (card {design.Id}): answer it or dismiss it first");
+            throw new MergeBlockedException(MergeRefusals.DesignQuestion, $"{flight.Code}'s PR {own} has an open design question (card {design.Id}): answer it or dismiss it first");
         }
         return (flight, head, method);
     }
@@ -347,14 +350,15 @@ public sealed partial class LegCommander
     private async Task<PullRequest> LookAtPrAsync(FlightRow flight, string head, CancellationToken cancellationToken)
     {
         var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken)
-            ?? throw new FlightException($"{flight.Branch} has no PR");
+            ?? throw new MergeBlockedException(MergeRefusals.Unpushed, $"{flight.Branch} has no PR");
         if (!string.Equals(pr.State, "OPEN", StringComparison.OrdinalIgnoreCase))
         {
             var said = $"#{pr.Number} is {pr.State.ToLowerInvariant()}, not open";
             // Merged already is what a merge wants (#799 rule 6): the caller lands the flight, it is no refusal to ring.
             throw string.Equals(pr.State, "MERGED", StringComparison.OrdinalIgnoreCase) && (flight.PullRequest is null || flight.PullRequest == pr.Number)
                 ? new AlreadyMergedException(said)
-                : new FlightException(said);
+                // Closed unmerged: nothing to merge and nothing to press.
+                : new MergeBlockedException(MergeRefusals.Closed, said);
         }
         if (!pr.Head.StartsWith(head, StringComparison.OrdinalIgnoreCase))
         {
@@ -366,11 +370,11 @@ public sealed partial class LegCommander
             && await git.RunAsync(["rev-list", "--count", $"{pr.Head}..HEAD"], flight.Worktree, cancellationToken) is { Ok: true } ahead
             && int.TryParse(ahead.Output.Trim(), out var unpushed) && unpushed > 0)
         {
-            throw new FlightException($"{flight.Code}'s plane holds {unpushed} commit{(unpushed == 1 ? "" : "s")} past #{pr.Number}'s head: open the PR again (flight pr) to push {(unpushed == 1 ? "it" : "them")}, and review what is new before it lands");
+            throw new MergeBlockedException(MergeRefusals.Unpushed, $"{flight.Code}'s plane holds {unpushed} commit{(unpushed == 1 ? "" : "s")} past #{pr.Number}'s head: open the PR again (flight pr) to push {(unpushed == 1 ? "it" : "them")}, and review what is new before it lands");
         }
         if (string.Equals(pr.Mergeable, "CONFLICTING", StringComparison.OrdinalIgnoreCase))
         {
-            throw new FlightException($"#{pr.Number} conflicts with its base, so GitHub cannot merge it");
+            throw new MergeBlockedException(MergeRefusals.Conflicting, $"#{pr.Number} conflicts with its base, so GitHub cannot merge it");
         }
         // Behind its base by the plane's own look, not only GitHub's (BEHIND needs a "require up to date" rule): never sent to the
         // queue to find out. The caller brings it up to date and reviews it afresh.
@@ -389,7 +393,7 @@ public sealed partial class LegCommander
                 {
                     return pr;
                 }
-                throw new FlightException(BehindText(pr.Number, await HeadWords.BehindAsync(git, flight.Worktree, flight.Base, $"origin/{BaseBranch(flight)}", tip, cancellationToken)));
+                throw new MergeBlockedException(MergeRefusals.Passing, BehindText(pr.Number, await HeadWords.BehindAsync(git, flight.Worktree, flight.Base, $"origin/{BaseBranch(flight)}", tip, cancellationToken)));
             }
         }
         return pr;
@@ -469,9 +473,10 @@ public sealed partial class LegCommander
                 state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s head moved by {flight.Base} or by whitespace or documentation only; its review carries to {CommitRefs.Short(pr.Head)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
                 return pr;
             }
-            throw new FlightException($"#{pr.Number}'s head is {words.Text}: look again before it lands");
+            // The node starts a review of the new head (HeadMovedAsync): it waits on that.
+            throw new MergeBlockedException(MergeRefusals.NodeWait, $"#{pr.Number}'s head is {words.Text}: look again before it lands");
         }
-        throw new FlightException($"#{pr.Number}'s head is newer than the one you reviewed ({CommitRefs.Short(pr.Head)} · reviewed {CommitRefs.Short(head)}): look again before it lands");
+        throw new MergeBlockedException(MergeRefusals.NodeWait, $"#{pr.Number}'s head is newer than the one you reviewed ({CommitRefs.Short(pr.Head)} · reviewed {CommitRefs.Short(head)}): look again before it lands");
     }
 
     private static bool Behind(string error) => error.Contains("is behind its base", StringComparison.OrdinalIgnoreCase);
