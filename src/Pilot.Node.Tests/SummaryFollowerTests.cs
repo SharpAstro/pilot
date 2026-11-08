@@ -28,12 +28,27 @@ public sealed class SummaryFollowerTests
 
         public string? Unavailable { get; set; }
 
+        /// <summary>When set, an ask fails with this though the brain is up (busy with another request): a failed ask that is not "down".</summary>
+        public string? FailsWith { get; set; }
+
+        /// <summary>When set, the next ask throws this once: something the summary's own error handling does not expect.</summary>
+        public Exception? StrayOnce { get; set; }
+
         public Task<BrainReply> AskAsync(string kind, string request, TimeSpan timeout, CancellationToken cancellationToken)
         {
             Asked.Add(kind);
+            if (StrayOnce is { } stray)
+            {
+                StrayOnce = null;
+                throw stray;
+            }
             if (Unavailable is { } down)
             {
                 throw new BrainDownException(down);
+            }
+            if (FailsWith is { } fails)
+            {
+                throw new BrainDownException(fails);
             }
             return Task.FromResult(new BrainReply(JsonDocument.Parse(BrainAnswer).RootElement.Clone(), TimeSpan.FromMilliseconds(5), null));
         }
@@ -98,6 +113,8 @@ public sealed class SummaryFollowerTests
     [Fact]
     public async Task AChangeWithAClientAttachedAsksTheWatchtowerOnceAfterTheQuietSpell()
     {
+        // The "change" here is that no summary has been made since the node started (the node asks once after a restart);
+        // ChangesCloseTogetherNeverAskMoreOftenThanTheMinimumGap covers a change after a kept summary.
         using var client = Attach();
         await _follower.StepAsync(Ct);
 
@@ -216,6 +233,88 @@ public sealed class SummaryFollowerTests
         await AfterAsync(TimeSpan.FromSeconds(1));
         _brain.Asked.Count.ShouldBe(2);
         Kept()!.NotFollowing.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ADownWatchtowerIsSaidOnTheKeptRowWithNoChangeWaiting()
+    {
+        // A summary of the current state is kept, so nothing is waiting to be asked.
+        await _summaries.MakeAsync(SummaryRow.FleetScope, Ct);
+        using var client = Attach();
+        await _follower.StepAsync(Ct);
+        Kept().ShouldNotBeNull().NotFollowing.ShouldBeNull();
+
+        _brain.Unavailable = "it has no running process";
+        await AfterAsync(TimeSpan.FromSeconds(1));
+
+        Kept()!.NotFollowing.ShouldNotBeNull().ShouldContain("watchtower is down");
+        _brain.Asked.Count.ShouldBe(1);
+        _old.Calls.ShouldBe(0);
+
+        // It stays said while nothing changes, and clears once the watchtower is back.
+        await AfterAsync(SummaryFollower.MinGap * 2);
+        Kept()!.NotFollowing.ShouldNotBeNull();
+        _brain.Unavailable = null;
+        await AfterAsync(TimeSpan.FromSeconds(1));
+        Kept()!.NotFollowing.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ARowTheOldCallMadeWhileTheWatchtowerWasDownStillSaysSoAfterTheNextLook()
+    {
+        _brain.Unavailable = "it is starting";
+        using var client = Attach();
+        await _follower.StepAsync(Ct);
+
+        var result = await _summaries.RunAsync(new CommandRequest { Verb = Verbs.Summarise, Target = Verbs.NodeTarget, Who = "tests" }, Ct);
+
+        result.Ok.ShouldBeTrue();
+        _old.Calls.ShouldBe(1);
+        Kept().ShouldNotBeNull().NotFollowing.ShouldNotBeNull().ShouldContain("it is starting");
+
+        // The summary is current, so no change waits; the look must not clear what is still true.
+        await AfterAsync(TimeSpan.FromSeconds(10));
+        Kept()!.NotFollowing.ShouldNotBeNull().ShouldContain("watchtower is down");
+        Kept()!.Markdown.ShouldContain("The old call says so.");
+        _old.Calls.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AWatchtowerAskThatFailsWhileItIsUpIsNotSaidAsNotFollowing()
+    {
+        await _summaries.MakeAsync(SummaryRow.FleetScope, Ct);
+        using var client = Attach();
+        await _follower.StepAsync(Ct);
+        Change();
+        _brain.FailsWith = "it was busy with another request";
+
+        await AfterAsync(SummaryFollower.Quiet + TimeSpan.FromSeconds(1));
+
+        _brain.Asked.Count.ShouldBe(2);
+        _old.Calls.ShouldBe(0);
+        // The watchtower is up, so a press of Refresh asks it first and no price is named: the row says nothing is wrong with it.
+        Kept()!.NotFollowing.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AStepThatThrowsDoesNotEndTheFollowerAndTheNextLookWorks()
+    {
+        using var client = Attach();
+        await _follower.StepAsync(Ct);
+        _brain.StrayOnce = new NullReferenceException("something nobody expected");
+
+        // The look that throws is swallowed (logged), not raised: raised, it would stop the node's host.
+        _time.Advance(SummaryFollower.Quiet + TimeSpan.FromSeconds(1));
+        var failed = await Record.ExceptionAsync(() => _follower.LookAsync(Ct));
+        failed.ShouldBeNull();
+        _brain.Asked.Count.ShouldBe(1);
+        Kept().ShouldBeNull();
+
+        // The next look, past the gap, asks again and keeps the summary.
+        _time.Advance(SummaryFollower.MinGap);
+        await _follower.LookAsync(Ct);
+        _brain.Asked.Count.ShouldBe(2);
+        Kept().ShouldNotBeNull().Markdown.ShouldContain("The brain says all is quiet.");
     }
 
     [Fact]

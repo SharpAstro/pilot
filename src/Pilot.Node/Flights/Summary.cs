@@ -642,6 +642,9 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
                 prompt = SummaryPrompt.Flight(scope, records);
             }
 
+            // Read before the ask: a row the paid fallback makes says the watchtower was down, so its Refresh keeps naming the price
+            // until the follower sees the watchtower up again.
+            var down = watchtowerOnly ? null : model.WatchtowerDown;
             SummaryAnswer answer;
             try
             {
@@ -653,7 +656,7 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
             }
             // The ids of resolved cards are never part of what is shown: the node takes them out, kept or not.
             var (prose, resolved) = StaleCardProposal.Split(answer.Text);
-            var row = Keep(scope, prose, answer.Tokens, answer.Cost, fingerprint);
+            var row = Keep(scope, prose, answer.Tokens, answer.Cost, fingerprint, down is null ? null : $"the watchtower is down ({down})");
             if (GitHub is { } github && scope != SummaryRow.AllNodesScope && resolved.Count > 0)
             {
                 await new StaleCards(state, github).DismissAsync(resolved, scope == SummaryRow.FleetScope ? null : Verbs.FlightTarget(scope), cancellationToken);
@@ -669,9 +672,9 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
         }
     }
 
-    private SummaryRow Keep(string scope, string markdown, long tokens, double? cost, string? madeFrom = null)
+    private SummaryRow Keep(string scope, string markdown, long tokens, double? cost, string? madeFrom = null, string? notFollowing = null)
     {
-        var row = new SummaryRow { Scope = scope, Markdown = markdown, MadeAt = time.GetUtcNow(), Tokens = tokens, Cost = cost };
+        var row = new SummaryRow { Scope = scope, Markdown = markdown, MadeAt = time.GetUtcNow(), Tokens = tokens, Cost = cost, NotFollowing = notFollowing };
         if (madeFrom is not null)
         {
             lock (_gate)

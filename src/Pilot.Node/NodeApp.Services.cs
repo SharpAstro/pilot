@@ -577,6 +577,7 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => new SummaryFollower(services.GetRequiredService<NodeState>(), services.GetRequiredService<Summaries>(), services.GetRequiredService<TimeProvider>())
         {
             Bounds = () => services.GetRequiredService<RoleModels>().Stale,
+            Error = logWriter,
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<SummaryFollower>());
         builder.Services.AddSingleton(services => new Digest(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())

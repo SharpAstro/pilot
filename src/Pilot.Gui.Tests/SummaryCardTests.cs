@@ -194,6 +194,23 @@ public sealed class SummaryCardTests
     }
 
     [Fact]
+    public void AFreshRowTheFallbackMadeWhileTheWatchtowerIsDownKeepsTheStatusAndThePriceOnRefresh()
+    {
+        using var window = new Window(1280, 2400);
+        const string why = "the watchtower is down (it is starting)";
+        // Made just now by the old one-off call, as the node keeps it: it carries the reason, so Refresh names the price on the very next frame.
+        var row = Row(SummaryRow.FleetScope, minutes: 0, tokens: 900, cost: 0.002, notFollowing: why);
+        window.Chrome.Summaries.Shelf = Shelf([Here], (Here, row));
+        window.Draw();
+
+        var words = window.Words(window.Chrome.Home.Tree(Home()));
+
+        words.ShouldContain($"from {row.MadeAt.ToLocalTime():HH:mm}; {why}");
+        words.ShouldNotContain("follows changes");
+        words.ShouldContain("Refresh · ~$0.0020");
+    }
+
+    [Fact]
     public void WithTheWatchtowerDownTheStatusSaysFromWhenAndWhyAndRefreshNamesThePrice()
     {
         using var window = new Window(1280, 2400);

@@ -34,8 +34,9 @@ public sealed record SummaryRow
     public double? Cost { get; init; }
 
     /// <summary>
-    /// Why this summary is not following the node's changes (the watchtower is down, or did not answer), set by the node while a change
-    /// is waiting and it cannot be asked; null when the summary follows, or was just made. A fresh summary clears it.
+    /// Why this summary is not following the node's changes: the watchtower is down. The node sets it on every look while a client is
+    /// attached (a change waiting or not), and a summary the paid fallback made while it was down carries it; null when the watchtower
+    /// is up. The Refresh button names the old call's price exactly while this is set.
     /// </summary>
     public string? NotFollowing { get; init; }
 }
