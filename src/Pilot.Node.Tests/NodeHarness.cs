@@ -243,7 +243,7 @@ internal sealed class NodeHarness : IAsyncDisposable
         _held.Dispose();
         try
         {
-            Directory.Delete(Folder, recursive: true);
+            TestDirs.DeleteTree(Folder);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

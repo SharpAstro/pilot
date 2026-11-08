@@ -11,7 +11,7 @@ public sealed class SessionMcpConfigTests : IDisposable
 {
     private readonly string _root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "mcp-" + Guid.NewGuid().ToString("N")[..8])).FullName;
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose() => TestDirs.DeleteTree(_root);
 
     private string Repo(string? pilotMd, string? mcpJson)
     {

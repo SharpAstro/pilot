@@ -66,7 +66,7 @@ public abstract class JobTestsBase : IDisposable
             {
                 File.SetAttributes(file, FileAttributes.Normal);
             }
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
         catch (IOException)
         {
@@ -1904,8 +1904,8 @@ public sealed class JobTests3 : JobTestsBase
         // The check ends when the test says so: it sleeps, then exits 7 once the flag exists.
         var flag = Path.Combine(_root, "carry.flag");
         var command = OperatingSystem.IsWindows()
-            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 120' -PassThru -NoNewWindow; Set-Content -Path '{marker}' -Value $p.Id; while (-not (Test-Path '{flag}')) {{ Start-Sleep -Milliseconds 200 }}; exit 7"
-            : $"sleep 120 & echo $! > '{marker}'; while [ ! -e '{flag}' ]; do sleep 0.2; done; exit 7";
+            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 120' -PassThru -NoNewWindow; Set-Content -Path '{marker}' -Value $p.Id; $end = (Get-Date).AddMinutes(2); while (-not (Test-Path '{flag}') -and (Get-Date) -lt $end) {{ Start-Sleep -Milliseconds 200 }}; exit 7"
+            : $"sleep 120 & echo $! > '{marker}'; i=0; while [ ! -e '{flag}' ] && [ $i -lt 600 ]; do sleep 0.2; i=$((i+1)); done; exit 7";
         int child = 0;
         JobRow? check = null;
         JobRow? kept = null;

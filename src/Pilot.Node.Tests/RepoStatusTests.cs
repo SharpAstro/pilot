@@ -21,7 +21,7 @@ public sealed class RepoStatusTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     // A folder that looks like a clone: a .git folder, with an origin on GitHub.
