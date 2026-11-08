@@ -222,6 +222,12 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                 foreach (var read in Read(doc.RootElement))
                 {
                     var entry = Noted(read);
+                    // The node's own asks of its brain and the brain's answers to them (PIL855) are the node's business, not the
+                    // person's conversation: they are left out, so they neither show in the chat nor count as the person's messages.
+                    if (BrainClient.IsBrainExchange(entry))
+                    {
+                        continue;
+                    }
                     Entries.Add(entry with { Index = Entries.Count, Id = $"{lineKey}:{ordinal++}", At = at, Text = Clip(entry.Text), Full = entry.Full is { } full ? Clip(full) : null });
                 }
             }

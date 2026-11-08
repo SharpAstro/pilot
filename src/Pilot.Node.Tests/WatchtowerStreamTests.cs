@@ -250,7 +250,13 @@ public sealed class WatchtowerStreamTests : IDisposable
         arguments.ShouldNotContain("--bg");
         // claude --help: --remote-control starts an interactive session, so the print-mode process starts without it.
         arguments.ShouldNotContain("--remote-control");
+        // Its questions reach the person's chat through --permission-prompt-tool stdio: the tool is not taken away on any start.
+        arguments.ShouldNotContain("--disallowedTools");
+        arguments.ShouldContain("--permission-prompt-tool");
         folder.ShouldBe(_options.WatchtowerFolder);
+        File.ReadAllText(_tower.RulesFile).ShouldContain("The AskUserQuestion tool works too");
+        // The rules are read in its own folder, where the stream allows a call without asking the person.
+        Path.GetDirectoryName(_tower.RulesFile).ShouldBe(_options.WatchtowerFolder);
         var brief = process.Said.ShouldHaveSingleItem();
         brief.Length.ShouldBeLessThanOrEqualTo(6000);
         brief.ShouldContain(_tower.RulesFile);
@@ -372,6 +378,7 @@ public sealed class WatchtowerStreamTests : IDisposable
         var arguments = _launcher.Started[1].Arguments;
         arguments.ShouldContain("--resume");
         arguments.ShouldNotContain("--session-id");
+        arguments.ShouldNotContain("--disallowedTools");
         _launcher.SessionOf(1).ShouldBe(session);
         _launcher.Process(1).Said.ShouldBeEmpty();
         Row().Id.ShouldBe(id);

@@ -176,8 +176,8 @@ public static partial class Briefs
     /// keeps its brief, and only a fresh start carries a changed one, so a watchtower whose recorded fingerprint differs
     /// from this one is replaced (#22).
     /// </summary>
-    public static string WatchtowerFingerprint(string name, string pilot, string? model = null, string? machine = null) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(WatchtowerHead(name, pilot, model, "") + "\n\u0001\n" + WatchtowerRules(name, pilot, machine))))[..16];
+    public static string WatchtowerFingerprint(string name, string pilot, string? model = null, string? machine = null, bool stream = false) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(WatchtowerHead(name, pilot, model, "") + "\n\u0001\n" + WatchtowerRules(name, pilot, machine, stream))))[..16];
 
     /// <summary>
     /// The part of the brief that does not change with the node's state, and the only fixed text the first prompt carries: who the
@@ -210,7 +210,7 @@ public static partial class Briefs
     /// The watchtower's fixed rules. The node writes them to a file when it starts a watchtower and the brief points to it (PIL855): the
     /// brief is the first prompt of a session and stays in its context for good, and 20,000 characters of rules in it made every turn slow.
     /// </summary>
-    public static string WatchtowerRules(string name, string pilot, string? machine = null)
+    public static string WatchtowerRules(string name, string pilot, string? machine = null, bool stream = false)
     {
         var text = new StringBuilder();
         text.AppendLine($"# The rules of {name}, the watchtower");
@@ -271,8 +271,12 @@ public static partial class Briefs
         text.AppendLine("  person-only card answered without their message in the turn is refused, so never press one on your own.");
         text.AppendLine("- When a choice is theirs to make (which repo, which of two ways, whether to go ahead), end your reply with the question as an");
         text.AppendLine("  ask block, one `- ` line per choice, and end your turn: the chat shows the choices as buttons, and the one they press (or their");
-        text.AppendLine("  own words) comes back to you as their next message. Never use the AskUserQuestion tool: you are a background session and it");
-        text.AppendLine("  would block with nobody to answer it. The block is exactly:");
+        text.AppendLine("  own words) comes back to you as their next message.");
+        // The stream watchtower (PIL855) runs with --permission-prompt-tool stdio: its AskUserQuestion reaches the person's chat as a
+        // question with buttons and waits for their answer. A --bg one has the tool disallowed: it would block with nobody to answer it.
+        text.AppendLine(stream
+            ? "  The AskUserQuestion tool works too: it shows in their chat under Waiting on you and your turn waits for their answer, so use it only when you cannot go on without one. The block is exactly:"
+            : "  Never use the AskUserQuestion tool: you are a background session and it would block with nobody to answer it. The block is exactly:");
         text.AppendLine("  <ask>");
         text.AppendLine("  Which repo should the flight fly in?");
         text.AppendLine("  - tianwen");

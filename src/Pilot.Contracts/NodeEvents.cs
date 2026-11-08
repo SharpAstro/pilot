@@ -268,7 +268,9 @@ public sealed record DecisionEvent : NodeEvent
 /// <summary>
 /// The watchtower's chat changed: partial words arrived, it started or ended a tool, a message was queued or taken, a turn ended. It
 /// carries nothing: a client asks for the chat feed (<see cref="NodeWire.ChatRoute"/>) when it sees one, so it need not poll. The node
-/// sends at most about ten a second while words stream.
+/// sends at most about ten a second while words stream, to the clients connected at the time only: it is not numbered (its
+/// <see cref="NodeEvent.Seq"/> is the last delta's), journalled or held for a client that reconnects, and a mirror takes it without
+/// moving its own number.
 /// </summary>
 public sealed record ChatChangedEvent : NodeEvent;
 

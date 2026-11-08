@@ -30,7 +30,7 @@ public sealed partial class NodeState
     {
         // With the brain to ask (PIL855), a card that would ring is first filed in For you, silent, and rings only on the brain's verdict
         // (RingJudge): the old path, a ring at once, is what runs with no judge, and what the judge itself falls back to.
-        if (bin != CardBin.Ring || RingJudge is not { CanJudge: true } judge || !RingJudge.Wants(kind))
+        if (bin != CardBin.Ring || RingJudge is not { CanJudge: true } judge || !RingJudge.Wants(kind, choices))
         {
             return RaiseCardCore(bin, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, out _);
         }
@@ -96,7 +96,9 @@ public sealed partial class NodeState
                 Link = link,
                 AskedBy = askedBy,
                 Why = why,
-                Cause = cause,
+                // The key a dismissal is remembered by, fixed when the card is raised: a later rewording of its title (the brain's, PIL855)
+                // cannot move it, so a dismissed card raised again for the same cause stays dismissed (#853).
+                Cause = cause ?? title,
                 Attachment = attachment,
                 AttachmentExt = attachment is null ? null : attachmentExt,
                 At = now,

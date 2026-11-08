@@ -127,8 +127,12 @@ public sealed partial class Watchtower(
     /// <summary>Where the fingerprint of the brief the running watchtower was started with is kept, in the node's data folder.</summary>
     public string BriefFile => Path.Combine(options.DataFolder, "watchtower-brief");
 
-    /// <summary>Where the watchtower's rules are written when the node starts one, in the node's data folder; the brief names this path.</summary>
-    public string RulesFile => Path.Combine(options.DataFolder, Briefs.WatchtowerRulesFileName);
+    /// <summary>
+    /// Where the watchtower's rules are written when the node starts one; the brief names this path. In the watchtower's own folder, its
+    /// working folder, so its first read of them is inside it and needs no leave asked of the person (the stream session allows calls
+    /// inside that folder and asks for any outside it).
+    /// </summary>
+    public string RulesFile => Path.Combine(options.WatchtowerFolder, Briefs.WatchtowerRulesFileName);
 
     private readonly SemaphoreSlim _one = new(1, 1);
     private string? _briefed;
@@ -1098,8 +1102,8 @@ public sealed partial class Watchtower(
                 alreadyTold = [.. Tells().Keys];
             }
             // The fixed rules are a file the brief points to, written fresh on every start so the file is the text the fingerprint covers (PIL855).
-            Directory.CreateDirectory(options.DataFolder);
-            File.WriteAllText(RulesFile,Briefs.WatchtowerRules(Name, Pilot, options.Machine));
+            Directory.CreateDirectory(options.WatchtowerFolder);
+            File.WriteAllText(RulesFile, Briefs.WatchtowerRules(Name, Pilot, options.Machine, stream: Streams is not null));
             var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower), options.Machine, alreadyTold, StaleSection.Read(state, time.GetUtcNow(), Models.Stale), state.StandingOrders(), Path.GetFullPath(RulesFile));
             fingerprint = BriefFingerprint();
             var start = new WorkerStart(Name, folder, null, brief, Model: Models.Model(RoleModels.Watchtower), Effort: Models.Effort(RoleModels.Watchtower),
@@ -1107,7 +1111,8 @@ public sealed partial class Watchtower(
                 // (Remote Control is its own item under pilot #857).
                 RemoteControl: Streams is null,
                 // A background session's AskUserQuestion blocks until someone answers it in claude agents, and a say to the chat is read only between tool calls: it asks in an ask block instead.
-                DisallowedTools: ["AskUserQuestion"],
+                // The stream watchtower keeps the tool: with --permission-prompt-tool stdio the question reaches the person's chat (PIL855).
+                DisallowedTools: Streams is null ? ["AskUserQuestion"] : null,
                 Reason: replacing is null ? SessionStartReasons.WatchtowerStart : SessionStartReasons.WatchtowerRestart);
             // The stream session is the node's own process: its brief is its first message, and its row is published from the stream.
             _job = Streams is not null ? await StartStreamAsync(start, why, cancellationToken) : await launcher.StartAsync(start, cancellationToken);
@@ -1360,7 +1365,7 @@ public sealed partial class Watchtower(
 
     // A stream watchtower's model is not part of it: a changed model restarts the process on --resume at its next idle (RelaunchOnSettingAsync),
     // in the same conversation, instead of ending it for a fresh generation on a new brief.
-    private string BriefFingerprint() => Briefs.WatchtowerFingerprint(Name, Pilot, Streams is null ? Models.Model(RoleModels.Watchtower) : null, options.Machine);
+    private string BriefFingerprint() => Briefs.WatchtowerFingerprint(Name, Pilot, Streams is null ? Models.Model(RoleModels.Watchtower) : null, options.Machine, stream: Streams is not null);
 
     /// <summary>The fingerprint of the brief the running watchtower was started with, or null when the node has no record of it.</summary>
     private string? Briefed()

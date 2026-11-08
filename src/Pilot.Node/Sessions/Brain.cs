@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using Pilot.Contracts;
 
 namespace Pilot.Node.Sessions;
 
@@ -190,9 +191,31 @@ public sealed class BrainClient(Func<StreamSession?> session, TimeProvider time)
         : stream.Pending.Count > 0 ? "it is waiting on the person"
         : null;
 
+    /// <summary>
+    /// How a request begins: in the node's voice (<see cref="NodeVoice.Prefix"/>), so a reader of the transcript takes it as the node's and
+    /// never as the person's, then the request's tag.
+    /// </summary>
+    public const string RequestPrefix = NodeVoice.Prefix + "[node request ";
+
+    /// <summary>
+    /// Whether <paramref name="text"/>, a message waiting to be read or a line of the transcript, is one of the node's requests of its brain.
+    /// </summary>
+    public static bool IsRequest(string text) => text.StartsWith(RequestPrefix, StringComparison.Ordinal);
+
+    /// <summary>Whether <paramref name="text"/>, the brain's words so far, is its answer to a request: kept out of the person's chat.</summary>
+    public static bool IsAnswer(string text) => text.TrimStart().StartsWith(AnswerMarker + " ", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Whether a transcript entry is one side of a brain exchange: a request (read as a note, its <see cref="NodeVoice.Prefix"/> cut off)
+    /// or the answer to one. Neither is the person's conversation.
+    /// </summary>
+    public static bool IsBrainExchange(TranscriptEntry entry) =>
+        entry.Kind == TranscriptKind.User ? entry.Note && entry.Text.StartsWith(RequestPrefix[NodeVoice.Prefix.Length..], StringComparison.Ordinal)
+        : entry.Kind == TranscriptKind.Assistant && IsAnswer(entry.Text);
+
     /// <summary>The message written to the brain's stdin for request <paramref name="id"/>.</summary>
     public static string Message(string id, string kind, string request) => $"""
-        [node request {id}: {kind}] This is the node asking, not the person; do not answer in chat.
+        {RequestPrefix}{id}: {kind}] This is the node asking, not the person; do not answer in chat.
 
         {request.Trim()}
 

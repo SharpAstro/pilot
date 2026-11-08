@@ -47,7 +47,16 @@ public sealed class RingJudge(NodeState state, Func<IBrain?> brain)
     /// asks the person something): those are the person's by definition, and a brain that is down cannot say.
     /// </summary>
     public static bool Wants(string kind) =>
-        kind is not (Watchtower.AskKind or Watchtower.Down or Watchtower.Stopped or Watchtower.Waits or CardKinds.AssistantAsk);
+        kind is not (Watchtower.AskKind or Watchtower.Down or Watchtower.Stopped or Watchtower.Waits or CardKinds.AssistantAsk
+            or LegCommander.PrReady or LegCommander.MergeFailed);
+
+    /// <summary>
+    /// Whether a card of <paramref name="kind"/> offering <paramref name="choices"/> goes to the brain before it rings. Not one whose choice
+    /// is the person's alone (a merge, a landing, any of <see cref="Standing.YourOnlyVerbs"/>): the brain could only hold it back, and a wrong
+    /// verdict would leave a decision of theirs unpushed with nothing to say so. Those ring at once, as before PIL855; the brain judges the rest.
+    /// </summary>
+    public static bool Wants(string kind, IReadOnlyList<CardChoice>? choices) =>
+        Wants(kind) && !(choices ?? []).Any(c => Standing.YourOnlyVerbs.Contains(c.Verb));
 
     /// <summary>
     /// Whether a ring can wait for the brain now: a brain there and able to answer. When it cannot, the card rings at once, as before, with

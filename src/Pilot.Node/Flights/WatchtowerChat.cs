@@ -61,8 +61,9 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
         // The stream session is the authority on what is held and what runs now; a watchtower that is not one has the transcript's say.
         var stream = tower.CurrentStream();
         // Written mid-turn and not yet read (it reads them at its next step) come first, then any held while its process starts.
-        var midTurn = stream?.ReadAtNextStep.Count ?? 0;
-        string[] queuedLines = stream is not null ? [.. stream.ReadAtNextStep, .. stream.Queued] : latest?.Queued ?? [];
+        // The node's own requests of its brain (PIL855) are not the person's messages: they are not shown as waiting.
+        var midTurn = stream?.ReadAtNextStep.Count(l => !BrainClient.IsRequest(l)) ?? 0;
+        string[] queuedLines = stream is not null ? [.. stream.ReadAtNextStep.Where(l => !BrainClient.IsRequest(l)), .. stream.Queued.Where(l => !BrainClient.IsRequest(l))] : latest?.Queued ?? [];
         var stamps = Stamps(segments, queuedLines);
         for (var i = 0; i < entries.Count; i++)
         {
@@ -82,7 +83,8 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
             Choices = stream is { Pending.Count: > 0 } ? null : latest?.Pending is { Choices.Length: > 0 } pending ? pending.Choices : null,
             Queued = queuedLines.Length > 0 ? queuedLines : null,
             QueuedIds = stamps.Queued is { } ids && ids.Any(id => id is not null) ? ids : null,
-            Partial = stream is { Working: true } && stream.PartialText is { Length: > 0 } words ? words : null,
+            // A turn that answers the node's request is the node's: its words are not written in the person's chat as they come.
+            Partial = stream is { Working: true } && stream.PartialText is { Length: > 0 } words && !words.Contains(BrainClient.AnswerMarker, StringComparison.Ordinal) ? words : null,
             Doing = stream is { Working: true } ? stream.Doing : null,
             QueuedBehind = stream is not null && queuedLines.Length > 0 ? BehindOf(midTurn, queuedLines.Length) : null,
             Timings = stream is { Timings.Count: > 0 } ? [.. stream.Timings.TakeLast(ChatTimings.Kept).Select(TimingOf)] : null,

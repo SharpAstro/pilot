@@ -122,6 +122,30 @@ public sealed class BrainUsesTests
         brain.Asked.Select(a => a.Kind).ShouldBe(["ring", "wording"]);
     }
 
+    /// <summary>
+    /// #853 with PIL855: the brain rewords a ringing card's title, the person dismisses it, and the next look raises it again with its
+    /// first title. The dismissal is remembered by the key fixed at raise time, so the card stays dismissed and is not judged again.
+    /// </summary>
+    [Fact]
+    public async Task ADismissalOfAWordedCardIsRememberedWhenTheSameCauseIsRaisedAgain()
+    {
+        var (state, brain) = Judged(new()
+        {
+            ["ring"] = """{"ring": true, "action": "Decide.", "reason": "Only the person can."}""",
+            ["wording"] = """{"title": "TIA1's parser needs your choice", "summary": "Pick one."}""",
+        });
+        var card = await RaiseAndSettle(state);
+        card.Title.ShouldBe("TIA1's parser needs your choice");
+        state.CloseCard(card.Id, "dismissed: not now", "gui").ShouldBeTrue();
+
+        var again = state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA1/parser", "TIA1/parser stopped: the check fails", "the build fails in Parser.cs");
+        await state.RingJudge!.SettledAsync();
+
+        again.Id.ShouldBe(card.Id);
+        state.Cards(openOnly: true).ShouldBeEmpty();
+        brain.Asked.Select(a => a.Kind).ShouldBe(["ring", "wording"]);
+    }
+
     [Fact]
     public async Task ABrainThatFailsWhenAskedLeavesTheCardRingingWithItsOwnWords()
     {
@@ -162,6 +186,23 @@ public sealed class BrainUsesTests
         RingJudge.Wants(Watchtower.AskKind).ShouldBeFalse();
         RingJudge.Wants(Watchtower.Down).ShouldBeFalse();
         RingJudge.Wants("leg-failed").ShouldBeTrue();
+    }
+
+    /// <summary>A card whose choice is the person's alone (a merge, a landing) rings at once: a wrong verdict could only hold it back.</summary>
+    [Fact]
+    public void ACardWhoseChoiceIsThePersonsAloneRingsAtOnceWithNoVerdict()
+    {
+        var (state, brain) = Judged(new() { ["ring"] = """{"ring": false, "action": "", "reason": "It settles."}""" });
+
+        var merge = state.RaiseCard(CardBin.Ring, LegCommander.PrReady, "flight/TIA1", "TIA1 is ready to merge", null,
+            [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/TIA1" }]);
+        var land = state.RaiseCard(CardBin.Ring, "not-landed", "flight/TIA2", "TIA2 merged but did not land", null,
+            [new CardChoice { Label = "Land it", Verb = Verbs.Land, Target = "flight/TIA2" }]);
+
+        merge.Bin.ShouldBe(CardBin.Ring);
+        land.Bin.ShouldBe(CardBin.Ring);
+        brain.Asked.ShouldBeEmpty();
+        RingJudge.Wants(LegCommander.PrReady).ShouldBeFalse();
     }
 
     [Theory]

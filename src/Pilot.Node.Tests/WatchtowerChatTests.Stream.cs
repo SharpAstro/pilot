@@ -181,13 +181,33 @@ public sealed partial class WatchtowerChatTests
         (older.Partial, older.Doing, older.QueuedBehind, older.Timings).ShouldBe((null, null, null, null));
 
         NodeWire.Version.ShouldBeGreaterThanOrEqualTo(12);
-        var wire = JsonSerializer.Serialize<NodeEvent>(new ChatChangedEvent { Seq = 7, At = Start }, PilotJsonContext.Default.NodeEvent);
+        // The nudge is not numbered: it carries the last delta's number, and a mirror takes it, and the next delta, without a gap.
+        var wire = JsonSerializer.Serialize<NodeEvent>(new ChatChangedEvent { Seq = 6, At = Start }, PilotJsonContext.Default.NodeEvent);
         wire.ShouldContain("\"kind\":\"chatChanged\"");
         var mirror = new NodeMirror();
         // A mirror takes deltas only after a snapshot, so the stream starts from one at seq 6.
         mirror.Apply(new SnapshotEvent { Seq = 6, At = Start, Stream = "s", Notes = [], Sessions = [] });
         mirror.Apply(JsonSerializer.Deserialize(wire, PilotJsonContext.Default.NodeEvent)!);
+        mirror.Apply(JsonSerializer.Deserialize(wire, PilotJsonContext.Default.NodeEvent)!);
+        mirror.Seq.ShouldBe(6);
+        mirror.Apply(new NodeChangedEvent { Seq = 7, At = Start, Row = new NodeRow() });
         mirror.Seq.ShouldBe(7);
+    }
+
+    /// <summary>PIL855's review: a chat nudge reaches a live client but is not journalled, numbered or held, so words streaming cost no disk.</summary>
+    [Fact]
+    public void AChatNudgeGoesToLiveClientsOnlyAndIsNeitherJournalledNorNumbered()
+    {
+        var journal = new InMemoryJournal();
+        var state = new NodeState(journal, TimeProvider.System);
+        var before = journal.DeltaCount;
+        var seq = state.Seq;
+
+        state.NotifyChatChanged();
+        state.NotifyChatChanged();
+
+        journal.DeltaCount.ShouldBe(before);
+        state.Seq.ShouldBe(seq);
     }
 
     private sealed class CountingSink : INodeEventSink
