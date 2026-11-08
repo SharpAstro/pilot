@@ -76,6 +76,18 @@ public sealed partial class WatchtowerChatTests
     /// PIL855's review: an ask nobody answers leaves the watchtower blocked with nothing else to show it. Its card waits in For you while
     /// the person may be at the chat, and rings once the wait passes the ring time, as any session waiting on them does.
     /// </summary>
+    /// <summary>The card of a permission prompt carries the whole command it allows: nothing past 1,500 characters is cut (PIL855's review).</summary>
+    [Fact]
+    public async Task APromptsCardCarriesTheWholeCommandItAllows()
+    {
+        var process = await StreamIdleAsync();
+        var command = "echo " + new string('x', 2000) + " TAIL";
+        process.Emit(CanUse("big", "Bash", JsonSerializer.Serialize(new { command })));
+        await UntilAsync(() => _state.Cards(openOnly: true).Any(c => c.Subject == Watchtower.AskSubject("big")), "its card");
+
+        _state.Cards(openOnly: true).Single(c => c.Subject == Watchtower.AskSubject("big")).Detail.ShouldNotBeNull().ShouldContain(" TAIL");
+    }
+
     [Fact]
     public async Task AnAskNobodyAnswersRingsOnceItHasWaitedPastTheRingTime()
     {

@@ -19,7 +19,6 @@ public sealed partial class Watchtower
     public const string DeclineLabel = "Decline to answer";
 
     private const int TitleLength = 160;
-    private const int InputLength = 1500;
 
     /// <summary>The subject of the card of ask <paramref name="requestId"/>: one card per ask, so two open asks never share one.</summary>
     public static string AskSubject(string requestId) => $"{Verbs.WatchtowerTarget}/ask/{requestId}";
@@ -51,7 +50,8 @@ public sealed partial class Watchtower
         else
         {
             title = $"The watchtower asks leave to {PermissionAsks.Describe(ask.Tool, ask.Summary)}";
-            detail = Clip(ask.Input.ValueKind == JsonValueKind.Object ? ask.Input.GetRawText() : "", InputLength);
+            // Whole, never cut: Allow runs the whole call, so the card shows all of what it allows (PIL855's review).
+            detail = ask.Input.ValueKind == JsonValueKind.Object ? ask.Input.GetRawText().Trim() : "";
             choices.Add(new CardChoice { Label = "Allow", Verb = Verbs.AnswerAsk, Target = Verbs.WatchtowerTarget, Args = [ask.Id, "allow"] });
             choices.Add(new CardChoice { Label = "Deny", Verb = Verbs.AnswerAsk, Target = Verbs.WatchtowerTarget, Args = [ask.Id, "deny"] });
         }
