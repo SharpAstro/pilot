@@ -586,6 +586,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             args = [.. args.Skip(1)];
         }
+        // --whole-suite <why> says why a dotnet test with no --filter may run.
+        string? wholeSuiteWhy = null;
+        if (args.Length > 1 && args[0] == Verbs.WholeSuiteArg)
+        {
+            wholeSuiteWhy = args[1].Trim().Length > 0 ? args[1].Trim() : null;
+            args = [.. args.Skip(2)];
+        }
         var alone = args.Length > 0 && args[0] == Verbs.AloneArg;
         if (alone)
         {
@@ -639,6 +646,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             return state.Complete(command, $"run takes a session to wake ({Verbs.SessionTargetPrefix}<id>) or the node, not {command.Target}");
         }
 
+        // A dotnet test over a whole project or solution is CI's, on the PR (as for a leg's check, CheckScope): refused unless the run says why.
+        if (wholeSuiteWhy is null && CheckScope.WholeSuite(line) is { } whole)
+        {
+            return state.Complete(command, WholeSuiteRefusal(whole, owner));
+        }
+
         // A session that replaced another of its name and role takes up the predecessor's queued job of the same command in the
         // same folder, rather than queueing the same work twice (its end already goes to the replacement, #601). A running one only
         // for a reviewer, which reads the head it was started on: a replacement worker edits the plane, so a run started before
@@ -688,6 +701,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             StartedAt = time.GetUtcNow(),
             MemoryKey = JobKey.Of(line, cwd).ToString(),
             FailFast = failFast || IsLegCheckOfReviewerOrFixer(owner, line),
+            WholeSuite = wholeSuiteWhy,
         };
         job = job with { QueuedAt = job.StartedAt };
 
@@ -696,6 +710,34 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         state.PutJob(job);
         _signals.Writer.TryWrite(new HandedOver(job));
         return state.Complete(command, null, made: jobId);
+    }
+
+    /// <summary>The git a refusal's suggested filter reads the flight's changes through; a test puts its own.</summary>
+    public IGit Git { get; init; } = new GitCli();
+
+    /// <summary>
+    /// <see cref="CheckScope.Refusal"/> for a run of a whole suite, with the filter suggested from the owner's flight's plane changes
+    /// when the owner has a flight with a plane, and the way past it for a run.
+    /// </summary>
+    private string WholeSuiteRefusal(string segment, SessionRow? owner)
+    {
+        string? suggestion = null;
+        if (owner?.Flight is { Length: > 0 } code && state.Flights().FirstOrDefault(f => f.Code == code) is { } flight && flight.Worktree is { Length: > 0 } plane && Directory.Exists(plane))
+        {
+            try
+            {
+                var diff = Git.RunAsync(["diff", "--name-only", $"{flight.Base}...HEAD"], plane, _stopping);
+                if (diff.Wait(TimeSpan.FromSeconds(10), _stopping) && diff.Result.Ok)
+                {
+                    suggestion = CheckScope.Suggest(diff.Result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), plane);
+                }
+            }
+            catch (Exception ex) when (ex is AggregateException or OperationCanceledException or System.ComponentModel.Win32Exception or IOException)
+            {
+                // No suggestion then: the refusal still says what to do.
+            }
+        }
+        return $"{CheckScope.Refusal(segment, suggestion)}. For a run, the way past it is pilot run --whole-suite \"<why>\" -- <command>";
     }
 
     /// <summary>

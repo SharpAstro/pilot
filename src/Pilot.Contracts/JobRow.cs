@@ -148,6 +148,9 @@ public sealed record JobRow
     /// <summary>Whether the node ends the job's whole tree at the first failed test it reads: a check, a run handed over with <c>--fail-fast</c>, a reviewer's or fixer's check run.</summary>
     public bool FailFast { get; init; }
 
+    /// <summary>Why the job runs a <c>dotnet test</c> over a whole project or solution with no <c>--filter</c> (<c>pilot run --whole-suite "&lt;why&gt;"</c>); null for any other job.</summary>
+    public string? WholeSuite { get; init; }
+
     /// <summary>
     /// The failures read so far in a line: <c>1 failed so far (BranchShapeTests.ARebase)</c>, <c>2 errors so far (CS0234 in A.cs)</c>,
     /// or both; null while there are none.
