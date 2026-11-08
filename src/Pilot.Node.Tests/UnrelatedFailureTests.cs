@@ -212,6 +212,31 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task AFirstAlertDoesNotOpenWhenTheOnlyEarlierHitsAreOtherFlightsPassedLegChecks()
+    {
+        var flight = await Flying();
+        var (investigations, _) = Investigating();
+        var alerts = new FailureAlerts(_state, _github, investigations, TimeProvider.System);
+        OtherFlight("TIA2", flight);
+        var output = Failing("Pilot.Tests.BarTests.Breaks");
+        const string test = "Pilot.Tests.BarTests.Breaks";
+
+        // TIA2's leg check failed in this test and its finish passed it: the first occurrence, on record, no flight of it hit.
+        var first = await investigations.InvestigateTestAsync(new FailureSite(flight.Repo, flight.RepoPath, 2, "TIA2", new string('b', 40), FailureWhere.PassedLegCheck), test, output, null, Ct);
+        first.ShouldNotBeNull().Others.ShouldBeFalse();
+
+        // TIA1's passed leg check is the second: an earlier hit exists, but a passed leg check holds nothing, so no alert opens for it.
+        var site = new FailureSite(flight.Repo, flight.RepoPath, 1, "TIA1", new string('a', 40), FailureWhere.PassedLegCheck);
+        var second = await investigations.InvestigateTestAsync(site, test, output, null, Ct);
+        second.ShouldNotBeNull().Others.ShouldBeTrue();
+        alerts.AlertOnPassedCheck(site, second).Answer.ShouldBe(FailureAnswer.Unknown);
+
+        alerts.Open().ShouldBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Kind == FailureAlerts.AlertKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFirstUntouchedFailureOnTheFinishRaisesNoAlert()
     {
         await Flying();

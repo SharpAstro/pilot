@@ -267,10 +267,13 @@ public sealed class FailureAlerts(NodeState state, IGitHub github, FailureInvest
         if (OpenAlertFor(site.Name, finding.Signature) is null)
         {
             // A first alert names the flights and hand PRs the failure hit before; with none of them still live it would ring for nothing.
+            // Another flight's passed leg check is an occurrence but no hit (Alert leaves it off the holds), so it does not count: an alert
+            // opened for those alone would hold nothing.
             if (!finding.Others || !investigations.Ledger.Of(site.Name, finding.Signature).Any(r =>
-                r.Flight is { Length: > 0 } code
+                r.Where != FailureWhere.PassedLegCheck
+                && (r.Flight is { Length: > 0 } code
                     ? code != finding.Investigation && code != site.Flight && state.Flights().FirstOrDefault(f => f.Code == code) is { State: not FlightState.Landed }
-                    : r.Pr is not null))
+                    : r.Pr is not null)))
             {
                 return new FailureDecision(FailureAnswer.Unknown, finding);
             }
