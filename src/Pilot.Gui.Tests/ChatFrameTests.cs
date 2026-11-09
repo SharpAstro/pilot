@@ -140,7 +140,13 @@ public sealed partial class ChatFrameTests
 
         var few = BestFrameMs(small.Chat);
         var many = BestFrameMs(big.Chat);
-        TestContext.Current.SendDiagnosticMessage($"chat frame at 1600x900: 20 entries {few:F1} ms, 2000 entries {many:F1} ms");
+        var line = $"chat frame at 1600x900: 20 entries {few:F1} ms, 2000 entries {many:F1} ms";
+        TestContext.Current.SendDiagnosticMessage(line);
+        // With PILOT_FRAME_TIMES set to a file the line goes there too, as PageFrameTimeTests writes its cases (what the measurement note quotes).
+        if (Environment.GetEnvironmentVariable("PILOT_FRAME_TIMES") is { Length: > 0 } file)
+        {
+            File.AppendAllLines(file, [line]);
+        }
 
         many.ShouldBeLessThan(FrameBudgetMs);
         // The rows in view are drawn either way; what the long transcript adds is the stack's walk of its row references, not their layout.
