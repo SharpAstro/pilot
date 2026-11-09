@@ -184,7 +184,14 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
     public long SessionMemoryFloor { get; set; } = 1536L * 1024 * 1024;
 
     /// <summary>The machine's free memory now, as the job queue reads it; a test swaps it.</summary>
-    public Func<long?> FreeMemory { get; init; } = MachineMemory.Available;
+    public Func<long?> FreeMemory { get; init; } = () => MachineFreeMemory();
+
+    /// <summary>
+    /// Where a gate given no <see cref="FreeMemory"/> of its own reads the machine's free memory: <see cref="MachineMemory.Available"/>.
+    /// The test assembly sets it to read nothing (null: no memory wait), so a unit test of a start never waits on the memory of the
+    /// machine it runs on; a test of the memory wait gives its gate or its input the free memory it means.
+    /// </summary>
+    internal static Func<long?> MachineFreeMemory { get; set; } = MachineMemory.Available;
 
     /// <summary>
     /// Whether a session of <paramref name="role"/> on <paramref name="model"/> may start now for <paramref name="flight"/> (null for a bare PR's, named by

@@ -52,6 +52,14 @@ internal static class TestEnvironment
     }
 
     /// <summary>
+    /// No test's session start waits on the memory of the machine it runs on (#934's gate read it, so 13 start tests failed on a machine
+    /// with under 1.5 GB free, and passed on one with more). A gate built with no free memory of its own reads none, as on a machine
+    /// where it cannot be read; the tests of the memory wait give theirs the free memory they mean.
+    /// </summary>
+    [ModuleInitializer]
+    internal static void KeepStartsOffMachineMemory() => Pilot.Node.Flights.AdmissionGate.MachineFreeMemory = () => null;
+
+    /// <summary>
     /// No test's git may reach GitHub or prompt for credentials (#462: a checkout whose origin was the real GitHub URL, with no
     /// per-test redirect, made every plane's <c>git fetch origin</c> go to the network for minutes on a developer machine while CI
     /// passed). Every git the tests start gets a redirect of https://github.com/ to a local path that does not exist, so it fails
