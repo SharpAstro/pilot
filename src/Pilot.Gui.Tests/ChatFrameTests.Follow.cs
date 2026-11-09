@@ -1,5 +1,6 @@
 using DIR.Lib;
 using Pilot.Contracts;
+using SharpAstro.Png;
 using Shouldly;
 using Xunit;
 using Layout = DIR.Lib.Layout;
@@ -184,5 +185,50 @@ public sealed partial class ChatFrameTests
             after.Has("the flight landed").ShouldBeFalse("what arrived is below the view");
         }
         held.Chat.Entries.Count.ShouldBe(Long + 4);
+    }
+
+    /// <summary>
+    /// The Chat page on a transcript of two thousand entries, with the reply in progress and two lines queued, as PNGs at a narrow (760x640) and a
+    /// wide (1600x900) window: following the end, and scrolled up (the Jump to end pill). They go to the folder in PILOT_CHAT_CAPTURES
+    /// (docs/captures, for the PR), else to a folder that goes with the test.
+    /// </summary>
+    [Fact]
+    public async Task ALongTranscriptIsCapturedAtANarrowAndAWideWindow()
+    {
+        var given = Environment.GetEnvironmentVariable("PILOT_CHAT_CAPTURES");
+        var folder = given is { Length: > 0 } ? Directory.CreateDirectory(given) : Directory.CreateTempSubdirectory("pilot-chat-");
+        try
+        {
+            foreach (var (size, width, height) in new[] { ("narrow", 760, 640), ("wide", 1600, 900) })
+            {
+                using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+                using var held = new Held(renderer, Transcript(Long)) { Tail = Writing("PIL907 has one leg left, and the chat page now lays out only the rows in view.\n\n- **before:** every row, every frame\n- **after:** the rows in view, and the box at the foot") };
+                await held.OpenAsync();
+                var view = new RectF32(0, 0, width, height);
+                foreach (var (label, up) in new[] { ("long", false), ("long-up", true) })
+                {
+                    held.Chat.Render(view);
+                    if (up)
+                    {
+                        var scroll = held.Chat.ScrollTargetAt(width / 2f, height / 2f).ShouldNotBeNull();
+                        for (var i = 0; i < 40; i++)
+                        {
+                            scroll.HandleInput(new InputEvent.Scroll(1f, width / 2f, height / 2f, InputModifier.None));
+                        }
+                        held.Chat.Render(view);
+                    }
+                    var png = Path.Combine(folder.FullName, $"chat-{label}-{size}.png");
+                    File.WriteAllBytes(png, PngWriter.Encode(renderer.Surface.Pixels, width, height));
+                    File.ReadAllBytes(png).Take(4).ShouldBe(new byte[] { 0x89, (byte)'P', (byte)'N', (byte)'G' });
+                }
+            }
+        }
+        finally
+        {
+            if (given is not { Length: > 0 })
+            {
+                folder.Delete(recursive: true);
+            }
+        }
     }
 }
