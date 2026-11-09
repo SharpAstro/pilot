@@ -274,7 +274,18 @@ public sealed class DismissHidesCardTests
         view.DismissedPending("c2").ShouldBeTrue();
         gate.SetException(thrown);
 
-        (await Should.ThrowAsync(() => sent!, thrown.GetType())).ShouldBeSameAs(thrown);
+        // A cancel reaches the awaiter as a TaskCanceledException (a canceled task is rethrown as a new one), so the kind is checked, not the instance.
+        Exception? reached = null;
+        try
+        {
+            await sent!;
+        }
+        catch (Exception ex)
+        {
+            reached = ex;
+        }
+        reached.ShouldNotBeNull();
+        reached.ShouldBeAssignableTo(thrown.GetType());
 
         view.DismissedPending("c2").ShouldBeFalse();
         var back = Words(view, screen);
