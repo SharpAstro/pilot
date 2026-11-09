@@ -552,7 +552,7 @@ public sealed class PullRequestActionsTests
     {
         using var renderer = new RgbaImageRenderer(1280, 900);
         var (chrome, page) = Window(renderer);
-        chrome.Cards.NoteRefused("c1", "Merge was refused: head moved past what was reviewed");
+        chrome.Cards.NoteRefused("c1", null, "Merge was refused: head moved past what was reviewed");
         var screen = Screen();
         page.Refusal().ShouldBeNull("not before a frame has told the page its cards");
         var arranged = Arrange(renderer, page, screen);
@@ -560,7 +560,7 @@ public sealed class PullRequestActionsTests
         arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>()
             .Select(t => t.Value).ShouldContain(t => t.Contains("head moved past what was reviewed", StringComparison.Ordinal));
 
-        chrome.Cards.NoteRefused("c1", null);
+        chrome.Cards.NoteRefused("c1", null, null);
         page.Refusal().ShouldBeNull();
     }
 
