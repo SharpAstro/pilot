@@ -282,8 +282,8 @@ internal sealed class TranscriptPane
             head.Add(Layout.Builder.Text("Jump to end", 13f, Bright, TextAlign.Center).Pad(12f, 5f).WAuto().Bg(Button).BgHover(ButtonHover)
                 .Follows(new HitResult.ButtonHit("transcript:end"), _ => JumpToEnd()));
         }
-        // Each row the pane's width: a paragraph wraps at the width it is given, and an unstretched row gives it none.
-        var rows = _entries.Rows(entries, live).Select(r => r.WStar()).ToList();
+        // Each row the pane's width (the rows come stretched, kept as one node per entry): a paragraph wraps at the width it is given, and an unstretched row gives it none.
+        var rows = _entries.Rows(entries, live);
         if (from >= 0 && rows.Count > 0)
         {
             // The entry the moment fell on, marked.

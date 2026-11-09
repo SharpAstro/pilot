@@ -76,6 +76,65 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     private readonly ChatComposer _composer = new();
 
     // The question card's own scroll, fresh for each question so a new one starts at its top.
+    // What the render reads of the held entries on every frame, kept for the list it was made from and carried on as entries are appended,
+    // so a frame with nothing new asks nothing of the whole transcript (PIL907): the entries as the chat shows them (a thinking entry left
+    // out, a card's quote folded in; each one the same record frame after frame, so its row is the same node), the ids and words the
+    // outbox is matched against, and where the person and the watchtower last spoke. Read and changed on the render thread only.
+    private sealed class Shown
+    {
+        public required object Epoch;
+        public int Count;
+        public readonly List<TranscriptEntry> Quoted = [];
+        public readonly HashSet<string> SendIds = new(StringComparer.Ordinal);
+        public readonly List<string> UnnamedUserTexts = [];
+        public TranscriptEntry? LastAssistant;
+        public int LastAssistantAt = -1;
+        public int LastPersonAt = -1;
+    }
+
+    private Shown? _shown;
+
+    // The held entries' derived view: the one kept when the epoch is the same (the held indices have not moved, so the list only grew)
+    // and brought up to the entries appended since, else made anew.
+    private Shown ShownOf(Held held)
+    {
+        var shown = _shown;
+        if (shown is null || !ReferenceEquals(shown.Epoch, held.Epoch) || shown.Count > held.Entries.Count)
+        {
+            shown = _shown = new Shown { Epoch = held.Epoch };
+        }
+        for (var i = shown.Count; i < held.Entries.Count; i++)
+        {
+            var entry = held.Entries[i];
+            if (entry.Kind != TranscriptKind.Thinking)
+            {
+                shown.Quoted.Add(AsQuoted(entry));
+            }
+            if (entry.Kind == TranscriptKind.Assistant)
+            {
+                shown.LastAssistant = entry;
+                shown.LastAssistantAt = i;
+            }
+            if (entry is { Kind: TranscriptKind.User, From: null, Note: false })
+            {
+                shown.LastPersonAt = i;
+            }
+            if (entry.Kind == TranscriptKind.User)
+            {
+                if (entry.SendId is { } sendId)
+                {
+                    shown.SendIds.Add(sendId);
+                }
+                else
+                {
+                    derived.UnnamedUserTexts.Add(entry.Text);
+                }
+            }
+        }
+        shown.Count = held.Entries.Count;
+        return shown;
+    }
+
     private ListScrollController _askScroll = NewAskScroll();
     private string? _askedKey;
 
@@ -721,6 +780,9 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         return line.Length > 60 ? line[..59] + "…" : line;
     }
 
+    /// <summary>How many rows the last frame built rather than took from the row cache (PIL907): none when nothing changed.</summary>
+    internal int RowsBuilt => _entries.RowsBuilt;
+
     internal override Action<string>? SelectionCopy => CopyText;
 
     internal override RectF32 PageSelectionViewport => _scroll.Viewport;
@@ -792,14 +854,16 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         {
             _entries.Reset();
         }
-        var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking).Select(AsQuoted)], held.Working).Select(r => r.WStar()).ToList();
+        var derived = ShownOf(held);
+        // The rows come kept, one node an entry, already stretched to the page's width.
+        var rows = _entries.Rows(derived.Quoted, held.Working);
         // What was said and the watchtower has not taken yet: last among the messages, dim, and saying so.
         // One send is one row, matched by its id and never by its words, so two sends of the same words are two rows: a queued
         // line whose id an entry carries is that entry's send already taken (a stale line), and shows no more.
-        var entryIds = held.Entries.Where(e => e.Kind == TranscriptKind.User && e.SendId is not null).Select(e => e.SendId!).ToHashSet(StringComparer.Ordinal);
+        var entryIds = derived.SendIds;
         var queuedIds = held.Queued.Select((_, i) => i < held.QueuedIds.Length ? held.QueuedIds[i] : null).ToArray();
         // The watchtower's reply as it is written comes before what waits behind it, in the bubble a finished reply has.
-        if (ShownPartial(held) is { } writing)
+        if (ShownPartial(held, derived.LastAssistant) is { } writing)
         {
             rows.Add(_entries.Streaming(writing).WStar());
         }
@@ -830,10 +894,10 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         }
         // What the person sent that the feed does not carry yet: once an entry or a queued line carries its id only the feed's copy
         // shows. The words are compared only with the feed's lines that have no id (an older node's).
-        var carried = entryIds.Concat(queuedIds.OfType<string>()).ToHashSet(StringComparer.Ordinal);
-        var unnamed = held.Entries.Where(e => e.Kind == TranscriptKind.User && e.SendId is null).Select(e => e.Text)
-            .Concat(held.Queued.Where((_, i) => queuedIds[i] is null)).ToList();
-        bool InFeed(Out m) => carried.Contains(m.SendId) || unnamed.Any(t => t.Contains(m.Text, StringComparison.Ordinal));
+        var queuedCarried = queuedIds.OfType<string>().ToHashSet(StringComparer.Ordinal);
+        var unnamedQueued = held.Queued.Where((_, i) => queuedIds[i] is null).ToList();
+        bool InFeed(Out m) => entryIds.Contains(m.SendId) || queuedCarried.Contains(m.SendId)
+            || derived.UnnamedUserTexts.Any(t => t.Contains(m.Text, StringComparison.Ordinal)) || unnamedQueued.Any(t => t.Contains(m.Text, StringComparison.Ordinal));
         var here = Node?.Where;
         ImmutableInterlocked.Update(ref _outbox, o => o.RemoveAll(m => m.Where == here && m.State == OutState.Sent && InFeed(m)));
         var place = 0;
@@ -860,9 +924,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         // A message from the person after the watchtower's last words answers the ask: the card closes, and only a newer ask
         // (the watchtower speaking again) reopens it.
         // Only the person's own line counts: a node note or a hand-back (Note, or From set) leaves the ask pending.
-        var answeredAlready = held.Entries.Count > 0
-            && held.Entries.FindLastIndex(e => e is { Kind: TranscriptKind.User, From: null, Note: false }) is var lastUser and >= 0
-            && lastUser > held.Entries.FindLastIndex(e => e.Kind == TranscriptKind.Assistant);
+        var answeredAlready = derived.LastPersonAt >= 0 && derived.LastPersonAt > derived.LastAssistantAt;
         // What the stream watchtower waits on the person for (a permission prompt, a question) comes first: it is answered here or on its card.
         if (canSend && held.Asks.Length > 0)
         {
@@ -871,7 +933,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         else if (canSend && !answeredAlready && held.Question is { Length: > 0 } question)
         {
             // The reply the question ends already says it in the feed: the card then holds only the choices.
-            var said = held.Entries.LastOrDefault(e => e.Kind == TranscriptKind.Assistant)?.Text;
+            var said = derived.LastAssistant?.Text;
             if (_askedKey != question)
             {
                 _askedKey = question;
@@ -1047,10 +1109,10 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
 
     // The reply in progress as the list shows it, or null when there is none. A turn that has ended carries its words as an entry and no
     // Partial; a reply already held as the last entry is not drawn a second time.
-    private string? ShownPartial(Held held)
+    private string? ShownPartial(Held held, TranscriptEntry? lastAssistant)
     {
         if (held.Partial is not { Length: > 0 } now
-            || held.Entries.LastOrDefault(e => e.Kind == TranscriptKind.Assistant) is { } last && last.Text.Trim() == now.Trim())
+            || lastAssistant is { } last && last.Text.Trim() == now.Trim())
         {
             _frozenPartial = null;
             return null;

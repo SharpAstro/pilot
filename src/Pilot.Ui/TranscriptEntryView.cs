@@ -105,6 +105,7 @@ internal sealed class TranscriptEntryView
     {
         _expanded.Clear();
         _markdown.Clear();
+        _rows.Clear();
     }
 
     /// <summary>
@@ -143,7 +144,7 @@ internal sealed class TranscriptEntryView
     }
 
     // The label a subagent has in the chips, for the link on the call that started it.
-    private string LabelOf(SubagentRow subagent) => Labels()[Subagents.ToList().IndexOf(subagent)];
+    private string LabelOf(SubagentRow subagent) => Labels()[IndexOf(subagent)];
 
     /// <summary>A message handed to the session that it has not read yet: last, dim, and saying so.</summary>
     internal static Layout.Node Waiting(string text) => Waiting(text, null, null, null);
@@ -220,13 +221,51 @@ internal sealed class TranscriptEntryView
             .Pad(0f, ProseSpace);
     }
 
+    // A row built once and kept, with what it was built from. DIR.Lib's measure memo and scroll cull key on the node's REFERENCE, so a
+    // row that is the same node frame after frame is measured once and, off screen, not laid out at all (DIR.Lib#170): a frame's cost
+    // follows the rows in view, not the transcript's length (PIL907). Open is the entry's fold; Live counts only for a call with nothing
+    // back yet; Link and LinkLabel are the subagent a call started or a report came from, and the label the chips give it.
+    private sealed class KeptRow
+    {
+        public required TranscriptEntry Entry;
+        public required TranscriptEntry? Result;
+        public required bool Open;
+        public required bool Live;
+        public required SubagentRow? Link;
+        public required string? LinkLabel;
+        public required Layout.Node Node;
+        public int Pass;
+    }
+
+    // The built rows by the entry's feed index, like _expanded and _markdown.
+    private readonly Dictionary<int, KeptRow> _rows = [];
+    private int _pass;
+
+    // What a row's build reads that is not in its entry: the labels, the links' openers and the palette. A change of any of them
+    // builds every row again.
+    private (string Prompt, string Assistant, int Lines, Action<string>? OpenLink, Action<SubagentRow>? OpenAgent, Action<string>? Copy, Palette Palette)? _rowsBuiltWith;
+
+    /// <summary>How many rows <see cref="Rows"/> built (rather than handed back from its cache) over its last call.</summary>
+    internal int RowsBuilt { get; private set; }
+
     /// <summary>
     /// The entries as rows: a tool call and what it gave back as one, the result folded under the call; a result whose call
     /// came before the entries held, on its own. <paramref name="live"/>: the session is still running, so a call with
-    /// nothing back yet is running rather than cut off.
+    /// nothing back yet is running rather than cut off. Each row is kept per entry and handed back as the same node (already
+    /// stretched to the page's width) while its entry, its result, its fold, its live state, its subagent link and the palette
+    /// are what it was built from; only a row one of them changed is built again, and a row whose entry is no longer listed goes.
     /// </summary>
-    internal IEnumerable<Layout.Node> Rows(List<TranscriptEntry> entries, bool live)
+    internal List<Layout.Node> Rows(List<TranscriptEntry> entries, bool live)
     {
+        var built = (Prompt: PromptLabel, Assistant: AssistantLabel, Lines: AssistantLines, OpenLink, OpenAgent, Copy: CopyText, Palette: Palette.Current);
+        if (_rowsBuiltWith != built)
+        {
+            _rows.Clear();
+            _rowsBuiltWith = built;
+        }
+        var pass = ++_pass;
+        var seen = 0;
+        RowsBuilt = 0;
         var results = new Dictionary<string, TranscriptEntry>(StringComparer.Ordinal);
         foreach (var entry in entries)
         {
@@ -236,25 +275,77 @@ internal sealed class TranscriptEntryView
             }
         }
         var calls = entries.Where(e => e.Kind == TranscriptKind.ToolUse && e.ToolUseId is not null).Select(e => e.ToolUseId!).ToHashSet(StringComparer.Ordinal);
+        string[]? labels = null;
+        var nodes = new List<Layout.Node>(entries.Count);
         foreach (var entry in entries)
         {
+            TranscriptEntry? result = null;
+            SubagentRow? link = null;
+            string? linkLabel = null;
+            var isLive = false;
             if (entry.Kind == TranscriptKind.ToolUse)
             {
-                yield return Call(entry, entry.ToolUseId is { } id && results.TryGetValue(id, out var result) ? result : null, live);
+                result = entry.ToolUseId is { } id && results.TryGetValue(id, out var found) ? found : null;
+                isLive = live && result is null;
+                if (StartedBy(entry) is { } started)
+                {
+                    link = started;
+                    labels ??= Labels();
+                    linkLabel = labels[IndexOf(started)];
+                }
             }
-            else if (entry.Kind is TranscriptKind.ToolResult or TranscriptKind.Error && entry.ToolUseId is { } id && calls.Contains(id))
+            else if (entry.Kind is TranscriptKind.ToolResult or TranscriptKind.Error && entry.ToolUseId is { } resultOf && calls.Contains(resultOf))
             {
                 // Shown under its call.
+                continue;
             }
-            else if (entry.Kind == TranscriptKind.Divider)
+            else if (entry.From is not null)
             {
-                yield return Divider(entry);
+                link = ReporterOf(entry);
             }
-            else
+            var open = _expanded.Contains(entry.Index);
+            if (_rows.TryGetValue(entry.Index, out var kept) && ReferenceEquals(kept.Entry, entry) && ReferenceEquals(kept.Result, result)
+                && kept.Open == open && kept.Live == isLive && Equals(kept.Link, link) && kept.LinkLabel == linkLabel)
             {
-                yield return Row(entry);
+                kept.Pass = pass;
+                nodes.Add(kept.Node);
+                seen++;
+                continue;
+            }
+            // Stretched here, inside the kept node: the owners add no wrapper of their own, whose reference would change every frame.
+            var node = (entry.Kind == TranscriptKind.ToolUse ? Call(entry, result, live) : entry.Kind == TranscriptKind.Divider ? Divider(entry) : Row(entry)).WStar();
+            _rows[entry.Index] = new KeptRow { Entry = entry, Result = result, Open = open, Live = isLive, Link = link, LinkLabel = linkLabel, Node = node, Pass = pass };
+            nodes.Add(node);
+            seen++;
+            RowsBuilt++;
+        }
+        if (_rows.Count != seen)
+        {
+            // Entries that are not listed any more (the list is shorter, or another transcript is shown): their rows go.
+            foreach (var gone in _rows.Where(r => r.Value.Pass != pass).Select(r => r.Key).ToList())
+            {
+                _rows.Remove(gone);
             }
         }
+        return nodes;
+    }
+
+    // The subagent a call started, and the one a report is from: what a call's line and a report's header link to.
+    private SubagentRow? StartedBy(TranscriptEntry call) =>
+        Subagents.FirstOrDefault(s => s.ToolUseId is not null && s.ToolUseId == call.ToolUseId);
+
+    private SubagentRow? ReporterOf(TranscriptEntry entry) => Subagents.FirstOrDefault(s => s.Id == entry.FromAgent);
+
+    private int IndexOf(SubagentRow subagent)
+    {
+        for (var i = 0; i < Subagents.Count; i++)
+        {
+            if (ReferenceEquals(Subagents[i], subagent))
+            {
+                return i;
+            }
+        }
+        return -1;
     }
 
     // Where a fresh watchtower began in the chat: a rule with what the node said of it (and when) in the middle.
@@ -289,7 +380,7 @@ internal sealed class TranscriptEntryView
             .Follows(new HitResult.ButtonHit($"transcript:call:{call.Index}"), _ => Toggle(call.Index));
         var body = new List<Layout.Node>();
         // A call that started a subagent leads to its transcript.
-        if (Subagents.FirstOrDefault(s => s.ToolUseId is not null && s.ToolUseId == call.ToolUseId) is { } started)
+        if (StartedBy(call) is { } started)
         {
             body.Add(AgentLink(started, $"open {LabelOf(started)} transcript", $"transcript:spawn:{call.Index}"));
         }
@@ -391,7 +482,7 @@ internal sealed class TranscriptEntryView
         var body = new List<Layout.Node>();
         if (entry.From is not null)
         {
-            body.Add(Subagents.FirstOrDefault(s => s.Id == entry.FromAgent) is { } reporter
+            body.Add(ReporterOf(entry) is { } reporter
                 ? Layout.Builder.HStack(Layout.Builder.Text("reported · ", 12f, Dim).WAuto(), AgentLink(reporter, "open its transcript", $"transcript:report:{entry.Index}"), Layout.Builder.Spacer().WStar())
                 : Layout.Builder.Text("reported", 12f, Dim).Selectable());
         }
@@ -495,7 +586,7 @@ internal sealed class TranscriptEntryView
             .Follows(new HitResult.ButtonHit($"transcript:fold:{entry.Index}"), _ => Toggle(entry.Index));
     }
 
-    private void Toggle(int index)
+    internal void Toggle(int index)
     {
         if (!_expanded.Remove(index))
         {
