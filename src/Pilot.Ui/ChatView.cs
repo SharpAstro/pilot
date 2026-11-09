@@ -127,7 +127,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
                 }
                 else
                 {
-                    derived.UnnamedUserTexts.Add(entry.Text);
+                    shown.UnnamedUserTexts.Add(entry.Text);
                 }
             }
         }
