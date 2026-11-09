@@ -1,3 +1,4 @@
+using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Shouldly;
 using Xunit;
@@ -6,34 +7,116 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// A design card says what it asks (owner, 2026-11-09: "it doesn't even list the question"): its body is the question itself and the
-/// recommended option, never only the kind's fixed words, and each option's button carries the option whole, never cut with "...".
+/// recommended option, never only the kind's fixed words, and never longer than the panel draws (240), so nothing is cut silently: when
+/// it does not fit, Recommended goes and the question ends with an ellipsis. Each test raises the card on the node's state, so
+/// <c>CardSummaries.Usable</c> judges the summary as it does for the node. An option's button ends in an ellipsis past what two lines
+/// hold. In memory only: no process, no disk.
 /// </summary>
 public sealed class DesignCardWordsTests
 {
-    private const string Question = "SiblingSource(job) exports UseLocalSiblings=true for a plane job of any repo, so a job in a repo with no sibling clones restores against folders that do not exist: should the variable be exported only when SiblingWatch.ReachedClones has the job's repo?";
+    private const string Subject = "pr/SharpAstro/pilot#888";
+    private const string Title = "the review asks a question of design";
+
+    // 270 characters: past 240 with nothing else added.
+    private const string LongQuestion = "SiblingSource(job) exports UseLocalSiblings=true for a plane job of any repo, so a job in a repo with no sibling clones restores against folders that do not exist: should the variable be exported only when SiblingWatch.ReachedClones has the job's repo, or always?";
 
     private static readonly DesignOption Recommended = new("export the variable only when SiblingWatch.ReachedClones(job.Repo) is true, and say so on the job's line in pilot status", "jobs in repos with no clones restore packages", true);
     private static readonly DesignOption Other = new("same, and also ring a card on the flight when the label is on a repo that has no sibling clones on this node at all", "one more card kind", false);
 
-    private static DesignQuestion Asked() => new(null!, Question, [Other, Recommended]);
+    private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
 
-    [Fact]
-    public void TheBodyIsTheQuestionWholeAndTheRecommendedOption()
+    private static DesignQuestion Asked(string question) => new(null!, question, [Other, Recommended]);
+
+    private string Raise(params DesignQuestion[] questions) =>
+        _state.RaiseCard(CardBin.Ring, PrReviews.DesignKind, Subject, Title, "detail", PrReviews.DesignChoices(Subject, questions),
+            summary: PrReviews.DesignSummary(questions)).Summary.ShouldNotBeNull();
+
+    private static void ItIsTheQuestionsOwnWords(string summary, string startsWith)
     {
-        var summary = PrReviews.DesignSummary([Asked()]);
-
-        summary.ShouldContain(Question);
-        summary.ShouldContain($"Recommended: {Recommended.Text}.");
-        summary.ShouldNotContain("...");
+        summary.ShouldStartWith(startsWith);
+        summary.Length.ShouldBeLessThanOrEqualTo(240);
+        summary.ShouldNotContain("\n");
+        // Not the kind's fixed words (CardSummaries.For), which a refused summary falls back to.
+        summary.ShouldNotBe(CardSummaries.For(PrReviews.DesignKind, Subject, Title, PrReviews.DesignChoices(Subject, [Asked("q")])));
     }
 
     [Fact]
-    public void EveryOptionsButtonCarriesTheOptionWholeRecommendedFirst()
+    public void ABodyThatFitsCarriesTheQuestionWholeAndTheRecommendedOption()
     {
-        var choices = PrReviews.DesignChoices("pr/SharpAstro/pilot#888", [Asked()]);
+        var question = "should the variable be exported only when SiblingWatch.ReachedClones has the job's repo?";
 
-        choices[0].Label.ShouldBe(Recommended.Text);
-        choices[1].Label.ShouldBe(Other.Text);
-        choices.ShouldAllBe(c => !c.Label.EndsWith("...", StringComparison.Ordinal));
+        var summary = Raise(Asked(question));
+
+        ItIsTheQuestionsOwnWords(summary, question);
+        summary.ShouldContain("Recommended: export the variable only when SiblingWatch.ReachedClones(job.Repo) is true, and say so");
+    }
+
+    [Fact]
+    public void AQuestionPastTheBoundDropsRecommendedAndEndsWithAnEllipsisNotACutWithoutOne()
+    {
+        LongQuestion.Length.ShouldBeGreaterThan(240);
+
+        var summary = Raise(Asked(LongQuestion));
+
+        ItIsTheQuestionsOwnWords(summary, "SiblingSource(job) exports UseLocalSiblings=true");
+        summary.ShouldEndWith("...");
+        summary.ShouldNotContain("Recommended");
+    }
+
+    [Fact]
+    public void AQuestionThatRingsForAReasonKeepsTheReasonWhenItIsCutToMakeRoom()
+    {
+        var question = Asked(LongQuestion) with { Options = [Other with { Misses = "the AC" }, Recommended with { Misses = "the README" }] };
+
+        var summary = Raise(question);
+
+        ItIsTheQuestionsOwnWords(summary, "SiblingSource(job) exports");
+        summary.ShouldContain("... It rings because no option reaches the criteria.");
+    }
+
+    [Fact]
+    public void ThreeQuestionsAreOneLineWithinTheBoundEachCutWithAnEllipsis()
+    {
+        var summary = Raise(Asked(LongQuestion), Asked(LongQuestion.Replace("SiblingSource", "SiblingSink")), Asked("should the third be asked too?"));
+
+        ItIsTheQuestionsOwnWords(summary, "SiblingSource(job)");
+        summary.ShouldContain("SiblingSink(job)");
+        summary.ShouldEndWith("should the third be asked too?");
+        summary.ShouldContain("...");
+    }
+
+    [Theory]
+    [InlineData("should src/Pilot.Node/Flights/PrReviews.Cards.cs build the summary whole?", "should PrReviews.Cards.cs build the summary whole?")]
+    [InlineData(@"should C:\Users\me\repos\pilot\notes.md say so?", "should notes.md say so?")]
+    [InlineData("should it ring when the run ends after 12:30:15 or not?", "should it ring when the run ends after or not?")]
+    public void AQuestionNamingAPathOrATimeKeepsItsWordsMinusThePathNotTheKindsFixedWords(string question, string expected)
+    {
+        var summary = Raise(Asked(question));
+
+        ItIsTheQuestionsOwnWords(summary, expected);
+        summary.ShouldNotContain("src/Pilot.Node");
+        summary.ShouldNotContain(@"C:\");
+        CardSummaries.Usable(summary).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ALongQuestionWithAPathIsBothBoundedAndWithoutThePath()
+    {
+        var summary = Raise(Asked("src/Pilot.Node/Flights/PrReviews.Cards.cs " + LongQuestion));
+
+        ItIsTheQuestionsOwnWords(summary, "PrReviews.Cards.cs SiblingSource(job)");
+        summary.ShouldEndWith("...");
+    }
+
+    [Fact]
+    public void AnOptionsButtonEndsInAnEllipsisPastWhatTwoLinesHoldAndTheAnswerStaysWhole()
+    {
+        var choices = PrReviews.DesignChoices(Subject, [Asked("should it?")]);
+
+        choices[0].Label.Length.ShouldBeLessThanOrEqualTo(PrReviews.MaxOptionLabel);
+        choices[0].Label.ShouldEndWith("...");
+        choices[0].Args.ShouldBe([Recommended.Answer]);
+        choices[^1].Label.ShouldBe(PrReviews.AnswerLabel);
+        PrReviews.DesignChoices(Subject, [new DesignQuestion(null!, "should it?", [new DesignOption("Keep a library", "", true)])])[0].Label.ShouldBe("Keep a library");
     }
 }

@@ -36,6 +36,7 @@ public sealed class ChatLoadingTests
 
         Described(chat).ShouldContain("Loading the conversation");
         Described(chat).ShouldNotContain("Nothing said yet");
+        Capture("chat-loading");
 
         answer.SetResult(new ChatPage { Entries = [], Total = 0 });
         await read.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
@@ -43,5 +44,26 @@ public sealed class ChatLoadingTests
 
         Described(chat).ShouldContain("Nothing said yet");
         Described(chat).ShouldNotContain("Loading the conversation");
+    }
+
+    // With PILOT_TEST_CAPTURE set, writes a page not yet read, at a narrow and a wide size beside that path (ui-changes.md: look at it, put captures in the PR).
+    private static void Capture(string name)
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var dir = Path.GetDirectoryName(capture) ?? ".";
+        foreach (var (width, height) in new[] { (700, 400), (1600, 500) })
+        {
+            using var shot = new RgbaImageRenderer((uint)width, (uint)height);
+            var view = new ChatView<RgbaImage>(shot) { FontPath = SessionsCapture.FontPath };
+            // A read that is asked and never answered: the page stays unread, which is the state shown.
+            view.Load = (_, _) => new TaskCompletionSource<ChatPage>().Task;
+            view.Open();
+            view.Render(new RectF32(0, 0, width, height));
+            view.Close();
+            File.WriteAllBytes(Path.Combine(dir, $"{name}-{width}.png"), SharpAstro.Png.PngWriter.Encode(shot.Surface.Pixels, width, height));
+        }
     }
 }
