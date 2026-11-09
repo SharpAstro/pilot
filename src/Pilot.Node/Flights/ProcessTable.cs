@@ -45,12 +45,77 @@ public interface IProcessTable
 /// <summary>A process's command line and working folder; either is null where the OS would not say.</summary>
 public readonly record struct ProcessDetail(string? CommandLine, string? WorkingDirectory);
 
-/// <summary>The real table: toolhelp's snapshot on Windows, <c>/proc</c> elsewhere.</summary>
+/// <summary>
+/// The real table: on Windows one <c>NtQuerySystemInformation</c> read of every process (<see cref="SystemProcesses"/>), and a
+/// process's memory through a limited handle on it alone; <c>/proc</c> elsewhere. <see cref="Process.GetProcessById(int)"/>'s
+/// <c>WorkingSet64</c> read the whole system's table for each pid it was asked of (#794).
+/// </summary>
 public sealed class OsProcessTable : IProcessTable
 {
     public static readonly OsProcessTable Instance = new();
 
+    private readonly Lock _gate = new();
+    private readonly SystemProcesses _table = new();
+    private readonly List<SystemProcess> _read = [];
+
     public IReadOnlyList<ProcessEntry> Snapshot() => OperatingSystem.IsWindows() ? WindowsSnapshot() : LinuxSnapshot();
+
+    private List<ProcessEntry> WindowsSnapshot()
+    {
+        lock (_gate)
+        {
+            if (!_table.Read(_read))
+            {
+                return ToolhelpSnapshot();
+            }
+            var result = new List<ProcessEntry>(_read.Count);
+            foreach (var p in _read)
+            {
+                result.Add(new ProcessEntry(p.Pid, p.ParentPid, p.Image));
+            }
+            return result;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MemoryCounters
+    {
+        public uint Size;
+        public uint PageFaultCount;
+        public nuint PeakWorkingSetSize;
+        public nuint WorkingSetSize;
+        public nuint QuotaPeakPagedPoolUsage;
+        public nuint QuotaPagedPoolUsage;
+        public nuint QuotaPeakNonPagedPoolUsage;
+        public nuint QuotaNonPagedPoolUsage;
+        public nuint PagefileUsage;
+        public nuint PeakPagefileUsage;
+    }
+
+    private const uint QueryLimitedInformation = 0x1000;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool K32GetProcessMemoryInfo(nint process, ref MemoryCounters counters, uint size);
+
+    /// <summary>The working set of one process through a handle on it alone; null when it is gone or not ours to read.</summary>
+    private static long? WindowsMemoryOf(int pid)
+    {
+        var handle = OpenProcess(QueryLimitedInformation, false, pid);
+        if (handle == 0)
+        {
+            return null;
+        }
+        try
+        {
+            var counters = new MemoryCounters { Size = (uint)Marshal.SizeOf<MemoryCounters>() };
+            return K32GetProcessMemoryInfo(handle, ref counters, counters.Size) ? (long)counters.WorkingSetSize : null;
+        }
+        finally
+        {
+            CloseHandle(handle);
+        }
+    }
 
     public DateTimeOffset? StartOf(int pid)
     {
@@ -69,6 +134,10 @@ public sealed class OsProcessTable : IProcessTable
     {
         try
         {
+            if (OperatingSystem.IsWindows())
+            {
+                return WindowsMemoryOf(pid);
+            }
             using var process = Process.GetProcessById(pid);
             return process.WorkingSet64;
         }
@@ -229,7 +298,8 @@ public sealed class OsProcessTable : IProcessTable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(nint handle);
 
-    private static List<ProcessEntry> WindowsSnapshot()
+    /// <summary>Toolhelp's snapshot: only where the one-call read cannot be had (a 32-bit node).</summary>
+    private static List<ProcessEntry> ToolhelpSnapshot()
     {
         var result = new List<ProcessEntry>();
         var snapshot = CreateToolhelp32Snapshot(SnapProcess, 0);

@@ -21,6 +21,7 @@ public static partial class NodeApp
         var logWriter = new LogWriter(log);
         builder.Logging.AddProvider(new FileLoggerProvider(log));
         DetachedShell.Error = logWriter;
+        NodeTraffic.Shared.Log = logWriter;
         builder.Services.AddSingleton(log);
         builder.Services.AddSingleton(logWriter);
         // First, so its start line leads and its stop line (hosts stop in reverse) closes the log of this run.
@@ -35,6 +36,9 @@ public static partial class NodeApp
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton(NodeTraffic.Shared);
+        // What GET /node reads the heap with: the live figures, unless a test host registers a fixed reading after this (a live
+        // working set moves between any two calls, so two `pilot status` outputs of one node would never be equal).
+        builder.Services.AddSingleton<Func<NodeHeapRow>>(_ => () => NodeHeap.Read());
         builder.Services.AddHostedService(services => new TrafficLog(services.GetRequiredService<NodeTraffic>(), services.GetRequiredService<RollingLog>(), services.GetRequiredService<TimeProvider>()));
     }
 
@@ -406,6 +410,7 @@ public static partial class NodeApp
         });
         builder.Services.AddSingleton<SendLog>();
         builder.Services.AddSingleton(services => new SendTimings(services.GetRequiredService<TimeProvider>(), logWriter));
+        builder.Services.AddSingleton(services => new CommandTimings(services.GetRequiredService<TimeProvider>(), logWriter));
         builder.Services.AddSingleton(services => new WatchtowerChat(services.GetRequiredService<Watchtower>(), services.GetRequiredService<TranscriptBook>(), services.GetRequiredService<SendLog>()));
         builder.Services.AddSingleton(services => new Compactor(services.GetRequiredService<NodeState>(), services.GetRequiredService<Watchtower>(),
             services.GetRequiredService<NodeCommands>().RunAsync, services.GetRequiredService<TimeProvider>())
@@ -463,6 +468,8 @@ public static partial class NodeApp
                 },
                 // The repos' drive, else the Claude profile's (one and the same on most machines).
                 DiskPath = () => options.RepoRoots.FirstOrDefault(Directory.Exists) ?? services.GetRequiredService<SessionTrackerOptions>().Profile.Root,
+                // Every 5 s while a GUI or TUI shows Home, where the machine is drawn; every 15 s otherwise.
+                Views = services.GetRequiredService<PageViews>(),
                 Logger = services.GetService<ILogger<MachineSampler>>(),
             };
         });
