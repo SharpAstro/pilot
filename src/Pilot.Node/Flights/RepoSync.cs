@@ -51,7 +51,7 @@ public sealed class RepoSync(IGit git, Planes planes, RepoWatch watch)
     /// pulled a sibling, so the dashboard stops showing that clone behind. A failed read is logged, never thrown.
     /// </summary>
     internal void RefreshWatchInBackground()
-        => WatchRefresh = Task.Run(async () =>
+        => WatchRefresh = ProcessGate.Run(async () =>
         {
             try
             {
