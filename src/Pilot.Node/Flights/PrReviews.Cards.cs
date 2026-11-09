@@ -10,10 +10,24 @@ public sealed partial class PrReviews
     /// <summary>The label of the design card's Answer choice.</summary>
     public const string AnswerLabel = "Answer in your own words";
 
-    /// <summary>Each design question in full with its path:line, and each option with its consequence.</summary>
+    /// <summary>
+    /// Each design question in full with its path:line, and each option with its consequence and what it misses of the criteria
+    /// (<c>- reword the doc: misses: the AC that the code follows the documented ladder</c>), so the ring says which criterion each option fails.
+    /// </summary>
     private static string DesignDetail(IReadOnlyList<DesignQuestion> questions) =>
         string.Join('\n', questions.Select(q => $"{q.Finding.Path}:{q.Finding.Line} {q.Question}"
-            + string.Concat(q.RecommendedFirst.Select(o => $"\n- {o.Text}{(o.Consequence.Length > 0 ? $": {o.Consequence}" : "")}{(o.Recommended ? " (recommended)" : "")}"))));
+            + string.Concat(q.RecommendedFirst.Select(o => $"\n- {o.Text}{DesignOptionWords(o)}{(o.Recommended ? " (recommended)" : "")}"))));
+
+    // The words after an option's text: its consequence, then what it misses; the colon the text takes comes first, a semicolon joins the two.
+    private static string DesignOptionWords(DesignOption option)
+    {
+        var consequence = option.Consequence.Length > 0 ? $": {option.Consequence}" : "";
+        if (option.Misses is not { } misses)
+        {
+            return consequence;
+        }
+        return $"{(consequence.Length > 0 ? consequence.TrimEnd('.', ';', ' ') + "; " : ": ")}misses: {misses}";
+    }
 
     /// <summary>
     /// The design card's choices: one per option, the recommended first, each a <c>review fix</c> whose args are the option's words
@@ -62,20 +76,23 @@ public sealed partial class PrReviews
 
     /// <summary>
     /// Closes the open cards of <paramref name="review"/> when the PR's head is past the commit it read, saying which: a review of a
-    /// head that is gone asks nothing of anyone. False when nothing was open or the head is where the review read it.
+    /// head that is gone asks nothing of anyone. False when nothing was open or the head is where the review read it. A review of the
+    /// new head that follows (<paramref name="newerReviewFollows"/>, a recheck's) leaves the design card for it: that review settles the
+    /// question or rings for it again once it is posted, which a card closed here for the head could not say.
     /// </summary>
-    public bool CloseCardsPastHead(PrReviewRow review, string head)
+    public bool CloseCardsPastHead(PrReviewRow review, string head, bool newerReviewFollows = false)
     {
         if (head.Length == 0 || string.Equals(head, review.Head, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
         var subject = Verbs.PrTarget(review.Repo, review.Number);
-        if (!state.Cards(openOnly: true).Any(c => c.Subject == subject && ReviewCardKinds.Contains(c.Kind)))
+        string[] kinds = newerReviewFollows ? [.. ReviewCardKinds.Where(k => k != DesignKind)] : ReviewCardKinds;
+        if (!state.Cards(openOnly: true).Any(c => c.Subject == subject && kinds.Contains(c.Kind)))
         {
             return false;
         }
-        state.CloseCardsAbout(subject, $"the head moved past {CommitRefs.Short(review.Head)} to {CommitRefs.Short(head)}", ReviewCardKinds);
+        state.CloseCardsAbout(subject, $"the head moved past {CommitRefs.Short(review.Head)} to {CommitRefs.Short(head)}", kinds);
         return true;
     }
 
