@@ -1725,7 +1725,10 @@ that only works in the owner's plane or names it on its command line may be a pe
 matches; it tries once, says so on a Handled `stray-killed` card, and a process that survives is named again with "tried to end it and it is
 still here". Anything else is only named. The strays also ride on the machine row (`MachineRow.Strays`, optional, so `NodeWire.Version`
 stays), which `pilot strays` lists with each one's why, command line and kill command, and the Machine part of `pilot status` shows
-as a `strays` line with one line under it for each.
+as a `strays` line with one line under it for each. The sweep remembers a session's last process (pid and start, the first start seen for
+that pid) in memory only, so that a leftover of a session that ended can be tied to it by the lost parent's pid; a pid whose start
+changes while the session lives is forgotten, and a session that ends across a node restart is tied only by its folder or command line,
+so it is named on a card and never ended: a safe limitation.
 
 A session the API stopped (its transcript's `apiError`, `usage_limit_reached` with when the limit resets) shows as
 **stopped** with why and when it can go on, hooks or not.

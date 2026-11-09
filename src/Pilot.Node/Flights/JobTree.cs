@@ -133,6 +133,26 @@ public sealed class JobTree(IProcessTable table)
             {
                 _afterEnd[jobId] = [.. map.Values.Select(s => new KnownProcess(s.Pid, s.Start))];
             }
+            DropGone();
+        }
+    }
+
+    // Bounded: a job older than the sweep's memory is never queried again, so its entry would stay until the node restarts.
+    // Each job's end drops the entries none of whose processes lives any more; what still lives stays, as that is what the sweep looks for.
+    // Under _gate.
+    private void DropGone()
+    {
+        if (_afterEnd.Count == 0)
+        {
+            return;
+        }
+        var alive = table.Snapshot().Select(e => e.Pid).ToHashSet();
+        foreach (var jobId in _afterEnd.Keys.ToList())
+        {
+            if (!_afterEnd[jobId].Any(k => alive.Contains(k.Pid) && JobProcess.SameStart(table.StartOf(k.Pid), k.Start)))
+            {
+                _afterEnd.Remove(jobId);
+            }
         }
     }
 

@@ -238,4 +238,30 @@ public sealed class StraySweepTests
         named.ShouldBeEmpty();
         _state.Cards().Single(c => c.Kind == StraySweep.KilledKind).Detail.ShouldNotBeNull().ShouldContain("Stop-Process -Id 951 -Force");
     }
+
+    [Fact]
+    public void ALivePidThatAnotherProcessTookIsNotTakenForTheSessionsOwnWhenTheRowEndsAndItsChildIsLeftAlone()
+    {
+        // 1. The session's process is seen.
+        Session("w3", "se1-pil909-worker", SessionState.Working, SessionStartReasons.LegLaunch, cwd: @"C:\elsewhere");
+        _live.Add(("w3", 960));
+        _table.Add(960, 1, "claude.exe", Began.AddMinutes(10), commandLine: "claude.exe");
+        _sweep.SweepOnce().ShouldBeEmpty();
+
+        // 2. It dies and a person's process takes the pid before the tracker drops it; a sweep reads the other start.
+        _time.Advance(TimeSpan.FromMinutes(5));
+        _table.Remove(960);
+        _table.Add(960, 1, "Code.exe", _time.GetUtcNow(), commandLine: "Code.exe");
+        _sweep.SweepOnce().ShouldBeEmpty();
+
+        // 3. The row ends; the person's process has a child, which is no leftover of the session.
+        _time.Advance(TimeSpan.FromMinutes(20));
+        Session("w3", "se1-pil909-worker", SessionState.Ended, SessionStartReasons.LegLaunch, ended: _time.GetUtcNow().AddMinutes(-10), cwd: @"C:\elsewhere");
+        _live.Clear();
+        _table.Add(961, 960, "node.exe", _time.GetUtcNow().AddMinutes(-13), commandLine: "node.exe server.js");
+
+        _sweep.SweepOnce();
+
+        _table.Killed.ShouldBeEmpty();
+    }
 }

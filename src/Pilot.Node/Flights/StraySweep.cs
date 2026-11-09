@@ -234,7 +234,12 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
                 var start = pid is { } id ? table.StartOf(id) : null;
                 if (pid is not null)
                 {
-                    _lastSeen[row.Id] = (pid, start);
+                    // The first start seen for a pid is kept. A later sweep reading another start for the same pid means a different
+                    // process took it (the session's own died): the start is then cleared, never overwritten, so once the row ends
+                    // that other process is not taken for the session's own and ended.
+                    _lastSeen[row.Id] = _lastSeen.TryGetValue(row.Id, out var before) && before.Pid == pid
+                        ? (before.Start is null || !JobProcess.SameStart(start, before.Start) ? (pid, null) : before)
+                        : (pid, start);
                 }
                 live.Add(new StraySession(row.Name, launched, pid, start, row.Cwd));
             }
