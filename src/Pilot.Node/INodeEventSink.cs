@@ -1,3 +1,6 @@
+using System.Text.Json;
+using Pilot.Contracts;
+
 namespace Pilot.Node;
 
 /// <summary>
@@ -11,6 +14,13 @@ public interface INodeEventSink
 
     /// <summary>Queues one message, or answers false at once when it cannot hold it.</summary>
     bool TryWrite(byte[] message);
+
+    /// <summary>
+    /// Queues the snapshot a new or lost client starts from, as the rows themselves. The event stream serialises it while
+    /// it sends, so the snapshot (tens of MB on a busy node) is never built whole as one array (#794). A sink that wants
+    /// bytes gets them here, built once.
+    /// </summary>
+    bool TryWriteSnapshot(SnapshotEvent snapshot) => TryWrite(JsonSerializer.SerializeToUtf8Bytes<NodeEvent>(snapshot, PilotJsonContext.Default.NodeEvent));
 
     /// <summary>
     /// Told once the node has stopped writing to it because it could not keep up. Its client is closed and

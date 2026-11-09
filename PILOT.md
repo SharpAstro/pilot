@@ -25,6 +25,10 @@ is neither built nor tested by CI.
   `pilot leg wait --for-file <path> [--until <time>]` and end the turn; the node wakes the leg once. Long builds and
   test runs go through `pilot run -- <command>`.
 - The machine is shared with other flights, so a job may wait its turn first. That costs the leg nothing.
+- A worker runs `dotnet test` and the build of a solution or test project only through `pilot run -- <command>` or the
+  leg's check; a hook refuses them run directly and names the way. The node also looks every few minutes for strays in
+  its own process tree (a job's or session's leftovers), raises a card for each with the kill command, and ends only
+  what it launched once its owner has ended. A process of yours that outlives its job or session is flagged.
 
 ## How a flight merges
 
@@ -49,6 +53,9 @@ is neither built nor tested by CI.
   the ledger closes it as finished or crashed. A session never stops another with `claude stop`.
 - One live watchtower per node. A change to how the node finds, messages, resumes or stops a session keeps
   `OneWatchtowerTests`, `WatchtowerTests` and `ResumeOptionsTests` passing.
+- The fleet summary is kept by the watchtower: the node has it remade after changes while a client is attached, asks
+  nothing with none, and `pilot summarise` and the panel's Refresh ask at once. The Haiku call runs only when the
+  watchtower is down (`SummaryRow.NotFollowing` says so); only then does the panel name a price.
 
 ## Build and check
 
@@ -63,6 +70,10 @@ dotnet test Pilot.Gui.Tests -c Release --no-build
 ```
 
 - A `Pilot.Node.Tests` test over 5 s fails on CI (GITHUB_ACTIONS=true or PILOT_TEST_TIME_STRICT=1) unless tagged `[Trait("Category", "Slow")]`; elsewhere a `slow-test:` line on stderr reports it without failing, since a loaded machine inflates wall clock.
+- A git run costs 100 to 400 ms on Windows, so the git-backed `Pilot.Node.Tests` bases (`ReviewTestsBase`, `LegCommanderTestsBase`, `OverlapTestsBase`, `PrMarksTestsBase`, `LegHoldTestsBase`)
+  run on `FakeRepoGit`, an in-memory git (`TestGit`), unless the test is about git itself: a test calls `RealGit()` first, or a class passes
+  `realGit: true`. A command the model cannot answer throws, so the test says it needs real git; `PILOT_TEST_REAL_GIT=1` runs everything on real
+  git, and `FakeRepoGitTests.TheModelAnswersAsGitDoes` holds the model to git's answers.
 - Repo-wide guard tests carry `[Trait("Category", "Invariant")]` and run in seconds (`--filter Category=Invariant`); a new repo-wide guard gets the trait too.
 - CI builds the whole solution and runs exactly two test projects, `Pilot.Node.Tests` and `Pilot.Gui.Tests`, on
   ubuntu and windows (win-x64). A check that matches CI runs both; a narrower one filters with

@@ -82,12 +82,13 @@ public static partial class Briefs
         }
         else
         {
-            var held = flying.Where(f => f.State == FlightState.Held).ToList();
+            // Held counts both kinds: a flight waiting on another, and one the owner put on hold (#771), which says who holds it.
+            var held = flying.Where(f => f.State == FlightState.Held || f.OnHold is not null).ToList();
             var flightLegs = legs.Where(l => flying.Any(f => f.Code == l.Flight)).ToList();
             text.AppendLine($"{flying.Count} flight{(flying.Count == 1 ? "" : "s")} not landed ({flying.Count - held.Count} flying, {held.Count} held), {flightLegs.Count} leg{(flightLegs.Count == 1 ? "" : "s")} ({flightLegs.Count(l => l.State == LegState.Flying)} flying, {flightLegs.Count(l => l.Hold is not null)} held for a package). `{pilot} status` lists them.");
             foreach (var flight in held.Take(MaxHeldListed))
             {
-                text.AppendLine($"- {flight.Code}: {Short(flight.Title ?? flight.Item.Noun, 60)} ({flight.Repo} {flight.Item.Display}, held, waiting for {FlightWaiting.For(flight)})");
+                text.AppendLine($"- {flight.Code}: {Short(flight.Title ?? flight.Item.Noun, 60)} ({flight.Repo} {flight.Item.Display}, {FlightWaiting.OnHoldText(flight) ?? $"held, waiting for {FlightWaiting.For(flight)}"})");
             }
             if (held.Count > MaxHeldListed)
             {
@@ -339,11 +340,18 @@ public static partial class Briefs
         text.AppendLine($"  go to a fixer worker by default: within a few minutes of the hold, plan and start a review-notes leg carrying the notes (`{pilot} leg plan`,");
         text.AppendLine($"  then `{pilot} leg start`; the finished leg's push ends the hold and the review runs again), or clear the flight with");
         text.AppendLine($"  `{pilot} flight clear <code> <why>` when the notes are not worth a round. Say which you did on the review-notes card. A fix of your own");
-        text.AppendLine($"  only for a one-line change: make it in the plane, commit it, then `{pilot} flight pr <code>`. With the autopilot on the node has");
-        text.AppendLine("  planned the review-notes leg itself (the card names it): there is nothing to do but watch it.");
-        text.AppendLine("  A hold does not wait for you once your session has ended (it ends by design after a reply): with no watchtower running, five minutes after");
-        text.AppendLine("  the hold the node pushes any commits left in the plane past the reviewed head (as `flight pr` does, so a fresh review gates the merge), or");
-        text.AppendLine("  posts the notes on the PR as one comment and releases the hold. So make or clear the fixes in the turn you take the card.");
+        text.AppendLine($"  only for a one-line change: take the hold with `{pilot} flight hold <code> [why]` (or commit in the plane), make it, then `{pilot} flight pr <code>`.");
+        text.AppendLine("  With the autopilot on the node has planned the review-notes leg itself (the card names it): there is nothing to do but watch it.");
+        text.AppendLine("  A hold holds only while it is being worked on: a hold no leg and no `flight hold` or commit in the plane takes within a few minutes is");
+        text.AppendLine("  released, and the flight merges at the reviewed head with the notes on a For-you card, to be done in a follow-up. A hold you took and left");
+        text.AppendLine("  rings the person after 30 minutes. With no watchtower running (it ends by design after a reply), five minutes after the hold the node pushes");
+        text.AppendLine("  any commits left in the plane past the reviewed head (as `flight pr` does, so a fresh review gates the merge), or posts the notes on the PR as");
+        text.AppendLine("  one comment and releases the hold. So make or clear the fixes in the turn you take the card.");
+        text.AppendLine("- A failure in a test a PR does not touch is a bug with a cause to find, and the node files it as an investigation (an issue, priority high, and a");
+        text.AppendLine("  flight). The first time it hits a PR the node retries once (queues it again, or runs its failed jobs again). When it comes again, in the same PR or");
+        text.AppendLine("  in another flight, a Ring card puts the tower on alert: it names the failure, the investigation and the flights hit, which the node holds (its");
+        text.AppendLine("  release card names each `held for <code>: <test>`) with no go-around, re-queue or rerun until the investigation flight lands, when it releases them itself.");
+        text.AppendLine("  Do not send a held flight round and do not call the failure chance. Help the investigation flight land, and tell the person if it needs them.");
         text.AppendLine("- A flight in `pilot status` whose legs are all done, whose PR carries `pilot: changes` and whose PR head is not the head its");
         text.AppendLine("  review read (Summary prints that one as `read head`): no review has read this work. The node's sweep should have started one");
         text.AppendLine($"  and did not, so start it yourself with `{pilot} flight review <code>` rather than wait for a card.");
@@ -351,6 +359,7 @@ public static partial class Briefs
         text.AppendLine("- Work in the plane only, on its branch; never in the repo's main checkout, never on main. Stay where you are and reach the");
         text.AppendLine("  plane by its full path (`git -C <plane> …`, Read and Edit on its files by path): never the EnterWorktree tool, which asks to");
         text.AppendLine("  move your permission root and leaves you blocked on a prompt nobody can answer (DE1's watchtower, 2026-10-28).");
+        text.AppendLine("- A flight `on hold by <who>` is the owner's: do nothing about it, and ring nothing, until it is released.");
         text.AppendLine("- Never rebase a flight's branch and never push one with --force or --force-with-lease, yours or a worker's asking: bring the base in");
         text.AppendLine("  by merging, and fix a commit with a new commit. A branch someone else has pushed is only ever added to (SE1's PIL294 work was");
         text.AppendLine("  lost to a force push from DE1, 2026-10-27).");
@@ -407,7 +416,7 @@ public static partial class Briefs
     public static string FlightStatus(FlightRow flight, IReadOnlyList<LegRow> legs)
     {
         var text = new StringBuilder();
-        var state = flight.State == FlightState.Held ? $"held, waiting for {FlightWaiting.For(flight)}" : flight.State.ToString().ToLowerInvariant();
+        var state = FlightWaiting.OnHoldText(flight) ?? (flight.State == FlightState.Held ? $"held, waiting for {FlightWaiting.For(flight)}" : flight.State.ToString().ToLowerInvariant());
         text.Append($"{flight.Code}: {flight.Title ?? flight.Item.Noun} ({flight.Repo} {flight.Item.Display}, {state})");
         text.Append(flight.PullRequestUrl is { } url ? $", PR {url}" : ", no PR yet");
         text.Append(flight.Review is { } review ? $", review {review.State.ToString().ToLowerInvariant()}" : ", no review yet");

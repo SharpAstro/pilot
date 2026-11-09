@@ -7,7 +7,8 @@ namespace Pilot.Node;
 
 /// <summary>
 /// Serves the event stream to each WebSocket client: subscribes it to <see cref="NodeState"/> and sends its queue.
-/// Adapted from tianwen's <c>EventHub</c>; the queue and its sender are Node.Lib's <see cref="WebSocketEventQueue"/>.
+/// Adapted from tianwen's <c>EventHub</c>; the queue and its sender are <see cref="EventStreamQueue"/>, Node.Lib's
+/// <c>WebSocketEventQueue</c> with each send cut to a fragment, so a snapshot never goes into Kestrel's pinned blocks whole (#794).
 /// </summary>
 /// <remarks>
 /// <para><b>A change never waits for a socket.</b> Every client has a bounded queue drained by ONE sender, its own;
@@ -36,7 +37,7 @@ public sealed class EventHub(NodeState state, PageViews views, ILogger<EventHub>
     /// <summary>Serves one accepted socket until it closes, the client falls behind, or the node stops.</summary>
     public async Task ServeAsync(WebSocket socket, long? since, string? stream, CancellationToken stopping)
     {
-        var client = new EventClient(new WebSocketEventQueue(socket, DefaultQueueCapacity, SendTimeout, singleWriter: true));
+        var client = new EventClient(new EventStreamQueue(socket, DefaultQueueCapacity, SendTimeout));
         Interlocked.Increment(ref _clients);
         try
         {
@@ -132,13 +133,15 @@ public sealed class EventHub(NodeState state, PageViews views, ILogger<EventHub>
     }
 
     /// <summary>A client as <see cref="NodeState"/> sees it: a sink over its queue, dropped when it overflows.</summary>
-    private sealed class EventClient(WebSocketEventQueue queue) : INodeEventSink
+    private sealed class EventClient(EventStreamQueue queue) : INodeEventSink
     {
-        public WebSocketEventQueue Queue { get; } = queue;
+        public EventStreamQueue Queue { get; } = queue;
 
         public int Capacity => Queue.Capacity;
 
         public bool TryWrite(byte[] message) => Queue.TryEnqueue(message);
+
+        public bool TryWriteSnapshot(SnapshotEvent snapshot) => Queue.TryEnqueue(snapshot);
 
         public void Overflowed() => Queue.Abort();
 

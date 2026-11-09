@@ -84,7 +84,7 @@ public sealed class ConnectTests : OverlapTestsBase
     {
         await TwoFlights();
         var github = new FakeGitHub { Pr = new PullRequest(77, "MERGED", "head", "https://github.com/x/tianwen/pull/77") };
-        var flights = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System, null, github) { Machine = "DU1", Fleet = _fleet };
+        var flights = new FlightCommander(_state, new Planes(_git), TimeProvider.System, null, github) { Machine = "DU1", Fleet = _fleet };
         Peer("DE1", Theirs("PIL294", 294) with { PullRequest = 77 });
         (await flights.RunAsync(new CommandRequest { Verb = Verbs.Connect, Target = "flight/TIA2", Args = ["PIL294"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
         F("TIA2").State.ShouldBe(FlightState.Held);
@@ -99,7 +99,7 @@ public sealed class ConnectTests : OverlapTestsBase
     {
         await TwoFlights();
         var github = new FakeGitHub { Pr = pr };
-        var flights = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System, null, github) { Machine = "DU1", Fleet = _fleet };
+        var flights = new FlightCommander(_state, new Planes(_git), TimeProvider.System, null, github) { Machine = "DU1", Fleet = _fleet };
         var peer = Peer("DE1", theirs);
         (await flights.RunAsync(new CommandRequest { Verb = Verbs.Connect, Target = "flight/TIA2", Args = [theirs.Code], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
         F("TIA2").State.ShouldBe(FlightState.Held);

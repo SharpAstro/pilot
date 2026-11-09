@@ -402,10 +402,22 @@ internal sealed class PilotChrome<TSurface>
     public TooltipLayer<TSurface> Tooltips { get; }
 
     /// <summary>
-    /// Called with <see cref="ClientPages.PullRequests"/> when the Pull requests page comes to be shown and with null when it stops being,
-    /// by whatever way the page changed: the host says it to each node it streams from (<c>NodeFeed.SayPage</c>), which also says it again after a reconnect.
+    /// Called with <see cref="ClientPages.PullRequests"/> when the Pull requests page comes to be shown, <see cref="ClientPages.Home"/>
+    /// for Home (where the machine is drawn), and null when neither is, by whatever way the page changed: the host says it to each
+    /// node it streams from (<c>NodeFeed.SayPage</c>), which also says it again after a reconnect. The host says <see cref="SaidPage"/>
+    /// once when it starts, as the first page is shown with no switch.
     /// </summary>
     public Action<string?>? OnPageShown { get; set; }
+
+    /// <summary>What the page shown now says to the nodes (<see cref="OnPageShown"/>).</summary>
+    public string? SaidPage => SaidOf(Page);
+
+    private static string? SaidOf(PilotPage page) => page switch
+    {
+        PilotPage.PullRequests => ClientPages.PullRequests,
+        PilotPage.Home => ClientPages.Home,
+        _ => null,
+    };
 
     /// <summary>The page shown beside the rail.</summary>
     public PilotPage Page { get; private set; } = PilotPage.Home;
@@ -515,10 +527,11 @@ internal sealed class PilotChrome<TSurface>
         }
         var before = Page;
         Page = page;
-        // The node reads the pull requests every minute only while a page shows them, so it is told when this one does and when it stops.
-        if ((before == PilotPage.PullRequests) != (page == PilotPage.PullRequests))
+        // The node reads the pull requests every minute, and the machine every 5 s, only while a page shows them, so it is told
+        // when one of those pages is shown and when it stops.
+        if (SaidOf(before) != SaidOf(page))
         {
-            OnPageShown?.Invoke(page == PilotPage.PullRequests ? ClientPages.PullRequests : null);
+            OnPageShown?.Invoke(SaidOf(page));
         }
         // The chat follows its feed while its page is the one shown, and only then.
         if (page == PilotPage.Chat)

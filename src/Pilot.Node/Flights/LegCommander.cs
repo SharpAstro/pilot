@@ -93,7 +93,7 @@ public sealed partial class LegCommander(
 
     public static bool Handles(string verb) =>
         verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.ValidateLeg or Verbs.Check or Verbs.FinishLeg or Verbs.WaitLeg or Verbs.GoAround or Verbs.Merge or Verbs.RerunChecks or Verbs.MoveFlight
-            or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review or Verbs.AllowRound or Verbs.Clear
+            or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review or Verbs.AllowRound or Verbs.Clear or Verbs.Hold or Verbs.Ground or Verbs.Unground
             or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Touches or Verbs.FlightChanges or Verbs.Fold or Verbs.Separate or Verbs.ConnectOverlap;
 
     /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
@@ -146,8 +146,9 @@ public sealed partial class LegCommander(
         var launches = _launched.Value = [];
         // Asked of the peers before the lock is taken: a slow one holds up this command, not the others.
         var peerRefusal = await PeerRefusalAsync(command, cancellationToken);
-        // The flight's issue label for admission, read at the start and without the lock too.
-        if (command.Verb is Verbs.StartLeg or Verbs.ValidateLeg or Verbs.PlanFlight or Verbs.StartReview
+        // The flight's issue label for admission, read at the start and without the lock too. Opening a PR and merging read it as well, the
+        // outward steps that matter most: a hold put on GitHub while this node was down holds them on a wake, before the repo sweep's first read.
+        if (command.Verb is Verbs.StartLeg or Verbs.ValidateLeg or Verbs.PlanFlight or Verbs.StartReview or Verbs.OpenPr or Verbs.Merge
             && state.Flights().FirstOrDefault(f => string.Equals(f.Code, CodeOf(command.Target), StringComparison.OrdinalIgnoreCase)) is { } starting)
         {
             await PrimeAsync(starting, cancellationToken);
@@ -178,8 +179,19 @@ public sealed partial class LegCommander(
             {
                 throw new FlightException(peerRefusal);
             }
+            // The owner's hold (#771): every flight and leg verb but the hold's own, a running session's reports and the reads is refused.
+            if (OnHoldRefusalFor(command) is { } onHold)
+            {
+                throw new FlightException(onHold);
+            }
             switch (command.Verb)
             {
+                case Verbs.Ground:
+                    made = await HoldAsync(command, cancellationToken);
+                    break;
+                case Verbs.Unground:
+                    made = await UnholdAsync(command, cancellationToken);
+                    break;
                 case Verbs.MoveFlight:
                     moving = FlightOf(command.Target);
                     break;
@@ -266,6 +278,9 @@ public sealed partial class LegCommander(
                     break;
                 case Verbs.Clear:
                     ClearHolding(command);
+                    break;
+                case Verbs.Hold:
+                    TakeHolding(command);
                     break;
                 case Verbs.Review:
                     await ReviewAsync(command, cancellationToken);
@@ -364,6 +379,13 @@ public sealed partial class LegCommander(
         else if (markedLegEnd)
         {
             ClearLegEndChecking(CodeOf(command.Target));
+        }
+
+        // A flight released from its hold goes on to what is due, as a resumed leg does.
+        // (A code this node has no flight for only had its issue's label taken off.)
+        if (error is null && command.Verb == Verbs.Unground && FlightNamed(command.Target) is { } released)
+        {
+            await AdvanceAsync(released, cancellationToken);
         }
 
         // A leg taken out: the flight goes on past it the same way, as the leg it was waiting on may have been the last
@@ -512,6 +534,11 @@ public sealed partial class LegCommander(
             if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying } flight || !Directory.Exists(flight.Worktree))
             {
                 return ($"{code} is not a flying flight with a plane", null);
+            }
+            // The owner's hold (#771): no base merge, no push; the hold is the reason, which is no conflict to hand to anyone.
+            if (OnHoldRefusal(flight) is { } onHold)
+            {
+                return (onHold, null);
             }
             if ((await OffLockAsync(null, () => git.RunAsync(["status", "--porcelain"], flight.Worktree, cancellationToken))).Output.Trim().Length > 0)
             {

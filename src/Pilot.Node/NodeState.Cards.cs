@@ -61,12 +61,24 @@ public sealed partial class NodeState
             {
                 return open;
             }
+            // The key a dismissal is remembered by, taken before the hold's words decorate the title: a card dismissed before the hold, one
+            // raised during it and one raised after the release all share it, so the hold neither breaks a dismissal nor ends one (#853).
+            var key = cause ?? title;
+            if (bin != CardBin.Handled && OnHoldOf(subject) is { } onHold)
+            {
+                // The owner's hold (#771): the card says so. Its choices are all kept, never stripped: a card raised once (an overlap's Connect
+                // and Plan) is not raised again on the release, so what it offers must still be there; the dispatch gate refuses a button the
+                // hold forbids, with the hold's words, and the release takes this note off (LiftHoldFromCards).
+                var said = FlightWaiting.OnHoldText(onHold)!;
+                title = $"{title} ({said})";
+                detail = $"{HeldLead}{said}.{HeldLeadMiddle}{onHold.Code}{HeldLeadEnd}{(detail is { Length: > 0 } ? " " + detail : "")}";
+            }
             var now = _time.GetUtcNow();
             // A card a person dismissed for this cause is not raised again by the next look (#853): the caller gets the dismissed card, and
             // nothing is stored, published, rung or said. Read from the cards themselves, so a journal replay or a snapshot restores it.
             // It holds for DismissalHolds after the dismissal: a cause that comes back later (a watchtower that keeps ending again a week on)
             // rings again, and one still there is not nagged about inside the window (PIL855's review).
-            if (bin != CardBin.Handled && _cards.Values.Where(c => IsPersonsDismissal(c) && c.Kind == kind && c.Subject == subject && (c.Cause ?? c.Title) == (cause ?? title)
+            if (bin != CardBin.Handled && _cards.Values.Where(c => IsPersonsDismissal(c) && c.Kind == kind && c.Subject == subject && (c.Cause ?? c.Title) == key
                     && c.ClosedAt is { } closed && now - closed < DismissalHolds)
                 .OrderByDescending(c => c.ClosedAt).FirstOrDefault() is { } dismissed)
             {
@@ -107,7 +119,7 @@ public sealed partial class NodeState
                 Why = why,
                 // The key a dismissal is remembered by, fixed when the card is raised: a later rewording of its title (the brain's, PIL855)
                 // cannot move it, so a dismissed card raised again for the same cause stays dismissed (#853).
-                Cause = cause ?? title,
+                Cause = key,
                 Attachment = attachment,
                 AttachmentExt = attachment is null ? null : attachmentExt,
                 At = now,
@@ -121,6 +133,51 @@ public sealed partial class NodeState
             created = true;
             return card;
         }
+    }
+
+    private const string HeldLead = "The flight is ";
+    private const string HeldLeadMiddle = " The node takes no step for it until it is released (pilot flight unground ";
+    private const string HeldLeadEnd = "); a choice below that would is refused with the hold's words.";
+
+    /// <summary>
+    /// The release of the hold on flight <paramref name="code"/> (#771): the open cards about it that were raised while it was held lose the
+    /// note that said so (the on-hold words on their title, the lead of their detail), and keep everything else, choices included. Read
+    /// back from the card's own text, so it holds for a card raised before a node restart too.
+    /// </summary>
+    public void LiftHoldFromCards(string code)
+    {
+        lock (_gate)
+        {
+            var subject = Verbs.FlightTarget(code);
+            foreach (var card in _cards.Values.Where(c => c.State == CardState.Open && (c.Subject == subject || c.Subject.StartsWith(subject + "/", StringComparison.Ordinal))).ToList())
+            {
+                if (card.Detail is not { } detail || !detail.StartsWith(HeldLead + "on hold by ", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                var middle = detail.IndexOf(HeldLeadMiddle, StringComparison.Ordinal);
+                var end = middle < 0 ? -1 : detail.IndexOf(HeldLeadEnd, middle, StringComparison.Ordinal);
+                if (end < 0)
+                {
+                    continue;
+                }
+                var said = detail[HeldLead.Length..(middle - 1)];
+                var rest = detail[(end + HeldLeadEnd.Length)..].TrimStart();
+                var title = card.Title.EndsWith($" ({said})", StringComparison.Ordinal) ? card.Title[..^(said.Length + 3)] : card.Title;
+                UpdateCard(card.Id, title, rest.Length > 0 ? rest : null, card.Choices, card.Link);
+            }
+        }
+    }
+
+    /// <summary>The flight on the owner's hold that a card's subject (<c>flight/&lt;code&gt;</c> or <c>flight/&lt;code&gt;/&lt;leg&gt;</c>) is about; null when it is about none, or the flight is not held.</summary>
+    private FlightRow? OnHoldOf(string subject)
+    {
+        if (!subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+        var code = subject[Verbs.FlightTargetPrefix.Length..].Split('/')[0];
+        return _flights.Values.FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase) && f.OnHold is not null);
     }
 
     /// <summary>
@@ -302,6 +359,20 @@ public sealed partial class NodeState
     /// </summary>
     public void CloseCardsAbout(string subject, string outcome, params string[] kinds)
         => CloseCardsAboutBy("node", subject, outcome, kinds);
+
+    /// <summary>Closes every open card about <paramref name="subject"/> (and its legs) except those of the kinds in <paramref name="keep"/>, which stay open.</summary>
+    public void CloseCardsAboutExcept(string subject, string outcome, params string[] keep)
+    {
+        lock (_gate)
+        {
+            var kinds = _cards.Values.Where(c => c.State == CardState.Open && (c.Subject == subject || c.Subject.StartsWith(subject + "/", StringComparison.Ordinal)) && !keep.Contains(c.Kind))
+                .Select(c => c.Kind).Distinct(StringComparer.Ordinal).ToArray();
+            if (kinds.Length > 0)
+            {
+                CloseCardsAboutBy("node", subject, outcome, kinds);
+            }
+        }
+    }
 
     /// <summary>As above, closed by <paramref name="closedBy"/> (an override names its session, not the node).</summary>
     public void CloseCardsAboutBy(string closedBy, string subject, string outcome, params string[] kinds)

@@ -422,6 +422,33 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
         Handled().ShouldBe([$"recheck of widget#7: head {Short(moved)} was not the one reviewed ({Short(_head)}), review restarted"]);
         _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
     }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARecheckOfAMovedHeadLeavesTheOpenDesignRingForTheReviewItStartsInsteadOfClosingItAsMoved()
+    {
+        // A review whose design question has no option that reaches the criteria: its ring is open.
+        (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = "pr/acme/widget#7", Who = "controller" }, Ct)).Error.ShouldBeNull();
+        (await _reviews.RunAsync(new CommandRequest
+        {
+            Verb = Verbs.PrVerdict, Target = "pr/acme/widget#7", Who = Review()!.Reviewer, Args = ["comment", "A question.", DecidableDesign.NoneReaches],
+        }, Ct)).Error.ShouldBeNull();
+        // The node does not post it here, so the controller does: the post is when the design card is raised.
+        (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.PostReview, Target = "pr/acme/widget#7", Who = "controller" }, Ct)).Error.ShouldBeNull();
+        var ring = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.DesignKind).ShouldHaveSingleItem();
+        _github.Labels[7] = [PilotMarks.Recheck];
+        var moved = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, "a later push");
+        _github.Prs["acme/widget#7"] = Pr("OPEN") with { Head = moved };
+
+        await LookAsync();
+
+        // The recheck started a review of the new head, which settles the question: the ring is not closed for the head here
+        // (PrRecheck passes newerReviewFollows: true), where a plain sweep would close it as "the head moved".
+        Review().ShouldNotBeNull().Head.ShouldBe(moved);
+        var now = _state.Cards().Single(c => c.Id == ring.Id);
+        now.State.ShouldBe(CardState.Open);
+        now.Outcome.ShouldBeNull();
+    }
 }
 
 /// <summary>Part 2 of PrRecheckTests: the class is split so its tests run side by side, not one after another.</summary>

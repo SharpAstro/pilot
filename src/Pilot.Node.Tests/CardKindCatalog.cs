@@ -29,6 +29,7 @@ internal static class CardKindCatalog
     private const string LegOpenPr = "Flights/LegCommander.OpenPr.cs";
     private const string LegPlanners = "Flights/LegCommander.Planners.cs";
     private const string LegReview = "Flights/LegCommander.Review.cs";
+    private const string LegReviewHold = "Flights/LegCommander.ReviewHold.cs";
     private const string LegHoldRelease = "Flights/LegCommander.HoldRelease.cs";
     private const string HumanVerification = "Flights/LegCommander.HumanVerification.cs";
     private const string LegMerge = "Flights/LegCommander.Merge.cs";
@@ -47,6 +48,7 @@ internal static class CardKindCatalog
     private const string PrReviewsFixer = "Flights/PrReviews.Fixer.cs";
     private const string PrReviewsFixerRounds = "Flights/PrReviews.FixerRounds.cs";
     private const string PrReviewsQueue = "Flights/PrReviews.Queue.cs";
+    private const string PrReviewsLand = "Flights/PrReviews.Land.cs";
     private const string PrReviewsStart = "Flights/PrReviews.Start.cs";
     private const string PrReviewsStatus = "Flights/PrReviews.Status.cs";
     private const string PrReviewsSweep = "Flights/PrReviews.Sweep.cs";
@@ -60,6 +62,7 @@ internal static class CardKindCatalog
     [
         // Workers, legs and planners.
         new("worker-stopped", "Ring", [Watch], "LegWatchTests.AStopWithNoResetTimeRingsAtOnce", "the worker's session row is stopped by the API (no reset time to resume at), the leg is flying and its flight has not landed", [nameof(Verbs.Say), nameof(Verbs.GoAround)]),
+        new("flight-on-hold", "Handled", ["Flights/LegCommander.OnHold.cs", "Flights/LabelHold.cs", "Flights/RepoWatch.cs"], "FlightHoldTests.HoldNeedsWhyRecordsWhoAndWhenAndARepeatUpdatesTheWhy"),
         new("worker-limit-wait", "Handled", [Watch], "LegCardTests.AUsageLimitStopTheNodeResumesItselfIsAHandledLineAndNoCard"),
         new("worker-idle", "Ring", [Watch], "LegWatchTests.ANudgeTheNodeCannotDeliverRings", "the worker's session row is idle with its leg unfinished, nothing of its own (a job, the node's recheck) is what it waits on, and its flight has not landed", [nameof(Verbs.Say), nameof(Verbs.GoAround)]),
         new("worker-waiting", "Ring", [Watch], "LegWatchTests.AWaitingWorkerRingsWithItsQuestionAndTheCardClosesWhenItWorksAgain", "the worker's last message asks the person, its leg is not rechecking, and its flight has not landed", [nameof(Verbs.GoAround)]),
@@ -112,7 +115,7 @@ internal static class CardKindCatalog
         new("review-notes", "ForYou", [LegReview], "ReviewModelTests.APassWithNotesRaisesTheWatchtowerCardAndSendsNoLegRound"),
         new("human-verification", "ForYou", [HumanVerification], "HumanVerificationFilingTests.AFlaggedPassFilesEachItemInTheMilestoneAndRaisesOneCard"),
         new("human-verification-refused", "Handled", [HumanVerification], "HumanVerificationFilingTests.ARefusedGhCallKeepsTheVerdictAndRaisesAHandledCard"),
-        new("holding-cleared", "Handled", [LegReview], "HoldingPatternTests.ClearByTheWatchtowerLetsAutopilotMergeIt"),
+        new("holding-cleared", "Handled", [LegReviewHold], "HoldingPatternTests.ClearByTheWatchtowerLetsAutopilotMergeIt"),
         new("hold-released", "Handled", [LegHoldRelease], "HoldingPatternTests.AHoldWhoseWatchtowerEndedIsReleasedWithItsNotesOnThePrAndMergesOnAutopilot"),
         new("pr-ready-restored", "Handled", [LegReview], "PassedWithoutCardTests.AFlightPassedWithNoCardGetsOneAndAutopilotMergesIt"),
         new("holding-timeout", "Ring", [Checks], "HoldingPatternTests.PastTheBoundTheTimeoutCardRingsAndMergeAsItIsMerges", "the flight's holding pattern on its row is past its timeout and its PR is still open on GitHub", [nameof(Verbs.Merge), nameof(Verbs.Land)]),
@@ -134,6 +137,10 @@ internal static class CardKindCatalog
         new("closed-landed", "Handled", [Checks], "ReviewTests.AFlightWhosePrWasClosedWithNothingOfItsOwnLeftLandsAndOneWithWorkRings"),
         new("closed-with-work", "Ring", [Checks], "ReviewTests.AFlightWhosePrWasClosedWithWorkOfItsOwnRingsOnceAndStaysFlying", "the PR's state on GitHub is closed unmerged and the plane holds work of its own", [nameof(Verbs.Land)]),
         new("queue-dropped", "ForYou|Handled", [Checks], "ReviewTests.APrThatLeftTheMergeQueueUnmergedIsACardSayingWhyWithMergeAgain"),
+        new("failure-investigation", "ForYou", ["Flights/FailureInvestigations.cs"], "FailureInvestigationTests.AFirstFailureInATestThePrDoesNotTouchIsFiledAsOneInvestigationWithItsFlightAndCard"),
+        new("failure-alert", "Ring", ["Flights/FailureAlerts.cs"], "RetryAndHoldTests.TheSameHeadFailingAgainAfterItsCiRetryRaisesOneAlertCardAndHoldsTheFlightWithNoGoAround", "the same untouched-test failure signature failed a second time, in a PR after its retry or in another flight, read from the failure ledger", [nameof(Verbs.FlightPriority)]),
+        new("failure-retried", "Handled", ["Flights/FailureAlerts.cs"], "RetryAndHoldTests.AFirstUntouchedQueueRemovalIsQueuedAgainOnceAtTheSameHeadWithALineNamingTheInvestigation"),
+        new("failure-released", "Handled", ["Flights/FailureAlerts.cs"], "RetryAndHoldTests.AFailureInALegCheckOfASecondFlightHoldsItAndLandingTheInvestigationReleasesEveryHoldAndDoesWhatEachWasHeldFrom"),
         new("checks-rerun", "Handled", [Checks], "ReviewTests.OnAutopilotFailedChecksRunAgainOnceAHeadBeforeTheLegIsSentRound"),
         new("merge-dropped", "ForYou", [Checks], "LegTests.AWaitingMergeWhoseChecksFailIsDroppedOnACardThatOffersItAgain"),
         new("autopilot-merge-refused", "Ring|ForYou", [Checks], "AutopilotMergeRefusalTests.AFailedRequiredCheckRingsWithReRunTheFailedCheckAndNoMergeAgain", "the PR's state on GitHub is still open (not merged) and the refusal's class is a person's (or a passing one that failed its third try), with the one action to take", [nameof(Verbs.RerunChecks), nameof(Verbs.OpenPr), nameof(Verbs.Dismiss), nameof(Verbs.Merge)]),
@@ -147,6 +154,8 @@ internal static class CardKindCatalog
         new("worktree-removed", "Handled", ["Flights/DiskSweep.cs"], "DiskSweepTests.AHandMadeWorktreeWhosePrMergedAndIsCleanIsRemovedWithAHandledLine"),
         new("worktree-dirty", "ForYou", ["Flights/DiskSweep.cs"], "DiskSweepTests.ADirtyHandMadeWorktreeRaisesOneForYouCardAndNoSecondOnTheNextSweep"),
         new("disk-low", "ForYou", ["Flights/DiskSweep.cs"], "DiskSweepTests.FreeSpaceBelowTheThresholdRaisesOneRingNamingTheLargestItemsAndClosesWhenSpaceIsBack"),
+        new("stray-process", "ForYou", ["Flights/StraySweep.cs"], "StraySweepTests.OneCardPerStrayNamesTheProcessItsOwnerAndTheKillCommand"),
+        new("stray-killed", "Handled", ["Flights/StraySweep.cs"], "StraySweepTests.AProcessOfAnEndedJobTheNodeLaunchedIsKilledThroughTheTableAndNothingElseIs"),
         new("plane-left", "ForYou|Handled", [Move, FlightCommanderLand], "RemovalQueueTests.ALandedFlightWhosePlaneFolderIsHeldSaysSoOnAHandledLineAndQueuesIt"),
         new("folded", "Handled", [FlightCommanderLand], "OverlapTests.FoldRetiresTheAskingFlightLandedAndMarkedFoldedWithNoLegsAndItsPlaneGoneButItsBranchKept"),
         new("routed", "Handled", [FlightCommanderRoute], "FleetRoutingTests.ARoutedFlightIsMadeOnTheWillingPeerWithItsOwnCheckoutAndSaysWhere"),
@@ -166,9 +175,9 @@ internal static class CardKindCatalog
         new("pr-review-restarted", "Handled", [PrReviewsSweep], "PrReviewTests.AReviewingRowWhoseSessionIsGoneAfterARestartIsStartedAfreshAtTheFirstSweepOnce"),
         new("pr-review-lost", "ForYou", [PrReviewsSweep], "PrReviewTests.AReviewLostInARestartThatCannotStartAgainTakesItsStatusAndLabelBackAndRaisesACardWithReviewAgain"),
         new("pr-review-posted", "Handled", [PrReviewsVerdicts], "PrReviewTests.PostsItselfOnAnOpenPr"),
-        new("pr-review-queued", "Handled", [PrReviewsQueue], "PrReviewTests.ACleanCommentOnOnesOwnPrQueuesItAtTheReviewedHeadOnceAndSaysSo"),
+        new("pr-review-queued", "Handled", [PrReviewsQueue, PrReviewsLand], "PrReviewTests.ACleanCommentOnOnesOwnPrQueuesItAtTheReviewedHeadOnceAndSaysSo"),
         new("pr-review-merge", "ForYou", [PrReviewsQueue], "PrReviewTests.ABaseWithoutAMergeQueueRaisesTheMergeCard"),
-        new("pr-review-queue-refused", "ForYou", [PrReviewsQueue], SourcePinned),
+        new("pr-review-queue-refused", "ForYou", [PrReviewsQueue, PrReviewsLand], SourcePinned),
         new("pr-review-design", "Ring", [PrReviewsFixer], "PrFixTests.ADesignQuestionRingsAndStartsNoFixer", "the reviewer's verdict on the PR names a design question, read from its review", [nameof(Verbs.FixPr)]),
         new("pr-review-design-settled", "Handled", [PrReviewsFixerRounds], "DesignSettledTests.AMergedPrDowngradesItsRingingDesignCardToANoticeNamingIt"),
         new("pr-review-no-fixer", "Ring", [PrReviewsFixer], "PrRecheckTests.ARecheckOfAChangesReviewWithNoFixerRingsTheOwnerOnceAndADismissalSticksUntilTheHeadMoves", "the review of the PR asks for changes and no fixer can start", [nameof(Verbs.FixPr)]),

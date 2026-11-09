@@ -209,7 +209,7 @@ if (options.Capture is { } capturePath)
     }
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
         jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)],
-        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, layers: options.Layers, night: options.Night, fold: options.Fold, spend: snapshot?.Spend);
+        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, layers: options.Layers, night: options.Night, fold: options.Fold, spend: snapshot?.Spend, summaries: snapshot?.Summaries);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;
@@ -328,12 +328,14 @@ if (feed is not null)
 // The fleet beyond this window's node: every node heard on the LAN or granted to this user, watched on its own stream,
 // its rows merged into every page. Disposed in the shutdown drain with the feed, never by an await here (see the feed's note).
 var fleetWatch = new FleetWatch();
-// Each node streamed from is told when the Pull requests page is shown and when it is left, so its watch reads every minute only meanwhile.
+// Each node streamed from is told when the Pull requests page or Home is shown and when it is left, so its PR watch reads every
+// minute, and its machine sampler every 5 s, only meanwhile. The first page is shown with no switch, so it is said here.
 chrome.OnPageShown = page =>
 {
     feed?.SayPage(page);
     fleetWatch.SayPage(page);
 };
+chrome.OnPageShown(chrome.SaidPage);
 var fleetKnownAt = DateTimeOffset.MinValue;
 IReadOnlySet<string> granted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 bool CanCommand(string where) => string.Equals(where, remoteEndpoint, StringComparison.OrdinalIgnoreCase) || granted.Contains(where);
@@ -764,7 +766,7 @@ if (feed is not null && client is not null && clients is not null)
         return refused;
     };
     chrome.Flights.OnOpen = location => OpenAway(location, () => chrome.Flights.Say($"could not open {location}"));
-    // The Summary cards on Home and on a flight's page: Summarise is a verb on the node the summary is of, and the card shows
+    // The Summary cards on Home and on a flight's page: Refresh sends the Summarise verb to the node the summary is of, and the card shows
     // it running until the node answers. The row it then shows is the node's own, from the stream, never this answer's.
     chrome.Summaries.Track = (run, what) => tracker.Run(run, what);
     chrome.Summaries.Changed = loop.RequestRedraw;

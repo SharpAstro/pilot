@@ -68,13 +68,19 @@ public sealed partial class LegCommander
         }
         // A planner held by the window goes by itself once it has reset: the same start, said again by the node.
         // Also a planner admission holds (queued on its flight, as a node restarted meanwhile has lost its memory of it), in the order admission gives.
-        foreach (var queued in state.Flights().Where(f => f is { State: FlightState.Flying, Queued: not null } && state.Legs(f.Code).Length == 0))
+        foreach (var queued in state.Flights().Where(f => f is { State: FlightState.Flying, Queued: not null, OnHold: null } && state.Legs(f.Code).Length == 0))
         {
             _plannersWaiting.TryAdd(queued.Code, true);
         }
         foreach (var code in Slots.Order(_plannersWaiting.Keys).ToList())
         {
             _plannersWaiting.TryRemove(code, out _);
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is { OnHold: not null })
+            {
+                // The owner's hold (#771): no planner starts; the sweep asks again once it is released.
+                _plannersWaiting[code] = true;
+                continue;
+            }
             if (state.Flights().FirstOrDefault(f => f.Code == code) is { } asking)
             {
                 await PrimeAsync(asking, cancellationToken);
@@ -119,6 +125,11 @@ public sealed partial class LegCommander
             await SettleMoveAsync(flight.Code, cancellationToken);
             return;
         }
+        // The owner's hold (#771): a held flight is advanced by no sweep, no finish and no card, until it is released.
+        if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is { OnHold: not null })
+        {
+            return;
+        }
         if (!Models.Advances || state.Flights().FirstOrDefault(f => f.Code == flight.Code) is not { State: FlightState.Flying } current
             || await InMaintenanceAsync(current, cancellationToken))
         {
@@ -136,11 +147,16 @@ public sealed partial class LegCommander
             }
             return;
         }
-        if (step.Verb is Verbs.StartLeg or Verbs.StartReview)
+        if (step.Verb is Verbs.StartLeg or Verbs.StartReview or Verbs.OpenPr or Verbs.Merge)
         {
             await PrimeAsync(current, cancellationToken);
+            // The prime reads the issue's labels, and a hold on GitHub it found is the owner's hold now (#771): nothing to gate or ring about.
+            if (state.Flights().FirstOrDefault(f => f.Code == current.Code) is { OnHold: not null })
+            {
+                return;
+            }
         }
-        var label = step.Verb == Verbs.StartLeg ? $"start {step.Target.Split('/')[^1]}" : step.Verb == Verbs.StartReview ? "start its reviewer" : "open its PR";
+        var label =step.Verb == Verbs.StartLeg ? $"start {step.Target.Split('/')[^1]}" : step.Verb == Verbs.StartReview ? "start its reviewer" : "open its PR";
         if (Gate.Hold($"{step.Verb} {step.Target}", Models.StartLimitFor(current.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} waits to {label}", Models.WeekPaceFor(current.Repo)))
         {
             return;

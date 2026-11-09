@@ -443,6 +443,23 @@ public static class Verbs
     public const string Clear = "clear";
 
     /// <summary>
+    /// <c>hold flight/&lt;code&gt; [why…]</c>: the watchtower's word (or the person's) that it is working on a flight held in a holding
+    /// pattern. A hold nobody takes is released by the node after a short grace and the flight merges with its notes; a taken one
+    /// keeps the merge held until <see cref="Clear"/>, a push, or the holding bound rings.
+    /// </summary>
+    public const string Hold = "hold";
+
+    /// <summary>
+    /// <c>ground flight/&lt;code&gt; &lt;why…&gt;</c>: the owner's hold on a flight (#771); not <see cref="Hold"/>, the holding pattern's. While it stands the node starts nothing for the flight
+    /// and takes no outward step (no leg, worker, planner, reviewer, go-around, base merge, push, PR open or merge); an armed merge
+    /// is disarmed and a queued PR taken out of the merge queue. The person's alone: not the watchtower's, not a flight session's.
+    /// </summary>
+    public const string Ground = "ground";
+
+    /// <summary><c>unground flight/&lt;code&gt; [why…]</c>: releases the owner's hold (<see cref="Ground"/>); the flight takes its next due step.</summary>
+    public const string Unground = "unground";
+
+    /// <summary>
     /// <c>review flight/&lt;code&gt; pass|changes &lt;report…&gt;</c>: the reviewer's verdict. A pass offers the merge; changes
     /// ring with a go-around. The controller may pass a review that asked for changes ("ready anyway").
     /// </summary>
@@ -493,9 +510,11 @@ public static class Verbs
     public const string Digest = "digest";
 
     /// <summary>
-    /// <c>summarise node</c> or <c>summarise flight/&lt;code&gt;</c>: one Haiku call over what the node holds of the flights in play
-    /// (or of that one flight), kept as the scope's <see cref="SummaryRow"/> with its time, tokens and cost, on the feed for every
-    /// client. Never run by itself: a client asks. The result's <see cref="CommandResult.Made"/> is the summary's markdown.
+    /// <c>summarise node</c> or <c>summarise flight/&lt;code&gt;</c>: the summary of what the node holds of the flights in play
+    /// (or of that one flight), made at once by the watchtower, with the one-off Haiku call only as the fallback when the watchtower is
+    /// down, and kept as the scope's <see cref="SummaryRow"/> with its time, tokens and cost, on the feed for every client. The fleet's
+    /// summary also follows changes by itself through the watchtower while a client is attached; this verb is the ask that does not wait.
+    /// The result's <see cref="CommandResult.Made"/> is the summary's markdown.
     /// </summary>
     public const string Summarise = "summarise";
 
