@@ -1699,10 +1699,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         return reached;
     }
 
-    /// <summary>The pid of a running job's wrapper, or null.</summary>
     /// <summary>The descendants of a job seen while it ran that still live: what the stray sweep finds a leftover of the job by (pilot #909).</summary>
     internal IReadOnlyList<KnownProcess> KnownOf(string id) => Tree.KnownOf(id);
 
+    /// <summary>The pid of a running job's wrapper, or null.</summary>
     internal int? PidOf(string id) => _running.TryGetValue(id, out var p) ? p.Pid : null;
 
     /// <summary><c>pause-job job/&lt;id&gt;</c>: freezes a running job's whole process tree; it keeps its slot and its timeout stops counting.</summary>

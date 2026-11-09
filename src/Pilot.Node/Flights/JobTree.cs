@@ -143,6 +143,12 @@ public sealed class JobTree(IProcessTable table)
         {
             List<KnownProcess> known = _seen.TryGetValue(jobId, out var map) ? [.. map.Values.Select(s => new KnownProcess(s.Pid, s.Start))]
                 : _afterEnd.TryGetValue(jobId, out var kept) ? kept : [];
+            // Nothing known: no process table read for it (the sweep asks for every job of the last days).
+            if (known.Count == 0)
+            {
+                _afterEnd.Remove(jobId);
+                return known;
+            }
             var alive = table.Snapshot().Select(e => e.Pid).ToHashSet();
             known = [.. known.Where(k => alive.Contains(k.Pid) && JobProcess.SameStart(table.StartOf(k.Pid), k.Start))];
             if (known.Count == 0)

@@ -253,11 +253,13 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
 
     private static (Owner Owner, string How)? Attribute(ProcessEntry entry, DateTimeOffset? start, ProcessDetail? detail, List<Owner> owners)
     {
-        // The pid of the parent it lost is the owner's own process, and it started after that owner did.
+        // The pid of the parent it lost is the owner's own process, and it started after that owner did and, if the owner has ended, before it ended:
+        // a person's process that started later and lost a parent which reused the pid of an ended wrapper is not the owner's.
         foreach (var owner in owners)
         {
             if (owner.Pid == entry.ParentPid && entry.ParentPid > 1
-                && (owner.Start is not { } ownerStart || start is not { } started || started >= ownerStart - JobProcess.StartTolerance))
+                && (owner.Start is not { } ownerStart || start is not { } started || started >= ownerStart - JobProcess.StartTolerance)
+                && StartedBeforeEnd(owner, start, unknownCounts: false))
             {
                 return (owner, "its parent was the owner's process");
             }
@@ -269,7 +271,8 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
         var how = "";
         foreach (var owner in owners)
         {
-            if (owner.Folder is not { Length: > 0 } folder)
+            // A process that started after the owner ended cannot be its leftover, whatever folder it works in.
+            if (owner.Folder is not { Length: > 0 } folder || !StartedBeforeEnd(owner, start, unknownCounts: true))
             {
                 continue;
             }
@@ -289,6 +292,11 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
         }
         return best is null ? null : (best, how);
     }
+
+    // An owner still running has no bound. One that ended can only have left what started before it ended; a start the OS would not say
+    // is accepted where the evidence is weak anyway (the folder and command line rules, which the node never ends) and refused where a process could be ended.
+    private static bool StartedBeforeEnd(Owner owner, DateTimeOffset? start, bool unknownCounts) =>
+        owner.EndedAt is not { } ended || (start is { } at ? at <= ended + JobProcess.StartTolerance : unknownCounts);
 
     private static string Normalize(string path) => path.Replace('/', '\\').TrimEnd('\\');
 

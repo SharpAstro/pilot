@@ -198,4 +198,44 @@ public sealed class StraySweepTests
         Open(StraySweep.Kind).Single(c => c.Subject.StartsWith("process:601@", StringComparison.Ordinal)).Detail.ShouldNotBeNull()
             .ShouldContain("tried to end it and it is still here");
     }
+
+    [Fact]
+    public void AnEndedJobsWrapperPidReusedByALaterParentThatDiedDoesNotMakeItsOrphanTheJobsStray()
+    {
+        // j100's wrapper (pid 12345) ended thirty minutes after it started. Later a person's terminal got pid 12345, started an editor and closed:
+        // the editor is an orphan whose lost parent has the wrapper's pid, but it started after the job ended, so it is not the job's.
+        Job("j100", 12345, Began, TimeSpan.FromHours(2), ended: Began.AddMinutes(30));
+        _table.Add(900, 12345, "Code.exe", Began.AddHours(2), commandLine: "Code.exe .");
+
+        var named = _sweep.SweepOnce();
+
+        named.ShouldBeEmpty();
+        _table.Killed.ShouldBeEmpty();
+        Open(StraySweep.Kind).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AnEndedNodeLaunchedSessionsChildReparentedWithTheSessionsPidAsItsLostParentIsKilledThroughTheTable()
+    {
+        // 1. The session lives, with a process the sweep sees and records.
+        Session("w2", "se1-pil909-worker", SessionState.Working, SessionStartReasons.LegLaunch, cwd: @"C:\elsewhere");
+        _live.Add(("w2", 950));
+        _table.Add(950, 1, "claude.exe", Began.AddMinutes(10), commandLine: "claude.exe");
+        _sweep.SweepOnce().ShouldBeEmpty();
+
+        // 2. It ends and its process goes; its MCP server lives on, re-parented, working outside any plane: only the lost parent's pid ties it.
+        _time.Advance(TimeSpan.FromMinutes(20));
+        Session("w2", "se1-pil909-worker", SessionState.Ended, SessionStartReasons.LegLaunch, ended: _time.GetUtcNow().AddMinutes(-10), cwd: @"C:\elsewhere");
+        _live.Clear();
+        _table.Remove(950);
+        _table.Add(951, 950, "node.exe", Began.AddMinutes(11), commandLine: "node.exe mcp-server.js");
+        // A process that started after the session ended and lost the same pid's later owner is not ended.
+        _table.Add(952, 950, "Code.exe", _time.GetUtcNow().AddMinutes(-5), commandLine: "Code.exe");
+
+        var named = _sweep.SweepOnce();
+
+        _table.Killed.ShouldBe([951]);
+        named.ShouldBeEmpty();
+        _state.Cards().Single(c => c.Kind == StraySweep.KilledKind).Detail.ShouldNotBeNull().ShouldContain("Stop-Process -Id 951 -Force");
+    }
 }

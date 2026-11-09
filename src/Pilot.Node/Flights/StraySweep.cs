@@ -51,6 +51,12 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     // What the last sweep saw of each process's CPU and of when each session was last busy: the finder reads a rate from two sweeps.
     private StrayHistory _history = StrayHistory.Empty;
 
+    // The last process pid and start the sweep saw for each live session (by row id), kept for when the row has ended.
+    private readonly Dictionary<string, (int? Pid, DateTimeOffset? Start)> _lastSeen = new(StringComparer.Ordinal);
+
+    private static bool IsPlane(string? folder) =>
+        folder is { Length: > 0 } && folder.Replace('/', '\\').Contains(@"\.claude\worktrees\", StringComparison.OrdinalIgnoreCase);
+
     // The strays the node already tried to end: a second try is never made, the card says it is still there.
     private readonly HashSet<string> _tried = new(StringComparer.Ordinal);
 
@@ -206,21 +212,38 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
         var pids = LivePids().GroupBy(p => p.Id).ToDictionary(g => g.Key, g => g.First().Pid, StringComparer.Ordinal);
         var live = new List<StraySession>();
         var ended = new List<StraySession>();
-        foreach (var row in state.Sessions())
+        var rows = state.Sessions();
+        foreach (var row in rows)
         {
             var launched = row.StartReason is { Length: > 0 } reason && reason != SessionStartReasons.BeforeLedger;
             if (row.State is SessionState.Ended or SessionState.Failed)
             {
                 if (row.EndedAt is { } at && now - at <= Remembered)
                 {
-                    ended.Add(new StraySession(row.Name, launched, null, null, row.Cwd, at));
+                    // The process the session had while it lived: what it left re-parented names it as the parent it lost.
+                    _lastSeen.TryGetValue(row.Id, out var seen);
+                    // Only a plane's folder ties a leftover to an ended session: a repo root is where a person's own tools work too.
+                    // A pid whose start was never read is not handed over: it would match whatever process holds that pid now.
+                    var known = seen.Start is not null;
+                    ended.Add(new StraySession(row.Name, launched, known ? seen.Pid : null, known ? seen.Start : null, IsPlane(row.Cwd) ? row.Cwd : null, at));
                 }
             }
             else
             {
                 var pid = pids.TryGetValue(row.Id, out var p) ? p : (int?)null;
-                live.Add(new StraySession(row.Name, launched, pid, pid is { } id ? table.StartOf(id) : null, row.Cwd));
+                var start = pid is { } id ? table.StartOf(id) : null;
+                if (pid is not null)
+                {
+                    _lastSeen[row.Id] = (pid, start);
+                }
+                live.Add(new StraySession(row.Name, launched, pid, start, row.Cwd));
             }
+        }
+        // Bounded: a session the node no longer holds is forgotten with its row.
+        var held = rows.Select(r => r.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var gone in _lastSeen.Keys.Where(k => !held.Contains(k)).ToList())
+        {
+            _lastSeen.Remove(gone);
         }
         // A live session claims what works in a plane before an ended one of the same plane does.
         return [.. live, .. ended];
