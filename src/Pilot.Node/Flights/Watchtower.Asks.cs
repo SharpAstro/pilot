@@ -52,8 +52,8 @@ public sealed partial class Watchtower
             title = $"The watchtower asks leave to {PermissionAsks.Describe(ask.Tool, ask.Summary)}";
             // Whole, never cut: Allow runs the whole call, so the card shows all of what it allows (PIL855's review).
             detail = ask.Input.ValueKind == JsonValueKind.Object ? ask.Input.GetRawText().Trim() : "";
-            choices.Add(new CardChoice { Label = "Allow", Verb = Verbs.AnswerAsk, Target = Verbs.WatchtowerTarget, Args = [ask.Id, "allow"] });
-            choices.Add(new CardChoice { Label = "Deny", Verb = Verbs.AnswerAsk, Target = Verbs.WatchtowerTarget, Args = [ask.Id, "deny"] });
+            choices.Add(new CardChoice { Label = "Allow it", Verb = Verbs.AnswerAsk, Target = Verbs.WatchtowerTarget, Args = [ask.Id, "allow"] });
+            choices.Add(new CardChoice { Label = "Deny it", Verb = Verbs.AnswerAsk, Target = Verbs.WatchtowerTarget, Args = [ask.Id, "deny"] });
         }
         state.RaiseCard(CardBin.ForYou, AskKind, AskSubject(ask.Id), title, detail is { Length: > 0 } ? detail : null, choices);
     }

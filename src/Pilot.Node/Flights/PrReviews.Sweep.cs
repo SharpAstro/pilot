@@ -71,7 +71,7 @@ public sealed partial class PrReviews
         }
         state.RaiseCard(CardBin.ForYou, LostKind, subject, $"{pr}: the review was lost in a node restart and starting it again failed: {LegCommander.OneLine(why)}",
             $"{lost}, and starting it again failed: {why}",
-            [new CardChoice { Label = $"Start the review of {pr} afresh", Verb = Verbs.ReviewPr, Target = subject }], link: review.Url,
+            [new CardChoice { Label = "Start the review again", Verb = Verbs.ReviewPr, Target = subject }], link: review.Url,
             summary: $"The review of {pr} was running when the node restarted and could not be started again. Review again starts it afresh.");
     }
 

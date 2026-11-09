@@ -104,7 +104,7 @@ public sealed partial class PrReviews
         {
             // Retry is the same Fix it: once what stopped it is cleared (a branch checked out elsewhere), it starts the fixer.
             RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start: {LegCommander.OneLine(ex.Message)}", ex.Message,
-                [new CardChoice { Label = $"Start the fixer on {pr} again", Verb = Verbs.FixPr, Target = subject }]);
+                [new CardChoice { Label = "Start the fixer again", Verb = Verbs.FixPr, Target = subject }]);
         }
     }
 
@@ -152,7 +152,7 @@ public sealed partial class PrReviews
             SettleDecided(pr, review, decided, "the start did not go, and the card for that starts it again with the decided answer");
             var what = flight is null ? $"the fixer could not start on {pr}" : $"{flight.Code}'s last leg could not be sent round for {pr}";
             RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, subject, $"{pr}: {what}: {LegCommander.OneLine(ex.Message)}", $"{said}\n{ex.Message}",
-                [new CardChoice { Label = flight is null ? $"Start the fixer on {pr} again" : $"Send {flight.Code}'s last leg round on {pr} again", Verb = Verbs.FixPr, Target = subject }]);
+                [new CardChoice { Label = flight is null ? "Start the fixer again" : "Redo the last leg", Verb = Verbs.FixPr, Target = subject }]);
         }
     }
 
@@ -335,7 +335,7 @@ public sealed partial class PrReviews
             // The answer stays stored (DesignAnswer), and the card's choice starts the fixer with it, without asking again.
             var subject = Verbs.PrTarget(pr.Repo, pr.Number);
             RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start: {LegCommander.OneLine(ex.Message)}", ex.Message,
-                [new CardChoice { Label = $"Start the fixer on {pr} again", Verb = Verbs.FixPr, Target = subject }]);
+                [new CardChoice { Label = "Start the fixer again", Verb = Verbs.FixPr, Target = subject }]);
             throw;
         }
         if (dequeued)

@@ -80,7 +80,7 @@ public sealed partial class PrReviews
             catch (FlightException ex)
             {
                 state.RaiseCard(CardBin.ForYou, PushedUnreviewedKind, subject, $"{pr}: the fixer pushed, but its review could not start: {LegCommander.OneLine(ex.Message)}", $"{ex.Message}\nThe push stands; the review has not started on it.",
-                    [new CardChoice { Label = $"Start the review of {pr} on the fixer's push", Verb = Verbs.ReviewPr, Target = subject }], link: review.Url);
+                    [new CardChoice { Label = "Review the fixer's push", Verb = Verbs.ReviewPr, Target = subject }], link: review.Url);
             }
             return;
         }
@@ -347,7 +347,7 @@ public sealed partial class PrReviews
         catch (FlightException ex) when (flight is null)
         {
             RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, target, $"{pr}: the fixer could not start: {LegCommander.OneLine(ex.Message)}", ex.Message,
-                [new CardChoice { Label = $"Start the fixer on {pr} again", Verb = Verbs.FixPr, Target = target }]);
+                [new CardChoice { Label = "Start the fixer again", Verb = Verbs.FixPr, Target = target }]);
             return;
         }
         // Say only what is true: a fixer running, one queued for a slot, or the flight's leg sent round.

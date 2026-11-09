@@ -13,8 +13,8 @@ namespace Pilot.Node;
 /// </summary>
 public sealed class Autopilot(NodeState state, IServiceProvider services)
 {
-    public const string AllowLabel = "Allow";
-    public const string DenyLabel = "Deny";
+    public const string AllowLabel = "Allow it";
+    public const string DenyLabel = "Deny it";
 
     /// <summary>
     /// The card for <paramref name="command"/>, an assistant's your-only command not to be run yet; its result is a refusal
