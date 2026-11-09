@@ -606,9 +606,6 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             since = spoken;
         }
-        // A worker idle while a job of its own runs or waits its turn is waiting, as it was told to: the job wakes it, so it
-        // is not stalled. Its own by row, or by name: a worker Claude Code continued as a copy is a row of its own, while
-        // the job it handed over is still the first row's (TIA1739's j13 rang c205 to c207 as stalls, 2026-10-23).
         if (now - since < IdleGrace)
         {
             return;
@@ -619,6 +616,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             return;
         }
+        // A worker idle while a job of its own runs or waits its turn is waiting, as it was told to: the job wakes it, so it
+        // is not stalled. Its own by row, or by name: a worker Claude Code continued as a copy is a row of its own, while
+        // the job it handed over is still the first row's (TIA1739's j13 rang c205 to c207 as stalls, 2026-10-23).
         var cause = ClassifyIdle(leg, worker);
         if (cause == IdleCause.OwnJob)
         {
@@ -1021,6 +1021,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// or running is a wait, not a stall, even when its turn ended and Claude Code dropped it from its listing (a --bg session ended
     /// by design resumes on the job's end), unless it failed. <see cref="Spoken"/> is the latest of a job's end and of its outcome
     /// being told, so a resumed session is given its turn and the idle grace from then rather than from its stale last response.
+    /// Not filtering on <c>Gone</c> also holds a session someone stopped from outside while its job is open. That is on purpose
+    /// and bounded: the job's end resumes any ended session through the usual say path, the job has a timeout, and once it has
+    /// ended the idle clock starts from <see cref="Spoken"/>, so a session that never takes its turn is told, restarted or rung.
     /// </summary>
     private readonly record struct OwnJobWait(bool Open, DateTimeOffset? Spoken);
 

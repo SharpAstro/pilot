@@ -348,6 +348,32 @@ public sealed class LegWatchTests
     }
 
     [Fact]
+    public async Task AWorkerResumedOnItsToldJobIsGivenItsTurnAndTheGraceBeforeAnyNudge()
+    {
+        Worker(SessionState.Idle);
+        _time.Advance(TimeSpan.FromMinutes(30));
+        // The job ended a while ago and its outcome was told just now (#893): the resumed worker has not had its turn yet.
+        var told = _time.GetUtcNow();
+        _state.PutJob(new JobRow
+        {
+            Id = "j9", Command = "dotnet test", Cwd = "/work/tia1", State = JobState.Succeeded, Owner = "a1b2c3d4", OwnerName = "du1-tia1-parser",
+            LogPath = "/tmp/j9.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start, EndedAt = told - TimeSpan.FromMinutes(20), Told = true, ToldAt = told,
+        });
+        _time.Advance(TimeSpan.FromMinutes(2));
+
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldBeEmpty();
+        Handled().ShouldNotContain(c => c.Kind == "worker-nudged");
+
+        // Still no turn after the grace since the telling: now it is nudged, as any idle worker is.
+        _time.Advance(TimeSpan.FromMinutes(3));
+        await _watch.LookAsync(Ct);
+        _said.ShouldHaveSingleItem();
+        Handled().ShouldContain(c => c.Kind == "worker-nudged");
+    }
+
+    [Fact]
     public async Task AnIdleWorkerWhoseEndedJobCouldNotBeToldFallsThroughToTheNudge()
     {
         Worker(SessionState.Idle);
