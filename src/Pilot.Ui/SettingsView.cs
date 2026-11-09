@@ -485,7 +485,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private static Layout.Node Section(string title, string hint) =>
         Layout.Builder.HStack(
                 Layout.Builder.Text(title, 15f, Bright).Selectable().WAuto(),
-                Layout.Builder.Text(hint, 12f, Faint).Selectable().WStar())
+                Layout.Builder.Text(hint, 12f, Faint).Whole(hint).Selectable().WStar())
             .WithGap(12f).Pad(8f, 10f).RowH(38f);
 
     // Setup's heading carries the refresh: it measures the checks again, and shows it is working until the node answers.
@@ -817,9 +817,10 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
                 Pill("default handle", $"settings:{key}:handle:default", () => SetHandle(key, "default"), chosen: handle == "default").HFixed(ControlH),
                 Pill("max handle", $"settings:{key}:handle:max", () => SetHandle(key, "max"), chosen: handle == "max").HFixed(ControlH))
             .WithGap(6f).WithLineGap(4f).WStar().HAuto();
+        var pressLine = $"{(fleet ? "setting the fleet's range" : "setting this node's range")}: a press moves {(handle.Length > 0 ? "the " + handle + " handle" : "the nearer handle")}";
         var lines = new List<Layout.Node>(pairLines)
         {
-            Layout.Builder.Text($"{(fleet ? "setting the fleet's range" : "setting this node's range")}: a press moves {(handle.Length > 0 ? "the " + handle + " handle" : "the nearer handle")}", 11f, Dim).Selectable().RowH(16f),
+            Layout.Builder.Text(pressLine, 11f, Dim).Whole(pressLine).Selectable().RowH(16f),
             scope,
         };
         if ((setting.Saved is not null && setting.Source != SettingSources.CommandLine && !fleet) || (fleet && setting.FleetValue is not null))
@@ -829,7 +830,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             lines.Add(Layout.Builder.HStack(NodePill(fleet ? "reset the fleet's" : "reset", action, () => Act(Verbs.Set, args, $"{setting.Label}: back to the default…", action)), Layout.Builder.Spacer().WStar()).HFixed(ControlH));
         }
         var fleetLine = setting.FleetValue is { } fv ? $"the fleet's range is {fv}" : "no fleet range is set";
-        lines.Add(Layout.Builder.Text($"{setting.Value} · {SourceWords(setting)} · {fleetLine}", 11f, Body).WithTooltip(setting.Detail).Selectable().RowH(18f));
+        // The tooltip is the line's own whole text: the page cuts it with an ellipsis where it is narrow, and the fleet's range would be unreadable (#887).
+        var summaryLine = $"{setting.Value} · {SourceWords(setting)} · {fleetLine}";
+        lines.Add(Layout.Builder.Text(summaryLine, 11f, Body).Whole(summaryLine).Selectable().RowH(18f));
         if (setting.Deviations.Length > 0)
         {
             var text = "differs from the fleet's: " + string.Join("; ", setting.Deviations.Select(d => $"{d.Node} runs {d.Value}"));

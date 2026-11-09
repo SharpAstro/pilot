@@ -97,6 +97,26 @@ public sealed class RoleRangeRowsTests
         }
     }
 
+    /// <summary>Text the page cuts with an ellipsis is never cut silently (#887): the range row's summary and help lines and the section hint carry their whole text as the tooltip.</summary>
+    [Theory]
+    [InlineData(500)]
+    [InlineData(700)]
+    public async Task TheRangeRowsSummaryAndHelpLinesAndTheSectionHintCarryTheirWholeTextOnHover(int width)
+    {
+        var row = Range("sonnet-high..opus-medium", SettingSources.ThisNode, "sonnet-high..opus-medium", "sonnet-medium..opus-xhigh");
+        using var renderer = new RgbaImageRenderer((uint)width, 1500);
+        var chrome = Chrome(renderer);
+        await Loaded(chrome, Page(row));
+        chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, width, 1500));
+
+        var arranged = Layout.Engine.Arrange(chrome.Settings.Tree(DateTimeOffset.UtcNow), new Rect<float>(0, 0, width, 2400), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        var tooltips = arranged.Select(a => a.Node.Tooltip).OfType<string>().ToList();
+
+        tooltips.ShouldContain(t => t.StartsWith("sonnet-high..opus-medium", StringComparison.Ordinal) && t.EndsWith("the fleet's range is sonnet-medium..opus-xhigh", StringComparison.Ordinal));
+        tooltips.ShouldContain("setting this node's range: a press moves the nearer handle");
+        tooltips.ShouldContain("the node restarts to run with a change at once; its sessions, flights and jobs carry on");
+    }
+
     public static TheoryData<string, string, int, float> RangeRowCases()
     {
         var data = new TheoryData<string, string, int, float>();
