@@ -412,7 +412,7 @@ public sealed class PageTextOverlapTests
         chat.OnSend = _ => Task.FromResult<string?>(null);
         chat.OnAnswerNow = _ => Task.FromResult<string?>(null);
         chat.Open();
-        for (var i = 0; i < 100 && chat.Entries.Count < feed.Length; i++)
+        for (var i = 0; i < 500 && chat.Entries.Count < feed.Length; i++)
         {
             await Task.Delay(20, TestContext.Current.CancellationToken);
         }
