@@ -93,9 +93,9 @@ public sealed class StrayFinderTests
     [Fact]
     public void A_sessions_mcp_server_that_outlived_the_session_is_a_stray()
     {
-        // The session's claude (pid 300) ended and is gone; its MCP server (301) was its child and now hangs below init.
+        // The session's claude (pid 300) ended and is gone; its MCP server (301) still names it as its parent, which the table no longer holds.
         var session = new StraySession("se1-pil909-stray-finder", NodeLaunched: true, Pid: 300, Start: Began, Folder: Plane, EndedAt: Began.AddMinutes(20));
-        _table.Add(301, 1, "node.exe", Began.AddSeconds(5), TimeSpan.FromSeconds(3), "node mcp-server.js");
+        _table.Add(301, 300, "node.exe", Began.AddSeconds(5), TimeSpan.FromSeconds(3), "node mcp-server.js");
 
         var stray = Find(sessions: [session], windows: false).Strays.ShouldHaveSingleItem();
 
