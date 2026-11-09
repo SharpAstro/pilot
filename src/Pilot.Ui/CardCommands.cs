@@ -22,23 +22,34 @@ internal static class CardCommands
         // Read now: by the time the node answers, the panel drawn holds other rows, and the card's node is no longer known by it.
         var node = cards.NodeOf(card)?.Name;
         string? refused;
-        if (send is null)
+        try
         {
-            refused = watchOnly;
+            if (send is null)
+            {
+                refused = watchOnly;
+            }
+            else
+            {
+                try
+                {
+                    var envelope = await send(DashboardCommands.CardRequest(verb, card, args, who), cancellationToken);
+                    answered?.Invoke(envelope);
+                    refused = DashboardCommands.RefusalOf(envelope);
+                }
+                catch (Exception ex) when (ex is HttpRequestException or IOException or System.Net.Sockets.SocketException or System.Text.Json.JsonException)
+                {
+                    // A node that did not answer took nothing: said on the card, which a Dismiss brings back.
+                    refused = $"the node did not answer: {ex.Message}";
+                }
+            }
         }
-        else
+        catch (Exception ex)
         {
-            try
-            {
-                var envelope = await send(DashboardCommands.CardRequest(verb, card, args, who), cancellationToken);
-                answered?.Invoke(envelope);
-                refused = DashboardCommands.RefusalOf(envelope);
-            }
-            catch (Exception ex) when (ex is HttpRequestException or IOException or System.Net.Sockets.SocketException or System.Text.Json.JsonException)
-            {
-                // A node that did not answer took nothing: said on the card, which a Dismiss brings back.
-                refused = $"the node did not answer: {ex.Message}";
-            }
+            // Any other exit (an ObjectDisposedException, an InvalidOperationException, the shutdown's cancel, a fault in `answered`) took
+            // nothing the person can rely on: said on the card so a Dismiss's card is never left hidden, then thrown on to the host, which
+            // logs it (pilot-tui starts this with `_ =`, so the card is the one place it is seen).
+            cards.NoteRefused(card.Id, node, $"the command did not finish: {ex.Message}");
+            throw;
         }
         cards.NoteRefused(card.Id, node, refused);
         return refused;

@@ -81,7 +81,7 @@ public sealed class DismissHidesCardTests
         PageButtonFeedbackTests.Click(view.Tree(screen), "card:c2:dismiss");
         Words(view, screen).ShouldNotContain("Gone card");
 
-        view.NoteRefused("c2", "the node has no card c2 to dismiss: it is on another node");
+        view.NoteRefused("c2", null, "the node has no card c2 to dismiss: it is on another node");
 
         view.DismissedPending("c2").ShouldBeFalse();
         var back = Words(view, screen);
@@ -99,7 +99,7 @@ public sealed class DismissHidesCardTests
         PageButtonFeedbackTests.Click(view.Tree(screen), "card:c2:dismiss");
 
         // The node took it: no refusal, so nothing brings the row back before the close.
-        view.NoteRefused("c2", null);
+        view.NoteRefused("c2", null, null);
         Words(view, screen).ShouldNotContain("Gone card");
         view.DismissedPending("c2").ShouldBeTrue();
 
@@ -250,6 +250,36 @@ public sealed class DismissHidesCardTests
         view.DismissedPending("c2").ShouldBeFalse();
     }
 
+    // Any exit of a send, not only the four a dead node throws, puts the card back and says why, then reaches the host.
+    [Theory]
+    [InlineData("disposed")]
+    [InlineData("invalid")]
+    [InlineData("cancelled")]
+    public async Task AnyOtherExceptionFromTheSendPutsTheDismissedCardBackWithTheReasonAndIsThrownOn(string how)
+    {
+        using var renderer = new RgbaImageRenderer(1, 1);
+        var view = new CardsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        var screen = CardsScreen.From([Keep, Gone]);
+        Task<string?>? sent = null;
+        Exception thrown = how switch
+        {
+            "disposed" => new ObjectDisposedException("client"),
+            "invalid" => new InvalidOperationException("the client is closed"),
+            _ => new OperationCanceledException("shutdown"),
+        };
+        view.OnDismiss = card => sent = CardCommands.SendAsync(view, Verbs.Dismiss, card, [], "tui",
+            (_, _) => Task.FromException<ResponseEnvelope<CommandResult>>(thrown), "watch only", CancellationToken.None);
+        PageButtonFeedbackTests.Click(view.Tree(screen), "card:c2:dismiss");
+        view.DismissedPending("c2").ShouldBeTrue();
+
+        (await Should.ThrowAsync(() => sent!, thrown.GetType())).ShouldBeSameAs(thrown);
+
+        view.DismissedPending("c2").ShouldBeFalse();
+        var back = Words(view, screen);
+        back.ShouldContain("Gone card");
+        back.ShouldContain("the command did not finish");
+    }
+
     // The panel before and after a dismiss at the narrowest and the widest panel width, with long words and a refusal that must wrap.
     [Theory]
     [InlineData(240)]
@@ -282,7 +312,7 @@ public sealed class DismissHidesCardTests
         PageButtonFeedbackTests.Click(view.Tree(screen), "card:c2:dismiss");
         Shoot("after", screen);
 
-        view.NoteRefused("c2", "the node refused: card c2 is held by a leg that is still flying");
+        view.NoteRefused("c2", null, "the node refused: card c2 is held by a leg that is still flying");
         Shoot("refused", screen);
 
         // The refused card is drawn whole: its refusal wraps inside the panel, past no edge.

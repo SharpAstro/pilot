@@ -532,7 +532,7 @@ if (feed is not null && client is not null && clients is not null)
         () => CardCommandAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)], $"card:{card.Id}:{number}"), $"answer {card.Id}");
     chrome.Cards.OnAnswerWords = (card, number, words) => tracker.Run(
         () => CardCommandAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture), words], $"card:{card.Id}:{number}"), $"answer {card.Id}");
-    chrome.Cards.OnDismiss = card => tracker.Run(() => CardCommandAsync(Verbs.Dismiss, card, [], $"card:{card.Id}:dismiss"), $"dismiss {card.Id}");
+    chrome.Cards.OnDismiss = card => tracker.Run(() => CardCommandAsync(Verbs.Dismiss, card, [], CardsView<VulkanContext>.DismissHit(card)), $"dismiss {card.Id}");
 
     // A page that draws text over text raises one for-you card on this window's node (the check's own once-per-page rule): through
     // the tracker, as a click's command goes, never on the render thread that found it.

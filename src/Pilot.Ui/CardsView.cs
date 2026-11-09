@@ -557,6 +557,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     // The cards whose Dismiss was clicked and the node has not yet closed, by node and id (a merged panel's nodes may share an id, so an
     // id alone hid another node's card the person never dismissed). The row leaves the panel on the click: a snapshot taken before the
     // node's close still lists the card open, and would bring it back for a moment (PIL853). Swapped whole, as the presses are.
+    // The node of the key is the merged panel's own: null for this window's node while one node is shown, its name once several are
+    // (FleetPages.Mark). A node joining or leaving while a dismiss is pending therefore changes the key, and the card shows again until the
+    // node's close arrives. Known and brief; a stable key would need the window's own node named when it is alone, which the panel does not carry.
     private System.Collections.Immutable.ImmutableHashSet<(string? Node, string Id)> _dismissed = System.Collections.Immutable.ImmutableHashSet<(string? Node, string Id)>.Empty;
 
     /// <summary>Whether card <paramref name="cardId"/> of node <paramref name="node"/> (null: this window's) was dismissed here and is hidden until the node closes it or refuses, for a test or a dump.</summary>
@@ -613,23 +616,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     }
 
     /// <summary>
-    /// What the node said when it refused a button on card <paramref name="cardId"/>, shown on the card in red until the
-    /// card changes or closes; null clears it (the next press that went through). A refusal of a Dismiss brings the card back
-    /// (<see cref="NoteDismissed"/>) with the reason on it: every node's card of that id, as a caller that knows only the id cannot say
-    /// which (<see cref="NoteRefused(string, string?, string?)"/> can).
-    /// </summary>
-    public void NoteRefused(string cardId, string? why)
-    {
-        Presses.NoteRefused(cardId, why);
-        if (why is not null)
-        {
-            System.Collections.Immutable.ImmutableInterlocked.Update(ref _dismissed, d => d.Except(d.Where(k => k.Id == cardId)));
-        }
-    }
-
-    /// <summary>
-    /// What node <paramref name="node"/> (null: this window's) said when it refused a button on its card <paramref name="cardId"/>, as
-    /// <see cref="NoteRefused(string, string?)"/>; a refused Dismiss brings back this card alone, not another node's card of the same id.
+    /// What node <paramref name="node"/> (null: this window's) said when it refused a button on its card <paramref name="cardId"/>, shown
+    /// on the card in red until the card changes or closes; null clears it (the next press that went through). A refused Dismiss brings
+    /// back this card alone (<see cref="NoteDismissed"/>), not another node's card of the same id, with the reason on it.
     /// The node is read when the press is sent (<see cref="NodeOf"/>), since the panel drawn by the time the answer comes holds other rows.
     /// </summary>
     public void NoteRefused(string cardId, string? node, string? why)
