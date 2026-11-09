@@ -213,7 +213,7 @@ public sealed class DismissHidesCardTests
         Task<string?>? sent = null;
         Func<CommandRequest, CancellationToken, Task<ResponseEnvelope<CommandResult>>>? send = how switch
         {
-            "refused" => (_, _) => Task.FromResult(ResponseEnvelope<CommandResult>.Ok(new CommandResult { Verb = Verbs.Dismiss, Target = "c2", Who = "tui", Ok = false, Error = "card c2 is held by a flying leg" })),
+            "refused" => (_, _) => Task.FromResult(ResponseEnvelope<CommandResult>.Ok(new CommandResult { Verb = Verbs.Dismiss, Target = "c2", Who = "tui", Seq = 1, Ok = false, Error = "card c2 is held by a flying leg" })),
             "failed" => (_, _) => Task.FromResult(ResponseEnvelope<CommandResult>.Fail("status 500: card c2 is held by a flying leg", 500)),
             "unreachable" => (_, _) => Task.FromException<ResponseEnvelope<CommandResult>>(new HttpRequestException("card c2 is held: connection refused")),
             _ => null,
@@ -240,7 +240,7 @@ public sealed class DismissHidesCardTests
         CommandRequest? asked = null;
         Task<string?>? sent = null;
         view.OnDismiss = card => sent = CardCommands.SendAsync(view, Verbs.Dismiss, card, [], "tui",
-            (request, _) => { asked = request; return Task.FromResult(ResponseEnvelope<CommandResult>.Ok(new CommandResult { Verb = Verbs.Dismiss, Target = "c2", Who = "tui", Ok = true })); }, "watch only", CancellationToken.None);
+            (request, _) => { asked = request; return Task.FromResult(ResponseEnvelope<CommandResult>.Ok(new CommandResult { Verb = Verbs.Dismiss, Target = "c2", Who = "tui", Seq = 1, Ok = true })); }, "watch only", CancellationToken.None);
         PageButtonFeedbackTests.Click(view.Tree(screen), "card:c2:dismiss");
 
         (await sent!).ShouldBeNull();
