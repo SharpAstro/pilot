@@ -21,7 +21,7 @@ public sealed class WaitBudgetTests
     private const string BudgetMarker = "budget:";
 
     // The wait bound itself, written as a TimeSpan: the unit and the number are captured for every form below.
-    private const string Span = @"TimeSpan\.From(?<unit>Seconds|Minutes|Hours)\(\s*(?<n>[0-9_]+(?:\.[0-9]+)?)\s*\)";
+    private const string Span = @"TimeSpan\.From(?<unit>Seconds|Minutes|Hours)\(\s*(?<n>[0-9][0-9_]*(?:\.[0-9]+)?)\s*\)";
 
     private static readonly Regex[] Forms =
     [
@@ -34,16 +34,16 @@ public sealed class WaitBudgetTests
         // A named ceiling: Ceiling, WaitCeiling, WaitBudget, CheckWait, Cap, or a cap: argument.
         new(@"\b(\w*Ceiling|\w*WaitBudget|CheckWait|Cap|cap)\s*[=:]\s*" + Span, RegexOptions.Compiled),
         // A deadline made of a clock plus a duration.
-        new(@"\b(until|deadline)\w*\s*=\s*[\w.]+\.Add(?<unit>Seconds|Minutes)\((?<n>[0-9_]+(?:\.[0-9]+)?)\)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        new(@"\b(until|deadline)\w*\s*=\s*[\w.]+\.Add(?<unit>Seconds|Minutes)\((?<n>[0-9][0-9_]*(?:\.[0-9]+)?)\)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
         // A ceiling kept as a bare number of seconds.
-        new(@"\bWait(?<unit>Seconds)\s*=\s*(?<n>[0-9_]+)\b", RegexOptions.Compiled),
+        new(@"\bWait(?<unit>Seconds)\s*=\s*(?<n>[0-9][0-9_]*)\b", RegexOptions.Compiled),
         // A delay given in milliseconds.
-        new(@"\bTask\.Delay\(\s*(?<ms>[0-9_]{5,})\s*[,)]", RegexOptions.Compiled),
+        new(@"\bTask\.Delay\(\s*(?<ms>[0-9][0-9_]{4,})\s*[,)]", RegexOptions.Compiled),
     ];
 
     // for (var i = 0; i < 600; i++) { ... await Task.Delay(50, Ct); }: the ceiling is the iterations times the delay.
-    private static readonly Regex Loop = new(@"\bfor\s*\(\s*var\s+\w+\s*=\s*0\s*;\s*\w+\s*<\s*(?<count>[0-9_]+)", RegexOptions.Compiled);
-    private static readonly Regex LoopDelay = new(@"Task\.Delay\(\s*(?<ms>[0-9_]+)\s*[,)]", RegexOptions.Compiled);
+    private static readonly Regex Loop = new(@"\bfor\s*\(\s*var\s+\w+\s*=\s*0\s*;\s*\w+\s*<\s*(?<count>[0-9][0-9_]*)", RegexOptions.Compiled);
+    private static readonly Regex LoopDelay = new(@"Task\.Delay\(\s*(?<ms>[0-9][0-9_]*)\s*[,)]", RegexOptions.Compiled);
     private const int LoopLookahead = 8;
 
     /// <summary>One wait ceiling at or over the limit with no <c>budget:</c> comment: the line number is 1-based.</summary>
