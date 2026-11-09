@@ -141,6 +141,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>How many jobs run at once; the rest wait their turn. Set live by <c>set node max-jobs</c>, then <see cref="Pump"/>.</summary>
     public int MaxRunning { get; set; } = 1;
 
+    /// <summary>
+    /// Whether a heavy job (a test run, a solution, test-project or folder build) waits while another heavy job runs on the machine,
+    /// whatever <see cref="MaxRunning"/> allows (the owner, 2026-11-09). On for every node; a test of another queue rule turns it off.
+    /// </summary>
+    public bool OneHeavyAtATime { get; set; } = true;
+
     /// <summary>The priority every job's process tree runs at, so builds and tests yield the CPU to other work (#629); Normal keeps the node's own.</summary>
     public JobPriority Priority { get; set; } = JobPriority.BelowNormal;
 
@@ -1570,7 +1576,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     private string? HeavyHold(JobRow job)
     {
-        if (!IsHeavy(job.Command))
+        if (!OneHeavyAtATime || !IsHeavy(job.Command))
         {
             return null;
         }
