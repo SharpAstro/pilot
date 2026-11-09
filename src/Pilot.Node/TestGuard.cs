@@ -127,9 +127,9 @@ public static class TestGuard
     }
 
     /// <summary>
-    /// <c>dotnet</c>'s arguments: the verb is the first word that is not a flag. <c>test</c> is refused whatever it names; <c>build</c> only
-    /// when it names a solution or a test project (a bare <c>dotnet build</c> builds what its folder holds, which this cannot see, and
-    /// passes). <c>--version</c>, <c>--list-sdks</c>, <c>--info</c> and <c>restore</c> have no such verb or another, and pass.
+    /// <c>dotnet</c>'s arguments: the verb is the first word that is not a flag. <c>test</c>, <c>build</c>, <c>run</c>, <c>publish</c>,
+    /// <c>pack</c> and <c>msbuild</c> are refused whatever they name: each compiles, and compiling is the job system's.
+    /// <c>--version</c>, <c>--list-sdks</c>, <c>--info</c> and <c>restore</c> have no such verb or another, and pass.
     /// </summary>
     private static string? DotnetReason(List<string> args)
     {
@@ -143,8 +143,10 @@ public static class TestGuard
         {
             case "test":
                 return "`dotnet test`";
-            case "build" when rest.FirstOrDefault(IsSolutionOrTestProject) is { } target:
-                return $"`dotnet build {target}`";
+            // Every build, not only a solution's: a pilot-driven session builds through the job system, always (the owner, 2026-11-09:
+            // "make sure that pilot driven sessions do not call dotnet build without the job system"). run, publish and pack build too.
+            case "build" or "run" or "publish" or "pack" or "msbuild":
+                return rest.FirstOrDefault(IsSolutionOrTestProject) is { } target ? $"`dotnet {args[at].ToLowerInvariant()} {target}`" : $"`dotnet {args[at].ToLowerInvariant()}`";
             default:
                 return null;
         }
