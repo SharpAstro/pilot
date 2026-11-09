@@ -26,6 +26,19 @@ public static partial class NodeApp
         builder.Services.AddSingleton(logWriter);
         // First, so its start line leads and its stop line (hosts stop in reverse) closes the log of this run.
         builder.Services.AddHostedService(_ => new NodeLifecycleLog(options, log));
+        // A reboot made ready (#916): maintenance mode, every live session told to save its state, the node collecting the files.
+        builder.Services.AddSingleton(services =>
+        {
+            var messenger = services.GetRequiredService<SessionMessenger>();
+            return new RebootPrep(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>(), Path.Combine(options.DataFolder, "reboot"))
+            {
+                Say = async (id, text, ct) => (await messenger.SayAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = "node" }, ct)).Ok,
+                End = async (id, why, ct) => await messenger.EndAsync(new CommandRequest { Verb = Verbs.EndSession, Target = Verbs.SessionTarget(id), Args = [why], Who = Flights.LegWatch.Who }, ct),
+                SetMaintenance = on => services.GetRequiredService<NodeSettingsCommands>().Set(new CommandRequest
+                    { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.MaintenanceKey, on ? "on" : "off"], Who = "node" }),
+            };
+        });
+        builder.Services.AddHostedService(services => services.GetRequiredService<RebootPrep>());
         return logWriter;
     }
 
