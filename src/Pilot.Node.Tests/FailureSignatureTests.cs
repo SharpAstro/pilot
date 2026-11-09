@@ -36,6 +36,73 @@ public sealed class FailureSignatureTests
         test (ubuntu-latest)	Test	2026-11-05T10:00:02.0000000Z [31;1mFailed![0m  - Failed:     1, Passed:   99, Skipped:     0, Total:   100
         """;
 
+    // gh run view --log-failed prefixes each line with its job, step and timestamp.
+    private static string Gh(string job, params string[] lines) =>
+        string.Join('\n', lines.Select((l, i) => $"{job}\tTest\t2026-11-09T09:00:{i % 60:00}.0000000Z{l}"));
+
+    private const string Compaction = "Pilot.Node.Tests.WatchtowerStreamTests.ACompactionIsSlashCompactOnItsStdinWhileIdleAndAGenerationOfItsOwn";
+    private const string Shouldly = "Shouldly.ShouldAssertException : events.Count should be 2 but was 1";
+    private const string SkipReason = "Starts the real claude: set PILOT_LIVE_CLAUDE=1 to run it.";
+
+    // Run 42604667012's windows job: a test's [FAIL] and Failed blocks, then a Skipped test whose block has its own "Error Message:"
+    // with the skip reason, then Passed lines (#931).
+    private static readonly string FailedThenSkipped = Gh("test (windows-latest)",
+        $" [xUnit.net 00:01:10.00]     {Compaction} [FAIL]",
+        $" [xUnit.net 00:01:10.00]       {Shouldly}",
+        " [xUnit.net 00:01:10.00]       Stack Trace:",
+        $" [xUnit.net 00:01:10.00]         at {Compaction}()",
+        $"   Failed {Compaction} [3 s]",
+        "   Error Message:",
+        $"    {Shouldly}",
+        "   Stack Trace:",
+        $"      at {Compaction}() in /_/src/Pilot.Node.Tests/WatchtowerStreamTests.cs:line 210",
+        "",
+        " [xUnit.net 00:01:11.00]     Pilot.Node.Tests.StreamLiveTests.ATurnStreamsItsWordsAndEnds [SKIP]",
+        $" [xUnit.net 00:01:11.00]       {SkipReason}",
+        "   Skipped Pilot.Node.Tests.StreamLiveTests.ATurnStreamsItsWordsAndEnds [1 ms]",
+        "   Error Message:",
+        $"    {SkipReason}",
+        "",
+        "   Passed Pilot.Node.Tests.StreamTests.AnotherOne [2 ms]",
+        "   Passed Pilot.Node.Tests.StreamTests.AndAnother [4 ms]");
+
+    [Fact]
+    public void ASkippedTestsReasonIsNeverTheMessageOfTheFailedTestBeforeIt()
+    {
+        var failure = FailureSignature.Tests(FailedThenSkipped).ShouldHaveSingleItem();
+
+        failure.Test.ShouldBe(Compaction);
+        failure.Message.ShouldBe(Shouldly);
+        failure.Message.ShouldNotContain("PILOT_LIVE_CLAUDE");
+    }
+
+    [Fact]
+    public void ASkippedOrPassedResultLineEndsTheReportInHand()
+    {
+        // No Failed block of its own: only xunit's [FAIL] message is there, and a later block must not be taken for it.
+        var log = Gh("job",
+            " [xUnit.net 00:00:01.00]     Ns.FooTests.Bar [FAIL]",
+            " [xUnit.net 00:00:01.00]       the real message",
+            " [xUnit.net 00:00:01.00]       Stack Trace:",
+            "   Passed Ns.FooTests.Fine [1 ms]",
+            "   Error Message:",
+            "    not a failure's message");
+
+        FailureSignature.Tests(log).ShouldHaveSingleItem().Message.ShouldBe("the real message");
+
+        var skipped = "[xUnit.net 00:00:01.00]     Ns.FooTests.Bar [FAIL]\n[xUnit.net 00:00:01.00]       the real message\n"
+            + "[xUnit.net 00:00:01.00]     Ns.FooTests.Skip [SKIP]\n[xUnit.net 00:00:01.00]       a skip reason";
+        FailureSignature.Tests(skipped).ShouldHaveSingleItem().Message.ShouldBe("the real message");
+    }
+
+    [Fact]
+    public void ATestNamesTheJobsItFailedIn()
+    {
+        var log = Gh("test (ubuntu-latest)", $"   Passed {Compaction} [3 ms]") + "\n" + FailedThenSkipped;
+
+        FailureSignature.Tests(log).ShouldHaveSingleItem().Jobs.ShouldBe(["test (windows-latest)"]);
+    }
+
     [Fact]
     public void ARefusedStartsTimeoutIsOneFailureWithItsFullNameAndTheWholeAssertionMessage()
     {

@@ -10,7 +10,14 @@ namespace Pilot.Node.Flights;
 public static partial class FailureSignature
 {
     /// <summary>One failed test: its full name (<c>Ns.Class.Method</c>, with its arguments when it is a theory row) and the assertion message it failed with.</summary>
-    public sealed record TestFailure(string Test, string Message);
+    /// <param name="Test">The test's full name.</param>
+    /// <param name="Message">The assertion message it failed with.</param>
+    /// <param name="FailedIn">The jobs whose log lines carry the failure (from <c>--log-failed</c>'s prefix); null or empty when the log has none.</param>
+    public sealed record TestFailure(string Test, string Message, IReadOnlyList<string>? FailedIn = null)
+    {
+        /// <summary>The jobs the test failed in; never null.</summary>
+        public IReadOnlyList<string> Jobs => FailedIn ?? [];
+    }
 
     // The most of a message kept: a Shouldly diff of a big object is pages.
     private const int MessageLimit = 600;
@@ -29,6 +36,7 @@ public static partial class FailureSignature
         var order = new List<string>();
         var viaXunit = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         var viaBlock = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var jobsOf = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         string? name = null;
         List<string>? into = null;
         var inBlock = false;
@@ -40,6 +48,7 @@ public static partial class FailureSignature
             {
                 name = fail.Groups["name"].Value.Trim();
                 inBlock = false;
+                SeenIn(jobsOf, name, JobOf(raw));
                 if (!viaXunit.TryGetValue(name, out into))
                 {
                     order.Add(name);
@@ -52,12 +61,20 @@ public static partial class FailureSignature
             {
                 name = failed.Groups["name"].Value.Trim();
                 inBlock = false;
+                SeenIn(jobsOf, name, JobOf(raw));
                 if (!viaXunit.ContainsKey(name))
                 {
                     order.Add(name);
                     viaXunit[name] = [];
                 }
                 into = null;
+                continue;
+            }
+            // A result line of any other outcome (a Passed or Skipped test) or an xunit [SKIP] line ends the report in hand: a skipped
+            // test's block has its own "Error Message:" (its reason), which is not the failed test's before it (#931).
+            if (OtherResult().IsMatch(line) || XunitSkip().IsMatch(line))
+            {
+                (into, inBlock, name) = (null, false, null);
                 continue;
             }
             if (name is null)
@@ -87,7 +104,30 @@ public static partial class FailureSignature
                 into.Add(text);
             }
         }
-        return [.. order.Select(n => new TestFailure(n, Message(viaBlock.GetValueOrDefault(n) is { Count: > 0 } block ? block : viaXunit[n])))];
+        return [.. order.Select(n => new TestFailure(n, Message(viaBlock.GetValueOrDefault(n) is { Count: > 0 } block ? block : viaXunit[n]), jobsOf.GetValueOrDefault(n) ?? []))];
+    }
+
+    // The job a raw log line is printed under (the first field of --log-failed's prefix); null for a line with none.
+    private static string? JobOf(string raw)
+    {
+        var prefixed = LogPrefix().Match(Ansi().Replace(raw.TrimEnd('\r'), ""));
+        return prefixed.Success && prefixed.Groups["job"].Value.Trim() is { Length: > 0 } job ? job : null;
+    }
+
+    private static void SeenIn(Dictionary<string, List<string>> jobsOf, string test, string? job)
+    {
+        if (job is null)
+        {
+            return;
+        }
+        if (!jobsOf.TryGetValue(test, out var jobs))
+        {
+            jobsOf[test] = jobs = [];
+        }
+        if (!jobs.Contains(job, StringComparer.Ordinal))
+        {
+            jobs.Add(job);
+        }
     }
 
     private static string Message(List<string> lines)
@@ -200,6 +240,13 @@ public static partial class FailureSignature
     [GeneratedRegex(@"^\s*Failed\s+(?<name>\S.*?)\s+\[[^\]]*\]\s*$")]
     private static partial Regex FailedLine();
 
+    // "  Passed Ns.Class.Method [4 ms]" or "  Skipped ...": a result of an outcome that is no failure.
+    [GeneratedRegex(@"^\s*(?:Passed|Skipped)\s+(?<name>\S.*?)\s+\[[^\]]*\]\s*$")]
+    private static partial Regex OtherResult();
+
+    [GeneratedRegex(@"^\[xUnit\.net [\d:.]+\]\s+(?<name>\S.*?)\s+\[SKIP\]\s*$")]
+    private static partial Regex XunitSkip();
+
     [GeneratedRegex(@"^\[xUnit\.net [\d:.]+\]\s?")]
     private static partial Regex XunitPrefix();
 
@@ -207,7 +254,7 @@ public static partial class FailureSignature
     private static partial Regex Summary();
 
     // The prefix of gh run view --log-failed: "job<TAB>step<TAB>2026-11-05T10:00:00.1234567Z the line".
-    [GeneratedRegex(@"^[^\t\n]*\t[^\t\n]*\t(?<rest>.*)$")]
+    [GeneratedRegex(@"^(?<job>[^\t\n]*)\t[^\t\n]*\t(?<rest>.*)$")]
     private static partial Regex LogPrefix();
 
     [GeneratedRegex(@"^﻿?\d{4}-\d\d-\d\dT[\d:.]+Z ?")]
