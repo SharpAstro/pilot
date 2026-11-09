@@ -1894,9 +1894,10 @@ public sealed class JobTests3 : JobTestsBase
     [Trait("Category", "Slow")]
     public async Task AResumedJobStillTimesOutOnceItHasRunItsTimeout()
     {
-        // PIL784: the time before the pause counts against the timeout, so it is generous (45 s) and a slow start cannot make the
-        // Pause refuse because the timeout already ran out.
-        var id = Run(Busy(Path.Combine(_root, "never")), timeoutSeconds: 45).Made!;
+        // PIL784: the time before the pause counts against the timeout, so it is generous (20 s) and a slow start cannot make the
+        // Pause refuse because the timeout already ran out. PIL895: the wait for the end is capped under 25 s, so the timeout
+        // must be shorter than that (it was 45 s, which the lowered ceiling could never outlast).
+        var id = Run(Busy(Path.Combine(_root, "never")), timeoutSeconds: 20).Made!;
         await Running(id);
         var paused = _jobs.Pause(Verb(Verbs.PauseJob, id));
         paused.Ok.ShouldBeTrue(paused.Error);
@@ -1905,7 +1906,7 @@ public sealed class JobTests3 : JobTestsBase
 
         var job = await Ended(id);
 
-        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 45s"));
+        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 20s"));
     }
 
     [Fact]
