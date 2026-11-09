@@ -60,8 +60,16 @@ public sealed class WatchtowerStreamTests : IDisposable
 
         private static string Text(string line) => JsonDocument.Parse(line).RootElement.GetProperty("message").GetProperty("content").GetString()!;
 
+        /// <summary>When set, the next write throws it and writes nothing: a wait for the write cancelled, or a pipe that broke.</summary>
+        public Exception? FailNextWrite { get; set; }
+
         public Task WriteLineAsync(string line, CancellationToken cancellationToken)
         {
+            if (FailNextWrite is { } failure)
+            {
+                FailNextWrite = null;
+                return Task.FromException(failure);
+            }
             lock (_written)
             {
                 _written.Add(line);
@@ -474,12 +482,15 @@ public sealed class WatchtowerStreamTests : IDisposable
     {
         await UpAndIdleAsync();
         var before = _launcher.SessionOf(0);
-        using var cancelled = new CancellationTokenSource();
-        await cancelled.CancelAsync();
+        // The say passes the gate and the compaction is marked under way; the write itself is then cancelled (OperationCanceledException,
+        // not an IO error), so Watchtower.SendAsync's catch is what must clear the mark: nothing was written, no compaction is coming.
+        // (A token cancelled before the call never got that far: the say gate threw first, and the test passed on main.)
+        var said = _launcher.Process(0).Said.Length;
+        _launcher.Process(0).FailNextWrite = new OperationCanceledException("the wait for the write was cancelled");
 
-        // The wait for the write is cancelled (OperationCanceledException, not an IO error): nothing was written, so no compaction is coming.
         await Should.ThrowAsync<OperationCanceledException>(() => _messenger.CompactAsync(
-            new CommandRequest { Verb = Verbs.Compact, Target = Verbs.SessionTarget(Row().Id), Args = ["keep the flights"], Who = LegWatch.Who }, cancelled.Token));
+            new CommandRequest { Verb = Verbs.Compact, Target = Verbs.SessionTarget(Row().Id), Args = ["keep the flights"], Who = LegWatch.Who }, Ct));
+        _launcher.Process(0).Said.Length.ShouldBe(said, "the compaction was never written");
 
         // A session id the row takes later is the generation's own again: the row is not left mid-compaction.
         const string Next = "11111111-2222-4333-8444-555555555555";
