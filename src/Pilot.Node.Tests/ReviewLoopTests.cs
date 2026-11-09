@@ -231,7 +231,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     [Fact]
     public void TheWatchtowerBriefSaysAReviewLoopIsItsJobAndAFourthRoundNeedsItsWord()
     {
-        var brief = Briefs.Watchtower(Tower, [], [], [], "pilot");
+        var brief = Briefs.WatchtowerRules(Tower, "pilot");
 
         brief.ShouldContain("A review loop is your job");
         brief.ShouldContain("third review round");

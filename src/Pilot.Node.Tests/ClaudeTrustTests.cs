@@ -12,7 +12,7 @@ public sealed class ClaudeTrustTests : IDisposable
 
     private string File => Path.Combine(_root, ".claude.json");
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose() => TestDirs.DeleteTree(_root);
 
     [Fact]
     public void AFolderIsTrustedAndEverythingElseInTheFileIsKept()

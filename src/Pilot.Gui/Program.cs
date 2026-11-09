@@ -209,7 +209,7 @@ if (options.Capture is { } capturePath)
     }
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
         jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)],
-        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, layers: options.Layers, night: options.Night, fold: options.Fold, spend: snapshot?.Spend);
+        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, layers: options.Layers, night: options.Night, fold: options.Fold, spend: snapshot?.Spend, summaries: snapshot?.Summaries);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;
@@ -598,6 +598,40 @@ if (feed is not null && client is not null && clients is not null)
         Note($"pilot-gui: tell card {card.Id}: {refused ?? "told"}");
         return refused;
     };
+    chrome.Chat.OnAnswerNow = async sendId =>
+    {
+        var refused = await ChatCommands.AnswerNowAsync(client, sendId, GuiSay.Who, cts.Token);
+        Note($"pilot-gui: answer now {sendId}: {refused ?? "cancelled the turn"}");
+        return refused;
+    };
+    chrome.Chat.OnAnswerNowOn = async (node, sendId) =>
+    {
+        if (clients.For(node) is not { } to)
+        {
+            return FleetClients.WatchOnly(node);
+        }
+        var refused = await ChatCommands.AnswerNowAsync(to, sendId, GuiSay.Who, cts.Token);
+        Note($"pilot-gui: answer now {sendId} on {node.Name}: {refused ?? "cancelled the turn"}");
+        return refused;
+    };
+    chrome.Chat.OnAnswerAsk = async (requestId, decision, words) =>
+    {
+        var refused = await ChatCommands.AnswerAskAsync(client, requestId, decision, words, GuiSay.Who, cts.Token);
+        Note($"pilot-gui: answer ask {requestId} ({decision}): {refused ?? "answered"}");
+        return refused;
+    };
+    chrome.Chat.OnAnswerAskOn = async (node, requestId, decision, words) =>
+    {
+        if (clients.For(node) is not { } to)
+        {
+            return FleetClients.WatchOnly(node);
+        }
+        var refused = await ChatCommands.AnswerAskAsync(to, requestId, decision, words, GuiSay.Who, cts.Token);
+        Note($"pilot-gui: answer ask {requestId} ({decision}) on {node.Name}: {refused ?? "answered"}");
+        return refused;
+    };
+    // The node says the chat changed as the watchtower's words stream: read the feed now, not at the page's next look.
+    feed.ChatChanged = chrome.Chat.Refresh;
     chrome.Chat.OnRestart = async () =>
     {
         var refused = await ChatCommands.RestartWatchtowerAsync(client, GuiSay.Who, cts.Token);
@@ -730,7 +764,7 @@ if (feed is not null && client is not null && clients is not null)
         return refused;
     };
     chrome.Flights.OnOpen = location => OpenAway(location, () => chrome.Flights.Say($"could not open {location}"));
-    // The Summary cards on Home and on a flight's page: Summarise is a verb on the node the summary is of, and the card shows
+    // The Summary cards on Home and on a flight's page: Refresh sends the Summarise verb to the node the summary is of, and the card shows
     // it running until the node answers. The row it then shows is the node's own, from the stream, never this answer's.
     chrome.Summaries.Track = (run, what) => tracker.Run(run, what);
     chrome.Summaries.Changed = loop.RequestRedraw;

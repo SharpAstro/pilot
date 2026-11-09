@@ -35,7 +35,7 @@ public sealed class JobMemoryTests : IDisposable
     {
         try
         {
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
         catch (IOException)
         {

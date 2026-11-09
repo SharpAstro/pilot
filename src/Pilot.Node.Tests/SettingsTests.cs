@@ -18,7 +18,7 @@ public sealed class SettingsTests : IDisposable
     {
         if (Directory.Exists(_root))
         {
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
     }
 
@@ -111,7 +111,7 @@ public sealed class SettingsTests : IDisposable
     [InlineData("machine", "DESKTOP", "machine takes two letters and a number, as in DE1")]
     [InlineData("update-channel", "nightly", "update-channel takes stable or beta")]
     [InlineData("max-jobs", "0", "max-jobs takes a number, 1 to 64")]
-    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, job-priority, job-plane-output, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, user-skills, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, max-go-arounds, scratch-days, disk-alert-gb, stale-flight-hours, stale-pr-hours, stale-recheck-hours, stale-card-hours, stale-holds, stale-unreachable-hours, watchtower-range, worker-range, planner-range, reviewer-range, worker-ladder")]
+    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, job-priority, job-plane-output, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, watchtower-compact-idle, watchtower-compact-above, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, user-skills, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, max-go-arounds, scratch-days, disk-alert-gb, stale-flight-hours, stale-pr-hours, stale-recheck-hours, stale-card-hours, stale-holds, stale-unreachable-hours, watchtower-range, worker-range, planner-range, reviewer-range, worker-ladder")]
     // Invariant: the "colour" case spells out every key, so a filtered check that adds a setting runs it too.
     [Trait("Category", InvariantTraitTests.Invariant)]
     public void ASettingRefusesWhatItDoesNotTake(string key, string value, string error)

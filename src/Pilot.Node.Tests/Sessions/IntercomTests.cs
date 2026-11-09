@@ -110,7 +110,7 @@ internal sealed class FakeIntercomEndpoint : IDisposable
         }
         try
         {
-            Directory.Delete(_folder, recursive: true);
+            TestDirs.DeleteTree(_folder);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

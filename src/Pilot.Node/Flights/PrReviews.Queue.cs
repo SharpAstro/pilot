@@ -72,6 +72,12 @@ public sealed partial class PrReviews
         var checks = await github.ChecksSummaryAsync(review.ClonePath, review.Number, cancellationToken);
         if (checks?.Status == ChoiceStatus.Failing)
         {
+            // A failing test the PR does not touch is an investigation, once a head (a flight's PR is looked into by its flight's checks).
+            // A first one is run again once, and the PR is looked at again by a later sweep for the result: no note until then.
+            if (!FlightOwns(review) && await LookAtFailedAsync(review, cancellationToken))
+            {
+                return;
+            }
             state.PutPrReview(review with { QueueNote = $"its checks fail{(checks.FailedName is { } name ? $" ({name})" : "")}" });
             return;
         }
@@ -93,6 +99,11 @@ public sealed partial class PrReviews
         }
         if (await github.MergeQueueAsync(review.ClonePath, review.Number, cancellationToken) is null)
         {
+            // On autopilot a base with no queue is merged by the repo's method, as a flight's PR is; off, the person's Merge card.
+            if (await LandOnAutopilotAsync(review, read, cancellationToken))
+            {
+                return;
+            }
             state.PutPrReview(review with { QueueNote = $"{read.Base} has no merge queue" });
             state.RaiseCard(CardBin.ForYou, MergeKind, subject, $"{review.Repo}#{review.Number} is reviewed {review.Verdict} and green, but {read.Base} has no merge queue",
                 $"Reviewed {review.Verdict} at {at}, checks green. Merge it when you are ready.",
@@ -152,5 +163,45 @@ public sealed partial class PrReviews
         state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });
         state.RaiseCard(CardBin.Handled, QueuedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             queued ? $"Queued {pr} in {read.Base}'s merge queue" : $"Merged {pr}", $"{command.Who} chose Merge at {CommitRefs.Short(head)}.", link: review.Url);
+    }
+
+    // A hand PR's failed checks looked into. True when its failed jobs were run again, or are being waited on after that, so a later sweep
+    // reads the result; the same failure coming again names the PR on the tower's alert (listed, never held).
+    private async Task<bool> LookAtFailedAsync(PrReviewRow review, CancellationToken cancellationToken)
+    {
+        var site = new FailureSite(review.Repo, review.ClonePath, review.Number, null, review.Head, FailureWhere.Ci, review.Url);
+        if (Alerts is not { } alerts)
+        {
+            if (Investigations is not null && _investigated.Add($"{review.Repo}#{review.Number} {review.Head}"))
+            {
+                await Investigations.LookAtRunAsync(site, mergeGroup: false, cancellationToken);
+            }
+            return false;
+        }
+        var decision = await alerts.LookAtRunAsync(site, mergeGroup: false, cancellationToken);
+        if (decision.Answer == FailureAnswer.Retrying)
+        {
+            return true;
+        }
+        if (decision is not { Answer: FailureAnswer.Retry, Finding: { } finding })
+        {
+            return false;
+        }
+        int runs;
+        try
+        {
+            runs = await github.RerunFailedChecksAsync(review.ClonePath, review.Number, cancellationToken);
+        }
+        catch (FlightException)
+        {
+            runs = 0;
+        }
+        if (runs == 0)
+        {
+            return false;
+        }
+        alerts.MarkRetried(site, finding);
+        alerts.SayRetried(site, finding, $"{runs} failed {(runs == 1 ? "run" : "runs")} running again");
+        return true;
     }
 }

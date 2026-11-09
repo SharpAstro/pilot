@@ -9,6 +9,12 @@ namespace Pilot.Gui.Tests;
 /// </summary>
 internal sealed class PageData
 {
+    /// <summary>
+    /// How many entries the chat holds in the "long" and "many" states (PIL907): a watchtower's transcript of a few days. The page lays out only
+    /// the rows in view, so the sweep and the frame-time test cover a long transcript, not the sixty entries that used to stand for one.
+    /// </summary>
+    internal const int WatchtowerTranscript = 2000;
+
     public static readonly DateTimeOffset Now = new(2026, 10, 28, 3, 0, 0, TimeSpan.Zero);
 
     internal const string LongTitle = "Every page is checked for text drawn over text, in tests and live, at every width and DPI, with a title that runs on and on past any column it is given";
@@ -58,8 +64,8 @@ internal sealed class PageData
     public static PageData For(string state) => state switch
     {
         "sample" => Sample(),
-        "long" => Build(state, sessions: 8, flights: 3, legs: 4, jobs: 6, cards: 5, repos: 4, chat: 10, transcript: 12, wizard: 6, nodes: 3, lengthen: true),
-        "many" => Build(state, sessions: 60, flights: 40, legs: 3, jobs: 50, cards: 14, repos: 40, chat: 60, transcript: 80, wizard: 60, nodes: 12, lengthen: false),
+        "long" => Build(state, sessions: 8, flights: 3, legs: 4, jobs: 6, cards: 5, repos: 4, chat: WatchtowerTranscript, transcript: 12, wizard: 6, nodes: 3, lengthen: true),
+        "many" => Build(state, sessions: 60, flights: 40, legs: 3, jobs: 50, cards: 14, repos: 40, chat: WatchtowerTranscript, transcript: 80, wizard: 60, nodes: 12, lengthen: false),
         "empty" => Empty(),
         _ => throw new ArgumentException($"no state '{state}'", nameof(state)),
     };

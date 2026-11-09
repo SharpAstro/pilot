@@ -16,8 +16,10 @@ public sealed class PressesTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     /// <summary>
-    /// A press records its outcome before it stops being pending: a reader that has seen the press pending never then looks and
-    /// finds it neither pending nor taken nor refused (a draw in that gap showed a switch its old state for a frame).
+    /// A press records its outcome before it stops being pending: at every moment a draw can look (while the node is asked, at
+    /// each Changed the press raises, and after it returns) the press is pending, taken or refused, never none of them (a draw
+    /// in that gap showed a switch its old state for a frame). Checked at those moments, not by a reader thread spinning on
+    /// the state: no test busy-spins.
     /// </summary>
     [Theory]
     [InlineData(false)]
@@ -25,36 +27,24 @@ public sealed class PressesTests
     public async Task APressIsNeverSeenWithNeitherPendingNorItsOutcome(bool refuse)
     {
         var presses = new Presses();
-        string? gap = null;
-        for (var i = 0; i < 300 && gap is null; i++)
+        const string key = "k";
+        var seen = new List<string>();
+        void Look(string when) =>
+            seen.Add($"{when}: pending={presses.PendingOf(key) is not null} taken={presses.IsTaken(key)} refused={presses.RefusedOf(key) is not null}");
+        presses.Changed = () => Look("changed");
+
+        await presses.PressAsync(key, "hit", _ =>
         {
-            var key = $"k{i}";
-            using var stop = new CancellationTokenSource();
-            var reader = Task.Run(() =>
-            {
-                while (presses.PendingOf(key) is null && !stop.IsCancellationRequested)
-                {
-                    Thread.SpinWait(10);
-                }
-                while (!stop.IsCancellationRequested)
-                {
-                    var pending = presses.PendingOf(key);
-                    if (pending is null && !presses.IsTaken(key) && presses.RefusedOf(key) is null)
-                    {
-                        return $"{key}: neither pending nor taken nor refused";
-                    }
-                    if (pending is null)
-                    {
-                        return null;
-                    }
-                }
-                return null;
-            }, Ct);
-            await presses.PressAsync(key, "hit", _ => Task.FromResult(refuse ? "no" : (string?)null), Ct);
-            await stop.CancelAsync();
-            gap = await reader.WaitAsync(TimeSpan.FromSeconds(10), Ct);
-        }
-        gap.ShouldBeNull();
+            Look("asked");
+            presses.PendingOf(key).ShouldBe("hit");
+            return Task.FromResult(refuse ? "no" : (string?)null);
+        }, Ct);
+        Look("after");
+
+        seen.ShouldNotBeEmpty();
+        seen.ShouldAllBe(s => !s.EndsWith("pending=False taken=False refused=False"));
+        presses.PendingOf(key).ShouldBeNull();
+        (refuse ? presses.RefusedOf(key) is not null : presses.IsTaken(key)).ShouldBeTrue(string.Join("\n", seen));
     }
 
     private static NodeSummary Summary(string stream, string prefix, string name, RoleRangeInfo range) => new()
