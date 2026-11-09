@@ -1695,7 +1695,17 @@ with `<machine>-` (case-insensitive) is denied, the reason giving the prefixed n
 resolved as the node does, without asking it: the `machine` it saved in `settings.json` of the default data folder, else
 `PILOT_MACHINE`, else the machine name's; a `claude` call without `--bg` or a name passes. Every brief (worker, validator, planner,
 reviewer, PR reviewer, watchtower) tells the session the same rule, with the node's machine code written out. Everything else, a push of a
-flight branch included, passes untouched. Like `pilot-node hook` it
+flight branch included, passes untouched.
+
+**The test guard** is a second rule of the same handler (one entry installed and checked, not two; `TestGuard`). In a session the node
+started (worker, validator, planner, reviewer, fixer, watchtower) it refuses a direct `dotnet test` and a `dotnet build` of a `.sln`,
+`.slnx` or `*Tests*.csproj`, pointing at `pilot run -- <command>` or the leg's check; `dotnet --version`, `--list-sdks`, `--info`, `restore`,
+a `dotnet build` of anything else and anything under `pilot run --` pass, and a person's own session is untouched. The command line is
+read exactly as the merge rule reads it (wrappers, `cd x &&`, `bash -c`, `pwsh -Command`, PowerShell quoting). The hook is its own
+process and cannot ask the node who a session is, so the node marks its sessions two ways and either is enough: `PILOT_SESSION=<role>` on
+the `claude` call that starts or resumes it (`ClaudeCli.StartInfo`), and its job id in `node-sessions.json` in the data folder
+(`SessionRoster`), because `claude --bg` hands the session to a daemon whose hooks may not see that call's environment. The roster is
+read from the default data folder, as the merge rule reads the machine's prefix. Like `pilot-node hook` it
 is fail-open (input it cannot read passes, exit 0 always) and never calls the node; the node's own merge
 (`pilot flight merge` runs `gh pr merge` itself) is not a session's tool call, so the hook never sees it.
 
