@@ -167,16 +167,18 @@ public sealed class ConflictEscalationTests : ReviewTestsBase
         _workers.Started.Count.ShouldBe(started);
         var card = Open().Where(c => c.Bin == CardBin.Ring).ShouldHaveSingleItem();
         card.Kind.ShouldBe(LegCommander.ConflictDecisionKind);
-        card.Title.ShouldContain("README.md");
-        card.Title.ShouldContain("keep the base's behaviour or the branch's");
+        // Golden (#797): what happened in the title, what to choose and why first, and the buttons say only which side stays.
+        card.Title.ShouldBe("TIA66's PR and its base change README.md in opposite ways");
+        card.Summary.ShouldNotBeNull().ShouldStartWith("Choose the side whose behaviour stays in README.md: TIA66's PR and its base change it in opposite ways, and the workers sent to merge them could not keep both.");
+        card.Choices.Select(c => c.Label).ShouldBe([LegCommander.KeepBaseLabel, LegCommander.KeepBranchLabel]);
         card.Detail.ShouldNotBeNull().ShouldContain("the readme says ours");
         card.Detail.ShouldContain("the readme says theirs");
         card.Detail.ShouldContain("the parser leg's documented flag is lost");
         card.Detail.ShouldContain("the new install steps on main are lost");
         card.Choices.Length.ShouldBe(2);
         card.Choices.ShouldAllBe(c => c.Verb == Verbs.GoAround && c.Target == Verbs.LegTarget(flight.Code, "parser"));
-        card.Choices[0].Label.ShouldContain("Keep the base's behaviour");
-        card.Choices[1].Label.ShouldContain("Keep the branch's behaviour");
+        card.Choices[0].Label.ShouldBe("Keep the base's behaviour");
+        card.Choices[1].Label.ShouldBe("Keep the branch's behaviour");
         card.Choices[0].Args!.Single().ShouldContain("keep the base's behaviour");
         card.Choices[0].Args!.Single().ShouldContain("the parser leg's documented flag is lost");
         card.Choices[1].Args!.Single().ShouldContain("keep the branch's behaviour");

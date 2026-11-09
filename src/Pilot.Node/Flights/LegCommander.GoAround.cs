@@ -163,7 +163,7 @@ public sealed partial class LegCommander
         var legs = state.Legs(flight.Code);
         // A conflict worker runs on its rung's model and effort, whatever the leg's plan or go-around count says (PIL846).
         var (attemptModel, attemptEffort) = rung is { } onRung ? (onRung.Model, onRung.Effort) : Models.WorkerFor(leg.Model, leg.Effort, next.GoArounds + 1);
-        var rungWords = rung is { } named ? $", {named.Label}" : "";
+        var rungWords = rung is { } named ? $", {named.Name}" : "";
         // The plane's HEAD as this go-around's worker starts, read off the lock with the plane in place; null when it cannot be read.
         string? startHead = null;
         Launching(LegsKey(flight.Code), $"{worker}, going around {flight.Code}/{leg.Name}{rungWords}", target,

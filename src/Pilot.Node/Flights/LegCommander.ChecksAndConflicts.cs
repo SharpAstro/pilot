@@ -165,7 +165,7 @@ public sealed partial class LegCommander
     /// <summary>The rung of the conflict ladder a go-around starts its worker on: its model and effort, and the words that name it.</summary>
     private sealed record ConflictRung(int Number, string Model, string? Effort, string Words)
     {
-        public string Label => $"conflict worker {Number} of {RoleModels.ConflictRungs} ({Words})";
+        public string Name => $"conflict worker {Number} of {RoleModels.ConflictRungs} ({Words})";
     }
 
     /// <summary>A conflict round asked for through the command route: its brief, which the go-around finds again, and its rung.</summary>
@@ -305,7 +305,7 @@ public sealed partial class LegCommander
     /// what the last worker reported, and how to report when the two sides cannot both stay (<see cref="ConflictDecision.Shape"/>).
     /// </summary>
     private static string ConflictBrief(string why, string detail, ConflictRung rung, string? lastReport) =>
-        $"[{rung.Label}] {ConflictBrief(why, detail)}" +
+        $"[{rung.Name}] {ConflictBrief(why, detail)}" +
         (lastReport is { Length: > 0 } ? $"\nThe worker before you stopped and reported:\n{lastReport}\n" : "\n") +
         "If you find that the two sides change the same behaviour in opposite ways, so that keeping both sides' work is impossible, do not guess and do not drop either side: " +
         $"abort the merge (git merge --abort) and finish the leg failed with a report in exactly this shape, one field a line:\n{ConflictDecision.Shape}";

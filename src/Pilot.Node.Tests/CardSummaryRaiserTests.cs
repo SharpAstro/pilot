@@ -33,9 +33,9 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         var card = _state.RaiseCard(CardBin.Ring, LegCommander.NoGoKind, "flight/TIA1/render", "NO-GO", "gone",
             [new CardChoice { Label = "Go anyway", Verb = Verbs.StartLeg, Target = "flight/TIA1/render" }]);
 
-        card.Summary.ShouldNotBeNull().ShouldContain("Start the leg as the tree is");
+        card.Summary.ShouldNotBeNull().ShouldContain("Fly it unchanged");
         card.Summary.ShouldContain("drop it");
-        card.Summary.ShouldContain("plan the flight again");
+        card.Summary.ShouldContain("replan the flight");
         card.Summary.ShouldNotContain("Redo leg");
     }
 

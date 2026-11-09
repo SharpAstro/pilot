@@ -765,7 +765,8 @@ public sealed class LegWatchTests
         {
             var line = Handled().ShouldHaveSingleItem();
             line.Kind.ShouldBe("worker-waiting-job");
-            line.Title.ShouldContain("waiting on a job of its own");
+            line.Title.ShouldBe("TIA1's worker is waiting for its job to end");
+            line.Detail.ShouldNotBeNull().ShouldContain("waiting on a job of its own");
         }
         else
         {

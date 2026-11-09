@@ -985,7 +985,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         state.CloseCardsAbout(Subject(leg), $"it waits on its own work, not on you ({what})", Waiting);
         if (wait == OwnWait.OwnJob && _ownJobNoted.Add(leg.WorkerJob!))
         {
-            state.RaiseCard(CardBin.Handled, "worker-waiting-job", Subject(leg), $"{Name(leg)}'s worker is waiting on a job of its own or of its leg; the job wakes it");
+            // The same plain line as the idle look's (#797): what happened in the title, the why in the detail.
+            state.RaiseCard(CardBin.Handled, "worker-waiting-job", Subject(leg), $"{leg.Flight}'s worker is waiting for its job to end", "waiting on a job of its own or of its leg; the job wakes it");
         }
     }
 
