@@ -136,7 +136,10 @@ public sealed class DesignDecideTests : PrFixTestsBase
         summary.ShouldStartWith("should this be a service at all?");
         summary.ShouldEndWith("It rings because no option reaches the criteria.");
         summary.Length.ShouldBeLessThanOrEqualTo(240);
-        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library", "Make it a service", PrReviews.AnswerLabel]);
+        // Each option is picked by its letter, its words the answer the button sends (#797 rule 4).
+        card.Choices.Select(c => c.Label).ShouldBe(["Pick option A", "Pick option B", PrReviews.AnswerLabel]);
+        card.Choices[0].Args.Single().ShouldStartWith("Keep a library");
+        card.Choices[1].Args.Single().ShouldStartWith("Make it a service");
     }
 
     [Fact]
