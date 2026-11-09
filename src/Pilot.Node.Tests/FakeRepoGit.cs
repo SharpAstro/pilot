@@ -7,7 +7,7 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// An in-memory git for the tests that check what pilot decides, not what git does (#813). A git run costs 100 to 400 ms on
-/// Windows (process start under the process-creation lock and the scanner), and a flight's lifecycle in the node makes about
+/// Windows (process start, one at a time under .NET's process-creation lock; not the scanner, which the hosted image has off), and a flight's lifecycle in the node makes about
 /// 50 of them, so a test class of a few dozen flights took minutes there and seconds on Linux. This models the repo the
 /// review tests build: one tianwen repo with a bare origin, branches, commits as trees of text files, the worktrees a flight's
 /// plane is, and the index, so <c>status</c>, <c>add</c> and <c>commit</c> work on the plane's real folder.
@@ -251,6 +251,7 @@ internal sealed class FakeRepoGit : IGit
             "add" => Add(a, wt),
             "commit" => CommitCommand(a, wt),
             "merge" => Merge(a, wt),
+            "merge-tree" => MergeTree(a, wt),
             "reset" => Reset(a, wt),
             "cherry" => Cherry(a, wt),
             "cherry-pick" => CherryPick(a, wt),
@@ -491,7 +492,8 @@ internal sealed class FakeRepoGit : IGit
     /// <summary>Whether a fetch or push reaches the modelled bare origin: it exists, and the remote's URL (rewritten) is its folder. A GitHub URL is offline.</summary>
     private bool Reachable() =>
         _hasOrigin && FetchUrl() is { } url && !url.Contains("://", StringComparison.Ordinal)
-        && Norm(url).Equals(Norm(_originPath), StringComparison.OrdinalIgnoreCase);
+        // A relative remote (../origin.git) is relative to the repo, as git reads it, not to the test process's folder.
+        && Norm(System.IO.Path.IsPathRooted(url) ? url : System.IO.Path.Combine(RepoPath, url)).Equals(Norm(_originPath), StringComparison.OrdinalIgnoreCase);
 
     /// <summary><c>git init --bare [-b main] origin.git</c>: the origin the repo's remote can be pointed at.</summary>
     private GitRun Init(List<string> a, string cwd)
@@ -658,6 +660,11 @@ internal sealed class FakeRepoGit : IGit
     {
         var force = a.Any(x => x is "--force" or "-f") || a.Any(x => x.StartsWith('+'));
         string? lease = a.FirstOrDefault(x => x.StartsWith("--force-with-lease=", StringComparison.Ordinal));
+        // Anything else starting with a dash (--delete, --tags, --mirror, --all, ...) changes what the push does: the model must not read it as a plain push.
+        if (a.FirstOrDefault(x => x.StartsWith('-') && x is not ("--force" or "-f" or "-u" or "--set-upstream" or "-q" or "--quiet") && !x.StartsWith("--force-with-lease=", StringComparison.Ordinal)) is { } unknown)
+        {
+            throw new NotSupportedException($"push flag {unknown}");
+        }
         var positional = a.Where(x => !x.StartsWith('-')).ToList();
         if (wt is null || positional.Count is < 1 or > 2 || positional[0] != "origin")
         {
@@ -982,6 +989,16 @@ internal sealed class FakeRepoGit : IGit
         a.Remove(format ?? "");
         var limit = a.FirstOrDefault(x => x.Length > 1 && x[0] == '-' && x[1..].All(char.IsDigit));
         a.Remove(limit ?? "");
+        var maxCount = a.FirstOrDefault(x => x.StartsWith("--max-count=", StringComparison.Ordinal) && x.Length > "--max-count=".Length && x["--max-count=".Length..].All(char.IsDigit));
+        a.Remove(maxCount ?? "");
+        limit ??= maxCount is null ? null : "-" + maxCount["--max-count=".Length..];
+        // A pathspec after -- keeps the commits that change one of those files (or folders).
+        var dash = a.IndexOf("--");
+        var pathspec = dash < 0 ? [] : a.Skip(dash + 1).ToList();
+        if (dash >= 0)
+        {
+            a.RemoveRange(dash, a.Count - dash);
+        }
         if (!oneline && format is not ("--format=%h %s" or "--format=%P\t%s" or "--format=%s") || a.Any(x => x.StartsWith('-') && x != "--not"))
         {
             throw new NotSupportedException("log form");
@@ -989,6 +1006,15 @@ internal sealed class FakeRepoGit : IGit
         try
         {
             var commits = Select(a, wt, firstParent: false).Commits;
+            if (pathspec.Count > 0)
+            {
+                // Git's default history simplification: a commit shows when its files under the pathspec differ from every parent's (a root's: when it has any).
+                bool Under(string path) => pathspec.Any(p => path == p || path.StartsWith(p.TrimEnd('/') + "/", StringComparison.Ordinal));
+                IEnumerable<KeyValuePair<string, string>> Of(IReadOnlyDictionary<string, string> tree) => tree.Where(t => Under(t.Key)).OrderBy(t => t.Key, StringComparer.Ordinal);
+                commits = [.. commits.Where(c => c.Parents.Count == 0
+                    ? Of(c.Tree).Any()
+                    : c.Parents.All(p => !Of(c.Tree).SequenceEqual(Of(_commits[p].Tree))))];
+            }
             if (reverse)
             {
                 commits.Reverse();
@@ -1179,9 +1205,16 @@ internal sealed class FakeRepoGit : IGit
         }
     }
 
-    /// <summary>The text with runs of whitespace as one space, trailing space gone and blank lines dropped.</summary>
+    /// <summary>
+    /// The text as <c>git diff -b --ignore-blank-lines</c> compares it: runs of whitespace inside a line as one space, trailing space gone, blank lines
+    /// dropped. A leading run is kept (as one space), since <c>-b</c> does not ignore indentation appearing where there was none.
+    /// </summary>
     private static string Squash(string text) =>
-        string.Join('\n', text.Split('\n').Select(l => string.Join(' ', l.Split([' ', '\t', '\r'], StringSplitOptions.RemoveEmptyEntries))).Where(l => l.Length > 0));
+        string.Join('\n', text.Split('\n').Select(l =>
+        {
+            var words = string.Join(' ', l.Split([' ', '\t', '\r'], StringSplitOptions.RemoveEmptyEntries));
+            return words.Length > 0 && l[0] is ' ' or '\t' ? " " + words : words;
+        }).Where(l => l.Length > 0));
 
     private static string[] Lines(string? text) => string.IsNullOrEmpty(text) ? [] : text.TrimEnd('\n').Split('\n');
 
@@ -1678,6 +1711,46 @@ internal sealed class FakeRepoGit : IGit
         wt.Index = new Dictionary<string, string>(merged);
         Materialize(wt, merged, previous);
         return Ok("Merge made by the 'ort' strategy.\n");
+    }
+
+    /// <summary>
+    /// <c>git merge-tree --write-tree [--name-only] [--no-messages] &lt;a&gt; &lt;b&gt;</c>: a test merge that touches no folder. The tree's id on the first line, then (when it
+    /// conflicts, exit 1) the conflicted paths. The id is a hash of the merged files, not a stored tree: nothing in the model reads a tree object back.
+    /// </summary>
+    private GitRun MergeTree(List<string> a, Worktree? wt)
+    {
+        if (!a.Remove("--write-tree"))
+        {
+            throw new NotSupportedException("merge-tree without --write-tree");
+        }
+        var nameOnly = a.Remove("--name-only");
+        a.Remove("--no-messages");
+        if (a.Count != 2 || a.Any(x => x.StartsWith('-')) || wt is null)
+        {
+            throw new NotSupportedException("merge-tree form");
+        }
+        var mine = Resolve(a[0], wt);
+        var theirs = Resolve(a[1], wt);
+        if (mine is null || theirs is null)
+        {
+            return Fail($"fatal: not something we can merge: {(mine is null ? a[0] : a[1])}", 128);
+        }
+        if (MergeBase(mine, theirs) is not { } baseId)
+        {
+            return Fail("fatal: refusing to merge unrelated histories", 128);
+        }
+        var (merged, conflicts) = Merge3(_commits[baseId].Tree, _commits[mine].Tree, _commits[theirs].Tree, null, false);
+        var text = new StringBuilder();
+        foreach (var (path, content) in merged.OrderBy(t => t.Key, StringComparer.Ordinal))
+        {
+            text.Append(path).Append('\0').Append(content).Append('\0');
+        }
+        var id = Convert.ToHexStringLower(SHA1.HashData(Encoding.UTF8.GetBytes(text.ToString())));
+        if (conflicts.Count == 0)
+        {
+            return Ok(id + "\n");
+        }
+        return new GitRun(1, id + "\n" + (nameOnly ? string.Concat(conflicts.Select(p => p + "\n")) : ""), "");
     }
 
     /// <summary>

@@ -8,7 +8,8 @@ namespace Pilot.Node.Tests;
 /// the tests that check what the node decides make dozens each, which made the Slow step 19 minutes there and 3 on Linux. A test, or a whole
 /// class, that checks what git itself does (a rebase, a conflict someone resolves, a second clone, a hook) asks for real git: the class by
 /// its constructor, a test by <see cref="UseReal"/> before it has used the repo. <c>PILOT_TEST_REAL_GIT=1</c> runs everything on real git, which is
-/// the fidelity check of the model and the "before" of a timing.
+/// the fidelity check of the model and the "before" of a timing: CI's Linux Slow job sets it (a git run is 1 to 3 ms there), so every test meets
+/// real git on every PR and a drift of the model shows as a red only Linux has, while Windows runs the model.
 /// </summary>
 internal sealed class TestGit : IGit
 {

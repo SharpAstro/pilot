@@ -120,7 +120,7 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
 
         finish.Ok.ShouldBeFalse();
         L("parser").State.ShouldBe(LegState.Flying);
-        _git.Pushes.ShouldBeEmpty();
+        _recorded.Pushes.ShouldBeEmpty();
         L("parser").Report.ShouldNotBeNull().ShouldContain("not pushed early: TIA1 is on hold");
     }
 

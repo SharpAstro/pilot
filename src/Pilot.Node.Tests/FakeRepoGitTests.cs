@@ -228,6 +228,44 @@ public sealed class FakeRepoGitTests : IDisposable
         _git.Unsupported.ShouldBe(["git bisect start"]);
     }
 
+    [Fact]
+    public void ARemoteGivenAsARelativePathIsReadFromTheRepoNotFromTheTestProcessFolder()
+    {
+        Run(Repo, "remote", "set-url", "origin", "../origin.git");
+
+        _git.Run(["fetch", "--quiet", "origin"], Repo).Ok.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void APushWithAFlagItDoesNotModelThrowsInsteadOfPushingABranchOfThatName()
+    {
+        MakePlane();
+        Commit(Plane, "a.txt", "one\n", "add a");
+        Run(Plane, "push", "-u", "origin", "flight/x");
+
+        Should.Throw<NotSupportedException>(() => _git.Run(["push", "--quiet", "origin", "--delete", "flight/x"], Plane));
+        Should.Throw<NotSupportedException>(() => _git.Run(["push", "--tags", "origin"], Plane));
+        _git.Run(["push", "--quiet", "--set-upstream", "origin", "flight/x"], Plane).Ok.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AMergeTreeNamesTheConflictedFilesAndALogOfAPathNamesTheCommitsThatTouchedIt()
+    {
+        MakePlane();
+        Commit(Plane, "README.md", "theirs\n", "plane edits readme");
+        Commit(Repo, "README.md", "ours\n", "main edits readme");
+        Commit(Repo, "other.txt", "other\n", "main adds other");
+        Run(Repo, "push", "-q", "origin", "main");
+        Run(Plane, "fetch", "-q", "origin");
+
+        var tree = _git.Run(["merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", "origin/main"], Plane);
+        tree.ExitCode.ShouldBe(1);
+        tree.Output.Trim().Split('\n')[1..].ShouldBe(["README.md"]);
+        Run(Plane, "log", "--oneline", "--max-count=8", "HEAD..origin/main", "--", "other.txt").ShouldEndWith("main adds other");
+        Run(Plane, "log", "--oneline", "--max-count=1", "HEAD..origin/main").ShouldEndWith("main adds other");
+        Run(Plane, "log", "--oneline", "HEAD..origin/main", "--", "nothing.txt").ShouldBeEmpty();
+    }
+
     private sealed record Step(string Where, string[] Args, bool Compare, string? WriteFile = null, string? Text = null);
 
     private static Step Do(string where, params string[] args) => new(where, args, false);
@@ -282,17 +320,30 @@ public sealed class FakeRepoGitTests : IDisposable
         Do("plane", "fetch", "--quiet", "origin"),
         Ask("plane", "merge-base", "--is-ancestor", "origin/main", "HEAD"),
         Ask("plane", "rev-list", "--left-right", "--count", "origin/main...HEAD"),
+        Ask("plane", "merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", "origin/main"),
+        Ask("plane", "log", "--oneline", "--max-count=8", "HEAD..origin/main", "--", "later.txt"),
+        Ask("plane", "log", "--oneline", "--max-count=8", "HEAD..origin/main", "--", "a.txt"),
         Save("plane", "merge", "--no-edit", "origin/main"),
         Ask("plane", "merge-base", "--is-ancestor", "origin/main", "HEAD"),
         Ask("plane", "rev-list", "--merges", "--count", "origin/main..HEAD"),
         Ask("plane", "rev-list", "--first-parent", "--no-merges", "--count", "origin/main..HEAD"),
         Ask("plane", "diff", "--name-only", "origin/main...HEAD"),
+        // What counts as a change under git diff -b --ignore-blank-lines: more or fewer spaces inside a line does not, indentation where there was none does.
+        Write("plane", "c.txt", "foo bar\n"),
+        Save("plane", "commit", "-q", "-a", "-m", "words"),
+        Write("plane", "c.txt", "foo   bar\n\n"),
+        Ask("plane", "diff", "-b", "--ignore-blank-lines", "--quiet", "HEAD"),
+        Write("plane", "c.txt", "    foo bar\n"),
+        Ask("plane", "diff", "-b", "--ignore-blank-lines", "--quiet", "HEAD"),
+        Write("plane", "c.txt", "foo bar\n"),
         Write("repo", "README.md", "ours\n"),
         Save("repo", "commit", "-q", "-a", "-m", "main edits readme"),
         Do("repo", "push", "-q", "origin", "main"),
         Write("plane", "README.md", "theirs\n"),
         Save("plane", "commit", "-q", "-a", "-m", "plane edits readme"),
         Do("plane", "fetch", "--quiet", "origin"),
+        Ask("plane", "merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", "origin/main"),
+        Ask("plane", "log", "--oneline", "--max-count=8", "HEAD..origin/main", "--", "README.md"),
         Save("plane", "merge", "--no-edit", "origin/main"),
         Ask("plane", "diff", "--name-only", "--diff-filter=U"),
         Do("plane", "merge", "--abort"),
