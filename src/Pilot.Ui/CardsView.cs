@@ -552,6 +552,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     ];
 
     // What a button's press is doing, by card id: working with the node, refused in its words. One helper for every button that asks the node.
+    // Known gap (pilot#922): the key is the card id alone, so with two nodes that share an id a refusal or a working press on one shows on
+    // the other. The dismissed set below is keyed by node and id; the press state still is not.
     internal Presses Presses { get; } = new();
 
     // The cards whose Dismiss was clicked and the node has not yet closed, by node and id (a merged panel's nodes may share an id, so an
@@ -796,6 +798,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     private const float AccentBar = 3f;
 
     /// <summary>How many lines a card's title may take: it says what happened and to what (an overlap's names both flights, the shared files and the choice), which one clipped row loses (pilot#677).</summary>
+    // Known gap (pilot#923): a title cut by this cap shows no ellipsis in a capture (the whole text is on hover in the live window only).
     internal const int TitleLines = 3;
 
     /// <summary>The cap on a card's detail: more for a card that offers a merge, and for an overlap's, which says what each of its choices does.</summary>
