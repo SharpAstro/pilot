@@ -440,7 +440,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.PullRequests => pullRequests.Tree(pages.PullRequests ?? new PullRequestsScreen(null, pages.Sessions.Source, now), width),
             PilotPage.Jobs => jobs.Tree(pages.Jobs),
             PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, now)),
-            PilotPage.Settings => settings.Tree(now),
+            PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };
         var cardsScreen = pages.Cards;
