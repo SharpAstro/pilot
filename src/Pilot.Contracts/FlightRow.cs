@@ -208,6 +208,14 @@ public sealed record FlightRow
     public string[]? PlannedFiles { get; init; }
 
     /// <summary>
+    /// How many legs the flight had when its planner said <c>planned</c> (PIL795): a later <c>leg plan</c> may take it one past this
+    /// without a word, and a leg beyond that raises a card to the owner. Null until the plan is said, so a flight journaled before
+    /// it has no cap. Optional and additive, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? PlannedLegs { get; init; }
+
+    /// <summary>
     /// The issues of other flights folded into this one (<c>fold</c>): its planner plans their points as legs after its own,
     /// and its PR closes each beside <see cref="Issue"/>. Null-safe for the reason <see cref="Overlaps"/> is.
     /// </summary>
@@ -326,6 +334,55 @@ public sealed record FlightRow
     /// <summary>The priority raises the node made (or could not make) for stale bounds, oldest first; one per bound. Null before the first.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public FlightStaleRaise[]? StaleRaises { get; init; }
+
+    /// <summary>
+    /// What the flight's PR has spent of GitHub Actions, as the node last counted it (PIL795): runner-minutes, runs, how many failed
+    /// or were cancelled, since when it has been red, and whether the node has stopped pushing for it. Null before the first count.
+    /// Optional and additive, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public FlightCi? Ci { get; init; }
+}
+
+/// <summary>A flight's CI spend (<see cref="FlightRow.Ci"/>) and the stop the node puts on its pushes past the budget.</summary>
+public sealed record FlightCi
+{
+    /// <summary>Runner-minutes the runs of its branch used, summed over their jobs (every attempt).</summary>
+    public double RunnerMinutes { get; init; }
+
+    /// <summary>How many workflow runs its branch has had.</summary>
+    public int Runs { get; init; }
+
+    /// <summary>How many of them failed (or timed out).</summary>
+    public int Failed { get; init; }
+
+    /// <summary>How many of them were cancelled.</summary>
+    public int Cancelled { get; init; }
+
+    /// <summary>When the latest run went red and nothing green has followed; null while the latest finished run is green or none finished.</summary>
+    public DateTimeOffset? RedSince { get; init; }
+
+    /// <summary>When the node last counted.</summary>
+    public DateTimeOffset CountedAt { get; init; }
+
+    /// <summary>How many extra budgets the owner granted with <c>continue</c>: the cap is (1 + this) budgets.</summary>
+    public int Extra { get; init; }
+
+    /// <summary>Set while the node has stopped pushing for the flight: why, in numbers (<c>4.3 runner-hours of 4, 31 runs, 9 failed</c>). Null while it may push.</summary>
+    public string? CappedWhy { get; init; }
+
+    /// <summary>When the owner last said <c>continue</c>: a red stop counts from the later of this and <see cref="RedSince"/>.</summary>
+    public DateTimeOffset? RedAcknowledgedAt { get; init; }
+
+    /// <summary>When it was capped.</summary>
+    public DateTimeOffset? CappedAt { get; init; }
+
+    /// <summary>The owner's answer to the cap that was not <c>continue</c>: <c>land-green</c> or <c>split</c>, kept for the controller; null otherwise.</summary>
+    public string? Answer { get; init; }
+
+    /// <summary>Runner-hours as a person reads them: <c>1.5</c>.</summary>
+    [JsonIgnore]
+    public double RunnerHours => RunnerMinutes / 60;
 }
 
 /// <summary>One priority raise for a stale bound (<see cref="FlightRow.StaleRaises"/>).</summary>

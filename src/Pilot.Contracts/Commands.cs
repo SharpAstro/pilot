@@ -445,6 +445,18 @@ public static class Verbs
     public const string AllowRound = "allow-round";
 
     /// <summary>
+    /// <c>ci-budget flight/&lt;code&gt; continue|land-green|split</c>: the owner's answer to a flight whose CI spend passed
+    /// <c>flight-ci-budget</c> (PIL795). <c>continue</c> raises the cap by one budget and lets pushes through again; the others are kept
+    /// on the flight for the controller, and the stop stays.
+    /// </summary>
+    public const string CiBudget = "ci-budget";
+
+    /// <summary>The answers to <see cref="CiBudget"/>.</summary>
+    public const string CiContinue = "continue";
+    public const string CiLandGreen = "land-green";
+    public const string CiSplit = "split";
+
+    /// <summary>
     /// <c>clear flight/&lt;code&gt; [why…]</c>: the watchtower's word (or the person's) that a flight held in a holding pattern (a
     /// review passed with notes) is cleared to land: autopilot's merge and the PR-ready card's Merge are no longer held.
     /// </summary>

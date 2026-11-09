@@ -657,6 +657,21 @@ internal sealed class FakeGitHub : IGitHub
     public Task<WorkflowRun[]> WorkflowRunsAsync(string repoPath, string commit, CancellationToken cancellationToken) =>
         RunsFail is { } why ? Task.FromException<WorkflowRun[]>(new FlightException(why)) : Task.FromResult(Runs.TryGetValue(commit, out var runs) ? runs : []);
 
+    /// <summary>The CI runs of each branch with their runner time, by branch name; a branch with none listed has none (PIL795).</summary>
+    public Dictionary<string, CiRun[]> CiRuns { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>How many times the CI runs of a branch were read.</summary>
+    public int CiReads;
+
+    /// <summary>When set, reading the CI runs fails with it, as a gh that could not reach GitHub.</summary>
+    public string? CiRunsFail { get; set; }
+
+    public Task<CiRun[]> CiRunsAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref CiReads);
+        return CiRunsFail is { } why ? Task.FromException<CiRun[]>(new FlightException(why)) : Task.FromResult(CiRuns.TryGetValue(branch, out var runs) ? runs : []);
+    }
+
     /// <summary>What MergeStateAsync answers for any PR; null to derive it from <see cref="Summary"/>/<see cref="Checks"/> and <see cref="Queue"/> as GitHub would say it, none with no checks.</summary>
     public MergeState? Merge { get; set; }
 

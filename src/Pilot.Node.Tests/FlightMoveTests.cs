@@ -27,6 +27,8 @@ public abstract class FlightMoveTestsBase : IAsyncDisposable
     private protected readonly NodeState _sender = new(new InMemoryJournal(), TimeProvider.System);
     private protected readonly RoleModels _models = new(null);
     private protected readonly FakeWorkers _workers = new();
+    private protected readonly FakeGitHub _github = new();
+    private protected readonly FakeGitHub _senderGitHub = new();
     private protected readonly FlightCommander _flights;
     private protected readonly LegCommander _legs;
     private protected readonly string _pushedHead;
@@ -62,17 +64,17 @@ public abstract class FlightMoveTestsBase : IAsyncDisposable
         _pushedHead = Git(Sending, "rev-parse", "HEAD");
 
         var git = new GitCli();
-        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System) { Models = _models, Machine = "DE1" };
+        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, github: _github) { Models = _models, Machine = "DE1" };
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DE1", RepoRootsGiven: [Path.Combine(_root, "receiver")]);
         _flights.Repos = new RepoCatalog(_state, options);
-        _legs = new LegCommander(_state, _workers, new FakeChecks(), new FakeGitHub(), git, new Planes(git), _flights, options, TimeProvider.System) { Models = new RoleModels(null) };
+        _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, git, new Planes(git), _flights, options, TimeProvider.System) { Models = new RoleModels(null) };
         _flights.Advance = _legs.AdvanceFlightAsync;
         Fleet(true);
 
         var senderOptions = new NodeOptions(Path.Combine(_root, "sender.sock"), Path.Combine(_root, "sender-data"), MachinePrefix: "SE1", RepoRootsGiven: [Path.Combine(_root, "sender")]);
         _peer = new MovePeer(_flights) { Checkout = Receiving, State = _state };
-        _senderFlights = new FlightCommander(_sender, new Planes(git), TimeProvider.System) { Models = _senderModels, Machine = "SE1", Fleet = new MoveFleet(_peer) };
-        _senderLegs = new LegCommander(_sender, _senderWorkers, new FakeChecks(), new FakeGitHub(), _senderGit, new Planes(git), _senderFlights, senderOptions, TimeProvider.System) { Models = _senderModels };
+        _senderFlights = new FlightCommander(_sender, new Planes(git), TimeProvider.System, github: _senderGitHub) { Models = _senderModels, Machine = "SE1", Fleet = new MoveFleet(_peer) };
+        _senderLegs = new LegCommander(_sender, _senderWorkers, new FakeChecks(), _senderGitHub, _senderGit, new Planes(git), _senderFlights, senderOptions, TimeProvider.System) { Models = _senderModels };
     }
 
     private protected string Receiving => Path.Combine(_root, "receiver", "tianwen");

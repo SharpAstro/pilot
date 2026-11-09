@@ -162,6 +162,34 @@ public sealed partial class LegCommander
             // Planned again, the leg keeps the sub-task it has: it is the same leg in the work item.
             SubTask = known?.SubTask,
         });
+        if (known is null)
+        {
+            RaiseLegCapCard(flight, name, legs.Length + 1);
+        }
+    }
+
+    /// <summary>The card a flight's second extra leg raises: it grew past the legs its planner laid.</summary>
+    public const string LegCapKind = "leg-cap";
+
+    /// <summary>How many legs past the plan a flight may add without a card to the owner (PIL795).</summary>
+    public const int ExtraLegsFree = 1;
+
+    /// <summary>
+    /// PIL795: a flight's legs grow by at most <see cref="ExtraLegsFree"/> past what was laid when it was planned without a card to the
+    /// owner. The leg is planned all the same; the card says so and offers to take it out. A flight with no recorded plan has no cap.
+    /// </summary>
+    private void RaiseLegCapCard(FlightRow flight, string leg, int count)
+    {
+        if (state.Flights().FirstOrDefault(f => f.Code == flight.Code)?.PlannedLegs is not { } planned || count <= planned + ExtraLegsFree)
+        {
+            return;
+        }
+        var subject = Verbs.FlightTarget(flight.Code);
+        state.CloseCardsAbout(subject, "a further leg was planned", LegCapKind);
+        state.RaiseCard(CardBin.ForYou, LegCapKind, subject,
+            $"{flight.Code}: {count} legs, {planned} planned ({count - planned} extra)",
+            $"The plan said {planned} {(planned == 1 ? "leg" : "legs")} and {leg} makes it {count}: more than {ExtraLegsFree} extra. {leg} is planned and flies in its turn; Remove it takes it out, or leave it if the issue needs it.",
+            [new CardChoice { Label = $"Remove {leg}", Verb = Verbs.RemoveLeg, Target = Verbs.LegTarget(flight.Code, leg) }]);
     }
 
     /// <summary>The card a removed leg leaves, a line saying it went and why.</summary>

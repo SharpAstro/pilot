@@ -20,7 +20,7 @@ public abstract class PrMarksTestsBase : IDisposable
     private protected const string Moved = "beef1111beef1111";
 
     private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2m-" + Guid.NewGuid().ToString("N")[..8]);
-    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private protected readonly NodeState _state;
     private protected readonly FakeWorkers _workers = new();
     private protected readonly FakeGitHub _github = new();
     private protected readonly FlightCommander _flights;
@@ -31,8 +31,11 @@ public abstract class PrMarksTestsBase : IDisposable
 
     private readonly TestGit _testGit;
 
-    protected PrMarksTestsBase(bool realGit = false)
+    /// <param name="journal">Where the node writes; a test that reads the black box gives a file journal.</param>
+    /// <param name="realGit">Real git for a class that is about git itself; the in-memory one otherwise (#813).</param>
+    protected PrMarksTestsBase(INodeJournal? journal = null, bool realGit = false)
     {
+        _state = new NodeState(journal ?? new InMemoryJournal(), TimeProvider.System);
         // Real: a repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
         _git = _testGit = new TestGit(_root, realGit, () => SeedRepo.Make(_root));
         var git = _git;
@@ -49,7 +52,7 @@ public abstract class PrMarksTestsBase : IDisposable
     /// <summary>Runs this test on git itself, before it has used the repo: for a test of a class that otherwise checks what the node decides.</summary>
     private protected void RealGit() => _testGit.UseReal();
 
-    public void Dispose()
+    public virtual void Dispose()
     {
         if (_testGit.IsReal)
         {

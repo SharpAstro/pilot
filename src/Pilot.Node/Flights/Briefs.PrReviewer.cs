@@ -49,6 +49,7 @@ public static partial class Briefs
         text.AppendLine();
         text.AppendLine("Look for: bugs and regressions, a claim the code does not bear out, tests that do not test what they say, and");
         text.AppendLine("anything the PR says it does that is missing. Style alone is no finding.");
+        text.AppendLine(SelfTriggeringCiRule);
         text.AppendLine("Never assert a defect you cannot prove from the tree: one you suspect and cannot show becomes a question for the");
         text.AppendLine("author, said as one. Each finding names its file and line in the PR's head (`path/to/File.cs:42`), what is wrong");
         text.AppendLine("and how you know.");

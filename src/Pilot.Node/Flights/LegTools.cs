@@ -26,6 +26,17 @@ public sealed record PullRequest(int Number, string State, string Head, string U
 public sealed record WorkflowRun(long Id, string Name, string Status, string? Conclusion, string Url, string Event, DateTimeOffset? CompletedAt);
 
 /// <summary>
+/// A GitHub Actions run on a PR's branch with the runner time it used (PIL795): <paramref name="RunnerMinutes"/> is the sum of its
+/// jobs' durations over every attempt, a job still running counted up to the time asked.
+/// </summary>
+/// <param name="Name">Its workflow's name.</param>
+/// <param name="Status"><c>queued</c>, <c>in_progress</c> or <c>completed</c>.</param>
+/// <param name="Conclusion">Null until it has completed.</param>
+/// <param name="StartedAt">When it started (its first attempt).</param>
+/// <param name="CompletedAt">When it last completed; null while it runs.</param>
+public sealed record CiRun(long Id, string Name, string Status, string? Conclusion, string Event, DateTimeOffset StartedAt, DateTimeOffset? CompletedAt, double RunnerMinutes);
+
+/// <summary>
 /// Where a PR stands in its base's merge queue. <paramref name="State"/> and <paramref name="Head"/> are the PR's own
 /// (<c>OPEN</c>, <c>MERGED</c>, <c>CLOSED</c>); <paramref name="Queued"/> whether it is in the queue now, at
 /// <paramref name="Position"/>; <paramref name="RemovedAt"/> and <paramref name="RemovedReason"/> its last removal from the
@@ -195,6 +206,14 @@ public interface IGitHub
     /// </summary>
     /// <exception cref="FlightException">gh could not list them.</exception>
     Task<WorkflowRun[]> WorkflowRunsAsync(string repoPath, string commit, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Every workflow run GitHub Actions made for <paramref name="branch"/> (the PR's head branch) in the repo at
+    /// <paramref name="repoPath"/>, newest first, each with the runner time its jobs used, so a flight's CI can be counted (PIL795).
+    /// A run that has completed is read once and kept; one still running is read again at each call.
+    /// </summary>
+    /// <exception cref="FlightException">gh could not list them.</exception>
+    Task<CiRun[]> CiRunsAsync(string repoPath, string branch, CancellationToken cancellationToken);
 
     /// <summary>
     /// PR <paramref name="number"/>'s checks as <see cref="ChecksAsync"/> reads them, with how many are done of how many, and the
