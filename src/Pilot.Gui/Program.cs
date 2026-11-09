@@ -493,6 +493,12 @@ if (feed is not null && client is not null && clients is not null)
         // One press of a card at a time, from the panel or the flight page: a second would clear the first's working state.
         if (chrome.Cards.WorkingOn(card.Id) is not null)
         {
+            // A Dismiss not sent must not leave its card hidden: nothing would bring it back (PIL853).
+            if (verb == Verbs.Dismiss)
+            {
+                chrome.Cards.NoteNotSent(card);
+                loop.RequestRedraw();
+            }
             return;
         }
         // Said on the button at once, cleared when the node has answered, whatever it said.
@@ -510,20 +516,13 @@ if (feed is not null && client is not null && clients is not null)
     }
     async Task SendCardCommandAsync(string verb, CardRow card, string[] args)
     {
-        // A card raised on another node is answered there.
-        if (clients.For(chrome.Cards.NodeOf(card)) is not { } to)
-        {
-            chrome.Cards.NoteRefused(card.Id, FleetClients.WatchOnly(chrome.Cards.NodeOf(card)));
-            Note($"pilot-gui: {verb} {card.Id}: {FleetClients.WatchOnly(chrome.Cards.NodeOf(card))}");
-            loop.RequestRedraw();
-            return;
-        }
-        var result = await to.SendAsync(DashboardCommands.CardRequest(verb, card, args, GuiSay.Who), cts.Token);
-        clients.NoteRefusal(chrome.Cards.NodeOf(card), result);
-        // A refusal is said on the card the button is on, never only here: a Merge pressed again and again on a PR GitHub
-        // would not merge showed nothing (SE1, 2026-10-24).
-        var refused = !result.Success ? result.Error : result.Response is { Ok: false } answer ? answer.Error : null;
-        chrome.Cards.NoteRefused(card.Id, refused);
+        // A card raised on another node is answered there. A refusal is said on the card the button is on, never only here: a Merge
+        // pressed again and again on a PR GitHub would not merge showed nothing (SE1, 2026-10-24). The helper does so for every
+        // outcome, which is what brings a refused Dismiss's card back (PIL853).
+        var node = chrome.Cards.NodeOf(card);
+        var to = clients.For(node);
+        var refused = await CardCommands.SendAsync(chrome.Cards, verb, card, args, GuiSay.Who, to is null ? null : to.SendAsync, FleetClients.WatchOnly(node),
+            cts.Token, result => clients.NoteRefusal(node, result));
         Note($"pilot-gui: {verb} {card.Id} ({card.Title}): {refused ?? "done"}");
         loop.RequestRedraw();
     }

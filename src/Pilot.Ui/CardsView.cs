@@ -186,23 +186,30 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
     // A held panel's summary: the cards as they are, not as held.
     private string? _summary;
 
-    /// <summary>The ids of the open cards <see cref="Without"/> took off this panel: they are not closed, only hidden, so a read of this screen must not take their absence for a close.</summary>
-    internal IReadOnlySet<string> Hidden { get; private init; } = new HashSet<string>();
+    /// <summary>
+    /// The open cards <see cref="Without"/> took off this panel, each by its node and id (two nodes' cards may share an id): they are not
+    /// closed, only hidden, so a read of this screen must not take their absence for a close.
+    /// </summary>
+    internal IReadOnlySet<(string? Node, string Id)> Hidden { get; private init; } = new HashSet<(string?, string)>();
+
+    /// <summary>The key a card is known by on this panel: its node's name (null for this window's alone) and its id, as <see cref="HeldTo"/> keys it.</summary>
+    internal (string? Node, string Id) KeyOf(CardRow card) => (NodeOf(card)?.Name, card.Id);
 
     /// <summary>
-    /// This panel without the open cards of <paramref name="ids"/> (cards a person dismissed that the node has not yet closed): the
-    /// rest as they are, in their order, with their nodes. A held panel's summary stays as it was held; otherwise it counts what is left.
+    /// This panel without the open cards of <paramref name="keys"/> (cards a person dismissed that the node has not yet closed, by node
+    /// and id, <see cref="KeyOf"/>): the rest as they are, in their order, with their nodes. A held panel's summary stays as it was held;
+    /// otherwise it counts what is left.
     /// </summary>
-    internal CardsScreen Without(IReadOnlySet<string> ids)
+    internal CardsScreen Without(IReadOnlySet<(string? Node, string Id)> keys)
     {
-        if (ids.Count == 0 || !Open.Any(c => ids.Contains(c.Id)))
+        if (keys.Count == 0 || !Open.Any(c => keys.Contains(KeyOf(c))))
         {
             return this;
         }
-        return new CardsScreen([.. Open.Where(c => !ids.Contains(c.Id))], Handled, Watchtower)
+        return new CardsScreen([.. Open.Where(c => !keys.Contains(KeyOf(c)))], Handled, Watchtower)
         {
             _nodes = _nodes, _summary = _summary, Merged = Merged, Held = Held,
-            Hidden = new HashSet<string>(Hidden.Concat(Open.Where(c => ids.Contains(c.Id)).Select(c => c.Id))),
+            Hidden = new HashSet<(string?, string)>(Hidden.Concat(Open.Where(c => keys.Contains(KeyOf(c))).Select(KeyOf))),
         };
     }
 
@@ -547,19 +554,42 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     // What a button's press is doing, by card id: working with the node, refused in its words. One helper for every button that asks the node.
     internal Presses Presses { get; } = new();
 
-    // The cards whose Dismiss was clicked and the node has not yet closed, by id. The row leaves the panel on the click: a snapshot
-    // taken before the node's close still lists the card open, and would bring it back for a moment (PIL853). Swapped whole, as the presses are.
-    private System.Collections.Immutable.ImmutableHashSet<string> _dismissed = System.Collections.Immutable.ImmutableHashSet<string>.Empty;
+    // The cards whose Dismiss was clicked and the node has not yet closed, by node and id (a merged panel's nodes may share an id, so an
+    // id alone hid another node's card the person never dismissed). The row leaves the panel on the click: a snapshot taken before the
+    // node's close still lists the card open, and would bring it back for a moment (PIL853). Swapped whole, as the presses are.
+    private System.Collections.Immutable.ImmutableHashSet<(string? Node, string Id)> _dismissed = System.Collections.Immutable.ImmutableHashSet<(string? Node, string Id)>.Empty;
 
-    /// <summary>Whether card <paramref name="cardId"/> was dismissed here and is hidden until the node closes it or refuses, for a test or a dump.</summary>
-    public bool DismissedPending(string cardId) => Volatile.Read(ref _dismissed).Contains(cardId);
+    /// <summary>Whether card <paramref name="cardId"/> of node <paramref name="node"/> (null: this window's) was dismissed here and is hidden until the node closes it or refuses, for a test or a dump.</summary>
+    public bool DismissedPending(string cardId, string? node = null) => Volatile.Read(ref _dismissed).Contains((node, cardId));
 
-    /// <summary>Hides card <paramref name="cardId"/> from the click of its Dismiss, until the node's close of it is read or <see cref="NoteRefused"/> brings it back.</summary>
-    public void NoteDismissed(string cardId)
+    /// <summary>
+    /// Hides <paramref name="card"/> from the click of its Dismiss, until the node's close of it is read or <see cref="NoteRefused(string, string?, string?)"/>
+    /// brings it back. The host sends every outcome of the dismiss back through that (<see cref="CardCommands.SendAsync"/>), or the card stays hidden.
+    /// </summary>
+    public void NoteDismissed(CardRow card)
     {
-        System.Collections.Immutable.ImmutableInterlocked.Update(ref _dismissed, d => d.Add(cardId));
+        var key = _shown.KeyOf(card);
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _dismissed, d => d.Add(key));
         Changed?.Invoke();
     }
+
+    /// <summary>
+    /// A Dismiss of <paramref name="card"/> the host did not send (another press on the card was still with the node): its row comes back,
+    /// unless a Dismiss of it is the press still working, whose answer will settle it.
+    /// </summary>
+    public void NoteNotSent(CardRow card)
+    {
+        if (WorkingOn(card.Id) == DismissHit(card))
+        {
+            return;
+        }
+        var key = _shown.KeyOf(card);
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _dismissed, d => d.Remove(key));
+        Changed?.Invoke();
+    }
+
+    /// <summary>The hit id of <paramref name="card"/>'s Dismiss button, as the host names the press working.</summary>
+    public static string DismissHit(CardRow card) => $"card:{card.Id}:dismiss";
 
     /// <summary>
     /// <paramref name="screen"/> as the panel and the flight page show it: without the cards dismissed here (<see cref="NoteDismissed"/>).
@@ -573,8 +603,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             return screen;
         }
-        var listed = screen.Open.Select(c => c.Id).Concat(screen.Hidden).ToHashSet();
-        if (marked.Any(id => !listed.Contains(id)))
+        var listed = screen.Open.Select(screen.KeyOf).Concat(screen.Hidden).ToHashSet();
+        if (marked.Any(key => !listed.Contains(key)))
         {
             System.Collections.Immutable.ImmutableInterlocked.Update(ref _dismissed, d => d.Intersect(listed));
             marked = Volatile.Read(ref _dismissed);
@@ -585,14 +615,29 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>
     /// What the node said when it refused a button on card <paramref name="cardId"/>, shown on the card in red until the
     /// card changes or closes; null clears it (the next press that went through). A refusal of a Dismiss brings the card back
-    /// (<see cref="NoteDismissed"/>) with the reason on it.
+    /// (<see cref="NoteDismissed"/>) with the reason on it: every node's card of that id, as a caller that knows only the id cannot say
+    /// which (<see cref="NoteRefused(string, string?, string?)"/> can).
     /// </summary>
     public void NoteRefused(string cardId, string? why)
     {
         Presses.NoteRefused(cardId, why);
         if (why is not null)
         {
-            System.Collections.Immutable.ImmutableInterlocked.Update(ref _dismissed, d => d.Remove(cardId));
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _dismissed, d => d.Except(d.Where(k => k.Id == cardId)));
+        }
+    }
+
+    /// <summary>
+    /// What node <paramref name="node"/> (null: this window's) said when it refused a button on its card <paramref name="cardId"/>, as
+    /// <see cref="NoteRefused(string, string?)"/>; a refused Dismiss brings back this card alone, not another node's card of the same id.
+    /// The node is read when the press is sent (<see cref="NodeOf"/>), since the panel drawn by the time the answer comes holds other rows.
+    /// </summary>
+    public void NoteRefused(string cardId, string? node, string? why)
+    {
+        Presses.NoteRefused(cardId, why);
+        if (why is not null)
+        {
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _dismissed, d => d.Remove((node, cardId)));
         }
     }
 
@@ -1023,12 +1068,16 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         if (watched is null && !merged)
         {
             // Dismiss (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            Put(NodeButton("Dismiss", $"card:{card.Id}:dismiss", () =>
+            Put(NodeButton("Dismiss", DismissHit(card), () =>
             {
-                // The row leaves on the click, not when the node's close reaches the stream.
+                // The row leaves on the click, not when the node's close reaches the stream. Not while another press on the card is
+                // with the node: the host sends no second press then (CardCommandAsync), so nothing would bring the row back.
                 if (OnDismiss is { } dismiss)
                 {
-                    NoteDismissed(card.Id);
+                    if (WorkingOn(card.Id) is null)
+                    {
+                        NoteDismissed(card);
+                    }
                     dismiss(card);
                 }
             }));
