@@ -21,7 +21,7 @@ public sealed class JobTestsFailFast : JobTestsBase
 
     // Longer than the commands' minute: a check that was never stopped ends by itself and fails the asserts that say so, rather
     // than a wait. How soon it stopped is read from its row, which a loaded machine's slow start does not move.
-    private static readonly TimeSpan CheckWait = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan CheckWait = TimeSpan.FromSeconds(25);
 
     // Starts a child that would sleep a minute and writes its pid, then prints the failure: the job's tree is more than its shell.
     private static string FailsWithAChild(string pidFile) => OperatingSystem.IsWindows()

@@ -95,7 +95,7 @@ public sealed class MergesTests
             if (call == nameof(IGitHub.MergeAsync) && Interlocked.Increment(ref first) == 1)
             {
                 reached.TrySetResult();
-                await open.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                await open.Task.WaitAsync(TimeSpan.FromSeconds(25));
             }
         };
 

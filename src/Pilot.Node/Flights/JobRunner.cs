@@ -62,6 +62,15 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>How long a queued benchmark waits for a quiet CPU before its owner is rung and told why the CPU is busy.</summary>
     public TimeSpan BenchQuietWait { get; set; } = TimeSpan.FromMinutes(30);
 
+    /// <summary>The Ring card for a running job that has held its slot past <see cref="LongJobWindow"/> while others wait behind it (#895).</summary>
+    public const string LongJobKind = "job-long";
+
+    /// <summary>How long a running job (not a benchmark) may hold its slot while another waits before one Ring card offers to cancel it.</summary>
+    public TimeSpan LongJobWindow { get; set; } = TimeSpan.FromMinutes(20);
+
+    // Jobs a long-job card was raised for: once per job.
+    private readonly ConcurrentDictionary<string, byte> _longJobTold = new(StringComparer.Ordinal);
+
     // Benches whose owner has been told they wait for a quiet CPU: once per bench.
     private readonly ConcurrentDictionary<string, byte> _benchBusyTold = new(StringComparer.Ordinal);
 
@@ -592,6 +601,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             args = [.. args.Skip(1)];
         }
+        // --whole-suite <why> says why a dotnet test with no --filter may run.
+        string? wholeSuiteWhy = null;
+        if (args.Length > 1 && args[0] == Verbs.WholeSuiteArg)
+        {
+            wholeSuiteWhy = args[1].Trim().Length > 0 ? args[1].Trim() : null;
+            args = [.. args.Skip(2)];
+        }
         var alone = args.Length > 0 && args[0] == Verbs.AloneArg;
         if (alone)
         {
@@ -645,6 +661,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             return state.Complete(command, $"run takes a session to wake ({Verbs.SessionTargetPrefix}<id>) or the node, not {command.Target}");
         }
 
+        // A dotnet test over a whole project or solution is CI's, on the PR (as for a leg's check, CheckScope): refused unless the run says why.
+        if (wholeSuiteWhy is null && CheckScope.WholeSuite(line) is { } whole)
+        {
+            return state.Complete(command, WholeSuiteRefusal(whole, owner));
+        }
+
         // A session that replaced another of its name and role takes up the predecessor's queued job of the same command in the
         // same folder, rather than queueing the same work twice (its end already goes to the replacement, #601). A running one only
         // for a reviewer, which reads the head it was started on: a replacement worker edits the plane, so a run started before
@@ -694,6 +716,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             StartedAt = time.GetUtcNow(),
             MemoryKey = JobKey.Of(line, cwd).ToString(),
             FailFast = failFast || IsLegCheckOfReviewerOrFixer(owner, line),
+            WholeSuite = wholeSuiteWhy,
         };
         job = job with { QueuedAt = job.StartedAt };
 
@@ -702,6 +725,34 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         state.PutJob(job);
         _signals.Writer.TryWrite(new HandedOver(job));
         return state.Complete(command, null, made: jobId);
+    }
+
+    /// <summary>The git a refusal's suggested filter reads the flight's changes through; a test puts its own.</summary>
+    public IGit Git { get; init; } = new GitCli();
+
+    /// <summary>
+    /// <see cref="CheckScope.Refusal"/> for a run of a whole suite, with the filter suggested from the owner's flight's plane changes
+    /// when the owner has a flight with a plane, and the way past it for a run.
+    /// </summary>
+    private string WholeSuiteRefusal(string segment, SessionRow? owner)
+    {
+        string? suggestion = null;
+        if (owner?.Flight is { Length: > 0 } code && state.Flights().FirstOrDefault(f => f.Code == code) is { } flight && flight.Worktree is { Length: > 0 } plane && Directory.Exists(plane))
+        {
+            try
+            {
+                var diff = Git.RunAsync(["diff", "--name-only", $"{flight.Base}...HEAD"], plane, _stopping);
+                if (diff.Wait(TimeSpan.FromSeconds(10), _stopping) && diff.Result.Ok)
+                {
+                    suggestion = CheckScope.Suggest(diff.Result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), plane);
+                }
+            }
+            catch (Exception ex) when (ex is AggregateException or OperationCanceledException or System.ComponentModel.Win32Exception or IOException)
+            {
+                // No suggestion then: the refusal still says what to do.
+            }
+        }
+        return $"{CheckScope.Refusal(segment, suggestion)}. For a run, the way past it is pilot run --whole-suite \"<why>\" -- <command>";
     }
 
     /// <summary>
@@ -1038,6 +1089,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
 
         CheckIdle();
+        CheckLongJob();
         CheckBenchBusy();
     }
 
@@ -1064,6 +1116,42 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         // The repo, heavy and flight holds are holds too: a job behind one of them is walked past, so a light job or another repo's
         // starts in a free slot (review of #924: a held heavy job at the head stopped the queue).
         && WhyWait(job, ignoreSibling: true, ignoreBuild: true, ignoreHolds: true) is null;
+
+    /// <summary>
+    /// A running job (not a benchmark) that has held its slot past <see cref="LongJobWindow"/> while another job is queued raises one
+    /// Ring card, once per job, whose choice cancels it. The card closes when the job ends or the queue empties.
+    /// </summary>
+    private void CheckLongJob()
+    {
+        var now = time.GetUtcNow();
+        foreach (var told in _longJobTold.Keys.Where(id => !_running.ContainsKey(id)).ToList())
+        {
+            _longJobTold.TryRemove(told, out _);
+            state.CloseCardsAbout(Verbs.JobTarget(told), "the job ended", LongJobKind);
+        }
+        if (_queue.Count == 0)
+        {
+            foreach (var told in _longJobTold.Keys)
+            {
+                state.CloseCardsAbout(Verbs.JobTarget(told), "nothing waits behind it now", LongJobKind);
+            }
+            return;
+        }
+        foreach (var id in _running.Keys)
+        {
+            if (state.Jobs().FirstOrDefault(j => j.Id == id) is not { State: JobState.Running, Kind: not JobKind.Bench, PausedAt: null } job
+                || now - job.StartedAt < LongJobWindow
+                || !_longJobTold.TryAdd(id, 0))
+            {
+                continue;
+            }
+            var owner = job.OwnerName ?? job.Owner ?? "the node";
+            var waiting = string.Join(", ", _queue.Select(q => $"{q.Id} ({q.OwnerName ?? q.Owner ?? "the node"})"));
+            state.RaiseCard(CardBin.Ring, LongJobKind, Verbs.JobTarget(id), $"job {id} of {owner} has held the slot for {Took(now - job.StartedAt)} while {_queue.Count} wait",
+                $"`{job.Command}` is run by {owner}; {_queue.Count} wait behind it: {waiting}.",
+                [new CardChoice { Label = $"Cancel job {id}", Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id) }]);
+        }
+    }
 
     /// <summary>
     /// A benchmark at the head of the queue that has waited past <see cref="BenchQuietWait"/> with nothing of pilot's running and the

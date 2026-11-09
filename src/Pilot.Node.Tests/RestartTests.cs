@@ -67,7 +67,7 @@ public sealed class RestartTests
     // that tianwen's training holds at 100% CPU a trivial pwsh took 78 to 146 s to start and exit at that priority, against 2 to 4 s at
     // normal (measured 2026-11-07). Every job here is two of them (the outer wrapper and the line's own pwsh), so one job takes several
     // minutes there: a 30 s wait ended on the third of three queued jobs, and a 120 s one on a followed job's exit after its last line.
-    private const int WaitSeconds = 900;
+    private const int WaitSeconds = 25;
 
     private static async Task<bool> WaitForAsync(Func<bool> condition, int seconds = WaitSeconds)
     {

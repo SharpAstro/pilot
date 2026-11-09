@@ -19,6 +19,7 @@ public sealed class InvariantTraitTests
         typeof(SplitFileSizeTests),
         typeof(FixtureTests),
         typeof(CommitNotDropTests),
+        typeof(WaitBudgetTests),
     ];
 
     [Fact]

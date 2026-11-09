@@ -229,6 +229,7 @@ internal static class CardKindCatalog
         new("bench-result", "ForYou", ["Flights/BenchRun.cs"], "BenchRunTests.ASingleRefRunsOnceInADetachedShortNamedWorktreeAndTheCardHoldsItsTableUnderItsRefAndSha"),
         new("job-told-unanswered", "Ring", ["Flights/JobRunner.cs"], "JobRetellTests.IdleAndSilentIsRetoldOnceThenRings", "the job's owner was told once of its end and its session row shows no turn since", [nameof(Verbs.Say)]),
         new("job-bench-busy", "Ring", ["Flights/JobRunner.cs"], "BenchSlotTests.ABenchWaitingPastTheBoundForABusyCpuRingsOnceNamingTheProcessAndClosesWhenItStarts", "a process other than the node holds the CPU past the bench's bound, read from the process list", [nameof(Verbs.Say)]),
+        new("job-long", "Ring", ["Flights/JobRunner.cs"], "LongJobRingTests.ARunningJobPastTheWindowWithAJobQueuedBehindItRaisesOneRingCardWhoseChoiceCancelsIt", "a running job has held the slot past the long-job window while another job waits behind it, read from the job rows and the queue", [nameof(Verbs.CancelJob)]),
         new("job-untold", "Ring", ["Flights/JobRunner.cs"], "JobTests.AnOwnerThatCannotBeToldRings", "the job's owner session cannot be told (its row is gone or it refuses messages)", [nameof(Verbs.Say)]),
         new("queued", "Handled", ["Flights/NamedLock.cs"], "LockWaitTests.ALegCommandWaitingPastFiveSecondsIsAnsweredWithWhatHoldsTheLockAndRunsOnceItFrees"),
         new("session-compacted", "Handled", ["Flights/Compactor.cs"], "CompactorTests.AWorkerWaitingOnItsJobIsCompactedWithWhatItWaitsOnAndOneNotWaitingIsNot"),
