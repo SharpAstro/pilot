@@ -32,10 +32,14 @@ public sealed partial class ChatFrameTests
         var arranged = Layout.Engine.Arrange(chat.Tree(), new Rect<float>(0, 0, Bounds.Width, Bounds.Height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
         // The feed is the tallest scrolled node (the page's short-window scroll is not in play at this size).
         var feed = arranged.Where(a => a.Node.Scroll is not null).OrderByDescending(a => a.Bounds.Height).First().Bounds;
+        // Text is drawn a word a leaf: the words on one line of the page (one rounded top) are read as that line, left to right.
         var texts = arranged
             .Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text })
-            .Select(a => new Seen(((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value.Trim(), a.Bounds.X, a.Bounds.Y, a.Bounds.Y + a.Bounds.Height))
-            .Where(t => t.Text.Length > 0 && t.Y >= feed.Y - 0.5f && t.Bottom <= feed.Y + feed.Height + 0.5f)
+            .Select(a => (Text: ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value.Trim(), a.Bounds))
+            .Where(t => t.Text.Length > 0 && t.Bounds.Y >= feed.Y - 0.5f && t.Bounds.Y + t.Bounds.Height <= feed.Y + feed.Height + 0.5f)
+            .GroupBy(t => MathF.Round(t.Bounds.Y))
+            .Select(g => g.OrderBy(t => t.Bounds.X).ToArray())
+            .Select(g => new Seen(string.Join(' ', g.Select(t => t.Text)), g[0].Bounds.X, g.Min(t => t.Bounds.Y), g.Max(t => t.Bounds.Y + t.Bounds.Height)))
             .OrderBy(t => t.Y).ThenBy(t => t.X)
             .ToArray();
         var jump = arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "Jump to end" } });
@@ -63,7 +67,7 @@ public sealed partial class ChatFrameTests
     public async Task TheViewFollowsTheEndAsEntriesArriveOnATwoThousandEntryTranscript()
     {
         using var renderer = new RgbaImageRenderer(1600, 900);
-        var held = new Held(renderer, Transcript(Long));
+        using var held = new Held(renderer, Transcript(Long));
         await held.OpenAsync();
         var chat = held.Chat;
 
@@ -88,7 +92,7 @@ public sealed partial class ChatFrameTests
     public async Task TheStreamingBubbleAndTheQueuedLinesShowLastAndKeepFollowingAsTheReplyGrows()
     {
         using var renderer = new RgbaImageRenderer(1600, 900);
-        var held = new Held(renderer, Transcript(Long)) { Tail = Writing("PIL907 has one leg left") };
+        using var held = new Held(renderer, Transcript(Long)) { Tail = Writing("PIL907 has one leg left") };
         await held.OpenAsync();
         var chat = held.Chat;
 
@@ -122,7 +126,7 @@ public sealed partial class ChatFrameTests
     public async Task JumpToEndShowsOnlyScrolledUpAndTakesTheViewBackToTheEnd()
     {
         using var renderer = new RgbaImageRenderer(1600, 900);
-        var held = new Held(renderer, Transcript(Long)) { Tail = Writing("PIL907 has one leg left") };
+        using var held = new Held(renderer, Transcript(Long)) { Tail = Writing("PIL907 has one leg left") };
         await held.OpenAsync();
         var chat = held.Chat;
 
@@ -152,7 +156,7 @@ public sealed partial class ChatFrameTests
     public async Task AReaderScrolledUpIsNotMovedByNewEntriesOrTheReplyInProgress()
     {
         using var renderer = new RgbaImageRenderer(1600, 900);
-        var held = new Held(renderer, Transcript(Long)) { Tail = Writing("PIL907 has one leg left") };
+        using var held = new Held(renderer, Transcript(Long)) { Tail = Writing("PIL907 has one leg left") };
         await held.OpenAsync();
         var chat = held.Chat;
 

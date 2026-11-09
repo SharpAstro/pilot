@@ -57,7 +57,7 @@ public sealed partial class ChatFrameTests
 
     // A Chat page holding the feed, read through its own follow: the feed's reads are awaited on the page's change signal (and a deadline), never on a clock.
     // Tail is what the node says beside the entries (the reply in progress, the lines queued behind it); a test sets it and reads again.
-    private sealed class Held(RgbaImageRenderer renderer, List<TranscriptEntry> feed)
+    private sealed class Held(RgbaImageRenderer renderer, List<TranscriptEntry> feed) : IDisposable
     {
         public ChatView<RgbaImage> Chat { get; } = new(renderer) { FontPath = SessionsCapture.FontPath };
         public ChatPage Tail { get; set; } = new() { Entries = [], Total = 0 };
@@ -83,15 +83,24 @@ public sealed partial class ChatFrameTests
             await ReadAsync(() => Chat.Entries.Count >= want);
         }
 
-        // Has the page read the node again, and waits for the change signal that says `arrived`.
+        // Has the page read the node again, and waits for the change signal that says `arrived`. The follow stays open between reads, as the
+        // window's does: opening the page scrolls it to its end, which is not what a read while it is open does.
         public async Task ReadAsync(Func<bool> arrived)
         {
             _changed = NewSignal();
             _arrived = arrived;
-            Chat.Open();
+            if (Chat.IsOpen)
+            {
+                Chat.Refresh();
+            }
+            else
+            {
+                Chat.Open();
+            }
             await _changed.Task.WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
-            Chat.Close();
         }
+
+        public void Dispose() => Chat.Close();
 
         // Adds an entry to the feed and has the page read it now.
         public Task AppendAsync(TranscriptEntry entry)
@@ -124,9 +133,9 @@ public sealed partial class ChatFrameTests
     public async Task AFrameOfTwoThousandEntriesIsWithinTheBudgetAndNearOneOfTwenty()
     {
         using var renderer = new RgbaImageRenderer(1600, 900);
-        var small = new Held(renderer, Transcript(20));
+        using var small = new Held(renderer, Transcript(20));
         await small.OpenAsync();
-        var big = new Held(renderer, Transcript(2000));
+        using var big = new Held(renderer, Transcript(2000));
         await big.OpenAsync();
 
         var few = BestFrameMs(small.Chat);
@@ -146,7 +155,7 @@ public sealed partial class ChatFrameTests
     public async Task AnUnchangedEntrysRowIsTheSameNodeAcrossFramesAndAnAppendBuildsOnlyItsOwnRow()
     {
         using var renderer = new RgbaImageRenderer(1600, 900);
-        var held = new Held(renderer, Transcript(2000));
+        using var held = new Held(renderer, Transcript(2000));
         await held.OpenAsync();
         var chat = held.Chat;
 
