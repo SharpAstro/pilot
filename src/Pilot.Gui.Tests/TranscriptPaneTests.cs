@@ -91,6 +91,57 @@ public sealed class TranscriptPaneTests
         regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == action).OnClick!.Invoke(InputModifier.None);
     }
 
+    // Walks to the stack with the most children: the list of rows (the head and foot stacks hold a handful).
+    private static Layout.Node[] RowsOf(Layout.Node page)
+    {
+        Layout.Node.Stack? widest = null;
+        void Walk(Layout.Node node)
+        {
+            if (node is Layout.Node.Stack stack)
+            {
+                if (widest is null || stack.Children.Length > widest.Children.Length)
+                {
+                    widest = stack;
+                }
+                foreach (var child in stack.Children)
+                {
+                    Walk(child);
+                }
+            }
+        }
+        Walk(page);
+        return [.. widest.ShouldNotBeNull().Children];
+    }
+
+    [Fact]
+    public async Task TheMomentsMarkedFirstRowIsTheSameNodeFrameAfterFrame()
+    {
+        var (_, screen, _) = await Open();
+        var entries = Entries();
+        var pane = new TranscriptPane
+        {
+            Load = (_, _, after, _) => Task.FromResult(after < 0
+                ? new TranscriptPage { Total = entries.Length, Entries = entries }
+                : new TranscriptPage { Total = entries.Length, Entries = [] }),
+        };
+        pane.Open(screen.Lines[0], at: Called);
+        for (var i = 0; i < 100 && pane.Entries.Count < entries.Length; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+        pane.Entries.Count.ShouldBe(entries.Length);
+
+        var first = RowsOf(pane.Tree());
+        var second = RowsOf(pane.Tree());
+
+        second.Length.ShouldBe(first.Length);
+        for (var i = 0; i < first.Length; i++)
+        {
+            second[i].ShouldBeSameAs(first[i], $"row {i}, the marked first row included, is kept across frames");
+        }
+        pane.Close();
+    }
+
     [Fact]
     public async Task AReadsTimeStandsAfterItsPathNotOverIt()
     {

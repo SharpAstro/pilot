@@ -74,6 +74,8 @@ internal sealed class TranscriptPane
     // top of a list that does not follow the end until Jump to end.
     private DateTimeOffset? _at;
     private readonly ListScrollController _atScroll = new() { Mode = ScrollBarMode.Interactive, Anchor = ScrollAnchor.Top };
+    // The marked first row: the row it wraps and the wrapper, kept across frames so the wrapper is one node (see Tree).
+    private (Layout.Node Row, Layout.Node Node)? _marked;
 
     /// <summary>The open session's row id, or null with none open.</summary>
     public string? RowId { get; private set; }
@@ -183,6 +185,7 @@ internal sealed class TranscriptPane
         _line = line;
         Volatile.Write(ref _held, Held.Empty);
         _entries.Reset();
+        _marked = null;
         _at = at;
         _atScroll.AtomOffset = 0;
         _scroll.ScrollToEnd();
@@ -286,8 +289,14 @@ internal sealed class TranscriptPane
         var rows = _entries.Rows(entries, live);
         if (from >= 0 && rows.Count > 0)
         {
-            // The entry the moment fell on, marked.
-            rows[0] = Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(3f).Bg(Prompt), rows[0].WStar()).WithGap(6f).Bg(Marked).WStar();
+            // The entry the moment fell on, marked. The wrapper is kept while the row under it is the same node: DIR.Lib's measure memo
+            // and cull key on the node's reference, so a wrapper made new every frame was measured and laid out every frame. The row is
+            // rebuilt when its entry, the palette or anything else it was built from changes, and the mark follows it then.
+            if (_marked is not { } kept || !ReferenceEquals(kept.Row, rows[0]))
+            {
+                _marked = (rows[0], Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(3f).Bg(Prompt), rows[0].WStar()).WithGap(6f).Bg(Marked).WStar());
+            }
+            rows[0] = _marked.Value.Node;
         }
         if (live)
         {
