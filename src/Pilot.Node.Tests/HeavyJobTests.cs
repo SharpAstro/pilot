@@ -19,11 +19,13 @@ public sealed class HeavyJobTests
     [InlineData("dotnet build src/Pilot.Node.Tests/Pilot.Node.Tests.csproj -c Release")]
     [InlineData("dotnet build")]
     [InlineData("dotnet build -c Release")]
+    [InlineData("dotnet build src -c Release")]
     public void ATestRunOrASolutionBuildIsHeavy(string command) => JobRunner.IsHeavy(command).ShouldBeTrue();
 
     [Theory]
     [InlineData("dotnet build src/SdlVulkan.Renderer.WebView/SdlVulkan.Renderer.WebView.csproj -c Release")]
     [InlineData("dotnet run --project C:\\scratch\\Scratch204.csproj -c Release")]
+    [InlineData("dotnet build -c Release src/Pilot.Node/Pilot.Node.csproj")]
     [InlineData("git status")]
     [InlineData("pwsh -File tools/fetch.ps1")]
     public void AOneProjectBuildOrAnythingElseIsLight(string command) => JobRunner.IsHeavy(command).ShouldBeFalse();
