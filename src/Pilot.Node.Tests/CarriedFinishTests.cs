@@ -15,7 +15,7 @@ namespace Pilot.Node.Tests;
 [Trait("Category", "Slow")]
 public sealed class CarriedFinishTests : LegCommanderTestsBase
 {
-    private static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(25);
 
     private const string Report = "parser in";
 

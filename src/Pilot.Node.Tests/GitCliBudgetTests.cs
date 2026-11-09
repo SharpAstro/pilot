@@ -80,7 +80,7 @@ public sealed class GitCliBudgetTests : IDisposable
 
         ex.Message.ShouldContain("said-before-leaving");
         ex.Message.ShouldContain("had exited");
-        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(40));
+        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(25));
     }
 
     [Fact]

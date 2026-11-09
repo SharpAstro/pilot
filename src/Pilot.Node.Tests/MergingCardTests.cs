@@ -61,7 +61,7 @@ public sealed class MergingCardTests : ReviewTestsBase
                 return Task.CompletedTask;
             }
             reached.TrySetResult();
-            return Task.WhenAny(open.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+            return Task.WhenAny(open.Task, Task.Delay(TimeSpan.FromSeconds(25)));
         };
         return (open, reached);
     }

@@ -42,7 +42,7 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
         var command = run();
         while (_workers.Hold is not null && !command.IsCompleted)
         {
-            waited.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(30), "the launcher was not asked");
+            waited.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(25), "the launcher was not asked");
             await Task.Delay(5, Ct);
         }
         var clock = Stopwatch.StartNew();

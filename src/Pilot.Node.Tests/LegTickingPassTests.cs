@@ -81,7 +81,7 @@ public sealed class LegTickingPassTests : LegCommanderTestsBase
 
     private static async Task Until(Func<bool> condition)
     {
-        var until = DateTime.UtcNow.AddSeconds(30);
+        var until = DateTime.UtcNow.AddSeconds(25);
         while (!condition() && DateTime.UtcNow < until)
         {
             await Task.Delay(10, Ct);

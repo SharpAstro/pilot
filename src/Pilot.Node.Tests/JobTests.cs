@@ -106,7 +106,7 @@ public abstract class JobTestsBase : IDisposable
         _jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = target, Args = [cwd ?? _root, timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture), command], Who = "se1-tia1-parser" });
 
     /// <summary>The longest a test waits on a condition: a ceiling a busy machine does not reach, not a time the code is held to.</summary>
-    private protected static readonly TimeSpan WaitCeiling = TimeSpan.FromMinutes(2);
+    private protected static readonly TimeSpan WaitCeiling = TimeSpan.FromSeconds(25);
 
     /// <summary>The job once <paramref name="condition"/> holds: the dispatcher acts on its own loop, a moment after the call.</summary>
     private protected async Task<JobRow> Until(string id, Func<JobRow, bool> condition)
@@ -1876,7 +1876,7 @@ public sealed class JobTests3 : JobTestsBase
         paused.Ok.ShouldBeTrue(paused.Error);
         // Paused for longer than the whole timeout: it would have been stopped without the pause.
         var pausedAt = DateTimeOffset.UtcNow;
-        while (DateTimeOffset.UtcNow - pausedAt < TimeSpan.FromSeconds(31))
+        while (DateTimeOffset.UtcNow - pausedAt < TimeSpan.FromSeconds(31)) // budget: the pause must outlast the job's whole 30 s timeout, so a held job really is not stopped by it
         {
             await Task.Delay(100, Ct);
         }
@@ -2054,7 +2054,7 @@ public sealed class JobTests3 : JobTestsBase
             // The stop lets go of the running check rather than waiting on it: its watch ends at its next look (a quarter second),
             // where the check itself sleeps for two minutes.
             // Relative to the check's own sleep, not a wall-clock figure: the stop returning well inside it shows the stop did not wait.
-            stop.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(60));
+            stop.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(25));
             // The waiting check's caller goes with the node, but its row stays queued for the next node (pilot #737); the running one's
             // row stays running with its tree alive, as an ordinary job's does.
             await Should.ThrowAsync<OperationCanceledException>(waiting.WaitAsync(WaitCeiling, Ct));

@@ -86,7 +86,7 @@ public abstract class ReviewTestsBase : IDisposable
         var clock = Stopwatch.StartNew();
         while (legs.Starting(code))
         {
-            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(90), $"{code}'s reviewer was not recorded");
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(25), $"{code}'s reviewer was not recorded");
             await Task.Delay(10, Ct);
         }
     }
