@@ -169,6 +169,7 @@ public sealed class ButtonFeedbackTests
     private static readonly (string Pattern, string Why)[] LocalOnly =
     [
         (@"^settings:[^:]+-range:(scope|handle):", "a range row's scope and handle pills only set which range and which handle the next pair press moves: local state, no command on the node"),
+        (@"^settings:[^:]+:(choose$|tracker:)", "a repo list's Choose opens the node's repos and a tracker pill sets which tracker the next Add uses: local state, no command on the node (the Add itself goes through Presses)"),
         (@"^about:(toggle|restart)$", "the About card's fold, and a restart of this window, not a command on the node"),
         (@"^night:toggle$", "the window's palette"),
         (@"^nodes:", "the node filter of the rail: which nodes the pages show"),

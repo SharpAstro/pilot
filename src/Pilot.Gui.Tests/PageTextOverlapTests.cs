@@ -251,6 +251,7 @@ public sealed class PageTextOverlapTests
         if (page == "settings" && chrome.Settings.Load is null && PageData.SettingsFor(state) is { } settingsPage)
         {
             chrome.Settings.Load = _ => Task.FromResult(settingsPage);
+            chrome.Settings.LoadRepos ??= _ => Task.FromResult<RepoInfo[]>(data.WizardRepos.Length > 0 ? data.WizardRepos : [new RepoInfo { Name = "pilot", Path = @"C:\work\pilot" }]);
         }
         chrome.Show(PageOf(page));
 

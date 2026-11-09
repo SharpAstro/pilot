@@ -98,6 +98,8 @@ internal sealed class PageData
             new() { Key = "lan", Label = "LAN", Detail = Detail("Whether other machines may reach this node"), Value = "off", Source = SettingSources.Default, Choices = ["on", "off"] },
             new() { Key = "update-channel", Label = "Update channel", Detail = Detail("Which releases the node updates to"), Value = "stable", Saved = "stable", Source = SettingSources.File, Choices = ["stable", "beta"] },
             new() { Key = "repo-roots", Label = "Repo roots", Detail = Detail("The folders the node looks for repos in, one a line"), Value = path, Saved = path, Source = SettingSources.File, Many = true },
+            // A list of repos, offered the node's repos once LoadRepos is set: its controls row (choose, trackers, Add) is in the sweep (#770).
+            new() { Key = "repo-trackers", Label = "Repo trackers", Detail = Detail("Which tracker each repo's issues are on"), Value = "pilot=github", Saved = "pilot=github", Source = SettingSources.File, Many = true },
             Range("watchtower", "sonnet..sonnet-high", SettingSources.BuiltIn),
             Range("worker", "sonnet..opus-xhigh", SettingSources.ThisNode, saved: "sonnet..opus-xhigh"),
             Range("planner", "sonnet-high..opus-medium", SettingSources.ThisNode, "sonnet-high..opus-medium", "sonnet-medium..opus-xhigh", new SettingDeviation("LE1 · LAPTOP-2", "sonnet-low..opus-low")),

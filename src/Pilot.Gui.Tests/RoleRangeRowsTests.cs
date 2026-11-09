@@ -2,6 +2,7 @@ using DIR.Lib;
 using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Pilot.Ui;
+using SharpAstro.Png;
 using Shouldly;
 using Xunit;
 
@@ -102,6 +103,8 @@ public sealed class RoleRangeRowsTests
         {
             ("worker", "sonnet..opus-xhigh"), ("watchtower", "sonnet..sonnet-high"),
             ("adjacent", "sonnet-high..sonnet-xhigh"), ("one stop", "opus-medium..opus-medium"),
+            // The handles on columns 0 and 1 (6 and 7): 'default' and 'max' span two columns each at the narrow widths and the shift search finds no room, so they stack.
+            ("close at the start", "sonnet-low..sonnet-medium"), ("close at the end", "opus-high..opus-xhigh"),
         })
         {
             foreach (var width in new[] { 500, 700, 900, 1300, 1900 })
@@ -231,6 +234,53 @@ public sealed class RoleRangeRowsTests
             sent[2].ShouldBe(["worker-range", "sonnet-high..opus-low"]);
             sent[3].ShouldBe(["worker-range", "sonnet-low..opus-medium", "--fleet"]);
         }
+    }
+
+    // PILOT_TEST_CAPTURE_DIR names the folder the frame is kept in as a PNG (without it nothing is written).
+    private static void Capture(RgbaImageRenderer renderer, string name)
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR") is { Length: > 0 } dir)
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllBytes(Path.Combine(dir, $"pil770-pair-{name}.png"), PngWriter.Encode(renderer.Surface.Pixels, 1280, 1500));
+        }
+    }
+
+    [Fact]
+    public async Task APairPressedAndWithTheNodeIsDrawnDimmedAndWithNoHitWhereIdleItIsAButton()
+    {
+        var row = Range("sonnet-high..opus-medium", SettingSources.Fleet);
+        using var renderer = new RgbaImageRenderer(1280, 1500);
+        var chrome = Chrome(renderer);
+        var answer = new TaskCompletionSource<SettingsReply>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var asked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await Loaded(chrome, Page(row), (_, _, _) =>
+        {
+            asked.TrySetResult();
+            return answer.Task;
+        });
+
+        // The pair as drawn now: sonnet-low is below the default handle, so a press on it moves the default and it is drawn as a button.
+        Layout.Node.Leaf Cell() => Descendants(chrome.Settings.Tree(DateTimeOffset.UtcNow)).OfType<Layout.Node.Leaf>().Single(l => TextOf(l) == "S low");
+        var idle = Cell();
+        idle.Background.ShouldBe(Palette.Current.Button);
+        var action = "settings:worker-range:pair:sonnet-low";
+        Regions(chrome).Any(r => r.Result is HitResult.ButtonHit b && b.Action == action).ShouldBeTrue();
+        Capture(renderer, "idle");
+
+        Click(Regions(chrome), action);
+        await asked.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+
+        // While the node has it: dimmed off the button blue, and no hit to press a second time.
+        var working = Cell();
+        working.Background.ShouldNotBe(idle.Background);
+        working.Background.ShouldBe(Palette.Current.MenuBg);
+        ((Layout.Content.Text)working.Content).Color.ShouldBe(Palette.Current.Dim);
+        ((Layout.Content.Text)idle.Content).Color.ShouldBe(Palette.Current.Body);
+        Regions(chrome).Any(r => r.Result is HitResult.ButtonHit b && b.Action == action).ShouldBeFalse();
+        Capture(renderer, "working");
+
+        answer.SetResult(new SettingsReply("done"));
     }
 
     [Fact]

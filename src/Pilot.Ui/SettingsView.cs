@@ -620,7 +620,8 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         {
             row = Layout.Builder.HStack(stripe, title.WFixed(TitleWidth), body.WStar()).WithGap(14f).Pad(8f, 6f);
             // Repo roots grow a line per folder: their row takes the height its lines ask for.
-            row = setting.Many ? row.HAuto() : row.RowH(RowHeight);
+            // WStar as the range row's: an Auto wide row counts its Star body as nothing, so the list's wrapping controls measured against no width.
+            row = setting.Many ? row.WStar().HAuto() : row.RowH(RowHeight);
         }
         return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }
@@ -758,8 +759,11 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             var allowed = PressedRange(setting, EditedText(setting, fleet), i, handle) is not null;
             var action = $"settings:{key}:pair:{pair}";
             var label = RangeCaptions.Label(pair, form);
-            Layout.Node CellOf(bool working) => Layout.Builder.Text(label, 11f, end ? Bright : allowed || inside ? Body : Faint, TextAlign.Center).Pad(2f, 4f).WStar().HFixed(ControlH)
-                .Bg(end ? Chosen : inside ? FieldBg : Button).WithTooltip(pair);
+            // A pair whose press is with the node reads as working, as the done mark does: off the Button blue that says it can be pressed,
+            // onto the menu ground in the dim ink (4.6:1; Dim on Button is only 3.3:1). A handle's pair keeps its Chosen mark and drops
+            // its ink a step (Bright to Body), as a working Pill does.
+            Layout.Node CellOf(bool working) => Layout.Builder.Text(label, 11f, end ? (working ? Body : Bright) : working ? Dim : allowed || inside ? Body : Faint, TextAlign.Center).Pad(2f, 4f).WStar().HFixed(ControlH)
+                .Bg(end ? Chosen : working || inside ? FieldBg : Button).WithTooltip(pair);
             // A pair that can be pressed asks the node, so it goes through Presses (working at once, no second press while it is out);
             // one that cannot is a plain control label.
             var cell = allowed
@@ -866,7 +870,8 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     {
         if (setting.Many)
         {
-            return ListEditor(setting, width, measure).HAuto();
+            // WStar: the list's controls wrap, and a wrap in an Auto wide stack measures against no width, so each pill took a line of its own.
+            return ListEditor(setting, width, measure).WStar().HAuto();
         }
         var parts = new List<Layout.Node>();
         if (setting.Choices.Length > 0)
@@ -939,7 +944,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         {
             controls.Add(read.Repos is null
                 ? Idle(read.ReposProblem is null ? "reading repos…" : "repos not read", read.ReposProblem is null ? "the node's repos are being read" : $"the node did not list its repos: {read.ReposProblem}", Button)
-                : Pill(pick is null ? "Choose a repo ▾" : $"{pick} ▾", $"settings:{key}:choose", () => Toggle(key), chosen: pick is not null).HFixed(ControlH));
+                : Pill(pick is null ? "Choose a repo ▾" : $"{Elide(pick)} ▾", $"settings:{key}:choose", () => Toggle(key), chosen: pick is not null).HFixed(ControlH));
             if (trackers)
             {
                 foreach (var which in new[] { "github", "shortcut" })
@@ -955,8 +960,8 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         var field = Field(setting, offering ? "or a folder's path, then Enter" : "add a folder, then Enter", text => [key, .. entries, trackers && !HasTracker(text) ? $"{text}={tracker}" : text]);
         if (offering)
         {
-            controls.Add(Layout.Builder.Spacer().WStar());
-            stack.Add(Layout.Builder.HStack([.. controls]).WithGap(6f).RowH(ControlH));
+            // The pills flow onto a second line where the row is too narrow for them (a long picked repo's name widens its pill): an Auto wide stack ran past the page's edge.
+            stack.Add(Layout.Builder.WrapH([.. controls]).WithGap(6f).WithLineGap(4f).WStar().HAuto());
             if (choice.Opened == key && read.Repos is { } repos)
             {
                 stack.Add(Layout.Builder.HStack(Offered(key, repos, entries, pick), Layout.Builder.Spacer().WStar()).HAuto());
@@ -1058,7 +1063,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     // A control that cannot be pressed now, in the shape of a pill.
     private static Layout.Node Idle(string label, string why, RGBAColor32 background) =>
-        Layout.Builder.Text(label, 12f, Dim, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(background).WithTooltip(why).HFixed(ControlH);
+        Layout.Builder.Text(label, 12f, Dim, TextAlign.Center).Selectable().Pad(10f, 4f).WAuto().Bg(background).WithTooltip(why).HFixed(ControlH);
 
     // A field's working id is its own: Enter sends, and the field says "saving…" until the node answers (a second Enter is ignored meanwhile).
     private Layout.Node Field(SettingRow setting, string placeholder, Func<string, string[]> args)
