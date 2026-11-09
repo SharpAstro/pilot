@@ -352,18 +352,19 @@ public sealed partial class LegCommander
                 call.Dispose();
                 // Notes that do not block are made in one round (#918): a later round's become a follow-up issue and the merge goes
                 // ahead. PIL909's #910 went round three times for notes that held nothing, each round a leg and a check rerun.
-                if (state.Legs(flight.Code).Any(l => l.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal) && l.State == LegState.Done)
-                    && await FileNotesFollowUpAsync(FlightOf(command.Target), notes, cancellationToken))
+                // Not a return: the reviewer is still done with below, whichever way the notes went (review of #935).
+                var filed = state.Legs(flight.Code).Any(l => l.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal) && l.State == LegState.Done)
+                    && await FileNotesFollowUpAsync(FlightOf(command.Target), notes, cancellationToken);
+                if (!filed)
                 {
-                    return;
+                    var fixer = await PlanReviewNotesLegAsync(flight, notes, cancellationToken);
+                    // The hold waits on the leg that makes the notes, never on a watchtower that may not be running (PIL815).
+                    if (fixer is not null)
+                    {
+                        HoldForLeg(flight.Code, fixer);
+                    }
+                    RaiseReviewNotes(FlightOf(command.Target), notes, fixer);
                 }
-                var fixer = await PlanReviewNotesLegAsync(flight, notes, cancellationToken);
-                // The hold waits on the leg that makes the notes, never on a watchtower that may not be running (PIL815).
-                if (fixer is not null)
-                {
-                    HoldForLeg(flight.Code, fixer);
-                }
-                RaiseReviewNotes(FlightOf(command.Target), notes, fixer);
             }
         }
         else if (ReviewLoopHeld(flight))
@@ -637,7 +638,8 @@ public sealed partial class LegCommander
         IssueInfo made;
         try
         {
-            made = await github.CreateIssueAsync(flight.RepoPath, title, body, cancellationToken);
+            // Off the lock, as the human checks are filed: gh is slow and the flight is not held for it.
+            made = await OffLockAsync(null, () => github.CreateIssueAsync(flight.RepoPath, title, body, cancellationToken));
         }
         catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException)
         {

@@ -667,6 +667,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The card's refusal as it stands, for a test or a dump; null when none.</summary>
     public string? RefusedOn(string cardId, string? node = null) => Presses.RefusedOf(PressKeyOf(node, cardId));
 
+    /// <summary><see cref="RefusedOn(string, string?)"/> for <paramref name="card"/>, under its node's key.</summary>
+    public string? RefusedOn(CardRow card) => Presses.RefusedOf(PressKey(card));
+
     /// <summary>The panel's foot, which stays in view while the cards above scroll: the way into the chat with the watchtower.</summary>
     private Layout.Node Foot(CardsScreen screen)
     {
