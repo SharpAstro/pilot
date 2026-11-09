@@ -164,6 +164,40 @@ public sealed class StraySweepTests
     }
 
     [Fact]
+    public void ExplorerUnderAReusedParentIdIsNeverTheJobsAndNothingOfItIsEnded()
+    {
+        // SE1, 2026-11-09 22:04: Explorer restarted, its parent (userinit) exited, and a process of job j2356 took that pid a second
+        // later. Within the old 2 s tolerance Explorer read as the job process's child, and the sweep ended Explorer, Edge and the rest.
+        Job("j9", 600, Began, TimeSpan.FromHours(2), ended: _time.GetUtcNow().AddMinutes(-10));
+        _table.Add(650, 1, "testhost.exe", Began.AddMinutes(1), commandLine: "testhost.exe");
+        _known["j9"] = [new KnownProcess(650, Began.AddMinutes(1))];
+        _table.Add(26484, 650, "explorer.exe", Began.AddMinutes(1) - TimeSpan.FromSeconds(1), commandLine: "explorer.exe");
+        _table.Add(26700, 26484, "msedge.exe", Began.AddMinutes(2), commandLine: "msedge.exe");
+
+        _sweep.SweepOnce();
+
+        _table.Killed.ShouldBe([650], "the job's own leftover only; Explorer started before the process whose pid is its parent id");
+    }
+
+    [Fact]
+    public void AShellOrBrowserProcessIsNeverEndedWhateverTheAttributionSays()
+    {
+        // Even attributed cleanly (started after the job's process, below it), the desktop's own processes are named, never ended.
+        Job("j9", 600, Began, TimeSpan.FromHours(2), ended: _time.GetUtcNow().AddMinutes(-10));
+        _table.Add(660, 1, "pwsh.exe", Began.AddMinutes(1), commandLine: "pwsh.exe");
+        _known["j9"] = [new KnownProcess(660, Began.AddMinutes(1))];
+        _table.Add(661, 660, "msedgewebview2.exe", Began.AddMinutes(2), commandLine: "msedgewebview2.exe");
+        _table.Add(662, 660, "explorer.exe", Began.AddMinutes(2), commandLine: "explorer.exe");
+
+        var named = _sweep.SweepOnce();
+
+        _table.Killed.ShouldBe([660]);
+        named.Select(s => s.Pid).ShouldContain(661);
+        StraySweep.NeverEnded("Explorer.EXE").ShouldBeTrue();
+        StraySweep.NeverEnded("testhost.exe").ShouldBeFalse();
+    }
+
+    [Fact]
     public void AProcessOfAnEndedJobTheNodeLaunchedIsKilledThroughTheTableAndNothingElseIs()
     {
         // 1. j9 ended ten minutes ago; a test host it started while it ran lives on, its wrapper long gone: the node ends it.

@@ -47,7 +47,7 @@ public sealed class JobTree(IProcessTable table)
                 }
                 var childStart = table.StartOf(child.Pid);
                 // A child cannot have started before its parent: such a "child" has the parent id of a process that ended, and is not its.
-                if (start is { } parentStart && childStart is { } started && started < parentStart - JobProcess.StartTolerance)
+                if (start is { } parentStart && childStart is { } started && started < parentStart)
                 {
                     continue;
                 }

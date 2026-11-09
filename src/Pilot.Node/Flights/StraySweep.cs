@@ -128,9 +128,24 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     private static string KeyOf(int pid, DateTimeOffset? start) =>
         $"process:{pid.ToString(CultureInfo.InvariantCulture)}@{(start is { } at ? at.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture) : "unknown")}";
 
-    // Only what the node launched, whose owner has ended, and that descends from it; never itself.
+    // Only what the node launched, whose owner has ended, and that descends from it; never itself, and never the desktop's or the
+    // system's own processes, whatever the attribution says: a misattributed tree ended Explorer, Edge, RuntimeBroker and TabTip as
+    // strays of job j2356 (SE1, 2026-11-09). A stray of those names is said on a card, never ended.
     private static bool CanEnd(Stray stray) =>
-        stray is { NodeLaunched: true, OwnerEnded: true, ByFolder: false, Start: not null } && stray.Pid != Environment.ProcessId;
+        stray is { NodeLaunched: true, OwnerEnded: true, ByFolder: false, Start: not null } && stray.Pid != Environment.ProcessId && !NeverEnded(stray.Name);
+
+    /// <summary>The processes the sweep never ends: the shell, the browser and its views, and Windows' own, by image name.</summary>
+    internal static readonly HashSet<string> NeverEnd = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "explorer", "dwm", "sihost", "ShellExperienceHost", "StartMenuExperienceHost", "SearchHost", "SearchApp", "SearchIndexer", "TextInputHost",
+        "TabTip", "ctfmon", "RuntimeBroker", "ApplicationFrameHost", "SystemSettings", "LockApp", "Widgets", "WidgetService", "PhoneExperienceHost",
+        "msedge", "msedgewebview2", "chrome", "firefox", "svchost", "services", "lsass", "csrss", "smss", "wininit", "winlogon", "fontdrvhost",
+        "WmiPrvSE", "taskhostw", "userinit", "dllhost", "sppsvc", "MsMpEng", "NisSrv", "SecurityHealthService", "SecurityHealthSystray",
+        "audiodg", "spoolsv", "Taskmgr", "OneDrive", "Teams", "ms-teams", "slack", "Code", "devenv", "rider64",
+    };
+
+    internal static bool NeverEnded(string name) =>
+        NeverEnd.Contains(name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? name[..^4] : name);
 
     private bool End(Stray stray, DateTimeOffset now)
     {
