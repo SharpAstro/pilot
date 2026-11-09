@@ -142,14 +142,17 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         RenderLayout(Tree(now), bounds);
     }
 
-    /// <summary>The room's width in design units as the last <see cref="Render"/> had it; null before the first, and in a terminal. A range row lays its captions out against it (#770).</summary>
+    /// <summary>The room's width in design units as the last <see cref="Render"/> or <c>Tree(now, width)</c> had it; null before the first. A range row lays its captions out against it (#770).</summary>
     internal float? PageWidth { get; set; }
 
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
-    internal Layout.Node Tree(DateTimeOffset now)
+    internal Layout.Node Tree(DateTimeOffset now, float? width = null)
     {
         Palette.Use(Night);
         _drawnAt = now;
+        _measured = null;
+        // A host with no render of its own (pilot-tui) hands the room's width in design units, as PullRequests.Tree takes it.
+        PageWidth = width ?? PageWidth;
         Read();
         var read = Volatile.Read(ref _read);
         var page = read.Page;
@@ -723,15 +726,30 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private const float TextMargin = 6f;
 
     // A text's width in design units: measured with the font the page draws with, or a guess where there is none (a terminal, before a first render).
+    // One measure context and one memo a frame (Tree starts them over), not a context per row: the same text at the same size is measured once.
+    private Func<string, float, float>? _measured;
+
     private Func<string, float, float> TextWidth()
     {
+        if (_measured is { } cached)
+        {
+            return cached;
+        }
         if (PageWidth is null || string.IsNullOrEmpty(FontPath))
         {
-            return (text, size) => text.Length * size * 0.6f;
+            return _measured = (text, size) => text.Length * size * 0.6f;
         }
         var context = MeasureContext();
         var scale = Scale.X <= 0f ? 1f : Scale.X;
-        return (text, size) => context.MeasureText(text, size).Width / scale;
+        var memo = new Dictionary<(string, float), float>();
+        return _measured = (text, size) =>
+        {
+            if (!memo.TryGetValue((text, size), out var width))
+            {
+                memo[(text, size)] = width = context.MeasureText(text, size).Width / scale;
+            }
+            return width;
+        };
     }
 
     private Layout.Node RangeRowNode(SettingRow setting, int index)
@@ -760,9 +778,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             var action = $"settings:{key}:pair:{pair}";
             var label = RangeCaptions.Label(pair, form);
             // A pair whose press is with the node reads as working, as the done mark does: off the Button blue that says it can be pressed,
-            // onto the menu ground in the dim ink (4.6:1; Dim on Button is only 3.3:1). A handle's pair keeps its Chosen mark and drops
-            // its ink a step (Bright to Body), as a working Pill does.
-            Layout.Node CellOf(bool working) => Layout.Builder.Text(label, 11f, end ? (working ? Body : Bright) : working ? Dim : allowed || inside ? Body : Faint, TextAlign.Center).Pad(2f, 4f).WStar().HFixed(ControlH)
+            // onto the menu ground in the dim ink (4.6:1; Dim on Button is only 3.3:1). A handle's pair keeps its Chosen mark and its Bright ink
+            // (5.1:1; Body on Chosen is only 3.7:1), as a chosen working Pill does: it shows it is working by the missing hit alone.
+            Layout.Node CellOf(bool working) => Layout.Builder.Text(label, 11f, end ? Bright : working ? Dim : allowed || inside ? Body : Faint, TextAlign.Center).Pad(2f, 4f).WStar().HFixed(ControlH)
                 .Bg(end ? Chosen : working || inside ? FieldBg : Button).WithTooltip(pair);
             // A pair that can be pressed asks the node, so it goes through Presses (working at once, no second press while it is out);
             // one that cannot is a plain control label.
@@ -944,7 +962,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         {
             controls.Add(read.Repos is null
                 ? Idle(read.ReposProblem is null ? "reading repos…" : "repos not read", read.ReposProblem is null ? "the node's repos are being read" : $"the node did not list its repos: {read.ReposProblem}", Button)
-                : Pill(pick is null ? "Choose a repo ▾" : $"{Elide(pick)} ▾", $"settings:{key}:choose", () => Toggle(key), chosen: pick is not null).HFixed(ControlH));
+                : ChoosePill(key, pick));
             if (trackers)
             {
                 foreach (var which in new[] { "github", "shortcut" })
@@ -973,6 +991,13 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             stack.Add(field.RowH(ControlH));
         }
         return Layout.Builder.VStack([.. stack]).WithGap(6f);
+    }
+
+    // The pill that opens the repo menu: the picked repo's name cut to a chip's room, the whole name on hover.
+    private Layout.Node ChoosePill(string key, string? pick)
+    {
+        var pill = Pill(pick is null ? "Choose a repo ▾" : $"{Elide(pick)} ▾", $"settings:{key}:choose", () => Toggle(key), chosen: pick is not null);
+        return (pick is null ? pill : pill.WithTooltip(pick)).HFixed(ControlH);
     }
 
     private static bool HasTracker(string text) => text.EndsWith("=github", StringComparison.OrdinalIgnoreCase) || text.EndsWith("=shortcut", StringComparison.OrdinalIgnoreCase);
@@ -1043,22 +1068,36 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         System.Collections.Immutable.ImmutableInterlocked.Update(ref _choice, c => c with { Picked = c.Picked.Remove(key) });
 
     // Long text elided in the middle (a path's ends say the most); where it is shown the whole of it is on hover.
-    private static string Elide(string text, int chars = ChipChars) =>
+    internal static string Elide(string text, int chars = ChipChars) =>
         text.Length <= chars ? text : $"{text[..(chars / 3)]}…{text[^(chars - chars / 3 - 1)..]}";
 
     // The most a chip's text is cut to (a path's drive and last folders, still), however narrow the room.
     private const int LeastChars = 9;
 
     // The text elided as little as the room (design units, at 12 units) allows, never past LeastChars and never longer than ChipChars.
-    private static string ElideToFit(string text, float room, Func<string, float, float> measure)
+    // A binary search over the character counts (the elided text only gets shorter as the count falls): log2(35) measures, not up to 35 a chip a frame.
+    internal static string ElideToFit(string text, float room, Func<string, float, float> measure)
     {
-        var chars = Math.Min(text.Length, ChipChars);
-        var fit = Elide(text, chars);
-        while (chars > LeastChars && measure(fit, 12f) > room)
+        var most = Math.Min(text.Length, ChipChars);
+        if (most <= LeastChars || measure(Elide(text, most), 12f) <= room)
         {
-            fit = Elide(text, --chars);
+            return Elide(text, most);
         }
-        return fit;
+        var low = LeastChars;
+        var high = most;
+        while (high - low > 1)
+        {
+            var mid = (low + high) / 2;
+            if (measure(Elide(text, mid), 12f) <= room)
+            {
+                low = mid;
+            }
+            else
+            {
+                high = mid;
+            }
+        }
+        return Elide(text, low);
     }
 
     // A control that cannot be pressed now, in the shape of a pill.

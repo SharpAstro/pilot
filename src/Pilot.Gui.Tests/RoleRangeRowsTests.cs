@@ -1,3 +1,4 @@
+using Console.Lib;
 using DIR.Lib;
 using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
@@ -246,6 +247,35 @@ public sealed class RoleRangeRowsTests
         }
     }
 
+    /// <summary>Captures of the range row narrow (500, 700) and wide: a mid-line range and one with its handles close at the start (stacked captions), into PILOT_TEST_CAPTURE_DIR.</summary>
+    [Fact]
+    public async Task TheRangeRowCapturedNarrowWithAMidLineRangeAndOneCloseAtTheStart()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR") is not { Length: > 0 } dir)
+        {
+            return;
+        }
+        Directory.CreateDirectory(dir);
+        foreach (var (name, value) in new[] { ("mid", "sonnet-high..opus-medium"), ("close-at-start", "sonnet-low..sonnet-medium") })
+        {
+            foreach (var width in new[] { 500, 700, 1280 })
+            {
+                using var renderer = new RgbaImageRenderer((uint)width, 520);
+                var chrome = Chrome(renderer);
+                chrome.Settings.Load = _ => Task.FromResult(Page(Range(value, SettingSources.ThisNode, value, "sonnet-medium..opus-xhigh", new SettingDeviation("LE1 · LAPTOP-2", "sonnet-low..opus-low"))));
+                chrome.Settings.Send = (_, _, _) => Task.FromResult(new SettingsReply("done"));
+                chrome.Show(PilotPage.Settings);
+                for (var i = 0; i < 200 && chrome.Settings.Page is null; i++)
+                {
+                    chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, width, 520));
+                    await Task.Delay(25, Ct);
+                }
+                chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, width, 520));
+                File.WriteAllBytes(Path.Combine(dir, $"pil770-range-{name}-{width}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, 520));
+            }
+        }
+    }
+
     [Fact]
     public async Task APairPressedAndWithTheNodeIsDrawnDimmedAndWithNoHitWhereIdleItIsAButton()
     {
@@ -281,6 +311,89 @@ public sealed class RoleRangeRowsTests
         Capture(renderer, "working");
 
         answer.SetResult(new SettingsReply("done"));
+    }
+
+    /// <summary>A handle's pair keeps its Bright ink while the node has the press (Body on Chosen is 3.7:1, under the 4.5 floor): a chosen working Pill does the same.</summary>
+    [Fact]
+    public async Task AWorkingHandleKeepsItsBrightInkOnTheChosenMarkAndAllowsNoSecondPress()
+    {
+        var row = Range("sonnet-high..opus-medium", SettingSources.ThisNode, "sonnet-high..opus-medium");
+        using var renderer = new RgbaImageRenderer(1280, 1500);
+        var chrome = Chrome(renderer);
+        var answer = new TaskCompletionSource<SettingsReply>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var asked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await Loaded(chrome, Page(row), (_, _, _) =>
+        {
+            asked.TrySetResult();
+            return answer.Task;
+        });
+        // With the max handle chosen, a press on the default handle's own pair moves the max down onto it: that pair is a handle and is pressable.
+        Click(Regions(chrome), "settings:worker-range:handle:max");
+        Layout.Node.Leaf Cell() => Descendants(chrome.Settings.Tree(DateTimeOffset.UtcNow)).OfType<Layout.Node.Leaf>().Single(l => l.Tooltip == "sonnet-high");
+        var action = "settings:worker-range:pair:sonnet-high";
+        Regions(chrome).Any(r => r.Result is HitResult.ButtonHit b && b.Action == action).ShouldBeTrue();
+        ((Layout.Content.Text)Cell().Content).Color.ShouldBe(Palette.Current.Bright);
+
+        Click(Regions(chrome), action);
+        await asked.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+
+        var working = Cell();
+        working.Background.ShouldBe(Palette.Current.Chosen);
+        ((Layout.Content.Text)working.Content).Color.ShouldBe(Palette.Current.Bright);
+        Regions(chrome).Any(r => r.Result is HitResult.ButtonHit b && b.Action == action).ShouldBeFalse();
+        Contrast(Palette.Current.Bright, Palette.Current.Chosen).ShouldBeGreaterThanOrEqualTo(4.5);
+        answer.SetResult(new SettingsReply("done"));
+    }
+
+    private static double Contrast(RGBAColor32 a, RGBAColor32 b)
+    {
+        static double Luminance(RGBAColor32 c)
+        {
+            static double Linear(byte v)
+            {
+                var x = v / 255.0;
+                return x <= 0.03928 ? x / 12.92 : Math.Pow((x + 0.055) / 1.055, 2.4);
+            }
+            return 0.2126 * Linear(c.Red) + 0.7152 * Linear(c.Green) + 0.0722 * Linear(c.Blue);
+        }
+        var (hi, lo) = (Math.Max(Luminance(a), Luminance(b)), Math.Min(Luminance(a), Luminance(b)));
+        return (hi + 0.05) / (lo + 0.05);
+    }
+
+    /// <summary>
+    /// pilot-tui hands the page's width to the tree as it does the pull requests' (columns x 8 units), so a range row decides stacked or beside
+    /// against the terminal's width and not the 900-unit default: at 60 columns the line of pairs sits under its title, at 120 beside it.
+    /// </summary>
+    [Theory]
+    [InlineData(60, true)]
+    [InlineData(120, false)]
+    public async Task ARangeRowInATerminalStacksOrSitsBesideByTheColumnsItIsHanded(int columns, bool stacked)
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1500);
+        // No FontPath: the terminal's page measures by the guess.
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer));
+        chrome.Settings.Load = _ => Task.FromResult(Page(Range("sonnet-high..opus-medium", SettingSources.ThisNode)));
+        chrome.Settings.Send = (_, _, _) => Task.FromResult(new SettingsReply("done"));
+        for (var i = 0; i < 200 && chrome.Settings.Page is null; i++)
+        {
+            chrome.Settings.Tree(DateTimeOffset.UtcNow, columns * 8f);
+            await Task.Delay(25, Ct);
+        }
+        chrome.Settings.Page.ShouldNotBeNull();
+        var tree = chrome.Settings.Tree(DateTimeOffset.UtcNow, columns * 8f);
+
+        var arranged = Layout.Engine.Arrange(tree, new Rect<int>(0, 0, columns, 200), CellMeasureContext.PixelAuthored);
+        var title = arranged.Single(a => TextOf(a.Node) == "Worker range").Bounds;
+        var cell = arranged.First(a => a.Node.Tooltip == "sonnet-low").Bounds;
+        if (stacked)
+        {
+            cell.Y.ShouldBeGreaterThan(title.Y);
+            cell.X.ShouldBeLessThanOrEqualTo(title.X + 1);
+        }
+        else
+        {
+            cell.X.ShouldBeGreaterThan(title.X + 20);
+        }
     }
 
     [Fact]

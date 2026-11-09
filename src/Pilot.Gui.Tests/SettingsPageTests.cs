@@ -936,6 +936,51 @@ public sealed class SettingsPageTests
         }
     }
 
+    /// <summary>A picked repo's name is cut to a chip's room on the pill (never silently): the whole name is on hover.</summary>
+    [Fact]
+    public async Task APickedReposLongNameIsElidedOnItsPillAndTheWholeNameIsOnHover()
+    {
+        var (chrome, renderer, _) = await ListsAsync();
+        using var shot = renderer;
+        var now = DateTimeOffset.UtcNow;
+        var longName = Repos.Single(r => r.Name.StartsWith("a-repo-with-a-very-long-name", StringComparison.Ordinal)).Name;
+
+        Click(Regions(chrome), "settings:no-auto-merge-repos:choose");
+        Look(chrome, renderer, now);
+        Click(Regions(chrome), $"settings:no-auto-merge-repos:pick:{longName}");
+        var (texts, _) = Look(chrome, renderer, now);
+        texts.ShouldNotContain($"{longName} ▾");
+        texts.ShouldContain(t => t.EndsWith(" ▾", StringComparison.Ordinal) && t.Contains('…'));
+        Hovers(chrome, renderer, now).Tooltips.ShouldContain(longName);
+    }
+
+    /// <summary>The elide of a chip's text takes a logarithmic number of measures (not one per character cut), and cuts exactly as far as a linear walk would.</summary>
+    [Theory]
+    [InlineData(5f)]
+    [InlineData(120f)]
+    [InlineData(200f)]
+    [InlineData(10000f)]
+    public void ElideToFitMeasuresALogarithmicNumberOfTimesAndCutsAsFarAsALinearWalkWould(float room)
+    {
+        var text = new string('x', 90);
+        var measures = 0;
+        float Measure(string s, float size)
+        {
+            measures++;
+            return s.Length * size * 0.6f;
+        }
+        var fit = SettingsView<RgbaImage>.ElideToFit(text, room, Measure);
+        measures.ShouldBeLessThanOrEqualTo(8);
+        // The linear walk the binary search replaces.
+        var chars = Math.Min(text.Length, 44);
+        var linear = SettingsView<RgbaImage>.Elide(text, chars);
+        while (chars > 9 && linear.Length * 12f * 0.6f > room)
+        {
+            linear = SettingsView<RgbaImage>.Elide(text, --chars);
+        }
+        fit.ShouldBe(linear);
+    }
+
     /// <summary>Captures of the list pickers narrow and wide, with long repo names and several chips, into PILOT_TEST_CAPTURE_DIR (nothing without it).</summary>
     [Fact]
     public async Task TheListPickersCapturedNarrowAndWideWithLongNamesAndSeveralChips()
