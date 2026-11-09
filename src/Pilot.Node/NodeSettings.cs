@@ -128,6 +128,9 @@ public sealed record NodeSettings
 
     /// <summary>How long the pull request watch waits between reads while no client shows the Pull requests page.</summary>
     public static readonly TimeSpan DefaultPrWatchIdle = TimeSpan.FromMinutes(15);
+    /// <summary>How long a peer must have been unheard before a flight it flew may be taken over by this node (#894).</summary>
+    public const string AdoptAfterKey = "adopt-after";
+    public static readonly TimeSpan DefaultAdoptAfter = TimeSpan.FromHours(1);
     public const string OpusCapKey = "opus-cap";
 
     /// <summary>The most reviews and fixers this node runs at once (#912); a start past it waits for a slot.</summary>
@@ -145,7 +148,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. RoleModels.Roles.Select(RoleModels.RangeKey), WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -235,6 +238,8 @@ public sealed record NodeSettings
 
     /// <summary>The wait between the pull request watch's reads while no client shows the Pull requests page (<see cref="PrWatchIdleKey"/>); a minute is read while one does.</summary>
     public TimeSpan? PrWatchIdle { get; init; }
+    /// <summary>How long a silent peer must be unheard before its flights may be taken over (<see cref="AdoptAfterKey"/>); <see cref="DefaultAdoptAfter"/> unless set.</summary>
+    public TimeSpan? AdoptAfter { get; init; }
     /// <summary>The margin, in points, a start tolerates between the 7-day window's used share and its elapsed share; null is off.</summary>
     public double? WeekPace { get; init; }
 
@@ -468,6 +473,7 @@ public sealed record NodeSettings
         PriorityStartLimitKey => PriorityStartLimit is { } high ? [high.ToString(CultureInfo.InvariantCulture)] : null,
         WeekLimitKey => WeekLimit is { } week ? [week.ToString(CultureInfo.InvariantCulture)] : null,
         PrWatchIdleKey => PrWatchIdle is { } idle ? [DurationText(idle)] : null,
+        AdoptAfterKey => AdoptAfter is { } adoptAfter ? [DurationText(adoptAfter)] : null,
         WeekPaceKey => WeekPace is { } pace ? [pace.ToString(CultureInfo.InvariantCulture)] : null,
         SpendAlertKey => SpendAlert is { } alert ? [alert.ToString(CultureInfo.InvariantCulture)] : null,
         WatchtowerCompactShareKey => WatchtowerCompactShare is { } wcs ? [wcs.ToString(CultureInfo.InvariantCulture)] : null,
@@ -730,6 +736,14 @@ public sealed record NodeSettings
                 return ParseDuration(One()) is { } idle && idle >= TimeSpan.FromMinutes(1) && idle <= TimeSpan.FromHours(24)
                     ? (settings with { PrWatchIdle = idle }, null)
                     : (null, "pr-watch-idle takes how long to wait between reads while no one looks at the Pull requests page, 1 minute to 24 hours, as 15m or 1h (a bare number is minutes)");
+            case AdoptAfterKey:
+                if (clear)
+                {
+                    return (settings with { AdoptAfter = null }, null);
+                }
+                return ParseDuration(One()) is { } adopt && adopt >= TimeSpan.FromMinutes(1) && adopt <= TimeSpan.FromDays(7)
+                    ? (settings with { AdoptAfter = adopt }, null)
+                    : (null, "adopt-after takes how long a peer node must be unheard before this node may take over its flights, 1 minute to 7 days, as 30m or 1h (a bare number is minutes)");
             case WeekPaceKey:
             {
                 var raw = clear ? "off" : One();

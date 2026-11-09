@@ -186,10 +186,15 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
             return;
         }
 
+        // The node's own state label only: a label a person sets (pilot: recheck, priority, hold…) is an ask the node reads, never drift
+        // to set back; counting it here made the correction below take a person's pilot: recheck off before the recheck read it.
         var label = pr.Labels is null ? null
-            : string.Join(", ", pr.Labels.Where(l => l.StartsWith(PilotMarks.LabelPrefix, StringComparison.Ordinal))) is { Length: > 0 } text ? text : null;
+            : string.Join(", ", pr.Labels.Where(l => l.StartsWith(PilotMarks.LabelPrefix, StringComparison.Ordinal) && !PilotMarks.ReadFromPeople.Contains(l))) is { Length: > 0 } text ? text : null;
         var disagrees = new List<string>();
-        if (pr.Labels is not null && now is { Label: { } set, MarksWhy: null } && label != set)
+        // A person's pilot: recheck on the PR is an ask the recheck takes and clears: the label is not set back under it, as the write
+        // would drop the ask before the recheck read it. The next look, once the recheck has acted, sets what still differs.
+        var asked = pr.Labels?.Contains(PilotMarks.Recheck) == true;
+        if (pr.Labels is not null && now is { Label: { } set, MarksWhy: null } && label != set && !asked)
         {
             // ApplyOneAsync writes the label only when the row's Label differs from the intended one, so a label changed on GitHub
             // afterwards (a pass with notes left at pilot: changes, PIL795) would stand for good: it is set again here, and said.

@@ -54,6 +54,10 @@ public static partial class PilotCommand
             var move = Action(new Command("move", "Hand the flight to the best willing node of the fleet: its plane is pushed and checked, and this node stops flying it") { Arguments = { code }, Options = { actingOn } },
                 (p, client, ct) => Send(client, Verbs.MoveFlight, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct, p.GetValue(actingOn)));
 
+            var adoptFrom = new Option<string>("--from") { Description = "The node whose flight this is: it has been silent longer than adopt-after, and this node holds its last copy of the flight", Required = true };
+            var adopt = Action(new Command("adopt", "Take over a flight whose node is down: its plane is made from the branch it pushed, its legs and PR come from the last copy of that node, and the issue and PR say so") { Arguments = { code }, Options = { adoptFrom, actingOn } },
+                (p, client, ct) => Send(client, Verbs.AdoptFlight, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(adoptFrom)!], who, ct, p.GetValue(actingOn)));
+
             var prTitle = Words("title", "The PR's title after the code; else the flight's", required: false);
             var pr = Action(new Command("pr", "Push the plane and open its PR") { Arguments = { code, prTitle } },
                 (p, client, ct) => Send(client, Verbs.OpenPr, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(prTitle) ?? [], who, ct));
@@ -128,7 +132,7 @@ public static partial class PilotCommand
             var connectOverlap = Action(new Command("connect-overlap", "Answer an overlap by connecting the flight to the other (on this node or another): it holds until the other has landed, and a fresh planner is started, told the answer") { Arguments = { code, other } },
                 (p, client, ct) => Send(client, Verbs.ConnectOverlap, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
             var flight = new Command("flight", "Flights: create, plan, check what they touch, overlap, connect, disconnect, fly past a package wait, open a PR, review, merge, land")
-                { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, priority, move, pr, reviewStart, allowRound, ciBudget, hold, clear, ground, unground, merge, land } };
+                { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, priority, move, adopt, pr, reviewStart, allowRound, ciBudget, hold, clear, ground, unground, merge, land } };
 
             return flight;
         }

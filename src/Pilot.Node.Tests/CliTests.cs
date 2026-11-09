@@ -589,6 +589,19 @@ public sealed class CliTests : IAsyncLifetime
         error.ToString().ShouldContain("no node answers");
     }
 
+    /// <summary><c>flight adopt &lt;code&gt; --from &lt;node&gt;</c> reaches the node as <see cref="Verbs.AdoptFlight"/> on the flight, naming the node: the test node has no copy of DE1's flights, so it refuses and says so; without --from it is a usage error.</summary>
+    [Fact]
+    public async Task FlightAdoptIsSentToTheNodeAsAdoptFlightNamingTheOldNode()
+    {
+        var (exit, output, error) = await Pilot(_root, "flight", "adopt", "TIA9", "--from", "DE1");
+
+        exit.ShouldBe(1);
+        (output + error).ShouldContain("refused: adopt-flight flight/TIA9: ");
+        (output + error).ShouldContain("no copy of DE1's flights");
+        (await Pilot(_root, "flight", "adopt", "TIA9")).Exit.ShouldNotBe(0);
+        (await Pilot(_root, "flight", "adopt", "--help")).Output.ShouldContain("--from");
+    }
+
     [Fact]
     public async Task TheWatchtowersCommandsAreSpelledAndItsCardsRaised()
     {
