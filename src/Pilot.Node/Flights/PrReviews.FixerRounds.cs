@@ -225,11 +225,24 @@ public sealed partial class PrReviews
     public const string DesignSettledKind = "pr-review-design-settled";
 
     /// <summary>
-    /// Downgrades the open design card of a PR to a Handled notice naming what settled it (the PR merged or closed, the question
-    /// answered, a flight that follows it landed); false when no design card is open. A settled question rings no more, and the
-    /// watchtower, which reads the open cards, never asks about it.
+    /// What a design question was answered with: the choice taken, why, and who took it (null when it is not known). The settled notice
+    /// names the choice and the reason, whichever way the answer came: the card, the watchtower's review fix, the PR's conversation or the node.
     /// </summary>
-    private bool SettleDesign(string repo, int number, string cause, string? link, string? underway = null)
+    private sealed record DesignChoice(string Choice, string Reason, string? By = null);
+
+    /// <summary>The words of the settled notice's cause for an answer: <c>answered by &lt;who&gt; with &lt;choice&gt;: &lt;what followed&gt;</c>, as far as it is known.</summary>
+    private static string AnsweredCause(DesignChoice? chose, string followed) =>
+        chose is null ? $"answered: {followed}"
+            : $"answered{(chose.By is { Length: > 0 } by ? $" by {by}" : "")} with {Clean(chose.Choice, 80)}: {followed}";
+
+    /// <summary>
+    /// Downgrades the open design card of a PR to a Handled notice naming what settled it (the PR merged or closed, the question
+    /// answered, a later review that decides it or no longer asks it, a flight that follows it landed); false when no design card is
+    /// open. A settled question rings no more, and the watchtower, which reads the open cards, never asks about it. When the choice
+    /// is known (<paramref name="chose"/>) the notice names it and why; <paramref name="closing"/> says what is left in place of the
+    /// default line, for a question that was settled without a fix under way.
+    /// </summary>
+    private bool SettleDesign(string repo, int number, string cause, string? link, string? underway = null, DesignChoice? chose = null, string? closing = null)
     {
         var subject = Verbs.PrTarget(repo, number);
         if (!state.Cards(openOnly: true).Any(c => c.Kind == DesignKind && c.Subject == subject))
@@ -237,10 +250,41 @@ public sealed partial class PrReviews
             return false;
         }
         state.CloseCardsAbout(subject, $"settled: {cause}", DesignKind);
-        state.RaiseCard(CardBin.Handled, DesignSettledKind, subject, $"{repo}#{number}: the design question is settled, {cause}",
-            underway is null ? "The card stopped ringing; nothing is left to answer." : $"The card stopped ringing: the question is answered and a fix is under way ({underway}).", link: link);
+        var ending = closing ?? (underway is null
+            ? "The card stopped ringing; nothing is left to answer."
+            : $"The card stopped ringing: the question is answered and a fix is under way ({underway}).");
+        var named = chose is null ? "" : $"Chosen: {Clean(chose.Choice, 300)}\nWhy: {Clean(chose.Reason, 600)}\n";
+        state.RaiseCard(CardBin.Handled, DesignSettledKind, subject, $"{repo}#{number}: the design question is settled, {cause}", named + ending, link: link);
         return true;
     }
+
+    /// <summary>
+    /// The choice the PR's stored answer stands for, read off the decision recorded for it (who chose and why); the answer alone when none
+    /// is recorded yet, as for one given while the fixer waited for a free slot. Null when no answer is stored.
+    /// </summary>
+    private DesignChoice? StoredChoice(PrReviewRow review)
+    {
+        if (review.DesignAnswer is not { Length: > 0 } stored)
+        {
+            return null;
+        }
+        var target = Verbs.PrTarget(review.Repo, review.Number);
+        var said = stored.Trim();
+        var recorded = state.Decisions(kind: DecisionKinds.Design).LastOrDefault(d => d.Subject == target && d.Choice == said);
+        return recorded is null
+            ? new DesignChoice(stored, "it was answered before the fixer could start", null)
+            : new DesignChoice(stored, recorded.Reason.Length > 0 ? recorded.Reason : "answered", recorded.By.Length > 0 ? recorded.By : null);
+    }
+
+    /// <summary>The name an answer given by the PR's conversation carries, as the person's or the node's own do.</summary>
+    private const string CommentWho = "the PR's comment";
+
+    /// <summary>Why an answer was taken, in words: the node's decision says its own reason; the others say who answered and how.</summary>
+    private static string AnswerReason(DesignDecided? decision, string? who, bool autopilot) =>
+        decision is not null ? decision.Reason
+        : who == CommentWho ? "the PR's author, or the controller, answered it in a comment on the PR"
+        : autopilot ? $"the watchtower answered it with review fix on autopilot ({who})"
+        : $"{who} answered it, on the card or with review fix";
 
     /// <summary>
     /// Looks at each PR with a design card open and downgrades it when the PR is merged or closed, when a flight that names it as its
@@ -291,12 +335,14 @@ public sealed partial class PrReviews
         if (flight is null && (review.Fixer is not null || _queued.ContainsKey(target)))
         {
             var by = review.Fixer is { } fixer ? $"{fixer} is making the changes the answer calls for" : "the fixer waits for a free Opus slot and starts with the answer";
-            SettleDesign(pr.Repo, pr.Number, "the PR's conversation answers it", review.Url, by);
+            // The answer already acted on is the stored one (a card's, say); the comment is the choice only when none is stored.
+            var acted = StoredChoice(review) ?? new DesignChoice(comment, AnswerReason(null, CommentWho, false), CommentWho);
+            SettleDesign(pr.Repo, pr.Number, "the PR's conversation answers it", review.Url, by, acted);
             return;
         }
         try
         {
-            await ActOnAnswerAsync(pr, review, comment, "the PR's comment", null, false, null, cancellationToken);
+            await ActOnAnswerAsync(pr, review, comment, CommentWho, null, false, null, cancellationToken);
         }
         catch (FlightException ex) when (flight is null)
         {
@@ -311,7 +357,7 @@ public sealed partial class PrReviews
             : _queued.ContainsKey(target) ? "the fixer waits for a free Opus slot and starts with the answer"
             : null;
         if (how is null) return;
-        SettleDesign(pr.Repo, pr.Number, "the PR's conversation answers it", review.Url, how);
+        SettleDesign(pr.Repo, pr.Number, "the PR's conversation answers it", review.Url, how, new DesignChoice(comment, AnswerReason(null, CommentWho, false), CommentWho));
     }
 
     /// <summary>A landed flight in the PR's repo whose title names the PR (<c>#n</c>) and that is not the PR's own flight, or null.</summary>

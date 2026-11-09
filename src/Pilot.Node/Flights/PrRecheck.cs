@@ -517,7 +517,8 @@ public sealed class PrRecheck : IHostedService
         {
             if (review.Fixer is null)
             {
-                reviews.CloseCardsPastHead(review, pr.Head);
+                // The review started next settles the design question the old head's review asked, so its card is left for that review.
+                reviews.CloseCardsPastHead(review, pr.Head, newerReviewFollows: true);
             }
             var started = await StartReviewOfAsync(entry, pr, subject, cancellationToken);
             if (!started.Ok)

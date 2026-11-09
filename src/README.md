@@ -524,8 +524,14 @@ A PR pilot did not make, in a repo it may not fly, is reviewed from its link (#1
   the report and every finding, the repo's CI build and test (`-c Release` for a SharpAstro repo), and to merge
   `origin/<base>` in rather than rebase, push without force, comment on the PR once with each finding and its fix, and
   end its turn. On anyone else's PR a For-you `pr-fix-offer` card has a **Fix it** choice (`fix-pr pr/<owner>/<repo>#<n>`)
-  that starts the same fixer. A finding the reviewer starts with `design:` is a question for the author: it rings a
-  `pr-review-design` card and starts no fixer. An untracked repo gets nothing. One fixer per PR, never a second, and the
+  that starts the same fixer. A finding the reviewer starts with `design:` is a question for the author with its options
+  listed, each saying what criterion it `misses:` (the PR's issue ACs, the PR description, the repo docs the PR touches).
+  When exactly one option reaches the criteria the node decides it (a `DecisionByKinds.Node` decision, mirrored by
+  `DesignDecisionMirror`, recorded and posted) and the fixer starts or the last leg goes round, as for an answered
+  question. It rings a `pr-review-design` card, naming the criterion each option misses, only when no option reaches them,
+  two reach them and differ in what the owner gets, or the question changes the criteria. An open card clears itself,
+  closing with a Handled `DesignSettledKind` notice, when a later review settles the question, the head no longer asks it,
+  or a fixer, the watchtower or the PR's conversation answers it. An untracked repo gets nothing. One fixer per PR, never a second, and the
   review ending takes neither the fixer nor its worktree (a fresh review of the PR carries them on).
   **Rounds.** Each sweep looks at a PR a fixer is on. A head past the reviewed one means it pushed: the fixer is stopped,
   its worktree removed (one held open is a card, tried again) and one fresh review starts at the new head, carrying
