@@ -115,6 +115,26 @@ jobs:
       # mini dump and the hung test is named in the log, instead of the job running to its 20 minute limit with no name
       # (the windows hang of flight/pil461 named no test). A diagnostic, not a raised test timeout.
       run: dotnet test Pilot.Node.Tests -c $BUILD_CONF --no-build --filter 'Category!=Slow' --logger "console;verbosity=detailed" --blame-hang-timeout 5m --blame-hang-dump-type mini
+      env:
+        # The tests that start real processes (#933): written at the run's end, read by the next two steps.
+        PILOT_TEST_PROCESS_REPORT: ${{ github.workspace }}/process-starts.txt
+    - name: Name the tests that start real processes
+      # The top of the report in the job's summary, the whole of it as an artifact: the list #933 moves onto fakes, test by test.
+      if: always()
+      run: |
+        report="$GITHUB_WORKSPACE/process-starts.txt"
+        if [ -f "$report" ]; then
+          { echo '### Tests that start real processes (#933)'; echo '```'; head -n 41 "$report"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo 'No test started a real process.' >> "$GITHUB_STEP_SUMMARY"
+        fi
+    - name: Upload the process-start report
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: process-starts-${{ matrix.os }}
+        path: process-starts.txt
+        if-no-files-found: ignore
     - name: Upload the hang dump
       if: failure()
       uses: actions/upload-artifact@v7
