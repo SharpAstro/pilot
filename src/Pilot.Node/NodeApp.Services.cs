@@ -470,6 +470,7 @@ public static partial class NodeApp
         if (options.MachineSampling)
         {
             builder.Services.AddHostedService(services => services.GetRequiredService<MachineSampler>());
+            builder.Services.AddHostedService(services => new StraySweep(services.GetRequiredService<NodeState>(), OsProcessTable.Instance, services.GetRequiredService<TimeProvider>()) { LivePids = () => services.GetRequiredService<SessionTracker>().LivePids().Select(p => (p.Id, p.Pid)).ToList(), KnownOf = services.GetRequiredService<JobRunner>().KnownOf });
             // The node's own row rides the same tick of the clock (a settings change has no event to hook).
             builder.Services.AddHostedService(services =>
             {

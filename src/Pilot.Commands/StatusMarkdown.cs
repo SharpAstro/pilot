@@ -42,6 +42,10 @@ internal static class StatusMarkdown
         if (snapshot.Machine is { } machine)
         {
             facts.Add($"**machine** {Text(machine.Line())}");
+            if (machine.Strays.Length > 0)
+            {
+                facts.Add($"**strays** {machine.Strays.Length} in the node's tree: {Text(string.Join("; ", machine.Strays.Select(s => s.Line())))}");
+            }
         }
         if (snapshot.Admission is { } admission)
         {

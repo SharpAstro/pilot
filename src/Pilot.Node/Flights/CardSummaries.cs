@@ -99,6 +99,8 @@ public static partial class CardSummaries
             DiskSweep.WorktreeRemovedKind => "The node's disk sweep removed a clean worktree under .claude/worktrees whose PR had merged or closed; the branch is kept. Nothing to do.",
             DiskSweep.WorktreeDirtyKind => "A worktree under .claude/worktrees has a merged or closed PR but holds changes not committed, so the disk sweep left it. Commit or discard the changes and the next sweep removes it.",
             DiskSweep.DiskLowKind => "Free space on the repos' drive is below the disk-alert-gb setting. The card names the biggest reclaimable items by unique bytes; free some space or raise the setting, and the card closes by itself once space is back.",
+            StraySweep.Kind => "A process of a job or session the node started is still running when it should not be. The card names its pid, command line, age, CPU, owner and the exact kill command; run it, or dismiss the card if the process is meant to run (it is not raised again for the same process). The card closes by itself once the process is gone.",
+            StraySweep.KilledKind => "The node ended a process that outlived a job or session it started, once that owner had ended. Nothing to do.",
             "plane-left" => "A flight's plane folder could not be deleted because a process holds it. The node tries again at its next start; delete it by hand if it stays.",
             "issue-left-open" => "A landed flight's issue is still open on GitHub. Close it by hand; its work is in the merged PR.",
             FlightCommander.FoldedKind => $"{what} was folded into another flight, whose planner now plans its points. Nothing to do.",

@@ -118,12 +118,42 @@ public sealed class JobTree(IProcessTable table)
         return [.. killed];
     }
 
-    /// <summary>Forgets what was seen of a job, once it has ended.</summary>
+    // What an ended job's descendants were, kept for the stray sweep while any of them still lives (pilot #909); dropped once none does.
+    private readonly Dictionary<string, List<KnownProcess>> _afterEnd = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Forgets what was seen of a job, once it has ended. The descendants seen are kept apart (<see cref="KnownOf"/>) until none of them
+    /// lives: one that outlives its job is what the stray sweep looks for.
+    /// </summary>
     public void Forget(string jobId)
     {
         lock (_gate)
         {
-            _seen.Remove(jobId);
+            if (_seen.Remove(jobId, out var map) && map.Count > 0)
+            {
+                _afterEnd[jobId] = [.. map.Values.Select(s => new KnownProcess(s.Pid, s.Start))];
+            }
+        }
+    }
+
+    /// <summary>The descendants seen of a job that still live, with the start each had; none for a job never seen or whose processes are all gone.</summary>
+    public IReadOnlyList<KnownProcess> KnownOf(string jobId)
+    {
+        lock (_gate)
+        {
+            List<KnownProcess> known = _seen.TryGetValue(jobId, out var map) ? [.. map.Values.Select(s => new KnownProcess(s.Pid, s.Start))]
+                : _afterEnd.TryGetValue(jobId, out var kept) ? kept : [];
+            var alive = table.Snapshot().Select(e => e.Pid).ToHashSet();
+            known = [.. known.Where(k => alive.Contains(k.Pid) && JobProcess.SameStart(table.StartOf(k.Pid), k.Start))];
+            if (known.Count == 0)
+            {
+                _afterEnd.Remove(jobId);
+            }
+            else if (!_seen.ContainsKey(jobId))
+            {
+                _afterEnd[jobId] = known;
+            }
+            return known;
         }
     }
 

@@ -45,7 +45,10 @@ public sealed record StrayHistory(IReadOnlyDictionary<int, CpuSample> Cpu, IRead
 /// <param name="Reason">Plain words: what it is still doing and what it should have done.</param>
 /// <param name="KillCommand">The command a person runs to end it, for this OS.</param>
 /// <param name="NodeLaunched">Whether the node started the owner, so the node may end it itself.</param>
-public sealed record Stray(int Pid, string Name, string? CommandLine, TimeSpan Age, TimeSpan? Cpu, string Owner, string Reason, string KillCommand, bool NodeLaunched);
+/// <param name="Start">When the process started: with the pid it names the process, as a later one may reuse the pid.</param>
+/// <param name="OwnerEnded">Whether the owner has ended; the node ends a stray itself only then.</param>
+/// <param name="ByFolder">Whether it was tied to its owner only by its folder or command line, not by descent from the owner: a person's editor open in a plane looks the same, so the node names it and never ends it.</param>
+public sealed record Stray(int Pid, string Name, string? CommandLine, TimeSpan Age, TimeSpan? Cpu, string Owner, string Reason, string KillCommand, bool NodeLaunched, DateTimeOffset? Start = null, bool OwnerEnded = false, bool ByFolder = false);
 
 /// <summary>What one finding came to: the strays, and the CPU of every process looked at, which the next finding gets as its history.</summary>
 public sealed record StrayReading(IReadOnlyList<Stray> Strays, IReadOnlyDictionary<int, CpuSample> Cpu);
@@ -208,7 +211,7 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
                 continue;
             }
             var detail = table.DetailsOf(pid);
-            strays.Add(new Stray(pid, byPid[pid].Name, detail?.CommandLine, start is { } at ? now - at : TimeSpan.Zero, cpu, owner.Label, reason, KillCommandFor(pid), owner.NodeLaunched));
+            strays.Add(new Stray(pid, byPid[pid].Name, detail?.CommandLine, start is { } at ? now - at : TimeSpan.Zero, cpu, owner.Label, reason, KillCommandFor(pid), owner.NodeLaunched, start, owner.EndedAt is not null, found.How.StartsWith("it works in", StringComparison.Ordinal) || found.How.StartsWith("its command line names", StringComparison.Ordinal)));
         }
         return new StrayReading(strays, cpuNow);
     }
