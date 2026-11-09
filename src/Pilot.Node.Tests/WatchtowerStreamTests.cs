@@ -470,6 +470,26 @@ public sealed class WatchtowerStreamTests : IDisposable
     }
 
     [Fact]
+    public async Task ACompactionCancelledBeforeItIsWrittenLeavesNoCompactionUnderWay()
+    {
+        await UpAndIdleAsync();
+        var before = _launcher.SessionOf(0);
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        // The wait for the write is cancelled (OperationCanceledException, not an IO error): nothing was written, so no compaction is coming.
+        await Should.ThrowAsync<OperationCanceledException>(() => _messenger.CompactAsync(
+            new CommandRequest { Verb = Verbs.Compact, Target = Verbs.SessionTarget(Row().Id), Args = ["keep the flights"], Who = LegWatch.Who }, cancelled.Token));
+
+        // A session id the row takes later is the generation's own again: the row is not left mid-compaction.
+        const string Next = "11111111-2222-4333-8444-555555555555";
+        _launcher.Process(0).Emit(Init(Next));
+        await Until(() => Row().SessionId == Next, "the row to carry the new session id");
+        _tower.Generations().ShouldHaveSingleItem().SessionId.ShouldBe(Next);
+        _tower.Generations().Single().SessionId.ShouldNotBe(before);
+    }
+
+    [Fact]
     public async Task ACompactionIsRefusedWhileItWorksSinceItIsOnlyEverItsNextTurn()
     {
         await _tower.LookAsync(Ct);

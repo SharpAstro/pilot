@@ -299,9 +299,9 @@ public sealed partial class Watchtower : IStreamRoute
     /// <summary>A /compact turn ended: the conversation goes on as a generation of its own (<see cref="Compacted"/>), which the chat divides at.</summary>
     private void CompleteCompaction(StreamEntry e, TurnTiming? turn)
     {
-        e.Compacting = false;
         if (turn is { IsError: true })
         {
+            e.Compacting = false;
             LogStream($"the compaction of {e.RowId} ended in error; no generation recorded");
             return;
         }
@@ -312,6 +312,9 @@ public sealed partial class Watchtower : IStreamRoute
             _generations.Add(new Generation($"{e.RowId}{CompactionMark}{n}", e.Session!.SessionId, time.GetUtcNow(), Compacted, Stream: true));
             _generations = [.. _generations.OrderBy(g => g.StartedAt)];
             SaveGenerations(_generations);
+            // Cleared only now, inside the lock Generations() holds: it sees the flag or the generation, never neither (else the row's
+            // new session id would be written onto the generation before).
+            e.Compacting = false;
         }
     }
 
@@ -545,10 +548,15 @@ public sealed partial class Watchtower : IStreamRoute
             {
                 await session.SendAsync(text, cancellationToken);
             }
-            catch (Exception ex) when (ex is InvalidOperationException or IOException)
+            catch (Exception ex)
             {
+                // Whatever stopped the say (a cancelled wait for the write included) means no compaction turn is coming.
                 entry.Compacting = false;
-                throw new SessionDeliveryException($"{row.Name} ended as the say was written: {ex.Message}");
+                if (ex is InvalidOperationException or IOException)
+                {
+                    throw new SessionDeliveryException($"{row.Name} ended as the say was written: {ex.Message}");
+                }
+                throw;
             }
         }
         finally
