@@ -1,0 +1,184 @@
+using DIR.Lib;
+using Pilot.Contracts;
+using Shouldly;
+using Xunit;
+using Layout = DIR.Lib.Layout;
+
+namespace Pilot.Gui.Tests;
+
+/// <summary>
+/// PIL907, the behaviours the culled chat keeps, on a transcript of two thousand entries: the view follows the end as entries arrive, the
+/// streaming bubble and the queued lines show last, Jump to end is there only when scrolled up and takes the view back, and a reader scrolled
+/// up to older rows is not moved by new entries or by the reply in progress growing. CPU-rendered; the page reads the feed on its own signal
+/// and nothing waits on the clock.
+/// </summary>
+public sealed partial class ChatFrameTests
+{
+    private const int Long = 2000;
+
+    // What a frame drew: each text leaf inside the feed's viewport with where it sits, top to bottom.
+    private readonly record struct Seen(string Text, float X, float Y, float Bottom);
+
+    private sealed record Frame(Seen[] Texts, RectF32 Feed, bool JumpShown)
+    {
+        public Seen Find(string text) => Texts.First(t => t.Text.Contains(text, StringComparison.Ordinal));
+        public bool Has(string text) => Texts.Any(t => t.Text.Contains(text, StringComparison.Ordinal));
+    }
+
+    // Draws the page (so the regions and the scroll bind) and reads what was arranged under the feed's viewport.
+    private static Frame Draw(RgbaImageRenderer renderer, ChatView<RgbaImage> chat)
+    {
+        chat.Render(Bounds);
+        var arranged = Layout.Engine.Arrange(chat.Tree(), new Rect<float>(0, 0, Bounds.Width, Bounds.Height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        // The feed is the tallest scrolled node (the page's short-window scroll is not in play at this size).
+        var feed = arranged.Where(a => a.Node.Scroll is not null).OrderByDescending(a => a.Bounds.Height).First().Bounds;
+        var texts = arranged
+            .Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text })
+            .Select(a => new Seen(((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value.Trim(), a.Bounds.X, a.Bounds.Y, a.Bounds.Y + a.Bounds.Height))
+            .Where(t => t.Text.Length > 0 && t.Y >= feed.Y - 0.5f && t.Bottom <= feed.Y + feed.Height + 0.5f)
+            .OrderBy(t => t.Y).ThenBy(t => t.X)
+            .ToArray();
+        var jump = arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "Jump to end" } });
+        return new Frame(texts, new RectF32(feed.X, feed.Y, feed.Width, feed.Height), jump);
+    }
+
+    private static ListScrollController FeedScroll(ChatView<RgbaImage> chat, Frame frame) =>
+        chat.ScrollTargetAt(frame.Feed.X + frame.Feed.Width / 2, frame.Feed.Y + frame.Feed.Height / 2).ShouldNotBeNull();
+
+    // The wheel, up by `notches` (a positive delta scrolls toward the start).
+    private static void WheelUp(ChatView<RgbaImage> chat, Frame frame, int notches)
+    {
+        var scroll = FeedScroll(chat, frame);
+        for (var i = 0; i < notches; i++)
+        {
+            scroll.HandleInput(new InputEvent.Scroll(1f, frame.Feed.X + frame.Feed.Width / 2, frame.Feed.Y + frame.Feed.Height / 2, InputModifier.None)).ShouldBeTrue();
+        }
+    }
+
+    private static TranscriptEntry Said(string text) => new() { Index = 0, Kind = TranscriptKind.Assistant, At = At, Text = text };
+
+    private static ChatPage Writing(string partial) => StreamingChatTests.Tail(false) with { Partial = partial };
+
+    [Fact]
+    public async Task TheViewFollowsTheEndAsEntriesArriveOnATwoThousandEntryTranscript()
+    {
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        var held = new Held(renderer, Transcript(Long));
+        await held.OpenAsync();
+        var chat = held.Chat;
+
+        var first = Draw(renderer, chat);
+        first.JumpShown.ShouldBeFalse("a page opened at its end follows it");
+        first.Has($"Paragraph 5 of the report on flight {(Long - 1) / 8}").ShouldBeTrue("the last entry is in view");
+        first.Has("Please look at flight 0:").ShouldBeFalse("the start of the transcript is not drawn");
+
+        for (var n = 1; n <= 3; n++)
+        {
+            var words = $"Arrival number {n}: the flight landed.";
+            await held.AppendAsync(Said(words));
+            var frame = Draw(renderer, chat);
+            frame.JumpShown.ShouldBeFalse($"still following after arrival {n}");
+            var last = frame.Find(words);
+            last.Bottom.ShouldBeLessThanOrEqualTo(frame.Feed.Y + frame.Feed.Height + 0.5f, $"arrival {n} is whole in view");
+            FeedScroll(chat, frame).Offset.ShouldBe(FeedScroll(chat, frame).MaxOffset, 0.01f, $"at the end after arrival {n}");
+        }
+    }
+
+    [Fact]
+    public async Task TheStreamingBubbleAndTheQueuedLinesShowLastAndKeepFollowingAsTheReplyGrows()
+    {
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        var held = new Held(renderer, Transcript(Long)) { Tail = Writing("PIL907 has one leg left") };
+        await held.OpenAsync();
+        var chat = held.Chat;
+
+        var frame = Draw(renderer, chat);
+        frame.JumpShown.ShouldBeFalse();
+        var lastReply = frame.Find($"Paragraph 5 of the report on flight {(Long - 1) / 8}");
+        var bubble = frame.Find("writing…");
+        var queued = frame.Find("queued behind running pilot status");
+        var second = frame.Find("queued behind the message before it");
+        var working = frame.Find("● running pilot status");
+        lastReply.Y.ShouldBeLessThan(bubble.Y);
+        bubble.Y.ShouldBeLessThan(queued.Y);
+        queued.Y.ShouldBeLessThan(second.Y);
+        second.Y.ShouldBeLessThan(working.Y);
+        working.Bottom.ShouldBeLessThanOrEqualTo(frame.Feed.Y + frame.Feed.Height + 0.5f, "the last line is whole in view");
+
+        // The reply grows by lines: the view stays at the end, the last line stays in view.
+        for (var n = 1; n <= 3; n++)
+        {
+            var words = $"PIL907 has one leg left, and growing round {n}:\n\n- the chat page lays out only the rows in view\n- the box and the queued lines stay at the foot";
+            held.Tail = Writing(words);
+            await held.ReadAsync(() => chat.Partial == words);
+            var grown = Draw(renderer, chat);
+            grown.JumpShown.ShouldBeFalse($"following while the reply grows ({n})");
+            grown.Has("the box and the queued lines stay at the foot").ShouldBeTrue($"the new words are in view ({n})");
+            grown.Find("● running pilot status").Bottom.ShouldBeLessThanOrEqualTo(grown.Feed.Y + grown.Feed.Height + 0.5f, $"the last line stays in view ({n})");
+        }
+    }
+
+    [Fact]
+    public async Task JumpToEndShowsOnlyScrolledUpAndTakesTheViewBackToTheEnd()
+    {
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        var held = new Held(renderer, Transcript(Long)) { Tail = Writing("PIL907 has one leg left") };
+        await held.OpenAsync();
+        var chat = held.Chat;
+
+        var atEnd = Draw(renderer, chat);
+        atEnd.JumpShown.ShouldBeFalse();
+
+        WheelUp(chat, atEnd, 10);
+        var up = Draw(renderer, chat);
+        up.JumpShown.ShouldBeTrue("scrolled up, the page offers the way back");
+        up.Has("● running pilot status").ShouldBeFalse("the foot of the feed is out of view");
+
+        // The pill's own click, as a person makes it.
+        var regions = new List<ClickableRegion>();
+        chat.CollectPaintedRegions(regions);
+        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "chat:end" }).OnClick!.Invoke(InputModifier.None);
+        var back = Draw(renderer, chat);
+        back.JumpShown.ShouldBeFalse("back at the end the pill goes");
+        back.Has("● running pilot status").ShouldBeTrue();
+        FeedScroll(chat, back).Offset.ShouldBe(FeedScroll(chat, back).MaxOffset, 0.01f);
+
+        // And the page follows again: an entry that arrives is in view.
+        await held.AppendAsync(Said("After the jump, the flight landed."));
+        Draw(renderer, chat).Has("After the jump, the flight landed.").ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AReaderScrolledUpIsNotMovedByNewEntriesOrTheReplyInProgress()
+    {
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        var held = new Held(renderer, Transcript(Long)) { Tail = Writing("PIL907 has one leg left") };
+        await held.OpenAsync();
+        var chat = held.Chat;
+
+        var atEnd = Draw(renderer, chat);
+        // Far up into the older rows, a wheel notch at a time as a person does.
+        WheelUp(chat, atEnd, 150);
+        var before = Draw(renderer, chat);
+        before.JumpShown.ShouldBeTrue();
+        before.Texts.Length.ShouldBeGreaterThan(3, "older rows are in view");
+        before.Has("Paragraph 5 of the report on flight 249").ShouldBeFalse("the reader is not at the end");
+        var offset = FeedScroll(chat, before).Offset;
+        var firstInView = before.Texts[0];
+
+        // Entries arrive and the reply in progress grows, over several reads.
+        for (var n = 1; n <= 4; n++)
+        {
+            held.Tail = Writing(string.Join("\n\n", Enumerable.Range(0, n * 3).Select(p => $"Paragraph {p} of the reply in progress, round {n}.")));
+            await held.AppendAsync(Said($"Arrival number {n}: the flight landed. {LongLine}"));
+            var after = Draw(renderer, chat);
+
+            after.JumpShown.ShouldBeTrue($"still scrolled up after read {n}");
+            FeedScroll(chat, after).Offset.ShouldBe(offset, 0.01f, $"the content offset from the top after read {n}");
+            after.Texts.Select(t => (t.Text, t.X, t.Y)).ShouldBe(before.Texts.Select(t => (t.Text, t.X, t.Y)), $"the rows in view are where they were after read {n}");
+            after.Texts[0].ShouldBe(firstInView, $"the first row in view and its top after read {n}");
+            after.Has("the flight landed").ShouldBeFalse("what arrived is below the view");
+        }
+        held.Chat.Entries.Count.ShouldBe(Long + 4);
+    }
+}

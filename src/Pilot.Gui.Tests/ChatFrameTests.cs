@@ -15,7 +15,7 @@ namespace Pilot.Gui.Tests;
 /// flight pages' budget test takes them; nothing here waits on the clock (the feed is read on a nudge and awaited by the page's own change
 /// signal) and no process runs.
 /// </summary>
-public sealed class ChatFrameTests
+public sealed partial class ChatFrameTests
 {
     /// <summary>The longest a frame of the Chat page may take (the best of the frames), in milliseconds: the GUI frame budget of the admission views' test.</summary>
     private const double FrameBudgetMs = 250;
@@ -56,40 +56,49 @@ public sealed class ChatFrameTests
     }
 
     // A Chat page holding the feed, read through its own follow: the feed's reads are awaited on the page's change signal (and a deadline), never on a clock.
+    // Tail is what the node says beside the entries (the reply in progress, the lines queued behind it); a test sets it and reads again.
     private sealed class Held(RgbaImageRenderer renderer, List<TranscriptEntry> feed)
     {
         public ChatView<RgbaImage> Chat { get; } = new(renderer) { FontPath = SessionsCapture.FontPath };
+        public ChatPage Tail { get; set; } = new() { Entries = [], Total = 0 };
+        public List<TranscriptEntry> Feed => feed;
         private TaskCompletionSource _changed = NewSignal();
-        private int _want;
+        private Func<bool> _arrived = () => true;
 
         private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public async Task OpenAsync()
         {
-            Chat.Load = (after, _) => Task.FromResult(new ChatPage { Entries = [.. feed.Where(e => e.Index > after)], Total = feed.Count });
+            Chat.Load = (after, _) => Task.FromResult(Tail with { Entries = [.. feed.Where(e => e.Index > after)], Total = feed.Count });
             Chat.OnSend = _ => Task.FromResult<string?>(null);
+            Chat.OnAnswerNow = _ => Task.FromResult<string?>(null);
             Chat.Changed = () =>
             {
-                if (Chat.Entries.Count >= Volatile.Read(ref _want))
+                if (_arrived())
                 {
                     _changed.TrySetResult();
                 }
             };
-            Volatile.Write(ref _want, feed.Count);
+            var want = feed.Count;
+            await ReadAsync(() => Chat.Entries.Count >= want);
+        }
+
+        // Has the page read the node again, and waits for the change signal that says `arrived`.
+        public async Task ReadAsync(Func<bool> arrived)
+        {
+            _changed = NewSignal();
+            _arrived = arrived;
             Chat.Open();
             await _changed.Task.WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
             Chat.Close();
         }
 
         // Adds an entry to the feed and has the page read it now.
-        public async Task AppendAsync(TranscriptEntry entry)
+        public Task AppendAsync(TranscriptEntry entry)
         {
-            _changed = NewSignal();
             feed.Add(entry with { Index = feed.Count });
-            Volatile.Write(ref _want, feed.Count);
-            Chat.Open();
-            await _changed.Task.WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
-            Chat.Close();
+            var want = feed.Count;
+            return ReadAsync(() => Chat.Entries.Count >= want);
         }
     }
 
