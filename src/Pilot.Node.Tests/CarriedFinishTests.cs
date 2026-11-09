@@ -13,7 +13,7 @@ namespace Pilot.Node.Tests;
 /// </summary>
 [Collection(JobsCollection.Name)]
 [Trait("Category", "Slow")]
-public sealed class CarriedFinishTests : LegCommanderTestsBase
+public sealed class CarriedFinishTests() : LegCommanderTestsBase(realGit: true)
 {
     private static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(60);
 
@@ -21,11 +21,11 @@ public sealed class CarriedFinishTests : LegCommanderTestsBase
 
     private string Gate => Path.Combine(_root, "gate");
 
-    // A check that runs until the gate file exists, then exits with the given code: the same line in pwsh and sh as RestartTests uses.
+    // A check that runs until the gate file exists, then exits with the given code, or after 2 minutes so a failed test leaves nothing running: the same line in pwsh and sh as RestartTests uses.
     private string WaitingFor(int exit) =>
         OperatingSystem.IsWindows()
-            ? $"while (-not (Test-Path -LiteralPath '{Gate}')) {{ Start-Sleep -Milliseconds 100 }}; echo 'finished'; exit {exit}"
-            : $"while [ ! -e '{Gate}' ]; do sleep 0.1; done; echo 'finished'; exit {exit}";
+            ? $"$end = (Get-Date).AddMinutes(2); while (-not (Test-Path -LiteralPath '{Gate}') -and (Get-Date) -lt $end) {{ Start-Sleep -Milliseconds 100 }}; echo 'finished'; exit {exit}"
+            : $"i=0; while [ ! -e '{Gate}' ] && [ $i -lt 1200 ]; do sleep 0.1; i=$((i+1)); done; echo 'finished'; exit {exit}";
 
     private static string Echoing(string text, int exit) => $"echo '{text}'; exit {exit}";
 

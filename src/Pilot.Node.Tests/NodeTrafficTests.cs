@@ -65,7 +65,7 @@ public sealed class NodeTrafficTests
 
         // gh's helper starts through the same method; git stands in for the binary, which may not be installed.
         var start = new ProcessStartInfo("git", ["--version"]) { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
-        var (process, counted) = traffic.Start("gh", start);
+        var (process, counted) = await traffic.StartAsync("gh", start, cancellationToken: Ct);
         using (process)
         using (counted)
         {

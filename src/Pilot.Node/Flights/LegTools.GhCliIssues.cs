@@ -120,6 +120,16 @@ public sealed partial class GhCli
         return exit != 0 ? [] : output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
+    public async Task<string[]> IssueLabelsOrThrowAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["issue", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "labels", "-q", ".labels[].name"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not read #{number}'s labels: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        return output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
     public async Task EnsureLabelAsync(string repoPath, string label, CancellationToken cancellationToken)
     {
         var (color, description) = PilotMarks.LabelStyle(label);

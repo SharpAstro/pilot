@@ -69,6 +69,8 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <summary>The issue break-up: what it proposes is the test's; Claude is never run.</summary>
     public FakeIssueSplitter Splitter { get; private init; } = new();
 
+    private static readonly NodeHeapRow FixedHeap = new() { At = DateTimeOffset.UnixEpoch, HeapBytes = 40L << 20, CommittedBytes = 60L << 20, WorkingSetBytes = 90L << 20 };
+
     /// <summary>nuget.org: what it lists is the test's.</summary>
     public FakeNuGetFeed NuGet { get; private init; } = new();
 
@@ -131,6 +133,8 @@ internal sealed class NodeHarness : IAsyncDisposable
                 builder.Services.AddSingleton<Pilot.Node.Flights.IGitHub>(github);
                 builder.Services.AddSingleton<Pilot.Node.Flights.INuGetFeed>(nuget);
                 builder.Services.AddSingleton<Pilot.Node.Flights.ISummaryModel>(summary);
+                // A fixed heap reading, so two reads of GET /node of one idle node are equal (the live one moves between calls).
+                builder.Services.AddSingleton<Func<NodeHeapRow>>(() => FixedHeap);
                 if (traffic is not null)
                 {
                     builder.Services.AddSingleton(traffic);
@@ -243,7 +247,7 @@ internal sealed class NodeHarness : IAsyncDisposable
         _held.Dispose();
         try
         {
-            Directory.Delete(Folder, recursive: true);
+            TestDirs.DeleteTree(Folder);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

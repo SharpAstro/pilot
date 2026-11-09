@@ -141,6 +141,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>How many jobs run at once; the rest wait their turn. Set live by <c>set node max-jobs</c>, then <see cref="Pump"/>.</summary>
     public int MaxRunning { get; set; } = 1;
 
+    /// <summary>
+    /// Whether a heavy job (a test run, a solution, test-project or folder build) waits while another heavy job runs on the machine,
+    /// whatever <see cref="MaxRunning"/> allows (the owner, 2026-11-09). On for every node; a test of another queue rule turns it off.
+    /// </summary>
+    public bool OneHeavyAtATime { get; set; } = true;
+
     /// <summary>The priority every job's process tree runs at, so builds and tests yield the CPU to other work (#629); Normal keeps the node's own.</summary>
     public JobPriority Priority { get; set; } = JobPriority.BelowNormal;
 
@@ -357,7 +363,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             }
             var candidates = ownerRow.Role == SessionRole.Worker ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray() : sessions;
             var replacement = Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates);
-            if (replacement is null && (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true))
+            if (replacement is null && OwnerEnded(ownerRow, row))
             {
                 continue;
             }
@@ -1012,6 +1018,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         // Benchmarks go by their own rule, so only the other jobs ahead count towards a priority reason.
         // Each wait is worked out once per dispatch and shared by the steps and BehindHeld.
         var whys = _queue.Select(j => WhyWait(j)).ToList();
+        var idleSince = TrackHoldIdle(now);
         var ranks = _queue.Select(j => j.Kind == JobKind.Bench ? (int?)null : JobOrder.RankOf(j, flights, admission, now)).ToList();
         for (var i = 0; i < _queue.Count; i++)
         {
@@ -1025,6 +1032,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 Step = i == 0 ? $"next in line: {whys[0]}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : BehindHeld(i, whys) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : BuildHold(job) is { } building ? $"queued, {i} ahead of it{place}; {building}" : BehindOwn(i, whys) is { } own ? $"queued, {i} ahead of it{place}; {own}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
                 Slots = MaxRunning,
                 WaitsOnSibling = SiblingHold(job) is not null,
+                HoldIdleSince = idleSince,
             };
             state.PutJob(_queue[i]);
         }
@@ -1032,6 +1040,30 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         CheckIdle();
         CheckBenchBusy();
     }
+
+    // When the head of the queue began to wait on a sibling or build hold with a slot free; null while no slot stands idle for one.
+    private DateTimeOffset? _holdIdleSince;
+
+    /// <summary>
+    /// Whether a slot stands idle because of a sibling or build hold, and since when: the head of the queue waits only on such a hold
+    /// (so a slot is free and memory is no reason), and <see cref="StartWhatCan"/> found nothing behind it that could start. The time is
+    /// when that first held, kept while it goes on (the head may change, a job may start out of turn) and cleared with the first dispatch
+    /// that finds no slot idle for a hold. Runs on the dispatcher, after the starts.
+    /// </summary>
+    private DateTimeOffset? TrackHoldIdle(DateTimeOffset now) =>
+        _holdIdleSince = _queue.Count > 0 && WaitsOnlyOnAHold(_queue[0]) ? _holdIdleSince ?? now : null;
+
+    /// <summary>
+    /// Whether a job waits on a sibling or build hold and nothing else: no benchmark holds the node, a slot is free and memory allows it.
+    /// A benchmark is never held this way. <see cref="StartWhatCan"/> walks past such a job to start a later one that shares nothing with it.
+    /// </summary>
+    private bool WaitsOnlyOnAHold(JobRow job) =>
+        (SiblingHold(job) is not null || BuildHold(job) is not null || RepoHold(job) is not null || HeavyHold(job) is not null || FlightHold(job) is not null)
+        && BenchHold(job) is null
+        && job.Kind != JobKind.Bench
+        // The repo, heavy and flight holds are holds too: a job behind one of them is walked past, so a light job or another repo's
+        // starts in a free slot (review of #924: a held heavy job at the head stopped the queue).
+        && WhyWait(job, ignoreSibling: true, ignoreBuild: true, ignoreHolds: true) is null;
 
     /// <summary>
     /// A benchmark at the head of the queue that has waited past <see cref="BenchQuietWait"/> with nothing of pilot's running and the
@@ -1143,7 +1175,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     // A benchmark waiting for outside load to pass holds nothing: the jobs behind it start as usual.
                     continue;
                 }
-                var siblingOnly = why is null || ((SiblingHold(job) is not null || BuildHold(job) is not null) && BenchHold(job) is null && job.Kind != JobKind.Bench && WhyWait(job, ignoreSibling: true, ignoreBuild: true) is null);
+                var siblingOnly = why is null || WaitsOnlyOnAHold(job);
                 if (!siblingOnly)
                 {
                     break;
@@ -1164,7 +1196,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             var step = passed.Count == 0
                 ? null
                 : $"started ahead of {passed.Count} held job{(passed.Count == 1 ? "" : "s")} ({string.Join(", ", passed.Select(j => j.Id))}) because it shares no sibling clone, build or session order with them";
-            if (Start(next with { State = JobState.Running, Step = step, StartedAt = time.GetUtcNow() }) is { } failed)
+            if (Start(next with { State = JobState.Running, Step = step, StartedAt = time.GetUtcNow(), HoldIdleSince = null }) is { } failed)
             {
                 var ended = next with { State = JobState.Failed, Error = $"it did not start: {failed}", EndedAt = time.GetUtcNow() };
                 _tried[next.Id] = 0;
@@ -1327,7 +1359,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// the only memory it could wait for is what its own queue's jobs hold, and a head that waits for memory nothing will
     /// free is a queue that never moves. Otherwise it starts when the machine has free what its kind of command needs.
     /// </summary>
-    private string? WhyWait(JobRow job, bool ignoreSibling = false, bool ignoreBuild = false)
+    private string? WhyWait(JobRow job, bool ignoreSibling = false, bool ignoreBuild = false, bool ignoreHolds = false)
     {
         if (job.Kind == JobKind.Bench)
         {
@@ -1350,6 +1382,18 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         if (BenchHold(job) is { } holds)
         {
             return holds;
+        }
+        if (!ignoreHolds && FlightHold(job) is { } flightHeld)
+        {
+            return flightHeld;
+        }
+        if (!ignoreHolds && RepoHold(job) is { } repoHeld)
+        {
+            return repoHeld;
+        }
+        if (!ignoreHolds && HeavyHold(job) is { } heavyHeld)
+        {
+            return heavyHeld;
         }
         if (!ignoreSibling && SiblingHold(job) is { } shared)
         {
@@ -1375,7 +1419,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             : null;
     }
 
-    /// <summary>Whether a job in a plane builds into the plane's own artifacts (<see cref="NodeSettings.JobPlaneOutputKey"/>); off unless set, live.</summary>
+    /// <summary>Whether a job in a plane builds into the plane's own artifacts (<see cref="NodeSettings.JobPlaneOutputKey"/>); off unless set on, live.</summary>
     public bool PlaneOutput
     {
         get => _planeOutput;
@@ -1395,10 +1439,36 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
     }
 
-    private bool _planeOutput;
+    private bool _planeOutput = NodeSettings.JobPlaneOutputDefault;
 
     /// <summary>The clones a job's build compiles; settable so a test can give fixed sets. Answered once per job, kept until it ends.</summary>
-    public Func<JobRow, IReadOnlyCollection<string>> SiblingsOf { get; set; } = job => SiblingSet.Of(job.Command, job.Cwd);
+    public Func<JobRow, IReadOnlyCollection<string>>? SiblingsOf { get; set; }
+
+    private IReadOnlyCollection<string> SiblingsOfJob(JobRow job) => SiblingsOf is { } given ? given(job) : SiblingSet.Of(job.Command, job.Cwd, SiblingSource(job));
+
+    /// <summary>
+    /// Whether <paramref name="job"/> runs in the plane of a flight marked to build on sibling source (<see cref="FlightRow.SiblingSource"/>,
+    /// the <c>pilot: sibling source</c> label): such a job gets <c>UseLocalSiblings=true</c>, which opens pilot's plane probe to the
+    /// clones, and holds them. Every other plane builds on the published packages, as CI does (PIL802).
+    /// </summary>
+    private bool SiblingSource(JobRow job) =>
+        job.Flight is { } code
+        && Flights.PlaneOutput.PlaneOf(job.Cwd) is not null
+        && state.Flights().FirstOrDefault(f => f.Code == code) is { SiblingSource: true };
+
+    /// <summary>The variables the node adds to <paramref name="job"/>'s environment: the plane's output variables, and <c>UseLocalSiblings=true</c> for a sibling-source flight's plane job.</summary>
+    internal Dictionary<string, string> EnvironmentOf(JobRow job)
+    {
+        var variables = new Dictionary<string, string>(Flights.PlaneOutput.Variables(PlaneOutput, job.Cwd), StringComparer.Ordinal);
+        if (SiblingSource(job))
+        {
+            variables[Flights.PlaneOutput.UseLocalSiblings] = "true";
+        }
+        return variables;
+    }
+
+    /// <summary>The clones <paramref name="job"/> would hold while it builds, as the queue asks for them; internal so a test can read it without running the job.</summary>
+    internal IReadOnlyCollection<string> HeldBy(JobRow job) => SiblingsOfJob(job);
 
     private readonly ConcurrentDictionary<string, IReadOnlyCollection<string>> _siblings = new(StringComparer.Ordinal);
 
@@ -1412,7 +1482,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         try
         {
             // A plane job that builds into the plane's own artifacts shares nothing to hold (job-plane-output).
-            set = PlaneOutput && Flights.PlaneOutput.PlaneOf(job.Cwd) is not null ? [] : SiblingsOf(job);
+            set = PlaneOutput && Flights.PlaneOutput.PlaneOf(job.Cwd) is not null ? [] : SiblingsOfJob(job);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
@@ -1483,6 +1553,59 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         return null;
     }
+
+    /// <summary>
+    /// Why a job may not start while another job of its repo runs: one job per repo at a time, whatever max-jobs allows across
+    /// repos. Two Pilot.Node.Tests runs of two pilot flights ran at once with max-jobs 2 and took the machine (SE1, 2026-11-09);
+    /// the owner: "having 2 jobs didn't mean two jobs of the same PIL/TIA can run". Null when no job of its repo is running.
+    /// </summary>
+    private string? RepoHold(JobRow job)
+    {
+        if (SiblingSet.RepoOf(job.Cwd) is not { } repo)
+        {
+            return null;
+        }
+        foreach (var id in _running.Keys.Order(StringComparer.Ordinal))
+        {
+            if (id != job.Id && state.Jobs().FirstOrDefault(j => j.Id == id) is { } row
+                && string.Equals(SiblingSet.RepoOf(row.Cwd), repo, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"one job per repo: {id} of {Path.GetFileName(repo)} is running";
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Why a job of a flight on hold may not start: a held flight loads the machine no more (the owner's "hold all flights" left PIL895's
+    /// whole-suite run going, 2026-11-09). A leg's check waits as any job does; the release lets it start. Null for a flight not held.
+    /// </summary>
+    private string? FlightHold(JobRow job) =>
+        job.Flight is { } code && state.Flights().FirstOrDefault(f => f.Code == code) is { OnHold: { } hold }
+            ? $"its flight {code} is on hold ({hold.Reason})" : null;
+
+    /// <summary>
+    /// Why a heavy job (a test run, or a build of a solution or a test project) may not start while another heavy job runs on this
+    /// machine, of any repo: max-jobs 2 means two jobs, never two heavy suites (the owner, 2026-11-09). Light jobs run beside one.
+    /// </summary>
+    private string? HeavyHold(JobRow job)
+    {
+        if (!OneHeavyAtATime || !IsHeavy(job.Command))
+        {
+            return null;
+        }
+        foreach (var id in _running.Keys.Order(StringComparer.Ordinal))
+        {
+            if (id != job.Id && state.Jobs().FirstOrDefault(j => j.Id == id) is { } row && IsHeavy(row.Command))
+            {
+                return $"one heavy job at a time: {id} is running a test run or a solution build";
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Whether a job's command runs tests or builds a solution or a test project: the jobs two of which take the machine.</summary>
+    internal static bool IsHeavy(string command) => DotnetCommand.IsHeavyLine(command);
 
     // Jobs that have let go of their sibling clones, once and for good: their tree moved past the last building segment.
     private readonly ConcurrentDictionary<string, byte> _released = new(StringComparer.Ordinal);
@@ -1598,7 +1721,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             // An exit file of an earlier run of this id would end the job at once: there is none.
             File.Delete(exitPath);
-            shell = DetachedShell.For(job.Id, job.Command, job.Cwd, job.LogPath, exitPath, Priority, Flights.PlaneOutput.Variables(PlaneOutput, job.Cwd));
+            var variables = EnvironmentOf(job);
+            shell = DetachedShell.For(job.Id, job.Command, job.Cwd, job.LogPath, exitPath, Priority, variables,
+                Flights.PlaneOutput.NoBuildNotice(PlaneOutput, job.Command, job.Cwd));
             var started = shell.Start();
             process = new JobProcess(started.Id, StartOf(started), started);
         }
@@ -1699,6 +1824,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         return reached;
     }
 
+    /// <summary>The descendants of a job seen while it ran that still live: what the stray sweep finds a leftover of the job by (pilot #909).</summary>
+    internal IReadOnlyList<KnownProcess> KnownOf(string id) => Tree.KnownOf(id);
+
     /// <summary>The pid of a running job's wrapper, or null.</summary>
     internal int? PidOf(string id) => _running.TryGetValue(id, out var p) ? p.Pid : null;
 
@@ -1776,6 +1904,23 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         var count = 0;
         foreach (var job in state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued
             && (string.Equals(j.Flight, flight, StringComparison.OrdinalIgnoreCase) || (j.Owner is not null && owners.Contains(j.Owner, StringComparer.Ordinal)))))
+        {
+            if (CancelJob(job.Id, who, force: false) is null)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// Cancels <paramref name="flight"/>'s running jobs other than a leg's check, which runs to its end (a cancelled check reads as a
+    /// failed one); its queued jobs are left to wait on the flight's hold (<see cref="FlightHold"/>). Returns how many were cancelled.
+    /// </summary>
+    public int CancelRunningFor(string flight, string who)
+    {
+        var count = 0;
+        foreach (var job in state.Jobs().Where(j => j.State == JobState.Running && j.Kind != JobKind.Check && string.Equals(j.Flight, flight, StringComparison.OrdinalIgnoreCase)))
         {
             if (CancelJob(job.Id, who, force: false) is null)
             {
@@ -2163,7 +2308,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     target = replacement.Id;
                     handed = $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; what it shows so far is passed on to you.\n";
                 }
-                else if (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true)
+                else if (OwnerEnded(ownerRow, job))
                 {
                     return;
                 }
@@ -2282,9 +2427,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 replacedTo = replacement.Id;
                 text = $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; its result is passed on to you.\n{text}";
             }
-            else if (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true)
+            else if (OwnerEnded(ownerRow, job))
             {
                 // The owner ended (finished, crashed or stopped) and nothing took its place: nobody is waiting on this job.
+                // A finished turn that came while this job was open is not one: the say below resumes the session (#893).
                 LogTell(job, target, ownerRow, "owner ended");
                 MarkTold(job, "owner-ended");
                 return;
@@ -2394,9 +2540,40 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     public Func<string, bool>? EndedForGood { get; set; }
 
+    /// <summary>
+    /// Whether the row ended after a finished turn (a --bg session Claude Code ended by design), as the tracker sees it. Set by the
+    /// node; null in a bare runner, where no end counts so (#893).
+    /// </summary>
+    public Func<string, bool>? EndedAfterTurn { get; set; }
+
+    /// <summary>
+    /// Whether the owner's end was a finished turn that came while <paramref name="job"/> was still queued or running: the job's
+    /// outcome is said to it, which resumes the background session, so it is not "owner ended" for this job (#893).
+    /// A wound-down or stopped owner is not one, and neither is a crash.
+    /// </summary>
+    private bool EndedWhileJobOpen(SessionRow row, JobRow job)
+    {
+        if (EndedAfterTurn?.Invoke(row.Id) != true || WindDown.Why(state, Ledger, row) is not null)
+        {
+            return false;
+        }
+        var entry = Ledger?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []]);
+        if (entry is { EndReason: not null and not SessionEndReasons.Finished })
+        {
+            return false;
+        }
+        // The job was open at the end unless it had ended before it; with no ledger time the row's own end is what is known.
+        var endedAt = entry?.EndedAt ?? row.EndedAt;
+        return endedAt is not { } at || at <= (job.EndedAt ?? time.GetUtcNow());
+    }
+
     private bool EndedNormally(SessionRow row) =>
         WindDown.Why(state, Ledger, row) is not null
         || Ledger?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []]) is { EndReason: SessionEndReasons.Finished };
+
+    /// <summary>The owner ended and nothing took its place, for this job: nobody is waiting on it.</summary>
+    private bool OwnerEnded(SessionRow row, JobRow job) =>
+        !EndedWhileJobOpen(row, job) && (EndedNormally(row) || EndedForGood?.Invoke(row.Id) == true);
 
     internal string WakeTarget(string owner, string? ownerName)
     {

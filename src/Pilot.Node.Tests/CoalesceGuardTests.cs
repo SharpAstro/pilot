@@ -19,7 +19,7 @@ public sealed class CoalesceGuardTests : ReviewTestsBase
     // A commander over the same state whose stuck limit is the given one, so a test need not wait ten minutes.
     private LegCommander Commander(TimeSpan stuckAfter)
     {
-        var git = new GitCli();
+        var git = _git;
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
         return new LegCommander(_state, _workers, new FakeChecks(), _github, git, new Planes(git), _flights, options, TimeProvider.System)
         {

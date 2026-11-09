@@ -13,6 +13,16 @@
     <!-- DXGI's COM calls are made through function pointers on the vtable (MachineNative), as AOT generates no COM marshalling. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+    <!-- Workstation concurrent GC, not server GC (#794). The Web SDK turns server GC on, which gives each of the 16
+         cores its own heap and lets every heap grow before it collects. On 2026-11-07 the node (beta 1781) was at
+         4.8 GB minutes after a restart and 5.56 GB a few minutes later, on a 64 GB machine at 100% CPU; a dump that
+         morning read 2.5 GB working set = 1.08 GB live + 1.21 GB LOH (477 MB of it fragmentation) + 737 MB pinned,
+         with System.GC.Server true (16 heaps). A node is one process serving a handful of clients: one heap that
+         collects in the background keeps it small and leaves the cores to the builds. The property is
+         ServerGarbageCollection (ServerGarbageCollector is silently ignored); bin's pilot-node.runtimeconfig.json
+         must read "System.GC.Server": false, which PinnedHeapTests checks. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>
@@ -32,7 +42,7 @@
   -->
   <PropertyGroup>
     <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\LAN.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
-    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\LAN.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND '$(UseLocalSiblings)' == 'true' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\LAN.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
     <UseLocalLanLib Condition="'$(UseLocalLanLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)LAN.Lib\src\LAN.Lib\LAN.Lib.csproj')">true</UseLocalLanLib>
   </PropertyGroup>
   <ItemGroup Condition="'$(UseLocalLanLib)' == 'true'">

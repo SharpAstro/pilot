@@ -37,6 +37,7 @@ public static partial class Briefs
         text.AppendLine("A leg that needs outside work (a file, a time) says so in its steps; its worker waits with `leg wait`, never with a job.");
         text.AppendLine(WaitRule(run));
         text.AppendLine(ReportRule(run));
+        text.Append(NoSpinRule);
         if (flight.FromIdea is { Length: > 0 } idea)
         {
             text.AppendLine();

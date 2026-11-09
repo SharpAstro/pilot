@@ -32,6 +32,9 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     /// <summary>Cancels the queued and running jobs of a flight and of its sessions (flight, session row ids, who); null where there is no job runner.</summary>
     public Func<string, IReadOnlyCollection<string>, string, int>? CancelJobs { get; set; }
 
+    /// <summary>Cancels a held flight's running jobs other than its leg's check (a cancelled check reads as a failed one); returns how many.</summary>
+    public Func<string, string, int>? CancelHeldJobs { get; set; }
+
     /// <summary>The node's ledger of launched sessions, whose live entries of a flight are wound down with it; null in a test with none.</summary>
     public Sessions.SessionLedger? Ledger { get; set; }
 

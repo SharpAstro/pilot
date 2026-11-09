@@ -64,6 +64,7 @@ public sealed partial class LegCommander
         {
             throw new FlightException($"{flight.Code} has landed");
         }
+        RefuseIfOnHold(flight.Code);
         var planner = $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{PlanLeg}";
         // One planner a flight: a second would plan the same legs over the first's. Live by its row, started here so
         // lately that the tracker has not listed it yet (PIL118's plan-flight, sent twice two seconds apart, 2026-10-23), or
@@ -151,7 +152,10 @@ public sealed partial class LegCommander
         var summary = string.Join(' ', command.Args ?? []).Trim();
         var lines = legs.Select(l => $"{l.Order}. {l.Name}: {l.Goal}");
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "planned again", PlannedKind);
-        state.RaiseCard(CardBin.ForYou, PlannedKind, Verbs.FlightTarget(flight.Code),
+        // A held flight's card offers nothing to press (the node refuses a start), so it is no card for the person yet: it is Handled
+        // until the hold lifts, and then comes to them with its Start (NodeState.RefreshPlannedCard). PIL797's "5 legs planned" sat in
+        // For you with only Chat and Dismiss (2026-11-09).
+        state.RaiseCard(PlannedBin(flight), PlannedKind, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}: {legs.Count} {(legs.Count == 1 ? "leg" : "legs")} planned",
             PlannedDetail(string.Join('\n', (summary.Length > 0 ? new[] { summary } : []).Concat(lines)), flight),
             PlannedChoices(flight, first));
@@ -169,6 +173,9 @@ public sealed partial class LegCommander
         => flight.State == FlightState.Flying
             ? [new CardChoice { Label = $"Start {first.Name}", Verb = Verbs.StartLeg, Target = Verbs.LegTarget(flight.Code, first.Name) }]
             : [];
+
+    /// <summary>Where a planned card goes: For you while its Start can be pressed (the flight flies), Handled while the flight is held.</summary>
+    internal static CardBin PlannedBin(FlightRow flight) => flight.State == FlightState.Flying ? CardBin.ForYou : CardBin.Handled;
 
     /// <summary>A planned card's detail with the waiting line of a held flight (and none for a flying one): any waiting line it carried is replaced.</summary>
     internal static string? PlannedDetail(string? detail, FlightRow flight)

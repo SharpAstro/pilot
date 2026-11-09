@@ -314,7 +314,7 @@ public sealed partial class LegCommander
         {
             throw new MergeBlockedException(MergeRefusals.Unclassified, $"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}");
         }
-        if (state.Legs(flight.Code).Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is { Count: > 0 } open)
+        if (state.OpenLegs(flight.Code) is { Count: > 0 } open)
         {
             throw new MergeBlockedException(MergeRefusals.NodeWait, $"{flight.Code} has legs not done: {string.Join(", ", open)}");
         }
@@ -332,7 +332,7 @@ public sealed partial class LegCommander
         }
         if (flight.Holding is { } holding)
         {
-            throw new MergeBlockedException(MergeRefusals.NodeWait, $"{flight.Code} is in a holding pattern since {holding.Since.ToLocalTime():HH:mm}: {holding.Reason}; the watchtower clears it (`flight clear {flight.Code}`) or pushes its fixes (`flight pr {flight.Code}`)");
+            throw new MergeBlockedException(MergeRefusals.NodeWait, $"{flight.Code} is in a holding pattern since {holding.Since.ToLocalTime():HH:mm}: {holding.Reason}; the watchtower clears it (`flight clear {flight.Code}`) or pushes its fixes (`flight pr {flight.Code}`); a hold the watchtower does not take (`flight hold {flight.Code}`, or a commit in the plane) is released by the node and merges with its notes");
         }
         // A question of design the review asked of this PR and nobody has answered holds the merge: answer it or dismiss it first.
         if (PrRef.Parse(flight.PullRequestUrl) is { } own
@@ -490,7 +490,7 @@ public sealed partial class LegCommander
     {
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind is PrReady or MergeFailed && c.Subject == target && c.Choices.Any(ch => ch.Verb == Verbs.Merge)))
         {
-            var code = target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? target[Verbs.FlightTargetPrefix.Length..] : target;
+            var code = Verbs.FlightCodeOf(target) ?? target;
             var flight = state.Flights().FirstOrDefault(f => f.Code == code);
             var merge = card.Choices.First(ch => ch.Verb == Verbs.Merge);
             _beforeMerging.TryRemove(card.Id, out _);
@@ -563,9 +563,13 @@ public sealed partial class LegCommander
     /// </summary>
     public void ShowMergeState(CardRow card, MergeState merge, string head, bool replaceWords = false)
     {
-        var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : card.Subject;
+        var code = Verbs.FlightCodeOf(card.Subject) ?? card.Subject;
         var flight = state.Flights().FirstOrDefault(f => f.Code == code);
         var number = flight?.PullRequest;
+        if (ShowLegWait(card))
+        {
+            return;
+        }
         // The PR's page, not the card's link: a card that showed a failed check's page turns back to the PR's.
         var link = flight?.PullRequestUrl ?? card.Link;
         // The card's own words (the review, the head) stay while the Merge only changes its colour; a state that wrote its own
@@ -586,7 +590,7 @@ public sealed partial class LegCommander
             MergeKinds.Armed => (ChoiceStatus.Armed, merge.Progress, $"{code}'s PR #{number} merges when its checks pass", $"GitHub's auto-merge is armed: merging when checks pass{(merge.Progress is { } progress ? $", {progress} done" : "")}. GitHub merges it, with the node up or not."),
             MergeKinds.Queued => (ChoiceStatus.Queued, merge.Place, $"{code}'s PR #{number} is in the merge queue", QueuedLine(code, merge.Place is { } place ? $"in the merge queue, {place}" : "in the merge queue")),
             MergeKinds.Blocked => (ChoiceStatus.Blocked, merge.FailedName ?? merge.Reason, $"{code}'s PR #{number} is blocked: {merge.Reason}",
-                merge.FailedName is { } name ? $"GitHub blocks the merge: {name} failed. Redo the leg to fix it, or re-run the check if it was a flake." : $"GitHub blocks the merge: {merge.Reason}."),
+                merge.FailedName is { } name ? $"GitHub blocks the merge: {name} failed. Redo the leg to fix it, or re-run the check." : $"GitHub blocks the merge: {merge.Reason}."),
             MergeKinds.ChangesRequested => (ChoiceStatus.ChangesRequested, null, $"{code}'s PR #{number} has changes requested", "A review on GitHub asks for changes. They are read first, then the merge is offered again."),
             _ => ((string?)null, null, null, null),
         };
@@ -608,13 +612,52 @@ public sealed partial class LegCommander
             MergeCardBin(merge.Kind is MergeKinds.Blocked or MergeKinds.ChangesRequested || !own && merge.DroppedFromQueue is not null));
     }
 
+    /// <summary>
+    /// A PR-ready card whose flight has a leg still to fly (a review-notes leg making the review's fixes, planned after the card was
+    /// raised): a Merge now is refused ("has legs not done"), so the card's Merge is a mark (<see cref="ChoiceStatus.WaitsForLegs"/>,
+    /// naming the legs) and the card says what the merge waits for, here and on the PR page that takes its button from it (#918;
+    /// PIL853's #920 said "ready" with a Merge that answered "legs not done: review-notes-2", twice in one evening). The choice keeps
+    /// the reviewed head the autopilot and the holding bound read. True when the card shows the wait (nothing else is to be said of
+    /// it now); false when every leg is done, and the card says what GitHub has. Called whether or not GitHub gave a merge state.
+    /// </summary>
+    public bool ShowLegWait(CardRow card)
+    {
+        var code = Verbs.FlightCodeOf(card.Subject) ?? card.Subject;
+        if (state.Flights().FirstOrDefault(f => f.Code == code) is not { } flight || !card.Choices.Any(c => c.Verb == Verbs.Merge)
+            || state.OpenLegs(code) is not { Count: > 0 } open)
+        {
+            return false;
+        }
+        var legs = state.Legs(code);
+        var legsLeft = LegWaitWords(legs);
+        var waitTitle = $"{code}'s PR #{flight.PullRequest} merges once {string.Join(", ", open)} {(open.Count == 1 ? "is" : "are")} done (legs {legs.Length - open.Count}/{legs.Length} done)";
+        var waitWhy = Models.Autopilot
+            ? $"The {string.Join(", ", open)} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; the node merges the PR once {(open.Count == 1 ? "it lands" : "they land")}."
+            : $"The {string.Join(", ", open)} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; Merge is offered once {(open.Count == 1 ? "it lands" : "they land")}.";
+        if (card.Title != waitTitle || card.Choices.Any(c => c.Verb == Verbs.Merge && (c.Status != ChoiceStatus.WaitsForLegs || c.Note != legsLeft)))
+        {
+            state.UpdateCard(card.Id, waitTitle, waitWhy,
+                [.. card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = ChoiceStatus.WaitsForLegs, Note = legsLeft } : c)],
+                flight.PullRequestUrl ?? card.Link, PrReady, waitWhy, card.Bin);
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// What a held merge waits for, in the words its Merge mark shows (#918): each leg not done, a leg whose check reruns marked so
+    /// (<c>review-notes-3 (check rerunning)</c>). No minutes: the words change only when the wait does, so the card is not rewritten every tick.
+    /// </summary>
+    internal static string LegWaitWords(IEnumerable<LegRow> legs) =>
+        string.Join(", ", legs.Where(l => l.State != LegState.Done).OrderBy(l => l.Order)
+            .Select(l => l is { State: LegState.Flying, Recheck: { Outcome: null } } ? $"{l.Name} (check rerunning)" : l.Name));
+
     /// <summary>What a PR-ready card says of the merge state it shows: its own sentence for each state, never the table's "is ready" for a PR GitHub holds back.</summary>
     internal static string MergeSummary(string code, MergeState merge) => merge.Kind switch
     {
         MergeKinds.Pending when merge.AwaitsCheck => $"The PR of {code} waits for a check GitHub requires. Merge arms it, and it goes through once the check passes.",
         MergeKinds.Pending => $"The checks of the PR of {code} are still running. Merge arms it, and it goes through once they pass.",
         MergeKinds.Armed or MergeKinds.Queued => $"The merge of {code} is set. GitHub merges it by itself, with the node up or not.",
-        MergeKinds.Blocked when merge.FailedName is { } name => $"GitHub blocks the merge of {code}: the check {name} failed. Redo the last leg from the flight page or with pilot leg go-around to fix what it found, or re-run the check if it was a flake.",
+        MergeKinds.Blocked when merge.FailedName is { } name => $"GitHub blocks the merge of {code}: the check {name} failed. Redo the last leg from the flight page or with pilot leg go-around to fix what it found, or re-run the check.",
         MergeKinds.Blocked => $"GitHub blocks the merge of {code}: {merge.Reason}. It waits until that is cleared.",
         MergeKinds.ChangesRequested => $"A review on GitHub asks for changes to {code}. They are read first, then the merge is offered again.",
         _ => $"{code} is reviewed and its PR is ready. Merge lands it; dismissing leaves the PR open.",

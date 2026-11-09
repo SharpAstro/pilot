@@ -64,7 +64,8 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
         var cards = state.Cards(openOnly: true);
         var legs = state.Legs();
         // Every live-listed row decides a flight's phase and repo hold; only the counted subset takes an Opus slot (an Idle row counts while it has work pending).
-        var live = state.Sessions().Where(s => !s.Archived && s.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Planner && ignoring?.Contains(s.Name) != true
+        // A PR fixer is an ad-hoc session the node started for a PR fix: it counts as a fixer (#912), where it was not counted at all.
+        var live = state.Sessions().Where(s => !s.Archived && (s.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Planner || IsFixer(s)) && ignoring?.Contains(s.Name) != true
             && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle).ToArray();
         var counted = live.Select(s => (Row: s, Note: s.State == SessionState.Idle ? PendingWork(s, jobs, cards, legs) : null))
             .Where(c => c.Row.State != SessionState.Idle || c.Note is not null).ToArray();
@@ -78,11 +79,13 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
             .Concat(state.Flights().Where(f => f.Review is { State: ReviewState.Reviewing, Reviewer: not null })
                 .Select(f => new Start(f, f.Review!.Reviewer!, f.Code, AdmissionRole.Reviewer, settings.ReviewerModel(ReviewDepth.Standard), f.Review.StartedAt)));
         var starts = _starts.Values.Concat(recorded).Where(s => ignoring?.Contains(s.Label) != true && !Listed(s)).ToArray();
-        var sessions = counted.Select(c => new FleetSession(machine, c.Row.Name, c.Row.Model) { Identity = FleetAdmission.IdentityOf(RoleOf(c.Row.Role), c.Row.Flight), Note = c.Note })
-            .Concat(starts.Select(s => new FleetSession(machine, s.Label, s.Model) { Identity = FleetAdmission.IdentityOf(s.Role, s.Flight) })).ToArray();
+        var sessions = counted.Select(c => new FleetSession(machine, c.Row.Name, c.Row.Model) { Identity = FleetAdmission.IdentityOf(RoleOf(c.Row), c.Row.Flight), Note = c.Note, Role = RoleOf(c.Row) })
+            .Concat(starts.Select(s => new FleetSession(machine, s.Label, s.Model) { Identity = FleetAdmission.IdentityOf(s.Role, s.Flight), Role = s.Role })).ToArray();
+        // The live reading the job queue takes too (one source of free memory), not the sampled machine row.
+        var free = FreeMemory();
         if (localOnly)
         {
-            return new AdmissionInput(sessions, [], settings.OpusCap, settings.OneFlightPerRepo);
+            return new AdmissionInput(sessions, [], settings.OpusCap, settings.OneFlightPerRepo) { ReviewLimit = settings.ReviewLimit, FreeMemory = free, MemoryFloor = SessionMemoryFloor };
         }
         var flights = state.Flights().Select(f =>
         {
@@ -104,7 +107,7 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
             return new FleetFlight(machine, f.Code, f.Repo, phase) { Waits = [.. waits], Priority = IsPriority(f), Level = LevelOf(f), Since = f.CreatedAt };
         }).Concat(FleetAdmission.FlightsOf(view)).ToArray();
         var (cap, onePerRepo) = Fleet.Settings(view, settings);
-        return new AdmissionInput(sessions, flights, cap, onePerRepo);
+        return new AdmissionInput(sessions, flights, cap, onePerRepo) { ReviewLimit = settings.ReviewLimit, FreeMemory = free, MemoryFloor = SessionMemoryFloor };
     }
 
     /// <summary>
@@ -171,6 +174,17 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
         SessionRole.Reviewer => AdmissionRole.Reviewer,
         _ => AdmissionRole.Worker,
     };
+
+    private static AdmissionRole RoleOf(SessionRow row) => IsFixer(row) ? AdmissionRole.Fixer : RoleOf(row.Role);
+
+    // A PR fixer: the ad-hoc session the node starts to make a review's changes.
+    private static bool IsFixer(SessionRow row) => row.Role == SessionRole.AdHoc && row.StartReason == SessionStartReasons.PrFix;
+
+    /// <summary>The free memory a session start needs (#912): a claude session and its build take 0.5 to 1 GB, so under 1.5 GB nothing starts.</summary>
+    public long SessionMemoryFloor { get; set; } = 1536L * 1024 * 1024;
+
+    /// <summary>The machine's free memory now, as the job queue reads it; a test swaps it.</summary>
+    public Func<long?> FreeMemory { get; init; } = MachineMemory.Available;
 
     /// <summary>
     /// Whether a session of <paramref name="role"/> on <paramref name="model"/> may start now for <paramref name="flight"/> (null for a bare PR's, named by

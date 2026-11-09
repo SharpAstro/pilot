@@ -40,7 +40,7 @@ public sealed class CheckScopeTests : IDisposable
 
     private string Plane => Path.Combine(_root, "plane");
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose() => TestDirs.DeleteTree(_root);
 
     private Task<CommandResult> PlanLeg(string check, string? wholeSuite = null) =>
         _legs.RunAsync(new CommandRequest

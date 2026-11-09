@@ -52,11 +52,92 @@ public sealed class SiblingReachTests : IDisposable
         held.ShouldContain(p => p.Equals(Path.Combine(_org, "DIR.Lib"), StringComparison.OrdinalIgnoreCase));
     }
 
+    // pilot's shape: a project reaches the org root through SharpAstroRoot, 3 levels up from a main clone and 6 from a plane, the
+    // latter only with UseLocalSiblings on (PIL802: a plane builds on the packages unless its flight is an exception).
+    private string PilotPlane()
+    {
+        foreach (var at in new[] { Path.Combine(_org, "pilot"), Path.Combine(_org, "pilot", ".claude", "worktrees", "pil1") })
+        {
+            Directory.CreateDirectory(Path.Combine(at, ".git"));
+            Directory.CreateDirectory(Path.Combine(at, "src", "Pilot.Ui"));
+            File.WriteAllText(Path.Combine(at, "src", "Pilot.Ui", "Pilot.Ui.csproj"), """
+                <Project>
+                  <PropertyGroup>
+                    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\DIR.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
+                    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND '$(UseLocalSiblings)' == 'true' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\DIR.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
+                    <UseLocalDirLib Condition="'$(UseLocalDirLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)DIR.Lib\src\DIR.Lib\DIR.Lib.csproj')">true</UseLocalDirLib>
+                  </PropertyGroup>
+                </Project>
+                """);
+        }
+        return Path.Combine(_org, "pilot", ".claude", "worktrees", "pil1");
+    }
+
+    private string DirLib => Path.Combine(_org, "DIR.Lib");
+
+    [Fact]
+    public void APilotPlaneBuildsOnThePackagesAndHoldsNoSibling()
+    {
+        SiblingSet.Of("dotnet build src/Pilot.slnx -c Release", PilotPlane()).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void APilotPlaneOfASiblingSourceFlightHoldsTheCloneItsOptInProbeReaches()
+    {
+        var plane = PilotPlane();
+
+        SiblingSet.Of("dotnet build src/Pilot.slnx -c Release", plane, siblingSource: true).ShouldContain(p => p.Equals(DirLib, StringComparison.OrdinalIgnoreCase));
+        SiblingSet.Of("dotnet build src/Pilot.slnx -c Release -p:UseLocalSiblings=true", plane).ShouldContain(p => p.Equals(DirLib, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void UseLocalSiblingsFalseOnTheCommandHoldsNoSiblingEvenInTheMainClone()
+    {
+        PilotPlane();
+        var main = Path.Combine(_org, "pilot");
+
+        SiblingSet.Of("dotnet build src/Pilot.slnx -c Release", main).ShouldContain(p => p.Equals(DirLib, StringComparison.OrdinalIgnoreCase));
+        SiblingSet.Of("dotnet build src/Pilot.slnx -c Release -p:UseLocalSiblings=false", main).ShouldNotContain(p => p.Equals(DirLib, StringComparison.OrdinalIgnoreCase));
+        SiblingSet.Of("dotnet build src/Pilot.slnx -c Release -p:UseLocalSiblings=false", PilotPlane(), siblingSource: true).ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("-p:UseLocalSiblings=true", true)]
+    [InlineData("--property:Configuration=Release;UseLocalSiblings=false", false)]
+    [InlineData("-property:uselocalsiblings=TRUE", true)]
+    [InlineData("-p:UseLocalDirLib=true", null)]
+    [InlineData("--no-build", null)]
+    public void TheSwitchIsReadFromTheFlags(string flag, bool? expected)
+    {
+        SiblingSet.UseLocalSiblingsOf([flag]).ShouldBe(expected);
+    }
+
+    /// <summary>Every 6-level SharpAstroRoot probe in pilot's own projects is opt-in, so no plane of pilot reaches a sibling by default.</summary>
+    [Fact]
+    [Trait("Category", "Invariant")]
+    public void EverySixLevelProbeInThisRepoAsksForUseLocalSiblings()
+    {
+        var src = new DirectoryInfo(AppContext.BaseDirectory);
+        while (src is not null && !File.Exists(Path.Combine(src.FullName, "src", "Pilot.slnx")))
+        {
+            src = src.Parent;
+        }
+        src.ShouldNotBeNull();
+        var probes = Directory.EnumerateFiles(Path.Combine(src.FullName, "src"), "*.csproj", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .SelectMany(f => File.ReadLines(f).Select(line => (File: Path.GetFileName(f), Line: line.Trim())))
+            .Where(l => l.Line.StartsWith("<SharpAstroRoot", StringComparison.Ordinal) && l.Line.Contains(@"..\..\..\..\..\..\", StringComparison.Ordinal))
+            .ToList();
+
+        probes.ShouldNotBeEmpty();
+        probes.Where(l => !l.Line.Contains("'$(UseLocalSiblings)' == 'true'", StringComparison.Ordinal)).Select(l => l.File).ShouldBeEmpty();
+    }
+
     public void Dispose()
     {
         try
         {
-            Directory.Delete(_org, recursive: true);
+            TestDirs.DeleteTree(_org);
         }
         catch (IOException)
         {

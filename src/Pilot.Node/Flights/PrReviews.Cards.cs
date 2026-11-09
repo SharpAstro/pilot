@@ -10,33 +10,29 @@ public sealed partial class PrReviews
     /// <summary>The label of the design card's Answer choice.</summary>
     public const string AnswerLabel = "Answer in your own words";
 
-    /// <summary>Each design question in full with its path:line, and each option with its consequence.</summary>
+    /// <summary>
+    /// Each design question in full with its path:line, and each option with its consequence and what it misses of the criteria
+    /// (<c>- reword the doc: misses: the AC that the code follows the documented ladder</c>), so the ring says which criterion each option fails.
+    /// </summary>
     private static string DesignDetail(IReadOnlyList<DesignQuestion> questions) =>
         string.Join('\n', questions.Select(q => $"{q.Finding.Path}:{q.Finding.Line} {q.Question}"
-            + string.Concat(q.RecommendedFirst.Select((o, i) => $"\n{(questions.Count == 1 ? $"{OptionLetter(i)}." : "-")} {o.Text}{(o.Consequence.Length > 0 ? $": {o.Consequence}" : "")}{(o.Recommended ? " (recommended)" : "")}"))));
+            + string.Concat(q.RecommendedFirst.Select((o, i) => $"\n{(questions.Count == 1 ? $"{OptionLetter(i)}." : "-")} {o.Text}{DesignOptionWords(o)}{(o.Recommended ? " (recommended)" : "")}"))));
 
     /// <summary>The letter an option goes by in the card's body and on its button: A for the first (the recommended), B, C and so on.</summary>
     private static char OptionLetter(int index) => (char)('A' + index);
 
     /// <summary>The label of the button that picks the option lettered <paramref name="index"/>: <c>Pick option A</c>. The option's own words are in the body, never in the button (#797 rule 4).</summary>
-    private static string PickLabel(int index) => $"Pick option {OptionLetter(index)}";
+    internal static string PickLabel(int index) => $"Pick option {OptionLetter(index)}";
 
-    /// <summary>
-    /// The design card's first lines: the question, then each option in full as A, B, C with its consequence, in the order of the buttons.
-    /// With several questions, or one that lists no options, which option answers which question would be a guess: the line says to
-    /// answer in words and leaves the full text to the detail. Cut to what a summary can carry.
-    /// </summary>
-    private static string DesignSummary(IReadOnlyList<DesignQuestion> questions, string decides)
+    // The words after an option's text: its consequence, then what it misses; the colon the text takes comes first, a semicolon joins the two.
+    private static string DesignOptionWords(DesignOption option)
     {
-        var plain = $"The review asks a design question that is yours to decide. {decides}";
-        if (questions.Count != 1 || questions[0].Options.Count == 0)
+        var consequence = option.Consequence.Length > 0 ? $": {option.Consequence}" : "";
+        if (option.Misses is not { } misses)
         {
-            return plain;
+            return consequence;
         }
-        // Whole words, never cut: an option too long for a summary sends the person to the detail, which holds it in full.
-        var options = string.Join(" ", questions[0].RecommendedFirst.Select((o, i) => $"{OptionLetter(i)}: {Clean(o.Text, int.MaxValue)}{(o.Recommended ? " (recommended)." : ".")}"));
-        var text = $"{Clean(questions[0].Question, int.MaxValue)}\n{options}";
-        return CardSummaries.Usable(text) ? text : plain;
+        return $"{(consequence.Length > 0 ? consequence.TrimEnd('.', ';', ' ') + "; " : ": ")}misses: {misses}";
     }
 
     /// <summary>
@@ -44,16 +40,101 @@ public sealed partial class PrReviews
     /// as the answer and whose button is <see cref="PickLabel"/>, then the free-text Answer. Options are offered only when there is one
     /// question: with several, which option answers which question would be a guess, so each is answered in words.
     /// </summary>
-    private static List<CardChoice> DesignChoices(string subject, IReadOnlyList<DesignQuestion> questions)
+    internal static List<CardChoice> DesignChoices(string subject, IReadOnlyList<DesignQuestion> questions)
     {
         var choices = new List<CardChoice>();
         if (questions.Count == 1)
         {
-            choices.AddRange(questions[0].RecommendedFirst.Select((o, i) => new CardChoice { Label = PickLabel(i), Verb = Verbs.FixPr, Target = subject, Args = [o.Answer] }));
+            // A short verb on the button and the option's words lettered in the body (#797 rule 4); the option whole, the answer the
+            // button sends, is its hover (Hint) and is in the detail.
+            choices.AddRange(questions[0].RecommendedFirst.Select((o, i) =>
+                new CardChoice { Label = PickLabel(i), Verb = Verbs.FixPr, Target = subject, Args = [o.Answer], Hint = o.Answer }));
         }
         choices.Add(AnswerChoice(subject));
         return choices;
     }
+
+    /// <summary>
+    /// The design card's body: the question itself and its options lettered as their buttons pick them (<c>A: ... (recommended). B: ...</c>),
+    /// so the card says what is asked without opening its detail (owner, 2026-11-09: "it doesn't even list the question"). One line, never
+    /// longer than the panel draws (<see cref="PanelSummaryChars"/>, <c>CardsView.SummaryChars</c>), so nothing is cut silently: when the
+    /// options do not fit, only the recommended one stays (<c>Recommended: option A, ...</c>); when that does not fit either it goes, then
+    /// the question ends with an ellipsis (the detail and each button's hover have each in full). With several
+    /// questions each takes an equal share, with no Recommended (their options are answered in words). Text that
+    /// <see cref="CardSummaries.Usable"/> would refuse (a path of three segments, a drive path, a time) keeps its last segment or loses the
+    /// time; if the line is still refused it is the plain sentence that points to the detail.
+    /// </summary>
+    internal static string DesignSummary(IReadOnlyList<DesignQuestion> questions)
+    {
+        const string ReadTheDetail = "The review asks a question of design: read it in the detail.";
+        if (questions.Count == 0)
+        {
+            return ReadTheDetail;
+        }
+        var line = DesignLine(questions, plain: false);
+        if (!CardSummaries.Usable(line))
+        {
+            line = DesignLine(questions, plain: true);
+        }
+        return CardSummaries.Usable(line) ? line : ReadTheDetail;
+    }
+
+    /// <summary>What the panel draws of a card's summary (<c>CardsView.SummaryChars</c> in Pilot.Ui, which the node does not reference).</summary>
+    internal const int PanelSummaryChars = 240;
+
+    // A question cut to less than this is no longer a question: the why goes first.
+    private const int QuestionFloor = 60;
+
+    private static string DesignLine(IReadOnlyList<DesignQuestion> questions, bool plain)
+    {
+        string Words(string text, int max) => Clean(plain ? WithoutLogLooks(text) : text, max);
+        if (questions.Count > 1)
+        {
+            var share = (PanelSummaryChars - (questions.Count - 1)) / questions.Count;
+            return string.Join(' ', questions.Select(q => Words(q.Question, share)));
+        }
+        var question = questions[0];
+        var why = question.WhyRings is { } w ? $" It rings because {w}." : "";
+        // Each option by the letter its button picks (Pick option A), the recommended first: the buttons say nothing more (#797 rule 4).
+        var options = question.Options.Count == 0 ? ""
+            : " " + string.Join(' ', question.RecommendedFirst.Select((o, i) => $"{OptionLetter(i)}: {Words(o.Text, int.MaxValue)}{(o.Recommended ? " (recommended)" : "")}."));
+        var recommended = question.RecommendedFirst.FirstOrDefault() is { Recommended: true } r ? $" Recommended: option A, {Words(r.Text, int.MaxValue)}." : "";
+        var whole = Words(question.Question, int.MaxValue);
+        if (whole.Length + options.Length + why.Length <= PanelSummaryChars)
+        {
+            return whole + options + why;
+        }
+        if (whole.Length + recommended.Length + why.Length <= PanelSummaryChars)
+        {
+            return whole + recommended + why;
+        }
+        // The options go first, then Recommended, then the question is cut with an ellipsis so the why still fits; past the floor the why goes too.
+        if (PanelSummaryChars - why.Length >= QuestionFloor)
+        {
+            return Words(question.Question, PanelSummaryChars - why.Length) + why;
+        }
+        return Words(question.Question, PanelSummaryChars);
+    }
+
+    /// <summary>
+    /// The words of a question as <see cref="CardSummaries.Usable"/> would take them: a path of three segments or a drive path is its last
+    /// segment (<c>src/Pilot.Node/Flights/PrReviews.Cards.cs</c> reads <c>PrReviews.Cards.cs</c>), a time of day is gone, a date's time too.
+    /// </summary>
+    private static string WithoutLogLooks(string text)
+    {
+        var drive = System.Text.RegularExpressions.Regex.Replace(text, @"[A-Za-z]:\\(?:[\w.-]+\\)*([\w.-]+)", "$1");
+        var back = System.Text.RegularExpressions.Regex.Replace(drive, @"(?:[\w.-]*\\){2,}([\w.-]+)", "$1");
+        var slash = System.Text.RegularExpressions.Regex.Replace(back, @"(?:[\w.-]*/){3,}([\w.-]+)", "$1");
+        var date = System.Text.RegularExpressions.Regex.Replace(slash, @"(\d{4}-\d{2}-\d{2})[T ]\d{2}:\d{2}(?::\d{2})?", "$1");
+        return System.Text.RegularExpressions.Regex.Replace(date, @"\b\d{1,2}:\d{2}:\d{2}\b", "");
+    }
+
+    /// <summary>
+    /// The most a design card's button carries: what two lines of a button hold at the panel's narrowest (<c>CardsView.ButtonFits</c>, 44),
+    /// as the card wraps a label to two lines and drops the rest with no mark. An option's button is a short verb (<see cref="PickLabel"/>),
+    /// well inside it; the option whole is in the card's body and detail, in the button's hover and in the answer the button sends.
+    /// </summary>
+    internal const int MaxOptionLabel = 44;
 
     private static string Cut(string text, int max) => text.Length <= max ? text : text[..(max - 3)].TrimEnd() + "...";
 
@@ -86,20 +167,23 @@ public sealed partial class PrReviews
 
     /// <summary>
     /// Closes the open cards of <paramref name="review"/> when the PR's head is past the commit it read, saying which: a review of a
-    /// head that is gone asks nothing of anyone. False when nothing was open or the head is where the review read it.
+    /// head that is gone asks nothing of anyone. False when nothing was open or the head is where the review read it. A review of the
+    /// new head that follows (<paramref name="newerReviewFollows"/>, a recheck's) leaves the design card for it: that review settles the
+    /// question or rings for it again once it is posted, which a card closed here for the head could not say.
     /// </summary>
-    public bool CloseCardsPastHead(PrReviewRow review, string head)
+    public bool CloseCardsPastHead(PrReviewRow review, string head, bool newerReviewFollows = false)
     {
         if (head.Length == 0 || string.Equals(head, review.Head, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
         var subject = Verbs.PrTarget(review.Repo, review.Number);
-        if (!state.Cards(openOnly: true).Any(c => c.Subject == subject && ReviewCardKinds.Contains(c.Kind)))
+        string[] kinds = newerReviewFollows ? [.. ReviewCardKinds.Where(k => k != DesignKind)] : ReviewCardKinds;
+        if (!state.Cards(openOnly: true).Any(c => c.Subject == subject && kinds.Contains(c.Kind)))
         {
             return false;
         }
-        state.CloseCardsAbout(subject, $"the head moved past {CommitRefs.Short(review.Head)} to {CommitRefs.Short(head)}", ReviewCardKinds);
+        state.CloseCardsAbout(subject, $"the head moved past {CommitRefs.Short(review.Head)} to {CommitRefs.Short(head)}", kinds);
         return true;
     }
 

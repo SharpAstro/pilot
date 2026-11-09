@@ -71,10 +71,19 @@ internal static class SessionsCapture
     /// <param name="openFlight">The code of the flight whose page the Flights page shows in place of its table.</param>
     public static SessionsView<RgbaImage> Render(RgbaImageRenderer renderer, SessionsScreen screen, float dpiScale = 1f, bool canSay = false,
         FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null, bool inPlay = false, IReadOnlyList<MachineLine>? machines = null,
-        string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null, SpendSnapshot? spend = null, string spendWindow = "today")
+        string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null, SpendSnapshot? spend = null, string spendWindow = "today", IReadOnlyList<SummaryRow>? summaries = null)
     {
         var view = new SessionsView<RgbaImage>(renderer) { CanSay = canSay };
         var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = FontPath, DpiScale = dpiScale };
+        if (summaries is { Count: > 0 })
+        {
+            // The file's summaries on the Summary card, with a button that asks nothing: a capture shows the card as a window
+            // attached to a node does.
+            var here = new NodeMark("snapshot", "snapshot", "this node", true);
+            chrome.Summaries.Shelf = new SummaryShelf([here], summaries.ToDictionary(s => (here.Key, s.Scope), s => s));
+            chrome.Summaries.Send = _ => Task.FromResult<string?>(null);
+            chrome.Summaries.Track = (_, _) => { };
+        }
         // A capture is a moment of a file, whole: the window's In play default leaves the done out unless asked for.
         if (!inPlay)
         {
@@ -176,10 +185,10 @@ internal static class SessionsCapture
     /// <summary>Renders one frame to <paramref name="pngPath"/> and its rows to <c>&lt;pngPath&gt;.rows.txt</c>; returns the dump's path.</summary>
     public static string Write(SessionsScreen screen, string pngPath, int width, int height, bool canSay = false,
         FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null,
-        IReadOnlyList<MachineLine>? machines = null, string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null, SpendSnapshot? spend = null, string spendWindow = "today")
+        IReadOnlyList<MachineLine>? machines = null, string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null, SpendSnapshot? spend = null, string spendWindow = "today", IReadOnlyList<SummaryRow>? summaries = null)
     {
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
-        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight, repos: repos, machines: machines, hover: hover, flightsView: flightsView, select: select, pullRequests: pullRequests, layers: layers, night: night, fold: fold, spend: spend, spendWindow: spendWindow);
+        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight, repos: repos, machines: machines, hover: hover, flightsView: flightsView, select: select, pullRequests: pullRequests, layers: layers, night: night, fold: fold, spend: spend, spendWindow: spendWindow, summaries: summaries);
         if (Path.GetDirectoryName(Path.GetFullPath(pngPath)) is { } folder)
         {
             Directory.CreateDirectory(folder);

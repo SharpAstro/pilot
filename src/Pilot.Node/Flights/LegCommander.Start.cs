@@ -86,13 +86,15 @@ public sealed partial class LegCommander
 
     /// <summary>
     /// Starts the ticking pass of a flying leg for the leg watch, under the lock so a leg that moved meanwhile (finished, sent round,
-    /// ticked, or already given a ticker) starts nothing. Throws a <see cref="FlightException"/> saying why not.
+    /// ticked, or already given a ticker) starts nothing, nor one on a flight put on the owner's hold since the watch looked (#771).
+    /// Throws a <see cref="FlightException"/> saying why not.
     /// </summary>
     internal async Task StartTickerAsync(string code, string legName, CancellationToken cancellationToken)
     {
         await _one.WaitAsync(cancellationToken);
         try
         {
+            RefuseIfOnHold(code);
             var (flight, leg) = LegOf(Verbs.LegTarget(code, legName));
             if (flight.State != FlightState.Flying || leg.State != LegState.Flying)
             {
@@ -165,6 +167,7 @@ public sealed partial class LegCommander
 
     private void StartValidator(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs)
     {
+        RefuseIfOnHold(flight.Code);
         var validator = ValidatorName(flight, leg);
         var target = Verbs.LegTarget(flight.Code, leg.Name);
         var brief = Briefs.Validate(flight, leg, legs, Briefs.Run(Cli, Socket), options.Machine);
@@ -231,8 +234,25 @@ public sealed partial class LegCommander
         }
     }
 
+    // The flight's reboot file not yet handed on (#916): its next worker is briefed from it, and it moves to read/ once that worker started.
+    private (string File, string Text)? RebootFileOf(FlightRow flight) => RebootPrep.FileFor(RebootPrep.FolderIn(options.DataFolder), flight.Code);
+
+    // The brief names the file where it will be once read, and carries its text, so the move cannot pull it from under the session.
+    private static (string File, string Text)? BriefedAs((string File, string Text)? reboot) => reboot is { } r ? (RebootPrep.ReadPathOf(r.File), r.Text) : null;
+
+    // A worker that started took the reboot file: it moves to read/, so no later brief carries it again.
+    private static string ReadOnStart((string File, string Text)? reboot, string started)
+    {
+        if (reboot is { } r)
+        {
+            RebootPrep.MarkRead(r.File);
+        }
+        return started;
+    }
+
     private void StartWorker(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs)
     {
+        RefuseIfOnHold(flight.Code);
         RingSpendAlert(flight, leg, leg.GoArounds);
         var worker = WorkerName(flight, leg);
         var target = Verbs.LegTarget(flight.Code, leg.Name);
@@ -265,9 +285,10 @@ public sealed partial class LegCommander
                     plane = new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : "");
                 }
                 // Read before the launcher is asked: from entering() on a command waits only StartAnswerWithin for the start.
-                var brief = Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed, machine: options.Machine, pilotMd: await PilotMdOfAsync(flight));
+                var reboot = RebootFileOf(flight);
+                var brief = Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed, machine: options.Machine, pilotMd: await PilotMdOfAsync(flight), reboot: BriefedAs(reboot));
                 entering();
-                return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, attemptModel, attemptEffort, Reason: SessionStartReasons.LegLaunch), CancellationToken.None);
+                return ReadOnStart(reboot, await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, attemptModel, attemptEffort, Reason: SessionStartReasons.LegLaunch), CancellationToken.None));
             },
             job =>
             {

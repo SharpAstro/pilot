@@ -6,7 +6,7 @@ using Pilot.Contracts;
 namespace Pilot.Ui;
 
 /// <summary>
-/// What one press of Summarise asks, and of which node: the flights of one node (<see cref="SummaryRow.FleetScope"/>), of
+/// What one press of Refresh asks, and of which node: the flights of one node (<see cref="SummaryRow.FleetScope"/>), of
 /// every node this window's node holds a grant for (<see cref="SummaryRow.AllNodesScope"/>), or one flight (its code).
 /// </summary>
 /// <param name="Scope">The scope the node keeps the answer under.</param>
@@ -69,7 +69,7 @@ internal sealed class SummaryBoard
 {
     private SummaryShelf _shelf = SummaryShelf.Empty;
 
-    /// <summary>What a press of Summarise is doing, by the ask's key: working with the node (the button reads "Summarising…"), or refused in its words.</summary>
+    /// <summary>What a press of Refresh is doing, by the ask's key: working with the node (the button reads "Refreshing…"), or refused in its words.</summary>
     internal Presses Presses { get; } = new();
 
     /// <summary>The rows and nodes as the page builder last read them; the host sets it with every build.</summary>
@@ -118,9 +118,10 @@ internal sealed class SummaryBoard
 
 /// <summary>
 /// The Summary card: Needs you, then Where it is, as the node kept it (Markdown, drawn by DIR.Lib's document), when it was made
-/// and what it cost, and a Summarise button that says what a press costs (the last run's figures). Home shows one for the nodes
-/// in view and each flight's page one for the flight; both build it here, so there is one card. It holds the Markdown it parsed,
-/// so the page builds it every frame without parsing again.
+/// and that it follows changes (the watchtower remakes it while a client is attached), or why it does not, and a Refresh button
+/// that asks at once. A press names a price only when the row says the watchtower is down, as the node then makes the one-off
+/// summary call (the summary model, sonnet by default; the last run's figures). Home shows one for the nodes in view and each flight's page one for the flight; both build
+/// it here, so there is one card. It holds the Markdown it parsed, so the page builds it every frame without parsing again.
 /// </summary>
 internal sealed class SummaryCard
 {
@@ -131,8 +132,8 @@ internal sealed class SummaryCard
     internal const float StatusHeight = 20f;
 
     /// <summary>
-    /// The button's width, fixed: its label is "Summarise · $0.0041" before a run's figures and "Summarising…" during one, and a
-    /// button that changed width would move under the pointer.
+    /// The button's width, fixed: its label is "Refresh", "Refresh · ~$0.0041" when the watchtower is down and "Refreshing…" during
+    /// a press, and a button that changed width would move under the pointer.
     /// </summary>
     internal const float ButtonWidth = 184f;
 
@@ -151,24 +152,30 @@ internal sealed class SummaryCard
         Text = p.Body, Strong = p.Bright, Emphasis = p.Body, Code = p.Bright, CodeBackground = p.GhostBg, Link = p.Landed, Muted = p.Dim,
     };
 
-    /// <summary>What a press costs, said in the button's label: the last run's dollars, else its tokens, else a call's worth.</summary>
+    /// <summary>
+    /// What a press costs, said in the button's label, only while the watchtower is down (the press then makes the one-off summary call):
+    /// the last run's dollars, else its tokens, else a call's worth. Empty while the watchtower makes the summary, which costs no call.
+    /// </summary>
     internal static string CostLabel(SummaryRow? row) => row switch
     {
-        null => " · one summary call",
+        null or { NotFollowing: null } => "",
         { Cost: { } usd } => $" · ~${Money(usd)}",
         { Tokens: > 0 and var tokens } => $" · ~{SessionLine.Tokens(tokens)} tokens",
-        _ => "",
+        _ => " · one summary call",
     };
 
     private static string Money(double usd) => usd.ToString(usd < 0.01 ? "0.0000" : "0.00", CultureInfo.InvariantCulture);
 
-    /// <summary>What a row used, as the line under the header says it: <c>8.21k tokens · $0.0041</c>; <c>no call made</c> for a fleet with nothing in play.</summary>
+    /// <summary>What a row used, as the Refresh tooltip says it while the watchtower is down: <c>8.21k tokens · $0.0041</c>; <c>no call made</c> for a fleet with nothing in play.</summary>
     internal static string Used(SummaryRow row) =>
         row.Tokens == 0 && row.Cost is null
             ? "no call made"
             : row.Cost is { } usd ? $"{SessionLine.Tokens(row.Tokens)} tokens · ${Money(usd)}" : $"{SessionLine.Tokens(row.Tokens)} tokens";
 
-    /// <summary>The line under the header: running, refused, when the kept one was made and what it used, or none yet.</summary>
+    /// <summary>
+    /// The line under the header: running, refused, when the kept one was made and that it follows changes, or, when the row says it
+    /// does not, <c>from 09:12; the watchtower is down (...)</c>; or none yet.
+    /// </summary>
     internal static (string Text, string? Full, StatusKind Kind) Status(SummaryRow? row, bool running, string? refused, DateTimeOffset now)
     {
         if (running)
@@ -177,11 +184,17 @@ internal sealed class SummaryCard
         }
         if (refused is not null)
         {
-            return ($"The node did not make one: {refused}. Press Summarise to try again.", null, StatusKind.Refused);
+            return ($"The node did not make one: {refused}. Press Refresh to try again.", null, StatusKind.Refused);
         }
-        return row is null
-            ? ("none yet", null, StatusKind.Quiet)
-            : ($"made {SessionLine.Ago(now - row.MadeAt)} · {Used(row)}", row.MadeAt.ToLocalTime().ToString("ddd d MMM yyyy HH:mm:ss zzz", CultureInfo.InvariantCulture), StatusKind.Quiet);
+        if (row is null)
+        {
+            return ("none yet", null, StatusKind.Quiet);
+        }
+        var exact = row.MadeAt.ToLocalTime().ToString("ddd d MMM yyyy HH:mm:ss zzz", CultureInfo.InvariantCulture);
+        return row.NotFollowing is { Length: > 0 } why
+            ? ($"from {row.MadeAt.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture)}; {why}", exact, StatusKind.NotFollowing)
+            // Only the node's fleet summary is remade by the follower; a flight's or all-nodes row stays as it was made until asked for again.
+            : ($"made {SessionLine.Ago(now - row.MadeAt)}{(row.Scope == SummaryRow.FleetScope ? " · follows changes" : "")}", exact, StatusKind.Quiet);
     }
 
     internal enum StatusKind
@@ -189,6 +202,7 @@ internal sealed class SummaryCard
         Quiet,
         Running,
         Refused,
+        NotFollowing,
     }
 
     /// <summary>
@@ -219,7 +233,7 @@ internal sealed class SummaryCard
         {
             head.Add(Button(board, ask, row, running, p));
         }
-        var statusColor = kind switch { StatusKind.Running => p.Held, StatusKind.Refused => p.Failed, _ => p.Dim };
+        var statusColor = kind switch { StatusKind.Running => p.Held, StatusKind.Refused => p.Failed, StatusKind.NotFollowing => p.Held, _ => p.Dim };
         var statusLine = Layout.Builder.Text(status, 12f, statusColor).Selectable().WithTooltip(full is null ? status : $"{status}\n{full}");
 
         var rows = new List<Layout.Node>
@@ -227,11 +241,20 @@ internal sealed class SummaryCard
             Layout.Builder.HStack([.. head]).WithGap(10f).RowH(HeaderHeight),
             Layout.Builder.HStack(statusLine.WStar().HStar()).RowH(StatusHeight),
             AtReadingWidth(row is null
-                ? WrappedProse.Of("Press Summarise and the node asks one summary call what needs you and where each flight is.", 13f, p.Body)
+                ? WrappedProse.Of(EmptyText(ask), 13f, p.Body)
                 : Parsed(row.Markdown, p)),
         };
         return Layout.Builder.VStack([.. rows]).WithGap(Gap).Pad(PadX, PadY).Bg(p.PanelBg).WStar().HAuto();
     }
+
+    /// <summary>
+    /// What the card says with no summary kept. Only the node's fleet summary is made and kept current by the watchtower while a window is
+    /// attached; a flight's or all-nodes summary is made only when asked for, so its text promises nothing more.
+    /// </summary>
+    internal static string EmptyText(SummaryAsk ask) =>
+        ask.Scope == SummaryRow.FleetScope
+            ? "Nothing made yet. While this window is attached, the watchtower makes the summary of what needs you and where each flight is, and keeps it current. Press Refresh to ask for one now."
+            : "Nothing made yet. Press Refresh to ask the watchtower for one now; it is not remade by itself.";
 
     // The kept Markdown as a tree, parsed once while it stays the same: the page is built every frame, and a node is immutable.
     private Layout.Node Parsed(string source, Palette p)
@@ -248,16 +271,16 @@ internal sealed class SummaryCard
     private static Layout.Node Button(SummaryBoard board, SummaryAsk ask, SummaryRow? row, bool running, Palette p)
     {
         var steerable = board.Steerable(ask);
-        var label = running ? "Summarising…" : $"Summarise{CostLabel(row)}";
+        var label = running ? "Refreshing…" : $"Refresh{CostLabel(row)}";
         var tip = !steerable
             ? FleetClients.WatchOnly(ask.Node)
             : running
                 ? "A summary is being made; the card shows it when the node has it."
                 : row switch
                 {
-                    null => "Asks the node for one summary call over what it holds. What it cost shows here once one has been made.",
-                    { Tokens: 0, Cost: null } => "The last run made no call, as nothing was in play. A press makes one when something is.",
-                    _ => $"The last run used {Used(row)}. A press makes a new one, which replaces it for everyone.",
+                    { NotFollowing: not null } => $"The watchtower is down, so a press makes one summary call over what the node holds. The last one used {Used(row)}. It replaces this summary for everyone.",
+                    { Scope: SummaryRow.FleetScope } => "Asks the watchtower for a new summary now, which replaces this one for everyone. The node also remakes it by itself after changes while a window is attached.",
+                    _ => "Asks the watchtower for a new summary now, which replaces this one for everyone. This one is not remade by itself.",
                 };
         var enabled = steerable && !running;
         var node = Layout.Builder.Text(label, 12f, enabled ? p.Bright : p.Body, TextAlign.Center, TextAlign.Center)
@@ -265,7 +288,7 @@ internal sealed class SummaryCard
             .HFixed(HeaderHeight)
             .Bg(enabled ? p.Button : p.GhostBg);
         // A button that cannot be pressed now is not one: no hit, no hover, no hand. Its words stay at full strength, as a disabled
-        // control's dimmed ones would not meet the contrast floor, and "Summarising…" is what the person is waiting to read.
+        // control's dimmed ones would not meet the contrast floor, and "Refreshing…" is what the person is waiting to read.
         return (enabled
                 ? node.BgHover(p.ButtonHover).Follows(new HitResult.ButtonHit($"summary:{ask.Key}"), _ => board.Press(ask))
                 : node)

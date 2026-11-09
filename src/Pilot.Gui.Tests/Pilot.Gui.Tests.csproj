@@ -40,7 +40,7 @@
   <!-- Console.Lib, to arrange the shared trees in cells as pilot-tui does: from the sibling clone when it is there. -->
   <PropertyGroup>
     <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\Console.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
-    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\Console.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND '$(UseLocalSiblings)' == 'true' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\Console.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
     <UseLocalConsoleLib Condition="'$(UseLocalConsoleLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)Console.Lib\src\Console.Lib\Console.Lib.csproj')">true</UseLocalConsoleLib>
   </PropertyGroup>
   <ItemGroup Condition="'$(UseLocalConsoleLib)' == 'true'">
@@ -51,4 +51,12 @@
     <PackageReference Include="Console.Lib.Debug" Condition="'$(Configuration)' == 'Debug'" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- One root for the run's temp files, deleted when the run ends (TestTempRoot). -->
+    <Compile Include="..\TestShared\TestTempRoot.cs" Link="TestShared\TestTempRoot.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- At most two tests at once (one per core took the machine: 106 test files start real git/pwsh processes). -->
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

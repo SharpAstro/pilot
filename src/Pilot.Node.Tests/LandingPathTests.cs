@@ -66,6 +66,8 @@ public sealed class LandingPathTests : ReviewTestsBase
         FlightRow flight;
         if (path == Path.Laid)
         {
+            // A PR laid on its base as one commit is built by rebase, merge-tree and commit-tree: git's own.
+            RealGit();
             _github.MergeQueueMethod = "REBASE";
             _github.Queues = true;
             (flight, var old) = await KeepOursFlight();

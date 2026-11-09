@@ -9,7 +9,7 @@ public sealed partial class LegCommander
 {
     /// <summary>
     /// Why a done leg is sent back: what its card is worded for (the review's findings, failed checks, or a reviewer that did not start).
-    /// A conflict is not sent back: it goes to the watchtower (<see cref="ConflictsAsync"/>).
+    /// A conflict is not sent back as one of these: a worker is told it, or the last leg goes round on it (<see cref="ResolveConflictAsync"/>).
     /// </summary>
     private enum SendBackReason
     {
@@ -76,6 +76,9 @@ public sealed partial class LegCommander
                 ? $"Run the review of {flight.Code} again, or land the PR without one. {said}"
                 : last is null
                     ? $"Land the PR of {flight.Code} as it is, or dismiss this and fix it by hand. {said}"
-                    : $"Have a worker on {last.Name} put it right on the leg's work as it stands, or land the PR as it is. {said}");
+                    : $"Have a worker on {last.Name} put it right on the leg's work as it stands, or land the PR as it is. {said}",
+            // Each round on a new head, or after a further send-back, is a new cause even when the first line of the findings reads the
+            // same (#853); the title no longer carries that first line, so the cause names it itself.
+            cause: $"{title}: {changes.Split('\n', 2)[0].Trim()}|{flight.Review?.ReviewedHead}|{last?.ReviewGoArounds}|{last?.GoArounds}");
     }
 }

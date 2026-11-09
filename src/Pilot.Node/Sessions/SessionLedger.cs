@@ -224,6 +224,28 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
         }
     }
 
+    /// <summary>
+    /// <paramref name="row"/> with the ledger's account of a session the node launched (<see cref="Observe"/>): what started it, and once it
+    /// ended, why, when and at what wall time. The row as it is when the node did not start it.
+    /// </summary>
+    public SessionRow Stamp(SessionRow row, DateTimeOffset? endedAt)
+    {
+        if (Observe(row, endedAt) is not { } entry)
+        {
+            return row;
+        }
+        var ended = entry.EndReason is not null;
+        return row with
+        {
+            StartReason = entry.StartReason,
+            EndReason = entry.EndReason,
+            EndedAt = ended ? entry.EndedAt : null,
+            WallSeconds = ended ? entry.WallSeconds : null,
+            LastCompactedAt = entry.CompactedAt,
+            CompactedBecause = entry.CompactedBecause,
+        };
+    }
+
     private static long Wall(SessionLedgerEntry entry, DateTimeOffset end) => Math.Max(0, (long)(end - entry.StartedAt).TotalSeconds);
 
     private static SessionLedgerEntry? FindLocked(List<SessionLedgerEntry> entries, IEnumerable<string> ids)

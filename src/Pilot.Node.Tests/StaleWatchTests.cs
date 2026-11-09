@@ -350,11 +350,13 @@ public sealed class StaleWatchTests
         _tracker.Sets.ShouldBeEmpty();
         Row().StaleSummary.ShouldBeNull();
 
-        // Twenty seconds on a leg finishes: the row follows at the next wake, still with no tick (no raise, no summary).
+        // Twenty seconds on a leg's finish is recorded (it finished seven hours ago, so the flight is still not moving: a flight that
+        // moved within half the bound is never stale): the row follows at the next wake, still with no tick (no raise, no summary).
         _clock.Now += TimeSpan.FromSeconds(20);
-        _state.PutLeg(new LegRow { Flight = "DIR178", Name = "main", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done, FinishedAt = _clock.Now });
+        var finished = Start - TimeSpan.FromHours(7);
+        _state.PutLeg(new LegRow { Flight = "DIR178", Name = "main", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done, FinishedAt = finished });
         await _watch.StepAsync(Ct);
-        Row().LastMovedAt.ShouldBe(_clock.Now);
+        Row().LastMovedAt.ShouldBe(finished);
         Row().LastMove.ShouldBe("leg main done");
         _tracker.Sets.ShouldBeEmpty();
 

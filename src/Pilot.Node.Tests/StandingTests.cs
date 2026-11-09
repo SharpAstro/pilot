@@ -313,6 +313,39 @@ public sealed class StandingTests
     }
 
     [Fact]
+    public async Task HoldAndUnholdAreThePersonsAloneAndAnAssistantsByTheAutopilotRule()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        const string worker = "du1-tia1-parser";
+        var lookout = Lookout(node);
+        Fly(node, "TIA1", worker);
+
+        foreach (var verb in new[] { Verbs.Ground, Verbs.Unground })
+        {
+            // The watchtower on its own and a flight's session are refused, and nothing is held.
+            (await Error(node, Command(verb, "flight/TIA1", lookout, true, "the owner is away"))).ShouldBe($"{verb} is the controller's, not the watchtower's: leave its card open for them");
+            (await Error(node, Command(verb, "flight/TIA1", worker, true, "the owner is away"))).ShouldBe($"{verb} is the controller's, not a flight session's: leave it to them");
+        }
+        node.State.Flights().Single().OnHold.ShouldBeNull();
+
+        // An assistant's hold waits on a card with the autopilot off, and runs with it on.
+        (await Error(node, Command(Verbs.Ground, "flight/TIA1", "pilot-33", true, "the owner is away"))).ShouldNotBeNull().ShouldContain("waits on their card");
+        node.State.Flights().Single().OnHold.ShouldBeNull();
+        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "on"))).ShouldBeNull();
+        (await Error(node, Command(Verbs.Ground, "flight/TIA1", "pilot-33", true, "the owner is away"))).ShouldBeNull();
+        node.State.Flights().Single().OnHold.ShouldNotBeNull().By.ShouldBe("pilot-33");
+        (await Error(node, Command(Verbs.Unground, "flight/TIA1", "pilot-33", true))).ShouldBeNull();
+        node.State.Flights().Single().OnHold.ShouldBeNull();
+
+        // The person holds and releases as they please, with the autopilot off too.
+        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "off"))).ShouldBeNull();
+        (await Error(node, Command(Verbs.Ground, "flight/TIA1", "gui", false, "back on", "Monday"))).ShouldBeNull();
+        node.State.Flights().Single().OnHold.ShouldNotBeNull().Reason.ShouldBe("back on Monday");
+        (await Error(node, Command(Verbs.Unground, "flight/TIA1", "gui"))).ShouldBeNull();
+        node.State.Flights().Single().OnHold.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task AWorkersPlannersAndReviewersMergeIsRefusedWhateverAutopilotSays()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

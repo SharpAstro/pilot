@@ -73,7 +73,7 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
             }
         }
 
-        var (obj, objBytes) = SweepObjFolders(sessions);
+        var (obj, artifacts, objBytes) = SweepObjFolders(sessions);
         bytes += objBytes;
 
         var probeCutoff = now - ProbeAge;
@@ -86,11 +86,17 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
             }
         }
 
-        if (scratch + probes + obj > 0)
+        if (scratch + probes + obj + artifacts > 0)
         {
+            var objTitle = obj > 0 ? $", {obj} obj folder{(obj == 1 ? "" : "s")} of finished legs" : "";
+            var artifactsTitle = artifacts > 0 ? $", {artifacts} artifacts folder{(artifacts == 1 ? "" : "s")} of finished legs" : "";
+            var objDetail = obj > 0 ? $", {obj} obj folders in planes whose legs are done and idle (bin kept)" : "";
+            var artifactsDetail = artifacts > 0
+                ? $", {artifacts} artifacts folders in planes whose legs are done and idle (artifacts/obj, and the artifacts/bin of sibling projects that do not live in the plane; the bin of the plane's own projects kept)"
+                : "";
             state.RaiseCard(CardBin.Handled, Kind, Verbs.NodeTarget,
-                $"Disk sweep freed {Size(bytes)}: {scratch} job scratch folder{(scratch == 1 ? "" : "s")}, {probes} probe folder{(probes == 1 ? "" : "s")}{(obj > 0 ? $", {obj} obj folder{(obj == 1 ? "" : "s")} of finished legs" : "")}",
-                $"Deleted {scratch} job scratch folders (jobs/<id>/tmp of landed flights' ended sessions, or older than the scratch-days setting) and {probes} p2o-* probe folders older than a day{(obj > 0 ? $", and {obj} obj folders in planes whose legs are done and idle (bin kept)" : "")}; {Size(bytes)} by unique bytes. state.json and the timeline of each job stay.");
+                $"Disk sweep freed {Size(bytes)}: {scratch} job scratch folder{(scratch == 1 ? "" : "s")}, {probes} probe folder{(probes == 1 ? "" : "s")}{objTitle}{artifactsTitle}",
+                $"Deleted {scratch} job scratch folders (jobs/<id>/tmp of landed flights' ended sessions, or older than the scratch-days setting) and {probes} p2o-* probe folders older than a day{objDetail}{artifactsDetail}; {Size(bytes)} by unique bytes. state.json and the timeline of each job stay.");
         }
 
         var reclaimable = new List<(string Name, string Path)>();
@@ -121,12 +127,15 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
 
     /// <summary>
     /// A flight not landed with a leg done, none flying, no live session and no queued or running job inside its plane loses
-    /// every <c>obj</c> folder under it (rebuilt on demand); bin stays for the next leg or the review. Reparse points and
-    /// <c>.git</c> are not entered. Returns the folders removed and the unique bytes freed.
+    /// every <c>obj</c> folder under it (rebuilt on demand); bin stays for the next leg or the review. It also loses what a
+    /// node job built into the plane's <c>artifacts</c> folder (<see cref="PlaneOutput"/>): <c>artifacts/obj</c> whole, and the
+    /// <c>artifacts/bin/&lt;Project&gt;</c> of every project that does not live in the plane (a sibling clone's output, which no
+    /// project file in the plane names); the bin of the plane's own projects stays like any other bin. Reparse points and
+    /// <c>.git</c> are not entered. Returns the obj folders and the artifacts folders removed and the unique bytes freed.
     /// </summary>
-    private (int Folders, long Bytes) SweepObjFolders(IReadOnlyList<SessionRow> sessions)
+    private (int Obj, int Artifacts, long Bytes) SweepObjFolders(IReadOnlyList<SessionRow> sessions)
     {
-        int folders = 0;
+        int folders = 0, artifactFolders = 0;
         long bytes = 0;
         var liveCwds = sessions.Where(s => s.State is not (SessionState.Ended or SessionState.Failed)).Select(s => s.Cwd).Where(c => !string.IsNullOrEmpty(c)).ToList();
         var jobCwds = state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued).Select(j => j.Cwd).Where(c => !string.IsNullOrEmpty(c)).ToList();
@@ -147,12 +156,26 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
                     continue;
                 }
                 var allGone = true;
-                foreach (var obj in ObjFolders(flight.Worktree))
+                var (objs, projects) = Scan(flight.Worktree);
+                foreach (var obj in objs)
                 {
                     var size = DiskUsage.UniqueBytes(obj);
                     if (RemovalQueue.TryDelete(obj, out _))
                     {
                         folders++;
+                        bytes += size;
+                    }
+                    else
+                    {
+                        allGone = false;
+                    }
+                }
+                foreach (var artifact in ArtifactsFolders(flight.Worktree, projects))
+                {
+                    var size = DiskUsage.UniqueBytes(artifact);
+                    if (RemovalQueue.TryDelete(artifact, out _))
+                    {
+                        artifactFolders++;
                         bytes += size;
                     }
                     else
@@ -170,29 +193,47 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
                 // Left for the next sweep.
             }
         }
-        return (folders, bytes);
+        return (folders, artifactFolders, bytes);
     }
 
-    private static List<string> ObjFolders(string root)
+    private const string ArtifactsFolder = "artifacts";
+
+    private static bool IsReparsePoint(string path) => (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+
+    /// <summary>
+    /// Walks a plane for the <c>obj</c> folders with a project file beside them, and for the names of the projects that live in
+    /// it (a <c>*proj</c> file's name without its extension, which is the <c>&lt;Project&gt;</c> folder MSBuild's artifacts layout
+    /// gives it). The plane's own <c>artifacts</c> folder is not walked: <see cref="ArtifactsFolders"/> reads it, and no project
+    /// that counts lives inside it.
+    /// </summary>
+    private static (List<string> Objs, HashSet<string> Projects) Scan(string root)
     {
         var found = new List<string>();
+        var projects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var pending = new Stack<string>();
         pending.Push(root);
         while (pending.Count > 0)
         {
             var dir = pending.Pop();
+            var projectFiles = Safe(() => Directory.EnumerateFiles(dir, "*proj"))
+                .Where(f => Path.GetExtension(f).EndsWith("proj", StringComparison.OrdinalIgnoreCase)).ToList();
+            foreach (var file in projectFiles)
+            {
+                projects.Add(Path.GetFileNameWithoutExtension(file));
+            }
             foreach (var sub in Safe(() => Directory.EnumerateDirectories(dir)))
             {
                 var name = Path.GetFileName(sub);
                 if (name.Equals(".git", StringComparison.OrdinalIgnoreCase)
-                    || (File.GetAttributes(sub) & FileAttributes.ReparsePoint) != 0)
+                    || (dir == root && name.Equals(ArtifactsFolder, StringComparison.OrdinalIgnoreCase))
+                    || IsReparsePoint(sub))
                 {
                     continue;
                 }
                 if (name.Equals("obj", StringComparison.OrdinalIgnoreCase))
                 {
                     // Build output only: a project file sits beside it. A tracked folder of model files named obj stays.
-                    if (Safe(() => Directory.EnumerateFiles(dir, "*proj")).Any())
+                    if (projectFiles.Count > 0)
                     {
                         found.Add(sub);
                     }
@@ -204,6 +245,39 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
                 else
                 {
                     pending.Push(sub);
+                }
+            }
+        }
+        return (found, projects);
+    }
+
+    /// <summary>
+    /// What a node job built under <c>&lt;plane&gt;/artifacts</c> that is not kept: <c>artifacts/obj</c> whole, and each
+    /// <c>artifacts/bin/&lt;Project&gt;</c> whose project is not in <paramref name="projects"/> (a sibling clone's output; its
+    /// project file sits in the sibling, not here). No project file sits beside either, so <see cref="Scan"/> never finds them.
+    /// Reparse points are not entered.
+    /// </summary>
+    private static List<string> ArtifactsFolders(string plane, HashSet<string> projects)
+    {
+        var found = new List<string>();
+        var artifacts = Path.Combine(plane, ArtifactsFolder);
+        if (!Directory.Exists(artifacts) || IsReparsePoint(artifacts))
+        {
+            return found;
+        }
+        var obj = Path.Combine(artifacts, "obj");
+        if (Directory.Exists(obj) && !IsReparsePoint(obj))
+        {
+            found.Add(obj);
+        }
+        var bin = Path.Combine(artifacts, "bin");
+        if (Directory.Exists(bin) && !IsReparsePoint(bin))
+        {
+            foreach (var project in Safe(() => Directory.EnumerateDirectories(bin)))
+            {
+                if (!projects.Contains(Path.GetFileName(project)) && !IsReparsePoint(project))
+                {
+                    found.Add(project);
                 }
             }
         }

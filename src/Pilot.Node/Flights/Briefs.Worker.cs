@@ -5,8 +5,24 @@ namespace Pilot.Node.Flights;
 
 public static partial class Briefs
 {
+    /// <summary>
+    /// What a leg's worker is told about a design choice, and about waiting (PIL800, pilot #800). It sits beside <see cref="ReportRule"/>,
+    /// not in it, because the planner and the reviewer read that one and a choice between ways to do a leg is the worker's. A worker that
+    /// reported blocked on a choice one option settled rang the person for nothing, and one that reported blocked while its own job or the
+    /// node's check rerun ran rang for a wait the node ends by itself.
+    /// </summary>
+    internal static string DesignChoiceRule(string run) =>
+        "- A design choice in your leg is yours to take when one option meets the leg's Done-when, the issue's acceptance criteria and the repo\n" +
+        "  docs your change touches (prefer code that obeys a documented rule over rewording the rule): take it, and say in your report which\n" +
+        "  option you took and why. Report blocked only when no option meets them, when two do and differ in what the owner gets, or when\n" +
+        "  the choice would change the criteria themselves.\n" +
+        "- Waiting on a job of your own or on the node's check rerun is not a reason to report blocked: end your turn, and the node wakes you\n" +
+        $"  when it ends. `{run} session report blocked` is for a person's decision only, and what you report is that question itself, ending\n" +
+        "  in a question mark, so the node can tell a wait on a person from a wait on your own work.";
+
     /// <param name="socket">The node's socket when it is not the default one: the CLI is told it, or it would ask another node.</param>
-    public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null, string? resumed = null, string? machine = null, string? update = null, string? pilotMd = null)
+    /// <param name="reboot">The flight's reboot file (#916), where it will be once read, and its text: what the session before the reboot wrote down.</param>
+    public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null, string? resumed = null, string? machine = null, string? update = null, string? pilotMd = null, (string File, string Text)? reboot = null)
     {
         var run = Run(cli, socket);
         var text = new StringBuilder();
@@ -96,6 +112,17 @@ public static partial class Briefs
             }
         }
 
+        if (reboot is { } saved)
+        {
+            text.AppendLine();
+            text.AppendLine("## Resumed after a reboot");
+            text.AppendLine($"The machine was rebooted while this flight flew. The session before it wrote down where it stopped (kept at {saved.File}):");
+            text.AppendLine();
+            text.AppendLine(saved.Text.Trim());
+            text.AppendLine();
+            text.AppendLine("Check the plane for work not committed or not pushed first, then carry on from its next step.");
+        }
+
         if (flight.HumanVerification)
         {
             text.AppendLine();
@@ -104,6 +131,19 @@ public static partial class Briefs
             text.AppendLine("test or a CPU-rendered capture: hardware, a live window, how it feels) is named in your report, under a `## Human verification`");
             text.AppendLine("heading, one list item each: a short title, then a `Do:` line (exactly what to do) and a `Done when:` line (what to look");
             text.AppendLine("for). The reviewer carries them over and the node files each as an issue for the controller. They never fail a leg.");
+        }
+        if (PinBumps(flight) is { } bumps)
+        {
+            text.AppendLine();
+            text.AppendLine(bumps);
+        }
+        if (flight.SiblingSource)
+        {
+            text.AppendLine();
+            text.AppendLine("## Sibling source");
+            text.AppendLine("This flight's issue carries the `pilot: sibling source` label: the exception to building on the published packages. The node");
+            text.AppendLine("runs its jobs with `UseLocalSiblings=true`, so they compile the sibling clones and wait while another build holds one. A build");
+            text.AppendLine("of your own in the plane takes the packages unless you pass `-p:UseLocalSiblings=true` too.");
         }
         text.AppendLine();
         // A view that only passed its tests shipped wrong to the eye (pilot's tooltips, 2026-10-25): where the org keeps a UI
@@ -166,6 +206,7 @@ public static partial class Briefs
         text.AppendLine("  A run goes on to its end unless you hand it over as `" + run + " run --fail-fast -- <command>`, which the node ends at its first failed test; use it when the first failure is all you need.");
         text.AppendLine(WaitRule(run));
         text.AppendLine(ReportRule(run));
+        text.AppendLine(DesignChoiceRule(run));
         // Claude Code isolates a -w session in its worktree and refuses a command it cannot prove stays inside: a git in a
         // loop, a pilot run handed a shell's -Command string. The worker recovers by splitting it, a turn lost each time
         // (TIA1781's cross-structure, SE1 2026-10-25).
@@ -175,6 +216,8 @@ public static partial class Briefs
         text.AppendLine($"  git plainly, one command or a few joined by `&&`, never inside a loop: tick steps as `{run} check 1 && {run} check 2`.");
         text.AppendLine("  " + JobShellRule);
         text.Append(BranchHistoryRule);
+        text.Append(NoSpinRule);
+        text.Append(CommandShapeRule);
         text.AppendLine();
         text.AppendLine(InvariantRule);
         text.AppendLine("## When you stop");
@@ -186,5 +229,27 @@ public static partial class Briefs
             text.AppendLine("without them is not a finished leg. Commits with no step ticked and no finish mean the leg is still open.");
         }
         return text.ToString();
+    }
+
+    /// <summary>
+    /// The brief's section for a connected consumer whose producers' packages are up (<see cref="FlightRow.PackagePins"/>): its leg bumps
+    /// each pin to the version found, as a flight builds against the published packages (PIL802). Null when there is none.
+    /// </summary>
+    internal static string? PinBumps(FlightRow flight)
+    {
+        if (flight.PackagePins.Length == 0)
+        {
+            return null;
+        }
+        var text = new StringBuilder();
+        text.AppendLine("## Packages to take");
+        text.AppendLine("This flight builds against the published packages, and the producers it waited for have released. Bump each pin to the");
+        text.AppendLine("version below where this repo pins it (`Directory.Packages.props`, or the project's `PackageReference`), in its own commit,");
+        text.AppendLine("unless it already pins that version or a later one; a restore that fails NU1102 on it is held by the node, not worked round.");
+        foreach (var pin in flight.PackagePins)
+        {
+            text.AppendLine($"- `{pin.Id}` {pin.Version} (from {pin.Producer})");
+        }
+        return text.ToString().TrimEnd();
     }
 }

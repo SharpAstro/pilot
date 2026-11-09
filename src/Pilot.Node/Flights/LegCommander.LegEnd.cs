@@ -547,7 +547,8 @@ public sealed partial class LegCommander
         var told = $"{row.Other} had landed: {now.Code} goes on, no answer needed";
         state.RaiseCard(CardBin.Handled, OverlapLandedKind, target, told,
             $"{now.Code} overlapped {at}, which has landed since, so its work is in and there is nothing to wait for. The node closed the overlap card itself and {now.Code} goes on"
-            + (row.AfterLeg is null ? " (its planner is started again with the answer)." : $"; {row.AfterLeg} stays done."));
+            + (row.AfterLeg is not null ? $"; {row.AfterLeg} stays done."
+                : IsOnHold(now.Code) ? " once it is released (it is on hold, so its planner waits for the release)." : " (its planner is started again with the answer)."));
         Error.WriteLine($"landed overlap: {now.Code} overlapped {at}, which has landed; answered by the node, no card rang");
         try
         {

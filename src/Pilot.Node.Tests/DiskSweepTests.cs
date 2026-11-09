@@ -475,6 +475,12 @@ public sealed class DiskSweepTests : IDisposable
         }
         File.WriteAllText(Path.Combine(plane, "src/A/A.csproj"), "<Project />");
         File.WriteAllText(Path.Combine(plane, "src/B/B.csproj"), "<Project />");
+        FlyingFlight(name, plane, legs);
+        return plane;
+    }
+
+    private void FlyingFlight(string name, string plane, LegState[] legs)
+    {
         _state.PutFlight(new FlightRow
         {
             Code = name, Repo = "pilot", Issue = 1, Title = "t", RepoPath = "/r", Branch = "b", Worktree = plane, Base = "origin/main",
@@ -488,7 +494,6 @@ public sealed class DiskSweepTests : IDisposable
                 FinishedAt = legs[i] == LegState.Done ? Start : null,
             });
         }
-        return plane;
     }
 
     [Fact]
@@ -540,5 +545,190 @@ public sealed class DiskSweepTests : IDisposable
         _state.PutLeg(new LegRow { Flight = "PIL25", Name = "l1", Order = 2, Goal = "g", DoneWhen = "d", State = LegState.Done, FinishedAt = Start.AddHours(1) });
         await _sweep.SweepAsync(TestContext.Current.CancellationToken);
         Directory.Exists(Path.Combine(plane, "src/A/obj")).ShouldBeFalse();
+    }
+
+    // ---- a plane's artifacts folder (job-plane-output): obj and bin of its own and of sibling projects ----
+
+    // One file of 100 bytes in each folder given, under the plane.
+    private static void Write(string plane, params string[] folders)
+    {
+        foreach (var folder in folders)
+        {
+            var dir = Path.Combine(plane, folder);
+            Directory.CreateDirectory(dir);
+            File.WriteAllBytes(Path.Combine(dir, "x.bin"), new byte[100]);
+        }
+    }
+
+    // The ObjPlane (own projects A and B) with what a node job built into <plane>/artifacts: obj of A and of the sibling Sib.Lib,
+    // bin of A, B (own) and Sib.Lib, Other.Lib (siblings: no project file of theirs sits in the plane).
+    private string ArtifactsPlane(string name, LegState[] legs)
+    {
+        var plane = ObjPlane(name, legs);
+        Write(plane, "artifacts/obj/A/release", "artifacts/obj/Sib.Lib/release",
+            "artifacts/bin/A/release", "artifacts/bin/B/release", "artifacts/bin/Sib.Lib/release", "artifacts/bin/Other.Lib/release");
+        return plane;
+    }
+
+    [Fact]
+    public async Task ADoneLegAndNothingRunningLosesArtifactsObjAndTheBinOfSiblingProjectsKeepsItsOwnBinAndCountsTheBytes()
+    {
+        var plane = ArtifactsPlane("PIL31", [LegState.Done, LegState.Planned]);
+
+        var (_, _, bytes) = await _sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        Directory.Exists(Path.Combine(plane, "artifacts/obj")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(plane, "artifacts/bin/Sib.Lib")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(plane, "artifacts/bin/Other.Lib")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(plane, "artifacts/bin/A/release")).ShouldBeTrue();
+        Directory.Exists(Path.Combine(plane, "artifacts/bin/B/release")).ShouldBeTrue();
+        // The usual obj sweep is unchanged beside it.
+        Directory.Exists(Path.Combine(plane, "src/A/obj")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(plane, "src/A/bin")).ShouldBeTrue();
+        Directory.Exists(Path.Combine(plane, ".git/obj")).ShouldBeTrue();
+        Directory.Exists(Path.Combine(plane, "models/obj")).ShouldBeTrue();
+
+        // 2 obj folders (200 B) + artifacts/obj (2 files) + the bin of 2 sibling projects (1 file each) = 600 B.
+        bytes.ShouldBe(600);
+        var card = _state.Cards().Single(c => c.Kind == "disk-swept");
+        card.Title.ShouldContain("2 obj folders");
+        card.Title.ShouldContain("3 artifacts folders");
+        card.Title.ShouldContain("600 B");
+        card.Detail!.ShouldContain("artifacts/obj");
+        card.Detail!.ShouldContain("artifacts/bin");
+    }
+
+    [Fact]
+    public async Task APlaneWithAFlyingLegALiveWorkerOrAJobInItKeepsAllOfItsArtifacts()
+    {
+        var flying = ArtifactsPlane("PIL32", [LegState.Done, LegState.Flying]);
+        var withWorker = ArtifactsPlane("PIL33", [LegState.Done]);
+        var running = ArtifactsPlane("PIL34", [LegState.Done]);
+        var queued = ArtifactsPlane("PIL35", [LegState.Done]);
+        _state.PutSession(new SessionRow
+        {
+            Id = "wk000002", SessionId = "wk000002-0000-4000-8000-000000000000", Name = "s-wk2", Kind = SessionKind.Background, Cwd = Path.Combine(withWorker, "src"),
+            Role = SessionRole.Worker, ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Working, SpendWeighted = 0, StartedAt = Start,
+        });
+        _state.PutJob(new JobRow { Id = "j2", Command = "dotnet test", Cwd = running, State = JobState.Running, LogPath = "x.log", Timeout = TimeSpan.FromMinutes(5), StartedAt = Start });
+        _state.PutJob(new JobRow { Id = "j3", Command = "dotnet build", Cwd = queued, State = JobState.Queued, LogPath = "y.log", Timeout = TimeSpan.FromMinutes(5), StartedAt = Start });
+
+        var (_, _, bytes) = await _sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        foreach (var plane in new[] { flying, withWorker, running, queued })
+        {
+            Directory.Exists(Path.Combine(plane, "artifacts/obj/Sib.Lib/release")).ShouldBeTrue(plane);
+            Directory.Exists(Path.Combine(plane, "artifacts/bin/Sib.Lib/release")).ShouldBeTrue(plane);
+            Directory.Exists(Path.Combine(plane, "artifacts/bin/Other.Lib/release")).ShouldBeTrue(plane);
+            Directory.Exists(Path.Combine(plane, "artifacts/bin/A/release")).ShouldBeTrue(plane);
+        }
+        bytes.ShouldBe(0);
+        _state.Cards().ShouldNotContain(c => c.Kind == "disk-swept");
+    }
+
+    [Fact]
+    public async Task APlaneWhoseOnlyLeftoverIsArtifactsStillRaisesTheLineAndNamesNoObj()
+    {
+        var plane = Path.Combine(_root, "planes", "PIL36");
+        Directory.CreateDirectory(Path.Combine(plane, "src/A"));
+        File.WriteAllText(Path.Combine(plane, "src/A/A.csproj"), "<Project />");
+        Write(plane, "artifacts/bin/Sib.Lib/release", "artifacts/bin/A/release");
+        FlyingFlight("PIL36", plane, [LegState.Done]);
+
+        var (_, _, bytes) = await _sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        bytes.ShouldBe(100);
+        Directory.Exists(Path.Combine(plane, "artifacts/bin/Sib.Lib")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(plane, "artifacts/bin/A/release")).ShouldBeTrue();
+        var card = _state.Cards().Single(c => c.Kind == "disk-swept");
+        card.Title.ShouldContain("1 artifacts folder of finished legs");
+        card.Title.ShouldContain("100 B");
+        card.Title.ShouldNotContain("obj folder");
+    }
+
+    [Fact]
+    public async Task AProjectFileDeepInThePlaneIsItsOwnWhileOneOnlyInsideArtifactsOrGitIsNot()
+    {
+        // Lib's project file sits deep in the plane (not under artifacts or .git): its bin is the plane's own. Ghost and
+        // Hidden have a project file only inside artifacts or .git, which are no place a project of the plane lives, so
+        // their bin is a sibling's.
+        var plane = Path.Combine(_root, "planes", "PIL37");
+        Directory.CreateDirectory(Path.Combine(plane, "tools/deep/Lib"));
+        File.WriteAllText(Path.Combine(plane, "tools/deep/Lib/Lib.csproj"), "<Project />");
+        Directory.CreateDirectory(Path.Combine(plane, "artifacts/bin/Ghost"));
+        File.WriteAllText(Path.Combine(plane, "artifacts/bin/Ghost/Ghost.csproj"), "<Project />");
+        Directory.CreateDirectory(Path.Combine(plane, ".git/modules"));
+        File.WriteAllText(Path.Combine(plane, ".git/modules/Hidden.csproj"), "<Project />");
+        Write(plane, "artifacts/bin/Lib/release", "artifacts/bin/Ghost/release", "artifacts/bin/Hidden/release");
+        FlyingFlight("PIL37", plane, [LegState.Done]);
+
+        await _sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        Directory.Exists(Path.Combine(plane, "artifacts/bin/Lib/release")).ShouldBeTrue();
+        Directory.Exists(Path.Combine(plane, "artifacts/bin/Ghost")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(plane, "artifacts/bin/Hidden")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task AReparsePointInArtifactsBinIsNeitherEnteredNorFollowed()
+    {
+        var plane = ArtifactsPlane("PIL38", [LegState.Done]);
+        var elsewhere = Path.Combine(_root, "elsewhere");
+        Directory.CreateDirectory(elsewhere);
+        File.WriteAllBytes(Path.Combine(elsewhere, "keep.bin"), new byte[100]);
+        var link = Path.Combine(plane, "artifacts/bin/Linked.Lib");
+        try
+        {
+            Directory.CreateSymbolicLink(link, elsewhere);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            Assert.Skip("a symbolic link cannot be made here: " + ex.Message);
+        }
+
+        await _sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        Directory.Exists(link).ShouldBeTrue();
+        File.Exists(Path.Combine(elsewhere, "keep.bin")).ShouldBeTrue();
+        Directory.Exists(Path.Combine(plane, "artifacts/bin/Sib.Lib")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task APlaneSweptForItsArtifactsIsNotSweptAgainUntilAnotherLegIsDone()
+    {
+        var plane = ArtifactsPlane("PIL39", [LegState.Done, LegState.Planned]);
+        await _sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        Write(plane, "artifacts/obj/A/release", "artifacts/bin/Sib.Lib/release");
+        await _sweep.SweepAsync(TestContext.Current.CancellationToken);
+        Directory.Exists(Path.Combine(plane, "artifacts/obj")).ShouldBeTrue();
+        Directory.Exists(Path.Combine(plane, "artifacts/bin/Sib.Lib")).ShouldBeTrue();
+
+        _state.PutLeg(new LegRow { Flight = "PIL39", Name = "l1", Order = 2, Goal = "g", DoneWhen = "d", State = LegState.Done, FinishedAt = Start.AddHours(1) });
+        await _sweep.SweepAsync(TestContext.Current.CancellationToken);
+        Directory.Exists(Path.Combine(plane, "artifacts/obj")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(plane, "artifacts/bin/Sib.Lib")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(plane, "artifacts/bin/A/release")).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ALandedPlaneGoesWithItsArtifactsFolderWhole()
+    {
+        var queue = new RemovalQueue(Path.Combine(_root, "pending.json"), _time);
+        var sweep = new DiskSweep(Jobs, Temp, _state, _time) { Queue = queue, FreeSpace = _ => null };
+        var plane = Path.Combine(_root, "planes", "PIL40");
+        Directory.CreateDirectory(Path.Combine(plane, "src/A"));
+        File.WriteAllText(Path.Combine(plane, "src/A/A.csproj"), "<Project />");
+        Write(plane, "artifacts/obj/A/release", "artifacts/bin/A/release", "artifacts/bin/Sib.Lib/release");
+        _state.PutFlight(new FlightRow
+        {
+            Code = "PIL40", Repo = "pilot", Issue = 1, Title = "t", RepoPath = "/r", Branch = "b", Worktree = plane, Base = "origin/main",
+            State = FlightState.Landed, CreatedAt = DateTimeOffset.UnixEpoch,
+        });
+
+        await sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        Directory.Exists(plane).ShouldBeFalse();
+        Directory.Exists(Path.Combine(plane, "artifacts")).ShouldBeFalse();
     }
 }

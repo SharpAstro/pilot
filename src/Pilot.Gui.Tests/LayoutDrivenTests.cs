@@ -27,6 +27,11 @@ public sealed class LayoutDrivenTests
         // so wrapped lines hang out under it (SharpAstro/DIR.Lib#157). Raised from 0 on 2026-10-25 for that alone, and
         // back to 0 when it lands.
         ["Pilot.Ui/TooltipLayer.cs"] = 3,
+        // The settings range row places its captions under their handles by measured text width and column arithmetic (a caption
+        // shows in full only where its run of columns is wide enough), and DIR.Lib's Grid has no column span to declare it; the two
+        // field widths (WFixed(Math.Min(..))) and the stacked-or-beside choice are the other hits. Raised from 0 on 2026-11-09 for
+        // PIL770 (the owner's call in review), lowered when DIR.Lib can declare measured caption placement.
+        ["Pilot.Ui/SettingsView.cs"] = 4,
     };
 
     // A sizing call; its argument, read to the matching parenthesis, must not compute (an operator, a Math call).

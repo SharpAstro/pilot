@@ -28,6 +28,15 @@ public static class SummaryRecords
     public const string LandedCards = "Open cards about flights that have already landed (stale, never a need; at most list their ids under Resolved):";
 
     /// <summary>
+    /// A cheap fingerprint of what the fleet summary reads: the hash of <see cref="Fleet"/>'s records taken as of a fixed time, so the
+    /// clock alone never changes it (nor do ages, which only the passing of time turns stale). Empty when there is nothing to say.
+    /// </summary>
+    public static string Fingerprint(NodeState state, StaleBounds? bounds = null) =>
+        Fleet(state, DateTimeOffset.UnixEpoch, bounds) is { } records
+            ? Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(records)))
+            : "";
+
+    /// <summary>
     /// The records of every flight in play (not landed), the open cards about none of them (those about a landed flight apart, under
     /// <see cref="LandedCards"/>) and the PR reviews not closed; null
     /// when there is nothing of that to say, which a summary does not spend a call on.
@@ -116,6 +125,10 @@ public static class SummaryRecords
         var title = flight.Title is { Length: > 0 } t ? $" \"{t}\"" : "";
         text.AppendLine(CultureInfo.InvariantCulture, $"Flight {flight.Code}: {flight.Repo} {flight.Item.Noun}{title}.");
         text.AppendLine(CultureInfo.InvariantCulture, $"  State: {flight.State.ToString().ToLowerInvariant()}{(flight.State == FlightState.Held ? $", waiting for {FlightWaiting.For(flight)}" : "")}{(flight.FoldedInto is { } into ? $" (folded into {into})" : "")}. Branch {flight.Branch} from {flight.Base}. Created {Stamp(flight.CreatedAt)}{(flight.LandedAt is { } landed ? $", landed {Stamp(landed)}" : "")}.");
+        if (FlightWaiting.OnHoldText(flight) is { } onHold)
+        {
+            text.AppendLine(CultureInfo.InvariantCulture, $"  {onHold}. The owner's hold: nothing starts or goes out for this flight until it is released.");
+        }
         if (flight.FoldedIn.Length > 0)
         {
             text.AppendLine(CultureInfo.InvariantCulture, $"  Folded in: {string.Join(", ", flight.FoldedIn.Select(f => $"#{f.Number} (from {f.From})"))}.");
@@ -410,6 +423,18 @@ public interface ISummaryModel
 {
     /// <summary>Asks <paramref name="prompt"/> once. Throws, saying why in its message, when it could not be had.</summary>
     Task<SummaryAnswer> AskAsync(string prompt, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Why the watchtower cannot be asked right now (<see cref="AskWatchtowerAsync"/> would fail); null when it can. A model with no
+    /// watchtower behind it is never down.
+    /// </summary>
+    string? WatchtowerDown => null;
+
+    /// <summary>
+    /// Asks <paramref name="prompt"/> of the watchtower alone, never the paid one-off call: what the summary that follows changes
+    /// runs (PIL903). Throws <see cref="InvalidOperationException"/>, saying why, when it could not be had.
+    /// </summary>
+    Task<SummaryAnswer> AskWatchtowerAsync(string prompt, CancellationToken cancellationToken) => AskAsync(prompt, cancellationToken);
 }
 
 /// <summary>
@@ -450,7 +475,7 @@ public sealed class ClaudeSummaryModel(string folder, RoleModels models) : ISumm
 /// The summary the node makes and keeps: <c>summarise node</c> for the flights in play, <c>summarise flight/&lt;code&gt;</c> for one.
 /// It builds the records (<see cref="SummaryRecords"/>) from what the node holds, asks the model once under the fixed
 /// <see cref="SummaryPrompt"/>, and keeps the answer per scope with its time, tokens and cost as a <see cref="SummaryRow"/>, on
-/// the feed for every client. It never runs by itself, and never twice at once for one scope.
+/// the feed for every client. It runs when asked, and by itself only as <see cref="SummaryFollower"/> asks the watchtower; never twice at once for one scope.
 /// </summary>
 public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider time)
 {
@@ -473,6 +498,7 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
     public const string EmptyFleet = $"{SummaryPrompt.Needs}\n{SummaryPrompt.Nothing}\n\n{SummaryPrompt.Where}\nNo flights in play.";
 
     private readonly Lock _gate = new Lock();
+    private string? _fleetMadeFrom;
     private readonly HashSet<string> _making = new HashSet<string>(StringComparer.Ordinal);
 
     /// <summary>Runs <c>summarise</c>; the model's call is off the state's lock, which the records and the kept row take for an instant each.</summary>
@@ -571,11 +597,53 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
         }
     }
 
+    /// <summary>Whether the summary of <paramref name="scope"/> is being made right now.</summary>
+    public bool IsMaking(string scope)
+    {
+        lock (_gate)
+        {
+            return _making.Contains(scope);
+        }
+    }
+
+    /// <summary>Why the watchtower cannot be asked right now; null when it can.</summary>
+    public string? WatchtowerDown => model.WatchtowerDown;
+
+    /// <summary>
+    /// The fingerprint (<see cref="SummaryRecords.Fingerprint"/>) of what the kept fleet summary was made of; null when none was made
+    /// since the node started, which counts as different from any state.
+    /// </summary>
+    public string? FleetMadeFrom
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _fleetMadeFrom;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Says on every kept summary why the watchtower is down (null clears it): one delta per row that changes, and none for a row that
+    /// already says so. Every scope, not the fleet's alone: a flight's or all-nodes row the paid fallback made while the watchtower was
+    /// down carries the notice (its Refresh names the price), and only a look that clears it when the watchtower is up keeps it from
+    /// staying for good. Only the fleet's row is one the follower remakes.
+    /// </summary>
+    public void SetNotFollowing(string? why)
+    {
+        foreach (var row in state.Summaries().Where(s => s.NotFollowing != why).ToList())
+        {
+            state.PutSummary(row with { NotFollowing = why });
+        }
+    }
+
     /// <summary>
     /// Makes the summary of <paramref name="scope"/> (<see cref="SummaryRow.FleetScope"/>, <see cref="SummaryRow.AllNodesScope"/> or a flight's code) and keeps it. A fleet
-    /// with nothing in play is answered without a call, at no cost. The row, or why there is none.
+    /// with nothing in play is answered without a call, at no cost. The row, or why there is none. With <paramref name="watchtowerOnly"/>
+    /// the watchtower is the only one asked (<see cref="ISummaryModel.AskWatchtowerAsync"/>), never the paid fallback: the follower's ask.
     /// </summary>
-    public async Task<(SummaryRow? Row, string? Error)> MakeAsync(string scope, CancellationToken cancellationToken)
+    public async Task<(SummaryRow? Row, string? Error)> MakeAsync(string scope, CancellationToken cancellationToken, bool watchtowerOnly = false)
     {
         lock (_gate)
         {
@@ -589,13 +657,17 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
         {
             var now = time.GetUtcNow();
             string prompt;
+            string? fingerprint = null;
             if (scope == SummaryRow.FleetScope)
             {
+                // Taken before the records, so a change made while the call runs differs from it and is followed by the next ask.
+                var madeFrom = SummaryRecords.Fingerprint(state, Bounds());
                 var records = SummaryRecords.Fleet(state, now, Bounds());
                 if (records is null)
                 {
-                    return (Keep(scope, EmptyFleet, tokens: 0, cost: null), null);
+                    return (Keep(scope, EmptyFleet, tokens: 0, cost: null, madeFrom), null);
                 }
+                fingerprint = madeFrom;
                 prompt = SummaryPrompt.Fleet(state.Flights().Count(f => f.State != FlightState.Landed), records);
             }
             else if (scope == SummaryRow.AllNodesScope)
@@ -617,10 +689,13 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
                 prompt = SummaryPrompt.Flight(scope, records);
             }
 
+            // Read before the ask: a row the paid fallback makes says the watchtower was down, so its Refresh keeps naming the price
+            // until the follower sees the watchtower up again.
+            var down = watchtowerOnly ? null : model.WatchtowerDown;
             SummaryAnswer answer;
             try
             {
-                answer = await model.AskAsync(prompt, cancellationToken);
+                answer = await (watchtowerOnly ? model.AskWatchtowerAsync(prompt, cancellationToken) : model.AskAsync(prompt, cancellationToken));
             }
             catch (Exception e) when (e is InvalidOperationException or IOException or TimeoutException or System.ComponentModel.Win32Exception)
             {
@@ -628,7 +703,7 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
             }
             // The ids of resolved cards are never part of what is shown: the node takes them out, kept or not.
             var (prose, resolved) = StaleCardProposal.Split(answer.Text);
-            var row = Keep(scope, prose, answer.Tokens, answer.Cost);
+            var row = Keep(scope, prose, answer.Tokens, answer.Cost, fingerprint, down is null ? null : $"the watchtower is down ({down})");
             if (GitHub is { } github && scope != SummaryRow.AllNodesScope && resolved.Count > 0)
             {
                 await new StaleCards(state, github).DismissAsync(resolved, scope == SummaryRow.FleetScope ? null : Verbs.FlightTarget(scope), cancellationToken);
@@ -644,9 +719,16 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
         }
     }
 
-    private SummaryRow Keep(string scope, string markdown, long tokens, double? cost)
+    private SummaryRow Keep(string scope, string markdown, long tokens, double? cost, string? madeFrom = null, string? notFollowing = null)
     {
-        var row = new SummaryRow { Scope = scope, Markdown = markdown, MadeAt = time.GetUtcNow(), Tokens = tokens, Cost = cost };
+        var row = new SummaryRow { Scope = scope, Markdown = markdown, MadeAt = time.GetUtcNow(), Tokens = tokens, Cost = cost, NotFollowing = notFollowing };
+        if (madeFrom is not null)
+        {
+            lock (_gate)
+            {
+                _fleetMadeFrom = madeFrom;
+            }
+        }
         state.PutSummary(row);
         return row;
     }

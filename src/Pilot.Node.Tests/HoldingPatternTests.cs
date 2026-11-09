@@ -115,13 +115,27 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
     private PrChecks TimedChecks(ManualTime clock, bool live) => new(_state, _github, clock, _flights, _legs) { WatchtowerLive = () => live };
 
+    private async Task TakeByHold(FlightRow flight, string why = "making the notes' fixes")
+    {
+        (await Run(Verbs.Hold, Verbs.FlightTarget(flight.Code), Tower, why)).Error.ShouldBeNull();
+        F(flight.Code).Holding.ShouldNotBeNull().TakenAt.ShouldNotBeNull();
+    }
+
+    private void CommitInPlane(FlightRow flight)
+    {
+        File.WriteAllText(Path.Combine(flight.Worktree, "note-fix.txt"), "fixed\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "small fix for the notes");
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task PastTheBoundTheTimeoutCardRingsAndMergeAsItIsMerges()
     {
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("6", Notes);
-        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        await TakeByHold(flight);
+        var clock = new ManualTime(F(flight.Code).Holding!.TakenAt!.Value);
         var checks = TimedChecks(clock, live: true);
 
         // Within the bound with a live watchtower nothing rings.
@@ -150,6 +164,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     public async Task ALiveWatchtowerThatLeavesAHoldPastTheBoundRingsAndWaitSilencesItForAnotherBound()
     {
         var flight = await Reviewed("7", Notes);
+        await TakeByHold(flight);
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
         var checks = TimedChecks(clock, live: true);
 
@@ -211,9 +226,30 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         text.ShouldContain($"PR #{pr}");
         text.ShouldContain(F(flight.Code).Review!.ReviewedHead![..8]);
         text.ShouldContain("rename `x` to `count`");
+        text.ShouldContain($"Take the hold with pilot flight hold {flight.Code} (or commit in the plane) before the grace ends, or the flight merges with these notes");
         text.ShouldContain("pilot leg plan, then pilot leg start");
         text.ShouldContain($"pilot flight clear {flight.Code} <why>");
         text.ShouldContain($"only for a one-line change in the plane ({flight.Worktree}), then pilot flight pr {flight.Code}");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ALaterRoundsNotesThatDoNotBlockAreAFollowUpIssueAndTheFlightMergesWithNoSecondLeg()
+    {
+        // #918: PIL909's #910 went round three times for notes that held nothing. One round of notes holds a merge; the next is filed.
+        AutopilotOn();
+        var flight = await Reviewed("11", "Checked.\n\n## Not blocking\n- rename `x` to `count`");
+        var first = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
+        _state.PutLeg(first with { State = LegState.Done, FinishedAt = DateTimeOffset.UtcNow });
+        _state.UpdateFlight(flight.Code, f => f with { Review = f.Review! with { State = ReviewState.Reviewing }, Holding = null });
+
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "Round 2.\n\n## Not blocking\n- a log line could name the job")).Error.ShouldBeNull();
+
+        _state.Legs(flight.Code).ShouldNotContain(l => l.Name == $"{LegCommander.ReviewNotesLeg}-2");
+        var issue = _github.IssuesCreated.ShouldHaveSingleItem();
+        issue.Title.ShouldStartWith($"Follow-up of {flight.Code}");
+        issue.Body.ShouldNotBeNull().ShouldContain("a log line could name the job");
+        F(flight.Code).Holding.ShouldBeNull("the flight merges with the notes filed");
     }
 
     [Fact]
@@ -276,7 +312,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task ALiveWatchtowersTimeoutRingsEvenWhenTheSweepRestoredThePrReadyCardInTheSameLook()
+    public async Task AnUntakenHoldPastTheGraceIsReleasedEvenWhenTheSweepRestoredThePrReadyCardInTheSameLook()
     {
         var flight = await NewFlight("9", "parser");
         await Fly(flight, "parser");
@@ -292,7 +328,189 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await TimedChecks(clock, live: true).LookAsync(Ct);
 
         Open().ShouldContain(c => c.Kind == LegCommander.PrReady);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+        F(flight.Code).Holding.ShouldBeNull();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnUntakenHoldMergesAfterTheGraceWithNoRingAndTheNotesCardOpen()
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("10", Notes);
+        await WithoutTheFixerLeg(flight.Code);
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        var checks = TimedChecks(clock, live: true);
+
+        // Inside the grace the hold stays, and nothing merges.
+        clock.Advance(TimeSpan.FromMinutes(4));
+        await checks.LookAsync(Ct);
+        F(flight.Code).Holding.ShouldNotBeNull();
+        _github.Merged.ShouldBeEmpty();
+
+        clock.Advance(TimeSpan.FromMinutes(2));
+        await checks.LookAsync(Ct);
+
+        F(flight.Code).Holding.ShouldBeNull();
+        _github.Merged.ShouldHaveSingleItem();
+        F(flight.Code).State.ShouldBe(FlightState.Landed);
+        var released = _state.Cards(openOnly: false).Single(c => c.Kind == LegCommander.HoldingClearedKind);
+        released.Bin.ShouldBe(CardBin.Handled);
+        released.Title.ShouldContain("did not take it within 5 minutes");
+        var notes = Open().Single(c => c.Kind == LegCommander.ReviewNotesKind);
+        notes.Bin.ShouldBe(CardBin.ForYou);
+        notes.Detail.ShouldNotBeNull().ShouldContain("rename `x` to `count`");
+        Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+        _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnUntakenHoldWithAutopilotOffLeavesTheOrdinaryPrReadyCardAndMergesNothing()
+    {
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("11", Notes);
+        Open().Single(c => c.Kind == LegCommander.PrReady).Title.ShouldContain("holding");
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        var checks = TimedChecks(clock, live: true);
+
+        clock.Advance(TimeSpan.FromMinutes(11));
+        await checks.LookAsync(Ct);
+
+        F(flight.Code).Holding.ShouldBeNull();
+        _github.Merged.ShouldBeEmpty();
+        var ready = Open().Single(c => c.Kind == LegCommander.PrReady);
+        ready.Title.ShouldNotContain("holding");
+        ready.Title.ShouldContain("ready to merge");
+        ready.Detail.ShouldNotBeNull().ShouldNotContain("The merge is held");
+        Open().ShouldContain(c => c.Kind == LegCommander.ReviewNotesKind);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+        // The card's own Merge now goes through, as for any passed review.
+        var merge = ready.Choices.Single(c => c.Verb == Verbs.Merge);
+        (await Run(merge.Verb, merge.Target, "me", [.. merge.Args])).Error.ShouldBeNull();
+        _github.Merged.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ANotLiveWatchtowerReleasesAnUntakenHoldOnceTheTakeBoundPassesAndTheFlightMerges()
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("12", Notes);
+        await WithoutTheFixerLeg(flight.Code);
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        // Told, and given the take bound to start the watchtower; then the node releases the hold itself.
+        clock.Advance(TimeSpan.FromMinutes(6));
+
+        await TimedChecks(clock, live: false).LookAsync(Ct);
+
+        F(flight.Code).Holding.ShouldBeNull();
+        _github.Merged.ShouldHaveSingleItem();
+        _state.Cards(openOnly: false).Single(c => c.Kind == LegCommander.HoldReleasedKind).Detail.ShouldNotBeNull().ShouldContain("no watchtower was running");
+        // The node writes the notes on the PR as one comment (PIL815), so the review-notes card closes with the hold.
+        Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewNotesKind);
+        _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ABaseMergeTheNodeMadeInThePlaneIsNotTheWatchtowerTakingTheHold()
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        RealGit(); // the test builds a merge in the plane with checkout, add, commit and merge: git work the model has no checkout for
+        var flight = await Reviewed("26", Notes);
+        await WithoutTheFixerLeg(flight.Code);
+        var reviewed = F(flight.Code).Review!.ReviewedHead!;
+        // The node brings the base into the plane by a merge: a commit past the reviewed head, and the base's own commit beside it.
+        Git(flight.Worktree, "checkout", "-q", "-b", "base-side", reviewed);
+        File.WriteAllText(Path.Combine(flight.Worktree, "from-base.txt"), "base\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "a commit on the base");
+        Git(flight.Worktree, "checkout", "-q", $"flight/{flight.Code.ToLowerInvariant()}");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "merge", "--no-ff", "-q", "-m", "Merge origin/main", "base-side");
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        clock.Advance(TimeSpan.FromMinutes(6));
+
+        await TimedChecks(clock, live: true).LookAsync(Ct);
+
+        // Not taken: the grace passed, so the node released the hold as for a watchtower that never came (its own merge in the plane
+        // is no commit of the watchtower's). The merge itself is not asserted: the plane holds an unpushed merge past the reviewed head.
+        F(flight.Code).Holding.ShouldBeNull();
+        _state.Cards(openOnly: false).ShouldContain(c => c.Kind == LegCommander.HoldingClearedKind && c.Title.Contains("did not take it"));
+        _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AHoldTakenByACommitInThePlaneKeepsHoldingPastTheGraceAndRingsAfterTheBound()
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("13", Notes);
+        await WithoutTheFixerLeg(flight.Code);
+        var first = TimedChecks(new ManualTime(F(flight.Code).Holding!.Since), live: true);
+        CommitInPlane(flight);
+
+        // Seen at the next look: the hold is taken, however late the look is.
+        await first.LookAsync(Ct);
+        var taken = F(flight.Code).Holding.ShouldNotBeNull().TakenAt.ShouldNotBeNull();
+
+        var clock = new ManualTime(taken);
+        var checks = TimedChecks(clock, live: true);
+        clock.Advance(TimeSpan.FromMinutes(29));
+        await checks.LookAsync(Ct);
+        F(flight.Code).Holding.ShouldNotBeNull();
+        _github.Merged.ShouldBeEmpty();
+        Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+
+        clock.Advance(TimeSpan.FromMinutes(2));
+        await checks.LookAsync(Ct);
         Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind).Bin.ShouldBe(CardBin.Ring);
+        _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AHoldTakenByFlightHoldKeepsHoldingPastTheGraceAndTheMergeStaysRefused()
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("14", Notes);
+        await WithoutTheFixerLeg(flight.Code);
+        await TakeByHold(flight, "renaming x");
+        F(flight.Code).Holding!.Reason.ShouldContain("renaming x");
+        var clock = new ManualTime(F(flight.Code).Holding!.TakenAt!.Value);
+        var checks = TimedChecks(clock, live: true);
+
+        clock.Advance(TimeSpan.FromMinutes(20));
+        await checks.LookAsync(Ct);
+
+        F(flight.Code).Holding.ShouldNotBeNull();
+        _github.Merged.ShouldBeEmpty();
+        Open().ShouldContain(c => c.Kind == LegCommander.ReviewNotesKind);
+        (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head[..8])).Error.ShouldNotBeNull().ShouldContain("holding pattern");
+        // Cleared by the watchtower, it lands as for any passed review.
+        (await Run(Verbs.Clear, Verbs.FlightTarget(flight.Code), Tower, "fixes made")).Error.ShouldBeNull();
+        await checks.LookAsync(Ct);
+        _github.Merged.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task HoldIsTheWatchtowersOrThePersonsAndOnlyForAFlightThatIsHolding()
+    {
+        var flight = await Reviewed("15", Notes);
+        var worker = _state.Legs(flight.Code).Single().Worker!;
+
+        (await Run(Verbs.Hold, Verbs.FlightTarget(flight.Code), worker)).Error.ShouldNotBeNull().ShouldContain("only the watchtower");
+        (await Run(Verbs.Hold, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code))).Error.ShouldNotBeNull();
+        F(flight.Code).Holding.ShouldNotBeNull().TakenAt.ShouldBeNull();
+
+        (await Run(Verbs.Clear, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldBeNull();
+        (await Run(Verbs.Hold, Verbs.FlightTarget(flight.Code), Tower)).Error.ShouldNotBeNull().ShouldContain("not in a holding pattern");
     }
 
     [Fact]
@@ -438,7 +656,8 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     {
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("26", Notes);
-        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        await TakeByHold(flight);
+        var clock = new ManualTime(F(flight.Code).Holding!.TakenAt!.Value);
         var checks = TimedChecks(clock, live: true);
         clock.Advance(TimeSpan.FromMinutes(31));
         await checks.LookAsync(Ct);

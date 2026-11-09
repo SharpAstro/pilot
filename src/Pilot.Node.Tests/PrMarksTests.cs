@@ -26,11 +26,16 @@ public abstract class PrMarksTestsBase : IDisposable
     private protected readonly FlightCommander _flights;
     private protected readonly LegCommander _legs;
 
-    protected PrMarksTestsBase()
+    /// <summary>The git every commander of the test runs: <see cref="FakeRepoGit"/>, or real git for a class that is about git itself. See <see cref="TestGit"/> (#813).</summary>
+    private protected readonly IGit _git;
+
+    private readonly TestGit _testGit;
+
+    protected PrMarksTestsBase(bool realGit = false)
     {
-        // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
-        SeedRepo.Make(_root);
-        var git = new GitCli();
+        // Real: a repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
+        _git = _testGit = new TestGit(_root, realGit, () => SeedRepo.Make(_root));
+        var git = _git;
         _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
         _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, git, new Planes(git), _flights, options, TimeProvider.System)
@@ -41,24 +46,36 @@ public abstract class PrMarksTestsBase : IDisposable
 
     private protected string Repo => Path.Combine(_root, "tianwen");
 
+    /// <summary>Runs this test on git itself, before it has used the repo: for a test of a class that otherwise checks what the node decides.</summary>
+    private protected void RealGit() => _testGit.UseReal();
+
     public void Dispose()
     {
-        try
+        if (_testGit.IsReal)
         {
-            Git(Repo, "worktree", "prune");
+            try
+            {
+                Git(Repo, "worktree", "prune");
+            }
+            catch (InvalidOperationException)
+            {
+            }
         }
-        catch (InvalidOperationException)
-        {
-        }
+        _testGit.Release();
         foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
+        _testGit.Verify();
     }
 
     private protected static string Git(string cwd, params string[] args)
     {
+        if (TestGit.Answer(cwd, args) is { } answered)
+        {
+            return answered;
+        }
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
         {

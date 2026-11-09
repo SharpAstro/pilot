@@ -46,7 +46,7 @@ public enum MergeAction
     /// <summary>A review on GitHub asks for changes: read them, then the merge is offered again.</summary>
     ReadChanges,
 
-    /// <summary>A required check failed: re-run it, or redo the leg if it was no flake.</summary>
+    /// <summary>A required check failed: re-run it, or redo the leg if it fails again with no cause of its own.</summary>
     RerunFailedCheck,
 
     /// <summary>The review asked a question of design nobody has answered: answer it or dismiss it.</summary>

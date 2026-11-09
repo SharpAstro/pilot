@@ -29,11 +29,11 @@ internal static class CardKindCatalog
     private const string LegOpenPr = "Flights/LegCommander.OpenPr.cs";
     private const string LegPlanners = "Flights/LegCommander.Planners.cs";
     private const string LegReview = "Flights/LegCommander.Review.cs";
+    private const string LegReviewHold = "Flights/LegCommander.ReviewHold.cs";
     private const string LegHoldRelease = "Flights/LegCommander.HoldRelease.cs";
     private const string HumanVerification = "Flights/LegCommander.HumanVerification.cs";
     private const string LegMerge = "Flights/LegCommander.Merge.cs";
     private const string LegQueuedPush = "Flights/LegCommander.QueuedPush.cs";
-    private const string LegChecksAndConflicts = "Flights/LegCommander.ChecksAndConflicts.cs";
     private const string Lay = "Flights/LegCommander.Lay.cs";
     private const string Shape = "Flights/LegCommander.Shape.cs";
     private const string Watch = "Flights/LegWatch.cs";
@@ -48,17 +48,21 @@ internal static class CardKindCatalog
     private const string PrReviewsFixer = "Flights/PrReviews.Fixer.cs";
     private const string PrReviewsFixerRounds = "Flights/PrReviews.FixerRounds.cs";
     private const string PrReviewsQueue = "Flights/PrReviews.Queue.cs";
+    private const string PrReviewsLand = "Flights/PrReviews.Land.cs";
     private const string PrReviewsStart = "Flights/PrReviews.Start.cs";
     private const string PrReviewsStatus = "Flights/PrReviews.Status.cs";
     private const string PrReviewsSweep = "Flights/PrReviews.Sweep.cs";
     private const string PrReviewsVerdicts = "Flights/PrReviews.Verdicts.cs";
     private const string Recheck = "Flights/PrRecheck.cs";
     private const string Tower = "Flights/Watchtower.cs";
+    private const string TowerStream = "Flights/Watchtower.Stream.cs";
+    private const string Asks = "Flights/Watchtower.Asks.cs";
 
     public static readonly CardKindEntry[] All =
     [
         // Workers, legs and planners.
         new("worker-stopped", "Ring", [Watch], "LegWatchTests.AStopWithNoResetTimeRingsAtOnce", "the worker's session row is stopped by the API (no reset time to resume at), the leg is flying and its flight has not landed", [nameof(Verbs.Say), nameof(Verbs.GoAround)]),
+        new("flight-on-hold", "Handled", ["Flights/LegCommander.OnHold.cs", "Flights/LabelHold.cs", "Flights/RepoWatch.cs"], "FlightHoldTests.HoldNeedsWhyRecordsWhoAndWhenAndARepeatUpdatesTheWhy"),
         new("worker-limit-wait", "Handled", [Watch], "LegCardTests.AUsageLimitStopTheNodeResumesItselfIsAHandledLineAndNoCard"),
         new("worker-idle", "Ring", [Watch], "LegWatchTests.ANudgeTheNodeCannotDeliverRings", "the worker's session row is idle with its leg unfinished, nothing of its own (a job, the node's recheck) is what it waits on, and its flight has not landed", [nameof(Verbs.Say), nameof(Verbs.GoAround)]),
         new("worker-waiting", "Ring", [Watch], "LegWatchTests.AWaitingWorkerRingsWithItsQuestionAndTheCardClosesWhenItWorksAgain", "the worker's last message asks the person, its leg is not rechecking, and its flight has not landed", [nameof(Verbs.GoAround)]),
@@ -93,8 +97,10 @@ internal static class CardKindCatalog
         new("next-step", "Ring|Handled", [LegAdvance, LegStart, LegPlanners, LegReview, FlightCommanderCreate], "FlightMoveTests.AnAdvanceThatThrowsAfterTheReceiveIsACardNotAFailedReceive", "the node's own next step after a receive was refused, on a flight that has not landed", [nameof(Verbs.GoAround)]),
         new("sibling-behind", "ForYou", [LegStart], "LegTests.ALegStartedWithASiblingBehindItsOriginRaisesOneCardNamingItAndThePullAndStillStarts"),
         new("sibling-pulled", "Handled", [LegStart], "LegTests.AStaleSiblingWhoseOriginWentUnreachableAfterTheCountIsStillPulled"),
+        new("reboot", "Handled", ["RebootPrep.cs"], "RebootPrepTests.ARequestTurnsMaintenanceOnAndTellsEachLiveNodeSessionOnce"),
+        new("reboot-ready", "ForYou", ["RebootPrep.cs"], "RebootPrepTests.AFileArrivingEndsItsSessionAndTheReadyCardComesOnlyWhenAllAreIn"),
         new("planner-started", "Handled", [LegPlanners], "LockFreeStartTests.APlanFlightAnswersStartedAtOnceAndItsCardComesWhenThePlannerIsUp"),
-        new("planned", "ForYou", [LegPlanners], "LegTests.APlannerIsStartedInThePlaneAndItsPlannedOffersTheFirstLeg"),
+        new("planned", "ForYou|Handled", [LegPlanners, "NodeState.Flights.cs"], "LegTests.APlannerIsStartedInThePlaneAndItsPlannedOffersTheFirstLeg"),
         new("overlap", "Ring", ["Flights/LegCommander.Overlap.cs", "Flights/LegCommander.LegEnd.cs"], "OverlapTests.TheRecordedAnswerSurvivesAReplayOfTheJournal", "the flight's files overlap another flight's and the controller has not answered", [nameof(Verbs.Fold), nameof(Verbs.ConnectOverlap), nameof(Verbs.Separate)]),
         new("overlap-parallel", "Handled", ["Flights/LegCommander.LegEnd.cs"], "LegEndOverlapTests.AnUnforeseenOverlapWithAFlightlessOpenPrIsAnsweredParallelByTheNodeWithAHandledNoteAndNoRing"),
         new("overlap-connected", "Handled", ["Flights/LegCommander.LegEnd.cs"], "LegEndOverlapTests.AnUnforeseenOverlapWithALocalFlightIsConnectedByTheNodeWithAHandledNoteNoRingAndTheNextLegHeld"),
@@ -106,11 +112,12 @@ internal static class CardKindCatalog
         new("admission-cycle", "Handled", ["Flights/AdmissionGate.cs"], "LegAdmissionTests.AFlightAdmittedToBreakACycleRaisesOneCardNamingBothFlights"),
         new("spend-alert", "Handled", [LegStart], "SpendAlertTests.ALegPastTheAlertShareRingsWithItsTokensAndShareBeforeItsNextRoundOncePerRound"),
         new("go-around-cap", "Ring", ["Flights/LegCommander.GoAround.cs"], "GoAroundCapTests.TheSixthGoAroundOfALegIsRefusedAndRaisesTheCardWithEveryRoundsReason", "the leg's go-around count on its row has reached the cap", [nameof(Verbs.FinishLeg)]),
+        new("conflict-decision", "Ring", ["Flights/LegCommander.ChecksAndConflicts.cs"], "ConflictEscalationTests.TheLastRungsDecisionReportRingsOneCardNamingTheFilesTheBehavioursAndWhatEachChoiceKeeps", "the last of three conflict workers failed with a report saying the two sides change the same behaviour in opposite ways (the fixed shape), and the leg's row holds it", [nameof(Verbs.GoAround)]),
         new("review-kept", "Handled", [LegReview], "ReReviewTests.AHeadThatOnlyMergedTheBaseKeepsThePassWithNoReviewerStarted"),
         new("review-notes", "ForYou", [LegReview], "ReviewModelTests.APassWithNotesRaisesTheWatchtowerCardAndSendsNoLegRound"),
         new("human-verification", "ForYou", [HumanVerification], "HumanVerificationFilingTests.AFlaggedPassFilesEachItemInTheMilestoneAndRaisesOneCard"),
         new("human-verification-refused", "Handled", [HumanVerification], "HumanVerificationFilingTests.ARefusedGhCallKeepsTheVerdictAndRaisesAHandledCard"),
-        new("holding-cleared", "Handled", [LegReview], "HoldingPatternTests.ClearByTheWatchtowerLetsAutopilotMergeIt"),
+        new("holding-cleared", "Handled", [LegReviewHold], "HoldingPatternTests.ClearByTheWatchtowerLetsAutopilotMergeIt"),
         new("hold-released", "Handled", [LegHoldRelease], "HoldingPatternTests.AHoldWhoseWatchtowerEndedIsReleasedWithItsNotesOnThePrAndMergesOnAutopilot"),
         new("pr-ready-restored", "Handled", [LegReview], "PassedWithoutCardTests.AFlightPassedWithNoCardGetsOneAndAutopilotMergesIt"),
         new("holding-timeout", "Ring", [Checks], "HoldingPatternTests.PastTheBoundTheTimeoutCardRingsAndMergeAsItIsMerges", "the flight's holding pattern on its row is past its timeout and its PR is still open on GitHub", [nameof(Verbs.Merge), nameof(Verbs.Land)]),
@@ -124,7 +131,6 @@ internal static class CardKindCatalog
         new("lay-failed", "ForYou", [Shape], "RebaseLayFlightTests.AMergeThatIsNotCleanPushesNothingAndRingsOnce"),
         new("drop-unexplained", "Handled|Ring", [Lay], "RebaseLayFlightTests.ADroppedPrWhoseCauseIsNotFoundRingsOnceAndIsNeverQueuedAgain", "a PR the base dropped has no cause the node can find on GitHub", [nameof(Verbs.Merge)]),
         new("pr-ready", "Ring", [LegReview, Lay], "PrFlightReviewTests.AnApproveAtTheFlightsHeadPassesItsReviewAndMarksItsPrReady", "the PR's state on GitHub is open, the review passed at its current head, and its checks are read", [nameof(Verbs.Merge)]),
-        new("pr-conflicts", "Ring", [LegChecksAndConflicts], "NodeCardTests.ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage", "the PR's mergeable state on GitHub is conflicting", [nameof(Verbs.GoAround)]),
         new("pr-checks-failed", "Ring", [Checks, Recheck], "NodeCardTests.ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage", "the PR's checks on GitHub failed at its current head", [nameof(Verbs.FixPr), nameof(Verbs.Merge)]),
         new("merge-taken-back", "Handled", [LegMerge, LegQueuedPush], "MergeTakeBackTests.PlanLegOnAQueuedMergeDequeuesAndTheCardSaysSo"),
         new("merged-under-leg", "ForYou", [FlightCommanderLand], "MergedUnderLegTests.ADoneLegGoesToANewPrWithTheMergedBaseMergedInAndPushedPlain"),
@@ -133,6 +139,10 @@ internal static class CardKindCatalog
         new("closed-landed", "Handled", [Checks], "ReviewTests.AFlightWhosePrWasClosedWithNothingOfItsOwnLeftLandsAndOneWithWorkRings"),
         new("closed-with-work", "Ring", [Checks], "ReviewTests.AFlightWhosePrWasClosedWithWorkOfItsOwnRingsOnceAndStaysFlying", "the PR's state on GitHub is closed unmerged and the plane holds work of its own", [nameof(Verbs.Land)]),
         new("queue-dropped", "ForYou|Handled", [Checks], "ReviewTests.APrThatLeftTheMergeQueueUnmergedIsACardSayingWhyWithMergeAgain"),
+        new("failure-investigation", "ForYou", ["Flights/FailureInvestigations.cs"], "FailureInvestigationTests.AFirstFailureInATestThePrDoesNotTouchIsFiledAsOneInvestigationWithItsFlightAndCard"),
+        new("failure-alert", "Ring", ["Flights/FailureAlerts.cs"], "RetryAndHoldTests.TheSameHeadFailingAgainAfterItsCiRetryRaisesOneAlertCardAndHoldsTheFlightWithNoGoAround", "the same untouched-test failure signature failed a second time, in a PR after its retry or in another flight, read from the failure ledger", [nameof(Verbs.FlightPriority)]),
+        new("failure-retried", "Handled", ["Flights/FailureAlerts.cs"], "RetryAndHoldTests.AFirstUntouchedQueueRemovalIsQueuedAgainOnceAtTheSameHeadWithALineNamingTheInvestigation"),
+        new("failure-released", "Handled", ["Flights/FailureAlerts.cs"], "RetryAndHoldTests.AFailureInALegCheckOfASecondFlightHoldsItAndLandingTheInvestigationReleasesEveryHoldAndDoesWhatEachWasHeldFrom"),
         new("checks-rerun", "Handled", [Checks], "ReviewTests.OnAutopilotFailedChecksRunAgainOnceAHeadBeforeTheLegIsSentRound"),
         new("merge-dropped", "ForYou", [Checks], "LegTests.AWaitingMergeWhoseChecksFailIsDroppedOnACardThatOffersItAgain"),
         new("autopilot-merge-refused", "Ring|ForYou", [Checks], "AutopilotMergeRefusalTests.AFailedRequiredCheckRingsWithReRunTheFailedCheckAndNoMergeAgain", "the PR's state on GitHub is still open (not merged) and the refusal's class is a person's (or a passing one that failed its third try), with the one action to take", [nameof(Verbs.RerunChecks), nameof(Verbs.OpenPr), nameof(Verbs.Dismiss), nameof(Verbs.Merge)]),
@@ -146,6 +156,8 @@ internal static class CardKindCatalog
         new("worktree-removed", "Handled", ["Flights/DiskSweep.cs"], "DiskSweepTests.AHandMadeWorktreeWhosePrMergedAndIsCleanIsRemovedWithAHandledLine"),
         new("worktree-dirty", "ForYou", ["Flights/DiskSweep.cs"], "DiskSweepTests.ADirtyHandMadeWorktreeRaisesOneForYouCardAndNoSecondOnTheNextSweep"),
         new("disk-low", "ForYou", ["Flights/DiskSweep.cs"], "DiskSweepTests.FreeSpaceBelowTheThresholdRaisesOneRingNamingTheLargestItemsAndClosesWhenSpaceIsBack"),
+        new("stray-process", "ForYou", ["Flights/StraySweep.cs"], "StraySweepTests.OneCardPerStrayNamesTheProcessItsOwnerAndTheKillCommand"),
+        new("stray-killed", "Handled", ["Flights/StraySweep.cs"], "StraySweepTests.AProcessOfAnEndedJobTheNodeLaunchedIsKilledThroughTheTableAndNothingElseIs"),
         new("plane-left", "Handled", [Move, FlightCommanderLand], "RemovalQueueTests.ALandedFlightWhosePlaneFolderIsHeldSaysSoOnAHandledLineAndQueuesIt"),
         new("folded", "Handled", [FlightCommanderLand], "OverlapTests.FoldRetiresTheAskingFlightLandedAndMarkedFoldedWithNoLegsAndItsPlaneGoneButItsBranchKept"),
         new("routed", "Handled", [FlightCommanderRoute], "FleetRoutingTests.ARoutedFlightIsMadeOnTheWillingPeerWithItsOwnCheckoutAndSaysWhere"),
@@ -165,9 +177,9 @@ internal static class CardKindCatalog
         new("pr-review-restarted", "Handled", [PrReviewsSweep], "PrReviewTests.AReviewingRowWhoseSessionIsGoneAfterARestartIsStartedAfreshAtTheFirstSweepOnce"),
         new("pr-review-lost", "ForYou", [PrReviewsSweep], "PrReviewTests.AReviewLostInARestartThatCannotStartAgainTakesItsStatusAndLabelBackAndRaisesACardWithReviewAgain"),
         new("pr-review-posted", "Handled", [PrReviewsVerdicts], "PrReviewTests.PostsItselfOnAnOpenPr"),
-        new("pr-review-queued", "Handled", [PrReviewsQueue], "PrReviewTests.ACleanCommentOnOnesOwnPrQueuesItAtTheReviewedHeadOnceAndSaysSo"),
+        new("pr-review-queued", "Handled", [PrReviewsQueue, PrReviewsLand], "PrReviewTests.ACleanCommentOnOnesOwnPrQueuesItAtTheReviewedHeadOnceAndSaysSo"),
         new("pr-review-merge", "ForYou", [PrReviewsQueue], "PrReviewTests.ABaseWithoutAMergeQueueRaisesTheMergeCard"),
-        new("pr-review-queue-refused", "ForYou", [PrReviewsQueue], SourcePinned),
+        new("pr-review-queue-refused", "ForYou", [PrReviewsQueue, PrReviewsLand], SourcePinned),
         new("pr-review-design", "Ring", [PrReviewsFixer], "PrFixTests.ADesignQuestionRingsAndStartsNoFixer", "the reviewer's verdict on the PR names a design question, read from its review", [nameof(Verbs.FixPr)]),
         new("pr-review-design-settled", "Handled", [PrReviewsFixerRounds], "DesignSettledTests.AMergedPrDowngradesItsRingingDesignCardToANoticeNamingIt"),
         new("pr-review-no-fixer", "Ring", [PrReviewsFixer], "PrRecheckTests.ARecheckOfAChangesReviewWithNoFixerRingsTheOwnerOnceAndADismissalSticksUntilTheHeadMoves", "the review of the PR asks for changes and no fixer can start", [nameof(Verbs.FixPr)]),
@@ -185,9 +197,10 @@ internal static class CardKindCatalog
         new("card-resolved", "Handled", ["Flights/StaleCards.cs"], "StaleCardTests.ASummaryRunLeavesACardItsCheckContradicts"),
 
         // The node itself, the watchtower and the person's own asks.
-        new("watchtower-down", "Ring", [Tower], "WatchtowerTests.AnUntrustedFolderRingsWithTheFixAndIsTriedAgainLater", "the watchtower's folder is untrusted or its session did not start, read from its row", [nameof(Verbs.RestartWatchtower)]),
+        new("watchtower-down", "Ring", [Tower, TowerStream], "WatchtowerTests.AnUntrustedFolderRingsWithTheFixAndIsTriedAgainLater", "the watchtower's folder is untrusted or its session did not start, read from its row", [nameof(Verbs.RestartWatchtower)]),
         new("watchtower-stopped", "Ring|Handled", [Tower], "WatchtowerTests.OneTheUsageLimitStoppedIsResumedAfterTheReset", "the watchtower's session row is stopped by the API with no reset to resume at", [nameof(Verbs.RestartWatchtower)]),
-        new("watchtower-waits", "Handled", [Tower], "StartGateTests.TheWatchtowerKeptByTheNodeWaitsForTheWindowAndStartsOnceItHasResetButARestartAskedForGoesAhead"),
+        new("watchtower-waits", "Handled", [Tower, TowerStream], "StartGateTests.TheWatchtowerKeptByTheNodeWaitsForTheWindowAndStartsOnceItHasResetButARestartAskedForGoesAhead"),
+        new("watchtower-ask", "ForYou", [Asks], "WatchtowerChatTests.APromptAndAQuestionEachRaiseACardWhoseButtonsAnswerThemAndTheCardClosesOnTheChatsAnswer"),
         new("watchtower-resumed", "Handled", [Tower], SourcePinned),
         new("watchtower-started", "Handled", [Tower], SourcePinned),
         new("watchtower-duplicate", "Handled", [Tower], "OneWatchtowerTests.StartingOneStopsAnotherLiveWatchtowerRowAndSaysSo"),
@@ -247,6 +260,8 @@ internal static class CardKindCatalog
         ["Flights/FlightCommander.Receive.cs|card.Title"] = "the card a refused receive carried over from the node that raised it",
         ["Flights/FlightCommander.Receive.cs|way"] = "the line the routing or the move wrote: where the flight went and why",
         ["Flights/FlightCommander.Route.cs|way"] = "the line the routing or the move wrote: where the flight went and why",
+        ["Flights/Watchtower.Asks.cs|title"] = "RaiseAskCard: a prompt's title names the call it asks leave for, a question's its first question",
+        ["NodeState.Flights.cs|logged.Title"] = "the planned card logged as Handled while its flight was held, raised again for the person once the hold lifts: \"<code>: <n> legs planned\"",
         ["NodeCommands.cs|title"] = "the title the person, the watchtower or a session gave to pilot raise",
         ["NodeSettingsCommands.cs|line"] = "the line the restart wrote: who restarted the node and how",
         ["Updates/NodeUpdater.cs|line"] = "the line the install wrote: the version installed and the node restarted",

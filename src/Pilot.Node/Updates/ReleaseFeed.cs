@@ -266,7 +266,7 @@ public sealed class GhReleaseFeed(string repo, string gh = "gh", UpdateChannel c
         NodeTraffic.Child counted;
         try
         {
-            (process, counted) = (traffic ?? NodeTraffic.Shared).Start("gh", start);
+            (process, counted) = await (traffic ?? NodeTraffic.Shared).StartAsync("gh", start, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         catch (System.ComponentModel.Win32Exception ex)
         {

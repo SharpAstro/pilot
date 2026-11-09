@@ -128,7 +128,7 @@ public sealed class DesignSettledTests : PrFixTestsBase
         var card = OpenDesign().ShouldNotBeNull();
         card.Title.Length.ShouldBeLessThan(200);
         card.Title.ShouldNotContain(c => char.IsControl(c));
-        card.Choices.ShouldAllBe(c => c.Label.Length <= 60 && !c.Label.Any(char.IsControl));
+        card.Choices.ShouldAllBe(c => c.Label.Length <= PrReviews.MaxOptionLabel && !c.Label.Any(char.IsControl));
         // The options are lettered in the body in the order of their buttons, the recommended first; each button is a short verb and
         // carries its option's words as the answer, never in its label (#797 rule 4).
         var detail = card.Detail.ShouldNotBeNull();

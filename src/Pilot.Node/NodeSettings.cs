@@ -26,8 +26,13 @@ public sealed record NodeSettings
     public const string MaxJobsKey = "max-jobs";
     public const string JobMemoryKey = "job-memory";
     public const string JobPriorityKey = "job-priority";
-    /// <summary>Whether a job in a plane builds into output under the plane (MSBuild artifacts output), so two planes never share a sibling clone's obj and the sibling lock is skipped for it; off unless set.</summary>
+    /// <summary>Whether a job in a plane builds into output under the plane (MSBuild artifacts output), so two planes never share a sibling clone's obj and the sibling lock is skipped for it; off unless set on.</summary>
     public const string JobPlaneOutputKey = "job-plane-output";
+    /// <summary>
+    /// What <see cref="JobPlaneOutputKey"/> is when the settings file does not say: off (PIL802). A plane builds on the published
+    /// packages, so it compiles no sibling and has nothing to share; only a <c>pilot: sibling source</c> flight holds clones.
+    /// </summary>
+    public const bool JobPlaneOutputDefault = false;
     public const string MergeMethodKey = "merge-method";
     public const string StartLimitKey = "start-limit";
     public const string PriorityStartLimitKey = "priority-start-limit";
@@ -37,6 +42,8 @@ public sealed record NodeSettings
     public const string SpendAlertKey = "spend-alert";
     public const string WatchtowerCompactShareKey = "watchtower-compact-share";
     public const string WatchtowerChatMessagesKey = "watchtower-chat-messages";
+    public const string WatchtowerCompactIdleKey = "watchtower-compact-idle";
+    public const string WatchtowerCompactAboveKey = "watchtower-compact-above";
     public const string MaintenanceKey = "maintenance";
     public const string AcceptFleetFlightsKey = "accept-fleet-flights";
     public const string AutopilotKey = "autopilot";
@@ -114,6 +121,9 @@ public sealed record NodeSettings
     /// <summary>How long the pull request watch waits between reads while no client shows the Pull requests page.</summary>
     public static readonly TimeSpan DefaultPrWatchIdle = TimeSpan.FromMinutes(15);
     public const string OpusCapKey = "opus-cap";
+
+    /// <summary>The most reviews and fixers this node runs at once (#912); a start past it waits for a slot.</summary>
+    public const string ReviewLimitKey = "review-limit";
     public const string OneFlightPerRepoKey = "one-flight-per-repo";
     /// <summary>The repos whose flights keep their legs as sub-tasks of the work item (a GitHub sub-issue, a Shortcut task); off for a repo left out.</summary>
     public const string SubTaskReposKey = "sub-task-repos";
@@ -129,7 +139,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -145,6 +155,9 @@ public sealed record NodeSettings
 
     /// <summary>How many Opus sessions the fleet runs at once (<see cref="OpusCapKey"/>); 0 for no cap, 3 unless set.</summary>
     public int? OpusCap { get; init; }
+
+    /// <summary>How many reviews and fixers this node runs at once (<see cref="ReviewLimitKey"/>); 0 for no limit, 2 unless set.</summary>
+    public int? ReviewLimit { get; init; }
 
     /// <summary>Whether only one flight per repo is in the air at a time (<see cref="OneFlightPerRepoKey"/>); off unless set.</summary>
     public bool? OneFlightPerRepo { get; init; }
@@ -170,7 +183,7 @@ public sealed record NodeSettings
     /// <summary>Whether a leg's fresh worker steps up the model ladder by attempt (<see cref="WorkerLadderKey"/>); on unless set off.</summary>
     public bool? WorkerLadder { get; init; }
 
-    /// <summary>Whether the node's jobs in a plane build into <c>&lt;plane&gt;/artifacts</c> (<see cref="JobPlaneOutputKey"/>); off unless set.</summary>
+    /// <summary>Whether the node's jobs in a plane build into <c>&lt;plane&gt;/artifacts</c> (<see cref="JobPlaneOutputKey"/>); <see cref="JobPlaneOutputDefault"/> unless set.</summary>
     public bool? JobPlaneOutput { get; init; }
 
     /// <summary>The Shortcut API token (<see cref="ShortcutTokenKey"/>) that reads a story's title; the <c>SHORTCUT_API_TOKEN</c> variable wins over it. Never shown by the settings output beyond set or not.</summary>
@@ -230,6 +243,12 @@ public sealed record NodeSettings
 
     /// <summary>The person messages in a watchtower chat, since its last compaction, after which it is compacted once idle (<see cref="WatchtowerChatMessagesKey"/>); 40 when unset, 0 is off.</summary>
     public int? WatchtowerChatMessages { get; init; }
+
+    /// <summary>How many minutes an idle watchtower (the brain) sits before it is compacted, when its context is over <see cref="WatchtowerCompactAbove"/> (<see cref="WatchtowerCompactIdleKey"/>); 50 when unset.</summary>
+    public int? WatchtowerCompactIdle { get; init; }
+
+    /// <summary>The context, in thousands of tokens, an idle watchtower must hold for the idle compaction to be worth its turn (<see cref="WatchtowerCompactAboveKey"/>); 100 when unset.</summary>
+    public int? WatchtowerCompactAbove { get; init; }
 
     /// <summary>The repos whose flights have runway: they go on past <see cref="StartLimit"/>, up to <see cref="PriorityStartLimit"/>.</summary>
     public IReadOnlyList<string>? PriorityRepos { get; init; }
@@ -370,6 +389,7 @@ public sealed record NodeSettings
                     MaintenanceKey => JsonValue.Create(Maintenance),
                     OneFlightPerRepoKey => JsonValue.Create(OneFlightPerRepo),
                     OpusCapKey => JsonValue.Create(OpusCap),
+                    ReviewLimitKey => JsonValue.Create(ReviewLimit),
                     AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
                     AutopilotKey => JsonValue.Create(Autopilot),
                     ReviewDeepFirstKey => JsonValue.Create(ReviewDeepFirst),
@@ -416,6 +436,7 @@ public sealed record NodeSettings
         MaintenanceKey => Maintenance is { } maintenance ? [maintenance ? "on" : "off"] : null,
         OneFlightPerRepoKey => OneFlightPerRepo is { } one ? [one ? "on" : "off"] : null,
         OpusCapKey => OpusCap is { } cap ? [cap.ToString(CultureInfo.InvariantCulture)] : null,
+        ReviewLimitKey => ReviewLimit is { } reviews ? [reviews.ToString(CultureInfo.InvariantCulture)] : null,
         AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
         AutopilotKey => Autopilot is { } autopilot ? [autopilot ? "on" : "off"] : null,
         ReviewDeepFirstKey => ReviewDeepFirst is { } deepFirst ? [deepFirst ? "on" : "off"] : null,
@@ -445,6 +466,8 @@ public sealed record NodeSettings
         SpendAlertKey => SpendAlert is { } alert ? [alert.ToString(CultureInfo.InvariantCulture)] : null,
         WatchtowerCompactShareKey => WatchtowerCompactShare is { } wcs ? [wcs.ToString(CultureInfo.InvariantCulture)] : null,
         WatchtowerChatMessagesKey => WatchtowerChatMessages is { } wcm ? [wcm.ToString(CultureInfo.InvariantCulture)] : null,
+        WatchtowerCompactIdleKey => WatchtowerCompactIdle is { } wci ? [wci.ToString(CultureInfo.InvariantCulture)] : null,
+        WatchtowerCompactAboveKey => WatchtowerCompactAbove is { } wca ? [wca.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityReposKey => PriorityRepos,
         RepoTrackersKey => RepoTrackers,
         NoAutoMergeReposKey => NoAutoMergeRepos,
@@ -499,6 +522,14 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var opus) && opus is >= 0 and <= 64
                     ? (settings with { OpusCap = opus }, null)
                     : (null, "opus-cap takes the most Opus sessions the fleet runs at once, 0 to 64 (0 for no cap)");
+            case ReviewLimitKey:
+                if (clear)
+                {
+                    return (settings with { ReviewLimit = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var reviewLimit) && reviewLimit is >= 0 and <= 16
+                    ? (settings with { ReviewLimit = reviewLimit }, null)
+                    : (null, "review-limit takes the most reviews and fixers this node runs at once, 0 to 16 (0 for no limit)");
             case AcceptFleetFlightsKey:
                 if (clear)
                 {
@@ -724,6 +755,22 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var chatMessages) && chatMessages >= 0
                     ? (settings with { WatchtowerChatMessages = chatMessages }, null)
                     : (null, "watchtower-chat-messages takes a count of person messages, 0 or more (0 is off)");
+            case WatchtowerCompactIdleKey:
+                if (clear)
+                {
+                    return (settings with { WatchtowerCompactIdle = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var compactIdle) && compactIdle > 0
+                    ? (settings with { WatchtowerCompactIdle = compactIdle }, null)
+                    : (null, "watchtower-compact-idle takes the minutes an idle watchtower waits before it is compacted, 1 or more");
+            case WatchtowerCompactAboveKey:
+                if (clear)
+                {
+                    return (settings with { WatchtowerCompactAbove = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var compactAbove) && compactAbove >= 0
+                    ? (settings with { WatchtowerCompactAbove = compactAbove }, null)
+                    : (null, "watchtower-compact-above takes the context in thousands of tokens an idle watchtower must hold to be compacted, 0 or more");
             case PriorityReposKey:
             {
                 if (clear)
