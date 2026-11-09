@@ -1709,6 +1709,24 @@ read from the default data folder, as the merge rule reads the machine's prefix.
 is fail-open (input it cannot read passes, exit 0 always) and never calls the node; the node's own merge
 (`pilot flight merge` runs `gh pr merge` itself) is not a session's tool call, so the hook never sees it.
 
+**The stray sweep** (`StraySweep`, pilot #909) is what catches what the guard did not stop: a process of the node's own tree that
+outlived what started it (a job's `testhost`, a shell that never ended; one such fixture spun a core for four days). Every 5 minutes
+(a `PeriodicTimer` on the node's `TimeProvider`, first look a minute after start) it reads the OS process table once through
+`IProcessTable` and hands `StrayFinder` the jobs (their wrapper's pid and start, time limit, and the descendants `JobTree` saw below
+them, which it keeps after the job ends while any lives) and the sessions (the tracker's live pids; ended rows by their plane and end
+time, a live session before an ended one in the same plane). The finder names a stray when its owner ended more than 2 minutes ago,
+when a running job is over its time limit by more than a minute, or when it is busy (0.5 cores or more over 30 s or longer) under a
+session that has been idle for 10 minutes; a process under a session the node did not launch (a person's own) is never one. Each stray
+gets one For you card (`stray-process`, subject `process:<pid>@<start>`) naming the process (pid, name, command line, start, age, CPU
+time), its owner, why, and the exact kill command for the OS (`Stop-Process -Id <pid> -Force`, `kill -9 <pid>`). A dismissal holds for the same
+pid and start (not for a later process that reuses the pid), and the card closes by itself once the process is gone. The node ends a stray
+itself, through `IProcessTable.Kill`, only when it started the owner, the owner has ended, the process descends from the owner (a process
+that only works in the owner's plane or names it on its command line may be a person's editor, so it is named and left) and the start still
+matches; it tries once, says so on a Handled `stray-killed` card, and a process that survives is named again with "tried to end it and it is
+still here". Anything else is only named. The strays also ride on the machine row (`MachineRow.Strays`, optional, so `NodeWire.Version`
+stays), which `pilot strays` lists with each one's why, command line and kill command, and the Machine part of `pilot status` shows
+as a `strays` line with one line under it for each.
+
 A session the API stopped (its transcript's `apiError`, `usage_limit_reached` with when the limit resets) shows as
 **stopped** with why and when it can go on, hooks or not.
 
