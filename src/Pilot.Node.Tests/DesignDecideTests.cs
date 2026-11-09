@@ -128,8 +128,8 @@ public sealed class DesignDecideTests : PrFixTestsBase
         var card = OpenDesign().ShouldNotBeNull();
         card.Bin.ShouldBe(CardBin.Ring);
         var detail = card.Detail.ShouldNotBeNull();
-        detail.ShouldContain("- Keep a library: no new process; misses: the sentence of the README that says it runs as a service (recommended)");
-        detail.ShouldContain("- Make it a service: more to run; misses: the AC that no new process is added");
+        detail.ShouldContain("A. Keep a library: no new process; misses: the sentence of the README that says it runs as a service (recommended)");
+        detail.ShouldContain("B. Make it a service: more to run; misses: the AC that no new process is added");
         detail.ShouldContain("It rings because no option reaches the criteria.");
         // The body is the question in the reviewer's own words and why it rings, within what the panel draws, not the kind's fixed words.
         var summary = card.Summary.ShouldNotBeNull();
@@ -165,8 +165,8 @@ public sealed class DesignDecideTests : PrFixTestsBase
         Fixers.ShouldBeEmpty();
         _state.Decisions(kind: DecisionKinds.Design).ShouldBeEmpty();
         var detail = OpenDesign().ShouldNotBeNull().Detail.ShouldNotBeNull();
-        detail.ShouldContain("- Keep a library: no new process; misses: none (recommended)");
-        detail.ShouldContain("- Make it a service: more to run");
+        detail.ShouldContain("A. Keep a library: no new process; misses: none (recommended)");
+        detail.ShouldContain("B. Make it a service: more to run");
         detail.ShouldNotContain("It rings because");
     }
 
