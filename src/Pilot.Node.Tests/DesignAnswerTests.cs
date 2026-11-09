@@ -135,15 +135,29 @@ public abstract class FlightDesignTestsBase : ReviewTestsBase
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),
             PostsItself = false,
             TakeFlightVerdict = _legs.TakePrVerdictAsync,
-            SendFlightRound = _legs.AnsweredDesignAsync,
+            SendFlightRound = WentRoundAsync,
         };
+    }
+
+    /// <summary>
+    /// The flight's last leg sent round, and its worker recorded before this returns: a go-around answers "started" once its plane
+    /// takes longer than StartReadyWithin or its launch longer than StartAnswerWithin (500 ms), which a busy machine's git and thread
+    /// pool do, and the leg is then still the done one it was. Waiting on the start, not a clock, is what every assertion of the round needs.
+    /// </summary>
+    private async Task<string?> WentRoundAsync(string code, string why, string? who, string? personsWord, CancellationToken cancellationToken)
+    {
+        var error = await _legs.AnsweredDesignAsync(code, why, who, personsWord, cancellationToken);
+        await Started(_legs, code);
+        return error;
     }
 
     private protected Task<CommandResult> RunPr(string verb, string who, params string[] args) =>
         _reviews.RunAsync(new CommandRequest { Verb = verb, Target = PrTarget, Args = args, Who = who }, Ct);
 
     /// <summary>A flight whose last leg is done, its PR open (number 71), and a PR review of it that asked a question of design.</summary>
-    private protected async Task<FlightRow> AskedDesign(string? question = null)
+    /// <param name="question">The finding of the question; the plain one by default.</param>
+    /// <param name="beforeVerdict">Runs once the flight and its PR review exist, before the review's verdict is taken and posted: where a test sets the flight up for the post.</param>
+    private protected async Task<FlightRow> AskedDesign(string? question = null, Action<FlightRow>? beforeVerdict = null)
     {
         var flight = await NewFlight("1", "parser");
         await Fly(flight, "parser");
@@ -166,6 +180,7 @@ public abstract class FlightDesignTestsBase : ReviewTestsBase
             State = PrReviewState.Reviewing,
             StartedAt = DateTimeOffset.UtcNow,
         });
+        beforeVerdict?.Invoke(flight);
         (await RunPr(Verbs.PrVerdict, "du1-review-tianwen-71", "comment", "A question.", question ?? Question)).Error.ShouldBeNull();
         // The node does not post it here, so the controller does: the post is when the design card is raised.
         (await RunPr(Verbs.PostReview, "controller")).Error.ShouldBeNull();
@@ -382,6 +397,113 @@ public sealed class DesignQuestionTests
 
     [Fact]
     public void AFindingThatIsNotADesignQuestionIsNull() => DesignQuestion.Parse(F("a bug here")).ShouldBeNull();
+
+    private const string Ladder = "design: Which ladder does the fallback follow? "
+        + "Option*: follow the documented ladder => the code changes, the doc stays; misses: none "
+        + "Option: reword the doc to match the code => the ladder changes; misses: the AC that the code follows the documented ladder";
+
+    [Fact]
+    public void ParsesWhatEachOptionMissesApartFromItsChoiceAndConsequence()
+    {
+        var q = DesignQuestion.Parse(F(Ladder))!;
+
+        q.Question.ShouldBe("Which ladder does the fallback follow?");
+        q.Options.Select(o => (o.Text, o.Consequence, o.Recommended, o.Misses)).ShouldBe(
+        [
+            ("follow the documented ladder", "the code changes, the doc stays", true, "none"),
+            ("reword the doc to match the code", "the ladder changes", false, "the AC that the code follows the documented ladder"),
+        ]);
+        q.Options[0].Answer.ShouldBe("follow the documented ladder (the code changes, the doc stays)");
+    }
+
+    [Fact]
+    public void TheOptionsThatReachTheCriteriaAreTheOnesThatMissNone()
+    {
+        var q = DesignQuestion.Parse(F(Ladder))!;
+
+        q.Reaching.Select(o => o.Text).ShouldBe(["follow the documented ladder"]);
+        q.OnlyReaching.ShouldNotBeNull().Text.ShouldBe("follow the documented ladder");
+        q.WhyRings.ShouldBeNull();
+        q.SaysMisses.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("none", true)]
+    [InlineData("None.", true)]
+    [InlineData("NONE", true)]
+    [InlineData("nothing", true)]
+    [InlineData("(none)", true)]
+    [InlineData("none of the ACs are met", false)]
+    [InlineData("the AC that the code follows the ladder", false)]
+    public void OnlyTheWordNoneSaysAnOptionMissesNothing(string misses, bool reaches) =>
+        DesignQuestion.Parse(F($"design: Q? Option: A => b; misses: {misses}"))!.Options.ShouldHaveSingleItem().Reaches.ShouldBe(reaches);
+
+    [Fact]
+    public void AnOptionWithNoArrowStillEndsWhereItsMissesBegin()
+    {
+        var q = DesignQuestion.Parse(F("design: Keep it? Option: yes; misses: none Option: no, misses: the README"))!;
+
+        q.Options.Select(o => (o.Text, o.Consequence, o.Misses)).ShouldBe([("yes", "", "none"), ("no", "", "the README")]);
+    }
+
+    [Fact]
+    public void AFindingWrittenTheOldWayHasNoMissesAndIsNeverDecided()
+    {
+        var q = DesignQuestion.Parse(F("design: Keep it? Option: Yes => cheap Option*: No => costly"))!;
+
+        q.Options.Select(o => (o.Text, o.Consequence, o.Recommended, o.Misses)).ShouldBe([("Yes", "cheap", false, (string?)null), ("No", "costly", true, null)]);
+        q.Options.ShouldAllBe(o => !o.Reaches);
+        q.SaysMisses.ShouldBeFalse();
+        q.OnlyReaching.ShouldBeNull();
+        q.WhyRings.ShouldBeNull();
+        DesignQuestion.Decide([q]).ShouldBeNull();
+    }
+
+    [Fact]
+    public void AMissesWordWithNothingAfterItIsNotSaid()
+    {
+        var q = DesignQuestion.Parse(F("design: Keep it? Option: Yes => cheap; misses: Option: No => costly; misses: none"))!;
+
+        q.Options.Select(o => o.Misses).ShouldBe([null, "none"]);
+        q.OnlyReaching.ShouldBeNull();
+    }
+
+    [Fact]
+    public void NoReachingOptionOrSeveralRingAndSayWhy()
+    {
+        var none = DesignQuestion.Parse(F("design: Q? Option: A => a; misses: the AC Option: B => b; misses: the doc"))!;
+        var two = DesignQuestion.Parse(F("design: Q? Option: A => a; misses: none Option: B => b; misses: none"))!;
+
+        none.OnlyReaching.ShouldBeNull();
+        none.WhyRings.ShouldBe("no option reaches the criteria");
+        two.OnlyReaching.ShouldBeNull();
+        two.WhyRings.ShouldBe("2 options reach the criteria and differ in what you get");
+        DesignQuestion.Decide([none]).ShouldBeNull();
+        DesignQuestion.Decide([two]).ShouldBeNull();
+    }
+
+    [Fact]
+    public void DecideTakesTheOneReachingOptionAndNamesWhatEachOtherMisses()
+    {
+        var decided = DesignQuestion.Decide([DesignQuestion.Parse(F(Ladder))!]).ShouldNotBeNull();
+
+        decided.Answer.ShouldBe("follow the documented ladder (the code changes, the doc stays)");
+        decided.Reason.ShouldStartWith("follow the documented ladder is the only option that reaches the criteria");
+        decided.Reason.ShouldContain("the others miss: reword the doc to match the code: the AC that the code follows the documented ladder");
+    }
+
+    [Fact]
+    public void DecideNeedsEveryQuestionToHaveItsOwnReachingOption()
+    {
+        var one = DesignQuestion.Parse(F(Ladder))!;
+        var none = DesignQuestion.Parse(F("design: Q? Option: A => a; misses: the AC"))!;
+
+        DesignQuestion.Decide([]).ShouldBeNull();
+        DesignQuestion.Decide([one, none]).ShouldBeNull();
+        DesignQuestion.Decide([one, one]).ShouldNotBeNull().Answer.ShouldBe(
+            "Which ladder does the fallback follow? => follow the documented ladder (the code changes, the doc stays)\n"
+            + "Which ladder does the fallback follow? => follow the documented ladder (the code changes, the doc stays)");
+    }
 }
 
 /// <summary>

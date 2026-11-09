@@ -1,5 +1,6 @@
 using Pilot.Contracts;
 using Pilot.Node.Flights;
+using Pilot.Node.Sessions;
 using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
@@ -600,6 +601,162 @@ public sealed class LegWatchTests
         await _watch.LookAsync(Ct);
         Open().ShouldBeEmpty();
         _state.Cards().Single(c => c.Id == card.Id).Outcome.ShouldBe("working again");
+    }
+
+    /// <summary>The work of its own a Waiting worker may wait on (PIL800): what the leg or the node holds that ends by itself and wakes it.</summary>
+    public enum OwnWork { RecordedWait, UntoldRecheck, CheckJob, OwnJobByRow, OwnJobByName, OtherJobOfTheLeg }
+
+    public static TheoryData<OwnWork, JobState> OwnWorks => new()
+    {
+        { OwnWork.RecordedWait, JobState.Queued },
+        { OwnWork.UntoldRecheck, JobState.Queued },
+        { OwnWork.CheckJob, JobState.Queued },
+        { OwnWork.CheckJob, JobState.Running },
+        { OwnWork.OwnJobByRow, JobState.Queued },
+        { OwnWork.OwnJobByRow, JobState.Running },
+        { OwnWork.OwnJobByName, JobState.Running },
+        { OwnWork.OtherJobOfTheLeg, JobState.Running },
+    };
+
+    private void PutOwnWork(OwnWork work, JobState jobState)
+    {
+        JobRow Job(string id, JobKind kind = JobKind.Run, string? owner = null, string? ownerName = null, string? flight = null, string? leg = null) => new()
+        {
+            Id = id, Command = "dotnet test", Cwd = "/work/tia1", Kind = kind, State = jobState, Owner = owner, OwnerName = ownerName, Flight = flight, Leg = leg,
+            LogPath = $"/tmp/{id}.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        };
+        switch (work)
+        {
+            case OwnWork.RecordedWait:
+                _state.PutLeg(_state.Legs("TIA1").Single() with { Wait = new LegWait { Path = Path.Combine(Path.GetTempPath(), "pil800-never-" + Guid.NewGuid().ToString("N")), Since = Start } });
+                break;
+            case OwnWork.UntoldRecheck:
+                Recheck(null);
+                break;
+            case OwnWork.CheckJob:
+                _state.PutJob(Job("j10", JobKind.Check, flight: "TIA1", leg: "parser"));
+                break;
+            case OwnWork.OwnJobByRow:
+                _state.PutJob(Job("j11", owner: "a1b2c3d4", ownerName: "du1-tia1-parser"));
+                break;
+            case OwnWork.OwnJobByName:
+                _state.PutJob(Job("j12", owner: "c0000000", ownerName: "du1-tia1-parser"));
+                break;
+            default:
+                _state.PutJob(Job("j13", owner: "zzzz", ownerName: "someone-else", flight: "TIA1", leg: "parser"));
+                break;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(OwnWorks))]
+    public async Task AWaitingWorkerThatWaitsOnItsOwnWorkRaisesNoWaitingRing(OwnWork work, JobState jobState)
+    {
+        // The worker reported blocked on work the node ends by itself (a leg's check job, its own build, a wait it recorded, the check
+        // rerun of its finish): that is a normal wait, as an idle worker's, and not "waits on you".
+        Worker(SessionState.Waiting, waitingFor: "waiting for my build to finish");
+        PutOwnWork(work, jobState);
+
+        foreach (var _ in Enumerable.Range(0, 4))
+        {
+            _time.Advance(TimeSpan.FromMinutes(5));
+            await _watch.LookAsync(Ct);
+        }
+
+        Open().ShouldBeEmpty();
+        _said.ShouldBeEmpty();
+        // The once-only Handled line is the idle worker's for a job of its own (by row, name or leg), and no line for the leg's wait, recheck or check job.
+        if (work is OwnWork.OwnJobByRow or OwnWork.OwnJobByName or OwnWork.OtherJobOfTheLeg)
+        {
+            var line = Handled().ShouldHaveSingleItem();
+            line.Kind.ShouldBe("worker-waiting-job");
+            line.Title.ShouldContain("waiting on a job of its own");
+        }
+        else
+        {
+            Handled().ShouldBeEmpty();
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(OwnWorks))]
+    public async Task AnOpenWaitingRingClosesOnceTheWorkerWaitsOnItsOwnWork(OwnWork work, JobState jobState)
+    {
+        Worker(SessionState.Waiting, waitingFor: "waiting for my build to finish");
+        await _watch.LookAsync(Ct);
+        var card = Open().ShouldHaveSingleItem();
+        card.Kind.ShouldBe(LegWatch.Waiting);
+
+        PutOwnWork(work, jobState);
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldBeEmpty();
+        var closed = _state.Cards().Single(c => c.Id == card.Id);
+        closed.State.ShouldBe(CardState.Closed);
+        closed.Outcome.ShouldNotBeNull().ShouldContain("it waits on its own work, not on you");
+    }
+
+    [Fact]
+    public async Task AWaitingWorkerWithNoWorkOfItsOwnStillRingsWhateverElseRunsOnTheNode()
+    {
+        Worker(SessionState.Waiting, waitingFor: "permission to run rm -rf build");
+        JobRow Job(string id, JobState state, JobKind kind = JobKind.Run, string? owner = null, string? ownerName = null, string? flight = null, string? leg = null) => new()
+        {
+            Id = id, Command = "dotnet test", Cwd = "/work/tia1", Kind = kind, State = state, Owner = owner, OwnerName = ownerName, Flight = flight, Leg = leg,
+            LogPath = $"/tmp/{id}.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        };
+        // An ended job of its own, a running job of someone else, and the check job of another leg are none of this worker's work.
+        _state.PutJob(Job("j20", JobState.Succeeded, owner: "a1b2c3d4", ownerName: "du1-tia1-parser"));
+        _state.PutJob(Job("j21", JobState.Running, owner: "zzzz", ownerName: "someone-else"));
+        _state.PutJob(Job("j22", JobState.Running, JobKind.Check, flight: "TIA1", leg: "other"));
+
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+
+        var card = Open().ShouldHaveSingleItem();
+        card.Kind.ShouldBe(LegWatch.Waiting);
+        card.Title.ShouldBe("TIA1/parser's worker waits on you for permission to run rm -rf build");
+        Handled().ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("which branch should I use?", null, "TIA1/parser's worker waits on you for which branch should I use?")]
+    [InlineData("permission to use Bash", "Bash: dotnet test", "TIA1/parser's worker wants to run: dotnet test (Bash)")]
+    public async Task AWaitingWorkerThatAsksAPersonStillRingsWhileAJobOfItsOwnRuns(string waitingFor, string? asking, string title)
+    {
+        // No job answers a question or approves a tool call: the ring stays, as it did before a waiting worker could wait on its own work.
+        Worker(SessionState.Waiting, waitingFor: waitingFor);
+        _state.PutSession(_state.Sessions().Single() with { Asking = asking });
+        _state.PutJob(new JobRow
+        {
+            Id = "j30", Command = "dotnet build", Cwd = "/work/tia1", State = JobState.Running, Owner = "a1b2c3d4", OwnerName = "du1-tia1-parser",
+            LogPath = "/tmp/j30.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        });
+
+        await _watch.LookAsync(Ct);
+
+        var card = Open().ShouldHaveSingleItem();
+        card.Kind.ShouldBe(LegWatch.Waiting);
+        // A question keeps its own words; a permission prompt is said by the call it asks leave for.
+        card.Title.ShouldBe(title);
+        Handled().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AWorkerBlockedOnAnApprovalItCannotAskForInTheBackgroundStillRingsWhileAJobOfItsOwnRuns()
+    {
+        // Only a person can answer it (it has no question mark and no pending call), so no job of the worker's holds the ring back.
+        Worker(SessionState.Waiting, waitingFor: SessionStates.BlockedWaitingFor);
+        _state.PutJob(new JobRow
+        {
+            Id = "j31", Command = "dotnet build", Cwd = "/work/tia1", State = JobState.Running, Owner = "a1b2c3d4", OwnerName = "du1-tia1-parser",
+            LogPath = "/tmp/j31.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        });
+
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldHaveSingleItem().Kind.ShouldBe(LegWatch.Waiting);
+        Handled().ShouldBeEmpty();
     }
 
     [Fact]

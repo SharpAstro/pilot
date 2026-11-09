@@ -83,6 +83,12 @@ public sealed record NodeInfo
 
     /// <summary>Median and slowest of the node's session starts, resumes and relays over the last hour (PIL584); null when an older node did not say or none happened.</summary>
     public SendTimingRow[]? SendTimings { get; init; }
+
+    /// <summary>Per verb, how long the node's commands took over the last hour (count, p50, p95); none when none ran. Optional, so older nodes and clients ignore it.</summary>
+    public CommandTimingRow[]? CommandTimings { get; init; }
+
+    /// <summary>The node's GC figures as of its last collection: pinned object heap, LOH and their free space, committed (#794). Optional, so older nodes and clients ignore it.</summary>
+    public NodeHeapRow? Heap { get; init; }
 }
 
 /// <summary>A role's effective range on a node (<c>sonnet-high..opus-medium</c>) and where it comes from (<see cref="SettingSources"/>).</summary>

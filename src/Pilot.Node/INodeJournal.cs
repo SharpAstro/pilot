@@ -16,7 +16,7 @@ public interface INodeJournal
     /// <summary>What the node had before this start: the stream it numbered, the last snapshot kept, and the deltas after it.</summary>
     NodeHistory Load();
 
-    /// <summary>Keeps one event the node has just made. <paramref name="json"/> is the event as the stream sends it.</summary>
+    /// <summary>Keeps one event the node has just made. <paramref name="json"/> is the event as the stream sends it, or empty for a <see cref="SnapshotEvent"/>, which a journal that writes one serialises itself, streamed.</summary>
     void Append(NodeEvent nodeEvent, ReadOnlyMemory<byte> json);
 
     /// <summary>

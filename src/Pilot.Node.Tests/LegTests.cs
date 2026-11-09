@@ -1250,7 +1250,9 @@ public abstract class LegCommanderTestsBase : IDisposable
         var git = new GitCli();
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [_root]);
         var watch = new RepoWatch(_state, new RepoCatalog(_state, options), new Planes(git), _github, TimeProvider.System) { Parallelism = 1 };
-        _legs.SiblingSync = new RepoSync(git, new Planes(git), watch);
+        // The pull's reads share one budget (two minutes by default). Beside a saturated machine and the other classes' git starts this
+        // test took 2 m 40 s and once lost its pull to that budget, so the budget is loosened: what is under test is the outcome, not the clock.
+        _legs.SiblingSync = new RepoSync(git, new Planes(git), watch) { Timeout = TimeSpan.FromMinutes(10) };
         return watch;
     }
 
