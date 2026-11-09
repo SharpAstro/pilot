@@ -263,7 +263,10 @@ public sealed class MachineSamplerCostTests
         {
             // Linux's comm is cut at 15 characters, where .NET may read the program's file instead.
             MachineSampler.NameOf(me.Image).ShouldBe(self.ProcessName);
+            // Its start, a FILETIME at the table's CreateTime: what .NET reads through a handle, with no handle opened.
+            me.Started.ShouldBe(self.StartTime.ToUniversalTime().ToFileTimeUtc());
         }
+        me.Started.ShouldBeGreaterThan(0);
     }
 
     [Fact]
