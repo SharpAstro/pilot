@@ -21,7 +21,8 @@ public static partial class Briefs
         "  in a question mark, so the node can tell a wait on a person from a wait on your own work.";
 
     /// <param name="socket">The node's socket when it is not the default one: the CLI is told it, or it would ask another node.</param>
-    public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null, string? resumed = null, string? machine = null, string? update = null, string? pilotMd = null)
+    /// <param name="reboot">The flight's reboot file (#916), where it will be once read, and its text: what the session before the reboot wrote down.</param>
+    public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null, string? resumed = null, string? machine = null, string? update = null, string? pilotMd = null, (string File, string Text)? reboot = null)
     {
         var run = Run(cli, socket);
         var text = new StringBuilder();
@@ -109,6 +110,17 @@ public static partial class Briefs
                     text.AppendLine(plane.DiffStat.Trim());
                 }
             }
+        }
+
+        if (reboot is { } saved)
+        {
+            text.AppendLine();
+            text.AppendLine("## Resumed after a reboot");
+            text.AppendLine($"The machine was rebooted while this flight flew. The session before it wrote down where it stopped (kept at {saved.File}):");
+            text.AppendLine();
+            text.AppendLine(saved.Text.Trim());
+            text.AppendLine();
+            text.AppendLine("Check the plane for work not committed or not pushed first, then carry on from its next step.");
         }
 
         if (flight.HumanVerification)

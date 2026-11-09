@@ -100,7 +100,8 @@ public sealed class MergeFixtureCardTests
         // A mark, not a button: Blocked, naming the leg, with the reviewed head kept for the autopilot and the holding bound.
         var mark = card.Choices.Single(c => c.Verb == Verbs.Merge);
         (mark.Status, mark.Note, mark.Args[0]).ShouldBe((ChoiceStatus.WaitsForLegs, "review-notes", PrHead));
-        card.Title.ShouldBe("TIA1's PR #63 merges once review-notes is done");
+        var legs = node.State.Legs("TIA1");
+        card.Title.ShouldBe($"TIA1's PR #63 merges once review-notes is done (legs {legs.Length - 1}/{legs.Length} done)");
 
         // GitHub gives no merge state (UNKNOWN right after a push): the wait stays, the Merge no button (review of #924).
         node.GitHub.Merge = null;
@@ -216,5 +217,18 @@ public sealed class MergeFixtureCardTests
         (state.Kind, state.Reason).ShouldBe((MergeKinds.Armed, "a review"));
         // Checks still running: GitHub waits for them, which is the armed merge's own line.
         Read("armed").Reason.ShouldBeNull();
+    }
+    [Fact]
+    public void AHeldMergeNamesEachLegNotDoneAndALegWhoseCheckReruns()
+    {
+        // #918: "Merge · waits for review-notes-3 (check rerunning)", in the leg order, the done legs left out.
+        LegRow Leg(string name, int order, LegState state, LegRecheck? recheck = null) =>
+            new() { Flight = "PIL909", Name = name, Order = order, Goal = "g", DoneWhen = "d", State = state, Recheck = recheck };
+        var running = new LegRecheck { Check = "dotnet test", Since = DateTimeOffset.UnixEpoch };
+
+        LegCommander.LegWaitWords([Leg("review-notes-3", 3, LegState.Flying, running), Leg("one", 1, LegState.Done), Leg("review-notes-4", 4, LegState.Planned)])
+            .ShouldBe("review-notes-3 (check rerunning), review-notes-4");
+        LegCommander.LegWaitWords([Leg("review-notes", 2, LegState.Flying, running with { Outcome = "passed" })]).ShouldBe("review-notes", "a rerun that ended is no longer running");
+        LegCommander.LegWaitWords([Leg("one", 1, LegState.Done)]).ShouldBeEmpty();
     }
 }

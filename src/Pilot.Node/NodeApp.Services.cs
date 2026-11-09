@@ -30,7 +30,7 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services =>
         {
             var messenger = services.GetRequiredService<SessionMessenger>();
-            return new RebootPrep(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>(), Path.Combine(options.DataFolder, "reboot"))
+            return new RebootPrep(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>(), RebootPrep.FolderIn(options.DataFolder))
             {
                 Say = async (id, text, ct) => (await messenger.SayAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = "node" }, ct)).Ok,
                 End = async (id, why, ct) => await messenger.EndAsync(new CommandRequest { Verb = Verbs.EndSession, Target = Verbs.SessionTarget(id), Args = [why], Who = Flights.LegWatch.Who }, ct),

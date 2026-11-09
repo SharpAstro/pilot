@@ -60,6 +60,22 @@ public sealed class OsProcessTable : IProcessTable
 
     public IReadOnlyList<ProcessEntry> Snapshot() => OperatingSystem.IsWindows() ? WindowsSnapshot() : LinuxSnapshot();
 
+    /// <summary>Every process with its CPU time and start, in one read of the table (no handle on any process); false where it cannot be read.</summary>
+    public bool ReadAll(List<SystemProcess> into)
+    {
+        lock (_gate)
+        {
+            if (!_table.Read(_read))
+            {
+                into.Clear();
+                return false;
+            }
+            into.Clear();
+            into.AddRange(_read);
+            return true;
+        }
+    }
+
     private List<ProcessEntry> WindowsSnapshot()
     {
         lock (_gate)

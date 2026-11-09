@@ -231,6 +231,22 @@ public sealed partial class LegCommander
         }
     }
 
+    // The flight's reboot file not yet handed on (#916): its next worker is briefed from it, and it moves to read/ once that worker started.
+    private (string File, string Text)? RebootFileOf(FlightRow flight) => RebootPrep.FileFor(RebootPrep.FolderIn(options.DataFolder), flight.Code);
+
+    // The brief names the file where it will be once read, and carries its text, so the move cannot pull it from under the session.
+    private static (string File, string Text)? BriefedAs((string File, string Text)? reboot) => reboot is { } r ? (RebootPrep.ReadPathOf(r.File), r.Text) : null;
+
+    // A worker that started took the reboot file: it moves to read/, so no later brief carries it again.
+    private static string ReadOnStart((string File, string Text)? reboot, string started)
+    {
+        if (reboot is { } r)
+        {
+            RebootPrep.MarkRead(r.File);
+        }
+        return started;
+    }
+
     private void StartWorker(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs)
     {
         RefuseIfOnHold(flight.Code);
@@ -266,9 +282,10 @@ public sealed partial class LegCommander
                     plane = new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : "");
                 }
                 // Read before the launcher is asked: from entering() on a command waits only StartAnswerWithin for the start.
-                var brief = Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed, machine: options.Machine, pilotMd: await PilotMdOfAsync(flight));
+                var reboot = RebootFileOf(flight);
+                var brief = Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed, machine: options.Machine, pilotMd: await PilotMdOfAsync(flight), reboot: BriefedAs(reboot));
                 entering();
-                return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, attemptModel, attemptEffort, Reason: SessionStartReasons.LegLaunch), CancellationToken.None);
+                return ReadOnStart(reboot, await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, attemptModel, attemptEffort, Reason: SessionStartReasons.LegLaunch), CancellationToken.None));
             },
             job =>
             {
