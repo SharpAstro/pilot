@@ -76,6 +76,14 @@ public sealed partial class NodeState
         foreach (var key in _legs.Where(l => l.Value.Recheck is { Outcome: null }).Select(l => l.Key).ToList())
         {
             var check = _legs[key].Recheck!.Check;
+            // A rerun whose finish named who asked for it is finished by this node itself once it is up (the leg watch resumes it, pilot #819):
+            // it keeps no outcome, for there is nothing for the worker to do, and carries on as rechecking. The check's job, whether queued,
+            // still running or ended by a crash, is the finish's to attach to or to run afresh, so the job's state is not read here.
+            if (_legs[key].Recheck!.By is { Length: > 0 })
+            {
+                _legs[key] = _legs[key] with { Recheck = _legs[key].Recheck! with { Resume = true } };
+                continue;
+            }
             // A check job still queued carries over the restart (the job runner puts it back in its place): say so, not that the rerun was lost.
             // One running with a process to follow carried over too, unless a crash ended it (then the next finish runs it afresh).
             var open = _jobs.Values.Where(j => j is { Kind: JobKind.Check, EndedAt: null } && j.Flight == key.Flight && j.Leg == key.Name).ToList();
@@ -93,7 +101,8 @@ public sealed partial class NodeState
             try
             {
                 var started = SnapshotLocked();
-                _journal.Append(started, Serialize(started));
+                // No bytes: the journal streams a snapshot to its file itself, never built whole on the LOH (#794).
+                _journal.Append(started, ReadOnlyMemory<byte>.Empty);
             }
             catch (Exception e)
             {

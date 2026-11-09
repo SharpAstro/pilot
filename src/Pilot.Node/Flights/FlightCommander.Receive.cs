@@ -88,7 +88,7 @@ public sealed partial class FlightCommander
         }
         foreach (var card in move.Cards.Where(c => c is { State: CardState.Open, Bin: not CardBin.Handled } && FlightMove.IsAbout(c, code)))
         {
-            state.RaiseCard(card.Bin, card.Kind, card.Subject, card.Title, card.Detail, card.Choices, card.Link, card.AskedBy, card.Why);
+            state.RaiseCard(card.Bin, card.Kind, card.Subject, card.Title, card.Detail, card.Choices, card.Link, card.AskedBy, card.Why, cause: card.Cause);
         }
         // The item says it flies here too (the sender takes its own label off once it has let go): a refusal is a card, not a lost flight.
         await LabelAsync(repoPath, sent.Item, code, null, cancellationToken, sent.PullRequest);

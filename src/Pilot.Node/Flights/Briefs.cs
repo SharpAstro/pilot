@@ -51,14 +51,36 @@ public static partial class Briefs
     }
 
     /// <summary>
+    /// The owner's hard rule, in every brief that writes or reviews code: nothing busy-spins. A leaked test fixture spun a core on SE1
+    /// for four days (busy.ps1, 2026-11-04 to 11-08, about 52 h of CPU).
+    /// </summary>
+    internal const string NoSpinRule =
+        "- NO BUSY SPINNING, anywhere in the code base, tests and scripts included: no loop on the CPU waiting for a condition, and no\n" +
+        "  SpinWait, SpinUntil or SpinOnce. Wait on an event, a task, a process exit or a timer (await Task.Delay, Start-Sleep, sleep), and give\n" +
+        "  every waiting loop a deadline so it ends with its owner. A unit test runs in milliseconds, in memory, against fakes: no real\n" +
+        "  process, no network, no wall-clock wait. A review finds any spin a blocking finding.\n";
+
+    /// <summary>
+    /// How a session runs a command so Claude Code's allow rules match it (#896): a rule matches the command's text as written, so a
+    /// chained, quoted or variable call of pilot misses <c>Bash(pilot answer:*)</c> and goes to the auto-mode classifier, which denied
+    /// the watchtower's card answers as acting on the person's behalf (SE1, 2026-11-08).
+    /// </summary>
+    internal const string CommandShapeRule =
+        "- Run each pilot command alone, exactly as this brief writes it: no `cd … &&` before it, no `;` or `&&` chain, no quotes added\n" +
+        "  around its path and no variable for it. Run git in another folder as `git -C <folder> …`, never by cd. Pilot's MCP tools\n" +
+        "  (answer, dismiss, cards, status and the rest) need no shell at all. Keep a note through the node (`pilot note`), never as a\n" +
+        "  file under ~/.claude: a session writing its own settings or memory is refused.\n";
+
+    /// <summary>
     /// How a branch takes the base, for the worker and both reviewers: merging it in is the way, and merge commits on a
-    /// working branch are never a finding, because the merge queue rebases each PR and lands it linear. A review that called
+    /// working branch are never a finding, because the merge queue lands each PR linear (squashed, or rebased where the repo's queue rebases; the node reshapes a branch only
+    /// for a rebasing queue). A review that called
     /// them a defect sent TIA1874's worker to rewrite its pushed branch, which then needed a force push only the owner could
     /// allow (DE1, 2026-10-30); TIA1910 and TIA1915 stalled the same way.
     /// </summary>
     internal const string BranchHistoryRule =
         "- A branch takes its base by a merge (`git fetch origin` then `git merge origin/<base>`). Merge commits on a working branch are\n" +
-        "  fine and never a finding: the merge queue rebases each PR, so main stays linear whatever the branch holds. Never rebase a\n" +
+        "  fine and never a finding: the merge queue squashes or rebases each PR, so main stays linear whatever the branch holds. Never rebase a\n" +
         "  pushed branch, never push with --force or --force-with-lease, and never ask for either.\n";
 
     /// <summary>
@@ -186,6 +208,15 @@ public static partial class Briefs
     internal const string SelfTriggeringCiRule =
         "A PR that adds or changes a CI workflow so that it re-runs on the PR's own pushes (a `pull_request` or `push` trigger on a repeat, soak or N-pass proof, or a path filter that includes the workflow itself), or so that a job over 30 minutes runs on every PR, is a blocking finding:\n" +
         "such a proof is `workflow_dispatch` only, run once at the end (TIA2000's 30-pass repeat on every push cost 37 runner-hours).";
+    /// <summary>The line the planner is told: a leg's check fits its change, and the whole suite is CI's on the PR (pilot #752).</summary>
+    internal const string CheckScopeRule =
+        "A leg's check filters `dotnet test` over the test classes of the files the flight touches plus the classes the leg names (`--filter 'FullyQualifiedName~FooTests|FullyQualifiedName~BarTests'`). " +
+        "The whole suite is CI's, on the PR: `leg plan` refuses a `dotnet test` with no --filter, suggesting one, unless it is given `--whole-suite \"<why>\"`.";
+
+    /// <summary>The line the worker is told: run the check and the classes touched, never the whole suite, which CI runs on the PR.</summary>
+    internal const string WorkerScopeRule =
+        "Run the check and the test classes you touch, never the whole suite: CI runs the whole suite on the PR, and an unrelated failure in it is not this leg's. " +
+        "A check that fails only in tests your change does not touch (their test file, the class of a source you changed, or a name in the check's filter) is passed by the node, which matches each to an open issue or files one and reports it as not this flight's: do not chase it.";
 
     /// <summary>The line the planner is told: a check runs in the plane's root, so write it as CI runs it, working-directory included.</summary>
     internal const string CheckWhereRule =

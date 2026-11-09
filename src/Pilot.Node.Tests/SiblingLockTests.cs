@@ -119,6 +119,52 @@ public sealed class SiblingLockTests : JobTestsBase
         SiblingSet.PastBuild("dotnet test Y --no-build", cwd, ["dotnet test Y --no-build"]).ShouldBeFalse();
     }
 
+    /// <summary>
+    /// The tree of the node's own check once its build is over (PIL802): a <c>dotnet test --no-build</c> starts no MSBuild.dll child at
+    /// all, it runs vstest.console and a testhost, so nothing in it reads as building and the job lets go of its clones. The command
+    /// lines are what the OS said of a real run, with its folders shortened.
+    /// </summary>
+    [Fact]
+    public void PastBuildHoldsNoLongerOnceTheRealTreeOfDotnetTestNoBuildIsRunning()
+    {
+        const string command = "cd src && dotnet build Pilot.slnx -c Release && dotnet test Pilot.Node.Tests -c Release --no-build --filter '(FullyQualifiedName~SiblingLockTests|FullyQualifiedName~PlaneOutputTests)|Category=Invariant'";
+        var cwd = _root;
+        const string dotnet = "\"C:\\Program Files\\dotnet\\dotnet.exe\"";
+        const string sdk = "C:\\Program Files\\dotnet\\sdk\\10.0.403";
+        const string bin = "C:\\work\\pil802\\src\\Pilot.Node.Tests\\bin\\Release\\net10.0";
+        const string wrapper = "pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"C:\\Temp\\p2j\\jobs\\j9.run.ps1\"";
+        string[] buildPhase =
+        [
+            wrapper,
+            $"{dotnet} build Pilot.slnx -c Release",
+            $"{dotnet} \"{sdk}\\MSBuild.dll\" -maxcpucount -verbosity:m -restore Pilot.slnx -property:Configuration=Release",
+        ];
+        // What the build leaves behind: msbuild's node-reuse workers and the compiler server.
+        string[] left =
+        [
+            $"{dotnet} \"{sdk}\\MSBuild.dll\" /nologo /nodemode:1 /nodeReuse:true /low:false",
+            $"{dotnet} \"{sdk}\\Roslyn\\bincore\\VBCSCompiler.dll\" -pipename:abc",
+        ];
+        string[] testPhase =
+        [
+            wrapper,
+            $"{dotnet} test Pilot.Node.Tests -c Release --no-build --filter (FullyQualifiedName~SiblingLockTests|FullyQualifiedName~PlaneOutputTests)|Category=Invariant",
+            $"{dotnet} exec \"{sdk}\\vstest.console.dll\" --framework:\".NETCoreApp,Version=v10.0\" --testCaseFilter:\"(FullyQualifiedName~SiblingLockTests|FullyQualifiedName~PlaneOutputTests)|Category=Invariant\" {bin}\\Pilot.Node.Tests.dll --logger:Console;Verbosity=minimal --nologo --artifactsProcessingMode-collect --testSessionCorrelationId:26208_ffd6f984",
+            $"\"{bin}\\testhost.exe\"  --runtimeconfig \"{bin}\\Pilot.Node.Tests.runtimeconfig.json\" --depsfile \"{bin}\\Pilot.Node.Tests.deps.json\" --port 62682 --endpoint 127.0.0.1:062682 --role client --parentprocessid 96464 --telemetryoptedin false",
+            "\\??\\C:\\WINDOWS\\system32\\conhost.exe 0x4",
+            $"\"{bin}\\Pilot.Node.Tests.exe\" @@ \"C:\\Temp\\tmprisjji.tmp\"",
+        ];
+
+        SiblingSet.PastBuild(command, cwd, buildPhase).ShouldBeFalse();
+        // The build is over and its workers linger, but the test run has not started.
+        SiblingSet.PastBuild(command, cwd, [wrapper, .. left]).ShouldBeFalse();
+        // The test run is up: past its build, with or without the workers the build left.
+        SiblingSet.PastBuild(command, cwd, testPhase).ShouldBeTrue();
+        SiblingSet.PastBuild(command, cwd, [.. left, .. testPhase]).ShouldBeTrue();
+        // A build still running beside it keeps the hold.
+        SiblingSet.PastBuild(command, cwd, [.. buildPhase, .. testPhase]).ShouldBeFalse();
+    }
+
     [Fact]
     public async Task JobsWithDisjointSiblingSetsRunSideBySide()
     {
@@ -277,8 +323,9 @@ public sealed class SiblingLockTests : JobTestsBase
         {
             Directory.CreateDirectory(Path.Combine(plane, "src"));
             File.WriteAllText(Path.Combine(plane, ".git"), "gitdir: nowhere");
+            // Four levels up from the plane, as pilot's own fallback: a probe the plane's build really resolves (PIL802).
             File.WriteAllText(Path.Combine(plane, "Directory.Build.props"),
-                "<Project><PropertyGroup><UseLocalA Condition=\"Exists('../../A')\">true</UseLocalA></PropertyGroup></Project>");
+                "<Project><PropertyGroup><UseLocalA Condition=\"Exists('../../../../A')\">true</UseLocalA></PropertyGroup></Project>");
         }
         Directory.CreateDirectory(Path.Combine(org, "A"));
         Directory.CreateDirectory(Path.Combine(org, "B"));

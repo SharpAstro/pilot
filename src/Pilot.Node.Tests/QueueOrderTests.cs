@@ -23,6 +23,8 @@ public sealed class QueueOrderTests : JobTestsBase
     {
         var (jobs, _, _, _) = Idle();
         jobs.MaxRunning = 4;
+        // The build-order rules under test, not the one-heavy-job rule (HeavyJobTests covers that).
+        jobs.OneHeavyAtATime = false;
         jobs.SiblingsOf = job => Sets(job.Command);
         return jobs;
     }

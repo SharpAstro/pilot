@@ -27,6 +27,8 @@ public static partial class Briefs
         }
         text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a redo of the leg (a go-around) makes any change.");
         text.Append(BranchHistoryRule);
+        text.Append(NoSpinRule);
+        text.Append(CommandShapeRule);
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         text.Append(LfsRule(flight.Worktree));
         text.Append(PilotMdSection(pilotMd));
@@ -100,8 +102,9 @@ public static partial class Briefs
         text.AppendLine();
         // TIA1814's reviewers ran tianwen's whole suite themselves (10,127 tests, 40 minutes on a busy machine) while CI had it
         // green, filled their context waiting and reading, and stopped without a verdict three times (2026-10-26).
-        text.AppendLine("Do not run the whole test suite: CI runs it on the PR, and `gh pr checks` says how it went. Rerun only the legs'");
-        text.AppendLine($"checks, each through `{run} run -- <check>` so the node holds the job and wakes you with its end.");
+        text.AppendLine("Do not run the whole test suite: the full suite is CI's, and `gh pr checks` says how it went (pilot #752). Your own run is");
+        text.AppendLine("the Release build, the tests the flight added or changed, and `Category=Invariant`; rerun the legs' checks only where they");
+        text.AppendLine($"say more than that. Each goes through `{run} run -- <command>` so the node holds the job and wakes you with its end.");
         text.AppendLine("A check run stops at its first failed test (the node ends the job and names that test), so the queue is free for the next job.");
         text.AppendLine($"The node knows it for a check only when it is handed over whole, as the leg's check reads; `{run} run --fail-fast -- <command>`");
         text.AppendLine("stops any run that way, a check split into its commands too.");

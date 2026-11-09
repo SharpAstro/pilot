@@ -36,7 +36,7 @@ public sealed class CheckPathsTests : IDisposable
 
     private string Plane => Path.Combine(_root, "plane");
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose() => TestDirs.DeleteTree(_root);
 
     private void Write(string relative)
     {
@@ -252,7 +252,7 @@ public sealed class CheckPathsTests : IDisposable
     {
         WriteSrcLayout();
 
-        (await PlanLeg("cd src && dotnet build Pilot.slnx -c Release && dotnet test Pilot.Node.Tests -c Release --no-build")).Ok.ShouldBeTrue();
+        (await PlanLeg("cd src && dotnet build Pilot.slnx -c Release && dotnet test Pilot.Node.Tests -c Release --no-build --filter A")).Ok.ShouldBeTrue();
         _state.Legs("PIL1").Single().Check.ShouldNotBeNull().ShouldStartWith("cd src && ");
     }
 

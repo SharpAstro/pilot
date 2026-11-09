@@ -59,6 +59,13 @@ jobs:
     # Both: the node, CLI and GUI run on Windows (the controller's win-arm64 machine) as much as on Linux, and much of
     # what can break is Windows-only: the socket's owner-only lock, case-insensitive paths, worktree locks, .exe names.
     # x64 Windows, not Arm: hosted Arm runners are limited on private repos, and the platform code is the same.
+    #
+    # The Windows job is meant to take under 12 minutes (#813). It took 26 once, when the git-backed tests ran real git at 100 to 400 ms
+    # a process: Windows' process start, one at a time under .NET's process-creation lock (#794). Not the scanner: the hosted image
+    # already has Defender's real-time scanning off, with C:\ and D:\ excluded (runner-images' Configure-WindowsDefender.ps1). Most of
+    # those tests now run on an in-memory git (FakeRepoGit) unless a test checks git itself or needs several repos. A job that hangs is stopped here, with its hang
+    # dump, rather than by the merge queue's 20 minutes without a name; the queue's own limit is the reason for the 12.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -78,6 +85,14 @@ jobs:
     - uses: actions/setup-dotnet@v6
       with:
         dotnet-version: 10.0.x
+    - name: Cache NuGet packages
+      # Keyed on what decides the packages: the central versions and each project's own references. A change to either gets a fresh
+      # cache, seeded from the nearest older one by the restore key, so restore fetches only what changed.
+      uses: actions/cache@v6
+      with:
+        path: ~/.nuget/packages
+        key: nuget-${{ runner.os }}-${{ hashFiles('src/Directory.Packages.props', 'src/**/*.csproj') }}
+        restore-keys: nuget-${{ runner.os }}-
     - name: Resolve version prefix
       # Read the major.minor back from the one place it is written instead of restating it here. -getProperty only
       # EVALUATES the file, so this can run before restore. The value is CAPTURED, so nothing else may print to
@@ -90,7 +105,9 @@ jobs:
         esac
         echo "VERSION_PREFIX=${MM}.${{ github.run_number }}" >> "$GITHUB_ENV"
     - name: Restore dependencies
-      run: dotnet restore Pilot.slnx
+      # Restored in the build's configuration: Pilot.Gui/Ui/Tui/Cli pick DIR.Lib, Console.Lib and SdlVulkan.Renderer or their .Debug
+      # twins by Configuration at restore, so a bare restore (Debug) under a Release --no-restore build compiled against the twins.
+      run: dotnet restore Pilot.slnx -p:Configuration=$BUILD_CONF
     - name: Build
       run: dotnet build Pilot.slnx -c $BUILD_CONF --no-restore -p:Version=${VERSION_PREFIX}${VERSION_REV}${VERSION_HASH} -p:FileVersion=${VERSION_PREFIX}.${VERSION_REV} -p:ContinuousIntegrationBuild=true
     - name: Test
@@ -98,10 +115,26 @@ jobs:
       # mini dump and the hung test is named in the log, instead of the job running to its 20 minute limit with no name
       # (the windows hang of flight/pil461 named no test). A diagnostic, not a raised test timeout.
       run: dotnet test Pilot.Node.Tests -c $BUILD_CONF --no-build --filter 'Category!=Slow' --logger "console;verbosity=detailed" --blame-hang-timeout 5m --blame-hang-dump-type mini
-    - name: Test (slow)
-      # Tests tagged [Trait("Category", "Slow")] are exempt from the 5 s guard and run here. Exit code 8 means none matched.
+      env:
+        # The tests that start real processes (#933): written at the run's end, read by the next two steps.
+        PILOT_TEST_PROCESS_REPORT: ${{ github.workspace }}/process-starts.txt
+    - name: Name the tests that start real processes
+      # The top of the report in the job's summary, the whole of it as an artifact: the list #933 moves onto fakes, test by test.
+      if: always()
       run: |
-        dotnet test Pilot.Node.Tests -c $BUILD_CONF --no-build --filter 'Category=Slow' --logger "console;verbosity=detailed" --blame-hang-timeout 5m --blame-hang-dump-type mini || [ $? -eq 8 ]
+        report="$GITHUB_WORKSPACE/process-starts.txt"
+        if [ -f "$report" ]; then
+          { echo '### Tests that start real processes (#933)'; echo '```'; head -n 41 "$report"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo 'No test started a real process.' >> "$GITHUB_STEP_SUMMARY"
+        fi
+    - name: Upload the process-start report
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: process-starts-${{ matrix.os }}
+        path: process-starts.txt
+        if-no-files-found: ignore
     - name: Upload the hang dump
       if: failure()
       uses: actions/upload-artifact@v7
@@ -112,18 +145,94 @@ jobs:
     - name: Test the GUI
       # The sessions view rendered on the CPU from the sample snapshot: no display and no GPU needed.
       run: dotnet test Pilot.Gui.Tests -c $BUILD_CONF --no-build --logger "console;verbosity=detailed"
+    - name: Upload the GUI's overlap captures
+      # The frame a text-overlap failure names, so a fault seen only on a runner can be looked at (PIL855's chat, 2026-11-08).
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: gui-text-overlap-${{ matrix.os }}
+        path: src/Pilot.Gui.Tests/bin/${{ env.BUILD_CONF }}/net10.0/text-overlap/
+        if-no-files-found: ignore
+
+  # Tests tagged [Trait("Category", "Slow")] are exempt from the time guard and run here, beside the build job rather than
+  # after it. On Windows they took 19 of the build job's 26 minutes (3,349 test-seconds; Linux runs them in 3), which put
+  # every merge-queue run past the queue's 20-minute check timeout and dropped green PRs (pilot #813). So Windows splits
+  # them into four shards of about 800 test-seconds each, by class name, the last shard taking whatever the others do not
+  # name, so a new class can never go unrun. Exit code 8 means a shard matched no test. The shards come out once a Windows run of the
+  # unsharded Slow step is under 5 minutes (#813): the bases whose tests need several repos (PrReview, PrFix, PrRecheck, FlightMove,
+  # PackageWait) still run real git there, as FakeRepoGit models one repo.
+  slow:
+    needs: changes
+    if: needs.changes.outputs.v2 == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            shard: all
+            filter: "Category=Slow"
+            # Linux runs the Slow-tagged git-backed tests on git itself (a run is 1 to 3 ms there), so every Slow test meets real git on
+            # every PR (the build job's non-Slow tests meet only the model). A drift of the in-memory model (FakeRepoGit, TestGit) shows
+            # on Windows, which runs the model: a command the model refuses is red there and green on Linux. Only a model more lenient
+            # than git is red on Linux alone. A red Windows shard that Linux passes: look for a model gap, or a test that races a background start the slow real git used to hide.
+            real_git: "1"
+          - os: windows-latest
+            shard: landing-review
+            filter: "Category=Slow&(FullyQualifiedName~Pilot.Node.Tests.LandingPath|FullyQualifiedName~Pilot.Node.Tests.Review)"
+          - os: windows-latest
+            shard: hold-overlap-job
+            filter: "Category=Slow&(FullyQualifiedName~Pilot.Node.Tests.HumanVerification|FullyQualifiedName~Pilot.Node.Tests.HoldingPattern|FullyQualifiedName~Pilot.Node.Tests.Overlap|FullyQualifiedName~Pilot.Node.Tests.Job|FullyQualifiedName~Pilot.Node.Tests.LegEnd|FullyQualifiedName~Pilot.Node.Tests.RebaseLay)"
+          - os: windows-latest
+            shard: m-to-z
+            filter: "Category=Slow&(FullyQualifiedName~Pilot.Node.Tests.M|FullyQualifiedName~Pilot.Node.Tests.N|FullyQualifiedName~Pilot.Node.Tests.O|FullyQualifiedName~Pilot.Node.Tests.P|FullyQualifiedName~Pilot.Node.Tests.Q|FullyQualifiedName~Pilot.Node.Tests.R|FullyQualifiedName~Pilot.Node.Tests.S|FullyQualifiedName~Pilot.Node.Tests.T|FullyQualifiedName~Pilot.Node.Tests.U|FullyQualifiedName~Pilot.Node.Tests.V|FullyQualifiedName~Pilot.Node.Tests.W|FullyQualifiedName~Pilot.Node.Tests.X|FullyQualifiedName~Pilot.Node.Tests.Y|FullyQualifiedName~Pilot.Node.Tests.Z)&FullyQualifiedName!~Pilot.Node.Tests.Review&FullyQualifiedName!~Pilot.Node.Tests.RebaseLay&FullyQualifiedName!~Pilot.Node.Tests.Overlap"
+          - os: windows-latest
+            shard: rest
+            filter: "Category=Slow&FullyQualifiedName!~Pilot.Node.Tests.LandingPath&FullyQualifiedName!~Pilot.Node.Tests.Review&FullyQualifiedName!~Pilot.Node.Tests.HumanVerification&FullyQualifiedName!~Pilot.Node.Tests.HoldingPattern&FullyQualifiedName!~Pilot.Node.Tests.Overlap&FullyQualifiedName!~Pilot.Node.Tests.Job&FullyQualifiedName!~Pilot.Node.Tests.LegEnd&FullyQualifiedName!~Pilot.Node.Tests.RebaseLay&FullyQualifiedName!~Pilot.Node.Tests.M&FullyQualifiedName!~Pilot.Node.Tests.N&FullyQualifiedName!~Pilot.Node.Tests.O&FullyQualifiedName!~Pilot.Node.Tests.P&FullyQualifiedName!~Pilot.Node.Tests.Q&FullyQualifiedName!~Pilot.Node.Tests.R&FullyQualifiedName!~Pilot.Node.Tests.S&FullyQualifiedName!~Pilot.Node.Tests.T&FullyQualifiedName!~Pilot.Node.Tests.U&FullyQualifiedName!~Pilot.Node.Tests.V&FullyQualifiedName!~Pilot.Node.Tests.W&FullyQualifiedName!~Pilot.Node.Tests.X&FullyQualifiedName!~Pilot.Node.Tests.Y&FullyQualifiedName!~Pilot.Node.Tests.Z"
+    name: slow (${{ matrix.os }}, ${{ matrix.shard }})
+    runs-on: ${{ matrix.os }}
+    # As the build job's: a hang is stopped here, with its dump, not by the merge queue's limit.
+    timeout-minutes: 25
+    env:
+      PILOT_TEST_REAL_GIT: ${{ matrix.real_git }}
+    defaults:
+      run:
+        working-directory: src
+        shell: bash
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: 10.0.x
+    - name: Cache NuGet packages
+      uses: actions/cache@v6
+      with:
+        path: ~/.nuget/packages
+        key: nuget-${{ runner.os }}-${{ hashFiles('src/Directory.Packages.props', 'src/**/*.csproj') }}
+        restore-keys: nuget-${{ runner.os }}-
+    - name: Build the node tests
+      run: dotnet build Pilot.Node.Tests -c $BUILD_CONF -p:ContinuousIntegrationBuild=true
+    - name: Test (slow)
+      run: |
+        dotnet test Pilot.Node.Tests -c $BUILD_CONF --no-build --filter '${{ matrix.filter }}' --logger "console;verbosity=detailed" --blame-hang-timeout 5m --blame-hang-dump-type mini || [ $? -eq 8 ]
+    - name: Upload the hang dump
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: node-tests-slow-hang-${{ matrix.os }}-${{ matrix.shard }}
+        path: src/Pilot.Node.Tests/TestResults/**/*.dmp
+        if-no-files-found: ignore
 
   # The one check main's ruleset requires, for a PR and for the merge queue: it reports whatever ran, so a PR whose
-  # build was skipped (nothing of v2 changed) passes, and one whose build failed or was cancelled does not.
+  # build was skipped (nothing of v2 changed) passes, and one whose build or slow tests failed or were cancelled does not.
   gate:
-    needs: [changes, build]
+    needs: [changes, build, slow]
     if: always()
     runs-on: ubuntu-latest
     steps:
     - shell: bash
       run: |
-        echo "changes: ${{ needs.changes.result }}, build: ${{ needs.build.result }}"
-        if [ "${{ needs.changes.result }}" != "success" ] || [[ "${{ needs.build.result }}" =~ ^(failure|cancelled)$ ]]; then
+        echo "changes: ${{ needs.changes.result }}, build: ${{ needs.build.result }}, slow: ${{ needs.slow.result }}"
+        if [ "${{ needs.changes.result }}" != "success" ] || [[ "${{ needs.build.result }}" =~ ^(failure|cancelled)$ ]] || [[ "${{ needs.slow.result }}" =~ ^(failure|cancelled)$ ]]; then
           exit 1
         fi
 
@@ -135,7 +244,7 @@ jobs:
   # packages takes the .Debug twins (DIR.Lib.Debug and the rest), so its pilot-gui carries the debug inspector. A prerelease is never
   # GitHub's latest release, so a node on the stable channel never sees it.
   beta-publish:
-    needs: build
+    needs: [build, slow]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false

@@ -41,6 +41,7 @@ public static partial class Briefs
         text.AppendLine(LegGrowthRule);
         text.AppendLine(WaitRule(run));
         text.AppendLine(ReportRule(run));
+        text.Append(NoSpinRule);
         if (flight.FromIdea is { Length: > 0 } idea)
         {
             text.AppendLine();
@@ -79,6 +80,12 @@ public static partial class Briefs
                 text.AppendLine(overlap.Answer switch
                 {
                     OverlapAnswer.Separate => $"- {at} ({overlap.Why}{files}): the controller chose to plan {flight.Code} in parallel with it. If it still depends on {overlap.Other}'s work, connect it: `{run} flight connect {flight.Code} {overlap.Other}`.",
+                    OverlapAnswer.Connect when overlap.AnsweredByNode == OverlapRow.AnsweredByNodeLanded =>
+                        $"- {at} ({overlap.Why}{files}): {overlap.Other} had landed when the overlap was found, so the node closed it itself: there is nothing to wait for and {flight.Code} is not held. " +
+                        $"Plan its legs for main as it is now, with {overlap.Other}'s changes in the shared files already there; do not connect or ask again.",
+                    OverlapAnswer.Connect when overlap.AnsweredByNode == OverlapRow.AnsweredByNodeConnected =>
+                        $"- {at} ({overlap.Why}{files}): the node connected {flight.Code} to it itself: {flight.Code} is held until {overlap.Other} has landed" +
+                        (overlap.Node is null ? "" : $" ({overlap.Node} says so)") + ", and branches off main after it. Plan its legs for main as it will be then, building on what " + overlap.Other + " changes in the shared files; do not connect or ask again.",
                     OverlapAnswer.Connect => $"- {at} ({overlap.Why}{files}): the controller chose to connect {flight.Code} to it: {flight.Code} is held until {overlap.Other} has landed" +
                         (overlap.Node is null ? "" : $" ({overlap.Node} says so)") + ", and branches off main after it. Plan its legs for main as it will be then, building on what " + overlap.Other + " changes in the shared files; do not connect or ask again.",
                     _ => $"- {overlap.Other} ({overlap.Why}{files}): the controller chose to fold {flight.Code} into it.",
@@ -91,9 +98,10 @@ public static partial class Briefs
         text.AppendLine("Before you plan any leg, look for a flight already doing this, on any node, or a PR open on the same code.");
         text.AppendLine("First read the issue and the code and list the files your legs will change (repo-relative paths, as many as you can name).");
         text.AppendLine($"Then run `{run} flight touches {flight.Code} <file> <file> ...` with them. It fetches the repo and compares them with every other flight not");
-        text.AppendLine("landed on this node and on each reachable node (the files its pushed branch changes against its base) and with every open PR, and");
-        text.AppendLine("answers a line each, in the form `PIL294 (DE1): connect, both change DetachedShell.cs, JobRunner.cs`. A line says unknown when that");
-        text.AppendLine("flight's branch is not pushed, its node did not answer or gh would not list the PR's files: it is not \"no overlap\", so say it in your");
+        text.AppendLine("landed on this node and on each reachable node (the files its plane changes against its base, committed or not, pushed or not; each node");
+        text.AppendLine("says that for its own flights) and with every open PR, and answers a line each, in the form");
+        text.AppendLine("`PIL294 (DE1): connect, both change DetachedShell.cs, JobRunner.cs`. A line says unknown when that flight's node did not answer or gh would not list the PR's files:");
+        text.AppendLine("it is not \"no overlap\", so say it in your");
         text.AppendLine($"planned summary. To confirm that a flight has the same goal, read its {words.Noun} ({words.ReadOther}) and its legs' goals (`{run} status` lists");
         text.AppendLine("this node's flights with their issues and legs).");
         text.AppendLine($"- `{run} nodes` lists the other pilot nodes on the LAN; `{run} summary --fleet` is the node's kept summary of the flights in play on every node it holds a grant for (what needs the controller, where it is), with its age.");
@@ -131,6 +139,7 @@ public static partial class Briefs
         text.AppendLine(MachineLoadRule(run));
         // PIL319: a check naming a solution that sits in src/ could never pass from the plane's root.
         text.AppendLine(CheckWhereRule);
+        text.AppendLine(CheckScopeRule);
         text.AppendLine("The node widens each `dotnet test --filter` in a check with `|Category=Invariant`, so the repo's guard tests run with it and the check need not list them; a check with no filtered dotnet test runs none, so give a leg that changes code a filtered test step.");
         if (CiShape.Of(flight.Worktree) is { } ci)
         {

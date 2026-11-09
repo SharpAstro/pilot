@@ -51,6 +51,15 @@ public sealed partial class PrReviews(
     /// <summary>Whether a start may go: the Opus cap and priority are asked here, as a flight's starts are (one gate, shared with the legs).</summary>
     public AdmissionGate Slots { get => field ??= new(state, () => Models, options.Machine); set; }
 
+    /// <summary>The failures looked into: a failing test the PR does not touch is filed as an investigation. Null for one built without.</summary>
+    public FailureInvestigations? Investigations { get; set; }
+
+    /// <summary>What a failure under investigation does to a hand PR: a first one is run again once, a repeat names the PR on the tower's alert. Null for one built without.</summary>
+    public FailureAlerts? Alerts { get; set; }
+
+    // The failed heads already looked into: once a head, not every sweep.
+    private readonly HashSet<string> _investigated = new(StringComparer.Ordinal);
+
     // The reviews and fixers admission holds, by PR target: the sweep asks again and starts them in turn.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (PrRef Pr, bool Fix)> _queued = new(StringComparer.Ordinal);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _queuedSaid = new(StringComparer.Ordinal);

@@ -27,6 +27,31 @@ public sealed partial class NodeState
                 case (Verbs.Note, _):
                     error = $"note takes the target node, not {command.Target}";
                     break;
+                case (Verbs.Order, Verbs.NodeTarget) when string.Join(' ', args).Trim() is { Length: > 0 } order:
+                {
+                    var id = NextOrderId();
+                    Publish(new NoteAddedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Note = new NodeNote { At = _time.GetUtcNow(), Who = command.Who, Text = order, Id = id } });
+                    return CompleteLocked(command, null, way: null, sessionId: null, made: id);
+                }
+                case (Verbs.Order, Verbs.NodeTarget):
+                    error = "order node needs the order's text";
+                    break;
+                case (Verbs.OrderDone, Verbs.NodeTarget):
+                {
+                    var id = string.Join(' ', args).Trim();
+                    if (_notes.FirstOrDefault(n => n.Id is { Length: > 0 } && string.Equals(n.Id, id, StringComparison.OrdinalIgnoreCase) && n.RetiredAt is null) is not { } standing)
+                    {
+                        error = id.Length == 0 ? "order-done node needs the order's id (pilot orders lists them)" : $"No standing order {id} stands (pilot orders lists them)";
+                        break;
+                    }
+                    Publish(new NoteAddedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Note = standing with { RetiredAt = _time.GetUtcNow() } });
+                    return CompleteLocked(command, null, way: null, sessionId: null, made: standing.Id);
+                }
+                case (Verbs.Orders, Verbs.NodeTarget):
+                    return CompleteLocked(command, null, way: null, sessionId: null, made: string.Join('\n', StandingOrdersLocked().Select(o => $"{o.Id}  {o.Text}")));
+                case (Verbs.Order or Verbs.OrderDone or Verbs.Orders, _):
+                    error = $"{command.Verb} takes the target node, not {command.Target}";
+                    break;
                 default:
                     error = $"The node knows no verb {command.Verb}";
                     break;
@@ -36,6 +61,20 @@ public sealed partial class NodeState
         }
     }
 
+    /// <summary>The standing orders that stand now (not retired), oldest first: what a fresh watchtower's brief lists.</summary>
+    public NodeNote[] StandingOrders()
+    {
+        lock (_gate)
+        {
+            return StandingOrdersLocked();
+        }
+    }
+
+    private NodeNote[] StandingOrdersLocked() => [.. _notes.Where(n => n.Id is { Length: > 0 } && n.RetiredAt is null)];
+
+    private string NextOrderId() =>
+        $"o{_notes.Select(n => n.Id is { Length: > 1 } id && id[0] == 'o' && int.TryParse(id.AsSpan(1), out var number) ? number : 0).DefaultIfEmpty(0).Max() + 1}";
+
     /// <summary>
     /// Puts the result of a command done outside <see cref="Execute"/> on the stream: one whose work is too long to do
     /// under the lock, as a <c>say</c> is (<see cref="Sessions.SessionMessenger"/>).
@@ -43,15 +82,15 @@ public sealed partial class NodeState
     /// <param name="error">Why it was not done, or null when it was.</param>
     /// <param name="way">Which way it went (<see cref="CommandResult.Way"/>).</param>
     /// <param name="sessionId">The target's new session id (<see cref="CommandResult.SessionId"/>).</param>
-    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null, ReadinessResult? readiness = null, MilestoneSuggestions? suggestions = null, IdeaRow? idea = null, BreakUpProposal? breakUp = null)
+    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null, ReadinessResult? readiness = null, MilestoneSuggestions? suggestions = null, IdeaRow? idea = null, BreakUpProposal? breakUp = null, MergeRefusal? refusal = null)
     {
         lock (_gate)
         {
-            return CompleteLocked(command, error, way, sessionId, made, setting, waiting, tidy, milestones, readiness, suggestions, idea, breakUp);
+            return CompleteLocked(command, error, way, sessionId, made, setting, waiting, tidy, milestones, readiness, suggestions, idea, breakUp, refusal);
         }
     }
 
-    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null, ReadinessResult? readiness = null, MilestoneSuggestions? suggestions = null, IdeaRow? idea = null, BreakUpProposal? breakUp = null)
+    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null, ReadinessResult? readiness = null, MilestoneSuggestions? suggestions = null, IdeaRow? idea = null, BreakUpProposal? breakUp = null, MergeRefusal? refusal = null)
     {
         var result = new CommandResult
         {
@@ -60,7 +99,8 @@ public sealed partial class NodeState
             Who = command.Who,
             Ok = error is null,
             Error = error,
-            Way = error is null ? way : null,
+            // A refusal carries a way only to say it was no verdict on the command, or how a push was refused (RefusalWays): any other way is a done command's.
+            Way = error is null || RefusalWays.Is(way) ? way : null,
             SessionId = error is null ? sessionId : null,
             Made = error is null ? made : null,
             Setting = error is null ? setting : null,
@@ -70,6 +110,7 @@ public sealed partial class NodeState
             Suggestions = error is null ? suggestions : null,
             Idea = error is null ? idea : null,
             BreakUp = error is null ? breakUp : null,
+            Refusal = error is null ? null : refusal,
             Autopilot = command.Autopilot,
             Why = command.Why is { } why && why.Trim().Length > 0 ? why.Trim() : null,
             Waiting = error is null ? waiting : null,
@@ -77,6 +118,20 @@ public sealed partial class NodeState
         };
         Publish(new CommandResultEvent { Seq = result.Seq, At = _time.GetUtcNow(), Result = result });
         return result;
+    }
+
+    /// <summary>
+    /// Tells every live client the watchtower's chat changed (a <see cref="ChatChangedEvent"/>): partial words, a tool, a queue move, a turn's end.
+    /// It changes no state and carries nothing; a client reads the chat feed. So it is not numbered, journalled or held: it goes to the
+    /// clients connected now, carrying the number of the last delta, and a client takes it without moving its own number. Words nudge
+    /// about ten times a second, and as deltas they filled the journal and pushed real deltas out of the held ones (PIL855's review).
+    /// </summary>
+    public void NotifyChatChanged()
+    {
+        lock (_gate)
+        {
+            WriteToSinks(Serialize(new ChatChangedEvent { Seq = _seq, At = _time.GetUtcNow() }));
+        }
     }
 
     /// <summary>

@@ -75,9 +75,49 @@ internal sealed record FlightLine
     /// <summary>The node's last priority raise for a stale bound (<c>raised to high: open 19 h</c>), or why it could not be made; null before the first.</summary>
     public string? StaleRaise => Row.StaleRaises is { Length: > 0 } raises ? raises[^1].Note : null;
 
-    /// <summary>The short mark under a stale flight's code: <c>stale · raised to high</c>.</summary>
+    /// <summary>
+    /// The clock this line was built against. The age below is read from it, not from the snapshot: the page rebuilds its lines with
+    /// each frame's clock, so an age ticks while the row does not change. Null for a line built without one.
+    /// </summary>
+    public DateTimeOffset? Now { get; init; }
+
+    /// <summary>
+    /// How long the flight has not really moved (<see cref="FlightRow.LastMovedAt"/> against <see cref="Now"/>); null when the node
+    /// gave no last move (an older node) or the line has no clock. Never negative.
+    /// </summary>
+    public TimeSpan? Idle => Row.LastMovedAt is { } at && Now is { } now ? (now - at is { Ticks: >= 0 } span ? span : TimeSpan.Zero) : null;
+
+    /// <summary>
+    /// The short mark under a stale flight's code: <c>stale · no progress for 10 h · raised to high</c> (just <c>stale</c> when the node
+    /// gave no last move). The age is <see cref="Waited.Coarse"/>, not <see cref="SessionLine.Ago"/> as the issue named: Ago says
+    /// seconds, minutes and an "ago" (<c>10h 5m ago</c>), which reads wrongly in "no progress for ..." and ticks every second and minute,
+    /// and it would drift from the number the node's digest and stale lines print for the same flight, which are <see cref="Waited.Coarse"/>
+    /// too (whole hours under a day, no "ago"). One format, so they never disagree.
+    /// </summary>
     public string? StaleWorkMark => StaleSummary is null ? null
-        : Row.StaleRaises?.LastOrDefault(r => r.Level is not null) is { Level: { } level } ? $"stale · raised to {IssuePriorities.Name(level).ToLowerInvariant()}" : "stale";
+        : string.Join(" · ", new[]
+        {
+            Idle is { } idle ? $"stale · no progress for {Waited.Coarse(idle)}" : "stale",
+            Row.StaleRaises?.LastOrDefault(r => r.Level is not null) is { Level: { } level } ? $"raised to {IssuePriorities.Name(level).ToLowerInvariant()}" : null,
+        }.OfType<string>());
+
+    /// <summary>The last thing that moved the flight with its local time, <c>last: review passed 12:09</c>; null when the node gave none.</summary>
+    public string? LastMoveText => Row is { LastMovedAt: { } at, LastMove: { Length: > 0 } move }
+        ? $"last: {move} {at.ToLocalTime().ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture)}" : null;
+
+    /// <summary>The whole text of the stale mark on hover: the mark, the last move with its time, and the stale timeline, one to a line.</summary>
+    public string? StaleWorkTip => StaleWorkMark is { } mark
+        ? string.Join('\n', new[] { mark, LastMoveText, StaleSummary }.OfType<string>()) : null;
+
+    /// <summary>
+    /// How long a flight in the air has been still, for its detail page only (a table row stays clean): <c>last activity 25 m ago</c>,
+    /// and for a stale flight the mark's words with the last move, <c>no progress for 10 h · last: review passed 12:09</c>. Null for a
+    /// landed, folded or moved flight, or one with no last move.
+    /// </summary>
+    public string? ActivityText => Row is { State: not FlightState.Landed, FoldedInto: null, MovedTo: null } && Idle is { } idle
+        ? StaleSummary is null ? $"last activity {Waited.Coarse(idle)} ago"
+            : string.Join(" · ", new[] { $"no progress for {Waited.Coarse(idle)}", LastMoveText }.OfType<string>())
+        : null;
 
     /// <summary>What says the row is a stale copy, <c>stale (DE1 unreachable)</c>, in words so colour never carries it alone; null while not stale.</summary>
     public string? StaleMark => Stale is { } node ? $"stale ({node} unreachable)" : null;
@@ -85,9 +125,10 @@ internal sealed record FlightLine
     /// <summary>
     /// What says the last attempt to move the flight to another node failed, in words so the red it is drawn in never carries it
     /// alone (#376); null while none failed. The reason is <see cref="MoveFailure"/>. A stale row keeps its stale mark and no red: it
-    /// is the last row the node told, and says nothing of what it is doing now.
+    /// is the last row the node told, and says nothing of what it is doing now. A landed flight has none: there is nothing left to
+    /// move, and no Retry move to press, so a failure a node left on it (before landings cleared it) is no band and no red row.
     /// </summary>
-    public string? MoveMark => Row.MoveFailure is { Length: > 0 } && Stale is null ? "move failed" : null;
+    public string? MoveMark => Row is { MoveFailure.Length: > 0, State: not FlightState.Landed } && Stale is null ? "move failed" : null;
 
     /// <summary>Why the move failed, as the node worded it (what happened, what to do); null when <see cref="MoveMark"/> is.</summary>
     public string? MoveFailure => MoveMark is null ? null : Row.MoveFailure;
@@ -162,12 +203,18 @@ internal sealed record FlightLine
         return new FlightLine
         {
             Row = flight,
+            Now = now,
             Code = flight.Code,
             Title = flight.Title ?? flight.Item.Noun,
             Where = $"{flight.Repo} {flight.Item.Display}",
-            State = flight.State switch { FlightState.Flying => "flying", FlightState.Held => "held", _ => flight.MovedTo is null ? "landed" : "moved" },
+            // The owner's hold is the state a person sees (#771): the flight still flies as far as the row goes, but nothing is done for it.
+            State = flight is { OnHold: not null, State: not FlightState.Landed } ? "on hold"
+                : flight.State switch { FlightState.Flying => "flying", FlightState.Held => "held", _ => flight.MovedTo is null ? "landed" : "moved" },
             StateDetail = flight.State switch
             {
+                // The owner's hold comes ahead of every other stage (#771).
+                // The state says "on hold"; the detail says who and why, without saying it twice.
+                not FlightState.Landed when flight.OnHold is { } onHold => $"by {onHold.By}: {onHold.Reason}",
                 FlightState.Held => $"waiting for {FlightWaiting.For(flight)}",
                 FlightState.Landed when flight.MovedTo is { } to => to.Text,
                 FlightState.Landed when flight.LandedAt is { } at => SessionLine.Ago(now - at),

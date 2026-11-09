@@ -46,6 +46,9 @@ public sealed class SessionTracker : BackgroundService
     /// <summary>Called once when a row first turns ended or failed on its own: the owner ids and why; drops the queued jobs they own.</summary>
     public Action<IReadOnlyCollection<string>, string>? DropJobs { get; set; }
 
+    /// <summary>Whether the commander is replacing the reviewer with this row or session id (its jobs are kept for the replacement).</summary>
+    public Func<string, bool>? IsBeingReplaced { get; set; }
+
     /// <summary>
     /// The node stopped row <paramref name="id"/> and its delivery saw the process gone: the row is ended now, with
     /// <paramref name="why"/>, and stays so while the listing gives its session no process. A resume that does clears it.
@@ -56,6 +59,7 @@ public sealed class SessionTracker : BackgroundService
         try
         {
             _stopped[id] = why;
+            Changed();
             if (_state.Sessions().FirstOrDefault(r => r.Id == id) is { } row)
             {
                 _endedAt[id] = _time.GetUtcNow();
@@ -91,6 +95,32 @@ public sealed class SessionTracker : BackgroundService
     /// <summary>The hooks sessions post: a row follows its session's latest one while the session runs.</summary>
     public HookBook Hooks { get; init; } = new();
 
+    /// <summary>Claude Code's record of a background job by its short id (state.json); null reads none. Read only for a row with no process, to tell an end by design from a crash.</summary>
+    public Func<string, ClaudeJobRecord?> JobRecord { get; init; } = _ => null;
+
+    // A job with no process does not change its record again: read once, kept by short id (a poll would otherwise read every ended job's file).
+    private readonly Dictionary<string, ClaudeJobRecord> _jobRecords = new Dictionary<string, ClaudeJobRecord>(StringComparer.Ordinal);
+
+    private ClaudeJobRecord? JobRecordOf(ClaudeAgentRow agent)
+    {
+        if (agent.Pid is not null || agent.Kind != "background")
+        {
+            // Running (again): what it left when it last ended is stale by its next end.
+            _jobRecords.Remove(agent.ShortId);
+            return null;
+        }
+        if (_jobRecords.TryGetValue(agent.ShortId, out var known))
+        {
+            return known;
+        }
+        var read = JobRecord(agent.ShortId);
+        if (read is { TurnFinished: true } or { Failed: true })
+        {
+            _jobRecords[agent.ShortId] = read;
+        }
+        return read;
+    }
+
     /// <summary>What sessions reported of their own state (<c>pilot session report</c>); preferred over the listing and transcripts while newest.</summary>
     public ReportBook Reports { get; init; } = new();
 
@@ -105,6 +135,13 @@ public sealed class SessionTracker : BackgroundService
 
     /// <summary>Whether a session or row id is one of the node's watchtowers (known by id, not by name); null knows none.</summary>
     public Func<string, bool>? IsWatchtowerId { get; init; }
+
+    /// <summary>
+    /// Whether a session id is one the node runs itself as a stream session (the watchtower, <see cref="StreamSession"/>): the node
+    /// publishes its row from the stream, so a listing of the same session (if Claude Code lists a print-mode process at all) is
+    /// left out here, and never a second writer of the row.
+    /// </summary>
+    public Func<string, bool>? IsStreamSession { get; init; }
 
     /// <summary>Where a model or effort mismatch is said (the node's log, pilot #416); nothing for a tracker built without.</summary>
     public TextWriter Error { get; init; } = TextWriter.Null;
@@ -250,16 +287,132 @@ public sealed class SessionTracker : BackgroundService
 
     public async Task PollAsync(CancellationToken cancellationToken)
     {
+        // The listing starts a claude process, which on a loaded node waits seconds for Process.Start: it runs outside the
+        // gate, so a say's look at one session, a resume's hold and a stop are not held behind it (PIL794). One listing at a
+        // time, and one taken while a resume or a stop changed the rows is stale: listed again once, else not applied.
+        await _listing.WaitAsync(cancellationToken);
+        try
+        {
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                var changes = Volatile.Read(ref _changes);
+                var clock = Stopwatch.StartNew();
+                string? text = null;
+                string? failure = null;
+                try
+                {
+                    text = await _agents.ListAsync(cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    failure = ex.Message;
+                }
+
+                await _gate.WaitAsync(cancellationToken);
+                try
+                {
+                    if (failure is not null)
+                    {
+                        Failed(failure);
+                        return;
+                    }
+                    if (changes != Volatile.Read(ref _changes))
+                    {
+                        continue;
+                    }
+                    Apply(text, clock);
+                    return;
+                }
+                finally
+                {
+                    _gate.Release();
+                }
+            }
+        }
+        finally
+        {
+            _listing.Release();
+            _firstPoll.TrySetResult();
+        }
+    }
+
+    // One listing at a time; and a count of the changes a listing taken before them would undo (a resume begun or completed, a stop).
+    private readonly SemaphoreSlim _listing = new SemaphoreSlim(1, 1);
+    private int _changes;
+
+    private void Changed() => Interlocked.Increment(ref _changes);
+
+    // By row id: the listing's row of each session, as last listed or looked at, which a look at one session starts from.
+    private readonly Dictionary<string, ClaudeAgentRow> _listed = new Dictionary<string, ClaudeAgentRow>(StringComparer.Ordinal);
+
+    private bool IsAlive(int pid) => (_options.IsAlive ?? ProcessAlive)(pid);
+
+    private static bool ProcessAlive(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            return false;
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // It runs, and may not be asked about.
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// A fresh look at row <paramref name="id"/> alone, before a say: its process, its session record, hooks and transcripts,
+    /// with no listing of every session. A say used to poll all of them first, which starts <c>claude agents</c> and waited
+    /// behind every other process start of a loaded node (51 s for a 185 ms relay, DE1, 2026-11-07). A row with no process at
+    /// its last listing, or whose process has gone, or one never listed, is looked at by a full poll: only a listing says what
+    /// became of it (ended, or continued under another id).
+    /// </summary>
+    /// <returns>Whether the look did without a listing.</returns>
+    public async Task<bool> LookAsync(string id, CancellationToken cancellationToken)
+    {
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            await PollLockedAsync(cancellationToken);
+            if (LookLocked(id))
+            {
+                return true;
+            }
         }
         finally
         {
             _gate.Release();
-            _firstPoll.TrySetResult();
         }
+        await PollAsync(cancellationToken);
+        return false;
+    }
+
+    private bool LookLocked(string id)
+    {
+        if (_resuming.ContainsKey(id))
+        {
+            // Held as it is while it is resumed: a look would end it, as a poll would.
+            return true;
+        }
+        if (!_rows.ContainsKey(id) || !_listed.TryGetValue(id, out var agent) || agent.Pid is not { } pid || _stopped.ContainsKey(id)
+            || !IsAlive(pid) || _options.Profile.ReadSessionRecord(pid) is not { } record)
+        {
+            return false;
+        }
+        // The record is what the listing reads a running session's status from: its own, as of now.
+        var fresh = record.Status is not null ? agent with { Status = record.Status, WaitingFor = record.WaitingFor } : agent;
+        if (fresh != agent)
+        {
+            // A listing that began before this look would put its older status over the look's at its end: a look that
+            // changed the row counts as a change, as a stop or a resume does, so that listing is taken again.
+            Changed();
+        }
+        Track(fresh, id, _time.GetUtcNow());
+        return true;
     }
 
     /// <summary>
@@ -273,6 +426,7 @@ public sealed class SessionTracker : BackgroundService
         try
         {
             _resuming[row.Id] = (name, row.Cwd);
+            Changed();
         }
         finally
         {
@@ -320,6 +474,7 @@ public sealed class SessionTracker : BackgroundService
             }
             _superseded.Remove(newSessionId);
             _rowOf[newSessionId] = id;
+            Changed();
             _endedAt.Remove(id);
             _stopped.Remove(id);
             // A user turn has just been given to it: it is working on it.
@@ -342,6 +497,7 @@ public sealed class SessionTracker : BackgroundService
         try
         {
             _resuming.Remove(id);
+            Changed();
         }
         finally
         {
@@ -362,20 +518,8 @@ public sealed class SessionTracker : BackgroundService
         }
     }
 
-    private async Task PollLockedAsync(CancellationToken cancellationToken)
+    private void Apply(string? text, Stopwatch clock)
     {
-        var clock = Stopwatch.StartNew();
-        string text;
-        try
-        {
-            text = await _agents.ListAsync(cancellationToken);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            Failed(ex.Message);
-            return;
-        }
-
         // A listing that is not one says nothing about the sessions: they stay as they were.
         if (ClaudeAgentsJson.Parse(text) is not { } listed)
         {
@@ -389,7 +533,8 @@ public sealed class SessionTracker : BackgroundService
         var present = new HashSet<string>(StringComparer.Ordinal);
         foreach (var agent in listed)
         {
-            if (_superseded.Contains(agent.SessionId) || _options.IsHidden(agent.Cwd) || RowIdOf(agent, listed) is not { } id)
+            if (_superseded.Contains(agent.SessionId) || _options.IsHidden(agent.Cwd) || IsStreamSession?.Invoke(agent.SessionId) == true
+                || RowIdOf(agent, listed) is not { } id)
             {
                 continue;
             }
@@ -424,6 +569,13 @@ public sealed class SessionTracker : BackgroundService
                 {
                     Put(previous with { EndedBecause = resumed });
                 }
+                continue;
+            }
+
+            if (IsStreamSession?.Invoke(previous.SessionId) == true && _state.Sessions().FirstOrDefault(r => r.Id == id) is { State: not (SessionState.Ended or SessionState.Failed) })
+            {
+                // The node's own stream session, live again (a resume after a restart) under the row this tracker seeded as ended: the node publishes it, and an
+                // ended copy of it here is not to be forgotten, taking the live row with it.
                 continue;
             }
 
@@ -507,6 +659,7 @@ public sealed class SessionTracker : BackgroundService
 
     private void Track(ClaudeAgentRow agent, string id, DateTimeOffset now)
     {
+        _listed[id] = agent;
         if (agent.Pid is { } listedPid)
         {
             _pids[id] = listedPid;
@@ -600,7 +753,8 @@ public sealed class SessionTracker : BackgroundService
             var round = joined is { Flight: { } code, Leg: { } leg } ? _state.Legs(code).FirstOrDefault(l => l.Name == leg)?.GoArounds ?? 0 : 0;
             Ledger.Record(agent.SessionId, agent.Name, joined, SpendRoles.Of(agent.Name, joined.Role), round, spend, now);
         }
-        var built = SessionRowBuilder.Build(agent, facts, record, repo, joined, Hooks.Of(agent.SessionId), Reports.Of(agent.SessionId));
+        var built = SessionRowBuilder.Build(agent, facts, record, repo, joined, Hooks.Of(agent.SessionId), Reports.Of(agent.SessionId),
+            JobRecordOf(agent));
         if (renamed is not null)
         {
             built = built with { Name = renamed };
@@ -705,19 +859,10 @@ public sealed class SessionTracker : BackgroundService
 
     private void Put(SessionRow row)
     {
-        if (Launched?.Observe(row, _endedAt.TryGetValue(row.Id, out var endedAt) ? endedAt : null) is { } entry)
+        if (Launched is not null)
         {
             // The ledger's account of a session the node launched: what started it, and once it ended, why, when and at what wall time.
-            var ended = entry.EndReason is not null;
-            row = row with
-            {
-                StartReason = entry.StartReason,
-                EndReason = entry.EndReason,
-                EndedAt = ended ? entry.EndedAt : null,
-                WallSeconds = ended ? entry.WallSeconds : null,
-                LastCompactedAt = entry.CompactedAt,
-                CompactedBecause = entry.CompactedBecause,
-            };
+            row = Launched.Stamp(row, _endedAt.TryGetValue(row.Id, out var endedAt) ? endedAt : null);
         }
         var wasEnded = _rows.TryGetValue(row.Id, out var before) && before.State is SessionState.Ended or SessionState.Failed;
         _rows[row.Id] = row;
@@ -752,6 +897,21 @@ public sealed class SessionTracker : BackgroundService
     /// <summary>Whether the row ended on its own, held so for two polls, and no live session replaced it: nobody waits on its jobs (#327).</summary>
     public bool IsEndedForGood(string id) => _confirmedEnded.ContainsKey(id);
 
+    /// <summary>
+    /// Whether the row is ended after its turn finished (a --bg session Claude Code ended by design once its turn was over, PIL815),
+    /// not by a crash: its own job's end is what resumes it (#893). A crash (Failed, or no finished turn) is not one.
+    /// </summary>
+    public bool EndedAfterFinishedTurn(string id) =>
+        _state.Sessions().FirstOrDefault(s => s.Id == id) is { State: SessionState.Ended } row
+        && (row.EndedBecause?.StartsWith(SessionRowBuilder.TurnFinishedEnd, StringComparison.Ordinal) == true
+            || JobRecord(row.Id) is { TurnFinished: true });
+
+    private bool OwnsOpenJob(SessionRow row)
+    {
+        string[] ids = [row.Id, row.SessionId, .. row.EarlierSessionIds ?? []];
+        return _state.Jobs().Any(j => j.State is JobState.Queued or JobState.Running && j.Owner is not null && ids.Contains(j.Owner, StringComparer.Ordinal));
+    }
+
     /// <summary>Drops the queued jobs of rows that ended on their own, unless a live session has taken the row over (a copy Claude Code continued it as): that one owns them now.</summary>
     private void DropJobsOfEnded()
     {
@@ -770,10 +930,19 @@ public sealed class SessionTracker : BackgroundService
             {
                 _justEnded[id] = (row, polls + 1);
             }
+            // Its open jobs first: a lookup in the state, where EndedAfterFinishedTurn may read the job's record from disk.
+            else if (OwnsOpenJob(now) && EndedAfterFinishedTurn(id))
+            {
+                // Its turn finished and it still owns a queued or running job: it is not ended in the node's eyes. The jobs stay, and
+                // the job's end resumes it with the outcome. Looked at again on later polls; once none is open the rule below applies (#893).
+            }
             else
             {
                 _justEnded.Remove(id);
-                if (SessionMessenger.ReplacedBy(row, all) is null)
+                // A reviewer the commander is replacing is not ended for good: its replacement row is not there yet, and its queued jobs
+                // are the replacement's to adopt (the commander drops them itself when the head moved).
+                if (SessionMessenger.ReplacedBy(row, all, _state.CurrentWatchtower) is null
+                    && IsBeingReplaced?.Invoke(row.Id) != true && IsBeingReplaced?.Invoke(row.SessionId) != true)
                 {
                     _confirmedEnded[id] = 0;
                     DropJobs?.Invoke([row.Id, row.SessionId, .. row.EarlierSessionIds ?? []], "its worker ended");
@@ -794,6 +963,8 @@ public sealed class SessionTracker : BackgroundService
         _stopped.Remove(id);
         _given.Remove(id);
         _listedNames.Remove(id);
+        _listed.Remove(id);
+        _jobRecords.Remove(id);
         _transcripts.Remove(sessionId);
         foreach (var copy in _rowOf.Where(c => c.Value == id).Select(c => c.Key).ToList())
         {

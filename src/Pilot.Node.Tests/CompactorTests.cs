@@ -10,13 +10,14 @@ namespace Pilot.Node.Tests;
 /// The compactor: the background sessions the node will wake again (the watchtower while it watches, a session waiting on
 /// its job) compacted before their prompt cache goes cold, once per stretch of idleness, and nothing else touched.
 /// </summary>
-public sealed class CompactorTests
+public sealed class CompactorTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private static readonly DateTimeOffset Start = new DateTimeOffset(2026, 10, 20, 9, 0, 0, TimeSpan.Zero);
 
     private readonly ManualTime _time = new(Start);
+    private readonly string _data = Path.Combine(Path.GetTempPath(), "pilot-tower-" + Guid.NewGuid().ToString("N"));
     private readonly NodeState _state;
     private readonly List<CommandRequest> _said = [];
     private readonly Compactor _compactor;
@@ -28,7 +29,7 @@ public sealed class CompactorTests
     public CompactorTests()
     {
         _state = new NodeState(new InMemoryJournal(), _time);
-        var tower = new Watchtower(_state, _workers, Run, new NodeOptions("/tmp/n.sock", "/tmp/pilot2", MachinePrefix: "DU1"), _time);
+        var tower = new Watchtower(_state, _workers, Run, new NodeOptions("/tmp/n.sock", _data, MachinePrefix: "DU1"), _time);
         _compactor = new Compactor(_state, tower, Run, _time) { PersonMessages = _ => _persons, Ledger = _ledger };
         // Something to watch: a flight in the air with a leg flying.
         _state.PutFlight(new FlightRow
@@ -37,6 +38,14 @@ public sealed class CompactorTests
             State = FlightState.Flying, CreatedAt = Start,
         });
         _state.PutLeg(new LegRow { Flight = "TIA9", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, WorkerJob = "w0000001" });
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_data))
+        {
+            TestDirs.DeleteTree(_data);
+        }
     }
 
     private Task<CommandResult> Run(CommandRequest command, CancellationToken cancellationToken)

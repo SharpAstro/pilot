@@ -18,7 +18,6 @@ public sealed class CardSummaryTests
         { LegCommander.MergeFailed, "flight/PIL355" },
         { "leg-failed", "flight/PIL355/redo" },
         { "pr-checks-failed", "flight/PIL355" },
-        { "pr-conflicts", "flight/PIL355" },
         { LegWatch.Stopped, "flight/PIL355/redo" },
         { LegWatch.Idle, "flight/PIL355/redo" },
         { LegWatch.OverBudget, "flight/PIL355/redo" },
@@ -167,7 +166,6 @@ public sealed class CardSummaryTests
 
     [Theory]
     [InlineData("pr-checks-failed")]
-    [InlineData("pr-conflicts")]
     public void ACardWithNoChoiceNamesNoRedoLegAndPromisesNoRebaseOrGoAround(string kind)
     {
         var summary = CardSummaries.For(kind, "flight/PIL355", "its PR", []);

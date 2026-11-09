@@ -59,7 +59,7 @@ public sealed class CiShapedCheckTests : IDisposable
 
     private string Plane => Path.Combine(_root, "plane");
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose() => TestDirs.DeleteTree(_root);
 
     private void WriteWorkflow(string yaml, string file = "dotnet.yml")
     {
@@ -162,7 +162,7 @@ public sealed class CiShapedCheckTests : IDisposable
 
         (await PlanLeg("dotnet test src/TianWen.Tests")).Error.ShouldNotBeNull().ShouldContain("dotnet.yml");
         _state.Legs("TIA1").ShouldBeEmpty();
-        (await PlanLeg("dotnet test src/TianWen.Tests -c Release")).Ok.ShouldBeTrue();
+        (await PlanLeg("dotnet test src/TianWen.Tests -c Release --filter A")).Ok.ShouldBeTrue();
     }
 
     [Fact]

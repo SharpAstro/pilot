@@ -98,14 +98,16 @@ public static partial class PilotCommand
         var review = tree.ReviewCommands();
         var (cards, answer, dismiss, ring, flag, handled) = tree.CardCommands();
         var (runCommand, jobsCommand, mergesCommand, spendCommand, decisionsCommand, jobShow, benchCommand) = tree.JobCommands();
-        var (say, sayAll, compact, note, sessionCommand, tell, watchtower, digest, archive) = tree.SessionCommands();
+        var (say, sayAll, compact, note, sessionCommand, tell, watchtower, digest, archive, order, orders) = tree.SessionCommands();
         var (update, nodeCommand, nodes, connectNode, grants, settings, logs) = tree.NodeCommands();
         var gui = tree.GuiCommands();
+        var chat = tree.ChatCommand();
+        var strays = tree.StraysCommand();
 
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { tree.socket, tree.node, tree.outputFormat },
-            Subcommands = { status, attachments, sessions, sessionCommand,reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, benchCommand, jobsCommand, mergesCommand, spendCommand, decisionsCommand, jobShow, tell, watchtower, digest, summary, summarise, reviewCost, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs, gui },
+            Subcommands = { status, attachments, sessions, sessionCommand,reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, order, orders, review, runCommand, benchCommand, jobsCommand, mergesCommand, spendCommand, decisionsCommand, jobShow, tell, chat, watchtower, digest, summary, summarise, reviewCost, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs, strays, gui },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host

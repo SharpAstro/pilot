@@ -209,7 +209,7 @@ if (options.Capture is { } capturePath)
     }
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
         jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)],
-        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, layers: options.Layers, night: options.Night, fold: options.Fold, spend: snapshot?.Spend);
+        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, layers: options.Layers, night: options.Night, fold: options.Fold, spend: snapshot?.Spend, summaries: snapshot?.Summaries);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;
@@ -233,7 +233,17 @@ if (gate is null)
 }
 
 var Title = remoteEndpoint is null ? "pilot v2 · sessions" : $"pilot v2 · {remoteEndpoint}";
-using var window = SdlVulkanWindow.Create(Title, 1280, 800);
+// Who the app is, for the taskbar grouping, the process name and a power-inhibit reason. The version is the GUI assembly's
+// informational version, read by reflection and passed whole with its "+<sha>" source-revision suffix (null lets SDL fill it
+// from the entry assembly). clickThroughOnFocus (true) and keepDisplayAwake
+// (false) are left at their defaults: the first click on an unfocused window presses what it lands on, and an idle GUI
+// lets the display sleep.
+var appVersion = typeof(GuiOptions).Assembly
+    .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+    .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+    .FirstOrDefault()?.InformationalVersion;
+using var window = SdlVulkanWindow.Create(Title, 1280, 800,
+    appMetadata: new SdlAppMetadata(Name: "pilot", Version: appVersion, Identifier: "com.sharpastro.pilot"));
 // The window's icon (the exe's is the ApplicationIcon): a missing file or one the decoder rejects leaves the platform's
 // default. The decoded array is adopted by the RgbaImage, not copied.
 var iconPath = Path.Combine(AppContext.BaseDirectory, "Resources", "pilot-256.png");
@@ -318,12 +328,14 @@ if (feed is not null)
 // The fleet beyond this window's node: every node heard on the LAN or granted to this user, watched on its own stream,
 // its rows merged into every page. Disposed in the shutdown drain with the feed, never by an await here (see the feed's note).
 var fleetWatch = new FleetWatch();
-// Each node streamed from is told when the Pull requests page is shown and when it is left, so its watch reads every minute only meanwhile.
+// Each node streamed from is told when the Pull requests page or Home is shown and when it is left, so its PR watch reads every
+// minute, and its machine sampler every 5 s, only meanwhile. The first page is shown with no switch, so it is said here.
 chrome.OnPageShown = page =>
 {
     feed?.SayPage(page);
     fleetWatch.SayPage(page);
 };
+chrome.OnPageShown(chrome.SaidPage);
 var fleetKnownAt = DateTimeOffset.MinValue;
 IReadOnlySet<string> granted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 bool CanCommand(string where) => string.Equals(where, remoteEndpoint, StringComparison.OrdinalIgnoreCase) || granted.Contains(where);
@@ -479,12 +491,18 @@ if (feed is not null && client is not null && clients is not null)
     async Task CardCommandAsync(string verb, CardRow card, string[] args, string action)
     {
         // One press of a card at a time, from the panel or the flight page: a second would clear the first's working state.
-        if (chrome.Cards.WorkingOn(card.Id) is not null)
+        if (chrome.Cards.WorkingOn(card) is not null)
         {
+            // A Dismiss not sent must not leave its card hidden: nothing would bring it back (PIL853).
+            if (verb == Verbs.Dismiss)
+            {
+                chrome.Cards.NoteNotSent(card);
+                loop.RequestRedraw();
+            }
             return;
         }
         // Said on the button at once, cleared when the node has answered, whatever it said.
-        chrome.Cards.NoteWorking(card.Id, action);
+        chrome.Cards.NoteWorking(card, action);
         loop.RequestRedraw();
         try
         {
@@ -492,26 +510,19 @@ if (feed is not null && client is not null && clients is not null)
         }
         finally
         {
-            chrome.Cards.NoteWorking(card.Id, null);
+            chrome.Cards.NoteWorking(card, null);
             loop.RequestRedraw();
         }
     }
     async Task SendCardCommandAsync(string verb, CardRow card, string[] args)
     {
-        // A card raised on another node is answered there.
-        if (clients.For(chrome.Cards.NodeOf(card)) is not { } to)
-        {
-            chrome.Cards.NoteRefused(card.Id, FleetClients.WatchOnly(chrome.Cards.NodeOf(card)));
-            Note($"pilot-gui: {verb} {card.Id}: {FleetClients.WatchOnly(chrome.Cards.NodeOf(card))}");
-            loop.RequestRedraw();
-            return;
-        }
-        var result = await to.SendAsync(DashboardCommands.CardRequest(verb, card, args, GuiSay.Who), cts.Token);
-        clients.NoteRefusal(chrome.Cards.NodeOf(card), result);
-        // A refusal is said on the card the button is on, never only here: a Merge pressed again and again on a PR GitHub
-        // would not merge showed nothing (SE1, 2026-10-24).
-        var refused = !result.Success ? result.Error : result.Response is { Ok: false } answer ? answer.Error : null;
-        chrome.Cards.NoteRefused(card.Id, refused);
+        // A card raised on another node is answered there. A refusal is said on the card the button is on, never only here: a Merge
+        // pressed again and again on a PR GitHub would not merge showed nothing (SE1, 2026-10-24). The helper does so for every
+        // outcome, which is what brings a refused Dismiss's card back (PIL853).
+        var node = chrome.Cards.NodeOf(card);
+        var to = clients.For(node);
+        var refused = await CardCommands.SendAsync(chrome.Cards, verb, card, args, GuiSay.Who, to is null ? null : to.SendAsync, FleetClients.WatchOnly(node),
+            cts.Token, result => clients.NoteRefusal(node, result));
         Note($"pilot-gui: {verb} {card.Id} ({card.Title}): {refused ?? "done"}");
         loop.RequestRedraw();
     }
@@ -521,7 +532,7 @@ if (feed is not null && client is not null && clients is not null)
         () => CardCommandAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)], $"card:{card.Id}:{number}"), $"answer {card.Id}");
     chrome.Cards.OnAnswerWords = (card, number, words) => tracker.Run(
         () => CardCommandAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture), words], $"card:{card.Id}:{number}"), $"answer {card.Id}");
-    chrome.Cards.OnDismiss = card => tracker.Run(() => CardCommandAsync(Verbs.Dismiss, card, [], $"card:{card.Id}:dismiss"), $"dismiss {card.Id}");
+    chrome.Cards.OnDismiss = card => tracker.Run(() => CardCommandAsync(Verbs.Dismiss, card, [], CardsView<VulkanContext>.DismissHit(card)), $"dismiss {card.Id}");
 
     // A page that draws text over text raises one for-you card on this window's node (the check's own once-per-page rule): through
     // the tracker, as a click's command goes, never on the render thread that found it.
@@ -588,6 +599,40 @@ if (feed is not null && client is not null && clients is not null)
         Note($"pilot-gui: tell card {card.Id}: {refused ?? "told"}");
         return refused;
     };
+    chrome.Chat.OnAnswerNow = async sendId =>
+    {
+        var refused = await ChatCommands.AnswerNowAsync(client, sendId, GuiSay.Who, cts.Token);
+        Note($"pilot-gui: answer now {sendId}: {refused ?? "cancelled the turn"}");
+        return refused;
+    };
+    chrome.Chat.OnAnswerNowOn = async (node, sendId) =>
+    {
+        if (clients.For(node) is not { } to)
+        {
+            return FleetClients.WatchOnly(node);
+        }
+        var refused = await ChatCommands.AnswerNowAsync(to, sendId, GuiSay.Who, cts.Token);
+        Note($"pilot-gui: answer now {sendId} on {node.Name}: {refused ?? "cancelled the turn"}");
+        return refused;
+    };
+    chrome.Chat.OnAnswerAsk = async (requestId, decision, words) =>
+    {
+        var refused = await ChatCommands.AnswerAskAsync(client, requestId, decision, words, GuiSay.Who, cts.Token);
+        Note($"pilot-gui: answer ask {requestId} ({decision}): {refused ?? "answered"}");
+        return refused;
+    };
+    chrome.Chat.OnAnswerAskOn = async (node, requestId, decision, words) =>
+    {
+        if (clients.For(node) is not { } to)
+        {
+            return FleetClients.WatchOnly(node);
+        }
+        var refused = await ChatCommands.AnswerAskAsync(to, requestId, decision, words, GuiSay.Who, cts.Token);
+        Note($"pilot-gui: answer ask {requestId} ({decision}) on {node.Name}: {refused ?? "answered"}");
+        return refused;
+    };
+    // The node says the chat changed as the watchtower's words stream: read the feed now, not at the page's next look.
+    feed.ChatChanged = chrome.Chat.Refresh;
     chrome.Chat.OnRestart = async () =>
     {
         var refused = await ChatCommands.RestartWatchtowerAsync(client, GuiSay.Who, cts.Token);
@@ -720,7 +765,7 @@ if (feed is not null && client is not null && clients is not null)
         return refused;
     };
     chrome.Flights.OnOpen = location => OpenAway(location, () => chrome.Flights.Say($"could not open {location}"));
-    // The Summary cards on Home and on a flight's page: Summarise is a verb on the node the summary is of, and the card shows
+    // The Summary cards on Home and on a flight's page: Refresh sends the Summarise verb to the node the summary is of, and the card shows
     // it running until the node answers. The row it then shows is the node's own, from the stream, never this answer's.
     chrome.Summaries.Track = (run, what) => tracker.Run(run, what);
     chrome.Summaries.Changed = loop.RequestRedraw;

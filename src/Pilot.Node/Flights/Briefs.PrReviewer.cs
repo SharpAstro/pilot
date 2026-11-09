@@ -27,6 +27,8 @@ public static partial class Briefs
         text.AppendLine("Do not edit, commit, push or merge anything, and post nothing to GitHub (no review, no comment): the controller");
         text.AppendLine("reads your verdict and posts it.");
         text.Append(BranchHistoryRule);
+        text.Append(NoSpinRule);
+        text.Append(CommandShapeRule);
         text.Append(NamingRule(machine, $"review-{review.Number}"));
         text.Append(LfsRule(review.Worktree, "worktree"));
         // As for a flight's review (20 Oct): one session's reading, very light on subagents; its depth follows #74 later.
@@ -64,6 +66,15 @@ public static partial class Briefs
         text.AppendLine("a question of design or direction (a choice for the author, not a defect to fix): such a finding goes to the");
         text.AppendLine("controller and starts no fixer. Write it on one line as `design: <the question> Option: <choice> => <what follows>`,");
         text.AppendLine("with 2 to 4 concrete options (each `Option: <choice> => <consequence in a line>`) and `Option*:` for the one you recommend.");
+        text.AppendLine("End each option with `misses: <the criteria it fails, or none>`. The criteria are the PR's issue acceptance criteria, the PR's");
+        text.AppendLine("description and the repo docs the PR touches (README, CLAUDE.md, PILOT.md, a doc the diff edits). Check each option against them");
+        text.AppendLine("before you write it: name the criterion it fails in words the author can look up (the AC, the sentence of the doc), never a");
+        text.AppendLine("vague \"worse\". The node takes the one option that misses none, records the decision and posts it on the PR, and rings the");
+        text.AppendLine("controller only when no option misses none, or when two or more miss none and differ in what the owner gets. So prefer the");
+        text.AppendLine("option that makes the code obey a documented rule over the one that rewords the rule, and write `misses: none` on no option");
+        text.AppendLine("when the question would change the criteria themselves (a different AC, a rewritten doc): that is the controller's to decide.");
+        text.AppendLine("Example: `design: Which ladder does the fallback follow? Option*: follow the documented ladder => the code changes, the doc stays");
+        text.AppendLine("misses: none Option: reword the doc to match the code => the ladder changes misses: the AC that the code follows the documented ladder`.");
         var own = login is { Length: > 0 } && string.Equals(login, review.Author, StringComparison.OrdinalIgnoreCase);
         if (own)
         {

@@ -30,8 +30,22 @@ namespace Pilot.Node.Flights;
 /// updated to a changed brief finds one still running on the old, and starts a fresh one in its place before telling it
 /// anything (#22). One whose start the node has no record of is taken as briefed by an older node.
 /// </para>
+/// <para>
+/// Why it ends about two minutes after each reply (PIL815, SE1: 49 starts in 24 h, each "watchtower start"): it is a
+/// <c>claude --bg</c> job (template bg, backend daemon), and Claude Code ends the process of such a job a minute or two after
+/// its turn reaches a terminal state. Its <c>state.json</c> then reads done or blocked with <c>lastTerminalAt</c> set (a
+/// blocked one has sometimes none), and the listing says "done (or blocked) with no process"; the session itself is whole and
+/// resumes with its conversation. So the watchtower ends after every reply by design, not by a crash. It used to be met with a
+/// fresh start on the next look whenever a flight was in the air and no card was untold to resume it with (<see cref="LookAsync"/>),
+/// each one a cold read of the brief. Now an ended row whose job record reads a finished turn (<see cref="Sessions.ClaudeJobRecord.TurnFinished"/>)
+/// with nothing untold is left ended: the next card resumes it in place while its cache is warm and a fresh one starts only
+/// when it is cold or past <see cref="ResumeBelow"/>, and a chat resumes it through the messenger. Such an end is no churn
+/// (<see cref="Health"/>). The session ledger still records it as Finished; only the row's <c>EndedBecause</c> text carries the
+/// by-design wording ("Claude Code ended the job after its turn finished"). One that ended with no finished turn (a crash, or no record)
+/// is started again as before.
+/// </para>
 /// </remarks>
-public sealed class Watchtower(
+public sealed partial class Watchtower(
     NodeState state, IWorkerLauncher launcher, Func<CommandRequest, CancellationToken, Task<CommandResult>> run, NodeOptions options, TimeProvider time) : BackgroundService
 {
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
@@ -113,6 +127,13 @@ public sealed class Watchtower(
     /// <summary>Where the fingerprint of the brief the running watchtower was started with is kept, in the node's data folder.</summary>
     public string BriefFile => Path.Combine(options.DataFolder, "watchtower-brief");
 
+    /// <summary>
+    /// Where the watchtower's rules are written when the node starts one; the brief names this path. In the watchtower's own folder, its
+    /// working folder, so its first read of them is inside it and needs no leave asked of the person (the stream session allows calls
+    /// inside that folder and asks for any outside it).
+    /// </summary>
+    public string RulesFile => Path.Combine(options.WatchtowerFolder, Briefs.WatchtowerRulesFileName);
+
     private readonly SemaphoreSlim _one = new(1, 1);
     private string? _briefed;
     private bool _briefedRead;
@@ -169,7 +190,19 @@ public sealed class Watchtower(
             // Kept in memory all the same; a restarted node then tells those cards once more.
         }
     }
-    private string? _job;
+    private string? _jobId;
+
+    // The one record of which row is the role's watchtower: set here, published on NodeState so the messenger reads the same one.
+    private string? _job
+    {
+        get => _jobId;
+        set
+        {
+            _jobId = value;
+            state.CurrentWatchtower = value;
+        }
+    }
+
     private DateTimeOffset? _startedAt;
     private DateTimeOffset _nextTry = DateTimeOffset.MinValue;
     private DateTimeOffset? _resumedAfter;
@@ -280,6 +313,15 @@ public sealed class Watchtower(
         var rows = state.Sessions().Where(IsWatchtower).ToList();
         if (rows.FirstOrDefault(r => r.Id == _job) is { } own)
         {
+            if (!Live(own) || _stopped.Contains(own.Id) || _replaced.Contains(own.Id))
+            {
+                // The record never points at an ended or ending session while another watchtower row of this node is live.
+                if (rows.Where(r => r.Id != own.Id && r.Kind == SessionKind.Background && Live(r) && !_stopped.Contains(r.Id) && !_replaced.Contains(r.Id))
+                        .OrderByDescending(r => r.StartedAt).FirstOrDefault() is { } live)
+                {
+                    return live;
+                }
+            }
             return own;
         }
         // The session the node started has vanished from the list: an older ended one is never adopted in its place (pilot #542,
@@ -291,9 +333,17 @@ public sealed class Watchtower(
     /// <summary>Where the watchtower sessions there have been are kept, in the node's data folder: a line each (<see cref="Generation"/>).</summary>
     public string SessionsFile => Path.Combine(options.DataFolder, "watchtower-sessions");
 
-    /// <summary>One watchtower the node has had: the row it ran as, its latest Claude session (a say resumes it under a new id that holds the history), when it began and why.</summary>
+    /// <summary>One watchtower the node has had: the row it ran as, its latest Claude session (a say resumes it under a new id that holds the history), when it began and why.
+    /// <c>AfterFinishedTurn</c>: whether its job record read a finished turn when it was first seen ended, which Claude Code does by design; null when not known.</summary>
     public sealed record Generation(string Job, string? SessionId, DateTimeOffset StartedAt, string? Why,
-        DateTimeOffset? EndedAt = null, DateTimeOffset? LastReplyAt = null, string? EndedBecause = null);
+        DateTimeOffset? EndedAt = null, DateTimeOffset? LastReplyAt = null, string? EndedBecause = null, bool? AfterFinishedTurn = null, bool Stream = false)
+    {
+        /// <summary>A compaction of a stream watchtower (<see cref="Compacted"/>) is a generation of its own, so the chat shows a divider, but no fresh start.</summary>
+        public bool IsCompaction => Why == Compacted;
+    }
+
+    /// <summary>The <see cref="Generation.Why"/> of a stream watchtower's compaction.</summary>
+    public const string Compacted = "compacted";
 
     private readonly Lock _generationsLock = new();
     private List<Generation>? _generations;
@@ -318,8 +368,10 @@ public sealed class Watchtower(
                     at = _generations.Count - 1;
                     changed = true;
                 }
-                else if (_generations[at].SessionId != row.SessionId)
+                else if (_generations[at].SessionId != row.SessionId && !_compactingRows.ContainsKey(row.Id) && !_generations.Any(g => g.IsCompaction && g.Job.StartsWith(row.Id + CompactionMark, StringComparison.Ordinal)))
                 {
+                    // (A stream watchtower's compactions are generations of their own, which keep the sessions after them: this one keeps its own,
+                    // and while a compaction is under way the new session id is the coming generation's, not this one's.)
                     _generations[at] = _generations[at] with { SessionId = row.SessionId };
                     changed = true;
                 }
@@ -327,12 +379,18 @@ public sealed class Watchtower(
                 if (row.State is SessionState.Ended or SessionState.Failed && known.EndedAt is null)
                 {
                     // Noted as the row is first seen ended: when it ended, when it last replied and why.
-                    _generations[at] = known with { EndedAt = time.GetUtcNow(), LastReplyAt = row.LastResponseAt, EndedBecause = row.EndedBecause };
+                    _generations[at] = known with { EndedAt = time.GetUtcNow(), LastReplyAt = row.LastResponseAt, EndedBecause = row.EndedBecause, AfterFinishedTurn = JobRecord(row.Id) is { TurnFinished: true } };
                     changed = true;
                 }
                 else if (known.EndedAt is not null && row.EndedBecause is { } because && because != known.EndedBecause)
                 {
                     _generations[at] = known with { EndedBecause = because };
+                    changed = true;
+                }
+                else if (known is { Stream: true, EndedAt: not null } && row.State is not (SessionState.Ended or SessionState.Failed))
+                {
+                    // A stream watchtower resumed after a crash is the same generation going on: its end is no longer one.
+                    _generations[at] = known with { EndedAt = null, EndedBecause = null };
                     changed = true;
                 }
             }
@@ -351,7 +409,7 @@ public sealed class Watchtower(
         {
             _generations ??= LoadGenerations();
             _generations.RemoveAll(g => g.Job == job);
-            _generations.Add(new Generation(job, null, time.GetUtcNow(), why));
+            _generations.Add(new Generation(job, null, time.GetUtcNow(), why, Stream: Streams is not null));
             _generations = [.. _generations.OrderBy(g => g.StartedAt)];
             SaveGenerations(_generations);
         }
@@ -368,7 +426,9 @@ public sealed class Watchtower(
                 if (parts.Length >= 3 && DateTimeOffset.TryParse(parts[2], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var at))
                 {
                     found.Add(new Generation(parts[0], parts[1].Length == 0 ? null : parts[1], at, parts.Length > 3 && parts[3].Length > 0 ? parts[3] : null,
-                        TimeAt(parts, 4), TimeAt(parts, 5), parts.Length > 6 && parts[6].Length > 0 ? parts[6] : null));
+                        TimeAt(parts, 4), TimeAt(parts, 5), parts.Length > 6 && parts[6].Length > 0 ? parts[6] : null,
+                        parts.Length > 7 && parts[7].Length > 0 ? parts[7] == "1" : null as bool?,
+                        Stream: parts.Length > 8 && parts[8] == "1"));
                 }
             }
         }
@@ -393,7 +453,7 @@ public sealed class Watchtower(
             Directory.CreateDirectory(options.DataFolder);
             File.WriteAllLines(SessionsFile, generations.Select(g =>
                 string.Join('\t', g.Job, g.SessionId ?? "", g.StartedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture), OneLine(g.Why),
-                Stamp(g.EndedAt), Stamp(g.LastReplyAt), OneLine(g.EndedBecause))));
+                Stamp(g.EndedAt), Stamp(g.LastReplyAt), OneLine(g.EndedBecause), g.AfterFinishedTurn is { } finished ? finished ? "1" : "0" : "", g.Stream ? "1" : "")));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -410,7 +470,11 @@ public sealed class Watchtower(
     /// <summary>How many that replied and ended in the last hour it takes before their lifetime is judged.</summary>
     public int MinEndedToJudge { get; set; } = 2;
 
-    /// <summary>How the watchtower is doing, from <see cref="Generations"/> and its row; null when the node keeps none.</summary>
+    /// <summary>
+    /// How the watchtower is doing, from <see cref="Generations"/> and its row; null when the node keeps none. Churn is fresh starts
+    /// per hour and ends with no finished turn: one Claude Code ended after its turn did so by design (PIL815) and is no churn, so it
+    /// counts toward no lifetime either.
+    /// </summary>
     public WatchtowerHealth? Health()
     {
         if (!options.Watchtower)
@@ -420,10 +484,11 @@ public sealed class Watchtower(
         var now = time.GetUtcNow();
         var all = Generations();
         var row = Current();
-        var lastHour = all.Count(g => now - g.StartedAt <= TimeSpan.FromHours(1));
-        var last24 = all.Count(g => now - g.StartedAt <= TimeSpan.FromHours(24));
+        // A compaction is the same watchtower going on, under a divider in the chat: no start, so no churn.
+        var lastHour = all.Count(g => !g.IsCompaction && now - g.StartedAt <= TimeSpan.FromHours(1));
+        var last24 = all.Count(g => !g.IsCompaction && now - g.StartedAt <= TimeSpan.FromHours(24));
         var lifetimes = all
-            .Where(g => g.EndedAt is { } end && now - end <= TimeSpan.FromHours(1) && g.LastReplyAt is not null)
+            .Where(g => g.EndedAt is { } end && now - end <= TimeSpan.FromHours(1) && g.LastReplyAt is not null && g.AfterFinishedTurn != true)
             .Select(g => g.EndedAt!.Value - g.LastReplyAt!.Value)
             .Order()
             .ToList();
@@ -646,6 +711,7 @@ public sealed class Watchtower(
             // Kept every look, so a row archived before anyone asked for the chat is still known by its session.
             Generations();
             KeepChurnCard(Health());
+            RingLongAsks(now);
             var watching = Keeping();
             NoteHeld();
             if (watching is not null || _watchingAt is null)
@@ -662,13 +728,21 @@ public sealed class Watchtower(
                     TellAllOpen();
                 }
             }
+            if (row is not null && Live(row) && _job is not null && row.Id != _job && !StartInFlight())
+            {
+                // The recorded row ended or is being stopped and another one is live: the role moves to the live one.
+                await Error.WriteLineAsync($"watchtower: the role moved to session {row.Id} from {_job}: the recorded one is no longer live");
+                _job = row.Id;
+                TellAllOpen();
+            }
             // Every look: a watchtower of this node but the current, renamed or not, is stopped.
             await StopOthersAsync(row?.Id, cancellationToken);
 
             if (watching is null)
             {
                 // Nothing to watch: none is started, and an idle one goes once it has been quiet long enough.
-                if (row is { State: SessionState.Idle } && now - _watchingAt >= QuietFor)
+                // A stream watchtower is never stopped for being quiet: it keeps its warm prompt cache, and idle it costs nothing (PIL855).
+                if (Streams is null && row is { State: SessionState.Idle } && now - _watchingAt >= QuietFor)
                 {
                     await StopQuietAsync(row, cancellationToken);
                 }
@@ -703,21 +777,30 @@ public sealed class Watchtower(
                         return;
                     }
                 }
+                if (Streams is not null && StreamToResume(row) is { } dead)
+                {
+                    // A stream watchtower that ended with nobody asking it to (a crash, or a node that went): its conversation goes on, on
+                    // --resume of the same session, never a fresh brief. One that dies at once is counted as a failed start (RetryAfter, ParkAfter).
+                    await ResumeAfterEndAsync(dead, watching, now, cancellationToken);
+                    return;
+                }
                 // One that ended (its turn over, or stopped when quiet) on the brief it has: with cards untold and its cache warm the
                 // say resumes it in place; otherwise a fresh one is started below, since something keeps it. That start costs a cold
                 // read of the brief (SE1 began 83 in a day on 2026-10-25 when sessions ended after each turn), so watch the start count
                 // in pilot status's send timings on a node like that.
-                if (row is { State: SessionState.Ended } && Briefed() == BriefFingerprint() && row.Id != _resumeRefused)
+                if (Streams is null && row is { State: SessionState.Ended } && Briefed() == BriefFingerprint() && row.Id != _resumeRefused)
                 {
                     // Past the check above, something keeps it (a flight in the air, or a connected UI), so one that is not live is
                     // started with no card to wait for: chatting never waits for a cold start (PIL584). With cards untold and its cache
-                    // warm, the say resumes it in place; otherwise a fresh one is started below.
+                    // warm, the say resumes it in place; otherwise a fresh one is started below, unless nothing is untold and its job
+                    // record reads a finished turn (ended by design, PIL815), which is left ended.
                     if (_wokeAt is { } woke && row.Id == _job && now - woke < ShowUpGrace)
                     {
                         // Resumed in place a moment ago: the listing may still show it ended, which is no reason to start a second.
                         return;
                     }
-                    if (Untold().Count > 0 && Warm(row, now))
+                    var untold = Untold().Count > 0;
+                    if (untold && Warm(row, now))
                     {
                         _job = row.Id;
                         _wokeAt = now;
@@ -749,6 +832,13 @@ public sealed class Watchtower(
                         }
                         return;
                     }
+                    if (!untold && JobRecord(row.Id) is { TurnFinished: true })
+                    {
+                        // Claude Code ended the job after its turn finished, which it does by design a minute or two after every reply
+                        // (PIL815). With nothing to tell it is left ended, not replaced: the next card resumes it in place while warm
+                        // and starts a fresh one when cold, and a chat resumes it through the messenger (PIL584).
+                        return;
+                    }
                 }
                 // Kept by the node by itself, so held while the 5-hour window is spent, and started by the next look once it has reset;
                 // a restart asked for (restart-watchtower, or the card's Try now) is a person's, and goes ahead.
@@ -776,7 +866,28 @@ public sealed class Watchtower(
                 }
                 return;
             }
-            if (row.State == SessionState.Idle && Models.Model(RoleModels.Watchtower) is { } setting && Sessions.SessionModelCheck.ModelDiffers(setting, row.Model) && now >= _nextTry)
+            if (Streams is not null && row.State == SessionState.Idle && now >= _nextTry && StreamSettingDrift(row) is { } drift)
+            {
+                // The brain's model or effort changed in Settings: at its next idle it restarts on the new ones, in the same conversation.
+                var change = $"the settings now say {drift.Model ?? "its model"}{(drift.Effort is null ? "" : " at " + drift.Effort)}, it ran on {row.Model}{(row.Effort is null ? "" : " at " + row.Effort)}";
+                if (!Gate.Hold("watchtower", Models.StartLimit, Models.WeekLimit, Waits, Verbs.WatchtowerTarget, "The watchtower waits to restart on its new model"))
+                {
+                    try
+                    {
+                        if (await RelaunchOnSettingAsync(row, change, cancellationToken))
+                        {
+                            await Error.WriteLineAsync($"watchtower: restarted the stream session {row.Id} on its new model and effort: {change}");
+                        }
+                    }
+                    catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+                    {
+                        _nextTry = now + RetryAfter;
+                        RaiseDown($"The watchtower could not be restarted on its new model: {LegCommander.OneLine(ex.Message)}", $"{ex.Message}; the node tries again in {RetryAfter.TotalMinutes:0} minutes");
+                    }
+                }
+                return;
+            }
+            if (Streams is null && row.State == SessionState.Idle && Models.Model(RoleModels.Watchtower) is { } setting && Sessions.SessionModelCheck.ModelDiffers(setting, row.Model) && now >= _nextTry)
             {
                 // Never mid-turn, and never by changing the model of the session: a fresh one on the setting.
                 await StartAsync($"it ran on {row.Model}, the setting says {setting}", cancellationToken, row);
@@ -791,14 +902,25 @@ public sealed class Watchtower(
     }
 
     /// <summary><c>restart-watchtower</c>: a fresh watchtower in place of the one running, if any.</summary>
-    public async Task<string?> RestartAsync(string why, CancellationToken cancellationToken)
+    public async Task<string?> RestartAsync(string why, CancellationToken cancellationToken) =>
+        (await RestartWithWayAsync(why, cancellationToken)).Error;
+
+    /// <summary>The words a restart that joined a start in progress says, instead of starting a second watchtower.</summary>
+    public const string JoinedWay = "joined the watchtower start already in progress; nothing new was started";
+
+    /// <summary><see cref="RestartAsync"/> with how it went: a restart asked while a start is in flight joins it (<see cref="JoinedWay"/>) and launches nothing.</summary>
+    public async Task<(string? Error, string? Way)> RestartWithWayAsync(string why, CancellationToken cancellationToken)
     {
         await _one.WaitAsync(cancellationToken);
         try
         {
+            if (StartInFlight())
+            {
+                return (null, JoinedWay);
+            }
             var row = Current();
             ClearFailures();
-            return await StartAsync(why, cancellationToken, row is not null && Live(row) ? row : null) ? null : "the watchtower did not start; its card says why";
+            return await StartAsync(why, cancellationToken, row is not null && Live(row) ? row : null) ? (null, null) : ("the watchtower did not start; its card says why", null);
         }
         finally
         {
@@ -862,6 +984,79 @@ public sealed class Watchtower(
         {
             return false;
         }
+        // Single flight across processes: an old and a new node overlapping an update must not both start one (#782). A lock held
+        // means a start is in progress, which this caller joins.
+        FileStream? gate = null;
+        try
+        {
+            Directory.CreateDirectory(options.DataFolder);
+            gate = new FileStream(StartLockFile, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1);
+        }
+        catch (IOException) when (File.Exists(StartLockFile))
+        {
+            await Error.WriteLineAsync("watchtower: a start is already in progress in another process, joined it");
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // No lock to be had (a folder that cannot be written): the in-process gate still holds.
+        }
+        try
+        {
+            if (JoinStartFromOtherProcess(replacing))
+            {
+                return true;
+            }
+            return await StartLockedAsync(why, cancellationToken, replacing);
+        }
+        finally
+        {
+            gate?.Dispose();
+        }
+    }
+
+    /// <summary>Held by the one start in progress, in the node's data folder (<see cref="StartAsync"/>).</summary>
+    public string StartLockFile => Path.Combine(options.DataFolder, "watchtower-start.lock");
+
+    /// <summary>
+    /// Whether a start is in flight: this node started one inside <see cref="ShowUpGrace"/> whose session has not been listed yet.
+    /// A second start in that window is the doubled watchtower of #782.
+    /// </summary>
+    private bool StartInFlight() =>
+        _startedAt is { } started && _job is { } job && time.GetUtcNow() - started is { } age && age >= TimeSpan.Zero && age < ShowUpGrace && state.Sessions().All(s => s.Id != job);
+
+    /// <summary>
+    /// Re-reads the generations file under the start lock: a start another process recorded inside <see cref="ShowUpGrace"/>, not yet
+    /// listed or still live, is adopted as this node's own instead of being doubled.
+    /// </summary>
+    private bool JoinStartFromOtherProcess(SessionRow? replacing)
+    {
+        var now = time.GetUtcNow();
+        lock (_generationsLock)
+        {
+            _generations ??= LoadGenerations();
+            var added = LoadGenerations().Where(d => _generations.All(g => g.Job != d.Job)).ToList();
+            if (added.Count > 0)
+            {
+                _generations = [.. _generations.Concat(added).OrderBy(g => g.StartedAt)];
+            }
+            // Any start inside the grace that is not this node's own current one, nor one it replaced, and has not ended: a start
+            // another process made (its record may have been read in by an earlier look, so not only the ones added just now).
+            // Only starts a node recorded (they carry a reason), not a row seen by name.
+            var recent = _generations.Where(g => g.Why is not null && now - g.StartedAt is { } age && age >= TimeSpan.Zero && age < ShowUpGrace && g.Job != _job && g.Job != replacing?.Id && !_replaced.Contains(g.Job) && g.EndedAt is null
+                && (state.Sessions().FirstOrDefault(s => s.Id == g.Job) is not { } row || Live(row))).OrderByDescending(g => g.StartedAt).FirstOrDefault();
+            if (recent is null)
+            {
+                return false;
+            }
+            _job = recent.Job;
+            _startedAt = recent.StartedAt;
+            return true;
+        }
+    }
+
+    private async Task<bool> StartLockedAsync(string why, CancellationToken cancellationToken, SessionRow? replacing)
+    {
         if (replacing is not null)
         {
             // Never taken as current again, ended or not. An idle one is ended now, through the node's end-session path (stop confirmed,
@@ -874,7 +1069,30 @@ public sealed class Watchtower(
             }
         }
 
+        // Every other live background watchtower the node still has is ended before the launch, not only the row passed as replacing and
+        // not only on a later look (StopOthersAsync): the start at the 'none was running' path passes no replacing, and an idle one left
+        // beside the fresh one is two watchtowers live under one name, so a say to that name is refused as ambiguous (#841). One mid-turn
+        // (Working) keeps the tell-then-grace path of StopOthersAsync once the fresh one has an id; it is marked replaced here all the same.
+        var endedBefore = new List<SessionRow>();
+        foreach (var other in state.Sessions()
+            .Where(r => r.Kind == SessionKind.Background && IsWatchtower(r) && Live(r) && r.Id != replacing?.Id && !_stopped.Contains(r.Id))
+            .OrderBy(r => r.StartedAt)
+            .ToList())
+        {
+            _replaced.Add(other.Id);
+            if (other.State != SessionState.Working && await EndOneAsync(other, $"replaced by a fresh watchtower: {why}", time.GetUtcNow(), cancellationToken))
+            {
+                endedBefore.Add(other);
+            }
+        }
+        if (endedBefore.Count > 0)
+        {
+            state.RaiseCard(CardBin.Handled, "watchtower-duplicate", Verbs.WatchtowerTarget,
+                $"Stopped {(endedBefore.Count == 1 ? "another watchtower" : $"{endedBefore.Count} other watchtowers")} (one per node): {string.Join(", ", endedBefore.Select(r => $"{r.Name} ({r.Id})"))}");
+        }
+
         var folder = options.WatchtowerFolder;
+        var attemptedAt = time.GetUtcNow();
         string fingerprint;
         HashSet<string> alreadyTold;
         try
@@ -885,16 +1103,38 @@ public sealed class Watchtower(
             {
                 alreadyTold = [.. Tells().Keys];
             }
-            var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower), options.Machine, alreadyTold, StaleSection.Read(state, time.GetUtcNow(), Models.Stale));
+            // The fixed rules are a file the brief points to, written fresh on every start so the file is the text the fingerprint covers (PIL855).
+            Directory.CreateDirectory(options.WatchtowerFolder);
+            File.WriteAllText(RulesFile, Briefs.WatchtowerRules(Name, Pilot, options.Machine, stream: Streams is not null));
+            var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower), options.Machine, alreadyTold, StaleSection.Read(state, time.GetUtcNow(), Models.Stale), state.StandingOrders(), Path.GetFullPath(RulesFile));
             fingerprint = BriefFingerprint();
-            _job = await launcher.StartAsync(new WorkerStart(Name, folder, null, brief, Model: Models.Model(RoleModels.Watchtower), Effort: Models.Effort(RoleModels.Watchtower), RemoteControl: true,
+            var start = new WorkerStart(Name, folder, null, brief, Model: Models.Model(RoleModels.Watchtower), Effort: Models.Effort(RoleModels.Watchtower),
+                // claude --help: --remote-control "starts an interactive session", so the stream session, a print-mode process, starts without it
+                // (Remote Control is its own item under pilot #857).
+                RemoteControl: Streams is null,
                 // A background session's AskUserQuestion blocks until someone answers it in claude agents, and a say to the chat is read only between tool calls: it asks in an ask block instead.
-                DisallowedTools: ["AskUserQuestion"],
-                Reason: replacing is null ? SessionStartReasons.WatchtowerStart : SessionStartReasons.WatchtowerRestart), cancellationToken);
+                // The stream watchtower keeps the tool: with --permission-prompt-tool stdio the question reaches the person's chat (PIL855).
+                DisallowedTools: Streams is null ? ["AskUserQuestion"] : null,
+                Reason: replacing is null ? SessionStartReasons.WatchtowerStart : SessionStartReasons.WatchtowerRestart);
+            // The stream session is the node's own process: its brief is its first message, and its row is published from the stream.
+            _job = Streams is not null ? await StartStreamAsync(start, why, cancellationToken) : await launcher.StartAsync(start, cancellationToken);
         }
         catch (Exception ex) when (ex is FlightException or IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
-            _nextTry = time.GetUtcNow() + RetryAfter;
+            // The launcher threw, but the session may have come up before it did: a live watchtower row begun since this attempt is
+            // adopted, never answered with a second start.
+            var attempted = time.GetUtcNow();
+            if (state.Sessions().Where(r => r.Kind == SessionKind.Background && IsWatchtower(r) && Live(r) && r.StartedAt >= attemptedAt && !_replaced.Contains(r.Id))
+                    .OrderByDescending(r => r.StartedAt).FirstOrDefault() is { } came)
+            {
+                _job = came.Id;
+                _startedAt = attempted;
+                RememberStart(came.Id, why);
+                RecordBrief(BriefFingerprint());
+                await Error.WriteLineAsync($"watchtower: the launcher failed ({ex.Message}) but session {came.Id} came up, adopted");
+                return true;
+            }
+            _nextTry = attempted + RetryAfter;
             _job = null;
             _startedAt = null;
             if (NoteFailure(ex.Message))
@@ -1125,7 +1365,9 @@ public sealed class Watchtower(
             $"Stopped the watchtower: no flight in the air and no UI connected for {QuietFor.TotalMinutes:0} minutes; a flight taking off or a UI connecting resumes it within the hour, else starts a fresh one");
     }
 
-    private string BriefFingerprint() => Briefs.WatchtowerFingerprint(Name, Pilot, Models.Model(RoleModels.Watchtower), options.Machine);
+    // A stream watchtower's model is not part of it: a changed model restarts the process on --resume at its next idle (RelaunchOnSettingAsync),
+    // in the same conversation, instead of ending it for a fresh generation on a new brief.
+    private string BriefFingerprint() => Briefs.WatchtowerFingerprint(Name, Pilot, Streams is null ? Models.Model(RoleModels.Watchtower) : null, options.Machine, stream: Streams is not null);
 
     /// <summary>The fingerprint of the brief the running watchtower was started with, or null when the node has no record of it.</summary>
     private string? Briefed()

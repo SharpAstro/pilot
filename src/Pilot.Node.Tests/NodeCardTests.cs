@@ -53,7 +53,7 @@ public sealed class NodeCardTests : IDisposable
     [Fact]
     public void ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage()
     {
-        foreach (var kind in new[] { "pr-checks-failed", "pr-conflicts", "not-landed" })
+        foreach (var kind in new[] { "pr-checks-failed", "not-landed" })
         {
             CardSummaries.For(kind, "flight/TIA1", "title", []).ShouldNotBeNull().ShouldNotContain("from the flight page");
         }

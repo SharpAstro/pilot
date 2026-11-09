@@ -38,6 +38,9 @@ internal sealed record NodeSummary
 
     public int Held { get; init; }
 
+    /// <summary>Flights on the owner's hold, counted in no other column (<see cref="FlightCounts"/>).</summary>
+    public int OnHold { get; init; }
+
     public int JobsRunning { get; init; }
 
     public int JobsQueued { get; init; }
@@ -117,7 +120,10 @@ internal sealed record FleetLine
     public string? Traffic { get; init; }
 
     /// <summary><see cref="Traffic"/> as the two lines the machine cell draws (the node's HTTP, then its git and gh children), each short enough for the column; empty without traffic.</summary>
-    public string[] TrafficLines => Traffic?.Split(" · ") ?? [];
+    public string[] TrafficLines => Commands is { } commands ? [.. Traffic?.Split(" · ") ?? [], commands] : Traffic?.Split(" · ") ?? [];
+
+    /// <summary>How slow the node's commands were over the last hour, the slowest verb's p95 (<c>commands p95 1.2 s</c>); null when none ran or the node does not say.</summary>
+    public string? Commands { get; init; }
 
     /// <summary>The node's watchtower in words (<see cref="Pilot.Commands.WatchtowerWords.Line"/>);<c>—</c> for a node not reached, null for one that keeps none.</summary>
     public string? Watchtower { get; init; }
@@ -186,8 +192,8 @@ internal sealed record FleetLine
     {
         var lastKnown = !summary.Connected && summary.Node is not null;
         var health = summary.Connected ? summary.Node?.Watchtower : null;
-        string Counted(int a, string aWord, int b, string bWord, string none) =>
-            a == 0 && b == 0 ? none : b == 0 ? $"{a} {aWord}" : a == 0 ? $"{b} {bWord}" : $"{a} {aWord} · {b} {bWord}";
+        string Counted(string none, params (int N, string Word)[] counts) =>
+            counts.Where(c => c.N > 0).Select(c => $"{c.N} {c.Word}").ToArray() is { Length: > 0 } parts ? string.Join(" · ", parts) : none;
         return new FleetLine
         {
             Where = where,
@@ -209,13 +215,14 @@ internal sealed record FleetLine
             WatchtowerStarts = health?.StartsLast24h ?? 0,
             WatchtowerSummary = health is { Churning: true, Summary.Length: > 0 } ? health.Summary : null,
             Traffic = (summary.Connected || lastKnown) && summary.Node?.Traffic is { } traffic ? TrafficWords(traffic) : null,
+            Commands = (summary.Connected || lastKnown) ? Pilot.Contracts.CommandTimingRow.Slowest(summary.Node?.CommandTimings) : null,
             Account = summary.Account ?? (summary.Connected || lastKnown ? "account unknown" : "—"),
             Usage = summary.Usage ?? "",
             // A node heard and quiet keeps its last words (dimmed, dated); one never heard has none, and its dashes say so.
             Sessions = !summary.Connected && !lastKnown ? "—" : summary.WaitingOnYou > 0 ? $"{summary.LiveSessions} live · {summary.WaitingOnYou} waiting on you" : $"{summary.LiveSessions} live",
             WaitingOnYou = summary.Connected ? summary.WaitingOnYou : 0,
-            Flights = !summary.Connected && !lastKnown ? "—" : Counted(summary.Flying, "flying", summary.Held, "held", "none in the air") + (summary.LegWait is { } wait ? $" · {wait}" : ""),
-            Jobs = !summary.Connected && !lastKnown ? "—" : Counted(summary.JobsRunning, "running", summary.JobsQueued, "queued", "none"),
+            Flights = !summary.Connected && !lastKnown ? "—" : Counted("none in the air", (summary.Flying, "flying"), (summary.Held, "held"), (summary.OnHold, "on hold")) + (summary.LegWait is { } wait ? $" · {wait}" : ""),
+            Jobs = !summary.Connected && !lastKnown ? "—" : Counted("none", (summary.JobsRunning, "running"), (summary.JobsQueued, "queued")),
             JobHolder = summary.Connected || lastKnown ? summary.JobHolder : null,
             JobFailing = summary.Connected || lastKnown ? summary.JobFailing : null,
             Rings = summary.Connected || lastKnown ? summary.Rings : 0,
@@ -555,7 +562,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     internal override Action<string>? SelectionCopy => CopyText;
 
-    internal override RectF32 SelectionViewport => _scroll.Viewport;
+    internal override RectF32 PageSelectionViewport => _scroll.Viewport;
 
     internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true };
 
@@ -603,7 +610,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             }
         }
         var page = Layout.Builder.VStack(Header(screen), Main(screen).Stretch()).Bg(Ground).Stretch();
-        page = WithSelection(page);
+        page = WithPageSelection(page);
         return About?.Over(page) ?? page;
     }
 
@@ -774,7 +781,8 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 Layout.Builder.Text(line.Machine, 15f, line.Connected ? Bright : Dim).Selectable().Whole(line.Machine).RowH(22f),
                 Layout.Builder.Text(where, 11f, Dim).Selectable().Whole(where).RowH(18f),
                 Layout.Builder.Text(line.TrafficLines is [var http, ..] ? http : "", 11f, Dim).Selectable().RowH(line.TrafficLines.Length > 0 ? 16f : 0f),
-                Layout.Builder.Text(line.TrafficLines is [_, var children, ..] ? children : "", 11f, Dim).Selectable().RowH(line.TrafficLines.Length > 1 ? 16f : 0f)),
+                Layout.Builder.Text(line.TrafficLines is [_, var children, ..] ? children : "", 11f, Dim).Selectable().RowH(line.TrafficLines.Length > 1 ? 16f : 0f),
+                Layout.Builder.Text(line.TrafficLines is [_, _, var commands, ..] ? commands : "", 11f, Dim).Selectable().RowH(line.TrafficLines.Length > 2 ? 16f : 0f)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.Account, 13f, line.LastKnown ? Dim : Body).Selectable().Whole(line.Account).RowH(22f),
                 line.Maintenance || line.AutopilotWord is not null || line.WatchtowerMark is not null

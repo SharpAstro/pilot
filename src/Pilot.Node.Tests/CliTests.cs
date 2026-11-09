@@ -213,7 +213,7 @@ public sealed class CliTests : IAsyncLifetime
         var flight = _node.State.Flights().Single();
         flight.Code.ShouldBe("TIA1611");
         await Ok(_root, "leg", "plan", "TIA1611", "gpu", "--goal", "Draw the planets on the GPU", "--done-when", "The capture shows them",
-            "--check", "dotnet test", "--budget", "4000000", "--item", "Write the shader", "--item", "Capture it");
+            "--check", "dotnet test --filter A", "--budget", "4000000", "--item", "Write the shader", "--item", "Capture it");
         await Ok(_root, "leg", "start", "TIA1611", "gpu");
         var worker = _node.Workers.Started.Single();
         worker.Brief.ShouldContain("check <step number>");
@@ -603,6 +603,17 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ChatNowReachesTheNodeAsChatNowAndItsRefusalSaysWhyNothingWasCancelled()
+    {
+        var now = await Pilot(_root, "chat", "now", "s1");
+        (now.Exit, now.Output.Trim()).ShouldBe((1, "refused: chat-now watchtower: nothing is running: the watchtower is idle, so there is no turn to cancel and a message sent to it is answered at once"));
+
+        var none = await Pilot(_root, "chat", "now");
+        none.Exit.ShouldNotBe(0);
+        _node.State.Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
     public void ACommandFromAClaudeSessionIsFromThatSessionByName()
     {
         var snapshot = new SnapshotEvent
@@ -726,6 +737,9 @@ public sealed class CliTests : IAsyncLifetime
     [Trait("Category", "Slow")]
     public async Task StatusWritesMarkdownForOutputFormatMarkdownAndPlainTextWhenNoHostCanRenderAuto()
     {
+        // A leg start that outlasts the node's 90 s reply deadline on a loaded machine is answered queued, and the leg is not flying yet for the
+        // check below: this test waits for the real answer.
+        _node.App.Services.GetRequiredService<NodeCommands>().ReplyDeadline = TimeSpan.FromMinutes(10);
         await Ok(Repo, "flight", "create", "1611", "Planets", "on", "the", "GPU");
         var flight = _node.State.Flights().Single();
         await Ok(_root, "leg", "plan", "TIA1611", "gpu", "--goal", "Draw the planets", "--done-when", "The capture shows them", "--item", "Write the shader", "--item", "Capture it");
@@ -770,6 +784,9 @@ public sealed class CliTests : IAsyncLifetime
     [Trait("Category", "Slow")]
     public async Task StatusHandsAutoAndRichToTheHostsRendererAndWritesPlainTextWhenItSettlesOnPlain()
     {
+        // The same flight create as the sibling test: on a loaded machine it can outlast the node's 90 s reply deadline and be answered queued,
+        // before the flight exists for the status below, so this test waits for the real answer too.
+        _node.App.Services.GetRequiredService<NodeCommands>().ReplyDeadline = TimeSpan.FromMinutes(10);
         await Ok(Repo, "flight", "create", "1611", "Planets", "on", "the", "GPU");
         var asked = new List<string>();
         async Task<string> Run(bool renders, params string[] args)

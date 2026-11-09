@@ -612,7 +612,7 @@ public sealed class SettingsPageTests
         Draw(chrome);
         await WaitAsync(() => chrome.Settings.Page is not null && chrome.Settings.Checks is not null);
         var (texts, buttons) = Look(chrome, renderer, now);
-        texts.ShouldNotContain("off…");
+        texts.ShouldNotContain("setting…");
         buttons.ShouldContain("settings:lan:off");
 
         var regions = Regions(chrome);
@@ -620,7 +620,7 @@ public sealed class SettingsPageTests
         // Pressed twice, it is sent once; the value is still the node's.
         Click(regions, "settings:lan:off");
         (texts, buttons) = Look(chrome, renderer, now);
-        texts.ShouldContain("off…");
+        texts.ShouldContain("setting…");
         buttons.ShouldNotContain("settings:lan:off");
         buttons.ShouldContain("settings:lan:on");
         chrome.Settings.Page!.Settings.Single(s => s.Key == "lan").Value.ShouldBe("on");
@@ -630,12 +630,77 @@ public sealed class SettingsPageTests
         reply.SetResult(new SettingsReply("refused: the node's command line gives lan, and wins", ReplyKind.Refused));
         await WaitAsync(() => chrome.Settings.Said!.StartsWith("refused", StringComparison.Ordinal));
         (texts, buttons) = Look(chrome, renderer, now);
-        texts.ShouldNotContain("off…");
+        texts.ShouldNotContain("setting…");
         texts.ShouldContain("off");
         buttons.ShouldContain("settings:lan:off");
         chrome.Settings.Page.Settings.Single(s => s.Key == "lan").Value.ShouldBe("on");
         chrome.Settings.Said.ShouldBe("refused: the node's command line gives lan, and wins");
         Volatile.Read(ref sends).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// The header's line is one line: a single value taken is named ("none" read as "default", as its pill says), and a list's value,
+    /// one entry a line, is never put in it raw (review of #828: "Repo roots set to a\nb\nc"); the node's own words are on one line.
+    /// </summary>
+    [Fact]
+    public void TheHeadersLineNamesASingleValueAndKeepsAListsOnOneLine()
+    {
+        var lan = Sample.Settings.Single(s => s.Key == "lan");
+        SettingsView<RgbaImage>.SaidOf(new SettingsReply("done", ReplyKind.Done, lan with { Value = "off" })).ShouldBe($"{lan.Label} set to off");
+        SettingsView<RgbaImage>.SaidOf(new SettingsReply("done", ReplyKind.Done, lan with { Value = "none" })).ShouldBe($"{lan.Label} set to default");
+
+        var roots = new SettingRow { Key = "repo-roots", Label = "Repo roots", Detail = "d", Value = "C:\\a\nC:\\b", Source = SettingSources.File, Many = true };
+        var said = SettingsView<RgbaImage>.SaidOf(new SettingsReply("repo-roots saved\nas two folders", ReplyKind.Done, roots));
+        said.ShouldBe("repo-roots saved as two folders");
+        said.ShouldNotContain("\n");
+
+        SettingsView<RgbaImage>.SaidOf(new SettingsReply("refused: no\nway", ReplyKind.Refused)).ShouldBe("refused: no way");
+    }
+
+    /// <summary>
+    /// A pressed choice reads "setting…" while the node works, the header says what is being set, and the outcome names the setting
+    /// and its value rather than a bare "done". With no answer (the node restarting for the change) the pill keeps saying "setting…"
+    /// until the read that shows the outcome is in.
+    /// </summary>
+    [Fact]
+    public async Task APressedChoiceSaysSettingUntilTheOutcomeIsKnownAndThenNamesIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 2000);
+        var chrome = Chrome(renderer);
+        var now = DateTimeOffset.UtcNow;
+        var reply = new TaskCompletionSource<SettingsReply>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reread = new TaskCompletionSource<SettingsPage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var loads = 0;
+        chrome.Settings.Presses.DoneFor = TimeSpan.Zero;
+        chrome.Settings.Load = _ => Interlocked.Increment(ref loads) == 1 ? Task.FromResult(Sample) : reread.Task;
+        chrome.Settings.LoadChecks = (_, _) => Task.FromResult(Measured(now, TimeSpan.FromSeconds(1)));
+        chrome.Settings.Send = (_, _, _) => reply.Task;
+        chrome.Show(PilotPage.Settings);
+
+        Draw(chrome);
+        await WaitAsync(() => chrome.Settings.Page is not null && chrome.Settings.Checks is not null);
+        var lan = Sample.Settings.Single(s => s.Key == "lan");
+
+        // Done with the row back: the line names the setting and its value.
+        Click(Regions(chrome), "settings:lan:off");
+        var (texts, _) = Look(chrome, renderer, now);
+        texts.ShouldContain(SettingsView<RgbaImage>.SettingWord + "…");
+        chrome.Settings.Said.ShouldBe($"setting {lan.Label} to off…");
+        reply.SetResult(new SettingsReply("done", ReplyKind.Done, lan with { Value = "off", Saved = "off" }));
+        await WaitAsync(() => chrome.Settings.Presses.PendingOf("settings:lan:off") is null);
+        chrome.Settings.Said.ShouldBe($"{lan.Label} set to off");
+
+        // No answer: still setting until the page is read again.
+        reply = new TaskCompletionSource<SettingsReply>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Click(Regions(chrome), "settings:lan:on");
+        reply.SetResult(new SettingsReply("no answer (closed); the node may be restarting", ReplyKind.NoAnswer));
+        await WaitAsync(() => Volatile.Read(ref loads) >= 2);
+        (texts, _) = Look(chrome, renderer, now);
+        texts.ShouldContain(SettingsView<RgbaImage>.SettingWord + "…");
+        reread.SetResult(Sample);
+        await WaitAsync(() => chrome.Settings.Presses.PendingOf("settings:lan:on") is null);
+        (texts, _) = Look(chrome, renderer, now);
+        texts.ShouldNotContain(SettingsView<RgbaImage>.SettingWord + "…");
     }
 
     /// <summary>Captures of the page narrow and wide, checks loading and loaded, with long lines, into the folder named by PILOT_TEST_CAPTURE_DIR (nothing without it).</summary>
@@ -869,6 +934,51 @@ public sealed class SettingsPageTests
         {
             sent.Single().ShouldBe(["worker-effort", "none"]);
         }
+    }
+
+    /// <summary>A picked repo's name is cut to a chip's room on the pill (never silently): the whole name is on hover.</summary>
+    [Fact]
+    public async Task APickedReposLongNameIsElidedOnItsPillAndTheWholeNameIsOnHover()
+    {
+        var (chrome, renderer, _) = await ListsAsync();
+        using var shot = renderer;
+        var now = DateTimeOffset.UtcNow;
+        var longName = Repos.Single(r => r.Name.StartsWith("a-repo-with-a-very-long-name", StringComparison.Ordinal)).Name;
+
+        Click(Regions(chrome), "settings:no-auto-merge-repos:choose");
+        Look(chrome, renderer, now);
+        Click(Regions(chrome), $"settings:no-auto-merge-repos:pick:{longName}");
+        var (texts, _) = Look(chrome, renderer, now);
+        texts.ShouldNotContain($"{longName} ▾");
+        texts.ShouldContain(t => t.EndsWith(" ▾", StringComparison.Ordinal) && t.Contains('…'));
+        Hovers(chrome, renderer, now).Tooltips.ShouldContain(longName);
+    }
+
+    /// <summary>The elide of a chip's text takes a logarithmic number of measures (not one per character cut), and cuts exactly as far as a linear walk would.</summary>
+    [Theory]
+    [InlineData(5f)]
+    [InlineData(120f)]
+    [InlineData(200f)]
+    [InlineData(10000f)]
+    public void ElideToFitMeasuresALogarithmicNumberOfTimesAndCutsAsFarAsALinearWalkWould(float room)
+    {
+        var text = new string('x', 90);
+        var measures = 0;
+        float Measure(string s, float size)
+        {
+            measures++;
+            return s.Length * size * 0.6f;
+        }
+        var fit = SettingsView<RgbaImage>.ElideToFit(text, room, Measure);
+        measures.ShouldBeLessThanOrEqualTo(8);
+        // The linear walk the binary search replaces.
+        var chars = Math.Min(text.Length, 44);
+        var linear = SettingsView<RgbaImage>.Elide(text, chars);
+        while (chars > 9 && linear.Length * 12f * 0.6f > room)
+        {
+            linear = SettingsView<RgbaImage>.Elide(text, --chars);
+        }
+        fit.ShouldBe(linear);
     }
 
     /// <summary>Captures of the list pickers narrow and wide, with long repo names and several chips, into PILOT_TEST_CAPTURE_DIR (nothing without it).</summary>

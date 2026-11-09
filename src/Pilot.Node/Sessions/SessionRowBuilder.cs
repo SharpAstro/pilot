@@ -45,6 +45,9 @@ public static class SessionStates
 /// <summary>A session's row from its parts. Pure: the same parts always make the same row.</summary>
 public static class SessionRowBuilder
 {
+    /// <summary>The start of <see cref="SessionRow.EndedBecause"/> for a background job Claude Code ended by design once its turn was over (PIL815).</summary>
+    public const string TurnFinishedEnd = "Claude Code ended the job after its turn finished";
+
     /// <param name="agent">The agents row.</param>
     /// <param name="transcripts">What its transcripts say.</param>
     /// <param name="record">Its session record, while its process lives.</param>
@@ -53,11 +56,13 @@ public static class SessionRowBuilder
     /// <param name="hook">The session's latest hook, which has the last word on a running session's state: it fired on
     /// the transition itself, where the listing is read every few seconds.</param>
     /// <param name="report">What the session reported of itself: applied only while its process lives and it is newer than the hook.</param>
-    public static SessionRow Build(ClaudeAgentRow agent, TranscriptFacts transcripts, SessionRecord? record, string? repo, SessionRoleInfo role, HookState? hook = null, SessionReport? report = null)
+    /// <param name="job">Claude Code's record of the job (its state.json): one whose turn finished and whose process is gone says it ended by design.</param>
+    public static SessionRow Build(ClaudeAgentRow agent, TranscriptFacts transcripts, SessionRecord? record, string? repo, SessionRoleInfo role, HookState? hook = null, SessionReport? report = null, ClaudeJobRecord? job = null)
     {
         var state = SessionStates.Map(agent.Status ?? record?.Status, agent.State, agent.Pid is not null);
         string? hookWaiting = null;
         DateTimeOffset? hookWaitingAt = null;
+        string? hookAsking = null;
         // A live process is never ended, whatever a hook said: a background session resumed in place sends its SessionEnd
         // after the resumed process is up, and that once left every watchtower the node told something as ended while it
         // ran on, so the node started another (eleven alive at once on DE1, 2026-10-23).
@@ -66,6 +71,7 @@ public static class SessionRowBuilder
             state = hooked;
             hookWaiting = hook.WaitingFor;
             hookWaitingAt = hooked == SessionState.Waiting ? hook.At : null;
+            hookAsking = hooked == SessionState.Waiting ? hook.Asking : null;
         }
         SessionReport? reported = null;
         // A blocked report is followed by the turn's own Stop (or an idle_prompt): those only say the turn ended, which is
@@ -76,6 +82,7 @@ public static class SessionRowBuilder
             && report.State is ReportBook.Idle or ReportBook.Working or ReportBook.Blocked)
         {
             reported = report;
+            hookAsking = null;
             switch (report.State)
             {
                 case ReportBook.Working:
@@ -96,10 +103,11 @@ public static class SessionRowBuilder
             }
         }
         var waiting = state == SessionState.Waiting;
-        var endedBecause = state is SessionState.Ended or SessionState.Failed ? EndedBecause(agent, state, hook) : null;
+        var endedBecause = state is SessionState.Ended or SessionState.Failed ? EndedBecause(agent, state, hook, job) : null;
         var pending = waiting ? transcripts.PendingTool : null;
         // A question is no call it asks leave to run: what it waits on (WaitingFor) is the question already.
-        var asking = pending is { Name: not "AskUserQuestion" } ? pending.Summary is { Length: > 0 } summary ? $"{pending.Name}: {summary}" : pending.Name : null;
+        // The PermissionRequest hook names the very call that asks; the transcript's last call with no result is the next best.
+        var asking = waiting ? hookAsking ?? (pending is null ? null : PermissionAsks.Asking(pending.Name, pending.Summary)) : null;
         // The transcript's record of an API stop, or the hook's; a later reply or turn clears both.
         var apiError = transcripts.Stop?.Error ?? (hook?.State is SessionState.Working ? null : hook?.ApiError);
         return new SessionRow
@@ -141,12 +149,19 @@ public static class SessionRowBuilder
         };
     }
 
-    /// <summary>Why a row the listing and hooks say ended did: its SessionEnd hook's word, else the listing's state with no process.</summary>
-    private static string? EndedBecause(ClaudeAgentRow agent, SessionState state, HookState? hook)
+    /// <summary>
+    /// Why a row the listing and hooks say ended did: its SessionEnd hook's word, else (for a background job whose record reads a
+    /// finished turn) that Claude Code ended it after the turn, which it does by design (PIL815), else the listing's state with no process.
+    /// </summary>
+    private static string? EndedBecause(ClaudeAgentRow agent, SessionState state, HookState? hook, ClaudeJobRecord? job)
     {
         if (hook is { State: SessionState.Ended } ended && agent.Pid is null)
         {
             return ended.EndReason is { Length: > 0 } reason ? $"session ended ({reason})" : "session ended";
+        }
+        if (agent.Pid is null && state == SessionState.Ended && job is { TurnFinished: true })
+        {
+            return $"{TurnFinishedEnd} ({job.State.ToLowerInvariant()})";
         }
         if (agent.Pid is null)
         {

@@ -85,6 +85,11 @@ internal sealed class FakeChecks : ICheckRunner
     /// <summary>Awaited as each run begins: a check that takes as long as the test says. Null answers at once.</summary>
     public Func<Task>? OnRun { get; set; }
 
+    /// <summary>What the node says about its own stopping, as a real runner reads it from its lifetime (pilot #819).</summary>
+    public bool Stopping { get; set; }
+
+    public bool NodeStopping => Stopping;
+
     public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null)
     {
         Runs.Add((command, cwd));
@@ -111,8 +116,11 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>The open issues, by number, with their titles.</summary>
     public Dictionary<int, string> Issues { get; } = [];
 
+    /// <summary>When set, IssuesAsync fails with it, as a gh that could not reach GitHub.</summary>
+    public string? OpenIssuesFail { get; set; }
+
     public Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken) =>
-        Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value, Labels = IssueLabels.TryGetValue(i.Key, out var labels) ? [.. labels] : [] })]);
+        OpenIssuesFail is { } why ? Task.FromException<IssueInfo[]>(new FlightException(why)) : Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value, Labels = IssueLabels.TryGetValue(i.Key, out var labels) ? [.. labels] : [] })]);
 
     /// <summary>Each repo's open PRs, by repo folder path; a repo with none listed has none.</summary>
     public Dictionary<string, PullRequestStatus[]> OpenPrs { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -631,6 +639,15 @@ internal sealed class FakeGitHub : IGitHub
         return 1;
     }
 
+    /// <summary>The failed run of a PR's own checks, or of its merge queue entry, by PR number and whether it is the queue's; none listed reads as none.</summary>
+    public Dictionary<(int Number, bool MergeGroup), FailedRun> FailedRuns { get; } = [];
+
+    /// <summary>When set, reading a failed run yields nothing, as a gh that could not read it.</summary>
+    public bool FailedRunFails { get; set; }
+
+    public Task<FailedRun?> FailedRunAsync(string repoPath, int number, bool mergeGroup, CancellationToken cancellationToken) =>
+        Task.FromResult(!FailedRunFails && FailedRuns.TryGetValue((number, mergeGroup), out var run) ? run : null);
+
     /// <summary>The workflow runs each commit has, by commit; a commit with none listed has none.</summary>
     public Dictionary<string, WorkflowRun[]> Runs { get; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -706,12 +723,16 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, DequeueAsync fails with it.</summary>
     public string? DequeueFails { get; set; }
 
+    /// <summary>Run as a dequeue is made, before it is recorded: what a test reads of the world at that moment (PIL836: whether the push came first).</summary>
+    public Action? OnDequeued { get; set; }
+
     public Task DequeueAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
         if (DequeueFails is { } why)
         {
             return Task.FromException(new FlightException(why));
         }
+        OnDequeued?.Invoke();
         Dequeued.Add(number);
         // The queue lets it go: the PR is not queued any more, and GitHub says it was removed by hand.
         if (Queue is { Queued: true } queued)
@@ -871,7 +892,13 @@ internal sealed class FakeGitHub : IGitHub
     public List<(int Number, string Body)> IssueComments { get; } = [];
 
     public Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult(IssueLabels.TryGetValue(number, out var labels) ? labels.ToArray() : []);
+        Task.FromResult(IssueLabelsReadFails is null && IssueLabels.TryGetValue(number, out var labels) ? labels.ToArray() : []);
+
+    /// <summary>When set, a label read that must tell failure from absence (<see cref="IGitHub.IssueLabelsOrThrowAsync"/>) fails with it, as gh exiting non-zero; the plain read answers none, as the real one does.</summary>
+    public string? IssueLabelsReadFails { get; set; }
+
+    public Task<string[]> IssueLabelsOrThrowAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        IssueLabelsReadFails is { } why ? Task.FromException<string[]>(new FlightException(why)) : IssueLabelsAsync(repoPath, number, cancellationToken);
 
     /// <summary>When set, adding or removing an issue label fails with it, as GitHub refusing it.</summary>
     public string? IssueLabelFails { get; set; }
@@ -1009,6 +1036,15 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>The conversation comments of PRs, by number, as PrCommentsAsync lists them; a comment made through CommentIssueAsync lands here too.</summary>
     public List<(int Number, PrComment Comment)> PrConversation { get; } = [];
 
+    /// <summary>Run as an issue's comments are read, before they are listed: what another command records while a gh call of the sweep is out.</summary>
+    public Action? OnIssueComments { get; set; }
+
+    public Task<IReadOnlyList<PrComment>> IssueCommentsAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        OnIssueComments?.Invoke();
+        return PrCommentsAsync(repoPath, number, cancellationToken);
+    }
+
     public Task<IReadOnlyList<PrComment>> PrCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<PrComment>>([.. PrConversation.Where(c => c.Number == number).Select(c => c.Comment)]);
 
@@ -1093,7 +1129,9 @@ public abstract class LegCommanderTestsBase : IDisposable
     private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2l-" + Guid.NewGuid().ToString("N")[..8]);
-    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    /// <summary>The state's journal, so a test can load what it holds into a fresh state as a restart does.</summary>
+    private protected readonly InMemoryJournal _journal = new();
+    private protected readonly NodeState _state;
     private protected readonly FakeWorkers _workers = new();
     private protected readonly FakeChecks _checks = new();
     private protected readonly FakeGitHub _github = new();
@@ -1102,7 +1140,21 @@ public abstract class LegCommanderTestsBase : IDisposable
     private protected readonly FlightCommander _flights;
     private protected readonly LegCommander _legs;
 
-    protected LegCommanderTestsBase()
+    /// <summary>The git every commander of the test runs: <see cref="FakeRepoGit"/> (a repo with no origin), or real git for a class that is about git itself. See <see cref="TestGit"/>.</summary>
+    private protected readonly IGit _git;
+
+    private readonly TestGit _testGit;
+
+    protected LegCommanderTestsBase(bool realGit = false)
+    {
+        _state = new NodeState(_journal, TimeProvider.System);
+        _git = _testGit = new TestGit(_root, realGit, MakeRealRepo, withOrigin: false);
+        _flights = new FlightCommander(_state, new Planes(_git), TimeProvider.System);
+        var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
+        _legs = new LegCommander(_state, _workers, _checks, _github, _git, new Planes(_git), _flights, options, _clock);
+    }
+
+    private void MakeRealRepo()
     {
         Directory.CreateDirectory(Repo);
         Git(Repo, "init", "-q", "-b", "main");
@@ -1111,34 +1163,45 @@ public abstract class LegCommanderTestsBase : IDisposable
         File.WriteAllText(Path.Combine(Repo, "Tianwen.slnx"), "<Solution />\n");
         Git(Repo, "add", ".");
         Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        var git = new GitCli();
-        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System);
-        var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
-        _legs = new LegCommander(_state, _workers, _checks, _github, git, new Planes(git), _flights, options, _clock);
     }
 
     private protected string Repo => Path.Combine(_root, "tianwen");
+
+    /// <summary>Runs this test on git itself, before it has used the repo: for a test of a class that otherwise checks what the node decides.</summary>
+    private protected void RealGit() => _testGit.UseReal();
+
+    /// <summary>The model this test runs on; null when it runs on real git.</summary>
+    private protected FakeRepoGit? RepoModel => _testGit.Fake;
 
     public void Dispose()
     {
         // A leg start that pulled a sibling has RepoWatch reading the repos in the background; let it finish before the folders go.
         _legs.SiblingSync?.WatchRefresh.Wait(TimeSpan.FromSeconds(30));
-        try
+        if (_testGit.IsReal)
         {
-            Git(Repo, "worktree", "prune");
+            try
+            {
+                Git(Repo, "worktree", "prune");
+            }
+            catch (InvalidOperationException)
+            {
+            }
         }
-        catch (InvalidOperationException)
-        {
-        }
+        _testGit.Release();
         foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
         TestDirs.DeleteTree(_root);
+        _testGit.Verify();
     }
 
     private protected static string Git(string cwd, params string[] args)
     {
+        if (TestGit.Answer(cwd, args) is { } answered)
+        {
+            return answered;
+        }
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
         {
@@ -1156,11 +1219,14 @@ public abstract class LegCommanderTestsBase : IDisposable
 
     private protected LegRow L(string name) => _state.Legs("TIA1").Single(l => l.Name == name);
 
+    /// <summary>The parser leg's check as <see cref="FlightWithTwoLegs"/> plans it: its filter widened to the invariant guards.</summary>
+    private protected const string PlannedCheck = "dotnet test --filter '(A)|Category=Invariant'";
+
     private protected async Task<FlightRow> FlightWithTwoLegs()
     {
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Parse the ephemeris", "done-when=The parser tests pass",
-            "check=dotnet test", "budget=4_000_000", "model=sonnet", "item=Write the parser", "item=Test it")).Ok.ShouldBeTrue();
+            "check=dotnet test --filter A", "budget=4_000_000", "model=sonnet", "item=Write the parser", "item=Test it")).Ok.ShouldBeTrue();
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=render", "goal=Draw the planets", "done-when=The capture shows them")).Ok.ShouldBeTrue();
         return _state.Flights().Single();
     }
@@ -1199,7 +1265,9 @@ public abstract class LegCommanderTestsBase : IDisposable
         var git = new GitCli();
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [_root]);
         var watch = new RepoWatch(_state, new RepoCatalog(_state, options), new Planes(git), _github, TimeProvider.System) { Parallelism = 1 };
-        _legs.SiblingSync = new RepoSync(git, new Planes(git), watch);
+        // The pull's reads share one budget (two minutes by default). Beside a saturated machine and the other classes' git starts this
+        // test took 2 m 40 s and once lost its pull to that budget, so the budget is loosened: what is under test is the outcome, not the clock.
+        _legs.SiblingSync = new RepoSync(git, new Planes(git), watch) { Timeout = TimeSpan.FromMinutes(10) };
         return watch;
     }
 
@@ -1241,13 +1309,11 @@ public abstract class LegCommanderTestsBase : IDisposable
     }
 
     /// <summary>git as on Windows with a process sitting in the worktree: the remove succeeds and the empty folder stays.</summary>
-    private protected sealed class FolderKeepingGit : IGit
+    private protected sealed class FolderKeepingGit(IGit inner) : IGit
     {
-        private readonly GitCli _git = new();
-
         public async Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
         {
-            var run = await _git.RunAsync(args, cwd, cancellationToken);
+            var run = await inner.RunAsync(args, cwd, cancellationToken);
             if (run.Ok && args is ["worktree", "remove", .., var worktree])
             {
                 Directory.CreateDirectory(worktree);
@@ -1266,7 +1332,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     public async Task AFlightMadeWithoutATitleTakesItsIssuesAndItsResultNamesTheCode()
     {
         _github.Issues[7] = "Moons of Jupiter";
-        var flights = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System, github: _github);
+        var flights = new FlightCommander(_state, new Planes(_git), TimeProvider.System, github: _github);
 
         var made = await flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["7"], Who = "tests" }, Ct);
 
@@ -1376,7 +1442,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         _state.Legs("TIA1").Select(l => (l.Name, l.Order)).ShouldBe([("parser", 1), ("render", 2)]);
         var parser = L("parser");
         parser.Checklist.Select(i => i.Text).ShouldBe(["Write the parser", "Test it"]);
-        (parser.Budget, parser.Model, parser.Check, parser.State).ShouldBe((4_000_000L, "sonnet", "dotnet test", LegState.Planned));
+        (parser.Budget, parser.Model, parser.Check, parser.State).ShouldBe((4_000_000L, "sonnet", PlannedCheck, LegState.Planned));
 
         // Planned again: replaced in its place.
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Parse it better", "done-when=The parser tests pass")).Ok.ShouldBeTrue();
@@ -1464,7 +1530,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         using (var journal = new FileJournal(folder))
         {
             var state = new NodeState(journal, TimeProvider.System);
-            var git = new GitCli();
+            var git = _git;
             var flights = new FlightCommander(state, new Planes(git), TimeProvider.System);
             var legs = new LegCommander(state, _workers, _checks, _github, git, new Planes(git), flights, new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1"), TimeProvider.System);
             (await flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
@@ -1486,6 +1552,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ALegStartedWithASiblingBehindItsOriginRaisesOneCardNamingItAndThePullAndStillStarts()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 3);
         await FlightWithTwoLegs();
 
@@ -1504,6 +1572,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ASiblingPulledByHandSinceItWasCountedBehindGivesNeitherAHandledLineNorACard()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 3);
         WithSiblingSync();
         var flight = await FlightWithTwoLegs();
@@ -1521,6 +1591,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task AfterALegStartPulledASiblingRepoWatchShowsItZeroBehind()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 3);
         var watch = WithSiblingSync();
         var flight = await FlightWithTwoLegs();
@@ -1538,6 +1610,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task AStaleSiblingWhoseOriginWentUnreachableAfterTheCountIsStillPulled()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 3);
         WithSiblingSync();
         var flight = await FlightWithTwoLegs();
@@ -1556,6 +1630,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ALegStartPullsAStaleCleanSiblingItselfAndRingsNobody()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 3);
         WithSiblingSync();
         await FlightWithTwoLegs();
@@ -1573,6 +1649,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ALegStartLeavesADirtySiblingAloneAndItsCardSaysWhy()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 2);
         File.WriteAllText(Path.Combine(_root, "DIR.Lib", "wip.txt"), "mine");
         Git(Path.Combine(_root, "DIR.Lib"), "add", "wip.txt");
@@ -1590,6 +1668,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ALegStartedWithItsSiblingsUpToDateRaisesNoCard()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 0);
         await FlightWithTwoLegs();
 
@@ -1613,7 +1693,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     public async Task ALegStartsWhenTheSiblingWatchCannotAsk()
     {
         await FlightWithTwoLegs();
-        var legs = new LegCommander(_state, _workers, _checks, _github, new GitCli(), new Planes(new GitCli()), _flights,
+        var legs = new LegCommander(_state, _workers, _checks, _github, _git, new Planes(_git), _flights,
             new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1"), TimeProvider.System)
         {
             Siblings = new SiblingWatch(new ThrowingGit(), TimeProvider.System),
@@ -1644,7 +1724,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         start.Brief.ShouldContain("Leave nothing behind in the plane: every change is committed before you finish");
         start.Brief.ShouldContain("1. [ ] Write the parser");
         start.Brief.ShouldContain("The parser tests pass");
-        start.Brief.ShouldContain("reruns `dotnet test`");
+        start.Brief.ShouldContain($"reruns `{PlannedCheck}`");
         start.Brief.ShouldContain(flight.Branch);
         // A leg fails only for what stops its Done-when (PIL277 failed a finished leg over a capture it could not attach).
         start.Brief.ShouldContain("Fail only for what stops the Done-when");
@@ -1683,7 +1763,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         await Leg(Verbs.Check, "flight/TIA1/parser", "2");
         _checks.Next = new CheckRun(1, "Failed: 2, Passed: 40");
         var failed = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "all good");
-        failed.Error.ShouldNotBeNull().ShouldContain("check `dotnet test` failed (1)");
+        failed.Error.ShouldNotBeNull().ShouldContain($"check `{PlannedCheck}` failed (1)");
         L("parser").State.ShouldBe(LegState.Flying);
         L("parser").Report.ShouldNotBeNull().ShouldContain("Failed: 2");
         Path.GetFullPath(_checks.Runs.Single().Cwd).ShouldBe(Path.GetFullPath(flight.Worktree));
@@ -1788,7 +1868,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         // The rerun is on the leg while it runs, so pilot status and the windows show it; the refusal says since when, where, and
         // that the worker ends its turn (pilot #487). The refused retry leaves the recording as the running finish made it.
         var recheck = L("parser").Recheck.ShouldNotBeNull();
-        (recheck.Check, recheck.Outcome).ShouldBe(("dotnet test", null));
+        (recheck.Check, recheck.Outcome).ShouldBe((PlannedCheck, null));
         var since = $"{recheck.Since.ToLocalTime():HH:mm}";
         FlightWaiting.LegState(L("parser")).ShouldBe($"rechecking since {since}");
         retry.Error.ShouldContain($"since {since} already");
@@ -1886,7 +1966,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         _checks.Next = new CheckRun(1, "Failed: 2, Passed: 40");
         var failed = await FinishWhileRunning(failing);
         failing.SetResult();
-        (await failed).Error.ShouldNotBeNull().ShouldContain("check `dotnet test` failed (1)");
+        (await failed).Error.ShouldNotBeNull().ShouldContain($"check `{PlannedCheck}` failed (1)");
         (L("parser").State, L("parser").Recheck).ShouldBe((LegState.Flying, null));
 
         // The leg changes meanwhile (sent round): the finish records nothing, and the recheck does not outlive it.
@@ -1939,7 +2019,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     {
         var result = await FailingFinishAsync(TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(50));
 
-        result.Error.ShouldNotBeNull().ShouldContain("check `dotnet test` failed (1)");
+        result.Error.ShouldNotBeNull().ShouldContain($"check `{PlannedCheck}` failed (1)");
         var recheck = L("parser").Recheck.ShouldNotBeNull();
         recheck.Outcome.ShouldNotBeNull().ShouldContain("failed (1)");
         recheck.Outcome.ShouldContain("Failed: 2, Passed: 40");
@@ -1963,7 +2043,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     {
         var result = await FailingFinishAsync(TimeSpan.FromMilliseconds(20), TimeSpan.FromMinutes(5));
 
-        result.Error.ShouldNotBeNull().ShouldContain("check `dotnet test` failed (1)");
+        result.Error.ShouldNotBeNull().ShouldContain($"check `{PlannedCheck}` failed (1)");
         (L("parser").State, L("parser").Recheck).ShouldBe((LegState.Flying, null));
     }
 
@@ -2026,7 +2106,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     public async Task AWorkerThatFinishedItsOwnLegIsStoppedAfterAGrace()
     {
         await FlightWithTwoLegs();
-        var legs = new LegCommander(_state, _workers, _checks, _github, new GitCli(), new Planes(new GitCli()), _flights,
+        var legs = new LegCommander(_state, _workers, _checks, _github, _git, new Planes(_git), _flights,
             new NodeOptions("/s", "/d", MachinePrefix: "DU1"), TimeProvider.System) { SelfFinishGrace = TimeSpan.FromMilliseconds(50) };
         Task<CommandResult> Run(string verb, string target, string who, params string[] args) =>
             legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct);
@@ -2035,9 +2115,9 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         (await Run(Verbs.FinishLeg, "flight/TIA1/parser", "du1-tia1-parser", "failed", "no ephemeris here")).Ok.ShouldBeTrue();
         var failed = _state.Cards(openOnly: true).ShouldHaveSingleItem();
         (failed.Bin, failed.Kind, failed.Subject, failed.Detail).ShouldBe((CardBin.Ring, "leg-failed", "flight/TIA1/parser", "no ephemeris here"));
-        failed.Title.ShouldBe("TIA1/parser stopped: no ephemeris here");
+        failed.Title.ShouldBe("TIA1/parser: no ephemeris here");
         failed.Title.ShouldNotContain("gave up");
-        failed.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Send parser round again to no ephemeris here", Verbs.GoAround), ("Accept parser as it stands, the failure kept in its report", Verbs.FinishLeg)]);
+        failed.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Send it round: a fresh worker fixes it and finishes", Verbs.GoAround), ("Accept as it is: the flight goes on, the failure kept in its report", Verbs.FinishLeg)]);
         failed.Choices.ShouldNotContain(c => c.Label.Contains("Mark done anyway"));
 
         _workers.Stopped.ShouldBeEmpty();
@@ -2119,7 +2199,9 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "late read");
         _github.Pr = new PullRequest(63, "OPEN", pushed, "https://github.com/x/tianwen/pull/63");
-        (await Leg(Verbs.Merge, "flight/TIA1", pushed[..8])).Error.ShouldBe("TIA1's plane holds 1 commit past #63's head: open the PR again (flight pr) to push it, and review what is new before it lands");
+        var unpushedRefusal = await Leg(Verbs.Merge, "flight/TIA1", pushed[..8]);
+        unpushedRefusal.Error.ShouldBe("TIA1's plane holds 1 commit past #63's head: open the PR again (flight pr) to push it, and review what is new before it lands");
+        unpushedRefusal.Refusal.ShouldBe(MergeRefusals.Unpushed);
         var tip = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
         _github.Pr = new PullRequest(63, "OPEN", tip, "https://github.com/x/tianwen/pull/63");
 
@@ -2216,7 +2298,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     {
         var flight = await FlightWithTwoLegs();
 
-        (await new Planes(new FolderKeepingGit()).RemoveAsync(Repo, flight.Worktree, Ct)).ShouldBeNull();
+        (await new Planes(new FolderKeepingGit(_git)).RemoveAsync(Repo, flight.Worktree, Ct)).ShouldBeNull();
 
         Directory.Exists(flight.Worktree).ShouldBeFalse();
     }
@@ -2225,6 +2307,8 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ACleanPlaneWithASubmoduleIsRemoved()
     {
+        // A submodule, and a plane whose git file went: what git does to a worktree.
+        RealGit();
         // git refuses "working trees containing submodules" without --force, and PDF439 did not land for it (SE1, 2026-10-29).
         var flight = await FlightWithTwoLegs();
         // Beside the repo, under the test's folder, so it goes with it.
@@ -2237,7 +2321,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         Git(flight.Worktree, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "lib/sub");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "The submodule");
 
-        (await new Planes(new GitCli()).RemoveAsync(Repo, flight.Worktree, Ct)).ShouldBeNull();
+        (await new Planes(_git).RemoveAsync(Repo, flight.Worktree, Ct)).ShouldBeNull();
 
         Directory.Exists(flight.Worktree).ShouldBeFalse();
     }
@@ -2248,7 +2332,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     {
         // TIA368 landed with its planner and an earlier reviewer idle in its plane: they held the folder and could still push.
         await FlightWithTwoLegs();
-        var flights = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System, workers: _workers);
+        var flights = new FlightCommander(_state, new Planes(_git), TimeProvider.System, workers: _workers);
         Session("aa000001", "du1-tia1-plan", SessionRole.Planner, "TIA1", SessionState.Idle);
         Session("aa000002", "du1-tia1-review", SessionRole.Reviewer, "TIA1", SessionState.Working);
         Session("aa000003", "du1-tia1-parser", SessionRole.Worker, "TIA1", SessionState.Ended);
@@ -2312,6 +2396,72 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct)).Ok.ShouldBeTrue();
     }
 
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task APlaneSquashMergedIntoMainLandsByContentEvenWhenMainEditedTheSameFileSince()
+    {
+        // PIL891: squash-merged as #929, then main's #935 changed a file the flight had touched; the plane's two commits are in main
+        // by content, though neither the ids nor that file match any more. Real git: the merge is line by line, as on the node.
+        RealGit();
+        BaseFile();
+        var flight = await FlightWithTwoLegs();
+        var origin = Path.Combine(_root, "origin.git");
+        Git(_root, "init", "-q", "--bare", origin);
+        Git(Repo, "remote", "add", "origin", origin);
+        Git(Repo, "push", "-q", "origin", "main");
+        File.WriteAllText(Path.Combine(flight.Worktree, "services.cs"), "a\nb\nswe\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "services 1");
+        File.WriteAllText(Path.Combine(flight.Worktree, "services.cs"), "a\nb\nsweep\n");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-a", "-m", "services 2");
+        Git(flight.Worktree, "push", "-q", "origin", "HEAD:" + flight.Branch);
+        // The squash merge, then another PR's edit at the file's top.
+        File.WriteAllText(Path.Combine(Repo, "services.cs"), "a\nb\nsweep\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "services (#929)");
+        File.WriteAllText(Path.Combine(Repo, "services.cs"), "reboot\na\nb\nsweep\n");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-a", "-m", "reboot (#935)");
+        Git(Repo, "push", "-q", "origin", "main");
+        Git(flight.Worktree, "fetch", "-q", "origin");
+
+        var landed = await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct);
+        landed.Error.ShouldBeNull();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task APlaneWithWorkMainLacksIsStillRefusedThoughMainEditedTheSameFile()
+    {
+        // The other side of the merge-tree rule: a line main does not hold keeps the refusal.
+        RealGit();
+        BaseFile();
+        var flight = await FlightWithTwoLegs();
+        var origin = Path.Combine(_root, "origin.git");
+        Git(_root, "init", "-q", "--bare", origin);
+        Git(Repo, "remote", "add", "origin", origin);
+        Git(Repo, "push", "-q", "origin", "main");
+        File.WriteAllText(Path.Combine(flight.Worktree, "services.cs"), "a\nb\nsweep\nnot merged\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "services");
+        Git(flight.Worktree, "push", "-q", "origin", "HEAD:" + flight.Branch);
+        File.WriteAllText(Path.Combine(Repo, "services.cs"), "reboot\na\nb\nsweep\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "services, part");
+        Git(Repo, "push", "-q", "origin", "main");
+        Git(flight.Worktree, "fetch", "-q", "origin");
+
+        var refused = await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct);
+        refused.Error.ShouldNotBeNull().ShouldContain("no passed review has read");
+    }
+
+    // services.cs as main has it where the flight's plane is cut: "a", "b".
+    private void BaseFile()
+    {
+        File.WriteAllText(Path.Combine(Repo, "services.cs"), "a\nb\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "services");
+    }
+
     private void Session(string id, string name, SessionRole role, string flight, SessionState state) => _state.PutSession(new SessionRow
     {
         Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = "/r/w", Role = role, Flight = flight,
@@ -2322,12 +2472,14 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task APlaneWhoseGitFileWentIsPrunableAndStillLands()
     {
+        // A submodule, and a plane whose git file went: what git does to a worktree.
+        RealGit();
         var flight = await FlightWithTwoLegs();
         // Listed by git, marked prunable: the folder's .git file is gone, as a half torn-down worktree leaves it.
         File.Delete(Path.Combine(flight.Worktree, ".git"));
         Git(Repo, "worktree", "list", "--porcelain").ShouldContain("prunable");
 
-        (await new Planes(new GitCli()).IsRegisteredAsync(Repo, flight.Worktree, Ct)).ShouldBeFalse();
+        (await new Planes(_git).IsRegisteredAsync(Repo, flight.Worktree, Ct)).ShouldBeFalse();
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct)).Ok.ShouldBeTrue();
     }
 

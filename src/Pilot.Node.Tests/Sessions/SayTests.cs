@@ -86,14 +86,21 @@ internal sealed class FakeSessionDelivery(FakeClaudeAgents agents) : ISessionDel
         return ResumesAs ?? Copy;
     }
 
-    public Task<string> RelayAsync(RelayRequest request, CancellationToken cancellationToken)
+    /// <summary>Run inside a relay, in the flow of the command that sent it: a test starts a process there, as the real delivery does.</summary>
+    public Func<Task>? DuringRelay { get; set; }
+
+    public async Task<string> RelayAsync(RelayRequest request, CancellationToken cancellationToken)
     {
         Record($"relay {request.Name}");
         lock (_calls)
         {
             Relays.Add(request);
         }
-        return RelayFailure is { } failure ? Task.FromException<string>(failure) : Task.FromResult(RelayRoute);
+        if (DuringRelay is { } during)
+        {
+            await during();
+        }
+        return RelayFailure is { } failure ? throw failure : RelayRoute;
     }
 
     private void Record(string call)
@@ -550,6 +557,55 @@ public sealed class SayTests : IDisposable
         _delivery.Calls.ShouldBeEmpty();
     }
 
+    private async Task TwoWorkingBackgroundNamesakesAsync()
+    {
+        // The same start time, so neither replaced the other: two live sessions that merely share a name.
+        _agents.Json = AgentRows.List(
+            AgentRows.Background(AgentRows.SessionB, "twin", "working", pid: 4343, status: "busy", cwd: Cwd),
+            AgentRows.Background(AgentRows.SessionC, "twin", "working", pid: 4444, status: "busy", cwd: Cwd));
+        await _tracker.PollAsync(Ct);
+    }
+
+    [Fact]
+    public async Task TheNodesOwnSayToOneOfTwoLiveNamesakesGoesBySessionIdAndIsNotRefused()
+    {
+        await TwoWorkingBackgroundNamesakesAsync();
+
+        var result = await _messenger.SayAsync(Say("c3d4e5f6", "the job ended") with { Who = Flights.LegWatch.Who }, Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        result.Way.ShouldBe(SayWays.Relayed);
+        var relay = _delivery.Relays.ShouldHaveSingleItem();
+        relay.DirectOnly.ShouldBeTrue();
+        relay.SessionId.ShouldBe(AgentRows.SessionC);
+    }
+
+    [Fact]
+    public async Task APersonsSayToTwoLiveBackgroundNamesakesIsStillRefused()
+    {
+        await TwoWorkingBackgroundNamesakesAsync();
+
+        var result = await _messenger.SayAsync(Say("c3d4e5f6", "which one"), Ct);
+
+        result.Ok.ShouldBeFalse();
+        result.Error.ShouldNotBeNull().ShouldContain("2 live sessions are named twin");
+        _delivery.Calls.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TheNodesOwnSayWhoseDirectRelayFailsIsRefusedAndNeverRelayedByName()
+    {
+        await TwoWorkingBackgroundNamesakesAsync();
+        _delivery.RelayFailure = new SessionDeliveryException($"twin ({AgentRows.SessionC}) is reached by its session id only, and that failed: no live process has its session record");
+
+        var result = await _messenger.SayAsync(Say("c3d4e5f6", "the job ended") with { Who = Flights.LegWatch.Who }, Ct);
+
+        result.Ok.ShouldBeFalse();
+        result.Error.ShouldNotBeNull().ShouldContain(AgentRows.SessionC);
+        _delivery.Relays.ShouldHaveSingleItem().DirectOnly.ShouldBeTrue();
+        _delivery.Calls.ShouldBe(["relay twin"]);
+    }
+
     [Fact]
     public async Task AFailedRelayIsTheSaysError()
     {
@@ -573,6 +629,25 @@ public sealed class SayTests : IDisposable
 
         _log.ToString().ShouldStartWith("say: who=tests from=session target=session/a1b2c3d4 way=relayed route=cli-relay (direct: its session record has no messagingSocketPath) delivered (");
         _log.ToString().ShouldContain(" ms)");
+    }
+
+    [Fact]
+    public async Task ASaysLogLineSplitsItsTimeIntoGateLookChooseAndDeliver()
+    {
+        // A 51 s say whose relay took 185 ms said only its total (DE1, 2026-11-07): the line says where the time went.
+        _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "pil5-say-int"));
+
+        await _messenger.SayAsync(Say("a1b2c3d4", "hello"), Ct);
+
+        _log.ToString().ShouldMatch(@"delivered \(\d+ ms: gate \d+ ms, look \d+ ms, choose \d+ ms, deliver \d+ ms\)");
+    }
+
+    [Fact]
+    public async Task ARefusedSaysLogLineNamesOnlyThePartsItReached()
+    {
+        await _messenger.SayAsync(Say("nobody", "hello"), Ct);
+
+        _log.ToString().ShouldMatch(@"refused: .* \(\d+ ms: gate \d+ ms, look \d+ ms\)");
     }
 
     [Fact]

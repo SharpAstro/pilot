@@ -45,6 +45,7 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(ReposChangedEvent), "reposChanged")]
 [JsonDerivedType(typeof(NodeChangedEvent), "nodeChanged")]
 [JsonDerivedType(typeof(DecisionEvent), "decision")]
+[JsonDerivedType(typeof(ChatChangedEvent), "chatChanged")]
 public abstract record NodeEvent
 {
     /// <summary>
@@ -264,6 +265,15 @@ public sealed record DecisionEvent : NodeEvent
     public required DecisionRow Decision { get; init; }
 }
 
+/// <summary>
+/// The watchtower's chat changed: partial words arrived, it started or ended a tool, a message was queued or taken, a turn ended. It
+/// carries nothing: a client asks for the chat feed (<see cref="NodeWire.ChatRoute"/>) when it sees one, so it need not poll. The node
+/// sends at most about ten a second while words stream, to the clients connected at the time only: it is not numbered (its
+/// <see cref="NodeEvent.Seq"/> is the last delta's), journalled or held for a client that reconnects, and a mirror takes it without
+/// moving its own number.
+/// </summary>
+public sealed record ChatChangedEvent : NodeEvent;
+
 /// <summary>A note on the node: the state the demo verb <c>note node</c> changes.</summary>
 public sealed record NodeNote
 {
@@ -273,6 +283,17 @@ public sealed record NodeNote
     public required string Who { get; init; }
 
     public required string Text { get; init; }
+
+    /// <summary>
+    /// Set on a standing order (<c>order node &lt;text&gt;</c>), as <c>o1</c>, <c>o2</c>: the id <c>order-done</c> retires it by. A
+    /// plain note has none. A later <see cref="NoteAddedEvent"/> with the same id replaces the order (that is how it is retired).
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? Id { get; init; }
+
+    /// <summary>When a standing order was retired; null while it stands.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? RetiredAt { get; init; }
 }
 
 /// <summary>A flight was created.</summary>

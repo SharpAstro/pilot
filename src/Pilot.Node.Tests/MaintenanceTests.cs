@@ -51,7 +51,7 @@ public sealed class MaintenanceTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private static string Git(string cwd, params string[] args)
@@ -176,6 +176,25 @@ public sealed class MaintenanceTests : IDisposable
 
         _state.Flights().Single(f => f.Code == "TIA1").State.ShouldBe(FlightState.Landed);
         _state.Flights().Single(f => f.Code == "TIA2").State.ShouldBe(FlightState.Flying);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFlightWhoseMaintenanceHandOffFailedLandsWithTheFailureAndItsCardGone()
+    {
+        // PIL909: maintenance tried to hand it off with no node reachable, then it merged and landed; the failure stayed on the row
+        // and Home drew a red band for a landed flight, with nothing to press.
+        (await Flight(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "1")).Ok.ShouldBeTrue();
+        _state.UpdateFlight("TIA1", f => f with { MoveFailure = "TIA1 could not move: no node of the fleet takes it" });
+        _state.RaiseCard(CardBin.Ring, LegCommander.MoveFailedKind, Verbs.FlightTarget("TIA1"), "TIA1 could not move");
+
+        (await Flight(Verbs.Land, Verbs.FlightTarget("TIA1"))).Ok.ShouldBeTrue();
+
+        var landed = _state.Flights().Single(f => f.Code == "TIA1");
+        landed.State.ShouldBe(FlightState.Landed);
+        landed.MoveFailure.ShouldBeNull();
+        landed.MoveUnknown.ShouldBeNull();
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.MoveFailedKind);
     }
 
     [Fact]

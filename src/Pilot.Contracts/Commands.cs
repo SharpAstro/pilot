@@ -97,7 +97,8 @@ public sealed record CommandResult
 
     /// <summary>
     /// Which way a verb that can go more than one way went, when it did: <c>say session</c> answers
-    /// <see cref="SayWays.Resumed"/> or <see cref="SayWays.Relayed"/>. Null for a verb that goes one way only.
+    /// <see cref="SayWays.Resumed"/> or <see cref="SayWays.Relayed"/>. Null for a verb that goes one way only. A refusal carries one
+    /// only when it was no verdict on the command, or to say how a push was refused (<see cref="RefusalWays"/>).
     /// </summary>
     public string? Way { get; init; }
 
@@ -140,6 +141,13 @@ public sealed record CommandResult
     /// <summary>Whether the node ran it as an assistant's your-only command because the autopilot is on (<see cref="CommandRequest.Autopilot"/>).</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Autopilot { get; init; }
+
+    /// <summary>
+    /// The class of a refused <c>merge</c> or <c>rerun-checks</c> (<see cref="MergeRefusal"/>), given where the refusal was made; null for
+    /// any other result. Node-internal: never on the wire.
+    /// </summary>
+    [JsonIgnore]
+    public MergeRefusal? Refusal { get; init; }
 
     /// <summary>The message the sender acted on (<see cref="CommandRequest.Why"/>), when it gave one.</summary>
     public string? Why { get; init; }
@@ -186,6 +194,21 @@ public static class Verbs
     /// <see cref="SessionRow.Id"/>. The result's <see cref="CommandResult.Way"/> says how it went.
     /// </summary>
     public const string Say = "say";
+
+    /// <summary>
+    /// <c>chat-now watchtower &lt;send id&gt;</c>: cancels the turn the watchtower is on and has the queued message with that send id
+    /// (<see cref="TranscriptEntry.SendId"/>, <see cref="ChatPage.QueuedIds"/>) answered next. Refused, with the reason, when nothing is
+    /// running or the send id is not queued.
+    /// </summary>
+    public const string ChatNow = "chat-now";
+
+    /// <summary>
+    /// <c>answer-ask watchtower &lt;request id&gt; allow|deny|answer [words]</c>: answers a permission prompt or a question the watchtower waits on
+    /// (<see cref="ChatPage.Asks"/>, PIL855): <c>allow</c> lets the tool run, <c>deny</c> refuses it with the words as the reason, and
+    /// <c>answer</c> takes the JSON object of a question's answers (question text to the chosen label; several labels of a multi-select
+    /// question joined by a comma). Answered once: a second answer to the same request is refused. The person's alone, from the chat's panel or the ask's card.
+    /// </summary>
+    public const string AnswerAsk = "answer-ask";
 
     /// <summary>
     /// <c>compact session/&lt;id&gt; [focus…]</c>: compacts an idle background session's conversation (Claude Code's
@@ -300,7 +323,7 @@ public static class Verbs
     public const string Check = "check";
 
     /// <summary>
-    /// <c>finish-leg flight/&lt;code&gt;/&lt;leg&gt; done|failed|accepted|verified [report…]</c>. Done only with every step ticked and its
+    /// <c>finish-leg flight/&lt;code&gt;/&lt;leg&gt; done|failed|retired|accepted|verified [report…]</c>. Retired ends a flying leg stopped on the controller's or the owner's word: done in the row with its report starting <c>retired:</c>, a Handled line and no card, and the flight goes on. Done only with every step ticked and its
     /// check, rerun by the node in the plane, passing. Accepted takes a failed leg's read as it is (the controller's, never
     /// its worker's or the watchtower's): the leg is done, its failure kept in the report, and the flight goes on. Verified
     /// (anyone's) finishes a failed leg only when its steps are ticked, its plane is clean and matches its pushed branch, and
@@ -432,6 +455,23 @@ public static class Verbs
     public const string Clear = "clear";
 
     /// <summary>
+    /// <c>hold flight/&lt;code&gt; [why…]</c>: the watchtower's word (or the person's) that it is working on a flight held in a holding
+    /// pattern. A hold nobody takes is released by the node after a short grace and the flight merges with its notes; a taken one
+    /// keeps the merge held until <see cref="Clear"/>, a push, or the holding bound rings.
+    /// </summary>
+    public const string Hold = "hold";
+
+    /// <summary>
+    /// <c>ground flight/&lt;code&gt; &lt;why…&gt;</c>: the owner's hold on a flight (#771); not <see cref="Hold"/>, the holding pattern's. While it stands the node starts nothing for the flight
+    /// and takes no outward step (no leg, worker, planner, reviewer, go-around, base merge, push, PR open or merge); an armed merge
+    /// is disarmed and a queued PR taken out of the merge queue. The person's alone: not the watchtower's, not a flight session's.
+    /// </summary>
+    public const string Ground = "ground";
+
+    /// <summary><c>unground flight/&lt;code&gt; [why…]</c>: releases the owner's hold (<see cref="Ground"/>); the flight takes its next due step.</summary>
+    public const string Unground = "unground";
+
+    /// <summary>
     /// <c>review flight/&lt;code&gt; pass|changes &lt;report…&gt;</c>: the reviewer's verdict. A pass offers the merge; changes
     /// ring with a go-around. The controller may pass a review that asked for changes ("ready anyway").
     /// </summary>
@@ -466,13 +506,27 @@ public static class Verbs
     /// <summary><c>extend-budget flight/&lt;code&gt;/&lt;leg&gt; &lt;tokens&gt;</c>: raises the leg's budget, in weighted tokens, to the new figure.</summary>
     public const string ExtendBudget = "extend-budget";
 
+    /// <summary>
+    /// <c>order node &lt;text&gt;</c>: keeps a standing order (a hold on a flight or repo, a scope rule) that every fresh watchtower
+    /// reads first in its brief; the result's <see cref="CommandResult.Made"/> is its id. Kept as a <see cref="NodeNote"/> with an id.
+    /// </summary>
+    public const string Order = "order";
+
+    /// <summary><c>order-done node &lt;id&gt;</c>: retires a standing order, so the next brief no longer lists it.</summary>
+    public const string OrderDone = "order-done";
+
+    /// <summary><c>orders node</c>: the live standing orders, one line each as <c>o1  text</c>, in the result's <see cref="CommandResult.Made"/>.</summary>
+    public const string Orders = "orders";
+
     /// <summary><c>digest node</c>: the digest now, as a For-you card, beside the ones at 08:00 and 18:00.</summary>
     public const string Digest = "digest";
 
     /// <summary>
-    /// <c>summarise node</c> or <c>summarise flight/&lt;code&gt;</c>: one Haiku call over what the node holds of the flights in play
-    /// (or of that one flight), kept as the scope's <see cref="SummaryRow"/> with its time, tokens and cost, on the feed for every
-    /// client. Never run by itself: a client asks. The result's <see cref="CommandResult.Made"/> is the summary's markdown.
+    /// <c>summarise node</c> or <c>summarise flight/&lt;code&gt;</c>: the summary of what the node holds of the flights in play
+    /// (or of that one flight), made at once by the watchtower, with the one-off Haiku call only as the fallback when the watchtower is
+    /// down, and kept as the scope's <see cref="SummaryRow"/> with its time, tokens and cost, on the feed for every client. The fleet's
+    /// summary also follows changes by itself through the watchtower while a client is attached; this verb is the ask that does not wait.
+    /// The result's <see cref="CommandResult.Made"/> is the summary's markdown.
     /// </summary>
     public const string Summarise = "summarise";
 
@@ -502,6 +556,13 @@ public static class Verbs
     /// or an update; jobs run detached, are not waited for, and the next node follows them again. The answer says how many carry on.
     /// </summary>
     public const string RestartNode = "restart-node";
+
+    /// <summary>
+    /// <c>reboot node &lt;request [why]|status|cancel|done&gt;</c> (#916): a reboot made ready. request puts the node in maintenance mode and
+    /// tells every live session it started to save its state to a file; status says how many are in; cancel drops the request; done
+    /// (after the reboot) leaves maintenance mode. The person's alone; the node never reboots the machine itself.
+    /// </summary>
+    public const string Reboot = "reboot";
 
     /// <summary>
     /// <c>set node &lt;key&gt; [value…]</c>: saves a setting in the node's settings file (no value, or <c>default</c>, takes
@@ -687,11 +748,20 @@ public static class Verbs
 
     /// <summary>
     /// <c>touches flight/&lt;code&gt; &lt;file…&gt;</c>: the planner's overlap check across nodes. Compares the files the flight's legs will
-    /// change with every other not-landed flight of the repo on this node and on each reachable peer (its pushed branch's changed files
-    /// against its base) and with every open PR, and answers a line per flight or PR: the shared files and fold, connect or parallel
-    /// (<c>unknown</c> for one whose branch is not pushed or whose node could not be reached). Reads only; changes nothing.
+    /// change with every other not-landed flight of the repo on this node and on each reachable peer (the files its plane changes against
+    /// its base, asked of its node with <see cref="FlightChanges"/>; its pushed branch's when that node is older) and with every open PR,
+    /// and answers a line per flight or PR: the shared files and fold, connect or parallel (<c>unknown</c> for one whose node did not
+    /// answer, or whose PR gh would not list). Reads only; changes nothing.
     /// </summary>
     public const string Touches = "touches";
+
+    /// <summary>
+    /// <c>flight-changes flight/&lt;code&gt;</c>: what a node's own flight changes against its base, read from the flight's plane itself
+    /// (committed, uncommitted and untracked files), so a peer's <see cref="Touches"/> sees a flight whose branch is not pushed. The answer's
+    /// <see cref="CommandResult.Made"/> is a line per file, <c>&lt;added plus removed lines&gt;&lt;TAB&gt;&lt;path&gt;</c>; a flight that has landed or
+    /// whose plane is gone is refused, saying why. Reads only and changes nothing, so a grant may send it.
+    /// </summary>
+    public const string FlightChanges = "flight-changes";
 
     /// <summary>
     /// <c>overlap flight/&lt;code&gt; &lt;other&gt; [file=&lt;path&gt;…] &lt;why…&gt;</c>: the planner found the flight to look like part of another
@@ -802,6 +872,10 @@ public static class Verbs
 
     public static string FlightTarget(string code) => FlightTargetPrefix + code;
 
+    /// <summary>The flight's code of a subject or target (<c>flight/&lt;code&gt;</c>); null for one that names no flight. The one reading of it.</summary>
+    public static string? FlightCodeOf(string subject) =>
+        subject.StartsWith(FlightTargetPrefix, StringComparison.Ordinal) ? subject[FlightTargetPrefix.Length..] : null;
+
     /// <summary>The target naming leg <paramref name="leg"/> of flight <paramref name="code"/>.</summary>
     public static string LegTarget(string code, string leg) => $"{FlightTargetPrefix}{code}/{leg}";
 
@@ -889,6 +963,28 @@ public static class MergeWays
     public const string InProgress = "in-progress";
 }
 
+/// <summary>
+/// The ways a refused command was refused (<see cref="CommandResult.Way"/>), where the refusal is no verdict on the command itself or
+/// says how a push was refused, so a caller acts on the way and never on the refusal's words.
+/// </summary>
+public static class RefusalWays
+{
+    /// <summary>Another command had calls out for the flight (merging its base, rerunning a check, pushing): asked again once it is free, it runs.</summary>
+    public const string Busy = "busy";
+
+    /// <summary>
+    /// A push GitHub refused as a protected branch (GH006) that the node could not clear: the PR was not queued, or it was taken out and
+    /// the branch stayed locked, or a ruleset protects it. Asked again unchanged, it is refused again (PIL836).
+    /// </summary>
+    public const string ProtectedBranch = "protected-branch";
+
+    /// <summary>A push that met the flight's PR merged meanwhile: the flight is marked merged under its work, and the commits go to a follow-up PR (PIL836).</summary>
+    public const string HandedOn = "handed-on";
+
+    /// <summary>Whether <paramref name="way"/> is one of these.</summary>
+    public static bool Is(string? way) => way is Busy or ProtectedBranch or HandedOn;
+}
+
 /// <summary>The ways an <c>edit-idea</c> went (<see cref="CommandResult.Way"/>).</summary>
 public static class IdeaEditWays
 {
@@ -940,6 +1036,12 @@ public static class SayWays
     /// any interactive session, is reached without stopping it.
     /// </summary>
     public const string Relayed = "relayed";
+
+    /// <summary>
+    /// The text was written to the standard input of the node's own long-lived stream session (the watchtower), at once, and queued
+    /// behind its turn when it was working: no resume and no intercom.
+    /// </summary>
+    public const string Streamed = "streamed";
 }
 
 /// <summary>

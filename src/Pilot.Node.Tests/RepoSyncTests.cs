@@ -20,7 +20,7 @@ public sealed class RepoSyncTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private string Clone(string name)

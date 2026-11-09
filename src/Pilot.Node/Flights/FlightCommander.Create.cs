@@ -47,7 +47,8 @@ public sealed partial class FlightCommander
 
     private void PlanOffReply(string code, string who, Func<string, string, CancellationToken, Task<CommandResult>> plan, CancellationToken cancellationToken)
     {
-        var task = Task.Run(async () =>
+        // Background work, not the command's: what it started to answer the person does not inherit the command's priority for its process starts (ProcessGate).
+        var task = ProcessGate.Run(async () =>
         {
             try
             {
@@ -64,7 +65,7 @@ public sealed partial class FlightCommander
             {
                 RaisePlanRefused(code, ex.Message);
             }
-        }, CancellationToken.None);
+        });
         _advancing[task] = true;
         _ = task.ContinueWith(t => _advancing.TryRemove(t, out _), TaskScheduler.Default);
     }
@@ -78,7 +79,7 @@ public sealed partial class FlightCommander
 
     private void AdvanceOffReply(string code, Func<string, CancellationToken, Task> advance, CancellationToken cancellationToken)
     {
-        var task = Task.Run(async () =>
+        var task = ProcessGate.Run(async () =>
         {
             try
             {
@@ -92,7 +93,7 @@ public sealed partial class FlightCommander
                 // The sweep takes the step again every minute; the flight is taken, so this is a card, not a failed receive.
                 state.RaiseCard(CardBin.Ring, LegCommander.NextStepKind, Verbs.FlightTarget(code), $"{code} came here, but its next step was refused: {LegCommander.OneLine(ex.Message)}", ex.Message);
             }
-        }, CancellationToken.None);
+        });
         _advancing[task] = true;
         _ = task.ContinueWith(t => _advancing.TryRemove(t, out _), TaskScheduler.Default);
     }

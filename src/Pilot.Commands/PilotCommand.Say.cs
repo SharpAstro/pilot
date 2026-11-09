@@ -9,8 +9,26 @@ public static partial class PilotCommand
 {
     private sealed partial class BuildContext
     {
+        /// <summary>
+        /// Makes <c>chat now &lt;send id&gt;</c> (PIL855): cancels the turn the watchtower is on so that the queued message with that send id
+        /// (the chat page's queued ids) is answered next. The node refuses it, saying why, when nothing runs or the send id is not queued.
+        /// </summary>
+        internal Command ChatCommand()
+        {
+            var sendId = Arg("send-id", "The send id of the queued message to answer now (the chat page's queued ids)");
+            var now = Action(new Command("now", "Cancel the watchtower's running turn and answer this queued message next") { Arguments = { sendId } },
+                (p, client, ct) => Send(client, Verbs.ChatNow, Verbs.WatchtowerTarget, [p.GetValue(sendId)!], who, ct));
+            // chat ask: answers a permission prompt or a question the watchtower waits on (the chat page's asks). The person's alone: the node refuses a session.
+            var askId = Arg("request-id", "The id of the ask to answer (the chat page's asks)");
+            var decision = Arg("decision", "allow, deny or answer");
+            var askWords = Words("words", "For deny: why. For answer: the JSON object of each question's text to its answer", required: false);
+            var ask = Action(new Command("ask", "Answer a permission prompt or a question the watchtower waits on: allow, deny [why] or answer <json>") { Arguments = { askId, decision, askWords } },
+                (p, client, ct) => Send(client, Verbs.AnswerAsk, Verbs.WatchtowerTarget, [p.GetValue(askId)!, p.GetValue(decision)!, .. Join(p, askWords) is { Length: > 0 } words ? [words] : Array.Empty<string>()], who, ct));
+            return new Command("chat", "The watchtower's chat") { Subcommands = { now, ask } };
+        }
+
         /// <summary>Makes the say, session end, say-all, compact, note, tell, watchtower, digest and archive: talking to and putting away sessions.</summary>
-        internal (Command, Command, Command, Command, Command, Command, Command, Command, Command) SessionCommands()
+        internal (Command, Command, Command, Command, Command, Command, Command, Command, Command, Command, Command) SessionCommands()
         {
             // say, note
             var session = Arg("session", "The session's row id");
@@ -133,6 +151,17 @@ public static partial class PilotCommand
             var note = Action(new Command("note", "Keep a note on the node, for every client") { Arguments = { noteText } },
                 (p, client, ct) => Send(client, Verbs.Note, Verbs.NodeTarget, [Join(p, noteText)], who, ct));
 
+            // order: a standing order the node keeps and every fresh watchtower reads first; orders lists them, order done retires one.
+            var orderText = Words("text", "The order: a hold on a flight or repo, a scope rule, anything that must outlast a session");
+            var orderDoneId = Arg("id", "The order's id (o1), from pilot orders");
+            var orderDone = Action(new Command("done", "Retire a standing order: the next watchtower brief no longer lists it") { Arguments = { orderDoneId } },
+                (p, client, ct) => Send(client, Verbs.OrderDone, Verbs.NodeTarget, [p.GetValue(orderDoneId)!], who, ct));
+            var order = Action(new Command("order", "Keep a standing order on the node, which every fresh watchtower reads first in its brief; 'order done <id>' retires one")
+                { Arguments = { orderText }, Subcommands = { orderDone } },
+                (p, client, ct) => Send(client, Verbs.Order, Verbs.NodeTarget, [Join(p, orderText)], who, ct));
+            var orders = Action(new Command("orders", "List the standing orders that stand now, with their ids"),
+                (_, client, ct) => Send(client, Verbs.Orders, Verbs.NodeTarget, [], who, ct));
+
             // the watchtower: tell it, restart it; and the cards it (or anyone) raises
             var tellText = Words("text", "What to tell it");
             var tellCard = new Option<string?>("--card") { Description = "A card's id (c12): tell the watchtower about that card, with its whole context ahead of your words" };
@@ -157,7 +186,7 @@ public static partial class PilotCommand
                         ? Send(client, Verbs.Archive, Verbs.SessionsTarget, p.GetValue(archiveUndo) ? ["undo"] : [], who, ct)
                         : throw new UsageException("archive takes a session's row id, or --ended"));
 
-            return (say, sayAll, compact, note, sessionCommand, tell, watchtower, digest, archive);
+            return (say, sayAll, compact, note, sessionCommand, tell, watchtower, digest, archive, order, orders);
         }
     }
 }

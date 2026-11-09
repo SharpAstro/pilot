@@ -66,7 +66,7 @@ public abstract class JobTestsBase : IDisposable
             {
                 File.SetAttributes(file, FileAttributes.Normal);
             }
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
         catch (IOException)
         {
@@ -283,15 +283,22 @@ public abstract class JobTestsBase : IDisposable
 
         public async Task<JobRow> UntilAsync(string id, Func<JobRow, bool> condition, CancellationToken cancellationToken)
         {
-            for (var i = 0; i < 400; i++)
+            // Bounded by the clock, not by a count of 50 ms waits: on a loaded machine each wait takes many times its length, so a
+            // count made the ceiling anything from 20 s to minutes (pilot #810, a check that failed after 1 m 47 s of them).
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            JobRow job;
+            while (!condition(job = Job(id)))
             {
-                if (Job(id) is var job && condition(job))
+                if (clock.Elapsed >= WaitCeiling)
                 {
-                    return job;
+                    // The row the wait ended on says why: a job that already ended (a timeout, a start that failed) reads very
+                    // differently from one that never left the queue.
+                    throw new TimeoutException($"job {id} never came to the state awaited within {WaitCeiling}: it is {job.State}"
+                        + $" (error: {job.Error ?? "none"}; step: {job.Step ?? "none"}; started {job.StartedAt:O}; ended {job.EndedAt?.ToString("O") ?? "never"}; told {job.Told})");
                 }
                 await Task.Delay(50, cancellationToken);
             }
-            throw new TimeoutException($"job {id} never came to the state awaited");
+            return job;
         }
 
         /// <summary>The job once it has ended and its owner has been told.</summary>
@@ -1317,6 +1324,33 @@ public sealed class JobTests2 : JobTestsBase
     }
 
     [Fact]
+    public void ATreesCpuIsReadFromOneTableReadAndAReusedParentPidAddsNoStranger()
+    {
+        // The job's shell (100) started a test host (101), which started a build node (102). 200 is an older process whose parent
+        // pid is 101's by reuse: it started before 101, so it is no child of the job (#932). One read, no handle on any process.
+        List<SystemProcess> table =
+        [
+            new(100, 4, "pwsh.exe", TimeSpan.FromSeconds(1), 0, Started: 1_000),
+            new(101, 100, "testhost.exe", TimeSpan.FromSeconds(30), 0, Started: 1_100),
+            new(102, 101, "dotnet.exe", TimeSpan.FromSeconds(5), 0, Started: 1_200),
+            new(200, 101, "explorer.exe", TimeSpan.FromHours(3), 0, Started: 10),
+            new(300, 4, "other.exe", TimeSpan.FromHours(1), 0, Started: 1_050),
+        ];
+        var reads = 0;
+        bool Read(List<SystemProcess> into)
+        {
+            reads++;
+            into.Clear();
+            into.AddRange(table);
+            return true;
+        }
+
+        ProcessTreeCpu.Of(100, new ProcessTreeCpu.Tally(), Read).ShouldBe(TimeSpan.FromSeconds(36));
+        reads.ShouldBe(1);
+        ProcessTreeCpu.Of(100, new ProcessTreeCpu.Tally(), _ => false).ShouldBeNull("a table that cannot be read says nothing");
+    }
+
+    [Fact]
     [Trait("Category", "Slow")]
     public async Task ARestartAskedForWhileAJobRunsLeavesItRunningForTheNextNodeToFollow()
     {
@@ -1475,6 +1509,74 @@ public sealed class JobTests2 : JobTestsBase
 
         (_state.Jobs().Single().State, _state.Jobs().Single().Error).ShouldBe((JobState.Failed, "ended while the node was down, no exit recorded"));
     }
+
+    // Pilot #810: a recovered job's owner is judged only once the tracker's first poll has listed the sessions (Ready).
+    private void PutDeadJob() => _state.PutJob(new JobRow
+    {
+        Id = "j1", Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = JobState.Running,
+        LogPath = Path.Combine(_root, "j1.log"), Timeout = JobRunner.DefaultTimeout, StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+    });
+
+    private JobRunner RunnerWaitingFor(Func<Task> ready, TimeSpan? budget = null) =>
+        new(_state, new NodeOptions(Path.Combine(_root, "n4.sock"), Path.Combine(_root, "data4")), TimeProvider.System)
+        {
+            Ready = ready,
+            ReadyBudget = budget ?? TimeSpan.FromSeconds(10),
+            Say = (command, _) =>
+            {
+                _said.Enqueue(command);
+                return Task.FromResult(_state.Complete(command, _refuse));
+            },
+        };
+
+    [Fact]
+    public async Task ADeadJobIsNotToldUntilTheTrackersFirstPollIsDone()
+    {
+        PutDeadJob();
+        var firstPoll = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runner = RunnerWaitingFor(() => firstPoll.Task);
+
+        var recovery = runner.RecoverAsync(Ct);
+        await Task.Delay(300, Ct);
+        // Ended from its missing exit file, as ever; but not told, nor judged, while the poll is out.
+        var waiting = _state.Jobs().Single();
+        (waiting.State, waiting.EndedAt is not null, waiting.Told, _said.Count).ShouldBe((JobState.Failed, true, false, 0));
+        recovery.IsCompleted.ShouldBeFalse();
+
+        firstPoll.SetResult();
+        await recovery.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        _state.Jobs().Single().Told.ShouldBeTrue();
+        _said.Single().Args[0].ShouldContain("Your job j1");
+    }
+
+    [Fact]
+    public async Task ADeadJobIsToldAfterTheBudgetWhenTheFirstPollNeverEnds()
+    {
+        PutDeadJob();
+        var runner = RunnerWaitingFor(() => new TaskCompletionSource().Task, TimeSpan.FromMilliseconds(200));
+
+        await runner.RecoverAsync(Ct).WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        _state.Jobs().Single().Told.ShouldBeTrue();
+        _said.Single().Args[0].ShouldContain("Your job j1");
+    }
+
+    [Fact]
+    public async Task ANodeThatStopsBeforeTheFirstPollLeavesTheDeadJobUntold()
+    {
+        PutDeadJob();
+        var runner = RunnerWaitingFor(() => new TaskCompletionSource().Task);
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+
+        var recovery = runner.RecoverAsync(stopping.Token);
+        await Task.Delay(100, Ct);
+        await stopping.CancelAsync();
+        await recovery.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        // Left for the next node's sweep, which tells it: nothing was said and the row is not marked told.
+        (_state.Jobs().Single().Told, _said.Count).ShouldBe((false, 0));
+    }
 }
 
 /// <summary>Part 3 of JobTests: the class is split so its tests run side by side, not one after another.</summary>
@@ -1585,61 +1687,30 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReattachedJobsTimeoutCountsFromItsStartNotFromTheRestart()
     {
+        // The first node enforces the timeout until it is stopped, so the test must see the job Running and stop that node inside
+        // the timeout. Under load the test's own waits run long (pilot #810: a check beside other flights' jobs saw a 3 s window
+        // pass before the test looked), so the window is a wide one; what the count proves is the gap between timeout and restart.
+        const int timeout = 6;
         var first = await Node.StartAsync(_root);
-        var id = first.Run(_root, Sleep(60), timeoutSeconds: 3).Made!;
-        await first.UntilAsync(id, j => j.State == JobState.Running, Ct);
+        var id = first.Run(_root, Sleep(60), timeoutSeconds: timeout).Made!;
+        var started = await first.UntilAsync(id, j => j.State == JobState.Running || j.EndedAt is not null, Ct);
+        (started.State, started.Error).ShouldBe((JobState.Running, null),
+            "the first node ended the job itself before the test could stop it: the machine was too slow for the timeout window");
         await first.StopAsync();
-        await Task.Delay(2000, Ct);
+        await Task.Delay(TimeSpan.FromSeconds(timeout / 2), Ct);
 
         var restarted = DateTimeOffset.UtcNow;
         using var second = await Node.StartAsync(_root);
         var job = await second.EndedAsync(id, Ct);
 
-        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 3s"));
-        // Counted from the start: it had about 1s left when the second node came up. A fresh 3s from the restart would end it no
-        // earlier than restarted + 3s, so ending before that proves the count. Both ends are the job's own row and the test's
-        // restart stamp, not how long the test took to get here.
-        job.EndedAt!.Value.ShouldBeLessThan(restarted + TimeSpan.FromSeconds(3));
-    }
-
-    [Fact]
-    public async Task APausedJobStaysFrozenAndPausedAcrossANodeRestartAndResumesAndCancelsByPid()
-    {
-        var flag = Path.Combine(_root, "go");
-        var first = await Node.StartAsync(_root);
-        var id = first.Run(_root, Busy(flag)).Made!;
-        await first.UntilAsync(id, j => j.State == JobState.Running, Ct);
-        first.Jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
-        var pid = first.Job(id).Pid!.Value;
-        var tree = TreeOf(pid);
-        await first.StopAsync();
-        // PIL746: settle, then a quiet window of the same processes must show no CPU, instead of fixed delays and a 100 ms bound.
-        await WaitSettled(tree, () => 0);
-        var cpu = Cpu(tree);
-        (await SampleWindow(tree, () => 0, TimeSpan.FromMilliseconds(500))).Cpu.ShouldBe(TimeSpan.Zero);
-
-        using var second = await Node.StartAsync(_root);
-        var found = second.Job(id);
-        (found.State, found.PausedAt is not null).ShouldBe((JobState.Running, true));
-        second.Jobs.Pause(Verb(Verbs.PauseJob, id)).Error.ShouldBe($"job {id} is already paused");
-        second.Jobs.Resume(Verb(Verbs.ResumeJob, id)).Ok.ShouldBeTrue();
-        (second.Job(id).PausedAt, second.Job(id).PausedFor > TimeSpan.Zero).ShouldBe((null, true));
-        await WaitForSample(() =>
-        {
-            var used = CpuSince(tree, cpu);
-            return (used > TimeSpan.Zero, $"cpu +{used.TotalMilliseconds:0} ms");
-        }, "the resumed tree using CPU again");
-
-        second.Jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
-        second.Cancel(id).Ok.ShouldBeTrue();
-        (await second.EndedAsync(id, Ct)).State.ShouldBe(JobState.Cancelled);
-        for (var i = 0; i < 100 && tree.Any(IsAlive); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
-        tree.Where(IsAlive).ShouldBeEmpty();
+        (job.State, job.Error).ShouldBe((JobState.Failed, $"stopped after its timeout of {timeout}s"));
+        // Counted from the start: it had about half the timeout left when the second node came up. A fresh timeout from the restart
+        // would end it no earlier than restarted + timeout, so ending before that proves the count. Both ends are the job's own row
+        // and the test's restart stamp, not how long the test took to get here.
+        job.EndedAt!.Value.ShouldBeLessThan(restarted + TimeSpan.FromSeconds(timeout));
     }
 
     [Fact]
@@ -1713,7 +1784,13 @@ public sealed class JobTests3 : JobTestsBase
         await watch.LookAsync(Ct);
         said.ShouldBeEmpty();
 
+        // The job's end resumes the worker (#893): its turn comes first, so the idle clock starts again at the end, not at its last response.
         state.PutJob(state.Jobs().Single() with { State = JobState.Succeeded, EndedAt = time.GetUtcNow() });
+        await watch.LookAsync(Ct);
+        said.ShouldBeEmpty();
+
+        // Still idle a grace after the job ended: nudged.
+        time.Advance(watch.IdleGrace);
         await watch.LookAsync(Ct);
         said.ShouldHaveSingleItem().Args[0].ShouldContain("is not finished yet");
     }
@@ -1728,158 +1805,6 @@ public sealed class JobTests3 : JobTestsBase
         span.ShouldBe(TimeSpan.FromSeconds(seconds));
         PilotCommand.TryDuration("2d", out _).ShouldBeFalse();
     }
-    // A busy tree: the job's shell runs a child that burns CPU and prints a counter until the flag file exists, then exits 7.
-    private string Busy(string flag)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            var ps1 = Path.Combine(_root, "busy.ps1");
-            File.WriteAllText(ps1, "param($flag)\n$i = 0\nwhile (-not (Test-Path $flag)) { $i++; if ($i % 200 -eq 0) { Write-Output $i } }\nexit 7\n");
-            return $"pwsh -NoProfile -File '{ps1}' '{flag}'; exit $LASTEXITCODE";
-        }
-        var sh = Path.Combine(_root, "busy.sh");
-        // The loop runs in a background subshell the script waits for: dash runs `sh -c 'sh script'` as the script itself, so
-        // without a child the job's tree would be one process on Ubuntu.
-        File.WriteAllText(sh, "(i=0\nwhile [ ! -f \"$1\" ]; do i=$((i+1)); if [ $((i % 200)) -eq 0 ]; then echo $i; fi; done) &\nwait $!\nexit 7\n");
-        return $"sh '{sh}' '{flag}'";
-    }
-
-    [Fact]
-    [Trait("Category", "Slow")]
-    public async Task APausedJobsTreeStopsWorkingAndWritingAndResumesToItsRealExitCode()
-    {
-        var flag = Path.Combine(_root, "go");
-        var id = Run(Busy(flag)).Made!;
-        var log = await Running(id);
-
-        _jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
-        var paused = _state.Jobs().Single(j => j.Id == id);
-        (paused.State, paused.PausedAt is not null).ShouldBe((JobState.Running, true));
-        // PIL537 (run 41144008663, windows: CpuSince 750 ms against < 100 ms while paused): half a core ran through the paused
-        // window, so a process of the tree was not frozen, one started between the node's read of the tree and its suspend.
-        // Pause now returns once a pass of the tree froze nothing new, so the sample is taken at once, on that event, not after
-        // a fixed delay that let a straggler's start-up CPU look like work.
-        var tree = TreeOf(_jobs.PidOf(id)!.Value);
-        // PIL746: wait until the tree settled, then one more window must show no CPU and no log growth at all (a frozen process
-        // accrues exactly none); the window's length no longer matters, so load cannot move the verdict.
-        await WaitSettled(tree, () => LogLength(log));
-        var (cpu, length) = (Cpu(tree), LogLength(log));
-        var quiet = await SampleWindow(tree, () => LogLength(log), TimeSpan.FromMilliseconds(500));
-        quiet.Cpu.ShouldBe(TimeSpan.Zero);
-        (quiet.Before, quiet.After).ShouldBe((length, length));
-
-        _jobs.Resume(Verb(Verbs.ResumeJob, id)).Ok.ShouldBeTrue();
-        var resumed = _state.Jobs().Single(j => j.Id == id);
-        (resumed.PausedAt, resumed.PausedFor > TimeSpan.Zero).ShouldBe((null, true));
-        // Resumed: wait until the same tree has used CPU since the paused sample and the log grew, under the ceiling.
-        await WaitForSample(() =>
-        {
-            var (used, now) = (CpuSince(tree, cpu), LogLength(log));
-            return (used > TimeSpan.Zero && now > length, $"cpu +{used.TotalMilliseconds:0} ms, log {length} -> {now}");
-        }, "the resumed tree working and writing again");
-
-        File.WriteAllText(flag, "");
-        var job = await Ended(id);
-        (job.State, job.ExitCode).ShouldBe((JobState.Failed, 7));
-    }
-
-    [Fact]
-    [Trait("Category", "Slow")]
-    public async Task ThePausedSpanIsNotCountedAgainstTheTimeout()
-    {
-        var flag = Path.Combine(_root, "go");
-        // PIL746 (j3539: Pause refused, the job had already run out its 15 s before a loaded machine got to pause it): the time
-        // before the pause counts against the timeout, so it is generous (30 s), and the wait for "past the deadline" is measured
-        // from the pause itself, so a slow start cannot move it.
-        var id = Run(Busy(flag), timeoutSeconds: 30).Made!;
-        await Running(id);
-
-        var paused = _jobs.Pause(Verb(Verbs.PauseJob, id));
-        paused.Ok.ShouldBeTrue(paused.Error);
-        // Paused for longer than the whole timeout: it would have been stopped without the pause.
-        var pausedAt = DateTimeOffset.UtcNow;
-        while (DateTimeOffset.UtcNow - pausedAt < TimeSpan.FromSeconds(31))
-        {
-            await Task.Delay(100, Ct);
-        }
-        var held = _state.Jobs().Single(j => j.Id == id);
-        (held.State, held.EndedAt).ShouldBe((JobState.Running, null));
-
-        _jobs.Resume(Verb(Verbs.ResumeJob, id)).Ok.ShouldBeTrue();
-        File.WriteAllText(flag, "");
-        var job = await Ended(id);
-        (job.State, job.ExitCode, job.Error).ShouldBe((JobState.Failed, 7, "exit 7"));
-        job.PausedFor.ShouldBeGreaterThan(TimeSpan.FromSeconds(1));
-    }
-
-    [Fact]
-    [Trait("Category", "Slow")]
-    public async Task AResumedJobStillTimesOutOnceItHasRunItsTimeout()
-    {
-        // PIL784: the time before the pause counts against the timeout, so it is generous (45 s) and a slow start cannot make the
-        // Pause refuse because the timeout already ran out.
-        var id = Run(Busy(Path.Combine(_root, "never")), timeoutSeconds: 45).Made!;
-        await Running(id);
-        var paused = _jobs.Pause(Verb(Verbs.PauseJob, id));
-        paused.Ok.ShouldBeTrue(paused.Error);
-        await Task.Delay(500, Ct);
-        _jobs.Resume(Verb(Verbs.ResumeJob, id)).Ok.ShouldBeTrue();
-
-        var job = await Ended(id);
-
-        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 45s"));
-    }
-
-    [Fact]
-    [Trait("Category", "Slow")]
-    public async Task CancellingAPausedJobLeavesNoProcessOfItsTreeAliveOrFrozen()
-    {
-        var id = Run(Busy(Path.Combine(_root, "never"))).Made!;
-        await Running(id);
-        _jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
-        var tree = TreeOf(_jobs.PidOf(id)!.Value);
-        tree.Count.ShouldBeGreaterThan(1);
-
-        _jobs.Cancel(Verb(Verbs.CancelJob, id)).Ok.ShouldBeTrue();
-        var job = await Ended(id);
-
-        (job.State, job.Error, job.PausedAt).ShouldBe((JobState.Cancelled, "cancelled by controller", null));
-        for (var i = 0; i < 100 && tree.Any(Alive); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
-        tree.Where(Alive).ShouldBeEmpty();
-    }
-
-    [Fact]
-    [Trait("Category", "Slow")]
-    public async Task PausingOrResumingAQueuedOrEndedOrUnpausedJobIsRefusedWithAReason()
-    {
-        var flag = Path.Combine(_root, "go");
-        var first = Run(Busy(flag)).Made!;
-        var queued = Run(Echo("later")).Made!;
-        await Running(first);
-        await Until(queued, j => j.Step is not null);
-
-        _jobs.Pause(Verb(Verbs.PauseJob, queued)).Error.ShouldNotBeNull().ShouldContain("queued, not running");
-        _jobs.Resume(Verb(Verbs.ResumeJob, queued)).Error.ShouldNotBeNull().ShouldContain("queued, not running");
-        _jobs.Resume(Verb(Verbs.ResumeJob, first)).Error.ShouldBe($"job {first} is not paused");
-        _jobs.Pause(Verb(Verbs.PauseJob, first)).Ok.ShouldBeTrue();
-        _jobs.Pause(Verb(Verbs.PauseJob, first)).Error.ShouldBe($"job {first} is already paused");
-        _jobs.Pause(Verb(Verbs.PauseJob, "j999")).Error.ShouldBe("There is no job j999");
-
-        // A paused job keeps its slot: the queued one waits behind it.
-        await Task.Delay(300, Ct);
-        _state.Jobs().Single(j => j.Id == queued).State.ShouldBe(JobState.Queued);
-
-        _jobs.Resume(Verb(Verbs.ResumeJob, first)).Ok.ShouldBeTrue();
-        File.WriteAllText(flag, "");
-        await Ended(first);
-        await Ended(queued);
-        _jobs.Pause(Verb(Verbs.PauseJob, queued)).Error.ShouldBe($"job {queued} is not running");
-        _jobs.Resume(Verb(Verbs.ResumeJob, first)).Error.ShouldBe($"job {first} is not running");
-    }
-
     // Starts a grandchild that sleeps and writes its pid to a marker, then sleeps itself: a check that leaves a process under it.
     private static string Grandchild(string marker) => OperatingSystem.IsWindows()
         ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 120' -PassThru -NoNewWindow; Set-Content -Path '{marker}' -Value $p.Id; Start-Sleep 120"
@@ -2012,8 +1937,8 @@ public sealed class JobTests3 : JobTestsBase
         // The check ends when the test says so: it sleeps, then exits 7 once the flag exists.
         var flag = Path.Combine(_root, "carry.flag");
         var command = OperatingSystem.IsWindows()
-            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 120' -PassThru -NoNewWindow; Set-Content -Path '{marker}' -Value $p.Id; while (-not (Test-Path '{flag}')) {{ Start-Sleep -Milliseconds 200 }}; exit 7"
-            : $"sleep 120 & echo $! > '{marker}'; while [ ! -e '{flag}' ]; do sleep 0.2; done; exit 7";
+            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 120' -PassThru -NoNewWindow; Set-Content -Path '{marker}' -Value $p.Id; $end = (Get-Date).AddMinutes(2); while (-not (Test-Path '{flag}') -and (Get-Date) -lt $end) {{ Start-Sleep -Milliseconds 200 }}; exit 7"
+            : $"sleep 120 & echo $! > '{marker}'; i=0; while [ ! -e '{flag}' ] && [ $i -lt 600 ]; do sleep 0.2; i=$((i+1)); done; exit 7";
         int child = 0;
         JobRow? check = null;
         JobRow? kept = null;
