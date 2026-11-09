@@ -481,8 +481,8 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     private static Layout.Node Section(string title, string hint) =>
         Layout.Builder.HStack(
-                Layout.Builder.Text(title, 15f, Bright).WAuto(),
-                Layout.Builder.Text(hint, 12f, Faint).WStar())
+                Layout.Builder.Text(title, 15f, Bright).Selectable().WAuto(),
+                Layout.Builder.Text(hint, 12f, Faint).Selectable().WStar())
             .WithGap(12f).Pad(8f, 10f).RowH(38f);
 
     // Setup's heading carries the refresh: it measures the checks again, and shows it is working until the node answers.
@@ -604,11 +604,11 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         var width = Math.Max(0f, room - SlackAround - (stacked ? 0f : 14f + TitleWidth));
         var stripe = Layout.Builder.Spacer().Bg(setting.Pending ? Todo : Faint).WFixed(StripeWidth).HStar();
         var title = Layout.Builder.VStack(
-            Layout.Builder.Text(setting.Label, 14f, Bright).RowH(22f),
-            Layout.Builder.Text(state, 11f, setting.Pending ? Todo : Dim).RowH(18f));
+            Layout.Builder.Text(setting.Label, 14f, Bright).Selectable().RowH(22f),
+            Layout.Builder.Text(state, 11f, setting.Pending ? Todo : Dim).Selectable().RowH(18f));
         var body = Layout.Builder.VStack(
             Editor(setting, width, need, measure),
-            Layout.Builder.Text(setting.Detail, 11f, Dim).WithTooltip(setting.Detail).RowH(18f));
+            Layout.Builder.Text(setting.Detail, 11f, Dim).WithTooltip(setting.Detail).Selectable().RowH(18f));
         Layout.Node row;
         if (stacked)
         {
@@ -757,12 +757,16 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             var inside = i > def && i < max;
             var allowed = PressedRange(setting, EditedText(setting, fleet), i, handle) is not null;
             var action = $"settings:{key}:pair:{pair}";
-            var cell = Layout.Builder.Text(RangeCaptions.Label(pair, form), 11f, end ? Bright : allowed || inside ? Body : Faint, TextAlign.Center).Pad(2f, 4f).WStar().HFixed(ControlH)
+            var label = RangeCaptions.Label(pair, form);
+            Layout.Node CellOf(bool working) => Layout.Builder.Text(label, 11f, end ? Bright : allowed || inside ? Body : Faint, TextAlign.Center).Pad(2f, 4f).WStar().HFixed(ControlH)
                 .Bg(end ? Chosen : inside ? FieldBg : Button).WithTooltip(pair);
-            if (allowed)
-            {
-                cell = cell.BgHover(end ? Chosen : ButtonHover).Follows(new HitResult.ButtonHit(action), _ => PickPair(setting, at));
-            }
+            // A pair that can be pressed asks the node, so it goes through Presses (working at once, no second press while it is out);
+            // one that cannot is a plain control label.
+            var cell = allowed
+                ? Presses.Button(action, action,
+                    () => CellOf(false).BgHover(end ? Chosen : ButtonHover).Follows(new HitResult.ButtonHit(action), _ => PickPair(setting, at)),
+                    _ => CellOf(true), doneMark: false)
+                : CellOf(false);
             cells.Add(cell);
         }
         var pairLines = new List<Layout.Node>();
@@ -793,7 +797,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             .WithGap(6f).WithLineGap(4f).WStar().HAuto();
         var lines = new List<Layout.Node>(pairLines)
         {
-            Layout.Builder.Text($"{(fleet ? "setting the fleet's range" : "setting this node's range")}: a press moves {(handle.Length > 0 ? "the " + handle + " handle" : "the nearer handle")}", 11f, Dim).RowH(16f),
+            Layout.Builder.Text($"{(fleet ? "setting the fleet's range" : "setting this node's range")}: a press moves {(handle.Length > 0 ? "the " + handle + " handle" : "the nearer handle")}", 11f, Dim).Selectable().RowH(16f),
             scope,
         };
         if ((setting.Saved is not null && setting.Source != SettingSources.CommandLine && !fleet) || (fleet && setting.FleetValue is not null))
@@ -803,16 +807,16 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             lines.Add(Layout.Builder.HStack(NodePill(fleet ? "reset the fleet's" : "reset", action, () => Act(Verbs.Set, args, $"{setting.Label}: back to the default…", action)), Layout.Builder.Spacer().WStar()).HFixed(ControlH));
         }
         var fleetLine = setting.FleetValue is { } fv ? $"the fleet's range is {fv}" : "no fleet range is set";
-        lines.Add(Layout.Builder.Text($"{setting.Value} · {SourceWords(setting)} · {fleetLine}", 11f, Body).WithTooltip(setting.Detail).RowH(18f));
+        lines.Add(Layout.Builder.Text($"{setting.Value} · {SourceWords(setting)} · {fleetLine}", 11f, Body).WithTooltip(setting.Detail).Selectable().RowH(18f));
         if (setting.Deviations.Length > 0)
         {
             var text = "differs from the fleet's: " + string.Join("; ", setting.Deviations.Select(d => $"{d.Node} runs {d.Value}"));
             lines.Add(WrappedProse.Paragraphs(text, 11f, Todo, 40));
         }
-        lines.Add(Layout.Builder.Text(setting.Detail, 11f, Dim).WithTooltip(setting.Detail).RowH(18f));
+        lines.Add(Layout.Builder.Text(setting.Detail, 11f, Dim).WithTooltip(setting.Detail).Selectable().RowH(18f));
         var title = Layout.Builder.VStack(
-            Layout.Builder.Text(setting.Label, 14f, Bright).RowH(22f),
-            Layout.Builder.Text(SourceWords(setting), 11f, Dim).RowH(18f));
+            Layout.Builder.Text(setting.Label, 14f, Bright).Selectable().RowH(22f),
+            Layout.Builder.Text(SourceWords(setting), 11f, Dim).Selectable().RowH(18f));
         var body = Layout.Builder.VStack([.. lines]).WithGap(4f);
         var stripe = Layout.Builder.Spacer().Bg(setting.Deviations.Length > 0 ? Todo : Faint).WFixed(StripeWidth).HStar();
         var row = (stacked
@@ -827,7 +831,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private static Layout.Node CaptionLine(IEnumerable<(string Text, int From, int To)> runs, int columns, float width, RGBAColor32 colour, RGBAColor32? chosen, string handle)
     {
         var parts = RangeCaptions.Segments(runs, columns, width, PairGap).Select(s => s.Text is { } text
-            ? Layout.Builder.Text(text, 10f, chosen is { } bright && handle.Length > 0 && text.StartsWith(handle, StringComparison.Ordinal) ? bright : colour, TextAlign.Center).WStar(s.Width).HFixed(14f)
+            ? Layout.Builder.Text(text, 10f, chosen is { } bright && handle.Length > 0 && text.StartsWith(handle, StringComparison.Ordinal) ? bright : colour, TextAlign.Center).Selectable().WStar(s.Width).HFixed(14f)
             : Layout.Builder.Spacer().WStar(s.Width).HFixed(14f));
         return Layout.Builder.HStack([.. parts]).WStar().HFixed(14f);
     }
@@ -975,7 +979,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         // The room the text has: the chip's width less its padding (2 x 8), the × pill and a margin for a measure's rounding.
         var budget = width - 2 * 8f - (measure("×", 12f) + 2 * PillPad) - TextMargin;
         return Layout.Builder.HStack(
-                Layout.Builder.Text(ElideToFit(entry, budget, measure), 12f, Body, TextAlign.Center).WithTooltip(entry).Pad(8f, 4f).WAuto(),
+                Layout.Builder.Text(ElideToFit(entry, budget, measure), 12f, Body, TextAlign.Center).WithTooltip(entry).Selectable().Pad(8f, 4f).WAuto(),
                 // The × stays a typeset rune for want of a close glyph: SharpAstro/DIR.Lib#151.
                 NodePill("×", action, () => Act(Verbs.Set, [setting.Key, .. entries.Where(e => e != entry).DefaultIfEmpty("default")], $"{setting.Label}: removing {entry}…", action)))
             .WithGap(0f).Bg(FieldBg).WAuto().HFixed(ControlH);

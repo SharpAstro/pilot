@@ -168,6 +168,7 @@ public sealed class ButtonFeedbackTests
     // A button that asks the node nothing: navigation, folds, links, copy; the reason is why it needs no working state.
     private static readonly (string Pattern, string Why)[] LocalOnly =
     [
+        (@"^settings:[^:]+-range:(scope|handle):", "a range row's scope and handle pills only set which range and which handle the next pair press moves: local state, no command on the node"),
         (@"^about:(toggle|restart)$", "the About card's fold, and a restart of this window, not a command on the node"),
         (@"^night:toggle$", "the window's palette"),
         (@"^nodes:", "the node filter of the rail: which nodes the pages show"),
