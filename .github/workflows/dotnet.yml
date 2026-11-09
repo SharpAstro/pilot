@@ -90,7 +90,9 @@ jobs:
         esac
         echo "VERSION_PREFIX=${MM}.${{ github.run_number }}" >> "$GITHUB_ENV"
     - name: Restore dependencies
-      run: dotnet restore Pilot.slnx
+      # Restored in the build's configuration: Pilot.Gui/Ui/Tui/Cli pick DIR.Lib, Console.Lib and SdlVulkan.Renderer or their .Debug
+      # twins by Configuration at restore, so a bare restore (Debug) under a Release --no-restore build compiled against the twins.
+      run: dotnet restore Pilot.slnx -p:Configuration=$BUILD_CONF
     - name: Build
       run: dotnet build Pilot.slnx -c $BUILD_CONF --no-restore -p:Version=${VERSION_PREFIX}${VERSION_REV}${VERSION_HASH} -p:FileVersion=${VERSION_PREFIX}.${VERSION_REV} -p:ContinuousIntegrationBuild=true
     - name: Test
