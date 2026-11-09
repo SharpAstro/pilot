@@ -42,7 +42,7 @@ internal sealed partial class FlightsView<TSurface>
     public Action<CardRow>? OnChatAboutCard { get; set; }
 
     /// <summary>The button of a card whose press is with the node, as the cards panel marks it: the page's Merge is the same card's.</summary>
-    public Func<string, string?>? CardWorking { get; set; }
+    public Func<CardRow, string?>? CardWorking { get; set; }
 
     /// <summary>Called as a flight's page is about to open, before what the window shows changes: the chrome records the place being left.</summary>
     public Action? Opening { get; set; }
@@ -375,7 +375,7 @@ internal sealed partial class FlightsView<TSurface>
             // A stale flight's (its node unreachable) is dead: the choice goes to the node, which cannot be asked.
             cells.Add(line.Stale is not null
                 ? CardsView<TSurface>.Dead(choice.Label).WithTooltip(StaleWhy(line))
-                : CardWorking?.Invoke(card.Id) is not null
+                : CardWorking?.Invoke(card) is not null
                 ? CardsView<TSurface>.Dead($"{choice.Label} …")
                 : CardsView<TSurface>.ChoiceControl(choice, card.Detail, $"flight:{line.Code}:merge-card", () => answer(card, number)));
         }
@@ -383,7 +383,7 @@ internal sealed partial class FlightsView<TSurface>
         {
             cells.Add(line.Stale is not null
                 ? CardsView<TSurface>.Dead(CardsView<TSurface>.ChatAboutLabel).WithTooltip(StaleWhy(line))
-                : CardWorking?.Invoke(card.Id) is not null
+                : CardWorking?.Invoke(card) is not null
                 ? CardsView<TSurface>.Dead(CardsView<TSurface>.ChatAboutLabel)
                 : Pill(CardsView<TSurface>.ChatAboutLabel, $"flight:{line.Code}:chat-card", () => about(card)));
         }
@@ -406,7 +406,7 @@ internal sealed partial class FlightsView<TSurface>
         }
         var button = line.Stale is not null
             ? CardsView<TSurface>.Dead(action.Label).WithTooltip(StaleWhy(line))
-            : CardWorking?.Invoke(card.Id) is not null
+            : CardWorking?.Invoke(card) is not null
             ? Layout.Builder.Text("Starting…", 12f, Dim, TextAlign.Center, TextAlign.Center)
                 .Bg(P.Button).WithTooltip($"Asking the node to fix {line.Code}'s review findings").WFixed(104f).HStar()
             : Pill(action.Label, $"flight:{line.Code}:address-review", () => answer(card, action.Choice)).WithTooltip(action.Tooltip);

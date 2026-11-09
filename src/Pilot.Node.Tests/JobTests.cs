@@ -1324,6 +1324,33 @@ public sealed class JobTests2 : JobTestsBase
     }
 
     [Fact]
+    public void ATreesCpuIsReadFromOneTableReadAndAReusedParentPidAddsNoStranger()
+    {
+        // The job's shell (100) started a test host (101), which started a build node (102). 200 is an older process whose parent
+        // pid is 101's by reuse: it started before 101, so it is no child of the job (#932). One read, no handle on any process.
+        List<SystemProcess> table =
+        [
+            new(100, 4, "pwsh.exe", TimeSpan.FromSeconds(1), 0, Started: 1_000),
+            new(101, 100, "testhost.exe", TimeSpan.FromSeconds(30), 0, Started: 1_100),
+            new(102, 101, "dotnet.exe", TimeSpan.FromSeconds(5), 0, Started: 1_200),
+            new(200, 101, "explorer.exe", TimeSpan.FromHours(3), 0, Started: 10),
+            new(300, 4, "other.exe", TimeSpan.FromHours(1), 0, Started: 1_050),
+        ];
+        var reads = 0;
+        bool Read(List<SystemProcess> into)
+        {
+            reads++;
+            into.Clear();
+            into.AddRange(table);
+            return true;
+        }
+
+        ProcessTreeCpu.Of(100, new ProcessTreeCpu.Tally(), Read).ShouldBe(TimeSpan.FromSeconds(36));
+        reads.ShouldBe(1);
+        ProcessTreeCpu.Of(100, new ProcessTreeCpu.Tally(), _ => false).ShouldBeNull("a table that cannot be read says nothing");
+    }
+
+    [Fact]
     [Trait("Category", "Slow")]
     public async Task ARestartAskedForWhileAJobRunsLeavesItRunningForTheNextNodeToFollow()
     {
@@ -1757,7 +1784,13 @@ public sealed class JobTests3 : JobTestsBase
         await watch.LookAsync(Ct);
         said.ShouldBeEmpty();
 
+        // The job's end resumes the worker (#893): its turn comes first, so the idle clock starts again at the end, not at its last response.
         state.PutJob(state.Jobs().Single() with { State = JobState.Succeeded, EndedAt = time.GetUtcNow() });
+        await watch.LookAsync(Ct);
+        said.ShouldBeEmpty();
+
+        // Still idle a grace after the job ended: nudged.
+        time.Advance(watch.IdleGrace);
         await watch.LookAsync(Ct);
         said.ShouldHaveSingleItem().Args[0].ShouldContain("is not finished yet");
     }

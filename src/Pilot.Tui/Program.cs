@@ -159,16 +159,13 @@ sessions.OnSay = SayTo;
 sessions.OnSayAll = SayTo;
 async Task CardAsync(string verb, CardRow card, string[] cardArgs)
 {
-    // A card raised on another node is answered there.
-    if (clients.For(cards.NodeOf(card)) is not { } to)
-    {
-        flights.Say($"{verb} {card.Id}: {FleetClients.WatchOnly(cards.NodeOf(card))}");
-        Redraw();
-        return;
-    }
-    var envelope = await to.SendAsync(DashboardCommands.CardRequest(verb, card, cardArgs, Who), stop.Token);
-    clients.NoteRefusal(cards.NodeOf(card), envelope);
-    flights.Say(envelope.Success ? $"{verb} {card.Id}: done" : $"{verb} {card.Id}: {envelope.Response?.Error ?? envelope.Error}");
+    // A card raised on another node is answered there. Every outcome is said on the card too, as the GUI does: a Dismiss hides its
+    // card from the click, and only a refusal said on it brings a refused one back (PIL853).
+    var node = cards.NodeOf(card);
+    var to = clients.For(node);
+    var refused = await CardCommands.SendAsync(cards, verb, card, cardArgs, Who, to is null ? null : to.SendAsync, FleetClients.WatchOnly(node),
+        stop.Token, envelope => clients.NoteRefusal(node, envelope));
+    flights.Say($"{verb} {card.Id}: {refused ?? "done"}");
     Redraw();
 }
 cards.OnAnswer = (card, number) => _ = CardAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
@@ -443,7 +440,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.PullRequests => pullRequests.Tree(pages.PullRequests ?? new PullRequestsScreen(null, pages.Sessions.Source, now), width),
             PilotPage.Jobs => jobs.Tree(pages.Jobs),
             PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, now)),
-            PilotPage.Settings => settings.Tree(now),
+            PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };
         var cardsScreen = pages.Cards;

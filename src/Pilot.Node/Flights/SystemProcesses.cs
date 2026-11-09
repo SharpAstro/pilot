@@ -3,8 +3,12 @@ using System.Runtime.InteropServices;
 
 namespace Pilot.Node.Flights;
 
-/// <summary>A process as the whole table gives it in one read: its id and its parent's, its program (<c>pwsh.exe</c> on Windows, the comm name on Linux), its CPU time so far and its working set.</summary>
-public readonly record struct SystemProcess(int Pid, int ParentPid, string Image, TimeSpan Cpu, long Memory);
+/// <summary>
+/// A process as the whole table gives it in one read: its id and its parent's, its program (<c>pwsh.exe</c> on Windows, the comm name on
+/// Linux), its CPU time so far and its working set, and <paramref name="Started"/>, when it started in the table's own unit (a FILETIME on
+/// Windows, clock ticks since boot on Linux): only compared with another reading of the same process, to tell a reused pid; 0 unknown.
+/// </summary>
+public readonly record struct SystemProcess(int Pid, int ParentPid, string Image, TimeSpan Cpu, long Memory, long Started = 0);
 
 /// <summary>Reads every process's CPU time and memory at once: the seam a test counts the reads of.</summary>
 public interface ISystemProcesses
@@ -28,6 +32,7 @@ public sealed class SystemProcesses : ISystemProcesses, IDisposable
 
     // SYSTEM_PROCESS_INFORMATION on a 64-bit Windows: the offsets of the fields read.
     private const int NextEntryOffset = 0x00;
+    private const int CreateTimeOffset = 0x20;
     private const int UserTimeOffset = 0x28;
     private const int KernelTimeOffset = 0x30;
     private const int ImageNameLengthOffset = 0x38;
@@ -118,7 +123,7 @@ public sealed class SystemProcesses : ISystemProcesses, IDisposable
             var name = *(nint*)(at + ImageNameBufferOffset);
             // The idle process has no name; the system process is "System".
             var image = length == 0 || name == 0 ? (pid == 0 ? "Idle" : "System") : new string((char*)name, 0, length / 2);
-            into.Add(new SystemProcess(pid, parent, image, cpu, memory));
+            into.Add(new SystemProcess(pid, parent, image, cpu, memory, *(long*)(at + CreateTimeOffset)));
             var next = *(uint*)(at + NextEntryOffset);
             if (next == 0)
             {
@@ -167,7 +172,7 @@ public sealed class SystemProcesses : ISystemProcesses, IDisposable
         {
             return null;
         }
-        // After the comm: state (0), ppid (1), ... utime (11), stime (12), ... rss (21).
+        // After the comm: state (0), ppid (1), ... utime (11), stime (12), ... starttime (19), ... rss (21).
         var fields = stat[(close + 2)..].Split(' ');
         if (fields.Length < 22
             || !int.TryParse(fields[1], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var parent)
@@ -178,6 +183,7 @@ public sealed class SystemProcesses : ISystemProcesses, IDisposable
             return null;
         }
         var cpu = TimeSpan.FromTicks((user + system) * (TimeSpan.TicksPerSecond / ClockTicksPerSecond));
-        return new SystemProcess(pid, parent, stat[(open + 1)..close], cpu, Math.Max(0, rss) * pageSize);
+        var started = long.TryParse(fields[19], NumberStyles.None, CultureInfo.InvariantCulture, out var since) ? since : 0;
+        return new SystemProcess(pid, parent, stat[(open + 1)..close], cpu, Math.Max(0, rss) * pageSize, started);
     }
 }

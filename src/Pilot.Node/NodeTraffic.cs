@@ -50,6 +50,7 @@ public sealed class NodeTraffic
     /// </summary>
     public async Task<Process> StartProcessAsync(string tool, ProcessStartInfo start, CancellationToken cancellationToken = default)
     {
+        ProcessStarts.Observe(tool, start);
         var began = Time.GetUtcNow();
         var process = await Gate.StartAsync(() => Starter(start), cancellationToken).ConfigureAwait(false) ?? throw new InvalidOperationException($"{tool} did not start");
         var waited = Time.GetUtcNow() - began;

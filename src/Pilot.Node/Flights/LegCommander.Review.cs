@@ -144,7 +144,7 @@ public sealed partial class LegCommander
                 // The flight as it is now: landed, or its review replaced meanwhile (a fresh start, a verdict), is no flight this
                 // reviewer was started for.
                 if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is not { State: not FlightState.Landed } now
-                    || now.Review?.ReviewerJob != before || state.Legs(flight.Code).Any(l => l.State != LegState.Done) || plan is null)
+                    || now.Review?.ReviewerJob != before || state.OpenLegs(flight.Code).Count > 0 || plan is null)
                 {
                     return $"{flight.Code} changed while {reviewer} was being started";
                 }
@@ -350,13 +350,21 @@ public sealed partial class LegCommander
             {
                 // The verdict is kept and given to GitHub: the flight is let go (Dispose is safe twice), as plan-leg refuses a flight with a call out.
                 call.Dispose();
-                var fixer = await PlanReviewNotesLegAsync(flight, notes, cancellationToken);
-                // The hold waits on the leg that makes the notes, never on a watchtower that may not be running (PIL815).
-                if (fixer is not null)
+                // Notes that do not block are made in one round (#918): a later round's become a follow-up issue and the merge goes
+                // ahead. PIL909's #910 went round three times for notes that held nothing, each round a leg and a check rerun.
+                // Not a return: the reviewer is still done with below, whichever way the notes went (review of #935).
+                var filed = state.Legs(flight.Code).Any(l => l.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal) && l.State == LegState.Done)
+                    && await FileNotesFollowUpAsync(FlightOf(command.Target), notes, cancellationToken);
+                if (!filed)
                 {
-                    HoldForLeg(flight.Code, fixer);
+                    var fixer = await PlanReviewNotesLegAsync(flight, notes, cancellationToken);
+                    // The hold waits on the leg that makes the notes, never on a watchtower that may not be running (PIL815).
+                    if (fixer is not null)
+                    {
+                        HoldForLeg(flight.Code, fixer);
+                    }
+                    RaiseReviewNotes(FlightOf(command.Target), notes, fixer);
                 }
-                RaiseReviewNotes(FlightOf(command.Target), notes, fixer);
             }
         }
         else if (ReviewLoopHeld(flight))
@@ -610,6 +618,39 @@ public sealed partial class LegCommander
             await Error.WriteLineAsync($"review: {flight.Code}'s review-notes leg was not planned, the watchtower is told instead: {ex.Message}");
             return null;
         }
+    }
+
+    /// <summary>
+    /// A later round's not-blocking notes (#918): filed as one follow-up issue that names the flight, its PR and each note, and the hold
+    /// released so the flight merges with them. False when the issue could not be filed: the notes then go round as before, never lost.
+    /// </summary>
+    private async Task<bool> FileNotesFollowUpAsync(FlightRow flight, IReadOnlyList<string> notes, CancellationToken cancellationToken)
+    {
+        var clean = notes.Select(n => n.Trim().TrimStart('-', '*', ' ').ReplaceLineEndings(" ")).Where(n => n.Length > 0).ToList();
+        if (clean.Count == 0)
+        {
+            return false;
+        }
+        var title = $"Follow-up of {flight.Code}: the review's notes on #{flight.PullRequest} that did not block it";
+        var body = $"{flight.Code} ({flight.PullRequestUrl ?? $"#{flight.PullRequest}"}) passed its review with notes that do not block the merge, after a review-notes round "
+            + "had already made the first ones. One round of notes holds a merge; these are filed here instead (#918).\n\n"
+            + string.Join("\n", clean.Select(n => $"- {n}"));
+        IssueInfo made;
+        try
+        {
+            // Off the lock, as the human checks are filed: gh is slow and the flight is not held for it.
+            made = await OffLockAsync(null, () => github.CreateIssueAsync(flight.RepoPath, title, body, cancellationToken));
+        }
+        catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException)
+        {
+            await Error.WriteLineAsync($"review: {flight.Code}'s later notes were not filed as a follow-up, they go round instead: {ex.Message}");
+            return false;
+        }
+        if (flight.Holding is not null)
+        {
+            ReleaseHolding(flight, "node", $"a later round's notes that do not block are filed as #{made.Number}, so it merges with them");
+        }
+        return true;
     }
 
     // The sentence RaisePrReadyAsync adds to a holding flight's PR-ready card, which a released hold takes off again.

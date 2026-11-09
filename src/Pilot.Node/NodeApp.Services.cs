@@ -26,6 +26,19 @@ public static partial class NodeApp
         builder.Services.AddSingleton(logWriter);
         // First, so its start line leads and its stop line (hosts stop in reverse) closes the log of this run.
         builder.Services.AddHostedService(_ => new NodeLifecycleLog(options, log));
+        // A reboot made ready (#916): maintenance mode, every live session told to save its state, the node collecting the files.
+        builder.Services.AddSingleton(services =>
+        {
+            var messenger = services.GetRequiredService<SessionMessenger>();
+            return new RebootPrep(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>(), RebootPrep.FolderIn(options.DataFolder))
+            {
+                Say = async (id, text, ct) => (await messenger.SayAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = "node" }, ct)).Ok,
+                End = async (id, why, ct) => await messenger.EndAsync(new CommandRequest { Verb = Verbs.EndSession, Target = Verbs.SessionTarget(id), Args = [why], Who = Flights.LegWatch.Who }, ct),
+                SetMaintenance = on => services.GetRequiredService<NodeSettingsCommands>().Set(new CommandRequest
+                    { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.MaintenanceKey, on ? "on" : "off"], Who = "node" }),
+            };
+        });
+        builder.Services.AddHostedService(services => services.GetRequiredService<RebootPrep>());
         return logWriter;
     }
 
@@ -93,6 +106,8 @@ public static partial class NodeApp
         });
         // The Claude Code jobs pilot started and has as ended or replaced are stopped and removed once the tracker has listed, then hourly (#891).
         builder.Services.AddSingleton<IClaudeJobs>(services => new ClaudeCliJobs(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")));
+        // The same removal, at once, when the node ends a session it started (a worker's stop, a session end).
+        builder.Services.AddSingleton(services => new ClaudeJobRemoval(services.GetRequiredService<IClaudeJobs>(), logWriter));
         builder.Services.AddHostedService(services => new ClaudeJobSweep(
             services.GetRequiredService<NodeState>(), services.GetRequiredService<SessionLedger>(), services.GetRequiredService<IClaudeJobs>(),
             services.GetRequiredService<IClaudeAgents>(), options.Machine, services.GetRequiredService<TimeProvider>())
@@ -144,6 +159,7 @@ public static partial class NodeApp
             flights.Say = async (id, text, ct) =>
                 (await services.GetRequiredService<NodeCommands>().RunAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = LegWatch.Who }, ct)).Ok;
             flights.CancelJobs = (flight, owners, who) => services.GetRequiredService<JobRunner>().CancelFor(flight, owners, who);
+            flights.CancelHeldJobs = (flight, who) => services.GetRequiredService<JobRunner>().CancelRunningFor(flight, who);
             var models = services.GetRequiredService<RoleModels>();
             var trackers = new List<ITracker> { new ShortcutTracker(new HttpClient(new CountingHandler(NodeTraffic.Shared) { InnerHandler = new HttpClientHandler() }) { Timeout = TimeSpan.FromSeconds(30) }, () => ShortcutTracker.TokenFrom(models.ShortcutToken)) };
             if (services.GetService<IGitHub>() is { } gitHub)
@@ -226,7 +242,8 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => new SessionLedger(SessionLedger.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         builder.Services.AddSingleton(_ => new SpendLedger(SpendLedger.FileIn(options.DataFolder)) { Error = logWriter });
         builder.Services.AddSingleton(services => new ClaudeWorkerLauncher(services.GetRequiredService<ClaudeTrust>(), services.GetRequiredService<StartOptionsBook>(),
-            services.GetRequiredService<SessionLedger>(), options, services.GetRequiredService<SendTimings>(), ClaudeWorkerLauncher.BriefFolderIn(options.DataFolder)));
+            services.GetRequiredService<SessionLedger>(), options, services.GetRequiredService<SendTimings>(), ClaudeWorkerLauncher.BriefFolderIn(options.DataFolder),
+            services.GetRequiredService<ClaudeJobRemoval>()));
         builder.Services.AddSingleton(services => new LoggingWorkerLauncher(
             services.GetRequiredService<ClaudeWorkerLauncher>(), logWriter,
             new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")), services.GetRequiredService<TimeProvider>()));
@@ -674,6 +691,7 @@ public static partial class NodeApp
             CancelJobs = (owners, who) => services.GetRequiredService<JobRunner>().CancelOwnedBy(owners, who),
             Sends = services.GetRequiredService<SendLog>(),
             Timings = services.GetRequiredService<SendTimings>(),
+            Removal = services.GetRequiredService<ClaudeJobRemoval>(),
             Streams = () => services.GetRequiredService<Watchtower>(),
         });
     }

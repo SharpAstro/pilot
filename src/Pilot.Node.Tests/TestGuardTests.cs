@@ -7,7 +7,7 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// The test guard (<see cref="TestGuard"/>, a rule of the merge-guard hook): a node-started session's direct <c>dotnet test</c>, and its
-/// <c>dotnet build</c> of a solution or test project, are refused, pointing at <c>pilot run</c>; a person's session is untouched. All on
+/// <c>dotnet build</c> (any project, or none named), run, publish and pack, are refused, pointing at <c>pilot run</c>; a person's session is untouched. All on
 /// the hook's own JSON input, in memory; only the roster tests touch a temp folder, which they remove.
 /// </summary>
 public sealed class TestGuardTests : IDisposable
@@ -40,6 +40,12 @@ public sealed class TestGuardTests : IDisposable
     [InlineData("cd src && dotnet test Pilot.Node.Tests -c Release")]
     [InlineData("dotnet build Pilot.slnx -c Release")]
     [InlineData("dotnet build src/Pilot.sln")]
+    // Every build, any project or none named: a pilot-driven session compiles through the job system (the owner, 2026-11-09).
+    [InlineData("dotnet build")]
+    [InlineData("dotnet build src/Pilot.Node/Pilot.Node.csproj -c Release")]
+    [InlineData("dotnet build -c Release --no-restore")]
+    [InlineData("dotnet run --project src/Pilot.Gui")]
+    [InlineData("dotnet publish src/Pilot.Node -c Release")]
     [InlineData("dotnet build -c Release Pilot.slnx")]
     [InlineData("dotnet build src/Pilot.Node.Tests/Pilot.Node.Tests.csproj")]
     [InlineData(@"dotnet build src\Pilot.Node.Tests\Pilot.Node.Tests.csproj -c Release")]
@@ -104,9 +110,6 @@ public sealed class TestGuardTests : IDisposable
     [InlineData("dotnet restore Pilot.slnx")]
     [InlineData("dotnet restore src/Pilot.Node.Tests/Pilot.Node.Tests.csproj")]
     [InlineData("cd src && dotnet restore")]
-    [InlineData("dotnet build")]
-    [InlineData("dotnet build src/Pilot.Node/Pilot.Node.csproj -c Release")]
-    [InlineData("dotnet build -c Release --no-restore")]
     [InlineData("dotnet new console")]
     [InlineData("dotnet format whitespace")]
     [InlineData("pilot run -- dotnet test Pilot.Node.Tests -c Release --no-build")]

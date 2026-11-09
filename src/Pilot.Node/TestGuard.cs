@@ -127,41 +127,26 @@ public static class TestGuard
     }
 
     /// <summary>
-    /// <c>dotnet</c>'s arguments: the verb is the first word that is not a flag. <c>test</c> is refused whatever it names; <c>build</c> only
-    /// when it names a solution or a test project (a bare <c>dotnet build</c> builds what its folder holds, which this cannot see, and
-    /// passes). <c>--version</c>, <c>--list-sdks</c>, <c>--info</c> and <c>restore</c> have no such verb or another, and pass.
+    /// <c>dotnet</c>'s arguments: the verb is the first word that is not a flag. <c>test</c>, <c>build</c>, <c>run</c>, <c>publish</c>,
+    /// <c>pack</c> and <c>msbuild</c> are refused whatever they name: each compiles, and compiling is the job system's.
+    /// <c>--version</c>, <c>--list-sdks</c>, <c>--info</c> and <c>restore</c> have no such verb or another, and pass.
     /// </summary>
     private static string? DotnetReason(List<string> args)
     {
-        var at = args.FindIndex(a => !a.StartsWith('-'));
-        if (at < 0)
+        // The verb and the targets as DotnetCommand reads them: one reading for the guard and the job queue's heavy rule.
+        if (!DotnetCommand.Compiles(args))
         {
             return null;
         }
-        var rest = args.Skip(at + 1).ToList();
-        switch (args[at].ToLowerInvariant())
+        var verb = DotnetCommand.Verb(args);
+        if (verb == "test")
         {
-            case "test":
-                return "`dotnet test`";
-            case "build" when rest.FirstOrDefault(IsSolutionOrTestProject) is { } target:
-                return $"`dotnet build {target}`";
-            default:
-                return null;
+            return "`dotnet test`";
         }
-    }
-
-    // MSBuild's own switches are not targets; a target is a path whose file is a .sln or .slnx, or a *Tests*.csproj.
-    private static bool IsSolutionOrTestProject(string arg)
-    {
-        if (arg.StartsWith('-'))
-        {
-            return false;
-        }
-        var path = arg.TrimEnd('/', '\\');
-        var file = path[(path.LastIndexOfAny(['/', '\\']) + 1)..];
-        return file.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
-            || file.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase)
-            || file.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) && file.Contains("Tests", StringComparison.OrdinalIgnoreCase);
+        // Every build, not only a solution's: a pilot-driven session builds through the job system, always (the owner, 2026-11-09:
+        // "make sure that pilot driven sessions do not call dotnet build without the job system"). run, publish and pack build too.
+        return DotnetCommand.Targets(args).FirstOrDefault(t => DotnetCommand.KindOf(t) is DotnetCommand.TargetKind.Solution or DotnetCommand.TargetKind.TestProject) is { } target
+            ? $"`dotnet {verb} {target}`" : $"`dotnet {verb}`";
     }
 
     private static string Refusal(string what) =>

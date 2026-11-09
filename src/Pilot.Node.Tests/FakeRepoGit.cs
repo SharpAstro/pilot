@@ -424,12 +424,14 @@ internal sealed class FakeRepoGit : IGit
         {
             throw new NotSupportedException("rev-parse form");
         }
-        var id = Resolve(a[0], wt);
+        // <rev>^{tree}: the commit's tree, by the id merge-tree gives the same contents.
+        var treeOf = a[0].EndsWith("^{tree}", StringComparison.Ordinal);
+        var id = Resolve(treeOf ? a[0][..^"^{tree}".Length] : a[0], wt);
         if (id is null)
         {
             return verify && quiet ? new GitRun(1, "", "") : Fail($"fatal: ambiguous argument '{a[0]}': unknown revision or path not in the working tree.", 128);
         }
-        return Ok(id + "\n");
+        return Ok((treeOf ? TreeId(_commits[id].Tree) : id) + "\n");
     }
 
     private GitRun SymbolicRef(List<string> a, Worktree? wt)
@@ -1718,6 +1720,17 @@ internal sealed class FakeRepoGit : IGit
     /// <c>git merge-tree --write-tree [--name-only] [--no-messages] &lt;a&gt; &lt;b&gt;</c>: a test merge that touches no folder. The tree's id on the first line, then (when it
     /// conflicts, exit 1) the conflicted paths. The id is a hash of the merged files, not a stored tree: nothing in the model reads a tree object back.
     /// </summary>
+    /// <summary>A tree's id: the same for the same paths and contents, as <c>merge-tree</c> and <c>rev-parse X^{tree}</c> both say it.</summary>
+    private static string TreeId(IReadOnlyDictionary<string, string> tree)
+    {
+        var text = new StringBuilder();
+        foreach (var (path, content) in tree.OrderBy(t => t.Key, StringComparer.Ordinal))
+        {
+            text.Append(path).Append('\0').Append(content).Append('\0');
+        }
+        return Convert.ToHexStringLower(SHA1.HashData(Encoding.UTF8.GetBytes(text.ToString())));
+    }
+
     private GitRun MergeTree(List<string> a, Worktree? wt)
     {
         if (!a.Remove("--write-tree"))
@@ -1741,12 +1754,7 @@ internal sealed class FakeRepoGit : IGit
             return Fail("fatal: refusing to merge unrelated histories", 128);
         }
         var (merged, conflicts) = Merge3(_commits[baseId].Tree, _commits[mine].Tree, _commits[theirs].Tree, null, false);
-        var text = new StringBuilder();
-        foreach (var (path, content) in merged.OrderBy(t => t.Key, StringComparer.Ordinal))
-        {
-            text.Append(path).Append('\0').Append(content).Append('\0');
-        }
-        var id = Convert.ToHexStringLower(SHA1.HashData(Encoding.UTF8.GetBytes(text.ToString())));
+        var id = TreeId(merged);
         if (conflicts.Count == 0)
         {
             return Ok(id + "\n");

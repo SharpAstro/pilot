@@ -289,11 +289,11 @@ public sealed class FlyingTests
             At = Live.At, State = CardState.Open,
         };
 
-        cards.NoteRefused("c144", "#195 conflicts with its base, so GitHub cannot merge it: it is being rebased onto its base and reviewed afresh");
+        cards.NoteRefused("c144", null, "#195 conflicts with its base, so GitHub cannot merge it: it is being rebased onto its base and reviewed afresh");
         cards.Render(CardsScreen.From([card], []), new RectF32(0, 0, 460, 800));
 
         cards.RefusedOn("c144").ShouldNotBeNull().ShouldContain("conflicts with its base");
-        cards.NoteRefused("c144", null);
+        cards.NoteRefused("c144", null, null);
         cards.RefusedOn("c144").ShouldBeNull();
     }
 

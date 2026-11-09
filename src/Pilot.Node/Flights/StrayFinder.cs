@@ -141,8 +141,11 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
                     continue;
                 }
                 var childStart = table.StartOf(child.Pid);
-                // A child cannot have started before its parent: such a "child" has the parent id of a process that ended.
-                if (start is { } parentStart && childStart is { } started && started < parentStart - JobProcess.StartTolerance)
+                // A child cannot have started before its parent: such a "child" has the parent id of a process that ended. No tolerance:
+                // Windows creates a child after its parent, always, and with thousands of starts an hour a pid is handed out again within
+                // seconds. A 2 s tolerance let a job process that took the pid of Explorer's exited parent (userinit) adopt Explorer and
+                // everything under it, and the sweep ended them (SE1, 2026-11-09 22:04). A start the OS will not tell is no child either.
+                if (childStart is not { } started || start is { } parentStart && started < parentStart)
                 {
                     continue;
                 }
@@ -166,7 +169,9 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
         {
             foreach (var known in owner.Job!.Known!)
             {
-                if (byPid.ContainsKey(known.Pid) && !assigned.ContainsKey(known.Pid) && JobProcess.SameStart(table.StartOf(known.Pid), known.Start))
+                // A known start only: an unknown one matches any process that took the pid (SameStart accepts a null expected start), so a
+                // protected process recorded with no start was the job's leftover for as long as it ran (wininit, 2026-11-09).
+                if (known.Start is not null && byPid.ContainsKey(known.Pid) && !assigned.ContainsKey(known.Pid) && JobProcess.SameStart(table.StartOf(known.Pid), known.Start))
                 {
                     assigned[known.Pid] = new Assigned(owner, 1, "started by the job while it ran");
                     Walk(known.Pid, known.Start, owner, 2, "started by the job while it ran");
@@ -248,7 +253,7 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
         {
             return true;
         }
-        return table.StartOf(entry.ParentPid) is { } parentStart && table.StartOf(entry.Pid) is { } start && start < parentStart - JobProcess.StartTolerance;
+        return table.StartOf(entry.ParentPid) is { } parentStart && table.StartOf(entry.Pid) is { } start && start < parentStart;
     }
 
     private static (Owner Owner, string How)? Attribute(ProcessEntry entry, DateTimeOffset? start, ProcessDetail? detail, List<Owner> owners)
@@ -258,7 +263,7 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
         foreach (var owner in owners)
         {
             if (owner.Pid == entry.ParentPid && entry.ParentPid > 1
-                && (owner.Start is not { } ownerStart || start is not { } started || started >= ownerStart - JobProcess.StartTolerance)
+                && (owner.Start is not { } ownerStart || start is not { } started || started >= ownerStart)
                 && StartedBeforeEnd(owner, start, unknownCounts: false))
             {
                 return (owner, "its parent was the owner's process");

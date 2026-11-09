@@ -87,6 +87,15 @@ public sealed class JobTreeTests
     }
 
     [Fact]
+    public void AChildWhoseStartTheOsWillNotTellIsNotTheJobs()
+    {
+        // A protected process (wininit) whose parent id is the wrapper's, reused: it says no start time, and is not the job's.
+        _table.Entries.Add(new ProcessEntry(1616, Wrapper, "wininit.exe"));
+
+        Describe(Running()).Tree.ShouldNotBeNull().Select(p => p.Pid).ShouldNotContain(1616);
+    }
+
+    [Fact]
     public void AProcessUnrelatedToTheWrapperIsNotInTheTree()
     {
         _table.Add(201, 200, "chrome.exe", Began.AddSeconds(5));

@@ -35,12 +35,16 @@ public static partial class PilotCommand
     /// The flights and their legs, a line each, and the live sessions. Landed flights are left out unless <paramref name="all"/>,
     /// with a line saying how many; a flight asked for by <paramref name="code"/>, or the newest, shows whatever its state.
     /// </summary>
-    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null)
+    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null)
     {
         var text = new System.Text.StringBuilder();
         if (!newestOnly && code is null && maintenance)
         {
             text.AppendLine("maintenance  on: this node takes no new flights (pilot settings set maintenance off)");
+        }
+        if (!newestOnly && code is null && reboot is { Length: > 0 })
+        {
+            text.AppendLine($"reboot  {reboot} (pilot node reboot status)");
         }
         if (!newestOnly && code is null && autopilot is { } piloting)
         {
@@ -187,6 +191,7 @@ public static partial class PilotCommand
             {
                 var snapshot = await SnapshotAsync(client, ct);
                 var maintenance = false;
+                string? reboot = null;
                 bool? autopilot = null;
                 string? dataFolder = null;
                 SendTimingRow[]? timings = null;
@@ -199,6 +204,7 @@ public static partial class PilotCommand
                     commandTimings = info.CommandTimings ?? [];
                     heap = info.Heap;
                     maintenance = info.Maintenance;
+                    reboot = info.Reboot;
                     autopilot = info.Autopilot;
                     dataFolder = info.DataFolder;
                 }
@@ -209,8 +215,8 @@ public static partial class PilotCommand
                 var everyFlight = parseResult.GetValue(allFlights);
                 var format = parseResult.GetValue(outputFormat);
                 var copies = format is "plain" or "text" ? new Dictionary<string, string>() : await AttachmentCopies.ResolveAsync(AttachmentCopies.Of(snapshot), client, dataFolder, ct);
-                await WriteAsync(format, () => Status(snapshot, maintenance: maintenance, autopilot: autopilot, all: everyFlight, sendTimings: timings, commandTimings: commandTimings, heap: heap),
-                    () => StatusMarkdown.Build(snapshot, maintenance, autopilot, everyFlight, copies, timings, commandTimings, heap));
+                await WriteAsync(format, () => Status(snapshot, maintenance: maintenance, autopilot: autopilot, all: everyFlight, sendTimings: timings, commandTimings: commandTimings, heap: heap, reboot: reboot),
+                    () => StatusMarkdown.Build(snapshot, maintenance, autopilot, everyFlight, copies, timings, commandTimings, heap, reboot));
                 return 0;
             });
             var attachmentsOwner = new Argument<string?>("flight-or-session") { Description = "A flight's code or a session's name; none lists every one", Arity = ArgumentArity.ZeroOrOne };

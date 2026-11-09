@@ -572,6 +572,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>The most reviews and fixers this node runs at once (<see cref="NodeSettings.ReviewLimitKey"/>); 2 unless the settings say otherwise, 0 for no limit (#912).</summary>
+    public int ReviewLimit
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.ReviewLimit ?? 2;
+            }
+        }
+    }
+
     /// <summary>The most Opus sessions the fleet runs at once (<see cref="NodeSettings.OpusCapKey"/>); 3 unless the settings say otherwise, 0 for no cap.</summary>
     public int OpusCap
     {
