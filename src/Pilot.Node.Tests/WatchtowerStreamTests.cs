@@ -449,6 +449,10 @@ public sealed class WatchtowerStreamTests : IDisposable
         // Claude Code continues the conversation under a new session id after a compaction.
         const string After = "11111111-2222-4333-8444-555555555555";
         _launcher.Process(0).Emit(Init(After));
+        // Between the new session's init and the compaction's result the row carries the new id already: a look then (the node's, or
+        // this test's wait) must not write it onto the generation before (PIL770's CI, 2026-11-09).
+        await Until(() => Row().SessionId == After, "the row to carry the compaction's session id");
+        _tower.Generations().ShouldHaveSingleItem().SessionId.ShouldBe(before);
         _launcher.Process(0).Emit(Result);
         await Until(() => _tower.Generations().Count == 2, "the compaction to be a generation");
 
