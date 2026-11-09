@@ -173,8 +173,17 @@ public static class SiblingSet
     /// <summary>The checkout (plane or clone) holding a folder: the nearest ancestor with a .git, or the folder itself when none has.</summary>
     internal static string CheckoutOf(string cwd) => Path.TrimEndingDirectorySeparator(CheckoutRootOf(Path.GetFullPath(cwd)));
 
-    /// <summary>The repo a folder belongs to: its main clone, for a folder in any of its worktrees (a plane) or in the clone itself.</summary>
-    internal static string RepoOf(string cwd) => MainCloneOf(Path.GetFullPath(cwd));
+    /// <summary>
+    /// The repo a folder belongs to: its main clone, for a folder in any of its worktrees (a plane) or in the clone itself; null for a
+    /// folder in no git checkout at all, which belongs to no repo.
+    /// </summary>
+    internal static string? RepoOf(string cwd)
+    {
+        var full = Path.GetFullPath(cwd);
+        return string.Equals(CheckoutRootOf(full), full, StringComparison.OrdinalIgnoreCase) && !Directory.Exists(Path.Combine(full, ".git")) && !File.Exists(Path.Combine(full, ".git"))
+            ? null
+            : MainCloneOf(full);
+    }
 
     private static string MainCloneOf(string full)
     {

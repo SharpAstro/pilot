@@ -1549,7 +1549,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     private string? RepoHold(JobRow job)
     {
-        var repo = SiblingSet.RepoOf(job.Cwd);
+        if (SiblingSet.RepoOf(job.Cwd) is not { } repo)
+        {
+            return null;
+        }
         foreach (var id in _running.Keys.Order(StringComparer.Ordinal))
         {
             if (id != job.Id && state.Jobs().FirstOrDefault(j => j.Id == id) is { } row
