@@ -264,4 +264,32 @@ public sealed class StraySweepTests
 
         _table.Killed.ShouldBeEmpty();
     }
+
+    [Fact]
+    public void OneUnreadableStartOfALiveSessionsProcessDoesNotClearItsRememberedStart()
+    {
+        // 1. The session's process is seen with its start.
+        Session("w4", "se1-pil909-worker", SessionState.Working, SessionStartReasons.LegLaunch, cwd: @"C:\elsewhere");
+        _live.Add(("w4", 970));
+        _table.Add(970, 1, "claude.exe", Began.AddMinutes(10), commandLine: "claude.exe");
+        _sweep.SweepOnce().ShouldBeEmpty();
+
+        // 2. One sweep cannot read its start (the process is still there): that says nothing about the pid being reused.
+        _time.Advance(TimeSpan.FromMinutes(5));
+        _table.Starts.Remove(970);
+        _sweep.SweepOnce().ShouldBeEmpty();
+        _table.Starts[970] = Began.AddMinutes(10);
+        _sweep.SweepOnce().ShouldBeEmpty();
+
+        // 3. The row ends and the process goes; its MCP server lives on, re-parented: the remembered start still ties it to the session.
+        _time.Advance(TimeSpan.FromMinutes(20));
+        Session("w4", "se1-pil909-worker", SessionState.Ended, SessionStartReasons.LegLaunch, ended: _time.GetUtcNow().AddMinutes(-10), cwd: @"C:\elsewhere");
+        _live.Clear();
+        _table.Remove(970);
+        _table.Add(971, 970, "node.exe", Began.AddMinutes(11), commandLine: "node.exe mcp-server.js");
+
+        _sweep.SweepOnce().ShouldBeEmpty();
+
+        _table.Killed.ShouldBe([971]);
+    }
 }

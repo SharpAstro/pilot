@@ -202,6 +202,32 @@ public sealed class JobTreeTests
     }
 
     [Fact]
+    public void ATableThatCannotBeReadDoesNotDropWhatAnEndedJobLeftNorWhatAskingForItPrunes()
+    {
+        var tree = new JobTree(_table);
+        var wrapper = new JobProcess(Wrapper, Began);
+        tree.Read("j1", wrapper);
+        tree.Forget("j1");
+        // The wrapper and its first child are gone; the rest lives on.
+        _table.Remove(Wrapper);
+        _table.Remove(101);
+        tree.KnownOf("j1").Select(k => k.Pid).ShouldBe([102, 103]);
+
+        // The table cannot be read: that says nothing, so what was kept stays, across another job's end too.
+        var all = _table.Entries.ToList();
+        _table.Entries.Clear();
+        tree.Forget("j2");
+        tree.KnownOf("j1").Select(k => k.Pid).ShouldBe([102, 103]);
+        _table.Entries.AddRange(all);
+
+        // Read again, the entry is still there and still pruned when its processes are really gone.
+        tree.KnownOf("j1").Select(k => k.Pid).ShouldBe([102, 103]);
+        _table.Remove(102);
+        _table.Remove(103);
+        tree.KnownOf("j1").ShouldBeEmpty();
+    }
+
+    [Fact]
     public void TheJobLogCarriesTheTreeOverTheWire()
     {
         var log = new JobLog { Lines = [], Length = 0, Pid = 5, Tree = [new JobProcessInfo("pwsh", 5, 0), new JobProcessInfo("dotnet", 6, 1)], Stuck = "process exited, output still held by 6" };

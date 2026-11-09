@@ -146,7 +146,13 @@ public sealed class JobTree(IProcessTable table)
         {
             return;
         }
-        var alive = table.Snapshot().Select(e => e.Pid).ToHashSet();
+        var snapshot = table.Snapshot();
+        // A table that could not be read says nothing: it is not "everything is gone" (as in Read).
+        if (snapshot.Count == 0)
+        {
+            return;
+        }
+        var alive = snapshot.Select(e => e.Pid).ToHashSet();
         foreach (var jobId in _afterEnd.Keys.ToList())
         {
             if (!_afterEnd[jobId].Any(k => alive.Contains(k.Pid) && JobProcess.SameStart(table.StartOf(k.Pid), k.Start)))
@@ -169,7 +175,13 @@ public sealed class JobTree(IProcessTable table)
                 _afterEnd.Remove(jobId);
                 return known;
             }
-            var alive = table.Snapshot().Select(e => e.Pid).ToHashSet();
+            var snapshot = table.Snapshot();
+            // A table that could not be read says nothing: what was known is kept, not dropped as gone.
+            if (snapshot.Count == 0)
+            {
+                return known;
+            }
+            var alive = snapshot.Select(e => e.Pid).ToHashSet();
             known = [.. known.Where(k => alive.Contains(k.Pid) && JobProcess.SameStart(table.StartOf(k.Pid), k.Start))];
             if (known.Count == 0)
             {
