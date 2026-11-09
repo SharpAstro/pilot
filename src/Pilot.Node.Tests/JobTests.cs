@@ -1757,7 +1757,13 @@ public sealed class JobTests3 : JobTestsBase
         await watch.LookAsync(Ct);
         said.ShouldBeEmpty();
 
+        // The job's end resumes the worker (#893): its turn comes first, so the idle clock starts again at the end, not at its last response.
         state.PutJob(state.Jobs().Single() with { State = JobState.Succeeded, EndedAt = time.GetUtcNow() });
+        await watch.LookAsync(Ct);
+        said.ShouldBeEmpty();
+
+        // Still idle a grace after the job ended: nudged.
+        time.Advance(watch.IdleGrace);
         await watch.LookAsync(Ct);
         said.ShouldHaveSingleItem().Args[0].ShouldContain("is not finished yet");
     }
