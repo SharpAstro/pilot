@@ -166,7 +166,9 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
         {
             foreach (var known in owner.Job!.Known!)
             {
-                if (byPid.ContainsKey(known.Pid) && !assigned.ContainsKey(known.Pid) && JobProcess.SameStart(table.StartOf(known.Pid), known.Start))
+                // A known start only: an unknown one matches any process that took the pid (SameStart accepts a null expected start), so a
+                // protected process recorded with no start was the job's leftover for as long as it ran (wininit, 2026-11-09).
+                if (known.Start is not null && byPid.ContainsKey(known.Pid) && !assigned.ContainsKey(known.Pid) && JobProcess.SameStart(table.StartOf(known.Pid), known.Start))
                 {
                     assigned[known.Pid] = new Assigned(owner, 1, "started by the job while it ran");
                     Walk(known.Pid, known.Start, owner, 2, "started by the job while it ran");
