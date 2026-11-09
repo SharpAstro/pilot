@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Pilot.Contracts;
 using Pilot.Node.Sessions;
 
 namespace Pilot.Node;
