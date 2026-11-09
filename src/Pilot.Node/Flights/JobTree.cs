@@ -47,7 +47,14 @@ public sealed class JobTree(IProcessTable table)
                 }
                 var childStart = table.StartOf(child.Pid);
                 // A child cannot have started before its parent: such a "child" has the parent id of a process that ended, and is not its.
-                if (start is { } parentStart && childStart is { } started && started < parentStart - JobProcess.StartTolerance)
+                if (start is { } parentStart && childStart is { } started && started < parentStart)
+                {
+                    continue;
+                }
+                // Nor one whose start the OS will not tell: what a job starts runs as this user and says when it started; a process that
+                // will not (wininit, WmiPrvSE: protected, or another user's) is not the job's, only a holder of a reused parent id. Taken
+                // as the job's, it was "still running after job j2356 ended" for good, 151 strays on SE1 (2026-11-09).
+                if (childStart is null)
                 {
                     continue;
                 }

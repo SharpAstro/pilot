@@ -82,6 +82,18 @@ public sealed class StrayFinderTests
     }
 
     [Fact]
+    public void A_protected_process_known_with_no_start_is_never_a_jobs_leftover()
+    {
+        // wininit and WmiPrvSE say no start time; recorded as a job's (through a reused parent id) with none, any process with the pid
+        // matched, and SE1 listed 151 "strays" still running after job j2356 ended (2026-11-09).
+        var job = new StrayJob("j2356", 100, Began, null, Scratch, EndedAt: Began.AddMinutes(10), Known: [new KnownProcess(1616, null), new KnownProcess(364, null)]);
+        _table.Entries.Add(new ProcessEntry(1616, 1, "wininit.exe"));
+        _table.Entries.Add(new ProcessEntry(364, 1, "WmiPrvSE.exe"));
+
+        Find([job]).Strays.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void A_job_that_ended_a_moment_ago_still_has_its_grace()
     {
         var job = new StrayJob("j42", 100, Began, null, Scratch, EndedAt: _clock.Now - TimeSpan.FromSeconds(30), Known: [new KnownProcess(102, Began.AddSeconds(2))]);
