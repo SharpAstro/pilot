@@ -49,7 +49,31 @@ public sealed partial class Watchtower : IStreamRoute
         public int? ExitCode { get; set; }
         public string? ExitError { get; set; }
         public DateTimeOffset? EndedAt { get; set; }
-        public bool Compacting { get; set; }
+        /// <summary>
+        /// A /compact turn is under way. Kept in <see cref="CompactingRows"/> too, which <see cref="Generations"/> reads without the streams
+        /// lock (it runs inside that lock elsewhere, so taking it there would invert the order).
+        /// </summary>
+        public bool Compacting
+        {
+            get => _compacting;
+            set
+            {
+                _compacting = value;
+                if (value)
+                {
+                    CompactingRows?.TryAdd(RowId, 0);
+                }
+                else
+                {
+                    CompactingRows?.TryRemove(RowId, out _);
+                }
+            }
+        }
+
+        private bool _compacting;
+
+        /// <summary>The watchtower's set of rows mid-compaction, which <see cref="Compacting"/> keeps.</summary>
+        public System.Collections.Concurrent.ConcurrentDictionary<string, byte>? CompactingRows { get; init; }
         public int Compactions { get; set; }
         public bool Counted { get; set; }
     }
@@ -75,6 +99,9 @@ public sealed partial class Watchtower : IStreamRoute
     }
 
     private readonly Dictionary<string, StreamEntry> _streams = new(StringComparer.Ordinal);
+    // The rows whose stream is mid-compaction: between the new session's init and the compaction's result the row already carries the new
+    // session id, and Generations must not write it onto the generation before (PIL770's CI, 2026-11-09).
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _compactingRows = new(StringComparer.Ordinal);
     private readonly Lock _streamsLock = new();
     // Starts, resumes and stops of the stream processes, one at a time: the look and a say that finds it ended both resume it.
     private readonly SemaphoreSlim _streamGate = new(1, 1);
@@ -163,6 +190,7 @@ public sealed partial class Watchtower : IStreamRoute
             ProcessStartedAt = time.GetUtcNow(),
             Earlier = [.. earlier],
             KnownSessionId = session.SessionId,
+            CompactingRows = _compactingRows,
         };
         lock (_streamsLock)
         {
@@ -271,9 +299,9 @@ public sealed partial class Watchtower : IStreamRoute
     /// <summary>A /compact turn ended: the conversation goes on as a generation of its own (<see cref="Compacted"/>), which the chat divides at.</summary>
     private void CompleteCompaction(StreamEntry e, TurnTiming? turn)
     {
-        e.Compacting = false;
         if (turn is { IsError: true })
         {
+            e.Compacting = false;
             LogStream($"the compaction of {e.RowId} ended in error; no generation recorded");
             return;
         }
@@ -284,6 +312,9 @@ public sealed partial class Watchtower : IStreamRoute
             _generations.Add(new Generation($"{e.RowId}{CompactionMark}{n}", e.Session!.SessionId, time.GetUtcNow(), Compacted, Stream: true));
             _generations = [.. _generations.OrderBy(g => g.StartedAt)];
             SaveGenerations(_generations);
+            // Cleared only now, inside the lock Generations() holds: it sees the flag or the generation, never neither (else the row's
+            // new session id would be written onto the generation before).
+            e.Compacting = false;
         }
     }
 
@@ -517,10 +548,15 @@ public sealed partial class Watchtower : IStreamRoute
             {
                 await session.SendAsync(text, cancellationToken);
             }
-            catch (Exception ex) when (ex is InvalidOperationException or IOException)
+            catch (Exception ex)
             {
+                // Whatever stopped the say (a cancelled wait for the write included) means no compaction turn is coming.
                 entry.Compacting = false;
-                throw new SessionDeliveryException($"{row.Name} ended as the say was written: {ex.Message}");
+                if (ex is InvalidOperationException or IOException)
+                {
+                    throw new SessionDeliveryException($"{row.Name} ended as the say was written: {ex.Message}");
+                }
+                throw;
             }
         }
         finally
