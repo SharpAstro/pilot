@@ -10,88 +10,16 @@ namespace Pilot.Node.Tests;
 /// unknown...), a first line that does not say again what the buttons say, and a Ring or For-you kind that offers something to do.
 /// It reads the same source as <see cref="CardKindTests"/> (every <c>RaiseCard</c> call and every button label under Pilot.Node) and the
 /// table of first lines (<see cref="CardSummaries"/>) of every kind in <see cref="CardKindCatalog"/>.
-/// The kinds not yet rewritten sit on <see cref="Baseline"/>, each with the rule it breaks: the next legs shrink that list and nothing adds to
-/// it, because a finding not on it fails, and so does an entry that no longer holds (remove it).
+/// There is no baseline and no exception: a finding fails the test, and the kind is rewritten to the rules.
 /// </summary>
 [Trait("Category", InvariantTraitTests.Invariant)]
 public sealed class CardLintTests
 {
-    /// <summary>
-    /// What is known to break a rule and is not yet rewritten: <c>kind: rule</c> for a title, a first line or a missing action,
-    /// <c>button file: "label": rule</c> for a button, <c>summary file: "text": rule</c> for a first line a raiser writes.
-    /// </summary>
-    private static readonly string[] Baseline =
-    [
-        "autopilot-ran: title over 70 characters",
-        "bench-result: Ring or ForYou kind with no action",
-        "bench-result: title over 70 characters",
-        "button Autopilot.cs: \"Allow\": button outside 2 to 5 words",
-        "button Autopilot.cs: \"Deny\": button outside 2 to 5 words",
-        "button Flights/PrChecks.cs: \"\": button outside 2 to 5 words",
-        "button Flights/PrChecks.cs: \"Answer the design question on its card, or dismiss it there, then press the button: the node asks again.\": button outside 2 to 5 words",
-        "button Flights/PrChecks.cs: \"Approve the PR on GitHub (branch protection needs an approving review), then press the button: the node asks again.\": button outside 2 to 5 words",
-        "button Flights/PrChecks.cs: \"GitHub did not take it in § tries: look at GitHub, and merge again once it answers.\": button outside 2 to 5 words",
-        "button Flights/PrChecks.cs: \"Merge\": button outside 2 to 5 words",
-        "button Flights/PrChecks.cs: \"Nothing to merge: the PR is closed. Open a new PR from the plane if the work is still wanted.\": button outside 2 to 5 words",
-        "button Flights/PrChecks.cs: \"Open a PR with the §\": button outside 2 to 5 words",
-        "button Flights/PrChecks.cs: \"Open the PR again so the commits the plane holds are pushed and reviewed before it lands.\": button outside 2 to 5 words",
-        "button Flights/PrChecks.cs: \"Queue §'s PR #§ for merging again\": button outside 2 to 5 words",
-        "button Flights/PrChecks.cs: \"Re-run the failed check; if it fails again with no cause of its own, redo the leg.\": button outside 2 to 5 words",
-        "button Flights/PrChecks.cs: \"Read the changes a review on GitHub asks for and push them or answer them, then press the button: the node asks again.\": button outside 2 to 5 words",
-        "button Flights/PrChecks.cs: \"Read what GitHub or the node said above; nothing the node can press fixes it.\": button outside 2 to 5 words",
-        "button Flights/PrChecks.cs: \"The PR conflicts with its base and the node's update of the branch did not clear it, so this is no failure of GitHub's: resolve the conflict in the plane (merge the base in), push, and review it again. Merging again does not help while the conflict stands.\": button outside 2 to 5 words",
-        "button Flights/PrChecks.cs: \"The PR is a draft: mark it ready for review on GitHub, then press the button: the node asks again.\": button outside 2 to 5 words",
-        "button Flights/PrChecks.cs: \"Wait\": button outside 2 to 5 words",
-        "button Flights/PrReviews.Fixer.cs: \"Send §'s last leg round on § again\": button outside 2 to 5 words",
-        "button Flights/PrReviews.Fixer.cs: \"Start the fixer on § again\": button outside 2 to 5 words",
-        "button Flights/PrReviews.FixerRounds.cs: \"Start the fixer on § again\": button outside 2 to 5 words",
-        "button Flights/PrReviews.FixerRounds.cs: \"Start the review of § on the fixer's push\": button outside 2 to 5 words",
-        "button Flights/PrReviews.Queue.cs: \"Merge\": button outside 2 to 5 words",
-        "button Flights/PrReviews.Sweep.cs: \"Start the review of § afresh\": button outside 2 to 5 words",
-        "button Flights/StopGate.cs: \"Tell the session to commit its files in §'s plane\": button outside 2 to 5 words",
-        "button Flights/Watchtower.Asks.cs: \"Allow\": button outside 2 to 5 words",
-        "button Flights/Watchtower.Asks.cs: \"Deny\": button outside 2 to 5 words",
-        "button Flights/Watchtower.cs: \"Start the watchtower now instead of waiting for the next try\": button outside 2 to 5 words",
-        "button NodeLan.cs: \"Allow § to run commands here until revoked\": button outside 2 to 5 words",
-        "button Updates/NodeUpdater.cs: \"Install pilot § and restart the node\": button outside 2 to 5 words",
-        "design-mirror-failed: Ring or ForYou kind with no action",
-        "digest: Ring or ForYou kind with no action",
-        "disk-low: Ring or ForYou kind with no action",
-        "disk-swept: title over 70 characters",
-        "failure-retried: title over 70 characters",
-        "holding-timeout: choice prose repeats the buttons",
-        "job-idle: Ring or ForYou kind with no action",
-        "job-untold: title over 70 characters",
-        "not-landed: title over 70 characters",
-        "pr-fix-follow-up-failed: title over 70 characters",
-        "pr-fix-follow-up: title over 70 characters",
-        "pr-fix-left: Ring or ForYou kind with no action",
-        "pr-fix-started: title over 70 characters",
-        "pr-review-left: title over 70 characters",
-        "pr-review-lost: title over 70 characters",
-        "pr-review-merge: title over 70 characters",
-        "pr-review-waiting: Ring or ForYou kind with no action",
-        "queue-dropped: title over 70 characters",
-        "reboot-ready: Ring or ForYou kind with no action",
-        "removal-held: Ring or ForYou kind with no action",
-        "session-compacted: title over 70 characters",
-        "stale-acted: banned word 'half a stale bound'",
-        "stale-acted: banned word 'stale bound'",
-        "stale-acted: title over 70 characters",
-        "store: Ring or ForYou kind with no action",
-        "stray-process: Ring or ForYou kind with no action",
-        "summary Flights/PrChecks.cs: \"§ has circled in a holding pattern and §. Merge as\": choice prose repeats the buttons",
-        "usage-week: Ring or ForYou kind with no action",
-        "watchtower-down: title over 70 characters",
-        "watchtower-parked: title over 70 characters",
-        "worktree-dirty: Ring or ForYou kind with no action",
-    ];
-
     private static IEnumerable<string> Labels(IEnumerable<string> files) =>
         CardKindTests.Sources.Value.Where(s => files.Contains(s.File))
             .SelectMany(s => CardSource.Labels(s.File, s.Source)).SelectMany(l => l.Literals).Where(CardSource.Ends).Select(l => l.Template);
 
-    /// <summary>Every finding over the source and the catalog, each as one line a baseline entry spells the same.</summary>
+    /// <summary>Every finding over the source and the catalog, each as one line: <c>kind: rule</c> for a title, a first line or a missing action, <c>button file: "label": rule</c> for a button, <c>summary file: "text": rule</c> for a first line a raiser writes.</summary>
     private static SortedSet<string> Findings()
     {
         var found = new SortedSet<string>(StringComparer.Ordinal);
@@ -161,21 +89,18 @@ public sealed class CardLintTests
     }
 
     [Fact]
-    public void EveryKindKeepsThePlainWordsRulesOrIsOnTheBaselineThatOnlyShrinks()
+    public void EveryKindKeepsThePlainWordsRules()
     {
         var found = Findings();
-        var baseline = new SortedSet<string>(Baseline, StringComparer.Ordinal);
 
-        var added = found.Except(baseline).ToList();
-        var gone = baseline.Except(found).ToList();
-
-        if (added.Count > 0 || gone.Count > 0)
+        if (found.Count > 0)
         {
             // Where a developer reads the whole list when it is long: outside the repo, never in it.
             File.WriteAllLines(Path.Combine(Path.GetTempPath(), "pilot-card-lint-findings.txt"), found);
         }
-        added.ShouldBeEmpty($"these break a plain-words rule (CardLint) and are not on the baseline; rewrite them:\n{string.Join('\n', added)}");
-        gone.ShouldBeEmpty($"these no longer break a rule: take them off the baseline:\n{string.Join('\n', gone)}");
+        found.ShouldBeEmpty($"these break a plain-words rule (CardLint); rewrite them:
+{string.Join('
+', found)}");
     }
 
     [Theory]

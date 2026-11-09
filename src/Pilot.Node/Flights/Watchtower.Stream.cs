@@ -415,7 +415,7 @@ public sealed partial class Watchtower : IStreamRoute
             _nextTry = now + RetryAfter;
             if (!NoteFailure(ex.Message))
             {
-                RaiseDown($"The watchtower could not be resumed: {LegCommander.OneLine(ex.Message)}", $"{ex.Message}; the node tries again in {RetryAfter.TotalMinutes:0} minutes");
+                RaiseDown("The watchtower could not be resumed", $"{ex.Message}; the node tries again in {RetryAfter.TotalMinutes:0} minutes");
             }
         }
     }

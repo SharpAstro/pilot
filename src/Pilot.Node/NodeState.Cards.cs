@@ -243,6 +243,13 @@ public sealed partial class NodeState
         }
     }
 
+    /// <summary>
+    /// Points the Dismiss choice of a card that is only to be read (written with an empty target, as the card's id is not known before it is
+    /// raised) at the card itself: the one button, "Mark it read", that closes it. A card with no such choice is left as it is.
+    /// </summary>
+    public void AimDismiss(CardRow card) =>
+        UpdateChoices(card.Id, [.. card.Choices.Select(c => c.Verb == Verbs.Dismiss && c.Target.Length == 0 ? c with { Target = Verbs.CardTarget(card.Id) } : c)]);
+
     /// <summary>Gives an open card new choices (a merge's checks turned green, say); false when it is not open or nothing changed.</summary>
     public bool UpdateChoices(string id, IReadOnlyList<CardChoice> choices, IReadOnlyList<CardChoice>? ifStill = null)
     {

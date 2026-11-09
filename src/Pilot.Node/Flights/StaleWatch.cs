@@ -184,7 +184,8 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         {
             // A worker just told of a job has something to do: no nudge on top of it.
             _acted.TryAdd($"nudge:{item.Kind}:{item.Subject}", 0);
-            state.RaiseCard(CardBin.Handled, ActedKind, subject, $"{item.Subject} is {item.AgeText} old, past half its bound; the node told its worker of a job that had ended");
+            state.RaiseCard(CardBin.Handled, ActedKind, subject, $"{item.Subject} has waited {item.AgeText}: the node told its worker of an ended job",
+                $"The worker had a job of its own that ended without telling it, so the node told it; no nudge on top of that.");
             return;
         }
         if (Say is not null && workers.FirstOrDefault(w => w.State == SessionState.Idle) is { } idle && _acted.TryAdd($"nudge:{item.Kind}:{item.Subject}", 0))
@@ -192,7 +193,8 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
             var text = $"Stale check: {item.Subject} has been open {item.AgeText}, past half its bound of {item.Bound}. It waits on {item.WaitsOn}. If your leg can move, move it; otherwise say what holds it.";
             if (await Say(idle.Id, text, cancellationToken))
             {
-                state.RaiseCard(CardBin.Handled, ActedKind, subject, $"{item.Subject} is {item.AgeText} old, past half its bound; the node nudged its idle worker");
+                state.RaiseCard(CardBin.Handled, ActedKind, subject, $"{item.Subject} has waited {item.AgeText}: the node nudged its idle worker",
+                    $"It waits on {item.WaitsOn}; the worker was asked to move it or say what holds it.");
             }
         }
     }
@@ -242,7 +244,7 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
             IssuePriority = level ?? f.IssuePriority,
             HasPriorityField = level is not null || f.HasPriorityField,
         });
-        state.RaiseCard(CardBin.Handled, ActedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}: {note}");
+        state.RaiseCard(CardBin.Handled, ActedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} has waited long; its priority {(level is not null ? "was raised" : "stays")}", $"{flight.Code}: {note}.");
     }
 
     // The cause up to what it waits on, which follows its last ", waiting on".

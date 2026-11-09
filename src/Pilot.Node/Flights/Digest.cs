@@ -73,7 +73,10 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
         _last = now;
         var (title, detail) = Compose(since, now);
         state.CloseCardsAbout(Verbs.NodeTarget, "a newer digest", Kind);
-        return state.RaiseCard(CardBin.ForYou, Kind, Verbs.NodeTarget, title, detail);
+        var card = state.RaiseCard(CardBin.ForYou, Kind, Verbs.NodeTarget, title, detail,
+            [new CardChoice { Label = "Mark it read", Verb = Verbs.Dismiss, Target = "" }]);
+        state.AimDismiss(card);
+        return card;
     }
 
     /// <summary>The digest's title and lines for (<paramref name="since"/>, <paramref name="now"/>].</summary>

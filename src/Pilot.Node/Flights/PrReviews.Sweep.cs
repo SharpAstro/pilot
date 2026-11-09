@@ -69,10 +69,10 @@ public sealed partial class PrReviews
                     $"{ex.Message}. The review itself stands.", link: review.Url);
             }
         }
-        state.RaiseCard(CardBin.ForYou, LostKind, subject, $"{pr}: the review was lost in a node restart and starting it again failed: {LegCommander.OneLine(why)}",
+        state.RaiseCard(CardBin.ForYou, LostKind, subject, $"{pr}: the review was lost in a restart and did not start again",
             $"{lost}, and starting it again failed: {why}",
             [new CardChoice { Label = "Start the review again", Verb = Verbs.ReviewPr, Target = subject }], link: review.Url,
-            summary: $"The review of {pr} was running when the node restarted and could not be started again. Review again starts it afresh.");
+            summary: $"Start the review of {pr} afresh: it was running when the node restarted and could not be started again ({LegCommander.OneLine(why)}).");
     }
 
     /// <summary>
@@ -109,7 +109,9 @@ public sealed partial class PrReviews
                 catch (FlightException ex)
                 {
                     _queued.TryRemove(Verbs.PrTarget(pr.Repo, pr.Number), out _);
-                    state.RaiseCard(CardBin.ForYou, WaitingKind, Verbs.PrTarget(pr.Repo, pr.Number), $"{pr}: the start that waited did not go", ex.Message);
+                    state.RaiseCard(CardBin.ForYou, WaitingKind, Verbs.PrTarget(pr.Repo, pr.Number), $"{pr}: the review that waited did not start", ex.Message,
+                        [new CardChoice { Label = "Start the review again", Verb = Verbs.ReviewPr, Target = Verbs.PrTarget(pr.Repo, pr.Number) }],
+                        summary: $"Start the review of {pr} again: it waited for a free slot and then did not start ({LegCommander.OneLine(ex.Message)}).");
                 }
             }
             foreach (var fixing in state.PrReviews().Where(r => r.Fixer is not null))
@@ -172,7 +174,7 @@ public sealed partial class PrReviews
             // review, SE1 2026-10-26); one Handled line says it, once.
             if (!saidHeld)
             {
-                state.RaiseCard(CardBin.Handled, LeftKind, subject, $"{review.Repo}#{review.Number}'s review worktree is still held; the node removes it when it is let go", held);
+                state.RaiseCard(CardBin.Handled, LeftKind, subject, $"{review.Repo}#{review.Number}'s review worktree is still held", $"{held}; the node removes it when it is let go.");
             }
             return;
         }

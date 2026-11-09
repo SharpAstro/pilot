@@ -149,7 +149,7 @@ internal static class CardKindCatalog
         new("autopilot-merge-refused", "Ring|ForYou", [Checks], "AutopilotMergeRefusalTests.AFailedRequiredCheckRingsWithReRunTheFailedCheckAndNoMergeAgain", "the PR's state on GitHub is still open (not merged) and the refusal's class is a person's (or a passing one that failed its third try), with the one action to take", [nameof(Verbs.RerunChecks), nameof(Verbs.OpenPr), nameof(Verbs.Dismiss), nameof(Verbs.Merge)]),
         new("pr-marks-refused", "Handled", [LegPlanners, "Flights/PrMarks.cs", PrReviewsStatus, PrReviewsSweep], "PrMarksTests.AWriteGitHubRefusesIsACardAndNeverFailsTheReviewOrLosesTheVerdict"),
         new("node-label-refused", "Handled", [Move, LegOpenPr, "Flights/RepoSetup.cs", FlightCommanderCreate, FlightCommanderAdopt], "PrMarksTests.ANodeLabelGitHubRefusesOnTheNewPrIsACardNotAFailedPr"),
-        new("design-mirror-failed", "ForYou", ["Flights/DesignDecisionMirror.cs"], "DesignDecisionMirrorTests.DesignDecisionMirrorNotesAFailedCommentOnARingCardNamingThePrAndKeepsTheDecision"),
+        new("design-mirror-failed", "Handled", ["Flights/DesignDecisionMirror.cs"], "DesignDecisionMirrorTests.DesignDecisionMirrorNotesAFailedCommentOnARingCardNamingThePrAndKeepsTheDecision"),
         new("repo-setup", "Handled", ["Flights/RepoSetup.cs"], "RepoSetupTests.SetupAgainstAnOrgWithNoFieldAndNoLabelsMakesTheFieldAndTheReadLabelsOnceAndASecondRunMakesNothing"),
         new("landed", "Handled", [FlightCommanderLand], "CliTests.ADirectFlightIsFlownFromTheCliAloneUpToItsLanding"),
         new("issue-left-open", "ForYou", [FlightCommanderLand], SourcePinned),
@@ -192,7 +192,7 @@ internal static class CardKindCatalog
         new("pr-fix-failed", "ForYou", [PrReviewsFixer, PrReviewsFixerRounds], SourcePinned),
         new("pr-fix-capped", "Ring", [PrReviewsFixer], "PrFixTests.ChangesOnRoundThreeRingsTheRoundsAndStartsNoFourthFixer", "the PR's fix rounds have reached the cap with changes still asked", [nameof(Verbs.FixPr)]),
         new("pr-fix-ended", "ForYou", [PrReviewsFixerRounds], "PrFixTests.AFixerThatEndsWithoutPushingLeavesACardWithFixItAndNoReview"),
-        new("pr-fix-left", "ForYou", [PrReviewsFixerRounds], SourcePinned),
+        new("pr-fix-left", "Handled", [PrReviewsFixerRounds], SourcePinned),
         new("pr-fix-follow-up", "Handled", [PrReviewsFixerRounds], "FixFollowUpTests.AMergedPrsFixerCommitGoesToANewBranchAndAFollowUpPrThatIsReviewed"),
         new("pr-fix-follow-up-failed", "ForYou", [PrReviewsFixerRounds], "FixFollowUpTests.APushGitHubRefusesLeavesAForYouCardNamingTheCommitAndTheLocalBranch"),
         new("pr-recheck", "Handled", [Recheck], SourcePinned),
@@ -282,12 +282,12 @@ internal static class CardKindCatalog
     [
         ("issue-left-open", "is still open", null),
         ("pr-review-queue-refused", "refused to queue", "again"),
-        ("pr-fix-failed", "the fixer could not start", "Start the fixer on"),
+        ("pr-fix-failed", "the fixer could not start", "Start the fixer"),
         ("pr-fix-left", "fixer worktree is still there", null),
         ("pr-recheck", "recheck of", null),
         ("watchtower-resumed", "resumed after its usage limit reset", null),
         ("watchtower-started", "Started a fresh watchtower", null),
-        ("watchtower-parked", "no flight in the air and no UI connected", null),
+        ("watchtower-parked", "Stopped the watchtower", null),
         ("store", "could not write its snapshot", null),
     ];
 }

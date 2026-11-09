@@ -184,10 +184,13 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
                 : stray.NodeLaunched
                     ? "Its owner has not ended: end it by hand if it should not be running."
                     : "The node did not start its owner, so it only names it: end it by hand if it should not be running.";
-        state.RaiseCard(CardBin.ForYou, Kind, key,
-            $"Stray {stray.Name} {stray.Pid} of {stray.Owner}: {stray.Reason}",
-            Describe(row, how),
+        var card = state.RaiseCard(CardBin.ForYou, Kind, key,
+            $"Stray {stray.Name} {stray.Pid} of {stray.Owner} is still running",
+            $"{stray.Reason}\n{Describe(row, how)}",
+            [new CardChoice { Label = "Leave it running", Verb = Verbs.Dismiss, Target = "" }],
+            summary: $"End process {stray.Pid} with {stray.KillCommand} if it should not be running, or leave it: {stray.Reason}",
             cause: key);
+        state.AimDismiss(card);
     }
 
     private static string Describe(MachineStray row, string how) =>

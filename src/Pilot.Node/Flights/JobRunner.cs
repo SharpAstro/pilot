@@ -1326,7 +1326,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             {
                 var waiting = string.Join(", ", _queue.Select(q => $"{q.Id} ({q.OwnerName ?? q.Owner ?? "the node"})"));
                 state.RaiseCard(CardBin.ForYou, IdleKind, subject, $"job {id} holds the slot but has used next to no CPU for {Took(now - mark.At)}",
-                    $"`{job.Command}` is run by {job.OwnerName ?? job.Owner ?? "the node"}; {_queue.Count} wait behind it: {waiting}. It may only be waiting on something; cancel it with `pilot job cancel {id}` if so, and the owner can wait with `pilot leg wait`.");
+                    $"`{job.Command}` is run by {job.OwnerName ?? job.Owner ?? "the node"}; {_queue.Count} wait behind it: {waiting}. It may only be waiting on something; the owner can wait with `pilot leg wait` instead.",
+                    [new CardChoice { Label = "Cancel the job", Verb = Verbs.CancelJob, Target = subject }],
+                    summary: $"Job {id} holds the machine's slot and does almost nothing while {_queue.Count} wait behind it: cancel it if it is only waiting.");
             }
         }
     }
@@ -2490,8 +2492,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         else
         {
-            state.RaiseCard(CardBin.Ring, UntoldKind, Verbs.JobTarget(job.Id), $"{job.Id} ended but {job.OwnerName ?? job.Owner} could not be told: its session refused the say ({LegCommander.OneLine(error ?? "no reason given")})",
-                $"{how}; the say was refused: {error}");
+            state.RaiseCard(CardBin.Ring, UntoldKind, Verbs.JobTarget(job.Id), $"Job {job.Id} ended and its owner could not be told",
+                $"{how}; the say was refused: {error}",
+                summary: $"Tell {job.OwnerName ?? job.Owner} yourself that job {job.Id} ended: its session refused the message ({LegCommander.OneLine(error ?? "no reason given")}).");
         }
     }
 

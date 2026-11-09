@@ -57,9 +57,10 @@ public sealed partial class PrReviews
                 {
                     var why = "the answer to its design question was given and its fixer ended without a push";
                     state.PutPrReview(review with { QueueNote = why });
-                    state.RaiseCard(CardBin.ForYou, MergeKind, subject, $"{review.Repo}#{review.Number} was not queued: {why}",
+                    state.RaiseCard(CardBin.ForYou, MergeKind, subject, $"{review.Repo}#{review.Number} was not queued",
                         $"Reviewed {review.Verdict} at {at}, but the fix its design answer called for was never pushed. Merge it at this head if you are content with it as it is.",
-                        [new CardChoice { Label = "Merge the PR", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
+                        [new CardChoice { Label = "Merge the PR", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url,
+                        summary: $"Merge it as it stands if you are content: {why}.");
                 }
                 return;
             }
@@ -92,9 +93,10 @@ public sealed partial class PrReviews
         {
             var why = $"{review.Repo} is set to no-auto-merge";
             state.PutPrReview(review with { QueueNote = why });
-            state.RaiseCard(CardBin.ForYou, MergeKind, subject, $"{review.Repo}#{review.Number} is reviewed {review.Verdict} and green, but {why}",
+            state.RaiseCard(CardBin.ForYou, MergeKind, subject, $"{review.Repo}#{review.Number} is reviewed and green, ready to merge",
                 $"Reviewed {review.Verdict} at {at}, checks green. The node does not merge this repo by itself: merge it when you are ready.",
-                [new CardChoice { Label = "Merge the PR", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
+                [new CardChoice { Label = "Merge the PR", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url,
+                summary: $"Merge it when you are ready: {why}, so the node leaves it to you.");
             return;
         }
         if (await github.MergeQueueAsync(review.ClonePath, review.Number, cancellationToken) is null)
@@ -105,9 +107,10 @@ public sealed partial class PrReviews
                 return;
             }
             state.PutPrReview(review with { QueueNote = $"{read.Base} has no merge queue" });
-            state.RaiseCard(CardBin.ForYou, MergeKind, subject, $"{review.Repo}#{review.Number} is reviewed {review.Verdict} and green, but {read.Base} has no merge queue",
+            state.RaiseCard(CardBin.ForYou, MergeKind, subject, $"{review.Repo}#{review.Number} is reviewed and green, ready to merge",
                 $"Reviewed {review.Verdict} at {at}, checks green. Merge it when you are ready.",
-                [new CardChoice { Label = "Merge the PR", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
+                [new CardChoice { Label = "Merge the PR", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url,
+                summary: $"Merge it when you are ready: {read.Base} has no merge queue, so the node leaves it to you.");
             return;
         }
         var outcome = await LegCommander.LandPrAsync(github, review.ClonePath, review.Number, review.Head, Models.MergeMethod, cancellationToken);

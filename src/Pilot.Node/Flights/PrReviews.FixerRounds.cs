@@ -127,8 +127,9 @@ public sealed partial class PrReviews
             if (!count.Ok)
             {
                 state.RaiseCard(CardBin.ForYou, FixFollowUpFailedKind, subject,
-                    $"{pr} merged while its fixer worked: its commits could not be counted ({LegCommander.OneLine(count.Why)})",
-                    $"{count.Why}\nThe fixer's worktree {worktree} is removed; anything it committed stays on its local branch in {review.ClonePath}.", link: review.Url);
+                    $"{pr} merged while its fixer worked: its commits were not counted",
+                    $"{count.Why}\nThe fixer's worktree {worktree} is removed; anything it committed stays on its local branch in {review.ClonePath}.", link: review.Url,
+                    summary: $"Look in {review.ClonePath} for commits the fixer made after {pr} merged: git could not count them ({LegCommander.OneLine(count.Why)}).");
                 return;
             }
             if (!int.TryParse(count.Output.Trim(), out var ahead) || ahead == 0)
@@ -143,14 +144,16 @@ public sealed partial class PrReviews
         catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
         {
             state.RaiseCard(CardBin.ForYou, FixFollowUpFailedKind, subject,
-                $"{pr} merged while its fixer worked: its commits could not be looked at ({LegCommander.OneLine(ex.Message)})",
-                $"{ex.Message}\nAnything the fixer committed stays on its local branch in {review.ClonePath}.", link: review.Url);
+                $"{pr} merged while its fixer worked: its commits were not read",
+                $"{ex.Message}\nAnything the fixer committed stays on its local branch in {review.ClonePath}.", link: review.Url,
+                summary: $"Look in {review.ClonePath} for commits the fixer made after {pr} merged: they could not be read ({LegCommander.OneLine(ex.Message)}).");
             return;
         }
         var branch = $"{(read.HeadRef.Length > 0 ? read.HeadRef : "fix")}-followup-{review.Number}";
         void Failed(string why) => state.RaiseCard(CardBin.ForYou, FixFollowUpFailedKind, subject,
-            $"{pr} merged while its fixer worked: commit {CommitRefs.Short(tip)} has no follow-up PR ({LegCommander.OneLine(why)})",
-            $"{why}\nThe commit {tip} stays on the local branch {localBranch} in {review.ClonePath}; push it if {branch} is not on origin, and open a PR against {baseBranch} by hand.", link: review.Url);
+            $"{pr} merged while its fixer worked: its commit has no PR",
+            $"{why}\nThe commit {tip} stays on the local branch {localBranch} in {review.ClonePath}; push it if {branch} is not on origin, and open a PR against {baseBranch} by hand.", link: review.Url,
+            summary: $"Push commit {CommitRefs.Short(tip)} and open a PR against {baseBranch} by hand: {LegCommander.OneLine(why)}.");
         try
         {
             var push = await git.RunAsync(["push", "origin", $"HEAD:refs/heads/{branch}"], worktree, cancellationToken);
@@ -164,7 +167,7 @@ public sealed partial class PrReviews
             var body = $"Follow-up of {pr} ({review.Url}), which merged while its fixer was still working. These are the fixer's commits past the merged head {CommitRefs.Short(merged)}.\n\nFrom the review of {pr}.{findings}{answer}";
             var created = await github.CreateAsync(review.ClonePath, branch, baseBranch, $"Follow-up of {pr}: {read.Title}", body, cancellationToken);
             var follow = new PrRef(pr.Owner, pr.Name, created.Number);
-            state.RaiseCard(CardBin.Handled, FixFollowUpKind, subject, $"{pr} merged while its fixer worked: its commit {CommitRefs.Short(tip)} is now {follow} on {branch}", $"against {baseBranch}", link: created.Url);
+            state.RaiseCard(CardBin.Handled, FixFollowUpKind, subject, $"{pr} merged mid-fix: its commit is now {follow}", $"Commit {CommitRefs.Short(tip)} is on {branch}, against {baseBranch}; the follow-up is reviewed as any PR.", link: created.Url);
             try
             {
                 await StartAsync(follow, cancellationToken);
@@ -208,7 +211,8 @@ public sealed partial class PrReviews
                 var subject = Verbs.PrTarget(review.Repo, review.Number);
                 if (!state.Cards(openOnly: true).Any(c => c.Kind == FixLeftKind && c.Subject == subject))
                 {
-                    state.RaiseCard(CardBin.ForYou, FixLeftKind, subject, $"{review.Repo}#{review.Number}'s fixer worktree is still there", $"{held}; the node tries again");
+                    // Nothing for the person to press: the node tries again, so it is a line to read, not a card to answer.
+                    state.RaiseCard(CardBin.Handled, FixLeftKind, subject, $"{review.Repo}#{review.Number}'s fixer worktree is still there", $"{held}; the node tries again");
                 }
                 return false;
             }

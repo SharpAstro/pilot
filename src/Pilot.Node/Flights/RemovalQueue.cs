@@ -313,9 +313,12 @@ public sealed class RemovalQueueStart(RemovalQueue queue, NodeState? state = nul
             return $"{e.Path}: {e.OwnerKind} {e.Owner}, queued {e.AddedAt:u}, {e.StartsTried} starts tried, held by "
                 + (holders.Count > 0 ? string.Join(", ", holders) : "a process (it could not be named)") + $" ({e.Why})";
         });
-        state.RaiseCard(CardBin.ForYou, Kind, Verbs.NodeTarget,
+        var card = state.RaiseCard(CardBin.ForYou, Kind, Verbs.NodeTarget,
             $"{due.Count} folder{(due.Count == 1 ? "" : "s")} Windows still holds open",
-            string.Join('\n', lines));
+            string.Join('\n', lines),
+            [new CardChoice { Label = "I will close it", Verb = Verbs.Dismiss, Target = "" }],
+            summary: $"Close whatever holds {(due.Count == 1 ? "the folder" : "the folders")} open (the detail names it): the node removes {(due.Count == 1 ? "it" : "them")} once {(due.Count == 1 ? "it is" : "they are")} let go.");
+        state.AimDismiss(card);
     }
 
     public Task StartedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
