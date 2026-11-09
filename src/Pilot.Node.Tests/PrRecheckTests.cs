@@ -792,7 +792,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
                 return Task.CompletedTask;
             }
             reached.TrySetResult();
-            return Task.WhenAny(open.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+            return Task.WhenAny(open.Task, Task.Delay(TimeSpan.FromSeconds(25)));
         };
         var first = _legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = Verbs.FlightTarget(_state.Flights().Single().Code), Args = [head], Who = "controller" }, Ct);
         (await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(20), Ct))).ShouldBe(reached.Task, "the first merge did not reach GitHub");

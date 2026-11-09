@@ -10,7 +10,7 @@ public sealed class SessionsRouteTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     /// <summary>A wait is for a condition, not for a time: this only bounds a hang, and is far past what a starved machine needs.</summary>
-    private static readonly TimeSpan WaitBudget = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan WaitBudget = TimeSpan.FromSeconds(25);
 
     [Fact]
     public async Task TheSessionsRouteListsTheRowsTheTrackerMade()

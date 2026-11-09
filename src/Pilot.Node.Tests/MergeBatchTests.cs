@@ -126,7 +126,7 @@ public sealed class MergeBatchTests
             if (call == nameof(IGitHub.MergeAsync) && Interlocked.Increment(ref first) == 1)
             {
                 reached.TrySetResult();
-                await release.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(25));
             }
         };
         Flight(node, "TIA9", 9);
@@ -438,7 +438,7 @@ public sealed class MergeBatchTests
             if (call == nameof(IGitHub.MergeAsync) && Interlocked.Increment(ref first) == 1)
             {
                 reached.TrySetResult();
-                await release.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(25));
             }
         };
         Flight(node, "TIA9", 9);
@@ -565,7 +565,7 @@ public sealed class MergeBatchTests
             if (call == nameof(IGitHub.MergeAsync) && Interlocked.Increment(ref first) == 1)
             {
                 reached.TrySetResult();
-                await release.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(25));
             }
         };
         // TIA9's merge holds tianwen's turn (as a batch holds it through its CI).
