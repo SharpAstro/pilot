@@ -106,6 +106,8 @@ public static partial class NodeApp
         });
         // The Claude Code jobs pilot started and has as ended or replaced are stopped and removed once the tracker has listed, then hourly (#891).
         builder.Services.AddSingleton<IClaudeJobs>(services => new ClaudeCliJobs(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")));
+        // The same removal, at once, when the node ends a session it started (a worker's stop, a session end).
+        builder.Services.AddSingleton(services => new ClaudeJobRemoval(services.GetRequiredService<IClaudeJobs>(), logWriter));
         builder.Services.AddHostedService(services => new ClaudeJobSweep(
             services.GetRequiredService<NodeState>(), services.GetRequiredService<SessionLedger>(), services.GetRequiredService<IClaudeJobs>(),
             services.GetRequiredService<IClaudeAgents>(), options.Machine, services.GetRequiredService<TimeProvider>())
@@ -236,7 +238,8 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => new SessionLedger(SessionLedger.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         builder.Services.AddSingleton(_ => new SpendLedger(SpendLedger.FileIn(options.DataFolder)) { Error = logWriter });
         builder.Services.AddSingleton(services => new ClaudeWorkerLauncher(services.GetRequiredService<ClaudeTrust>(), services.GetRequiredService<StartOptionsBook>(),
-            services.GetRequiredService<SessionLedger>(), options, services.GetRequiredService<SendTimings>(), ClaudeWorkerLauncher.BriefFolderIn(options.DataFolder)));
+            services.GetRequiredService<SessionLedger>(), options, services.GetRequiredService<SendTimings>(), ClaudeWorkerLauncher.BriefFolderIn(options.DataFolder),
+            services.GetRequiredService<ClaudeJobRemoval>()));
         builder.Services.AddSingleton(services => new LoggingWorkerLauncher(
             services.GetRequiredService<ClaudeWorkerLauncher>(), logWriter,
             new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")), services.GetRequiredService<TimeProvider>()));
@@ -684,6 +687,7 @@ public static partial class NodeApp
             CancelJobs = (owners, who) => services.GetRequiredService<JobRunner>().CancelOwnedBy(owners, who),
             Sends = services.GetRequiredService<SendLog>(),
             Timings = services.GetRequiredService<SendTimings>(),
+            Removal = services.GetRequiredService<ClaudeJobRemoval>(),
             Streams = () => services.GetRequiredService<Watchtower>(),
         });
     }

@@ -39,7 +39,8 @@ public interface IWorkerLauncher
 /// trusted repo under the repo's trust (it locks it while there; landing unlocks it).
 /// </remarks>
 public sealed partial class ClaudeWorkerLauncher(
-    ClaudeTrust trust, StartOptionsBook? starts = null, SessionLedger? ledger = null, NodeOptions? options = null, SendTimings? timings = null, string? briefFolder = null) : IWorkerLauncher
+    ClaudeTrust trust, StartOptionsBook? starts = null, SessionLedger? ledger = null, NodeOptions? options = null, SendTimings? timings = null, string? briefFolder = null,
+    ClaudeJobRemoval? removal = null) : IWorkerLauncher
 {
     /// <summary>The start with its MCP config file written and named (pilot's server, and the repo's declared extras); unchanged when the node has no options (a test's launcher).</summary>
     public WorkerStart WithMcp(WorkerStart start) =>
@@ -207,14 +208,29 @@ public sealed partial class ClaudeWorkerLauncher(
             "Read that whole file first and follow it as your brief; it is everything you were started to do.";
     }
 
-    public async Task StopAsync(string job, CancellationToken cancellationToken) =>
+    /// <summary>What stops a job; a test replaces it so no <c>claude</c> process runs. Null runs <c>claude stop</c>.</summary>
+    public Func<string, CancellationToken, Task>? Stopper { get; init; }
+
+    public async Task StopAsync(string job, CancellationToken cancellationToken)
+    {
+        if (Stopper is { } stopper)
+        {
+            await stopper(job, cancellationToken);
+            return;
+        }
         await ClaudeCli.RunAsync(["stop", job], stdin: null, cwd: null, Timeout, cancellationToken);
+    }
 
     public async Task StopAsync(string job, string reason, string by, CancellationToken cancellationToken)
     {
         // Recorded before the stop, so the poll that sees it end finds the node's reason and does not call it finished.
         ledger?.Stopped([job], reason, by);
         await StopAsync(job, cancellationToken);
+        // The stop is done: the job goes at once (unless its plane still exists, then the hourly sweep takes it). Never throws; the ledger keeps the reason.
+        if (removal is not null)
+        {
+            await removal.RemoveAsync([job], reason, cancellationToken);
+        }
     }
 
     private static string Clip(string text) => text.Trim() is { Length: > 400 } long_ ? long_[..400] + "…" : text.Trim();
