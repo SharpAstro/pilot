@@ -225,11 +225,18 @@ public sealed partial class ClaudeWorkerLauncher(
     {
         // Recorded before the stop, so the poll that sees it end finds the node's reason and does not call it finished.
         ledger?.Stopped([job], reason, by);
-        await StopAsync(job, cancellationToken);
-        // The stop is done: the job goes at once (unless its plane still exists, then the hourly sweep takes it). Never throws; the ledger keeps the reason.
-        if (removal is not null)
+        try
         {
-            await removal.RemoveAsync([job], reason, cancellationToken);
+            await StopAsync(job, cancellationToken);
+        }
+        finally
+        {
+            // The job goes at once (unless its plane still exists, then the hourly sweep takes it), also when claude stop failed: a stop that
+            // fails is mostly one for a job that is already gone, and the failure still reaches the caller. Never throws; the ledger keeps the reason.
+            if (removal is not null)
+            {
+                await removal.RemoveAsync([job], reason, cancellationToken);
+            }
         }
     }
 

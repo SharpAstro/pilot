@@ -46,11 +46,11 @@ public sealed class ClaudeJobRemovalTests : IDisposable
         new() { Verb = Verbs.EndSession, Target = Verbs.SessionTarget(Job), Args = [why], Who = who };
 
     // A session the node started: in the ledger, listed with a process, its job folder on disk (here: in the fake).
-    private async Task RunningAsync(string? worktree = null)
+    private async Task RunningAsync(string? worktree = null, string name = Name)
     {
-        _ledger.Started(Job, Name, SessionRoles.Resolve(Name, background: true), SessionStartReasons.LegLaunch, "claude-sonnet-5-5");
-        _jobs.Add(new ClaudeJobFolder(Job, "working", Name, AgentRows.SessionA, worktree, null, null));
-        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionA, Name, "working", pid: 1, status: "busy", cwd: Cwd));
+        _ledger.Started(Job, name, SessionRoles.Resolve(name, background: true), SessionStartReasons.LegLaunch, "claude-sonnet-5-5");
+        _jobs.Add(new ClaudeJobFolder(Job, "working", name, AgentRows.SessionA, worktree, null, null));
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionA, name, "working", pid: 1, status: "busy", cwd: Cwd));
         await _tracker.PollAsync(Ct);
     }
 
@@ -81,14 +81,82 @@ public sealed class ClaudeJobRemovalTests : IDisposable
     [Fact]
     public async Task A_stopped_watchtower_job_is_removed()
     {
-        await RunningAsync();
+        await RunningAsync(name: "de1-watchtower");
+        _state.Sessions().Single().Role.ShouldBe(SessionRole.Watchtower);
 
         var result = await _messenger.EndAsync(End("de1-watchtower", "replaced by a fresh one"), Ct);
 
         result.Ok.ShouldBeTrue(result.Error);
         _delivery.Calls.ShouldBe([$"stop {AgentRows.SessionA}"]);
         _jobs.Calls.ShouldBe([$"rm {Job}"]);
-        _log.ToString().ShouldContain("removed");
+        _jobs.Folders().ShouldBeEmpty();
+        _log.ToString().ShouldContain($"job removal: {Job} de1-watchtower");
+        _ledger.Find([Job]).ShouldNotBeNull().EndReason.ShouldBe($"{SessionEndReasons.Watchtower}: replaced by a fresh one");
+    }
+
+    [Fact]
+    public async Task A_worker_whose_claude_stop_failed_is_removed_all_the_same_and_the_failure_still_reaches_the_caller()
+    {
+        _ledger.Started(Job, Name, SessionRoles.Resolve(Name, background: true), SessionStartReasons.LegLaunch, null);
+        _jobs.Add(new ClaudeJobFolder(Job, "working", Name, AgentRows.SessionA, null, null, null));
+        var launcher = new ClaudeWorkerLauncher(new ClaudeTrust(Path.Combine(_profile.Folder, "claude.json")), ledger: _ledger, removal: new ClaudeJobRemoval(_jobs, _log))
+        {
+            Stopper = (_, _) => Task.FromException(new InvalidOperationException("claude stop: no such job")),
+        };
+
+        var failure = await Should.ThrowAsync<InvalidOperationException>(() => launcher.StopAsync(Job, SessionEndReasons.Finished, "node", Ct));
+
+        failure.Message.ShouldContain("no such job");
+        _jobs.Calls.ShouldBe([$"rm {Job}"]);
+        _jobs.Folders().ShouldBeEmpty();
+        _ledger.Find([Job]).ShouldNotBeNull().EndReason.ShouldBe(SessionEndReasons.Finished);
+    }
+
+    [Fact]
+    public async Task A_cancelled_removal_leaves_the_end_command_completed_and_the_job_for_the_sweep()
+    {
+        await RunningAsync();
+        _jobs.Cancelling = true;
+
+        var result = await _messenger.EndAsync(End("cli", "not wanted"), Ct);
+
+        // The stop is confirmed before the removal: the command is answered, not left pending by the cancellation.
+        result.Ok.ShouldBeTrue(result.Error);
+        _state.Sessions().Single().State.ShouldBe(SessionState.Ended);
+        _jobs.Folders().ShouldHaveSingleItem();
+        _log.ToString().ShouldContain("cancelled, left for the sweep");
+    }
+
+    [Fact]
+    public async Task An_end_removes_the_rows_own_job_and_not_the_jobs_of_its_earlier_session_ids()
+    {
+        await RunningAsync();
+        var earlier = AgentRows.SessionB[..8];
+        _jobs.Add(new ClaudeJobFolder(earlier, "done", Name, AgentRows.SessionB, null, null, null));
+        _state.PutSession(_state.Sessions().Single() with { EarlierSessionIds = [AgentRows.SessionB] });
+
+        var result = await _messenger.EndAsync(End("cli", "not wanted"), Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        // [row.Id, row.SessionId] only: the sweep takes an earlier id's job, whose own end is not this one's.
+        _jobs.Calls.ShouldBe([$"rm {Job}"]);
+        _jobs.Folders().ShouldHaveSingleItem().Id.ShouldBe(earlier);
+    }
+
+    [Fact]
+    public async Task A_removed_jobs_respawn_flags_are_gone_with_its_folder()
+    {
+        await RunningAsync();
+        var folder = Path.Combine(_profile.Profile.Root, "jobs", Job);
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "state.json"), """{"respawnFlags":["--model","opus"]}""");
+        _jobs.OnRemoved = id => Directory.Delete(Path.Combine(_profile.Profile.Root, "jobs", id), recursive: true);
+        _profile.Profile.HasRespawnFlags(AgentRows.SessionA).ShouldBeTrue();
+
+        (await _messenger.EndAsync(End("cli", "not wanted"), Ct)).Ok.ShouldBeTrue();
+
+        _profile.Profile.HasRespawnFlags(AgentRows.SessionA).ShouldBeFalse();
+        Directory.Exists(folder).ShouldBeFalse();
     }
 
     [Fact]
@@ -187,6 +255,12 @@ public sealed class ClaudeJobRemovalTests : IDisposable
 
         public bool Throwing { get; set; }
 
+        /// <summary>A removal cut short by a cancellation.</summary>
+        public bool Cancelling { get; set; }
+
+        /// <summary>What <c>claude rm</c> does to the job's folder on disk besides leaving the listing; null touches nothing.</summary>
+        public Action<string>? OnRemoved { get; set; }
+
         public List<string> Calls
         {
             get
@@ -222,6 +296,10 @@ public sealed class ClaudeJobRemovalTests : IDisposable
             {
                 throw new InvalidOperationException("claude rm blew up");
             }
+            if (Cancelling)
+            {
+                throw new OperationCanceledException("cancelled");
+            }
             var call = Record($"rm {job}");
             if (call.Ok)
             {
@@ -229,6 +307,7 @@ public sealed class ClaudeJobRemovalTests : IDisposable
                 {
                     _folders.RemoveAll(f => f.Id == job);
                 }
+                OnRemoved?.Invoke(job);
             }
             return Task.FromResult(call);
         }
