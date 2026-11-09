@@ -184,7 +184,8 @@ public sealed class TestGuardTests : IDisposable
     {
         var reason = Marked("dotnet test").ShouldNotBeNull();
         reason.ShouldNotContain("\u2014");
-        reason.ShouldNotContain(" -- ", customMessage: "only `pilot run -- <command>` may carry the double dash");
+        // Only the command it tells the session to use may carry a double dash.
+        reason.Replace(TestGuard.Instead, "").ShouldNotContain(" -- ");
     }
 
     [Fact]
