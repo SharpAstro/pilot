@@ -1015,13 +1015,14 @@ internal sealed class FakeRepoGit : IGit
                     ? Of(c.Tree).Any()
                     : c.Parents.All(p => !Of(c.Tree).SequenceEqual(Of(_commits[p].Tree))))];
             }
-            if (reverse)
-            {
-                commits.Reverse();
-            }
+            // Git takes the N newest first and reverses them after (log --reverse -2 shows the second-newest, then the newest).
             if (limit is not null)
             {
                 commits = [.. commits.Take(int.Parse(limit[1..]))];
+            }
+            if (reverse)
+            {
+                commits.Reverse();
             }
             return Ok(string.Concat(commits.Select(c => format switch
             {

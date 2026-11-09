@@ -151,8 +151,10 @@ jobs:
           - os: ubuntu-latest
             shard: all
             filter: "Category=Slow"
-            # Linux runs the git-backed tests on git itself (a run is 1 to 3 ms there), so every test meets real git on every PR and a
-            # drift of the in-memory model (FakeRepoGit, TestGit) shows as a red that only Linux has. Windows runs the model.
+            # Linux runs the Slow-tagged git-backed tests on git itself (a run is 1 to 3 ms there), so every Slow test meets real git on
+            # every PR (the build job's non-Slow tests meet only the model). A drift of the in-memory model (FakeRepoGit, TestGit) shows
+            # on Windows, which runs the model: a command the model refuses is red there and green on Linux. Only a model more lenient
+            # than git is red on Linux alone. A red Windows shard that Linux passes: look for a model gap first.
             real_git: "1"
           - os: windows-latest
             shard: landing-review

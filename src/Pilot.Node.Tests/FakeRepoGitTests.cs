@@ -307,6 +307,9 @@ public sealed class FakeRepoGitTests : IDisposable
         Ask("plane", "status", "--porcelain"),
         Do("plane", "add", "."),
         Save("plane", "commit", "-q", "-m", "work in progress"),
+        // The limit takes the newest first and --reverse turns those around: with one allowed, the newest of the two commits, not the oldest.
+        Ask("plane", "log", "--reverse", "--max-count=1", "--format=%s", "origin/main..HEAD"),
+        Ask("plane", "log", "--reverse", "--format=%s", "origin/main..HEAD"),
         // A GitHub remote, as a peer's checkout has, still reaches the bare origin through an insteadOf rewrite.
         Do("repo", "config", "url.{origin}.insteadOf", "https://github.com/SharpAstro/tianwen.git"),
         Do("repo", "remote", "set-url", "origin", "https://github.com/SharpAstro/tianwen.git"),
