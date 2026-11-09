@@ -17,7 +17,32 @@ public sealed class BrainSummaryModel(IBrain brain, ISummaryModel fallback, Acti
     /// <summary>The JSON object the brain answers with.</summary>
     public const string AnswerShape = """{"summary": "<the whole answer, in exactly the format above, as one JSON string>"}""";
 
+    /// <inheritdoc />
+    public string? WatchtowerDown => brain.Unavailable;
+
     public async Task<SummaryAnswer> AskAsync(string prompt, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await AskBrainAsync(prompt, cancellationToken);
+        }
+        catch (InvalidOperationException ex)
+        {
+            log?.Invoke($"summary: {ex.Message}; the old call runs");
+        }
+        return await fallback.AskAsync(prompt, cancellationToken);
+    }
+
+    /// <summary>
+    /// Asks the brain and nothing else, for the summary that follows changes (PIL903): never the paid fallback.
+    /// Throws <see cref="InvalidOperationException"/>, saying why, when the brain is down or answers no summary.
+    /// </summary>
+    public Task<SummaryAnswer> AskWatchtowerAsync(string prompt, CancellationToken cancellationToken) =>
+        brain.Unavailable is { } down
+            ? throw new InvalidOperationException($"the watchtower is down ({down})")
+            : AskBrainAsync(prompt, cancellationToken);
+
+    private async Task<SummaryAnswer> AskBrainAsync(string prompt, CancellationToken cancellationToken)
     {
         try
         {
@@ -27,12 +52,11 @@ public sealed class BrainSummaryModel(IBrain brain, ISummaryModel fallback, Acti
                 // Its tokens ride on the brain's own session; no call of its own, so none to count.
                 return new SummaryAnswer(text.GetString()!.Trim(), 0, null);
             }
-            log?.Invoke("summary: the brain answered with no summary; the old call runs");
         }
         catch (BrainDownException ex)
         {
-            log?.Invoke($"summary: the brain could not be asked ({ex.Message}); the old call runs");
+            throw new InvalidOperationException($"the brain could not be asked ({ex.Message})", ex);
         }
-        return await fallback.AskAsync(prompt, cancellationToken);
+        throw new InvalidOperationException("the brain answered with no summary");
     }
 }

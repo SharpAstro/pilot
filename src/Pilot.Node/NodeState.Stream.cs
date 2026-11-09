@@ -21,6 +21,18 @@ public sealed partial class NodeState
         }
     }
 
+    /// <summary>How many clients are attached to the feed now (<see cref="Subscribe"/> not yet disposed, and not dropped for lagging).</summary>
+    public int ClientsAttached
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _sinks.Count;
+            }
+        }
+    }
+
     /// <summary>Everything a client shows, as of now.</summary>
     public SnapshotEvent Snapshot()
     {

@@ -49,6 +49,9 @@ is neither built nor tested by CI.
   the ledger closes it as finished or crashed. A session never stops another with `claude stop`.
 - One live watchtower per node. A change to how the node finds, messages, resumes or stops a session keeps
   `OneWatchtowerTests`, `WatchtowerTests` and `ResumeOptionsTests` passing.
+- The fleet summary is kept by the watchtower: the node has it remade after changes while a client is attached, asks
+  nothing with none, and `pilot summarise` and the panel's Refresh ask at once. The Haiku call runs only when the
+  watchtower is down (`SummaryRow.NotFollowing` says so); only then does the panel name a price.
 
 ## Build and check
 

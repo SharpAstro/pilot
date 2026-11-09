@@ -573,6 +573,13 @@ public static partial class NodeApp
             // The nodes this user's grants reach, the same a create-flight in maintenance may route to.
             Fleet = services.GetRequiredService<FlightCommander>().Fleet,
         });
+        // The fleet summary follows changes through the watchtower while a client is attached (PIL903).
+        builder.Services.AddSingleton(services => new SummaryFollower(services.GetRequiredService<NodeState>(), services.GetRequiredService<Summaries>(), services.GetRequiredService<TimeProvider>())
+        {
+            Bounds = () => services.GetRequiredService<RoleModels>().Stale,
+            Error = logWriter,
+        });
+        builder.Services.AddHostedService(services => services.GetRequiredService<SummaryFollower>());
         builder.Services.AddSingleton(services => new Digest(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
         {
             Bounds = () => services.GetRequiredService<RoleModels>().Stale,
