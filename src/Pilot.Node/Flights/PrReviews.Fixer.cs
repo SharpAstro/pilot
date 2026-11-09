@@ -41,11 +41,11 @@ public sealed partial class PrReviews
             {
                 RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr} ({flight.Code}'s PR): the review asks a question of design{asked}",
                     $"{design}\nNo fixer started: {flight.Code}'s own legs make changes. review fix {pr} <answer> sends its last leg round with the answer, as the card's Answer does.",
-                    choices);
+                    choices, DesignSummary(questions));
                 return;
             }
             RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design{asked}", $"{design}\nNo fixer started: this is the author's to decide. An option or Answer in your own words posts the answer on the PR and starts the fixer.",
-                choices);
+                choices, DesignSummary(questions));
             return;
         }
         var rounds = review.FixRound ?? 0;

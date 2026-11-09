@@ -20,16 +20,27 @@ public sealed partial class PrReviews
     /// as the answer, then the free-text Answer. Options are offered only when there is one question: with several, which option
     /// answers which question would be a guess, so each is answered in words.
     /// </summary>
-    private static List<CardChoice> DesignChoices(string subject, IReadOnlyList<DesignQuestion> questions)
+    internal static List<CardChoice> DesignChoices(string subject, IReadOnlyList<DesignQuestion> questions)
     {
         var choices = new List<CardChoice>();
         if (questions.Count == 1)
         {
-            choices.AddRange(questions[0].RecommendedFirst.Select(o => new CardChoice { Label = Clean(o.Text, 60), Verb = Verbs.FixPr, Target = subject, Args = [o.Answer] }));
+            // Whole: the card wraps a choice's label, and an option cut short cannot be chosen knowingly (owner, 2026-11-09).
+            choices.AddRange(questions[0].RecommendedFirst.Select(o => new CardChoice { Label = Clean(o.Text, int.MaxValue), Verb = Verbs.FixPr, Target = subject, Args = [o.Answer] }));
         }
         choices.Add(AnswerChoice(subject));
         return choices;
     }
+
+    /// <summary>
+    /// The design card's body: the question itself, whole, and the option the reviewer recommends, so the card says what is asked without
+    /// opening its detail (owner, 2026-11-09: "it doesn't even list the question"). With several questions, each in turn.
+    /// </summary>
+    internal static string DesignSummary(IReadOnlyList<DesignQuestion> questions) =>
+        questions.Count == 0
+            ? "The review asks a question of design: read it in the detail."
+            : string.Join('\n', questions.Select(q =>
+                Clean(q.Question, int.MaxValue) + (q.Options.FirstOrDefault(o => o.Recommended) is { } r ? $" Recommended: {Clean(r.Text, int.MaxValue)}." : "")));
 
     private static string Cut(string text, int max) => text.Length <= max ? text : text[..(max - 3)].TrimEnd() + "...";
 
@@ -48,14 +59,14 @@ public sealed partial class PrReviews
     /// card dismissed is never raised again from the same review and head, by a recheck, a sweep or a node restart. Null when this
     /// review raised the kind already.
     /// </summary>
-    private CardRow? RaiseOnce(PrRef pr, PrReviewRow review, CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices = null)
+    private CardRow? RaiseOnce(PrRef pr, PrReviewRow review, CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices = null, string? summary = null)
     {
         var current = Of(pr) ?? review;
         if (current.Raised.Contains(kind))
         {
             return null;
         }
-        var card = state.RaiseCard(bin, kind, subject, title, detail, choices, link: review.Url);
+        var card = state.RaiseCard(bin, kind, subject, title, detail, choices, link: review.Url, summary: summary);
         state.PutPrReview(current with { Raised = [.. current.Raised, kind] });
         return card;
     }

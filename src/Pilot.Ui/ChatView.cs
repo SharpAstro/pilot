@@ -61,6 +61,9 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
 
         // An empty list under an epoch of its own.
         public static Held Fresh() => new([], ImmutableDictionary<string, int>.Empty, 0, null, false, null, [], [], [], null, null, [], [], [], new object());
+
+        /// <summary>Whether a page of the feed has been read into it: until then the chat says it is loading, not that nothing was said.</summary>
+        public bool Read { get; init; }
     }
 
     private Held _held = Held.Empty;
@@ -465,7 +468,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         }
         // A reread may have moved every index: a new epoch tells the render to forget its index-keyed caches.
         return new Held(entries.ToImmutable(), ids.ToImmutable(), page.Total, null, page.Working, page.PendingQuestion, page.Choices ?? [], page.Queued ?? [], page.QueuedIds ?? [],
-            page.Partial, page.Doing, page.QueuedBehind ?? [], page.Timings ?? [], page.Asks ?? [], whole ? new object() : held.Epoch);
+            page.Partial, page.Doing, page.QueuedBehind ?? [], page.Timings ?? [], page.Asks ?? [], whole ? new object() : held.Epoch) { Read = true };
     }
 
     private async Task FollowAsync(Func<int, CancellationToken, Task<ChatPage>> load, CancellationToken cancellationToken)
@@ -968,7 +971,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             rows.Add((sending ? Layout.Builder.Text("● sending…", 13f, Running).Selectable() : WrappedProse.Of($"● {doing}", 13f, Running)).Pad(0f, 4f).WStar());
         }
         var list = rows.Count == 0
-            ? Layout.Builder.Text(held.Problem ?? (CurrentLoad() is null ? "The chat is read from a live node." : "Nothing said yet. Tell the watchtower what you want: “let's launch a flight for issue 12”."), 13f, Dim).Selectable().Stretch()
+            ? Layout.Builder.Text(held.Problem ?? (CurrentLoad() is null ? "The chat is read from a live node." : !held.Read ? "Loading the conversation…" : "Nothing said yet. Tell the watchtower what you want: “let's launch a flight for issue 12”."), 13f, Dim).Selectable().Stretch()
             : Layout.Builder.VStack([.. rows]).WithGap(ToolGap).WithScroll(_scroll).Stretch();
 
         var page = !canSend
