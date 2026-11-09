@@ -134,6 +134,7 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     // already, through its kill-on-close Job Object (KillOnCloseJob), which knows its members exactly; nothing here guesses.
     private static bool CanEnd(Stray stray) => false;
 
+    /// <summary>The processes the sweep would never end, whatever the attribution: kept as a backstop should ending ever come back (it is off: CanEnd).</summary>
     internal static readonly HashSet<string> NeverEnd = new(StringComparer.OrdinalIgnoreCase)
     {
         "explorer", "dwm", "sihost", "ShellExperienceHost", "StartMenuExperienceHost", "SearchHost", "SearchApp", "SearchIndexer", "TextInputHost",
