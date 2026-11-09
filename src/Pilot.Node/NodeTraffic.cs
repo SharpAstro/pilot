@@ -15,7 +15,7 @@ namespace Pilot.Node;
 /// <item>The node's own HTTP (NuGet feed, Shortcut tracker), by <see cref="CountingHandler"/>: the request line and headers
 /// as written plus the body length, and the response status line, headers and body. A response that was compressed on the
 /// wire is counted decompressed, so the figure is an upper bound there.</item>
-/// <item>The git and gh children (<see cref="Start"/>), whose traffic no portable per-process counter gives. On Windows
+/// <item>The git and gh children (<see cref="StartAsync"/>), whose traffic no portable per-process counter gives. On Windows
 /// each child is started into an anonymous job object (so its own children, git-remote-https and git-lfs, are in it) and
 /// the job's <c>OtherTransferCount</c> (JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION) is read once the child ended:
 /// socket I/O is counted there as "other" transfer, but so is any other non-read, non-write I/O, so it is an <b>upper
@@ -27,6 +27,46 @@ namespace Pilot.Node;
 /// </remarks>
 public sealed class NodeTraffic
 {
+    /// <summary>A process start that waited longer than this for <see cref="Process.Start(ProcessStartInfo)"/> (its lock) is logged.</summary>
+    public static readonly TimeSpan SlowStart = TimeSpan.FromSeconds(1);
+
+    /// <summary>Where a slow start is written (the node's log, set by the node); nowhere by default.</summary>
+    public TextWriter Log { get; set; } = TextWriter.Null;
+
+    /// <summary>The call that starts a process; a test swaps it for a slow or instant one.</summary>
+    public Func<ProcessStartInfo, Process?> Starter { get; init; } = Process.Start;
+
+    /// <summary>
+    /// The budget of background starts, one per node: a start made outside a command takes a slot of it for the
+    /// <see cref="Starter"/> call, a command's own start does not (see <see cref="ProcessGate"/>).
+    /// </summary>
+    public ProcessGate Gate { get; init; } = new();
+
+    /// <summary>
+    /// Starts a child of kind <paramref name="tool"/> (<c>git</c>, <c>gh</c> or <c>claude</c>) and logs <c>timing: process start
+    /// &lt;tool&gt; waited &lt;n&gt; ms</c> when the start took over <see cref="SlowStart"/>: Process.Start takes a lock that
+    /// every start in the process queues on, so a long wait is the node starving itself, not the tool being slow. The wait counts
+    /// from the ask, so a background start's wait for a slot of the <see cref="Gate"/> is in it with the lock's.
+    /// </summary>
+    public async Task<Process> StartProcessAsync(string tool, ProcessStartInfo start, CancellationToken cancellationToken = default)
+    {
+        var began = Time.GetUtcNow();
+        var process = await Gate.StartAsync(() => Starter(start), cancellationToken).ConfigureAwait(false) ?? throw new InvalidOperationException($"{tool} did not start");
+        var waited = Time.GetUtcNow() - began;
+        if (waited > SlowStart)
+        {
+            try
+            {
+                Log.WriteLine($"timing: process start {tool} waited {(long)waited.TotalMilliseconds} ms");
+                Log.Flush();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+        return process;
+    }
+
     /// <summary>The node's one counter: the static git and gh helpers cannot take it from the container, so they add here.</summary>
     public static NodeTraffic Shared { get; } = new();
 
@@ -170,6 +210,9 @@ public sealed class NodeTraffic
         };
     }
 
+    /// <summary>Where the hourly line's GC figures come from (#794): the node's own heap unless a test says otherwise.</summary>
+    public Func<NodeHeapRow> Heap { get; set; } = () => NodeHeap.Read();
+
     /// <summary>
     /// Writes the line of the last full clock hour when it has not been written yet; true when it wrote. Called by the hourly
     /// service after each hour boundary.
@@ -188,7 +231,7 @@ public sealed class NodeTraffic
         var t = Hour(hour);
         var child = CanMeasureChildren ? $"{t.ChildBytes} bytes (estimate, upper bound)" : "unknown";
         write(string.Create(CultureInfo.InvariantCulture,
-            $"traffic {hour:yyyy-MM-dd HH}:00Z: http in {t.HttpIn} bytes, out {t.HttpOut} bytes; git and gh children {child}; git runs {t.GitRuns}, gh runs {t.GhRuns}"));
+            $"traffic {hour:yyyy-MM-dd HH}:00Z: http in {t.HttpIn} bytes, out {t.HttpOut} bytes; git and gh children {child}; git runs {t.GitRuns}, gh runs {t.GhRuns}; {Heap().Line()}"));
         return true;
     }
 
@@ -227,9 +270,9 @@ public sealed class NodeTraffic
     /// With <paramref name="canUseNetwork"/> false (a local git run: status, log, diff) the run is counted but its bytes are
     /// not, since the job's figure is then local file I/O, which would swamp the network share the figure is for.
     /// </summary>
-    public (Process Process, Child Counted) Start(string tool, ProcessStartInfo start, bool canUseNetwork = true)
+    public async Task<(Process Process, Child Counted)> StartAsync(string tool, ProcessStartInfo start, bool canUseNetwork = true, CancellationToken cancellationToken = default)
     {
-        var process = Process.Start(start) ?? throw new InvalidOperationException($"{tool} did not start");
+        var process = await StartProcessAsync(tool, start, cancellationToken).ConfigureAwait(false);
         if (canUseNetwork && tool == "git")
         {
             Interlocked.Increment(ref _networkGitRuns);

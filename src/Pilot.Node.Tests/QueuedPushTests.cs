@@ -60,16 +60,47 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
 
     // Origin refuses a push as GitHub does a queued branch: the GH006 line on the hook's stderr (git relays it as "remote: ..."), exit 1.
     // The marker file says a push was refused; with onlyOnce, the next push passes. With progressFirst, the hook prints a progress line
-    // before the GH006 line, as GitHub often does, so the refusal's first line is not GitHub's error.
+    // before the GH006 line, as GitHub often does, so the refusal's first line is not GitHub's error. On the model the hook is its
+    // PreReceive; on real git (PILOT_TEST_REAL_GIT=1) the same hook is a script in origin.git/hooks.
     private void RefuseWithGh006(FlightRow flight, bool onlyOnce = false, bool progressFirst = false)
     {
-        var progress = progressFirst ? "echo 'Resolving deltas: 100% (3/3), completed with 2 local objects.' >&2\n" : "";
-        var refuse = $"touch '{RefusedMarker}'\n{progress}echo 'error: GH006: Protected branch update failed for refs/heads/{flight.Branch}.' >&2\necho 'error: Cannot change this locked branch because it is in a merge queue.' >&2\nexit 1";
+        var lines = new List<string>();
+        if (progressFirst)
+        {
+            lines.Add("Resolving deltas: 100% (3/3), completed with 2 local objects.");
+        }
+        lines.Add($"error: GH006: Protected branch update failed for refs/heads/{flight.Branch}.");
+        lines.Add("error: Cannot change this locked branch because it is in a merge queue.");
+        if (RepoModel is { } fake)
+        {
+            fake.PreReceive = _ =>
+            {
+                if (onlyOnce && File.Exists(RefusedMarker))
+                {
+                    return null;
+                }
+                File.WriteAllText(RefusedMarker, "");
+                return lines;
+            };
+            return;
+        }
+        var refuse = $"touch '{RefusedMarker}'\n{string.Concat(lines.Select(l => $"echo '{l}' >&2\n"))}exit 1";
         File.WriteAllText(HookPath, $"#!/bin/sh\n{(onlyOnce ? $"if [ -f '{RefusedMarker}' ]; then exit 0; fi\n" : "")}{refuse}\n");
         if (!OperatingSystem.IsWindows())
         {
             File.SetUnixFileMode(HookPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
+    }
+
+    // Origin lets pushes through again: the hook goes.
+    private void LetPushesThrough()
+    {
+        if (RepoModel is { } fake)
+        {
+            fake.PreReceive = null;
+            return;
+        }
+        File.Delete(HookPath);
     }
 
     // The PR is merged on GitHub from the moment a push was refused: what the node reads after the refusal.
@@ -111,7 +142,7 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
 
         // The last leg is done, and origin lets the branch go as it is no longer locked: the sweep's own step opens the follow-up PR.
         MarkDone("parser");
-        File.Delete(HookPath);
+        LetPushesThrough();
         _github.OnCall = null;
         await _legs.AdvanceFlightAsync("TIA1", Ct);
 
