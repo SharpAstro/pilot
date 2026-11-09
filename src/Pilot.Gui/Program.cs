@@ -491,7 +491,7 @@ if (feed is not null && client is not null && clients is not null)
     async Task CardCommandAsync(string verb, CardRow card, string[] args, string action)
     {
         // One press of a card at a time, from the panel or the flight page: a second would clear the first's working state.
-        if (chrome.Cards.WorkingOn(card.Id) is not null)
+        if (chrome.Cards.WorkingOn(card) is not null)
         {
             // A Dismiss not sent must not leave its card hidden: nothing would bring it back (PIL853).
             if (verb == Verbs.Dismiss)
@@ -502,7 +502,7 @@ if (feed is not null && client is not null && clients is not null)
             return;
         }
         // Said on the button at once, cleared when the node has answered, whatever it said.
-        chrome.Cards.NoteWorking(card.Id, action);
+        chrome.Cards.NoteWorking(card, action);
         loop.RequestRedraw();
         try
         {
@@ -510,7 +510,7 @@ if (feed is not null && client is not null && clients is not null)
         }
         finally
         {
-            chrome.Cards.NoteWorking(card.Id, null);
+            chrome.Cards.NoteWorking(card, null);
             loop.RequestRedraw();
         }
     }
