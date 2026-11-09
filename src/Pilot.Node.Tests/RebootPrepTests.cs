@@ -1,4 +1,6 @@
+using Pilot.Commands;
 using Pilot.Contracts;
+using Pilot.Node.Flights;
 using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
@@ -133,5 +135,59 @@ public sealed class RebootPrepTests
         prep.Done("seb").Error.ShouldBeNull();
         _maintenance.ShouldBe([true, false, true, false]);
         _state.Cards().ShouldContain(c => c.Subject == Verbs.FlightTarget("PIL895") && c.Title.Contains("resumes from its reboot file"));
+    }
+    [Fact]
+    public void TheNewestUnreadFileOfAFlightIsHandedOnOnceAndThenMovesToRead()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(Path.Combine(_folder, "flight-PIL895-reboot-20261108-1000.md"), "older");
+        File.WriteAllText(Path.Combine(_folder, "flight-PIL895-reboot-20261109-1912.md"), "# where I stopped");
+        File.WriteAllText(Path.Combine(_folder, "flight-PIL89-reboot-20261109-1912.md"), "another flight");
+
+        var found = RebootPrep.FileFor(_folder, "PIL895").ShouldNotBeNull();
+        Path.GetFileName(found.File).ShouldBe("flight-PIL895-reboot-20261109-1912.md");
+        found.Text.ShouldBe("# where I stopped");
+
+        RebootPrep.MarkRead(found.File);
+        File.Exists(RebootPrep.ReadPathOf(found.File)).ShouldBeTrue();
+        Path.GetFileName(RebootPrep.FileFor(_folder, "PIL895")!.Value.File).ShouldBe("flight-PIL895-reboot-20261108-1000.md", "the newer one is read; the older is next");
+        RebootPrep.FileFor(_folder, "PIL1").ShouldBeNull();
+        RebootPrep.FileFor(Path.Combine(_folder, "none"), "PIL895").ShouldBeNull();
+    }
+
+    [Fact]
+    public void AWorkersBriefCarriesTheRebootFilesTextAndWhereItIsKept()
+    {
+        var flight = new FlightRow
+        {
+            Code = "PIL895", Repo = "pilot", RepoPath = "/r/pilot", Issue = 895, Branch = "flight/pil895", Worktree = "/w/PIL895", Base = "origin/main",
+            State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
+        };
+        var leg = new LegRow { Flight = "PIL895", Name = "teardown", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Planned };
+
+        var brief = Briefs.For(flight, leg, [leg], reboot: ("/data/reboot/read/flight-PIL895-reboot-20261109-1912.md", "Next step: run the guard's tests."));
+
+        brief.ShouldContain("## Resumed after a reboot");
+        brief.ShouldContain("Next step: run the guard's tests.");
+        brief.ShouldContain("/data/reboot/read/flight-PIL895-reboot-20261109-1912.md");
+        Briefs.For(flight, leg, [leg]).ShouldNotContain("Resumed after a reboot");
+    }
+
+    [Fact]
+    public async Task StatusShowsTheRequestInALineUntilItEnds()
+    {
+        Session("w1", "se1-pil895-teardown", SessionRole.Worker, "PIL895", SessionStartReasons.LegLaunch);
+        var prep = Prep();
+        prep.Headline.ShouldBeNull();
+
+        await prep.RequestAsync("seb", "", Ct);
+
+        prep.Headline.ShouldNotBeNull().ShouldStartWith("Preparing to reboot");
+        var plain = PilotCommand.Status(_state.Snapshot(), reboot: prep.Headline);
+        plain.ShouldContain("reboot  Preparing to reboot");
+        StatusMarkdown.Build(_state.Snapshot(), reboot: prep.Headline).ShouldContain("**reboot** Preparing to reboot");
+        PilotCommand.Status(_state.Snapshot()).ShouldNotContain("reboot  ");
+        prep.Cancel("seb");
+        prep.Headline.ShouldBeNull();
     }
 }

@@ -271,7 +271,7 @@ public sealed class RebootPrep(NodeState state, TimeProvider time, string folder
         foreach (var file in files.Where(f => f.Flight is not null))
         {
             state.RaiseCard(CardBin.Handled, Kind, Verbs.FlightTarget(file.Flight!), $"{file.Flight} resumes from its reboot file",
-                $"Its session's state before the reboot is in {file.File}: the next session of {file.Flight} starts from it.");
+                $"Its session's state before the reboot is in {file.File}: the next worker of {file.Flight} is briefed from it, and the file then moves to read/.");
         }
         state.RaiseCard(CardBin.Handled, Kind, Verbs.NodeTarget, $"Resumed after the reboot by {who}", $"Maintenance mode is off; {files.Count} saved {(files.Count == 1 ? "state" : "states")} in {folder}.");
         return (null, $"maintenance mode is off; {files.Count} saved {(files.Count == 1 ? "state is" : "states are")} named on their flights");
@@ -317,6 +317,61 @@ public sealed class RebootPrep(NodeState state, TimeProvider time, string folder
         row.Flight is { Length: > 0 } flight ? $"flight-{flight}-reboot-{stamp}.md"
         : row.Role == SessionRole.Watchtower ? $"watchtower-reboot-{stamp}.md"
         : $"{string.Concat(row.Name.Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '-'))}-reboot-{stamp}.md";
+
+    /// <summary>Where the reboot files are kept: <c>&lt;data&gt;/reboot</c>.</summary>
+    public static string FolderIn(string dataFolder) => Path.Combine(dataFolder, "reboot");
+
+    /// <summary>The longest part of a reboot file a brief carries: a session's four parts fit many times over.</summary>
+    public const int MaxBriefText = 8_000;
+
+    /// <summary>
+    /// The newest reboot file of flight <paramref name="code"/> not yet handed to a session, with its text (cut at <see cref="MaxBriefText"/>);
+    /// null when there is none. Its next worker's brief carries the text and names the file, so the session starts where the one before
+    /// the reboot stopped (#916); <see cref="MarkRead"/> then moves it to <c>read/</c>, so it is handed on once.
+    /// </summary>
+    public static (string File, string Text)? FileFor(string folder, string code)
+    {
+        try
+        {
+            if (!Directory.Exists(folder))
+            {
+                return null;
+            }
+            var newest = Directory.EnumerateFiles(folder, $"flight-{code}-reboot-*.md").Where(f => string.Equals(FlightOf(f), code, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(f => Path.GetFileName(f), StringComparer.Ordinal).FirstOrDefault();
+            if (newest is null)
+            {
+                return null;
+            }
+            var text = File.ReadAllText(newest);
+            return (newest, text.Length > MaxBriefText ? text[..MaxBriefText] + "\n(cut: the rest is in the file)" : text);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Where <see cref="MarkRead"/> moves a reboot file: <c>read/</c> beside it.</summary>
+    public static string ReadPathOf(string file) => Path.Combine(Path.GetDirectoryName(file) ?? "", "read", Path.GetFileName(file));
+
+    /// <summary>Moves a reboot file handed to a session to <c>read/</c>, so no later brief carries it again; a file that cannot be moved stays.</summary>
+    public static void MarkRead(string file)
+    {
+        try
+        {
+            var to = ReadPathOf(file);
+            Directory.CreateDirectory(Path.GetDirectoryName(to)!);
+            File.Move(file, to, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Left in place: the next brief carries it again, which is better than none.
+        }
+    }
+
+    /// <summary>The request's first status line for <c>pilot status</c>; null with no request.</summary>
+    public string? Headline => Requested ? Status().Split('\n')[0] : null;
 
     /// <summary>The request's time as the files name it: <c>20261109-1912</c>, local time.</summary>
     internal static string Stamp(DateTimeOffset at) => at.ToLocalTime().ToString("yyyyMMdd-HHmm", CultureInfo.InvariantCulture);
