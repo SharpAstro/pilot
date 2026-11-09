@@ -127,6 +127,12 @@ public sealed record CardChoice
     /// what was typed after the choice (<c>pilot answer &lt;card&gt; &lt;choice&gt; --words ...</c>). Null for an ordinary button.
     /// </summary>
     public string? AsksFor { get; init; }
+
+    /// <summary>
+    /// The whole of what the label may cut (a design option's text and consequence, which the button's two lines cannot hold): a client
+    /// shows it as the button's hover, so a label ending in an ellipsis still carries its whole words. Null where the label is whole.
+    /// </summary>
+    public string? Hint { get; init; }
 }
 
 /// <summary>Kinds of card a client treats specially, matched by word (<see cref="CardRow.Kind"/>).</summary>

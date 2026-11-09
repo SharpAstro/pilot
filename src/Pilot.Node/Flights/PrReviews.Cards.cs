@@ -39,8 +39,12 @@ public sealed partial class PrReviews
         var choices = new List<CardChoice>();
         if (questions.Count == 1)
         {
-            // The label ends in an ellipsis past what two lines hold; the option whole is in the detail and is the answer the button sends.
-            choices.AddRange(questions[0].RecommendedFirst.Select(o => new CardChoice { Label = Clean(o.Text, MaxOptionLabel), Verb = Verbs.FixPr, Target = subject, Args = [o.Answer] }));
+            // The label ends in an ellipsis past what two lines hold; the option whole, the answer the button sends, is its hover (Hint) and is in the detail.
+            choices.AddRange(questions[0].RecommendedFirst.Select(o =>
+            {
+                var label = Clean(o.Text, MaxOptionLabel);
+                return new CardChoice { Label = label, Verb = Verbs.FixPr, Target = subject, Args = [o.Answer], Hint = label == o.Answer ? null : o.Answer };
+            }));
         }
         choices.Add(AnswerChoice(subject));
         return choices;

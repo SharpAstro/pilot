@@ -1240,5 +1240,5 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     internal static Layout.Node ChoiceControl(CardChoice choice, string? detail, string action, Action onClick, bool wrap = false) =>
         IsChip(choice.Status)
             ? ChoicePill(StatusLabel(choice, detail), false, null, null, null, ArmedText, ChipTooltip(choice), Layout.DockSide.Left, wrap, StatusTint(choice.Status)!.Value.Bg)
-            : ChoicePill(StatusLabel(choice, detail), false, action, onClick, StatusTint(choice.Status), Bright, wrap: wrap);
+            : ChoicePill(StatusLabel(choice, detail), false, action, onClick, StatusTint(choice.Status), Bright, choice.Hint, wrap: wrap);
 }
