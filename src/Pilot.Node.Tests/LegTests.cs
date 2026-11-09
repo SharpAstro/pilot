@@ -2381,6 +2381,72 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct)).Ok.ShouldBeTrue();
     }
 
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task APlaneSquashMergedIntoMainLandsByContentEvenWhenMainEditedTheSameFileSince()
+    {
+        // PIL891: squash-merged as #929, then main's #935 changed a file the flight had touched; the plane's two commits are in main
+        // by content, though neither the ids nor that file match any more. Real git: the merge is line by line, as on the node.
+        RealGit();
+        BaseFile();
+        var flight = await FlightWithTwoLegs();
+        var origin = Path.Combine(_root, "origin.git");
+        Git(_root, "init", "-q", "--bare", origin);
+        Git(Repo, "remote", "add", "origin", origin);
+        Git(Repo, "push", "-q", "origin", "main");
+        File.WriteAllText(Path.Combine(flight.Worktree, "services.cs"), "a\nb\nswe\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "services 1");
+        File.WriteAllText(Path.Combine(flight.Worktree, "services.cs"), "a\nb\nsweep\n");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-a", "-m", "services 2");
+        Git(flight.Worktree, "push", "-q", "origin", "HEAD:" + flight.Branch);
+        // The squash merge, then another PR's edit at the file's top.
+        File.WriteAllText(Path.Combine(Repo, "services.cs"), "a\nb\nsweep\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "services (#929)");
+        File.WriteAllText(Path.Combine(Repo, "services.cs"), "reboot\na\nb\nsweep\n");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-a", "-m", "reboot (#935)");
+        Git(Repo, "push", "-q", "origin", "main");
+        Git(flight.Worktree, "fetch", "-q", "origin");
+
+        var landed = await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct);
+        landed.Error.ShouldBeNull();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task APlaneWithWorkMainLacksIsStillRefusedThoughMainEditedTheSameFile()
+    {
+        // The other side of the merge-tree rule: a line main does not hold keeps the refusal.
+        RealGit();
+        BaseFile();
+        var flight = await FlightWithTwoLegs();
+        var origin = Path.Combine(_root, "origin.git");
+        Git(_root, "init", "-q", "--bare", origin);
+        Git(Repo, "remote", "add", "origin", origin);
+        Git(Repo, "push", "-q", "origin", "main");
+        File.WriteAllText(Path.Combine(flight.Worktree, "services.cs"), "a\nb\nsweep\nnot merged\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "services");
+        Git(flight.Worktree, "push", "-q", "origin", "HEAD:" + flight.Branch);
+        File.WriteAllText(Path.Combine(Repo, "services.cs"), "reboot\na\nb\nsweep\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "services, part");
+        Git(Repo, "push", "-q", "origin", "main");
+        Git(flight.Worktree, "fetch", "-q", "origin");
+
+        var refused = await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct);
+        refused.Error.ShouldNotBeNull().ShouldContain("no passed review has read");
+    }
+
+    // services.cs as main has it where the flight's plane is cut: "a", "b".
+    private void BaseFile()
+    {
+        File.WriteAllText(Path.Combine(Repo, "services.cs"), "a\nb\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "services");
+    }
+
     private void Session(string id, string name, SessionRole role, string flight, SessionState state) => _state.PutSession(new SessionRow
     {
         Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = "/r/w", Role = role, Flight = flight,
