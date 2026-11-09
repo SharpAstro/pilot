@@ -4,8 +4,8 @@ namespace Pilot.Node.Sessions;
 /// The one removal of a Claude Code job the node makes when it ends a session it started (a leg's worker or validator done, a planner
 /// planned, a reviewer or fixer done, a watchtower replaced or ended): <c>claude rm</c> after the stop that was just confirmed, so the job
 /// does not wait for <see cref="ClaudeJobSweep"/>'s next pass (pilot #891). It shares <see cref="IClaudeJobs"/> and the plane guard
-/// (<see cref="ClaudeJobFolder.HoldsWorktree"/>) with the sweep, and never throws past its caller: a stop is confirmed whether or not the
-/// removal worked, and the hourly sweep takes what this left.
+/// (<see cref="ClaudeJobFolder.HoldsWorktree"/>) with the sweep, and never throws past its caller, a cancellation included: a stop is
+/// confirmed whether or not the removal worked, and the hourly sweep takes what this left.
 /// </summary>
 /// <remarks>
 /// Only the job goes: the transcript under <c>&lt;profile&gt;/projects</c> and the session ledger's end reason stay. A resume of a removed
@@ -31,9 +31,11 @@ public sealed class ClaudeJobRemoval(IClaudeJobs jobs, TextWriter log)
                 removed |= await RemoveOneAsync(job, reason, cancellationToken);
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
-            await Say($"job removal: {string.Join(',', candidates)} failed, left for the sweep: {ex.Message}");
+            // A cancellation too: the stop is already confirmed, and a cancelled removal that threw would leave the caller's end command
+            // uncompleted. The job is left for the sweep.
+            await Say($"job removal: {string.Join(',', candidates)} {(ex is OperationCanceledException ? "cancelled" : "failed")}, left for the sweep: {ex.Message}");
         }
         return removed;
     }
