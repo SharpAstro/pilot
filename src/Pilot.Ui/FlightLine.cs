@@ -125,9 +125,10 @@ internal sealed record FlightLine
     /// <summary>
     /// What says the last attempt to move the flight to another node failed, in words so the red it is drawn in never carries it
     /// alone (#376); null while none failed. The reason is <see cref="MoveFailure"/>. A stale row keeps its stale mark and no red: it
-    /// is the last row the node told, and says nothing of what it is doing now.
+    /// is the last row the node told, and says nothing of what it is doing now. A landed flight has none: there is nothing left to
+    /// move, and no Retry move to press, so a failure a node left on it (before landings cleared it) is no band and no red row.
     /// </summary>
-    public string? MoveMark => Row.MoveFailure is { Length: > 0 } && Stale is null ? "move failed" : null;
+    public string? MoveMark => Row is { MoveFailure.Length: > 0, State: not FlightState.Landed } && Stale is null ? "move failed" : null;
 
     /// <summary>Why the move failed, as the node worded it (what happened, what to do); null when <see cref="MoveMark"/> is.</summary>
     public string? MoveFailure => MoveMark is null ? null : Row.MoveFailure;
