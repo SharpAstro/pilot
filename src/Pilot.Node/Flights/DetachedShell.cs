@@ -117,6 +117,7 @@ public sealed class DetachedShell : IDisposable
         var start = UnixStart(command, cwd, logPath, exitPath, jobId, priority, extra, notice);
         // systemd-run --scope execs the command in its own process, so the pid Process.Start returns is the job shell's: the
         // pid the row records stays valid for reattach and for Kill(entireProcessTree) after the scope has been made.
+        ProcessStarts.Observe("job", start);
         return Process.Start(start) ?? throw new InvalidOperationException($"`{command}` did not start");
     }
 
@@ -480,6 +481,7 @@ public sealed class DetachedShell : IDisposable
             // not allow breakaway refuses the flag, and the job then starts without it. Suspended until it is in its own
             // named job object, so nothing it starts can be outside it.
             var flags = CreateNoWindow | CreateNewProcessGroup | CreateSuspended | ExtendedStartupInfoPresent | priority.WindowsClass();
+            ProcessStarts.Observe("job", new ProcessStartInfo { FileName = line, WorkingDirectory = cwd });
             var started = CreateProcessW(null, new StringBuilder(line), 0, 0, true, flags | CreateBreakawayFromJob, 0, cwd, ref startup, out var info);
             if (!started && Marshal.GetLastWin32Error() == ErrorAccessDenied)
             {

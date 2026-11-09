@@ -234,6 +234,26 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task ALaterRoundsNotesThatDoNotBlockAreAFollowUpIssueAndTheFlightMergesWithNoSecondLeg()
+    {
+        // #918: PIL909's #910 went round three times for notes that held nothing. One round of notes holds a merge; the next is filed.
+        AutopilotOn();
+        var flight = await Reviewed("11", "Checked.\n\n## Not blocking\n- rename `x` to `count`");
+        var first = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
+        _state.PutLeg(first with { State = LegState.Done, FinishedAt = DateTimeOffset.UtcNow });
+        _state.UpdateFlight(flight.Code, f => f with { Review = f.Review! with { State = ReviewState.Reviewing }, Holding = null });
+
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "Round 2.\n\n## Not blocking\n- a log line could name the job")).Error.ShouldBeNull();
+
+        _state.Legs(flight.Code).ShouldNotContain(l => l.Name == $"{LegCommander.ReviewNotesLeg}-2");
+        var issue = _github.IssuesCreated.ShouldHaveSingleItem();
+        issue.Title.ShouldStartWith($"Follow-up of {flight.Code}");
+        issue.Body.ShouldNotBeNull().ShouldContain("a log line could name the job");
+        F(flight.Code).Holding.ShouldBeNull("the flight merges with the notes filed");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task OnAutopilotAPassWithNotesPlansAReviewNotesLegCarryingTheNotesAndTheLastChecksCheck()
     {
         AutopilotOn();

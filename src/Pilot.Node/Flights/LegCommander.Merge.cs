@@ -311,7 +311,7 @@ public sealed partial class LegCommander
         {
             throw new MergeBlockedException(MergeRefusals.Unclassified, $"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}");
         }
-        if (state.Legs(flight.Code).Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is { Count: > 0 } open)
+        if (state.OpenLegs(flight.Code) is { Count: > 0 } open)
         {
             throw new MergeBlockedException(MergeRefusals.NodeWait, $"{flight.Code} has legs not done: {string.Join(", ", open)}");
         }
@@ -487,7 +487,7 @@ public sealed partial class LegCommander
     {
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind is PrReady or MergeFailed && c.Subject == target && c.Choices.Any(ch => ch.Verb == Verbs.Merge)))
         {
-            var code = target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? target[Verbs.FlightTargetPrefix.Length..] : target;
+            var code = Verbs.FlightCodeOf(target) ?? target;
             var flight = state.Flights().FirstOrDefault(f => f.Code == code);
             var merge = card.Choices.First(ch => ch.Verb == Verbs.Merge);
             _beforeMerging.TryRemove(card.Id, out _);
@@ -560,9 +560,13 @@ public sealed partial class LegCommander
     /// </summary>
     public void ShowMergeState(CardRow card, MergeState merge, string head, bool replaceWords = false)
     {
-        var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : card.Subject;
+        var code = Verbs.FlightCodeOf(card.Subject) ?? card.Subject;
         var flight = state.Flights().FirstOrDefault(f => f.Code == code);
         var number = flight?.PullRequest;
+        if (ShowLegWait(card))
+        {
+            return;
+        }
         // The PR's page, not the card's link: a card that showed a failed check's page turns back to the PR's.
         var link = flight?.PullRequestUrl ?? card.Link;
         // The card's own words (the review, the head) stay while the Merge only changes its colour; a state that wrote its own
@@ -603,6 +607,36 @@ public sealed partial class LegCommander
         // The failed check's page is the link only where a failed check is what blocks it: the others keep the PR's.
         state.UpdateCard(card.Id, title, detail, choices, merge is { Kind: MergeKinds.Blocked, FailedName: not null } ? merge.FailedLink ?? link : link, PrReady, MergeSummary(code, merge),
             MergeCardBin(merge.Kind is MergeKinds.Blocked or MergeKinds.ChangesRequested || !own && merge.DroppedFromQueue is not null));
+    }
+
+    /// <summary>
+    /// A PR-ready card whose flight has a leg still to fly (a review-notes leg making the review's fixes, planned after the card was
+    /// raised): a Merge now is refused ("has legs not done"), so the card's Merge is a mark (<see cref="ChoiceStatus.WaitsForLegs"/>,
+    /// naming the legs) and the card says what the merge waits for, here and on the PR page that takes its button from it (#918;
+    /// PIL853's #920 said "ready" with a Merge that answered "legs not done: review-notes-2", twice in one evening). The choice keeps
+    /// the reviewed head the autopilot and the holding bound read. True when the card shows the wait (nothing else is to be said of
+    /// it now); false when every leg is done, and the card says what GitHub has. Called whether or not GitHub gave a merge state.
+    /// </summary>
+    public bool ShowLegWait(CardRow card)
+    {
+        var code = Verbs.FlightCodeOf(card.Subject) ?? card.Subject;
+        if (state.Flights().FirstOrDefault(f => f.Code == code) is not { } flight || !card.Choices.Any(c => c.Verb == Verbs.Merge)
+            || state.OpenLegs(code) is not { Count: > 0 } open)
+        {
+            return false;
+        }
+        var legsLeft = string.Join(", ", open);
+        var waitTitle = $"{code}'s PR #{flight.PullRequest} merges once {legsLeft} {(open.Count == 1 ? "is" : "are")} done";
+        var waitWhy = Models.Autopilot
+            ? $"The {legsLeft} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; the node merges the PR once {(open.Count == 1 ? "it lands" : "they land")}."
+            : $"The {legsLeft} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; Merge is offered once {(open.Count == 1 ? "it lands" : "they land")}.";
+        if (card.Title != waitTitle || card.Choices.Any(c => c.Verb == Verbs.Merge && (c.Status != ChoiceStatus.WaitsForLegs || c.Note != legsLeft)))
+        {
+            state.UpdateCard(card.Id, waitTitle, waitWhy,
+                [.. card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = ChoiceStatus.WaitsForLegs, Note = legsLeft } : c)],
+                flight.PullRequestUrl ?? card.Link, PrReady, waitWhy, card.Bin);
+        }
+        return true;
     }
 
     /// <summary>What a PR-ready card says of the merge state it shows: its own sentence for each state, never the table's "is ready" for a PR GitHub holds back.</summary>

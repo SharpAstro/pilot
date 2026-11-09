@@ -338,7 +338,10 @@ public sealed class FalseRingTests : ReviewTestsBase
 
         (await _legs.RunAsync(new CommandRequest { Verb = Verbs.Planned, Target = Verbs.FlightTarget(flight.Code), Args = ["parser first"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
 
-        var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.PlannedKind);
+        // Nothing to press while held: no card for the person yet, only a Handled line (PIL797's sat in For you with only Chat and Dismiss).
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.PlannedKind);
+        var card = _state.Cards().Single(c => c.Kind == LegCommander.PlannedKind);
+        card.Bin.ShouldBe(CardBin.Handled);
         card.Choices.ShouldBeEmpty();
         card.Detail.ShouldNotBeNull().ShouldContain("Waiting for PIL1");
         // The node would refuse the start while the flight is held; the press is never offered.
@@ -347,11 +350,24 @@ public sealed class FalseRingTests : ReviewTestsBase
         // The flight it waits for lands: the same card now offers Start, with no waiting line.
         _state.PutFlight(flight with { State = FlightState.Flying, Connections = [] });
 
+        // The flight it waits for lands: the plan comes to the person, offering Start, with no waiting line.
         var lifted = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.PlannedKind);
-        lifted.Id.ShouldBe(card.Id);
+        lifted.Title.ShouldBe(card.Title);
         var start = lifted.Choices.ShouldHaveSingleItem();
         (start.Label, start.Verb, start.Target).ShouldBe(("Start parser", Verbs.StartLeg, Verbs.LegTarget(flight.Code, "parser")));
         lifted.Detail.ShouldNotBeNull().ShouldNotContain("Waiting for");
+        lifted.Bin.ShouldBe(CardBin.ForYou);
+
+        // Its first leg takes off: the card's Start is done, and a card still offering it would be stale (COD74, 2026-11-09).
+        var parser = _state.Legs(flight.Code).Single(l => l.Name == "parser");
+        _state.PutLeg(parser with { State = LegState.Flying, StartedAt = DateTimeOffset.UtcNow });
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.PlannedKind);
+
+        // Held again and released after a leg flew: no stale plan comes back offering a Start (review of #924).
+        var flying = _state.Flights().Single(f => f.Code == flight.Code);
+        _state.PutFlight(flying with { State = FlightState.Held });
+        _state.PutFlight(flying with { State = FlightState.Flying });
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.PlannedKind);
     }
 
     [Fact]

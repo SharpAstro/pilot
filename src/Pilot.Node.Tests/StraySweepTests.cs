@@ -164,6 +164,41 @@ public sealed class StraySweepTests
     }
 
     [Fact]
+    public void ExplorerUnderAReusedParentIdIsNeverTheJobsAndNothingOfItIsEnded()
+    {
+        // SE1, 2026-11-09 22:04: Explorer restarted, its parent (userinit) exited, and a process of job j2356 took that pid a second
+        // later. Within the old 2 s tolerance Explorer read as the job process's child, and the sweep ended Explorer, Edge and the rest.
+        Job("j9", 600, Began, TimeSpan.FromHours(2), ended: _time.GetUtcNow().AddMinutes(-10));
+        _table.Add(650, 1, "testhost.exe", Began.AddMinutes(1), commandLine: "testhost.exe");
+        _known["j9"] = [new KnownProcess(650, Began.AddMinutes(1))];
+        _table.Add(26484, 650, "explorer.exe", Began.AddMinutes(1) - TimeSpan.FromSeconds(1), commandLine: "explorer.exe");
+        _table.Add(26700, 26484, "msedge.exe", Began.AddMinutes(2), commandLine: "msedge.exe");
+
+        _sweep.SweepOnce();
+
+        _table.Killed.ShouldBeEmpty("the sweep ends nothing: it names, the person decides");
+    }
+
+    [Fact]
+    public void AShellOrBrowserProcessIsNeverEndedWhateverTheAttributionSays()
+    {
+        // Even attributed cleanly (started after the job's process, below it), the desktop's own processes are neither ended nor named:
+        // one read as a stray is a misattribution, and a card would offer its kill command.
+        Job("j9", 600, Began, TimeSpan.FromHours(2), ended: _time.GetUtcNow().AddMinutes(-10));
+        _table.Add(660, 1, "pwsh.exe", Began.AddMinutes(1), commandLine: "pwsh.exe");
+        _known["j9"] = [new KnownProcess(660, Began.AddMinutes(1))];
+        _table.Add(661, 660, "msedgewebview2.exe", Began.AddMinutes(2), commandLine: "msedgewebview2.exe");
+        _table.Add(662, 660, "explorer.exe", Began.AddMinutes(2), commandLine: "explorer.exe");
+
+        var named = _sweep.SweepOnce();
+
+        _table.Killed.ShouldBeEmpty("the sweep ends nothing: it names, the person decides");
+        named.Select(s => s.Pid).ShouldBe([660], "pwsh, the job's own; never msedgewebview2 or explorer");
+        StraySweep.NeverEnded("Explorer.EXE").ShouldBeTrue();
+        StraySweep.NeverEnded("testhost.exe").ShouldBeFalse();
+    }
+
+    [Fact]
     public void AProcessOfAnEndedJobTheNodeLaunchedIsKilledThroughTheTableAndNothingElseIs()
     {
         // 1. j9 ended ten minutes ago; a test host it started while it ran lives on, its wrapper long gone: the node ends it.
@@ -183,20 +218,16 @@ public sealed class StraySweepTests
 
         var named = _sweep.SweepOnce();
 
-        _table.Killed.ShouldBe([601]);
-        named.Select(s => s.Pid).Order().ShouldBe([500, 501, 700]);
-        var ended = _state.Cards().Single(c => c.Kind == StraySweep.KilledKind);
-        ended.Bin.ShouldBe(CardBin.Handled);
-        ended.Detail.ShouldNotBeNull().ShouldContain("Stop-Process -Id 601 -Force");
-        Open(StraySweep.Kind).Select(c => c.Subject.Split('@')[0]).Order().ShouldBe(["process:500", "process:501", "process:700"]);
-        Open(StraySweep.Kind).Single(c => c.Subject.StartsWith("process:700@", StringComparison.Ordinal)).Detail.ShouldNotBeNull()
-            .ShouldContain("tied to its owner by its folder or command line only");
+        // Nothing is ended: each stray is named on a card with its kill command, and the person decides (SE1, 2026-11-09 22:04).
+        _table.Killed.ShouldBeEmpty("the sweep ends nothing: it names, the person decides");
+        // 700 is Code.exe, a person's editor in the plane: on the never-named list, so no card offers its kill command.
+        named.Select(s => s.Pid).Order().ShouldBe([500, 501, 601]);
+        _state.Cards().ShouldNotContain(c => c.Kind == StraySweep.KilledKind);
+        Open(StraySweep.Kind).Single(c => c.Subject.StartsWith("process:601@", StringComparison.Ordinal)).Detail.ShouldNotBeNull().ShouldContain("Stop-Process -Id 601 -Force");
+        Open(StraySweep.Kind).ShouldNotContain(c => c.Subject.StartsWith("process:700@", StringComparison.Ordinal));
 
-        // The one the node ended that stays alive is not ended a second time: it is named, and the card says it is still there.
         _sweep.SweepOnce();
-        _table.Killed.ShouldBe([601]);
-        Open(StraySweep.Kind).Single(c => c.Subject.StartsWith("process:601@", StringComparison.Ordinal)).Detail.ShouldNotBeNull()
-            .ShouldContain("tried to end it and it is still here");
+        _table.Killed.ShouldBeEmpty();
     }
 
     [Fact]
@@ -234,9 +265,9 @@ public sealed class StraySweepTests
 
         var named = _sweep.SweepOnce();
 
-        _table.Killed.ShouldBe([951]);
-        named.ShouldBeEmpty();
-        _state.Cards().Single(c => c.Kind == StraySweep.KilledKind).Detail.ShouldNotBeNull().ShouldContain("Stop-Process -Id 951 -Force");
+        _table.Killed.ShouldBeEmpty("the sweep ends nothing: it names, the person decides");
+        named.Select(s => s.Pid).ShouldBe([951], "named on a card, not ended");
+        _state.Cards(openOnly: true).Single(c => c.Kind == StraySweep.Kind && c.Subject.StartsWith("process:951@", StringComparison.Ordinal)).Detail.ShouldNotBeNull().ShouldContain("Stop-Process -Id 951 -Force");
     }
 
     [Fact]
@@ -288,8 +319,8 @@ public sealed class StraySweepTests
         _table.Remove(970);
         _table.Add(971, 970, "node.exe", Began.AddMinutes(11), commandLine: "node.exe mcp-server.js");
 
-        _sweep.SweepOnce().ShouldBeEmpty();
+        _sweep.SweepOnce().Select(s => s.Pid).ShouldBe([971], "named on a card, not ended");
 
-        _table.Killed.ShouldBe([971]);
+        _table.Killed.ShouldBeEmpty("the sweep ends nothing: it names, the person decides");
     }
 }

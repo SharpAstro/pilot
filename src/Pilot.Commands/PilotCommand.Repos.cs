@@ -43,7 +43,7 @@ public static partial class PilotCommand
         {
             // repos
             var allRepos = new Option<bool>("--all") { Description = "Repos nothing has flown in too, not only the tracked ones" };
-            var freshRepos = new Option<bool>("--refresh") { Description = "Wait for a fresh read of git and gh, not the node's cache" };
+            var freshRepos = new Option<bool>("--refresh") { Description = "Wait for a fresh read of git and gh, not the node's cache: every repo's git status is read again unless it was read within the last 5 s" };
             var reposCommand = Action(new Command("repos", "Each tracked repo: its branch, worktrees and open PRs, as the node last read them") { Options = { allRepos, freshRepos } },
                 async (p, client, ct) =>
                 {

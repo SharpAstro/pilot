@@ -145,8 +145,13 @@ public sealed partial class LegCommander
         // The cards that offer the merge or a step close: the hold refuses each button, and a release brings the due ones back.
         state.CloseCardsAbout(target, $"{flight.Code} is on hold by {by}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, NextStepKind);
         state.CloseCardsAbout(target, repeat ? "the hold's reason was updated" : "on hold", OnHoldKind);
+        // A held flight loads the machine no more (the held PIL895 ran the whole Pilot.Node.Tests suite for an hour after "hold all
+        // flights", SE1, 2026-11-09): its running jobs end, but for its leg's check, which a cancel would count as a failure; its queued
+        // ones wait (JobRunner.FlightHold) and start once it is released.
+        var cancelled = flights.CancelHeldJobs?.Invoke(flight.Code, by) ?? 0;
         var detail = $"{by}: {why}. The node starts nothing for {flight.Code} and takes no outward step (no leg, worker, planner, reviewer, go-around, base merge, push, PR open or merge) until `pilot flight unground {flight.Code}`. "
             + LabelHold.RunningNote
+            + (cancelled > 0 ? $" Its {cancelled} running {(cancelled == 1 ? "job was" : "jobs were")} cancelled (a check runs to its end); its queued ones wait for the release." : "")
             + (took.Count > 0 ? $" {string.Join(", ", took)}." : "")
             + (problem is not null ? $" {problem}." : "")
             + (labelNote is not null ? $" {labelNote}." : "");

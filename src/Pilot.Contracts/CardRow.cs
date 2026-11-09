@@ -244,6 +244,12 @@ public static class ChoiceStatus
     public const string ChangesRequested = "changes-requested";
 
     /// <summary>
+    /// The node's own wait: a leg of the flight (a review-notes leg making the review's fixes) is still to fly, and the merge is
+    /// refused until it lands; <see cref="CardChoice.Note"/> names the legs. Not a button, and not a failure: it ends by itself (#918).
+    /// </summary>
+    public const string WaitsForLegs = "waits-for-legs";
+
+    /// <summary>
     /// The node has taken the merge and is working on it: waiting its turn behind another flight of the repo, bringing the PR up to
     /// date, or waiting for its checks. <see cref="CardChoice.Note"/> says which. Not a button: a second press is answered as in progress.
     /// </summary>

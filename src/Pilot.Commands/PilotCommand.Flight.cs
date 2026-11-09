@@ -30,17 +30,19 @@ public static partial class PilotCommand
             var title = Words("title", "What it is for, in a line", required: false);
             var repo = new Option<string?>("--repo") { Description = RepoOptionDescription };
             var anyway = new Option<bool>(Verbs.AnywayFlag) { Description = "Create it although the issue carries another node's pilot node: label; says so on the issue" };
-            var create = Action(new Command("create", "A flight on an issue of this repo, and its plane") { Arguments = { issue, title }, Options = { repo, anyway } },
+            // --why: --anyway overrides a gate, and the node refuses an override with no why naming the evidence (#926: the gate asked for
+            // a --why the command did not take, and a --why typed anyway became title words).
+            var create = Action(new Command("create", "A flight on an issue of this repo, and its plane") { Arguments = { issue, title }, Options = { repo, anyway, actingOn } },
                 (p, client, ct) => Send(client, Verbs.CreateFlight, Verbs.RepoTarget(RepoPath(client, p.GetValue(repo), cwd)),
-                    [p.GetValue(issue)!, .. p.GetValue(title) ?? [], .. p.GetValue(anyway) ? new[] { Verbs.AnywayFlag } : []], who, ct));
+                    [p.GetValue(issue)!, .. p.GetValue(title) ?? [], .. p.GetValue(anyway) ? new[] { Verbs.AnywayFlag } : []], who, ct, p.GetValue(actingOn)));
 
             var other = Arg("other", "The flight it waits for");
             var connect = Action(new Command("connect", "The flight holds until the other, a flight of this node or of a reachable one, has landed") { Arguments = { code, other } },
                 (p, client, ct) => Send(client, Verbs.Connect, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
 
             var disconnectAnyway = new Option<bool>(Verbs.AnywayFlag) { Description = "Drop a connection the controller chose as the answer to an overlap (the person's to give)" };
-            var disconnect = Action(new Command("disconnect", "Undo a connect: the flight stops waiting for the other (on this node or another) and flies when nothing else holds it") { Arguments = { code, other }, Options = { disconnectAnyway } },
-                (p, client, ct) => Send(client, Verbs.Disconnect, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!, .. p.GetValue(disconnectAnyway) ? new[] { Verbs.AnywayFlag } : []], who, ct));
+            var disconnect = Action(new Command("disconnect", "Undo a connect: the flight stops waiting for the other (on this node or another) and flies when nothing else holds it") { Arguments = { code, other }, Options = { disconnectAnyway, actingOn } },
+                (p, client, ct) => Send(client, Verbs.Disconnect, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!, .. p.GetValue(disconnectAnyway) ? new[] { Verbs.AnywayFlag } : []], who, ct, p.GetValue(actingOn)));
 
             var fly = Action(new Command("fly", "Stop the flight's wait for a package nuget.org does not serve: it flies now") { Arguments = { code } },
                 (p, client, ct) => Send(client, Verbs.FlyAnyway, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct));

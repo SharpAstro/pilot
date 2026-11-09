@@ -286,6 +286,11 @@ internal sealed partial class PullRequestsView<TSurface>
         } : null;
         var bg = tint?.Bg ?? P.Button;
         var hover = tint?.Hover ?? P.ButtonHover;
+        // A merge waiting on a leg of the flight is said, not offered: a press would be refused (#918).
+        if (action is { Kind: PullRequestActionKind.Merge, Status: ChoiceStatus.WaitsForLegs })
+        {
+            return Said(action.Label, action.Tooltip, P.Bright, bg, width);
+        }
         // A press the node refused leaves the button saying so, pressable again (which retries); the words are in the tooltip and the bar.
         var prName = $"{pr.Repo}#{pr.Number}";
         var failed = action.Kind switch
@@ -321,7 +326,7 @@ internal sealed partial class PullRequestsView<TSurface>
         }
         // Merge and Go around ask through the card, whose own press says the card is with the node.
         return action.Card is { } card
-            ? Presses.ButtonOf($"pr:{pr.Url}:{ActionId(action.Kind)}", () => CardWorking?.Invoke(card.Id), Idle,
+            ? Presses.ButtonOf($"pr:{pr.Url}:{ActionId(action.Kind)}", () => CardWorking?.Invoke(card), Idle,
                 _ => Layout.Builder.Text($"{action.Label} …", ChipSize, P.Dim, TextAlign.Center, TextAlign.Center).Bg(bg).WFixed(width).HStar())
             : Idle();
     }
