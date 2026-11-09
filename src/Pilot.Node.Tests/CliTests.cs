@@ -278,7 +278,7 @@ public sealed class CliTests : IAsyncLifetime
         _node.GitHub.Merged.ShouldBe([(71, "cafe0000cafe0000", "rebase")]);
         _node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
         var after = _node.State.Cards();
-        after.Single(c => c.Id == ring).Outcome.ShouldBe("Merge");
+        after.Single(c => c.Id == ring).Outcome.ShouldBe(LegCommander.MergeLabel);
         after.Single(c => c.Kind == "landed").Bin.ShouldBe(CardBin.Handled);
 
         // Landed, it leaves status, which says how many it left out; --all shows it with its legs.
