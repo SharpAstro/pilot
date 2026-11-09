@@ -205,4 +205,38 @@ public sealed class AdmissionTests
             Flight("PIL15", "pilot", FlightPhase.Ready)], 1, true);
         Admission.Decide(input, Start("PIL15")).ShouldBeOfType<AdmissionDecision.Wait>().Why.ShouldStartWith("waiting for an Opus slot");
     }
+
+    // #912: reviews and fixers wait in a queue, and a starved machine starts nothing.
+    private static FleetSession Reviewing(string label, AdmissionRole role) => new("SE1", label, "sonnet") { Role = role, Identity = label };
+
+    [Fact]
+    public void AtTheReviewLimitAReviewOrAFixerWaitsAndAWorkerDoesNot()
+    {
+        var input = new AdmissionInput([Reviewing("se1-review-pilot-887", AdmissionRole.Reviewer), Reviewing("se1-fix-pilot-911", AdmissionRole.Fixer)], [], 3, false) { ReviewLimit = 2 };
+
+        var review = Admission.Decide(input, new AdmissionRequest(AdmissionRole.Reviewer, "sonnet", "SE1")).ShouldBeOfType<AdmissionDecision.Wait>();
+        review.Why.ShouldContain("waiting for a review slot: 2 of 2");
+        review.Why.ShouldContain("se1-fix-pilot-911");
+        Admission.Decide(input, new AdmissionRequest(AdmissionRole.Fixer, "sonnet", "SE1")).ShouldBeOfType<AdmissionDecision.Wait>();
+        Admission.Decide(input, new AdmissionRequest(AdmissionRole.Worker, "sonnet", "SE1")).ShouldBeOfType<AdmissionDecision.Admit>();
+
+        // One ends: the next starts.
+        Admission.Decide(input with { Sessions = [input.Sessions[0]] }, new AdmissionRequest(AdmissionRole.Reviewer, "sonnet", "SE1")).ShouldBeOfType<AdmissionDecision.Admit>();
+        // 0 is no limit.
+        Admission.Decide(input with { ReviewLimit = 0 }, new AdmissionRequest(AdmissionRole.Reviewer, "sonnet", "SE1")).ShouldBeOfType<AdmissionDecision.Admit>();
+    }
+
+    [Fact]
+    public void UnderTheMemoryFloorNothingStarts()
+    {
+        const long Gb = 1024L * 1024 * 1024;
+        var starved = new AdmissionInput([], [], 3, false) { FreeMemory = Gb / 2, MemoryFloor = Gb * 3 / 2 };
+        foreach (var role in new[] { AdmissionRole.Worker, AdmissionRole.Planner, AdmissionRole.Reviewer, AdmissionRole.Fixer })
+        {
+            Admission.Decide(starved, new AdmissionRequest(role, "sonnet", "SE1")).ShouldBeOfType<AdmissionDecision.Wait>().Why.ShouldStartWith("waiting for memory: 0.5 GB free, 1.5 GB needed");
+        }
+        Admission.Decide(starved with { FreeMemory = Gb * 2 }, new AdmissionRequest(AdmissionRole.Reviewer, "sonnet", "SE1")).ShouldBeOfType<AdmissionDecision.Admit>();
+        // A memory that was not read holds nothing back.
+        Admission.Decide(starved with { FreeMemory = null }, new AdmissionRequest(AdmissionRole.Worker, "sonnet", "SE1")).ShouldBeOfType<AdmissionDecision.Admit>();
+    }
 }

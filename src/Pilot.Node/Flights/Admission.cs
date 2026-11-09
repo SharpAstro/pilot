@@ -61,6 +61,9 @@ public sealed record FleetSession(string Node, string Label, string? Model, bool
     /// <summary>What names the session across nodes and across a claim and the session that follows it (<c>worker:PIL1</c>); the label when none is given.</summary>
     public string Identity { get; init; } = "";
 
+    /// <summary>Its role, where the node knows it: reviewers and fixers count against the review limit (#912); null for a peer's.</summary>
+    public AdmissionRole? Role { get; init; }
+
     /// <summary>For an Idle session counted only because it has work pending (<c>idle, job j12 running</c>); null for any other. Never part of the key.</summary>
     public string? Note { get; init; }
 
@@ -95,7 +98,17 @@ public sealed record FleetFlight(string Node, string Code, string Repo, FlightPh
 }
 
 /// <summary>The fleet as admission sees it.</summary>
-public sealed record AdmissionInput(IReadOnlyList<FleetSession> Sessions, IReadOnlyList<FleetFlight> Flights, int OpusCap, bool OneFlightPerRepo);
+public sealed record AdmissionInput(IReadOnlyList<FleetSession> Sessions, IReadOnlyList<FleetFlight> Flights, int OpusCap, bool OneFlightPerRepo)
+{
+    /// <summary>The most reviewers and fixers of this node at once (#912); 0 for no limit.</summary>
+    public int ReviewLimit { get; init; }
+
+    /// <summary>The machine's free memory now, in bytes; null when it was not read (a test, a peer's view).</summary>
+    public long? FreeMemory { get; init; }
+
+    /// <summary>The free memory a start needs: under it, nothing starts (#912: five reviewers and four fixers took SE1 to 0.4 GB free).</summary>
+    public long MemoryFloor { get; init; }
+}
 
 /// <summary>A session that asks to start. <paramref name="Flight"/> is null for one that belongs to no flight (the review of a bare PR).</summary>
 public sealed record AdmissionRequest(AdmissionRole Role, string? Model, string? Node = null, string? Flight = null);
@@ -148,6 +161,18 @@ public static class Admission
                     card = breaking.Card;
                     break;
             }
+        }
+        // A starved machine takes on no other session: under the floor, every start waits until memory comes back (#912).
+        if (input.FreeMemory is { } free && free < input.MemoryFloor)
+        {
+            return new AdmissionDecision.Wait($"waiting for memory: {free / (1024.0 * 1024 * 1024):0.0} GB free, {input.MemoryFloor / (1024.0 * 1024 * 1024):0.0} GB needed to start a session");
+        }
+        // Reviews and fixers wait in a queue: at most ReviewLimit at once, whatever their model, since each builds and tests in its own worktree (#912).
+        if (request.Role is AdmissionRole.Reviewer or AdmissionRole.Fixer && input.ReviewLimit > 0
+            && input.Sessions.Where(s => !s.Meta && s.Role is AdmissionRole.Reviewer or AdmissionRole.Fixer).DistinctBy(s => s.Key).ToArray() is { } reviewing
+            && reviewing.Length >= input.ReviewLimit)
+        {
+            return new AdmissionDecision.Wait($"waiting for a review slot: {reviewing.Length} of {input.ReviewLimit} reviews and fixers running: {string.Join(", ", reviewing.Select(s => s.Label))}");
         }
         if (IsOpus(request.Model) && input.OpusCap > 0
             && input.Sessions.Where(s => !s.Meta && IsOpus(s.Model)).DistinctBy(s => s.Key).ToArray() is { } opus && opus.Length >= input.OpusCap)
