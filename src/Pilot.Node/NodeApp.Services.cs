@@ -36,6 +36,9 @@ public static partial class NodeApp
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton(NodeTraffic.Shared);
+        // What GET /node reads the heap with: the live figures, unless a test host registers a fixed reading after this (a live
+        // working set moves between any two calls, so two `pilot status` outputs of one node would never be equal).
+        builder.Services.AddSingleton<Func<NodeHeapRow>>(_ => () => NodeHeap.Read());
         builder.Services.AddHostedService(services => new TrafficLog(services.GetRequiredService<NodeTraffic>(), services.GetRequiredService<RollingLog>(), services.GetRequiredService<TimeProvider>()));
     }
 

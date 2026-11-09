@@ -113,6 +113,35 @@ public sealed class SayLookTests : IDisposable
     }
 
     [Fact]
+    public async Task ALookThatSawTheSessionBusyIsNotUndoneByAListingThatBeganBeforeIt()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "done", pid: Pid, status: "idle", cwd: Cwd));
+        _profile.WriteSessionRecord(Pid, """{"status":"idle"}""");
+        await _tracker.PollAsync(Ct);
+        _state.Sessions().Single().State.ShouldBe(SessionState.Idle);
+
+        // A listing starts while the session is idle and is stuck; the session goes busy and a say's look sees it; then the
+        // listing's answer arrives. What it read is older than the look: it is taken again, and says busy as the record does.
+        _agents.Stuck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var listing = _tracker.PollAsync(Ct);
+        _profile.WriteSessionRecord(Pid, """{"status":"busy"}""");
+        (await _tracker.LookAsync("b2c3d4e5", Ct)).ShouldBeTrue();
+        _state.Sessions().Single().State.ShouldBe(SessionState.Working);
+
+        var busy = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "working", pid: Pid, status: "busy", cwd: Cwd));
+        _agents.AfterListing = () =>
+        {
+            _agents.AfterListing = null;
+            _agents.Json = busy;
+        };
+        _agents.Stuck.SetResult();
+        await listing;
+
+        _state.Sessions().Single().State.ShouldBe(SessionState.Working, "the older listing's idle was put over the look's busy");
+        _agents.Listings.ShouldBe(3);
+    }
+
+    [Fact]
     public async Task APersonsSayGoesAheadOfTheNodesOwnQueuedNudgesAtTheGate()
     {
         // The node's nudges held the watchtower's gate 3 to 17 s each while an owner's message queued behind them (DE1, 2026-11-07).

@@ -398,6 +398,12 @@ public sealed class SessionTracker : BackgroundService
         }
         // The record is what the listing reads a running session's status from: its own, as of now.
         var fresh = record.Status is not null ? agent with { Status = record.Status, WaitingFor = record.WaitingFor } : agent;
+        if (fresh != agent)
+        {
+            // A listing that began before this look would put its older status over the look's at its end: a look that
+            // changed the row counts as a change, as a stop or a resume does, so that listing is taken again.
+            Changed();
+        }
         Track(fresh, id, _time.GetUtcNow());
         return true;
     }

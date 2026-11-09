@@ -25,9 +25,18 @@ public sealed class MachineSamplerCostTests
 
         public int Reads => Volatile.Read(ref _reads);
 
+        private readonly TaskCompletionSource _read3 = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _read4 = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Completes when the third read is done, and the fourth: the test waits on them, not on the clock.</summary>
+        public Task Read3 => _read3.Task;
+
+        public Task Read4 => _read4.Task;
+
         public bool Read(List<SystemProcess> into)
         {
-            Interlocked.Increment(ref _reads);
+            var reads = Interlocked.Increment(ref _reads);
+            (reads == 3 ? _read3 : reads == 4 ? _read4 : null)?.TrySetResult();
             var tick = Interlocked.Increment(ref _tick);
             into.Clear();
             into.Add(new SystemProcess(0, 0, "Idle", TimeSpan.FromHours(tick), 0));
@@ -160,55 +169,71 @@ public sealed class MachineSamplerCostTests
         reads.ShouldBe(2);
     }
 
+    /// <summary>A clock a test moves, which tells when a timer is set: the test waits for the sampler's sleep to begin, then moves it on.</summary>
+    private sealed class SignalingTime(DateTimeOffset start) : TimeProvider
+    {
+        private readonly TimerTime _inner = new(start);
+
+        public SemaphoreSlim TimerSet { get; } = new(0);
+
+        public override DateTimeOffset GetUtcNow() => _inner.GetUtcNow();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = _inner.CreateTimer(callback, state, dueTime, period);
+            TimerSet.Release();
+            return timer;
+        }
+
+        public void Advance(TimeSpan by) => _inner.Advance(by);
+    }
+
     [Fact]
     public async Task AClientOpeningHomeWakesTheIdleWait()
     {
+        // The sampler's own sleeps run on a clock the test moves and the test waits on events (a read, a timer set), never on the wall clock.
+        var time = new SignalingTime(Now);
         var views = new PageViews();
         var table = new CountingTable(3);
         var logged = new ListLogger();
-        using var sampler = new MachineSampler(new NodeState(new InMemoryJournal(), TimeProvider.System), TimeProvider.System)
+        using var sampler = new MachineSampler(new NodeState(new InMemoryJournal(), time), time)
         {
             Processes = table,
             Views = views,
             Details = _ => (null, null),
             Gpu = () => null,
             FirstAfter = TimeSpan.Zero,
-            Interval = TimeSpan.FromMilliseconds(20),
+            Interval = TimeSpan.FromSeconds(5),
             IdleInterval = TimeSpan.FromHours(1),
             Logger = logged,
         };
         await sampler.StartAsync(Ct);
         try
         {
-            // The baseline and the first sample, then the idle wait of an hour.
-            (await WaitFor(() => table.Reads >= 2)).ShouldBeTrue(string.Join('\n', logged.Lines));
-            await Task.Delay(100, Ct);
-            var idle = table.Reads;
-            idle.ShouldBe(2);
+            // The baseline and the first sample, then the idle wait of an hour (its timer set).
+            await time.TimerSet.WaitAsync(Deadline, Ct);
+            table.Reads.ShouldBe(2, string.Join('\n', logged.Lines));
 
+            // A client opens Home: the hour's wait ends, and the watched pace (5 s since the last sample) is waited out instead.
             views.Say(new object(), ClientPages.Home);
+            await time.TimerSet.WaitAsync(Deadline, Ct);
+            table.Reads.ShouldBe(2);
 
-            (await WaitFor(() => table.Reads >= idle + 2)).ShouldBeTrue($"reads {table.Reads}: {string.Join('\n', logged.Lines)}");
+            time.Advance(TimeSpan.FromSeconds(5));
+            await table.Read3.WaitAsync(Deadline, Ct);
+            await time.TimerSet.WaitAsync(Deadline, Ct);
+            time.Advance(TimeSpan.FromSeconds(5));
+            await table.Read4.WaitAsync(Deadline, Ct);
         }
         finally
         {
             await sampler.StopAsync(Ct);
         }
         logged.Lines.ShouldBeEmpty();
-
-        static async Task<bool> WaitFor(Func<bool> condition)
-        {
-            for (var waited = 0; waited < 4000; waited += 10)
-            {
-                if (condition())
-                {
-                    return true;
-                }
-                await Task.Delay(10, Ct);
-            }
-            return condition();
-        }
     }
+
+    /// <summary>The longest a wait for an event may take before the test fails: a limit, not a pace.</summary>
+    private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(60);
 
     // ---- The real table ----
 
