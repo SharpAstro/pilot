@@ -51,4 +51,8 @@
     <PackageReference Include="Console.Lib.Debug" Condition="'$(Configuration)' == 'Debug'" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- One root for the run's temp files, deleted when the run ends (TestTempRoot). -->
+    <Compile Include="..\TestShared\TestTempRoot.cs" Link="TestShared\TestTempRoot.cs" />
+  </ItemGroup>
 </Project>
