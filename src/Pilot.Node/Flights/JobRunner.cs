@@ -141,6 +141,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>How many jobs run at once; the rest wait their turn. Set live by <c>set node max-jobs</c>, then <see cref="Pump"/>.</summary>
     public int MaxRunning { get; set; } = 1;
 
+    /// <summary>
+    /// Whether a heavy job (a test run, a solution, test-project or folder build) waits while another heavy job runs on the machine,
+    /// whatever <see cref="MaxRunning"/> allows (the owner, 2026-11-09). On for every node; a test of another queue rule turns it off.
+    /// </summary>
+    public bool OneHeavyAtATime { get; set; } = true;
+
     /// <summary>The priority every job's process tree runs at, so builds and tests yield the CPU to other work (#629); Normal keeps the node's own.</summary>
     public JobPriority Priority { get; set; } = JobPriority.BelowNormal;
 
@@ -1375,6 +1381,14 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             return holds;
         }
+        if (RepoHold(job) is { } repoHeld)
+        {
+            return repoHeld;
+        }
+        if (HeavyHold(job) is { } heavyHeld)
+        {
+            return heavyHeld;
+        }
         if (!ignoreSibling && SiblingHold(job) is { } shared)
         {
             return shared;
@@ -1533,6 +1547,53 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         return null;
     }
+
+    /// <summary>
+    /// Why a job may not start while another job of its repo runs: one job per repo at a time, whatever max-jobs allows across
+    /// repos. Two Pilot.Node.Tests runs of two pilot flights ran at once with max-jobs 2 and took the machine (SE1, 2026-11-09);
+    /// the owner: "having 2 jobs didn't mean two jobs of the same PIL/TIA can run". Null when no job of its repo is running.
+    /// </summary>
+    private string? RepoHold(JobRow job)
+    {
+        if (SiblingSet.RepoOf(job.Cwd) is not { } repo)
+        {
+            return null;
+        }
+        foreach (var id in _running.Keys.Order(StringComparer.Ordinal))
+        {
+            if (id != job.Id && state.Jobs().FirstOrDefault(j => j.Id == id) is { } row
+                && string.Equals(SiblingSet.RepoOf(row.Cwd), repo, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"one job per repo: {id} of {Path.GetFileName(repo)} is running";
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Why a heavy job (a test run, or a build of a solution or a test project) may not start while another heavy job runs on this
+    /// machine, of any repo: max-jobs 2 means two jobs, never two heavy suites (the owner, 2026-11-09). Light jobs run beside one.
+    /// </summary>
+    private string? HeavyHold(JobRow job)
+    {
+        if (!OneHeavyAtATime || !IsHeavy(job.Command))
+        {
+            return null;
+        }
+        foreach (var id in _running.Keys.Order(StringComparer.Ordinal))
+        {
+            if (id != job.Id && state.Jobs().FirstOrDefault(j => j.Id == id) is { } row && IsHeavy(row.Command))
+            {
+                return $"one heavy job at a time: {id} is running a test run or a solution build";
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Whether a job's command runs tests or builds a solution or a test project: the jobs two of which take the machine.</summary>
+    internal static bool IsHeavy(string command) =>
+        System.Text.RegularExpressions.Regex.IsMatch(command, @"\bdotnet\s+(test\b|build\b[^&|;]*\.(slnx?|\S*Tests\S*\.csproj)\b)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+        || System.Text.RegularExpressions.Regex.IsMatch(command, @"\bdotnet\s+build\s*($|[&|;]|-)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     // Jobs that have let go of their sibling clones, once and for good: their tree moved past the last building segment.
     private readonly ConcurrentDictionary<string, byte> _released = new(StringComparer.Ordinal);

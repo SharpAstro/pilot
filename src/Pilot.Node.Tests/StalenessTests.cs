@@ -302,16 +302,29 @@ public class StalenessTests
     [Fact]
     public void WaitsOnNamesAReviewRoundAHoldAConnectedFlightAndARingingCard()
     {
-        var reviewing = new ReviewRow { State = ReviewState.Reviewing, Reviewer = "DE1-DIR178-review", StartedAt = Now - TimeSpan.FromHours(1) };
+        var reviewing = new ReviewRow { State = ReviewState.Reviewing, Reviewer = "DE1-DIR178-review", StartedAt = Now - TimeSpan.FromHours(7) };
         Read([Flight(age: TimeSpan.FromHours(13), review: reviewing)], [Leg("DIR178", state: LegState.Done)]).Stale.Single().WaitsOn.ShouldContain("a review round");
 
-        var holding = new FlightHolding { Reason = "small fixes", Since = Now - TimeSpan.FromHours(1) };
+        // A review or a hold that began within half the bound is a move: these began longer ago, so the flight is stale and says on what.
+        var holding = new FlightHolding { Reason = "small fixes", Since = Now - TimeSpan.FromHours(7) };
         Read([Flight(age: TimeSpan.FromHours(13), holding: holding)]).Stale.Single().WaitsOn.ShouldContain("a hold");
 
         Read([Flight(age: TimeSpan.FromHours(13), state: FlightState.Held, connections: ["PIL9"])]).Stale.Single().WaitsOn.ShouldBe("a connected flight (PIL9)");
 
         Read([Flight(age: TimeSpan.FromHours(13))], [Leg("DIR178", state: LegState.Done)], [Card("c7", "flight/DIR178", age: TimeSpan.FromMinutes(10))])
             .Stale.Single().WaitsOn.ShouldContain("a ringing card (c7");
+    }
+
+    [Fact]
+    public void AFlightOpenLongButMovingIsNeitherStaleNorNearing()
+    {
+        // Released from a hold, a leg started 12 minutes ago: the row read "stale · no progress for 12 m" (SE1, 2026-11-09).
+        var reading = Read([Flight(age: TimeSpan.FromHours(30))], [Leg("DIR178", state: LegState.Flying) with { StartedAt = Now - TimeSpan.FromMinutes(12) }]);
+        reading.Stale.ShouldBeEmpty();
+        reading.Nearing.ShouldBeEmpty();
+
+        // Still for longer than the bound, it is stale again.
+        Read([Flight(age: TimeSpan.FromHours(30))], [Leg("DIR178", state: LegState.Flying) with { StartedAt = Now - TimeSpan.FromHours(13) }]).Stale.ShouldNotBeEmpty();
     }
 
     [Fact]
