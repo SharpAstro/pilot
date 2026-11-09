@@ -22,7 +22,7 @@ public sealed class UsageTests : IDisposable
         _state = new NodeState(new InMemoryJournal(), _time);
     }
 
-    public void Dispose() => Directory.Delete(_folder, recursive: true);
+    public void Dispose() => TestDirs.DeleteTree(_folder);
 
     private string File => Path.Combine(_folder, "rate-limits.json");
 

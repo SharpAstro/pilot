@@ -828,11 +828,19 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             {
                 // Wraps within the panel, three lines at most (eight on a merge's); an explicit newline stays a break.
                 var cap = DetailLinesOf(card);
-                // The whole text is on hover wherever it could pass the cap: a narrow panel wraps a detail of a few hundred characters
-                // past eight lines, and a later paragraph gets one line, so the length is judged at the narrowest width (DetailFits per
-                // DetailLines), never scaled up by the cap, and a second paragraph is a cut of its own.
-                lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap, LineChars), detail,
-                    detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
+                if (card.Kind == CardKinds.WatchtowerAsk)
+                {
+                    // An ask's detail is the whole call its Allow runs: drawn whole, uncapped, so the tail of a long command is seen (PIL855).
+                    lines.Add(WrappedProse.Of(detail, 11f, Body));
+                }
+                else
+                {
+                    // The whole text is on hover wherever it could pass the cap: a narrow panel wraps a detail of a few hundred characters
+                    // past eight lines, and a later paragraph gets one line, so the length is judged at the narrowest width (DetailFits per
+                    // DetailLines), never scaled up by the cap, and a second paragraph is a cut of its own.
+                    lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap, LineChars), detail,
+                        detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
+                }
             }
         }
         // The one image the node keeps for the card (an overlap's screenshot): a thumbnail under the detail, a click opens it full size.
@@ -1232,5 +1240,5 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     internal static Layout.Node ChoiceControl(CardChoice choice, string? detail, string action, Action onClick, bool wrap = false) =>
         IsChip(choice.Status)
             ? ChoicePill(StatusLabel(choice, detail), false, null, null, null, ArmedText, ChipTooltip(choice), Layout.DockSide.Left, wrap, StatusTint(choice.Status)!.Value.Bg)
-            : ChoicePill(StatusLabel(choice, detail), false, action, onClick, StatusTint(choice.Status), Bright, wrap: wrap);
+            : ChoicePill(StatusLabel(choice, detail), false, action, onClick, StatusTint(choice.Status), Bright, choice.Hint, wrap: wrap);
 }

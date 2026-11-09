@@ -24,8 +24,8 @@ public sealed class RestartTests
     /// <summary>A job that runs until <paramref name="gate"/> exists, then exits with <paramref name="exit"/>: it outlasts a restart however slow.</summary>
     private static string WaitingFor(string gate, int exit) =>
         OperatingSystem.IsWindows()
-            ? $"while (-not (Test-Path -LiteralPath '{gate}')) {{ Start-Sleep -Milliseconds 100 }}; echo 'finished'; exit {exit}"
-            : $"while [ ! -e '{gate}' ]; do sleep 0.1; done; echo 'finished'; exit {exit}";
+            ? $"$end = (Get-Date).AddMinutes(2); while (-not (Test-Path -LiteralPath '{gate}') -and (Get-Date) -lt $end) {{ Start-Sleep -Milliseconds 100 }}; echo 'finished'; exit {exit}"
+            : $"i=0; while [ ! -e '{gate}' ] && [ $i -lt 1200 ]; do sleep 0.1; i=$((i+1)); done; echo 'finished'; exit {exit}";
 
     /// <summary>
     /// Starts a node whose tracker lists the owner from its first poll on: the first listing is held until the test has set it

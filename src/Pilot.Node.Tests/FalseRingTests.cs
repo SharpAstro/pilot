@@ -8,8 +8,9 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// Pilot #799: a card rings only when the person must act, checked against the facts first. One golden test per row of the issue's
-/// table, named after its row: the same inputs that rang before now raise no ring (or the right action). Git is real (a bare origin
-/// and a plane); GitHub is the fake.
+/// table, named after its row: the same inputs that rang before now raise no ring (or the right action). Git is the in-memory
+/// <c>FakeRepoGit</c> except in the three tests that compare squash-merge trees (commit-tree, merge-tree, <c>^{tree}</c>), which ask
+/// for real git; GitHub is the fake.
 /// </summary>
 public sealed class FalseRingTests : ReviewTestsBase
 {
@@ -33,6 +34,7 @@ public sealed class FalseRingTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task MergedWithTheLegsTreeLandsNotRings_TIA2000()
     {
+        RealGit(); // the squash's tree is built with commit-tree: git's own object model is what the check compares
         var (flight, number) = await Passed("2000");
         LegNotDone(flight);
         // The squash merge's tree is the plane's head tree: the leg's commit was in it, so nothing is left behind.
@@ -54,6 +56,7 @@ public sealed class FalseRingTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AMergeWhoseTreeLacksThePlanesWorkStillRaisesItsCardAndStaysFlying_TIA2000()
     {
+        RealGit(); // trees are compared as git builds them
         var (flight, _) = await Passed("2001");
         LegNotDone(flight);
         // The merge holds the base's tree alone: the plane's work is not in it, so the new work goes to a new PR and the node rings.
@@ -384,6 +387,7 @@ public sealed class FalseRingTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AMergeOnAMainThatMovedAfterThePlaneLastTookItStillHoldsThePlanesWork_TIA2000()
     {
+        RealGit(); // merge-tree --write-tree computes the squash's tree: that is git itself under test
         var (flight, _) = await Passed("2003");
         LegNotDone(flight);
         // Main moved (a file the plane never touched) after the plane's last take of it: the squash holds the plane's work and main's.

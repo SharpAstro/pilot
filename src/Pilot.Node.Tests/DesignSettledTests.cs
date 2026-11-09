@@ -128,7 +128,7 @@ public sealed class DesignSettledTests : PrFixTestsBase
         var card = OpenDesign().ShouldNotBeNull();
         card.Title.Length.ShouldBeLessThan(200);
         card.Title.ShouldNotContain(c => char.IsControl(c));
-        card.Choices.ShouldAllBe(c => c.Label.Length <= 60 && !c.Label.Any(char.IsControl));
+        card.Choices.ShouldAllBe(c => c.Label.Length <= PrReviews.MaxOptionLabel && !c.Label.Any(char.IsControl));
         var detail = card.Detail.ShouldNotBeNull();
         detail.IndexOf("- second", StringComparison.Ordinal).ShouldBeLessThan(detail.IndexOf("- first", StringComparison.Ordinal));
         card.Choices[0].Label.ShouldBe("second");

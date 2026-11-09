@@ -9,9 +9,10 @@ namespace Pilot.Node.Flights;
 /// <see cref="NodeState"/> as a <see cref="ReposRow"/> on the event stream, and a node with no row yet puts one at boot with the
 /// repos the catalog knows, each marked <see cref="RepoStatus.Unread"/>. Refreshed every <see cref="Interval"/> from boot, and on demand; never more than one refresh runs at once, and one asked
 /// for while another runs gets that one's answer. A git or gh call that fails leaves its part of the repo's status empty
-/// and says so in its <see cref="RepoStatus.Errors"/>, never failing the rest.
+/// and says so in its <see cref="RepoStatus.Errors"/>, never failing the rest. The git half of a round is skipped for whatever
+/// the files git keeps say has not moved since the last round (RepoWatch.Git.cs); the GitHub half is read every round.
 /// </summary>
-public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes, IGitHub github, TimeProvider time) : BackgroundService
+public sealed partial class RepoWatch(NodeState state, RepoCatalog repos, Planes planes, IGitHub github, TimeProvider time) : BackgroundService
 {
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
@@ -43,7 +44,8 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
         Task<RepoStatus[]> run;
         lock (_gate)
         {
-            run = _running ??= Task.Run(ReadAllAsync);
+            // A background read even when a command asked for it: its git starts share the budget (ProcessGate), never the command's priority.
+            run = _running ??= ProcessGate.Run(ReadAllAsync);
         }
         return run.WaitAsync(cancellationToken);
     }
@@ -132,6 +134,11 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
             await Parallel.ForEachAsync(Enumerable.Range(0, catalog.Length),
                 new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Parallelism), CancellationToken = _stopping },
                 async (i, token) => statuses[i] = await ReadAsync(catalog[i], flights, now, tracked.Contains(catalog[i].Path), token));
+            // A clone no longer under a root keeps no memory of its git half.
+            foreach (var gone in _memory.Keys.Where(k => !catalog.Any(r => r.Path == k)))
+            {
+                _memory.TryRemove(gone, out _);
+            }
             _latest = statuses;
             state.PutRepos(new ReposRow { Repos = statuses, ReadAt = time.GetUtcNow() });
             return statuses;
@@ -149,62 +156,29 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
     {
         var errors = new List<string>();
         var flights = allFlights.Where(f => SamePath(f.RepoPath, repo.Path)).ToArray();
+        var reads = new Reads(errors, cancellationToken);
 
-        async Task<T?> Ref<T>(string what, Func<Task<T?>> read) where T : class
-        {
-            try
-            {
-                return await read();
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-            {
-                errors.Add($"{what}: {ex.Message}");
-                return null;
-            }
-        }
+        Task<T?> Ref<T>(string what, Func<Task<T?>> read) where T : class => reads.Ref(what, read);
 
-        async Task<T?> Value<T>(string what, Func<Task<T?>> read) where T : struct
-        {
-            try
-            {
-                return await read() ?? Failed<T>(what);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-            {
-                errors.Add($"{what}: {ex.Message}");
-                return null;
-            }
-        }
-
-        T? Failed<T>(string what) where T : struct
-        {
-            errors.Add($"git could not read {what}");
-            return null;
-        }
-
-        var entries = await Ref("worktrees", () => planes.WorktreesAsync(repo.Path, cancellationToken));
-        if (entries is null && errors.Count == 0)
-        {
-            errors.Add("git could not list the worktrees");
-        }
-        var defaultRef = await Ref("default branch", () => planes.DefaultRefAsync(repo.Path, cancellationToken));
-        var dirty = await Value("main checkout's status", () => planes.IsDirtyAsync(repo.Path, cancellationToken, withoutPlanes: true));
-        (int Ahead, int Behind)? sync = defaultRef is null ? null : await Value($"main checkout against {defaultRef}", () => planes.AheadBehindAsync(repo.Path, defaultRef, cancellationToken));
+        // The git half: kept from the last round while the files it read are as they were (RepoWatch.Git.cs).
+        var side = await ReadGitAsync(repo, now, reads, cancellationToken);
+        var entries = side.Entries;
+        var defaultRef = side.DefaultRef;
+        var dirty = side.Dirty;
+        var sync = side.Sync;
 
         var worktrees = new List<WorktreeStatus>();
-        foreach (var entry in (entries ?? []).Skip(1).Where(e => !e.Prunable && Directory.Exists(e.Path)))
+        foreach (var read in side.Worktrees)
         {
-            var wDirty = await Value($"{entry.Path}'s status", () => planes.IsDirtyAsync(entry.Path, cancellationToken));
-            (int Files, int Added, int Removed)? diff = defaultRef is null ? null : await Value($"{entry.Path}'s diff", () => planes.DiffStatAsync(entry.Path, defaultRef, cancellationToken));
             worktrees.Add(new WorktreeStatus
             {
-                Path = entry.Path,
-                Branch = entry.Branch,
-                Flight = flights.FirstOrDefault(f => SamePath(f.Worktree, entry.Path))?.Code,
-                Dirty = wDirty ?? false,
-                Files = diff?.Files ?? 0,
-                Added = diff?.Added ?? 0,
-                Removed = diff?.Removed ?? 0,
+                Path = read.Entry.Path,
+                Branch = read.Entry.Branch,
+                Flight = flights.FirstOrDefault(f => SamePath(f.Worktree, read.Entry.Path))?.Code,
+                Dirty = read.Dirty ?? false,
+                Files = read.Diff?.Files ?? 0,
+                Added = read.Diff?.Added ?? 0,
+                Removed = read.Diff?.Removed ?? 0,
             });
         }
 
@@ -241,10 +215,14 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
 
             // This node's label on an open issue no flight of this node (flying or held) is on is stale, left by a flight that
             // went without landing: taken off. Another node's label is never touched. Shortcut stories are covered by landing.
+            var issues = await Ref("open issues", async () => await github.IssuesAsync(repo.Path, cancellationToken));
+            if (issues is not null)
+            {
+                await SweepHoldsAsync(repo, flights, issues, Ref<string[]>, cancellationToken);
+            }
             if (Machine.Length > 0)
             {
                 var own = PilotMarks.NodeLabel(Machine);
-                var issues = await Ref("open issues", async () => await github.IssuesAsync(repo.Path, cancellationToken));
                 foreach (var issue in (issues ?? []).Where(i => i.Labels.Contains(own, StringComparer.OrdinalIgnoreCase)
                              && !flights.Any(f => f.State != FlightState.Landed && f.Tracker == TrackerKind.GitHub && f.Issue == i.Number)))
                 {
@@ -291,6 +269,78 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
             Errors = [.. errors],
             UpdatedAt = now,
         };
+    }
+
+    /// <summary>
+    /// The owner's hold on GitHub (#771): <c>pilot: hold</c> on a local flight's issue holds the flight (by the label, the why from the newest
+    /// hold comment pilot wrote); a hold that had been labelled whose label is gone is released; a hold whose label write failed gets it again.
+    /// Each change is confirmed on a fresh read of the issue's labels, so a hold or unhold that is mid-way is not undone by an older list.
+    /// A read that fails leaves the rows as they were.
+    /// </summary>
+    private async Task SweepHoldsAsync(RepoInfo repo, FlightRow[] flights, IssueInfo[] issues,
+        Func<string, Func<Task<string[]?>>, Task<string[]?>> read, CancellationToken cancellationToken)
+    {
+        foreach (var local in flights.Where(f => f.State != FlightState.Landed && f.Tracker == TrackerKind.GitHub))
+        {
+            if (issues.FirstOrDefault(i => i.Number == local.Issue) is not { } issue)
+            {
+                continue;
+            }
+            var listed = issue.Labels.Contains(PilotMarks.Hold, StringComparer.OrdinalIgnoreCase);
+            var hold = state.Flights().FirstOrDefault(f => f.Code == local.Code)?.OnHold;
+            if (!(listed ? hold is null or { Labelled: not true } : hold is { Labelled: not null }))
+            {
+                continue;
+            }
+            // Confirmed on a fresh read that throws when gh fails (the plain read answers no labels then, which would read as a label
+            // taken off); one that fails leaves the row as it was.
+            var fresh = await read($"labels of #{issue.Number}", async () => await github.IssueLabelsOrThrowAsync(repo.Path, issue.Number, cancellationToken));
+            if (fresh is null)
+            {
+                continue;
+            }
+            var labelled = fresh.Contains(PilotMarks.Hold, StringComparer.OrdinalIgnoreCase);
+            if (state.Flights().FirstOrDefault(f => f.Code == local.Code) is not { State: not FlightState.Landed } current)
+            {
+                continue;
+            }
+            var target = Verbs.FlightTarget(current.Code);
+            if (labelled && current.OnHold is null)
+            {
+                // The comments come from a gh call; the hold is then put on the row as it stands, not on the copy read before it.
+                var comments = await read($"comments of #{issue.Number}", async () => await LabelHold.CommentsAsync(github, repo.Path, issue.Number, cancellationToken));
+                await LabelHold.ApplyAsync(state, github, time, current.Code, comments, cancellationToken);
+            }
+            else if (!labelled && current.OnHold is { Labelled: true } held)
+            {
+                if (state.UpdateFlight(current.Code, f => f.OnHold is { Labelled: true } ? f with { OnHold = null } : null) is not null)
+                {
+                    state.CloseCardsAbout(target, $"{PilotMarks.Hold} was taken off {current.Item.Display}", LegCommander.OnHoldKind);
+                    state.LiftHoldFromCards(current.Code);
+                    state.RaiseCard(CardBin.Handled, LegCommander.OnHoldKind, target, $"{current.Code} is off hold",
+                        $"{PilotMarks.Hold} was taken off {current.Item.Noun} {current.Item.Display} on GitHub, so the hold by {held.By} ({held.Reason}) ends. The node takes its next due step.");
+                }
+            }
+            else if (!labelled && current.OnHold is { Labelled: false } retry)
+            {
+                // The label write failed when the flight was put on hold: the hold stands, and the label is tried again.
+                await read($"{PilotMarks.Hold} on #{issue.Number}", async () =>
+                {
+                    await github.AddIssueLabelAsync(repo.Path, issue.Number, PilotMarks.Hold, cancellationToken);
+                    return Array.Empty<string>();
+                });
+                if (state.Flights().FirstOrDefault(f => f.Code == local.Code) is { OnHold: { } now } && now == retry
+                    && (await read($"labels of #{issue.Number}", async () => await github.IssueLabelsOrThrowAsync(repo.Path, issue.Number, cancellationToken))) is { } again
+                    && again.Contains(PilotMarks.Hold, StringComparer.OrdinalIgnoreCase))
+                {
+                    state.UpdateFlight(local.Code, f => f.OnHold == retry ? f with { OnHold = retry with { Labelled = true } } : null);
+                }
+            }
+            else if (labelled && current.OnHold is { Labelled: not true } known)
+            {
+                state.UpdateFlight(local.Code, f => f.OnHold == known ? f with { OnHold = known with { Labelled = true } } : null);
+            }
+        }
     }
 
     private static bool SamePath(string a, string b) =>

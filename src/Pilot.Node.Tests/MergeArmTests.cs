@@ -280,7 +280,7 @@ public sealed class MergeArmTests
 
         var detail = Card(node, ready).Detail.ShouldNotBeNull();
         detail.ShouldContain("Dropped from the merge queue: merge conflict");
-        detail.ShouldContain("The watchtower merges the base into the plane");
+        detail.ShouldContain("A worker merges the base into the plane");
         detail.ShouldNotContain("rebase it");
     }
 
@@ -590,7 +590,7 @@ public sealed class MergeArmTests
         var (node, ready) = await ArmedNatively(Pending(1));
         await using var _ = node;
 
-        // Its review is not a passed one now, so the node cannot send it back by itself and the card is where the person acts.
+        // Its review is not a passed one now: the conflict hand-over sends its last leg round (PIL846), so nobody is asked.
         var flight = node.State.Flights().Single();
         node.State.PutFlight(flight with { Review = flight.Review! with { State = ReviewState.Changes } });
         node.GitHub.Summary = Passing();
@@ -599,9 +599,10 @@ public sealed class MergeArmTests
 
         node.GitHub.AutoMergeDisarmed.ShouldBe([63]);
         node.State.Flights().Single().MergeWhenGreen.ShouldBeNull();
-        // The card loop took over: a go-around, no Merge, and no card of a dropped merge beside it.
-        var card = Card(node, ready);
-        card.Choices.Select(c => c.Verb).ShouldBe([Verbs.GoAround]);
+        // The node's own work (owner 2026-11-09: never bother the owner about rebases): the ready card closes as handled, no ring
+        // takes its place, and no card of a dropped merge beside it.
+        Card(node, ready).State.ShouldBe(CardState.Closed);
+        node.State.Cards(openOnly: true).ShouldNotContain(c => c.Bin == CardBin.Ring);
         node.State.Cards().Where(c => c.Kind == PrChecks.MergeDropped).ShouldBeEmpty();
     }
 

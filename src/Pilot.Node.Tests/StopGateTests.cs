@@ -47,7 +47,7 @@ public sealed class StopGateTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private FlightRow Flight() => new()

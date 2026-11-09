@@ -5,18 +5,62 @@ using Pilot.Contracts;
 namespace Pilot.Node.Flights;
 
 /// <summary>
-/// Samples the machine every few seconds, off the request path, and puts it as a <see cref="MachineRow"/>: CPU from two
+/// Samples the machine every <see cref="Interval"/> while a client shows it and every <see cref="IdleInterval"/> otherwise,
+/// off the request path, and puts it as a <see cref="MachineRow"/>: CPU from two
 /// samples of the system's tick counters, memory, the GPU where the platform says (<see cref="MachineGpuCounters"/>), and
 /// the top <see cref="TopCount"/> processes by the CPU time each used since the last sample, those of the node's own
-/// marked with whose they are. The maths and the parsers are pure static functions, so a test feeds them fixed figures.
+/// marked with whose they are. Every process's CPU time, memory and parent come from ONE read of the OS's table
+/// (<see cref="SystemProcesses"/>), and only the top few are opened for their command line; the GPU is read every
+/// <see cref="GpuEvery"/> (#794). The maths and the parsers are pure static functions, so a test feeds them fixed figures.
 /// </summary>
 public sealed class MachineSampler(NodeState state, TimeProvider time) : BackgroundService
 {
     /// <summary>How many processes the row names.</summary>
     public const int TopCount = 5;
 
-    /// <summary>How long between samples.</summary>
+    /// <summary>How long between samples while a client shows the machine (<see cref="Watched"/>).</summary>
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>How long between samples while no client shows it: the row then serves the jobs' load checks and the journal, which a slower pace does.</summary>
+    public TimeSpan IdleInterval { get; init; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>How long the GPU's last reading is kept: its counters list an instance per process per engine, the dearest read of a sample.</summary>
+    public TimeSpan GpuEvery { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>Every process's CPU time, memory and parent, read whole in one go.</summary>
+    public ISystemProcesses Processes { get; init; } = new SystemProcesses();
+
+    /// <summary>The GPU now; null uses the platform's counters (<see cref="MachineGpuCounters"/>).</summary>
+    public Func<MachineGpu?>? Gpu { get; init; }
+
+    /// <summary>
+    /// The pages the node's clients show: one showing <see cref="ClientPages.Home"/> (where the machine is drawn) makes the
+    /// sampler read every <see cref="Interval"/>, and one opening it wakes the wait. Null, nobody watches.
+    /// </summary>
+    public PageViews? Views
+    {
+        get => _views;
+        init
+        {
+            _views = value;
+            if (value is not null)
+            {
+                value.Changed += (page, shown) =>
+                {
+                    if (page == ClientPages.Home && shown)
+                    {
+                        Wake();
+                    }
+                };
+            }
+        }
+    }
+
+    /// <summary>Whether a client shows the machine now.</summary>
+    public bool Watched => _views?.Count(ClientPages.Home) > 0;
+
+    /// <summary>The pace now: <see cref="Interval"/> while watched, else <see cref="IdleInterval"/>.</summary>
+    public TimeSpan CurrentInterval => Watched ? Interval : IdleInterval;
 
     /// <summary>The owner a watchtower session's processes are marked with, whatever the session is called.</summary>
     public const string WatchtowerOwner = "watchtower";
@@ -42,7 +86,15 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
     private const double PercentStep = 3;
 
     private readonly MachineGpuCounters _gpu = new();
+    private readonly List<SystemProcess> _table = [];
     private readonly List<ProcessSample> _processes = [];
+    private readonly Dictionary<int, int> _parents = [];
+    private readonly Lock _wakeGate = new();
+    private PageViews? _views;
+    private CancellationTokenSource? _sleeping;
+    private bool _woken;
+    private MachineGpu? _gpuHeld;
+    private DateTimeOffset? _gpuAt;
     private Dictionary<int, TimeSpan> _previous = [];
     private Dictionary<int, TimeSpan> _current = [];
     private (long Idle, long Total)? _cpuBefore;
@@ -52,6 +104,7 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         var wait = FirstAfter;
+        DateTimeOffset? last = null;
         while (!stopping.IsCancellationRequested)
         {
             try
@@ -60,8 +113,16 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
                 {
                     await Task.Run(Baseline, stopping);
                 }
-                await Task.Delay(wait, time, stopping);
-                wait = Interval;
+                await SleepAsync(wait, stopping);
+                // A wake (a client opened the machine's page) samples at once when the watched pace is already due, else
+                // waits out what is left of it.
+                if (last is { } was && time.GetUtcNow() - was is var since && since < CurrentInterval)
+                {
+                    wait = CurrentInterval - since;
+                    continue;
+                }
+                last = time.GetUtcNow();
+                wait = CurrentInterval;
                 if (await Task.Run(Sample, stopping) is { } row)
                 {
                     state.PutMachine(row);
@@ -76,16 +137,70 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
                 // A sample that fails says nothing about the machine: the held row stays, and the next tick tries again.
                 Logger?.LogWarning(ex, "Sampling the machine failed; trying again");
                 _baselined = false;
-                wait = Interval;
+                wait = CurrentInterval;
             }
         }
         _gpu.Dispose();
     }
 
+    /// <summary>Waits <paramref name="wait"/>, or less when <see cref="Wake"/> comes first.</summary>
+    private async Task SleepAsync(TimeSpan wait, CancellationToken stopping)
+    {
+        using var sleeping = CancellationTokenSource.CreateLinkedTokenSource(stopping);
+        lock (_wakeGate)
+        {
+            if (_woken)
+            {
+                _woken = false;
+                return;
+            }
+            _sleeping = sleeping;
+        }
+        try
+        {
+            await Task.Delay(wait, time, sleeping.Token);
+        }
+        catch (OperationCanceledException) when (!stopping.IsCancellationRequested)
+        {
+            // Woken.
+        }
+        finally
+        {
+            lock (_wakeGate)
+            {
+                _sleeping = null;
+            }
+        }
+    }
+
+    /// <summary>Ends the wait in progress, so the pace is counted again: a client came to show the machine.</summary>
+    public void Wake()
+    {
+        lock (_wakeGate)
+        {
+            // A wake while a sample runs is kept for the wait after it, so it is not lost.
+            _woken = _sleeping is null;
+            _sleeping?.Cancel();
+        }
+    }
+
     public override void Dispose()
     {
         _gpu.Dispose();
+        (Processes as IDisposable)?.Dispose();
         base.Dispose();
+    }
+
+    /// <summary>The GPU, read again only once the last reading is <see cref="GpuEvery"/> old.</summary>
+    private MachineGpu? ReadGpu()
+    {
+        var now = time.GetUtcNow();
+        if (_gpuAt is { } at && now - at < GpuEvery)
+        {
+            return _gpuHeld;
+        }
+        _gpuAt = now;
+        return _gpuHeld = Gpu is { } read ? read() : _gpu.Read();
     }
 
     /// <summary>The readings the next sample's deltas are against.</summary>
@@ -93,9 +208,13 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
     {
         _cpuBefore = ReadCpu();
         _stampBefore = time.GetTimestamp();
-        ReadProcesses(_processes);
+        ReadProcesses();
         Note(_processes);
-        _gpu.Read();
+        // Windows' utilisation is a rate between two collects: this one is the first.
+        if (Gpu is null)
+        {
+            _gpu.Read();
+        }
         NoteNet();
         _baselined = true;
     }
@@ -112,14 +231,14 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
         var wall = time.GetElapsedTime(_stampBefore);
         _stampBefore = time.GetTimestamp();
         var cores = Environment.ProcessorCount;
-        ReadProcesses(_processes);
+        ReadProcesses();
         var top = Top(_processes, _previous, wall, cores, TopCount);
         for (var i = 0; i < top.Length; i++)
         {
             var (commandLine, workingDirectory) = Details(top[i].Pid);
             top[i] = top[i] with { CommandLine = commandLine, WorkingDirectory = workingDirectory };
         }
-        var gpu = _gpu.Read();
+        var gpu = ReadGpu();
         var linkBits = NoteNet();
         var net = NetRate(_net);
         var owners = Owners();
@@ -131,11 +250,8 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
             {
                 roots[pid] = owner;
             }
-            var parents = new Dictionary<int, int>();
-            foreach (var (pid, parent, _) in OsProcessTable.Instance.Snapshot())
-            {
-                parents[pid] = parent;
-            }
+            // The parents came with the same read: no second walk of the table.
+            var parents = _parents;
             for (var i = 0; i < top.Length; i++)
             {
                 top[i] = top[i] with { Owner = OwnerOf(top[i].Pid, parents, roots) };
@@ -258,29 +374,30 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
     /// <summary>A process as read in one pass: its CPU time so far, which two passes' difference makes a share of.</summary>
     internal readonly record struct ProcessSample(int Pid, string Name, TimeSpan Cpu, long Memory);
 
-    private static void ReadProcesses(List<ProcessSample> into)
+    /// <summary>Every process's CPU time and memory, and its parent, from one read of the table (<see cref="Processes"/>).</summary>
+    private void ReadProcesses()
     {
-        into.Clear();
-        foreach (var process in Process.GetProcesses())
+        _processes.Clear();
+        _parents.Clear();
+        if (!Processes.Read(_table))
         {
-            using (process)
+            return;
+        }
+        foreach (var p in _table)
+        {
+            // Windows' System Idle Process is the CPU's idle time, not a process anyone runs.
+            if (p.Pid == 0)
             {
-                // Windows' System Idle Process is the CPU's idle time, not a process anyone runs.
-                if (process.Id == 0)
-                {
-                    continue;
-                }
-                try
-                {
-                    into.Add(new ProcessSample(process.Id, process.ProcessName, process.TotalProcessorTime, process.WorkingSet64));
-                }
-                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
-                {
-                    // Ended since the listing, or not ours to read (a protected system process).
-                }
+                continue;
             }
+            _parents[p.Pid] = p.ParentPid;
+            _processes.Add(new ProcessSample(p.Pid, NameOf(p.Image), p.Cpu, p.Memory));
         }
     }
+
+    /// <summary>A process's name as <see cref="Process.ProcessName"/> says it: the program without its <c>.exe</c>.</summary>
+    public static string NameOf(string image) =>
+        image.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? image[..^4] : image;
 
     /// <summary>
     /// The share of the whole machine's CPU a process used over <paramref name="wall"/>: its CPU time's growth, over the

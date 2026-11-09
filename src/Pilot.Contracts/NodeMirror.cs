@@ -162,6 +162,11 @@ public sealed class NodeMirror
         {
             throw new InvalidOperationException($"A delta ({nodeEvent.Seq}) arrived before any snapshot");
         }
+        // A chat nudge is not numbered (it carries the last delta's number): it changes no state and moves nothing.
+        if (nodeEvent is ChatChangedEvent)
+        {
+            return;
+        }
         if (nodeEvent.Seq != Seq + 1)
         {
             throw new InvalidOperationException($"Delta {nodeEvent.Seq} arrived after {Seq}: the stream skipped or repeated");
@@ -268,6 +273,9 @@ public sealed class NodeMirror
                 break;
             case CommandResultEvent:
                 // A result changes no state; the deltas the command made carry that.
+                break;
+            case ChatChangedEvent:
+                // A nudge to read the chat feed; it changes no state.
                 break;
             case DecisionEvent:
                 // A decision is a record, kept by the journal's decisions file; it changes no state.

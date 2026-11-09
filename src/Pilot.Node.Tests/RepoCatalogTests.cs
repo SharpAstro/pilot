@@ -11,7 +11,7 @@ public sealed class RepoCatalogTests : IDisposable
 {
     private readonly string _root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "p2r-" + Guid.NewGuid().ToString("N")[..8])).FullName;
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose() => TestDirs.DeleteTree(_root);
 
     // A folder that looks like a clone: a .git folder, with an origin when given.
     private string Clone(string name, string? origin = null)

@@ -311,6 +311,32 @@ public sealed class FlightMoveTests
     }
 
     [Fact]
+    public void FlightMoveALandedFlightWithAFailureLeftOnItDrawsNoBandNoRedAndNoRetryOnHomeOrFlights()
+    {
+        // PIL909 landed (merged) with a maintenance hand-off's failure still on its row: Home drew a red band with nothing to press
+        // and no way to dismiss it. A landed flight has nothing to move, so it says nothing of a move.
+        var landed = Flight("PIL909", "pilot", 909, FlightState.Landed, "Workers' tests stay in jobs", f => f with { MoveFailure = Reason, LandedAt = At });
+        var screen = Screen(landed, Rows[2]);
+        screen.Lines.Single(l => l.Code == "PIL909").MoveMark.ShouldBeNull();
+        screen.Lines.Single(l => l.Code == "PIL909").MoveFailure.ShouldBeNull();
+
+        var home = new HomeScreen(screen, NoSessions, NoJobs, CardsScreen.Empty);
+        home.Waiting.ShouldNotContain("move failed");
+        home.ToDump().ShouldNotContain("move failed");
+
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        foreach (var page in new[] { PilotPage.Home, PilotPage.Flights })
+        {
+            var chrome = Chrome(renderer, page, screen, []);
+            Regions(chrome, page == PilotPage.Home).Select(r => r.Result).OfType<HitResult.ButtonHit>()
+                .ShouldNotContain(b => b.Action.EndsWith(":move-flight", StringComparison.Ordinal));
+        }
+        var view = new HomeView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = _ => Task.FromResult<string?>(null) };
+        Runs(Arrange(view.Tree(home), renderer, 1600, 900)).ShouldNotContain(r => IsHeading(r));
+        Runs(Arrange(View(renderer).Tree(screen), renderer, 1600, 900)).ShouldNotContain(r => IsHeading(r));
+    }
+
+    [Fact]
     public void FlightMoveAMovedInFlightSaysWhereItCameFromOnItsRowItsPageAndHome()
     {
         var screen = Screen(Rows);
