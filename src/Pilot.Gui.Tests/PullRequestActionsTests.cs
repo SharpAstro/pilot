@@ -50,9 +50,13 @@ public sealed class PullRequestActionsTests
     [Fact]
     public void MergeIsOfferedOnAFlightsReadyPRAndOnOneWhoseChecksRunButOnNothingElse()
     {
-        // A card whose Merge is a mark (a leg still to fly: the node would refuse it) gives the ready row no Merge button (#918, #920).
-        Kinds(Pr("SharpAstro/pilot", 920, PullRequestKind.Ready, "Ready", "PIL853", PullRequestReview.Passed), MergeCard("PIL853", status: ChoiceStatus.Blocked))
-            .ShouldBe([PullRequestActionKind.Open]);
+        // A card whose Merge waits on a leg still to fly (the node would refuse a press) gives the ready row the wait, said, not a
+        // Merge button (#918, #920): the slot names the leg, in the card's words.
+        var card = MergeCard("PIL853", status: ChoiceStatus.WaitsForLegs);
+        card = card with { Choices = [card.Choices[0] with { Note = "review-notes-2" }] };
+        var waits = PullRequestActions.Offered(Pr("SharpAstro/pilot", 920, PullRequestKind.Ready, "Ready", "PIL853", PullRequestReview.Passed), [card]);
+        waits[0].Status.ShouldBe(ChoiceStatus.WaitsForLegs);
+        waits[0].Label.ShouldBe("Waits for review-notes-2");
 
         var cards = new[] { MergeCard("PIL252") };
         Kinds(Pr("SharpAstro/pilot", 252, PullRequestKind.Ready, "Ready", "PIL252", PullRequestReview.Passed), cards).ShouldBe([PullRequestActionKind.Merge, PullRequestActionKind.Open]);

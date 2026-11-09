@@ -230,18 +230,20 @@ public sealed class AdmissionTests
     [Fact]
     public void AHoldingFlightIsNeverTheFirstHolderSoTheFlightItWaitsForStillGoes()
     {
-        // PIL12 is held with its plane up, waiting for PIL15's package: PIL15 goes, though PIL12 is older and holds the repo too.
+        // PIL12 is held with its plane up, waiting for PIL15's package, and outranks it (Urgent, which the ranking puts before the
+        // flights others wait for): were it a candidate, PIL15 would wait for the flight that waits for it. PIL15 goes.
         var input = Repo(
-            Holding("PIL12", "pilot", waits: new FlightWait("DE1", "PIL15", WaitKind.Package)),
-            Flight("PIL15", "pilot", FlightPhase.Flying, age: 30));
+            Holding("PIL12", "pilot", waits: new FlightWait("DE1", "PIL15", WaitKind.Package)) with { Level = Pilot.Contracts.IssuePriority.Urgent, Since = T0 },
+            Flight("PIL15", "pilot", FlightPhase.Flying, age: 30) with { Level = Pilot.Contracts.IssuePriority.Low });
         Admission.Decide(input, Start("PIL15")).ShouldBeOfType<AdmissionDecision.Admit>();
     }
 
     [Fact]
     public void APriorityFlightIsOutsideTheOneHolderRule()
     {
-        var input = Repo(Flight("PIL1", "pilot", FlightPhase.Flying, age: 0), Flight("PIL2", "pilot", FlightPhase.Flying, age: 5) with { Priority = true });
-        Admission.Decide(input, Start("PIL2")).ShouldBeOfType<AdmissionDecision.Admit>();
+        // PIL2 is a priority flight and the older holder, so it would rank first; it is outside the rule, so PIL1 does not wait for it.
+        var input = Repo(Flight("PIL2", "pilot", FlightPhase.Flying, age: 0) with { Priority = true }, Flight("PIL1", "pilot", FlightPhase.Flying, age: 5));
         Admission.Decide(input, Start("PIL1")).ShouldBeOfType<AdmissionDecision.Admit>();
+        Admission.Decide(input, Start("PIL2")).ShouldBeOfType<AdmissionDecision.Admit>();
     }
 }

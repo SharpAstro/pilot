@@ -286,6 +286,11 @@ internal sealed partial class PullRequestsView<TSurface>
         } : null;
         var bg = tint?.Bg ?? P.Button;
         var hover = tint?.Hover ?? P.ButtonHover;
+        // A merge waiting on a leg of the flight is said, not offered: a press would be refused (#918).
+        if (action is { Kind: PullRequestActionKind.Merge, Status: ChoiceStatus.WaitsForLegs })
+        {
+            return Said(action.Label, action.Tooltip, P.Bright, bg, width);
+        }
         // A press the node refused leaves the button saying so, pressable again (which retries); the words are in the tooltip and the bar.
         var prName = $"{pr.Repo}#{pr.Number}";
         var failed = action.Kind switch

@@ -1178,6 +1178,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         ChoiceStatus.Behind => BehindLabel,
         ChoiceStatus.Blocked => choice.Note is { Length: > 0 } why ? $"{BlockedLabel} · {Ellipsize(why, NoteFits)}" : BlockedLabel,
         ChoiceStatus.ChangesRequested => ChangesRequestedLabel,
+        ChoiceStatus.WaitsForLegs => choice.Note is { Length: > 0 } legs ? $"Waits for {Ellipsize(legs, NoteFits)}" : "Waits for its legs",
         ChoiceStatus.Merged => MergedLabel,
         ChoiceStatus.Merging => choice.Note is { Length: > 0 } doing ? $"{MergingLabel} {doing}" : MergingLabel,
         _ => choice.Label,
@@ -1201,7 +1202,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// failed check, requested changes), or done (merged). Drawn as a chip in the button's size and place, with no hover or click.
     /// </summary>
     internal static bool IsChip(string? status) =>
-        status is ChoiceStatus.Armed or ChoiceStatus.Queued or ChoiceStatus.Blocked or ChoiceStatus.ChangesRequested or ChoiceStatus.Merged or ChoiceStatus.Merging;
+        status is ChoiceStatus.Armed or ChoiceStatus.Queued or ChoiceStatus.Blocked or ChoiceStatus.ChangesRequested or ChoiceStatus.WaitsForLegs or ChoiceStatus.Merged or ChoiceStatus.Merging;
 
     // What a chip says when hovered: what is going on, and that there is nothing to press; the whole note, uncut.
     private static string ChipTooltip(CardChoice choice) => choice.Status switch
@@ -1210,6 +1211,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         ChoiceStatus.Queued => $"In the merge queue{(choice.Note is { Length: > 0 } place ? $", {place}" : "")}: the queue merges it once its checks pass. Nothing to press.",
         ChoiceStatus.Blocked => $"GitHub blocks the merge{(choice.Note is { Length: > 0 } why ? $": {why}" : "")}. Merging it now would be refused.",
         ChoiceStatus.ChangesRequested => "A review on GitHub asks for changes. Merging it now would be refused.",
+        ChoiceStatus.WaitsForLegs => $"Merges once {(choice.Note is { Length: > 0 } legs ? legs : "its legs")} {(choice.Note?.Contains(',') == true ? "are" : "is")} done: a leg of the flight makes the review's fixes first. Nothing to press.",
         ChoiceStatus.Merging => "The node is merging this PR now: nothing to press.",
         _ => "Merged: this card goes in a moment.",
     };
@@ -1226,7 +1228,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     internal static (RGBAColor32 Bg, RGBAColor32 Hover)? StatusTint(string? status) => status switch
     {
         ChoiceStatus.Passing or ChoiceStatus.Merged => (Palette.Current.PassTint, Palette.Current.PassTintHover),
-        ChoiceStatus.Pending => (Palette.Current.PendTint, Palette.Current.PendTintHover),
+        // A leg wait is the node's own and ends by itself: amber, as checks that run, never the failure red.
+        ChoiceStatus.Pending or ChoiceStatus.WaitsForLegs => (Palette.Current.PendTint, Palette.Current.PendTintHover),
         ChoiceStatus.Failing or ChoiceStatus.Conflicting or ChoiceStatus.Behind or ChoiceStatus.Blocked or ChoiceStatus.ChangesRequested => (Palette.Current.FailTint, Palette.Current.FailTintHover),
         ChoiceStatus.Armed or ChoiceStatus.Queued or ChoiceStatus.Merging => (ArmedBg, ArmedBg),
         _ => null,

@@ -99,8 +99,13 @@ public sealed class MergeFixtureCardTests
         card.State.ShouldBe(CardState.Open);
         // A mark, not a button: Blocked, naming the leg, with the reviewed head kept for the autopilot and the holding bound.
         var mark = card.Choices.Single(c => c.Verb == Verbs.Merge);
-        (mark.Status, mark.Note, mark.Args[0]).ShouldBe((ChoiceStatus.Blocked, "waits for review-notes", PrHead));
+        (mark.Status, mark.Note, mark.Args[0]).ShouldBe((ChoiceStatus.WaitsForLegs, "review-notes", PrHead));
         card.Title.ShouldBe("TIA1's PR #63 merges once review-notes is done");
+
+        // GitHub gives no merge state (UNKNOWN right after a push): the wait stays, the Merge no button (review of #924).
+        node.GitHub.Merge = null;
+        await node.App.Services.GetRequiredService<PrChecks>().LookAsync(Ct);
+        Card(node, ready).Choices.Single(c => c.Verb == Verbs.Merge).Status.ShouldBe(ChoiceStatus.WaitsForLegs);
 
         // The leg lands: the next look offers the Merge again, as GitHub has the PR.
         node.State.PutLeg(node.State.Legs("TIA1").Single(l => l.Name == "review-notes") with { State = LegState.Done });

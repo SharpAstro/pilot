@@ -563,26 +563,8 @@ public sealed partial class LegCommander
         var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : card.Subject;
         var flight = state.Flights().FirstOrDefault(f => f.Code == code);
         var number = flight?.PullRequest;
-        // A leg still to fly (a review-notes leg making the review's fixes, planned after the card was raised): a Merge now is refused
-        // ("has legs not done"). So the card's Merge is a mark, not a button (Blocked, naming the leg), and the card says what the merge
-        // waits for, here and on the PR page that takes its button from it (#918; PIL853's #920 said "ready" with a Merge that answered
-        // "legs not done: review-notes-2", twice in one evening). The choice stays, with the reviewed head the autopilot and the
-        // holding bound read; once the leg lands, the next look turns it back to what GitHub says (below) and the autopilot merges.
-        if (flight is not null && state.Legs(code).Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is { Count: > 0 } open
-            && card.Choices.Any(c => c.Verb == Verbs.Merge))
+        if (ShowLegWait(card))
         {
-            var legsLeft = string.Join(", ", open);
-            var waitTitle = $"{code}'s PR #{number} merges once {legsLeft} {(open.Count == 1 ? "is" : "are")} done";
-            var waitWhy = Models.Autopilot
-                ? $"The {legsLeft} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; the node merges the PR once {(open.Count == 1 ? "it lands" : "they land")}."
-                : $"The {legsLeft} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; Merge is offered once {(open.Count == 1 ? "it lands" : "they land")}.";
-            var waitNote = $"waits for {legsLeft}";
-            if (card.Title != waitTitle || card.Choices.Any(c => c.Verb == Verbs.Merge && (c.Status != ChoiceStatus.Blocked || c.Note != waitNote)))
-            {
-                state.UpdateCard(card.Id, waitTitle, waitWhy,
-                    [.. card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = ChoiceStatus.Blocked, Note = waitNote } : c)],
-                    flight.PullRequestUrl ?? card.Link, PrReady, waitWhy, card.Bin);
-            }
             return;
         }
         // The PR's page, not the card's link: a card that showed a failed check's page turns back to the PR's.
@@ -625,6 +607,36 @@ public sealed partial class LegCommander
         // The failed check's page is the link only where a failed check is what blocks it: the others keep the PR's.
         state.UpdateCard(card.Id, title, detail, choices, merge is { Kind: MergeKinds.Blocked, FailedName: not null } ? merge.FailedLink ?? link : link, PrReady, MergeSummary(code, merge),
             MergeCardBin(merge.Kind is MergeKinds.Blocked or MergeKinds.ChangesRequested || !own && merge.DroppedFromQueue is not null));
+    }
+
+    /// <summary>
+    /// A PR-ready card whose flight has a leg still to fly (a review-notes leg making the review's fixes, planned after the card was
+    /// raised): a Merge now is refused ("has legs not done"), so the card's Merge is a mark (<see cref="ChoiceStatus.WaitsForLegs"/>,
+    /// naming the legs) and the card says what the merge waits for, here and on the PR page that takes its button from it (#918;
+    /// PIL853's #920 said "ready" with a Merge that answered "legs not done: review-notes-2", twice in one evening). The choice keeps
+    /// the reviewed head the autopilot and the holding bound read. True when the card shows the wait (nothing else is to be said of
+    /// it now); false when every leg is done, and the card says what GitHub has. Called whether or not GitHub gave a merge state.
+    /// </summary>
+    public bool ShowLegWait(CardRow card)
+    {
+        var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : card.Subject;
+        if (state.Flights().FirstOrDefault(f => f.Code == code) is not { } flight || !card.Choices.Any(c => c.Verb == Verbs.Merge)
+            || state.Legs(code).Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is not { Count: > 0 } open)
+        {
+            return false;
+        }
+        var legsLeft = string.Join(", ", open);
+        var waitTitle = $"{code}'s PR #{flight.PullRequest} merges once {legsLeft} {(open.Count == 1 ? "is" : "are")} done";
+        var waitWhy = Models.Autopilot
+            ? $"The {legsLeft} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; the node merges the PR once {(open.Count == 1 ? "it lands" : "they land")}."
+            : $"The {legsLeft} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; Merge is offered once {(open.Count == 1 ? "it lands" : "they land")}.";
+        if (card.Title != waitTitle || card.Choices.Any(c => c.Verb == Verbs.Merge && (c.Status != ChoiceStatus.WaitsForLegs || c.Note != legsLeft)))
+        {
+            state.UpdateCard(card.Id, waitTitle, waitWhy,
+                [.. card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = ChoiceStatus.WaitsForLegs, Note = legsLeft } : c)],
+                flight.PullRequestUrl ?? card.Link, PrReady, waitWhy, card.Bin);
+        }
+        return true;
     }
 
     /// <summary>What a PR-ready card says of the merge state it shows: its own sentence for each state, never the table's "is ready" for a PR GitHub holds back.</summary>
