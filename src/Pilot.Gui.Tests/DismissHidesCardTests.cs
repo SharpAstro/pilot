@@ -267,10 +267,12 @@ public sealed class DismissHidesCardTests
             "invalid" => new InvalidOperationException("the client is closed"),
             _ => new OperationCanceledException("shutdown"),
         };
-        view.OnDismiss = card => sent = CardCommands.SendAsync(view, Verbs.Dismiss, card, [], "tui",
-            (_, _) => Task.FromException<ResponseEnvelope<CommandResult>>(thrown), "watch only", CancellationToken.None);
+        // The send is with the node until the test lets it fail, so the mark is seen set first.
+        var gate = new TaskCompletionSource<ResponseEnvelope<CommandResult>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        view.OnDismiss = card => sent = CardCommands.SendAsync(view, Verbs.Dismiss, card, [], "tui", (_, _) => gate.Task, "watch only", CancellationToken.None);
         PageButtonFeedbackTests.Click(view.Tree(screen), "card:c2:dismiss");
         view.DismissedPending("c2").ShouldBeTrue();
+        gate.SetException(thrown);
 
         (await Should.ThrowAsync(() => sent!, thrown.GetType())).ShouldBeSameAs(thrown);
 
