@@ -95,7 +95,9 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
 
         var named = new List<MachineStray>();
         var current = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var stray in reading.Strays)
+        // The shell, the browser and Windows' own processes are never a job's or a session's: one read as a stray is a misattribution,
+        // and a card offering its kill command (Explorer's, Edge's) is the last thing to put in front of a person (review of #924).
+        foreach (var stray in reading.Strays.Where(s => !NeverEnded(s.Name)))
         {
             var key = KeyOf(stray);
             if (CanEnd(stray) && !_tried.Contains(key))
@@ -128,9 +130,24 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     private static string KeyOf(int pid, DateTimeOffset? start) =>
         $"process:{pid.ToString(CultureInfo.InvariantCulture)}@{(start is { } at ? at.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture) : "unknown")}";
 
-    // Only what the node launched, whose owner has ended, and that descends from it; never itself.
-    private static bool CanEnd(Stray stray) =>
-        stray is { NodeLaunched: true, OwnerEnded: true, ByFolder: false, Start: not null } && stray.Pid != Environment.ProcessId;
+    // The sweep ends nothing: it names a stray on a card, with its kill command, and the person decides. It used to end what it
+    // attributed to an ended job, and an attribution through a reused pid ended Explorer, Edge, RuntimeBroker and TabTip (SE1,
+    // 2026-11-09 22:04). The owner: "I NEVER MEANT FOR YOU TO KILL NOTHING YOU DIDN'T LAUNCH". What a job starts dies with the job
+    // already, through its kill-on-close Job Object (KillOnCloseJob), which knows its members exactly; nothing here guesses.
+    private static bool CanEnd(Stray stray) => false;
+
+    /// <summary>The processes the sweep would never end, whatever the attribution: kept as a backstop should ending ever come back (it is off: CanEnd).</summary>
+    internal static readonly HashSet<string> NeverEnd = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "explorer", "dwm", "sihost", "ShellExperienceHost", "StartMenuExperienceHost", "SearchHost", "SearchApp", "SearchIndexer", "TextInputHost",
+        "TabTip", "ctfmon", "RuntimeBroker", "ApplicationFrameHost", "SystemSettings", "LockApp", "Widgets", "WidgetService", "PhoneExperienceHost",
+        "msedge", "msedgewebview2", "chrome", "firefox", "svchost", "services", "lsass", "csrss", "smss", "wininit", "winlogon", "fontdrvhost",
+        "WmiPrvSE", "taskhostw", "userinit", "dllhost", "sppsvc", "MsMpEng", "NisSrv", "SecurityHealthService", "SecurityHealthSystray",
+        "audiodg", "spoolsv", "Taskmgr", "OneDrive", "Teams", "ms-teams", "slack", "Code", "devenv", "rider64",
+    };
+
+    internal static bool NeverEnded(string name) =>
+        NeverEnd.Contains(name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? name[..^4] : name);
 
     private bool End(Stray stray, DateTimeOffset now)
     {
@@ -159,12 +176,13 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
 
     private void Raise(Stray stray, MachineStray row, string key)
     {
-        var how = _tried.Contains(key)
-            ? "The node tried to end it and it is still here: end it by hand."
-            : stray.NodeLaunched && stray.OwnerEnded && stray.ByFolder
-                ? "It is tied to its owner by its folder or command line only, so the node does not end it (it may be a person's own): end it by hand if it is not."
+        // The node ends nothing itself (CanEnd): each card says why the process is named, and the person decides.
+        var how = stray.NodeLaunched && stray.OwnerEnded && stray.ByFolder
+            ? "It is tied to its owner by its folder or command line only (it may be a person's own): end it by hand if it is not."
+            : stray.NodeLaunched && stray.OwnerEnded
+                ? "Its owner has ended, and the node never ends a process itself: end it by hand if it should not be running."
                 : stray.NodeLaunched
-                    ? "Its owner has not ended, so the node leaves it: end it by hand if it should not be running."
+                    ? "Its owner has not ended: end it by hand if it should not be running."
                     : "The node did not start its owner, so it only names it: end it by hand if it should not be running.";
         state.RaiseCard(CardBin.ForYou, Kind, key,
             $"Stray {stray.Name} {stray.Pid} of {stray.Owner}: {stray.Reason}",

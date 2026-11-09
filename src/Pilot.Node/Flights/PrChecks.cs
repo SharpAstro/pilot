@@ -543,7 +543,15 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// </summary>
     private async Task MergeWhenGreenAsync(CancellationToken cancellationToken)
     {
-        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, MergeWhenGreen: [_, _, ..], PullRequest: not null, OnHold: null }))
+        var armedFlights = state.Flights().Where(f => f is { State: FlightState.Flying, MergeWhenGreen: [_, _, ..], PullRequest: not null, OnHold: null }).ToList();
+        // The tries of an armed head are kept only while that head is still armed: one that moved, landed or was dropped has no later
+        // look to remove its key, so it is pruned here rather than kept for the life of the node.
+        var live = armedFlights.Select(f => $"armed {f.Code} {f.MergeWhenGreen![0]}").ToHashSet(StringComparer.Ordinal);
+        foreach (var stale in _mergeTries.Keys.Where(k => k.StartsWith("armed ", StringComparison.Ordinal) && !live.Contains(k)).ToList())
+        {
+            _mergeTries.Remove(stale);
+        }
+        foreach (var flight in armedFlights)
         {
             var (head, method) = (flight.MergeWhenGreen![0], flight.MergeWhenGreen[1]);
             var how = flight.MergeWhenGreen.ElementAtOrDefault(2) is { Length: > 0 } who ? who : null;
@@ -854,7 +862,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         var flights = state.Flights();
         foreach (var card in cards)
         {
-            var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : null;
+            var code = Verbs.FlightCodeOf(card.Subject);
             if (flights.FirstOrDefault(f => f.Code == code) is not { State: not FlightState.Landed, Holding: not null })
             {
                 state.CloseCard(card.Id, "the hold ended", "node");
@@ -994,7 +1002,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         await LookAtMarksAsync(cancellationToken);
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind is LegCommander.PrReady or LegCommander.MergeFailed))
         {
-            var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : null;
+            var code = Verbs.FlightCodeOf(card.Subject);
             // A flight that landed (here, or on the node it moved to) has nothing to merge: its merge card closes, as a landing here does.
             if (state.Flights().FirstOrDefault(f => f.Code == code) is { State: FlightState.Landed })
             {
@@ -1144,6 +1152,13 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 {
                     continue;
                 }
+                // A leg still to fly keeps the card's leg wait (its Merge a mark), whatever GitHub could not say: GitHub gives no merge state
+                // right after a push (UNKNOWN), which is when a review-notes leg has just pushed, and writing the checks' status here
+                // turned the Merge back into a button the node refuses (review of #924).
+                if (legs is not null && legs.ShowLegWait(current))
+                {
+                    continue;
+                }
                 var choices = current.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = status } : c).ToList();
                 state.UpdateChoices(current.Id, choices, ifStill: current.Choices);
             }
@@ -1175,7 +1190,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             || flight.Holding is not null
             // A leg still to fly (a review-notes leg, say) is the merge's own refusal: not asked, and the head not marked as tried, so
             // it merges once that leg lands. Asking rang "merge on autopilot was refused: has legs not done" (PDF446, PIL841, 2026-11-07).
-            || state.Legs(flight.Code).Any(l => l.State != LegState.Done)
+            || state.OpenLegs(flight.Code).Count > 0
             || card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { } merge
             // Another merge of its repo holds the turn: asked at a later look, and only an ask made marks the head as tried.
             || legs.TurnHeld(flight.Repo)

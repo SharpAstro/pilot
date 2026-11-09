@@ -141,6 +141,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>How many jobs run at once; the rest wait their turn. Set live by <c>set node max-jobs</c>, then <see cref="Pump"/>.</summary>
     public int MaxRunning { get; set; } = 1;
 
+    /// <summary>
+    /// Whether a heavy job (a test run, a solution, test-project or folder build) waits while another heavy job runs on the machine,
+    /// whatever <see cref="MaxRunning"/> allows (the owner, 2026-11-09). On for every node; a test of another queue rule turns it off.
+    /// </summary>
+    public bool OneHeavyAtATime { get; set; } = true;
+
     /// <summary>The priority every job's process tree runs at, so builds and tests yield the CPU to other work (#629); Normal keeps the node's own.</summary>
     public JobPriority Priority { get; set; } = JobPriority.BelowNormal;
 
@@ -1052,10 +1058,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// A benchmark is never held this way. <see cref="StartWhatCan"/> walks past such a job to start a later one that shares nothing with it.
     /// </summary>
     private bool WaitsOnlyOnAHold(JobRow job) =>
-        (SiblingHold(job) is not null || BuildHold(job) is not null)
+        (SiblingHold(job) is not null || BuildHold(job) is not null || RepoHold(job) is not null || HeavyHold(job) is not null || FlightHold(job) is not null)
         && BenchHold(job) is null
         && job.Kind != JobKind.Bench
-        && WhyWait(job, ignoreSibling: true, ignoreBuild: true) is null;
+        // The repo, heavy and flight holds are holds too: a job behind one of them is walked past, so a light job or another repo's
+        // starts in a free slot (review of #924: a held heavy job at the head stopped the queue).
+        && WhyWait(job, ignoreSibling: true, ignoreBuild: true, ignoreHolds: true) is null;
 
     /// <summary>
     /// A benchmark at the head of the queue that has waited past <see cref="BenchQuietWait"/> with nothing of pilot's running and the
@@ -1351,7 +1359,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// the only memory it could wait for is what its own queue's jobs hold, and a head that waits for memory nothing will
     /// free is a queue that never moves. Otherwise it starts when the machine has free what its kind of command needs.
     /// </summary>
-    private string? WhyWait(JobRow job, bool ignoreSibling = false, bool ignoreBuild = false)
+    private string? WhyWait(JobRow job, bool ignoreSibling = false, bool ignoreBuild = false, bool ignoreHolds = false)
     {
         if (job.Kind == JobKind.Bench)
         {
@@ -1374,6 +1382,18 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         if (BenchHold(job) is { } holds)
         {
             return holds;
+        }
+        if (!ignoreHolds && FlightHold(job) is { } flightHeld)
+        {
+            return flightHeld;
+        }
+        if (!ignoreHolds && RepoHold(job) is { } repoHeld)
+        {
+            return repoHeld;
+        }
+        if (!ignoreHolds && HeavyHold(job) is { } heavyHeld)
+        {
+            return heavyHeld;
         }
         if (!ignoreSibling && SiblingHold(job) is { } shared)
         {
@@ -1533,6 +1553,59 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         return null;
     }
+
+    /// <summary>
+    /// Why a job may not start while another job of its repo runs: one job per repo at a time, whatever max-jobs allows across
+    /// repos. Two Pilot.Node.Tests runs of two pilot flights ran at once with max-jobs 2 and took the machine (SE1, 2026-11-09);
+    /// the owner: "having 2 jobs didn't mean two jobs of the same PIL/TIA can run". Null when no job of its repo is running.
+    /// </summary>
+    private string? RepoHold(JobRow job)
+    {
+        if (SiblingSet.RepoOf(job.Cwd) is not { } repo)
+        {
+            return null;
+        }
+        foreach (var id in _running.Keys.Order(StringComparer.Ordinal))
+        {
+            if (id != job.Id && state.Jobs().FirstOrDefault(j => j.Id == id) is { } row
+                && string.Equals(SiblingSet.RepoOf(row.Cwd), repo, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"one job per repo: {id} of {Path.GetFileName(repo)} is running";
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Why a job of a flight on hold may not start: a held flight loads the machine no more (the owner's "hold all flights" left PIL895's
+    /// whole-suite run going, 2026-11-09). A leg's check waits as any job does; the release lets it start. Null for a flight not held.
+    /// </summary>
+    private string? FlightHold(JobRow job) =>
+        job.Flight is { } code && state.Flights().FirstOrDefault(f => f.Code == code) is { OnHold: { } hold }
+            ? $"its flight {code} is on hold ({hold.Reason})" : null;
+
+    /// <summary>
+    /// Why a heavy job (a test run, or a build of a solution or a test project) may not start while another heavy job runs on this
+    /// machine, of any repo: max-jobs 2 means two jobs, never two heavy suites (the owner, 2026-11-09). Light jobs run beside one.
+    /// </summary>
+    private string? HeavyHold(JobRow job)
+    {
+        if (!OneHeavyAtATime || !IsHeavy(job.Command))
+        {
+            return null;
+        }
+        foreach (var id in _running.Keys.Order(StringComparer.Ordinal))
+        {
+            if (id != job.Id && state.Jobs().FirstOrDefault(j => j.Id == id) is { } row && IsHeavy(row.Command))
+            {
+                return $"one heavy job at a time: {id} is running a test run or a solution build";
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Whether a job's command runs tests or builds a solution or a test project: the jobs two of which take the machine.</summary>
+    internal static bool IsHeavy(string command) => DotnetCommand.IsHeavyLine(command);
 
     // Jobs that have let go of their sibling clones, once and for good: their tree moved past the last building segment.
     private readonly ConcurrentDictionary<string, byte> _released = new(StringComparer.Ordinal);
@@ -1831,6 +1904,23 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         var count = 0;
         foreach (var job in state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued
             && (string.Equals(j.Flight, flight, StringComparison.OrdinalIgnoreCase) || (j.Owner is not null && owners.Contains(j.Owner, StringComparer.Ordinal)))))
+        {
+            if (CancelJob(job.Id, who, force: false) is null)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// Cancels <paramref name="flight"/>'s running jobs other than a leg's check, which runs to its end (a cancelled check reads as a
+    /// failed one); its queued jobs are left to wait on the flight's hold (<see cref="FlightHold"/>). Returns how many were cancelled.
+    /// </summary>
+    public int CancelRunningFor(string flight, string who)
+    {
+        var count = 0;
+        foreach (var job in state.Jobs().Where(j => j.State == JobState.Running && j.Kind != JobKind.Check && string.Equals(j.Flight, flight, StringComparison.OrdinalIgnoreCase)))
         {
             if (CancelJob(job.Id, who, force: false) is null)
             {
