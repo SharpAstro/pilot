@@ -29,6 +29,12 @@ internal sealed class FakeClaudeAgents : IClaudeAgents
 
     public void ReleaseFirstListing() => _firstListing.TrySetResult();
 
+    /// <summary>While set, every listing waits for it: a <c>claude agents</c> start stuck behind a loaded node's other process starts.</summary>
+    public TaskCompletionSource? Stuck { get; set; }
+
+    /// <summary>Run once a listing has read its answer: a test changes what the next one reads.</summary>
+    public Action? AfterListing { get; set; }
+
     public async Task<string> ListAsync(CancellationToken cancellationToken)
     {
         var number = Interlocked.Increment(ref _listings);
@@ -36,7 +42,13 @@ internal sealed class FakeClaudeAgents : IClaudeAgents
         {
             await _firstListing.Task.WaitAsync(cancellationToken);
         }
-        return Failure is { } failure ? throw failure : Json;
+        if (Stuck is { } stuck)
+        {
+            await stuck.Task.WaitAsync(cancellationToken);
+        }
+        var json = Json;
+        AfterListing?.Invoke();
+        return Failure is { } failure ? throw failure : json;
     }
 }
 
@@ -165,7 +177,8 @@ internal sealed class TempProfile : IDisposable
     public ClaudeProfile Profile { get; }
 
     public SessionTrackerOptions Options(TimeSpan? retention = null) =>
-        new SessionTrackerOptions(Profile, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(15), retention ?? SessionTrackerOptions.DefaultEndedRetention);
+        // A fixture pid is no process of the test's: a real one that happens to have it must not make a say skip its poll.
+        new SessionTrackerOptions(Profile, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(15), retention ?? SessionTrackerOptions.DefaultEndedRetention) { IsAlive = _ => false };
 
     public string TranscriptPath(string sessionId) => Path.Combine(Folder, "claude", "projects", "proj-a", sessionId + ".jsonl");
 

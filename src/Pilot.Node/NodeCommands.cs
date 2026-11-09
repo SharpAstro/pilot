@@ -137,7 +137,70 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         }
     }
 
+    private sealed class Mark
+    {
+        public DateTimeOffset? HandlerStarted;
+    }
+
+    // Times the command (PIL794): wait is the time before its handler started, run the handler's own time. A command queued
+    // behind a lock replies at once with a Later; its timing is written when that settles, its run then including the queue.
     private async Task<CommandResult> RunOnceAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var time = Clock;
+        var began = time.GetUtcNow();
+        var mark = new Mark();
+        // The command's own flow is the foreground of the node's process starts (ProcessGate): a git, gh or claude start made
+        // anywhere in what it awaits goes straight to Process.Start, never behind the background readers' starts. An explicit
+        // scope, not a bare flag: it is switched off when the command ends (a Later: when it settles), so a Task.Run or a
+        // fire-and-forget call that outlives the command finds it off and is background, instead of inheriting the command's
+        // priority for as long as it runs. Work started while the command still runs is handed off with ProcessGate.Run or
+        // ProcessGate.Background (the background readers and the advances a create or a receive starts off its reply).
+        var foreground = ProcessGate.Foreground();
+        CommandResult result;
+        try
+        {
+            result = await RunCoreAsync(command, cancellationToken, mark);
+        }
+        catch
+        {
+            foreground.Dispose();
+            Note(command, began, mark.HandlerStarted, time.GetUtcNow());
+            throw;
+        }
+        if (result.Later is { } later)
+        {
+            _ = NoteWhenSettledAsync(command, began, time.GetUtcNow(), later, foreground);
+        }
+        else
+        {
+            foreground.Dispose();
+            Note(command, began, mark.HandlerStarted, time.GetUtcNow());
+        }
+        return result;
+    }
+
+    private void Note(CommandRequest command, DateTimeOffset began, DateTimeOffset? handlerStarted, DateTimeOffset ended)
+    {
+        var started = handlerStarted ?? ended;
+        services.GetService<CommandTimings>()?.Record(command.Verb, command.Target, command.Who, started - began, ended - started);
+    }
+
+    // The queued command is still the person's: its flow keeps the foreground mark until it settles, then the scope ends.
+    private async Task NoteWhenSettledAsync(CommandRequest command, DateTimeOffset began, DateTimeOffset replied, Task<CommandResult> later, IDisposable foreground)
+    {
+        try
+        {
+            await later;
+        }
+        catch (Exception)
+        {
+            // Its failure is told elsewhere; it still took the time.
+        }
+        foreground.Dispose();
+        Note(command, began, replied, Clock.GetUtcNow());
+    }
+
+    private async Task<CommandResult> RunCoreAsync(CommandRequest command, CancellationToken cancellationToken, Mark mark)
     {
         // Who sends it decides what it may do (Standing): the lookout and a flight's session are fenced from what is the
         // person's alone (a merge or a landing by any route, a card's included; the node's settings and setup; a review posted to
@@ -207,6 +270,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         // your-only command run on autopilot is recorded by Autopilot.Handled.
         var fromCard = _fromCard.Value;
         _fromCard.Value = false;
+        mark.HandlerStarted = Clock.GetUtcNow();
         var result = await RouteAsync(command, cancellationToken);
         if (result.Ok && !fromCard && !onAutopilot && DecisionSources.IsDirect(command.Verb, command.Args))
         {
@@ -226,7 +290,11 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             var record = !fromCard && command.Verb is not (Verbs.Answer or Verbs.Dismiss);
             if (result.Later is { } later)
             {
-                _ = HandledWhenDoneAsync(command, later, record);
+                // Not started by the person's command: what it does once the queued one has run is the node's own.
+                using (ProcessGate.Background())
+                {
+                    _ = HandledWhenDoneAsync(command, later, record);
+                }
             }
             else
             {
@@ -816,4 +884,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
     }
 
     private T Get<T>() where T : notnull => services.GetRequiredService<T>();
+
+    // The timing every command gets is incidental to it: a host that registered no clock or timings (a test's) still runs it.
+    private TimeProvider Clock => services.GetService<TimeProvider>() ?? TimeProvider.System;
 }

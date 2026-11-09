@@ -101,7 +101,8 @@ public sealed partial class NodeState
             try
             {
                 var started = SnapshotLocked();
-                _journal.Append(started, Serialize(started));
+                // No bytes: the journal streams a snapshot to its file itself, never built whole on the LOH (#794).
+                _journal.Append(started, ReadOnlyMemory<byte>.Empty);
             }
             catch (Exception e)
             {

@@ -17,4 +17,7 @@ public static class ClientPages
 {
     /// <summary>The Pull requests page: the node reads the open PRs every minute while a client shows it.</summary>
     public const string PullRequests = "prs";
+
+    /// <summary>The Home page, where the machine is drawn: the node samples it every 5 s while a client shows it, every 15 s otherwise.</summary>
+    public const string Home = "home";
 }
