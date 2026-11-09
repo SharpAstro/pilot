@@ -9,9 +9,14 @@ is neither built nor tested by CI.
 - A plane is a git worktree at `<repo>/.claude/worktrees/<code>` on `flight/<code>`. Work and commit only there. Do not
   push, open a PR or merge; the controller lands the flight. Leave nothing uncommitted in the plane, and put scratch
   output outside it.
-- Sibling clones are not yours. `Pilot.Gui` compiles the sibling `DIR.Lib`, `SdlVulkan.Renderer` and `AppShell` source
-  when they sit beside this repo, and restores their packages otherwise (as CI does). Editing a sibling changes this
-  build with no version bump, so a change that spans repos is not a step of this plane; name it and leave it.
+- Sibling clones are not yours. **A plane builds against the published packages, as CI does**: the projects' 6-level
+  `SharpAstroRoot` probe is opt-in (`UseLocalSiblings=true`), so nothing in a plane compiles `DIR.Lib`, `SdlVulkan.Renderer`,
+  `AppShell` or another sibling's source, and its jobs never wait on another repo's build. Only the main clone compiles
+  sibling source. A change that spans repos is not a step of this plane; name it and leave it.
+- Exceptions are named: a flight whose issue carries `pilot: sibling source` builds on the sibling clones (the node runs
+  its jobs with `UseLocalSiblings=true` and holds the clones while they build). A feature that needs an unreleased sibling
+  otherwise takes that sibling's preview (prerelease) package. A consumer connected to a producer flies once the
+  producer's package is on nuget.org, and its leg bumps the pin to that version.
 - The live node is the controller's, one per machine. A plane must not start, stop or restart it, install an update,
   or run `pilot-node setup`: it would touch the real socket, settings and store under `%LOCALAPPDATA%\pilot2\`. Tests
   run a node in memory or on a temporary socket; use those.
