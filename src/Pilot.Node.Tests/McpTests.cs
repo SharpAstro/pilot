@@ -168,6 +168,36 @@ public sealed class McpTests : IAsyncLifetime
     }
 
     [Fact]
+    public void EveryCommandThatOverridesAGateTakesTheWhyTheGateAsksFor()
+    {
+        // #926: flight create --anyway was refused for want of a --why it had no option for, and a --why typed anyway became title
+        // words. Every command with --anyway takes --why, on the CLI and so as a tool parameter.
+        var root = PilotCommand.Build(_node.Folder, TextWriter.Null, TextWriter.Null, console: true);
+        var lacking = new List<string>();
+        void Walk(Command command, string path)
+        {
+            foreach (var sub in command.Subcommands)
+            {
+                var name = $"{path} {sub.Name}".Trim();
+                if (sub.Options.Any(o => o.Name == Verbs.AnywayFlag) && !sub.Options.Any(o => o.Name == "--why"))
+                {
+                    lacking.Add(name);
+                }
+                Walk(sub, name);
+            }
+        }
+        Walk(root, "");
+        lacking.ShouldBeEmpty();
+
+        var tools = McpServer.Tools(PilotCommand.Build(_node.Folder, TextWriter.Null, TextWriter.Null));
+        var (path, create) = tools["flight_create"];
+        var parsed = root.Parse(McpServer.Spell(path, create, Arguments("""{"issue":"2027","anyway":true,"why":"DE1 is down since 11-08 04:40 (pilot nodes)"}""")));
+        parsed.Errors.ShouldBeEmpty();
+        parsed.GetValue<string>("--why").ShouldBe("DE1 is down since 11-08 04:40 (pilot nodes)");
+        parsed.GetValue<string[]>("title").ShouldBeEmpty("the why is not taken as title words");
+    }
+
+    [Fact]
     public void ACallIsSpelledAsTheCliParsesIt_WordsThatLookLikeOptionsStayWords()
     {
         var root = PilotCommand.Build(_node.Folder, TextWriter.Null, TextWriter.Null);
