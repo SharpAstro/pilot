@@ -146,8 +146,9 @@ public sealed class LandingPathTests : ReviewTestsBase
                         outcome.ShouldNotBeNull().Kind.ShouldBe(LandKind.Refused);
                         outcome.Said.ShouldNotBeNull().ShouldContain(Marker);
                         break;
-                    case Path.Autopilot or Path.ArmedAtGreen when LandingAnswers.UpdatesTheBranch(answer):
+                    case Path.Autopilot or Path.ArmedAtGreen when LandingAnswers.UpdatesTheBranch(answer) || LandingAnswers.HeadMoved(answer):
                         // Behind or conflicting: the node brings the branch up to date and offers the merge again, nothing to show.
+                        // A head that moved is the node's own wait (PIL864): the new head is looked at, no card.
                         LandingAnswers.NothingAsks(_state);
                         break;
                     default:

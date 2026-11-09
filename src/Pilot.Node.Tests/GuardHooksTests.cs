@@ -17,7 +17,7 @@ public sealed class GuardHooksTests : IDisposable
     {
         if (Directory.Exists(_root))
         {
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
     }
 

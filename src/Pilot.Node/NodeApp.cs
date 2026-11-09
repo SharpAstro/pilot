@@ -52,6 +52,7 @@ public static partial class NodeApp
         AddIdeas(builder, logWriter);
         AddWorkers(builder, options, logWriter);
         AddAdmission(builder, options);
+        AddFailureInvestigations(builder, logWriter, options);
         AddLegs(builder);
         AddPrReviews(builder, logWriter);
         AddCommands(builder, options);
@@ -62,7 +63,7 @@ public static partial class NodeApp
         AddJobs(builder);
         AddFlightAdvance(builder, logWriter);
         AddPrChecks(builder, logWriter);
-        AddSummaries(builder, options);
+        AddSummaries(builder, options, logWriter);
         AddUpdates(builder, options);
         AddSettings(builder, options);
         AddSessions(builder, options, logWriter);

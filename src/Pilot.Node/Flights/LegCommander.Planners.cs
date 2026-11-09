@@ -63,6 +63,7 @@ public sealed partial class LegCommander
         {
             throw new FlightException($"{flight.Code} has landed");
         }
+        RefuseIfOnHold(flight.Code);
         var planner = $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{PlanLeg}";
         // One planner a flight: a second would plan the same legs over the first's. Live by its row, started here so
         // lately that the tracker has not listed it yet (PIL118's plan-flight, sent twice two seconds apart, 2026-10-23), or

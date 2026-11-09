@@ -32,7 +32,7 @@ is neither built nor tested by CI.
   `SQUASH`). So a branch's own history never matters here: merge commits on it, a merge of main that resolved
   conflicts, many small commits, all land as one commit. A rebase that would conflict is no reason to hold a PR.
 - Take main by a merge (`git fetch origin`, then `git merge origin/main`), never by a rebase, and never push with
-  `--force`. Repos whose queue rebases (tianwen) say so in their own PILOT.md.
+  `--force`. A repo whose queue rebases says so in its own PILOT.md; tianwen's squashes too since 2026-11-08.
 
 ## Sessions and the watchtower
 
@@ -49,6 +49,9 @@ is neither built nor tested by CI.
   the ledger closes it as finished or crashed. A session never stops another with `claude stop`.
 - One live watchtower per node. A change to how the node finds, messages, resumes or stops a session keeps
   `OneWatchtowerTests`, `WatchtowerTests` and `ResumeOptionsTests` passing.
+- The fleet summary is kept by the watchtower: the node has it remade after changes while a client is attached, asks
+  nothing with none, and `pilot summarise` and the panel's Refresh ask at once. The Haiku call runs only when the
+  watchtower is down (`SummaryRow.NotFollowing` says so); only then does the panel name a price.
 
 ## Build and check
 

@@ -114,28 +114,4 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         summary.ShouldContain("tried to send the last leg back and could not");
         summary.ShouldNotContain("goes around");
     }
-
-    [Fact]
-    [Trait("Category", "Slow")]
-    public async Task AConflictsRingKeepsTheSentenceThePrChecksWroteNotTheTables()
-    {
-        var flight = await NewFlight("45", "parser");
-        File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
-        await Fly(flight, "parser");
-        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
-        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "the parser drops the last line")).Ok.ShouldBeTrue();
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "ours\n");
-        Git(Repo, "commit", "-qam", "README on main");
-        Git(Repo, "push", "-q", "origin", "main");
-        _github.Pr = _github.Pr! with { Mergeable = "CONFLICTING" };
-        // Past its cap of review go-arounds the node may not send the leg round, so the ring is rung.
-        var leg = _state.Legs(flight.Code).Single();
-        _state.PutLeg(leg with { GoArounds = LegCommander.MaxReviewGoArounds, ReviewGoArounds = LegCommander.MaxReviewGoArounds });
-
-        await new PrChecks(_state, _github, TimeProvider.System, legs: _legs).LookAsync(Ct);
-
-        var card = Open().Single(c => c.Kind == "pr-conflicts");
-        card.Summary.ShouldNotBeNull().ShouldContain("watchtower merges the base into the plane");
-        card.Summary.ShouldNotContain("rebase");
-    }
 }

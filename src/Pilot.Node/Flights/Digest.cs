@@ -84,9 +84,10 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
         var cards = state.Cards();
         var handled = cards.Where(c => c.Bin == CardBin.Handled && c.At > since && c.At <= now).OrderBy(c => c.At).ToList();
         var open = cards.Where(c => c.State == CardState.Open && c.Kind != Kind).ToList();
-        var held = flights.Where(f => f.State == FlightState.Held).ToList();
+        var onHold = flights.Where(f => f.State != FlightState.Landed && f.OnHold is not null).ToList();
+        var held = flights.Where(f => f.State == FlightState.Held && f.OnHold is null).ToList();
         var failed = state.Legs().Where(l => l.State == LegState.Failed).ToList();
-        var flying = flights.Count(f => f.State == FlightState.Flying);
+        var flying = FlightCounts.Of(flights).Flying;
 
         var stale = StaleSection.Read(state, now, Bounds(), time.LocalTimeZone);
         var title = $"Digest: {Count(landed.Count, "landed", "landed")}, {flying} flying, {Count(open.Count, "card open", "cards open")}{(stale.Count > 0 ? $", {stale.Count} gone stale" : "")}";
@@ -109,9 +110,13 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
         {
             text.AppendLine($"- and {handled.Count - MaxLines} more (pilot cards --all)");
         }
-        if (held.Count + failed.Count + open.Count > 0)
+        if (onHold.Count + held.Count + failed.Count + open.Count > 0)
         {
             text.AppendLine("Parked:");
+            foreach (var flight in onHold)
+            {
+                text.AppendLine($"- {flight.Code} {FlightWaiting.OnHoldText(flight)}");
+            }
             foreach (var flight in held)
             {
                 text.AppendLine($"- {flight.Code} held, waiting for {FlightWaiting.For(flight)}");

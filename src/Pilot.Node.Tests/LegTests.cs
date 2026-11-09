@@ -116,8 +116,11 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>The open issues, by number, with their titles.</summary>
     public Dictionary<int, string> Issues { get; } = [];
 
+    /// <summary>When set, IssuesAsync fails with it, as a gh that could not reach GitHub.</summary>
+    public string? OpenIssuesFail { get; set; }
+
     public Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken) =>
-        Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value, Labels = IssueLabels.TryGetValue(i.Key, out var labels) ? [.. labels] : [] })]);
+        OpenIssuesFail is { } why ? Task.FromException<IssueInfo[]>(new FlightException(why)) : Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value, Labels = IssueLabels.TryGetValue(i.Key, out var labels) ? [.. labels] : [] })]);
 
     /// <summary>Each repo's open PRs, by repo folder path; a repo with none listed has none.</summary>
     public Dictionary<string, PullRequestStatus[]> OpenPrs { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -636,6 +639,15 @@ internal sealed class FakeGitHub : IGitHub
         return 1;
     }
 
+    /// <summary>The failed run of a PR's own checks, or of its merge queue entry, by PR number and whether it is the queue's; none listed reads as none.</summary>
+    public Dictionary<(int Number, bool MergeGroup), FailedRun> FailedRuns { get; } = [];
+
+    /// <summary>When set, reading a failed run yields nothing, as a gh that could not read it.</summary>
+    public bool FailedRunFails { get; set; }
+
+    public Task<FailedRun?> FailedRunAsync(string repoPath, int number, bool mergeGroup, CancellationToken cancellationToken) =>
+        Task.FromResult(!FailedRunFails && FailedRuns.TryGetValue((number, mergeGroup), out var run) ? run : null);
+
     /// <summary>The workflow runs each commit has, by commit; a commit with none listed has none.</summary>
     public Dictionary<string, WorkflowRun[]> Runs { get; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -865,7 +877,13 @@ internal sealed class FakeGitHub : IGitHub
     public List<(int Number, string Body)> IssueComments { get; } = [];
 
     public Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult(IssueLabels.TryGetValue(number, out var labels) ? labels.ToArray() : []);
+        Task.FromResult(IssueLabelsReadFails is null && IssueLabels.TryGetValue(number, out var labels) ? labels.ToArray() : []);
+
+    /// <summary>When set, a label read that must tell failure from absence (<see cref="IGitHub.IssueLabelsOrThrowAsync"/>) fails with it, as gh exiting non-zero; the plain read answers none, as the real one does.</summary>
+    public string? IssueLabelsReadFails { get; set; }
+
+    public Task<string[]> IssueLabelsOrThrowAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        IssueLabelsReadFails is { } why ? Task.FromException<string[]>(new FlightException(why)) : IssueLabelsAsync(repoPath, number, cancellationToken);
 
     /// <summary>When set, adding or removing an issue label fails with it, as GitHub refusing it.</summary>
     public string? IssueLabelFails { get; set; }
@@ -1002,6 +1020,15 @@ internal sealed class FakeGitHub : IGitHub
 
     /// <summary>The conversation comments of PRs, by number, as PrCommentsAsync lists them; a comment made through CommentIssueAsync lands here too.</summary>
     public List<(int Number, PrComment Comment)> PrConversation { get; } = [];
+
+    /// <summary>Run as an issue's comments are read, before they are listed: what another command records while a gh call of the sweep is out.</summary>
+    public Action? OnIssueComments { get; set; }
+
+    public Task<IReadOnlyList<PrComment>> IssueCommentsAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        OnIssueComments?.Invoke();
+        return PrCommentsAsync(repoPath, number, cancellationToken);
+    }
 
     public Task<IReadOnlyList<PrComment>> PrCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<PrComment>>([.. PrConversation.Where(c => c.Number == number).Select(c => c.Comment)]);
@@ -2155,7 +2182,9 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "late read");
         _github.Pr = new PullRequest(63, "OPEN", pushed, "https://github.com/x/tianwen/pull/63");
-        (await Leg(Verbs.Merge, "flight/TIA1", pushed[..8])).Error.ShouldBe("TIA1's plane holds 1 commit past #63's head: open the PR again (flight pr) to push it, and review what is new before it lands");
+        var unpushedRefusal = await Leg(Verbs.Merge, "flight/TIA1", pushed[..8]);
+        unpushedRefusal.Error.ShouldBe("TIA1's plane holds 1 commit past #63's head: open the PR again (flight pr) to push it, and review what is new before it lands");
+        unpushedRefusal.Refusal.ShouldBe(MergeRefusals.Unpushed);
         var tip = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
         _github.Pr = new PullRequest(63, "OPEN", tip, "https://github.com/x/tianwen/pull/63");
 

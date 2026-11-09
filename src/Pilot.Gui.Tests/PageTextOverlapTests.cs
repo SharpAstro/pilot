@@ -402,10 +402,17 @@ public sealed class PageTextOverlapTests
     {
         var chat = chrome.Chat;
         var feed = data.Chat;
-        chat.Load = (after, _) => Task.FromResult(after < 0 ? new ChatPage { Entries = feed, Total = feed.Length } : new ChatPage { Entries = [], Total = feed.Length });
+        // A watchtower mid-turn when the feed has anything to show: the reply so far, two lines waiting behind it with the first one's Answer
+        // now, and the last twenty turns' timings under the box, so the sweep and the frame time cover what PIL855 added.
+        var live = feed.Length > 0;
+        var lengthen = data.State is "long" or "many";
+        var tail = live ? StreamingChatTests.Tail(lengthen) : null;
+        ChatPage Page(TranscriptEntry[] entries) => (tail ?? new ChatPage { Entries = [], Total = 0 }) with { Entries = entries, Total = feed.Length };
+        chat.Load = (after, _) => Task.FromResult(Page(after < 0 ? feed : []));
         chat.OnSend = _ => Task.FromResult<string?>(null);
+        chat.OnAnswerNow = _ => Task.FromResult<string?>(null);
         chat.Open();
-        for (var i = 0; i < 100 && chat.Entries.Count < feed.Length; i++)
+        for (var i = 0; i < 500 && chat.Entries.Count < feed.Length; i++)
         {
             await Task.Delay(20, TestContext.Current.CancellationToken);
         }

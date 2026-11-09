@@ -107,6 +107,8 @@ public sealed class CoalesceGuardTests : ReviewTestsBase
 
         again.Ok.ShouldBeFalse();
         again.Error.ShouldNotBeNull().ShouldContain("is being merged already");
+        // A node wait, not a person's: the autopilot asks again and rings nobody.
+        again.Refusal.ShouldBe(MergeRefusals.NodeWait);
         open.SetResult();
         await merge;
     }
