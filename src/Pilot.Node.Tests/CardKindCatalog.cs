@@ -41,6 +41,7 @@ internal static class CardKindCatalog
     private const string FlightCommanderCreate = "Flights/FlightCommander.Create.cs";
     private const string FlightCommanderLand = "Flights/FlightCommander.Land.cs";
     private const string FlightCommanderReceive = "Flights/FlightCommander.Receive.cs";
+    private const string FlightCommanderAdopt = "Flights/FlightCommander.Adopt.cs";
     private const string FlightCommanderRoute = "Flights/FlightCommander.Route.cs";
     private const string Move = "Flights/LegCommander.Move.cs";
     private const string Checks = "Flights/PrChecks.cs";
@@ -147,7 +148,7 @@ internal static class CardKindCatalog
         new("merge-dropped", "ForYou", [Checks], "LegTests.AWaitingMergeWhoseChecksFailIsDroppedOnACardThatOffersItAgain"),
         new("autopilot-merge-refused", "Ring|ForYou", [Checks], "AutopilotMergeRefusalTests.AFailedRequiredCheckRingsWithReRunTheFailedCheckAndNoMergeAgain", "the PR's state on GitHub is still open (not merged) and the refusal's class is a person's (or a passing one that failed its third try), with the one action to take", [nameof(Verbs.RerunChecks), nameof(Verbs.OpenPr), nameof(Verbs.Dismiss), nameof(Verbs.Merge)]),
         new("pr-marks-refused", "Handled", [LegPlanners, "Flights/PrMarks.cs", PrReviewsStatus, PrReviewsSweep], "PrMarksTests.AWriteGitHubRefusesIsACardAndNeverFailsTheReviewOrLosesTheVerdict"),
-        new("node-label-refused", "Handled", [Move, LegOpenPr, "Flights/RepoSetup.cs", FlightCommanderCreate], "PrMarksTests.ANodeLabelGitHubRefusesOnTheNewPrIsACardNotAFailedPr"),
+        new("node-label-refused", "Handled", [Move, LegOpenPr, "Flights/RepoSetup.cs", FlightCommanderCreate, FlightCommanderAdopt], "PrMarksTests.ANodeLabelGitHubRefusesOnTheNewPrIsACardNotAFailedPr"),
         new("design-mirror-failed", "ForYou", ["Flights/DesignDecisionMirror.cs"], "DesignDecisionMirrorTests.DesignDecisionMirrorNotesAFailedCommentOnARingCardNamingThePrAndKeepsTheDecision"),
         new("repo-setup", "Handled", ["Flights/RepoSetup.cs"], "RepoSetupTests.SetupAgainstAnOrgWithNoFieldAndNoLabelsMakesTheFieldAndTheReadLabelsOnceAndASecondRunMakesNothing"),
         new("landed", "Handled", [FlightCommanderLand], "CliTests.ADirectFlightIsFlownFromTheCliAloneUpToItsLanding"),
@@ -164,6 +165,9 @@ internal static class CardKindCatalog
         new("connection-released", "Handled", [FlightCommanderConnect], "ConnectReleaseTests.ALandWithoutAPrReleasesTheWaiterFromThatFlightOnly"),
         new("disconnected", "Handled", [FlightCommanderConnect], "DisconnectTests.TheDroppedConnectionStaysDroppedWhenTheJournalIsReplayed"),
         new("received", "Handled", [FlightCommanderReceive], "FlightMoveTests.AHandedFlightArrivesWithItsLegsReportsPrReviewAndOpenCardsOnAPlaneAtThePushedHead"),
+        new("adopted", "Handled", [FlightCommanderAdopt], "AdoptTests.AFlightOfANodeSilentPastAdoptAfterIsTakenFromTheCopyWithItsPlaneLegsLabelCommentsAndAnAtRiskCard"),
+        new("adopt-at-risk", "ForYou", [FlightCommanderAdopt], "AdoptTests.AFlightOfANodeSilentPastAdoptAfterIsTakenFromTheCopyWithItsPlaneLegsLabelCommentsAndAnAtRiskCard"),
+        new("adopt-comment-refused", "Handled", [FlightCommanderAdopt], "AdoptTests.ARefusedCommentOrLabelIsACardAndTheAdoptionStands"),
         new("move-failed", "Ring", [Move], "FlightMoveTests.APushBehindTheRemoteLeavesTheFlightHereWithTheReasonAndARetryThatRunsTheMoveAgain", "the push of the flight's branch to hand it to the peer was refused, read from git", [nameof(Verbs.MoveFlight)]),
         new("planner-ended", "Handled", ["Flights/LegCommander.Planners.cs"], "PlannerWindDownTests.AnIdlePlannerOfAFlightWhoseLegFliesIsEndedAsPlannedAndItsSlotGoesToTheNextFlightOnTheSweep"),
         new("moved-away", "Handled", [Move], "FlightMoveTests.AHandMoveOutsideMaintenanceMovesTheFlightAsWell"),

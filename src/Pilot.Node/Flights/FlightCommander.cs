@@ -91,13 +91,15 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     public const string ReceivedKind = "received";
 
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
-    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.ReceiveFlight or Verbs.Connect or Verbs.Disconnect or Verbs.Land or Verbs.FlyAnyway or Verbs.FlightPriority;
+    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.ReceiveFlight or Verbs.Connect or Verbs.Disconnect or Verbs.Land or Verbs.FlyAnyway or Verbs.FlightPriority or Verbs.AdoptFlight;
 
     /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
     public Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken) =>
         command.Verb is Verbs.CreateFlight or Verbs.ReceiveFlight
             ? CreateOneAtATimeAsync(command, cancellationToken)
-            : LockWait.RunAsync(_one, state, time, command, token => RunUnderLockAsync(command, token), cancellationToken);
+            : command.Verb == Verbs.AdoptFlight
+                ? AdoptOneAtATimeAsync(command, cancellationToken)
+                :LockWait.RunAsync(_one, state, time, command, token => RunUnderLockAsync(command, token), cancellationToken);
 
     private async Task<CommandResult> RunUnderLockAsync(CommandRequest command, CancellationToken cancellationToken)
     {

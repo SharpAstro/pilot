@@ -283,6 +283,14 @@ public static class Verbs
     public const string MoveFlight = "move-flight";
 
     /// <summary>
+    /// <c>adopt-flight flight/&lt;code&gt; &lt;node&gt;</c> (#894): take over a flight whose node has been silent longer than <c>adopt-after</c>, from
+    /// this node's last copy of that node's flights and legs. The plane is made from the branch the old node pushed, the flight says it was
+    /// adopted from that node (<see cref="FlightMoved.Adopted"/>), a leg that was flying there is planned again so it restarts here, and
+    /// the issue and the PR say who adopted it from whom. Refused while the node answers or was heard within <c>adopt-after</c>.
+    /// </summary>
+    public const string AdoptFlight = "adopt-flight";
+
+    /// <summary>
     /// The arg a <c>create-flight</c> may carry after its item: create it although the item carries another node's
     /// <c>pilot node:</c> label. It is no part of the title.
     /// </summary>

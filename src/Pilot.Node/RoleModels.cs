@@ -143,6 +143,19 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>How long a peer must be unheard before its flights may be taken over (<see cref="NodeSettings.AdoptAfterKey"/>);
+    /// <see cref="NodeSettings.DefaultAdoptAfter"/> unless the settings say otherwise.</summary>
+    public TimeSpan AdoptAfter
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.AdoptAfter ?? NodeSettings.DefaultAdoptAfter;
+            }
+        }
+    }
+
     /// <summary>The model a session of <paramref name="role"/> starts on, or null for Claude Code's own default.</summary>
     public string? Model(string role) => _defaults ? Range(role).Default.Model : null;
 
