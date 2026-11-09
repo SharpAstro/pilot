@@ -426,8 +426,16 @@ public sealed record FlightMoved
     /// <summary>When this node took the flight over.</summary>
     public required DateTimeOffset At { get; init; }
 
-    /// <summary>How a client says it, in one place: <c>moved from SE1 after leg parser</c>.</summary>
-    public string Text => AfterLeg is { Length: > 0 } ? $"moved from {From} after leg {AfterLeg}" : $"moved from {From}";
+    /// <summary>
+    /// True when this node took the flight over from <see cref="From"/> while that node was down, without its hand-over (<c>flight adopt</c>, #894):
+    /// the node that comes back can tell an adoption from a hand-over. False for a hand-over, and for a row written before the flag existed.
+    /// </summary>
+    public bool Adopted { get; init; }
+
+    /// <summary>How a client says it, in one place: <c>moved from SE1 after leg parser</c>, or <c>adopted from SE1</c> for an adoption.</summary>
+    public string Text => Adopted
+        ? $"adopted from {From}"
+        : AfterLeg is { Length: > 0 } ? $"moved from {From} after leg {AfterLeg}" : $"moved from {From}";
 }
 
 /// <summary>

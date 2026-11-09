@@ -171,8 +171,12 @@ public static partial class NodeApp
             flights.Fleet = new HeldTokenFleet(Environment.GetEnvironmentVariable("PILOT_CLIENT_GRANTS") is { Length: > 0 } grants
                 ? grants
                 : Path.Combine(options.DataFolder, "client-grants.json"));
+            // The last copy of each peer's flights and legs, so a flight of a node that went down can still be read (#894).
+            flights.Copy = services.GetRequiredService<FleetCopy>();
             return flights;
         });
+        builder.Services.AddSingleton(services => new FleetCopy(FleetCopy.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = services.GetRequiredService<LogWriter>() });
+        builder.Services.AddHostedService(services => new FleetCopyWatch(services.GetRequiredService<FlightCommander>(), services.GetRequiredService<TimeProvider>()) { Error = services.GetRequiredService<LogWriter>() });
     }
 
     /// <summary>The repos: the catalog, the watches on them and on their PRs, the sync and the commander.</summary>
