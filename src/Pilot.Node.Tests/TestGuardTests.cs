@@ -184,8 +184,8 @@ public sealed class TestGuardTests : IDisposable
     {
         var reason = Marked("dotnet test").ShouldNotBeNull();
         reason.ShouldNotContain("\u2014");
-        // Only the command it tells the session to use may carry a double dash.
-        reason.Replace(TestGuard.Instead, "").ShouldNotContain(" -- ");
+        // Only the commands it names, in backticks, may carry a double dash.
+        System.Text.RegularExpressions.Regex.Replace(reason, "`[^`]*`", "").ShouldNotContain(" -- ");
     }
 
     [Fact]
