@@ -724,6 +724,111 @@ public sealed class LegWatchTests
         (_said.ShouldHaveSingleItem().Verb, _said[0].Target).ShouldBe((Verbs.Say, "session/a1b2c3d4"));
     }
 
+    private void ReviewerEndedAfterItsTurn(bool gone = true) =>
+        _state.PutSession(_state.Sessions().Single(s => s.Id == "a1b2c3d4") with { State = SessionState.Ended, Gone = gone, LastResponseAt = _time.GetUtcNow() });
+
+    private JobRow ReviewerJob(JobState job, DateTimeOffset? ended = null, DateTimeOffset? told = null) => new()
+    {
+        Id = "rj1", Command = "dotnet test", Cwd = "/r/w", State = job, Owner = "a1b2c3d4", OwnerName = "du1-tia1-review",
+        LogPath = "/tmp/rj1.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start, EndedAt = ended, Told = told is not null, ToldAt = told,
+    };
+
+    [Theory]
+    [InlineData(JobState.Running, true)]
+    [InlineData(JobState.Queued, true)]
+    [InlineData(JobState.Running, false)]
+    public async Task AReviewerThatEndedItsTurnWithAJobOfItsOwnOpenIsNeitherToldNorRestartedNorRungAndKeepsItsJob(JobState job, bool gone)
+    {
+        ReviewingFlight(null);
+        ReviewerEndedAfterItsTurn(gone);
+        _state.PutJob(ReviewerJob(job));
+        _time.Advance(TimeSpan.FromMinutes(30));
+
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldBeEmpty();
+        Open().ShouldNotContain(c => c.Kind == LegWatch.ReviewStalled);
+        _state.Jobs().Single(j => j.Id == "rj1").State.ShouldBe(job);
+    }
+
+    [Fact]
+    public async Task AnEndedReviewerWhoseJobEndedAndWasToldIsGivenItsTurnAndTheGraceBeforeAnySayOrRestart()
+    {
+        ReviewingFlight(null);
+        ReviewerEndedAfterItsTurn();
+        _time.Advance(TimeSpan.FromMinutes(30));
+        // The job ended a while ago and its outcome was told just now: the resumed reviewer has not had its turn yet.
+        _state.PutJob(ReviewerJob(JobState.Succeeded, ended: _time.GetUtcNow() - TimeSpan.FromMinutes(20), told: _time.GetUtcNow()));
+        _time.Advance(TimeSpan.FromMinutes(2));
+
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldBeEmpty();
+        Open().ShouldNotContain(c => c.Kind == LegWatch.ReviewStalled);
+
+        // Still no turn after the grace since the telling: now it is told, as any idle reviewer is.
+        _time.Advance(TimeSpan.FromMinutes(3));
+        await _watch.LookAsync(Ct);
+        (_said.ShouldHaveSingleItem().Verb, _said[0].Target).ShouldBe((Verbs.Say, "session/a1b2c3d4"));
+    }
+
+    [Fact]
+    public async Task AReviewerThatEndedItsTurnWithNoJobOfItsOwnIsStillToldToGiveItsVerdict()
+    {
+        ReviewingFlight(null);
+        ReviewerEndedAfterItsTurn();
+        _time.Advance(TimeSpan.FromMinutes(30));
+
+        await _watch.LookAsync(Ct);
+
+        (_said.ShouldHaveSingleItem().Verb, _said[0].Target).ShouldBe((Verbs.Say, "session/a1b2c3d4"));
+    }
+
+    [Fact]
+    public async Task APrReviewerThatEndedItsTurnWithAJobOfItsOwnRunningIsLeftAlone()
+    {
+        _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });
+        _state.PutPrReview(new PrReviewRow
+        {
+            Repo = "acme/widget", Number = 7, Url = "https://github.com/acme/widget/pull/7", Base = "main", Head = "4f2c9a01d6e8",
+            ClonePath = "/r", Worktree = "/r/.claude/worktrees/review-widget-7", Reviewer = "du1-review-widget-7", ReviewerJob = "a1b2c3d4",
+            State = PrReviewState.Reviewing, StartedAt = Start,
+        });
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow());
+        ReviewerEndedAfterItsTurn();
+        _state.PutJob(ReviewerJob(JobState.Running));
+        _time.Advance(TimeSpan.FromMinutes(30));
+
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldBeEmpty();
+        Open().ShouldNotContain(c => c.Kind == LegWatch.ReviewStalled);
+        _state.Jobs().Single(j => j.Id == "rj1").State.ShouldBe(JobState.Running);
+    }
+
+    [Fact]
+    public async Task AValidatorThatEndedItsTurnWithAJobOfItsOwnRunningRingsNothing()
+    {
+        _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });
+        _state.PutLeg(new LegRow
+        {
+            Flight = "TIA1", Name = "render", Order = 2, Goal = "Render it", DoneWhen = "It renders", State = LegState.Planned,
+            Validation = LegValidation.Pending, Validator = "du1-tia1-render-validator", ValidatorJob = "a1b2c3d4",
+        });
+        _state.RaiseCard(CardBin.Handled, LegCommander.ValidatingKind, "flight/TIA1/render", "Validating TIA1/render");
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow());
+        ReviewerEndedAfterItsTurn();
+        _state.PutJob(ReviewerJob(JobState.Running) with { OwnerName = "du1-tia1-parser" });
+        _time.Advance(TimeSpan.FromMinutes(30));
+
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldNotContain(c => c.Kind == LegWatch.ValidationStalled);
+        _state.Jobs().Single(j => j.Id == "rj1").State.ShouldBe(JobState.Running);
+    }
+
     [Fact]
     public async Task ALaterReviewRoundOfTheSameFlightIsToldAgainBeforeItIsRestartedOrRung()
     {

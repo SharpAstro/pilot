@@ -576,6 +576,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             since = retold;
         }
+        // Likewise one whose own job's outcome was just told (a --bg worker ended by design resumes on it, #893): its turn comes first.
+        if (OwnJobsWait(worker).Spoken is { } spoken && spoken > since)
+        {
+            since = spoken;
+        }
         // A worker idle while a job of its own runs or waits its turn is waiting, as it was told to: the job wakes it, so it
         // is not stalled. Its own by row, or by name: a worker Claude Code continued as a copy is a row of its own, while
         // the job it handed over is still the first row's (TIA1739's j13 rang c205 to c207 as stalls, 2026-10-23).
@@ -900,7 +905,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// </summary>
     internal IdleCause ClassifyIdle(LegRow leg, SessionRow worker)
     {
-        if (JobsOf(worker, leg).Any(j => j.State is JobState.Running or JobState.Queued))
+        if (OwnJobsWait(worker, leg).Open)
         {
             return IdleCause.OwnJob;
         }
@@ -915,6 +920,25 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         (j.Owner is { Length: > 0 } owner && (owner == session.Id || owner == session.SessionId || session.EarlierSessionIds?.Contains(owner) == true))
         || string.Equals(j.OwnerName, session.Name, StringComparison.OrdinalIgnoreCase)
         || (leg is not null && string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>
+    /// A session's wait on jobs of its own (pilot #893), the one rule for a reviewer, a validator and a worker: a job still queued
+    /// or running is a wait, not a stall, even when its turn ended and Claude Code dropped it from its listing (a --bg session ended
+    /// by design resumes on the job's end), unless it failed. <see cref="Spoken"/> is the latest of a job's end and of its outcome
+    /// being told, so a resumed session is given its turn and the idle grace from then rather than from its stale last response.
+    /// </summary>
+    private readonly record struct OwnJobWait(bool Open, DateTimeOffset? Spoken);
+
+    private OwnJobWait OwnJobsWait(SessionRow row, LegRow? leg = null)
+    {
+        if (row.State == SessionState.Failed)
+        {
+            return new OwnJobWait(false, null);
+        }
+        var jobs = JobsOf(row, leg).ToArray();
+        var spoken = jobs.SelectMany(j => new[] { j.EndedAt, j.ToldAt, j.RetoldAt }).Where(t => t is not null).Select(t => t!.Value).DefaultIfEmpty().Max();
+        return new OwnJobWait(jobs.Any(j => j.State is JobState.Running or JobState.Queued), spoken == default ? null : spoken);
+    }
 
     /// <summary>The detail's lead for a worker idle with room in its context: the cause, in plain words.</summary>
     private static string RoomLead(SessionRow worker) => worker.ContextWindow > 0
@@ -1038,13 +1062,21 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             {
                 continue;
             }
+            // Waiting on a job of its own, even after its turn ended, is not stalled: the job's end resumes it (#893).
+            var wait = row is null ? default : OwnJobsWait(row);
+            if (twice is null && wait.Open)
+            {
+                state.CloseCardsAbout(subject, "waiting on its own job", ValidationStalled);
+                continue;
+            }
+            var idleSince = row is null ? startedAt : new[] { row.LastResponseAt ?? row.StartedAt, wait.Spoken ?? DateTimeOffset.MinValue }.Max();
             string? why = twice is not null ? $"its validator never took a turn after two starts: {twice}" : row switch
             {
                 null when now - startedAt > ShowUpGrace => $"started {Ago(now, startedAt)} ago and never showed up",
                 null => null,
                 { State: SessionState.Working or SessionState.Waiting } => null,
                 { State: SessionState.Failed } => "it failed",
-                _ when now - (row.LastResponseAt ?? row.StartedAt) >= IdleGrace => $"it stopped {Ago(now, row.LastResponseAt ?? row.StartedAt)} ago without its GO or NO-GO",
+                _ when now - idleSince >= IdleGrace => $"it stopped {Ago(now, idleSince)} ago without its GO or NO-GO",
                 _ => null,
             };
             if (why is not null)
@@ -1138,15 +1170,16 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             return;
         }
         // Waiting on a job of its own (pilot #777) is not stalled: the job's end wakes the reviewer.
-        var ownJobs = row is { State: not SessionState.Failed, Gone: false } ? JobsOf(row).ToArray() : [];
-        if (ownJobs.Any(j => j.State is JobState.Running or JobState.Queued))
+        // Also one whose turn ended with the job open (Ended, maybe Gone from Claude Code's listing): the job's end resumes it (#893).
+        var wait = row is null ? default : OwnJobsWait(row);
+        if (wait.Open)
         {
             state.CloseCardsAbout(subject, "waiting on its own job", ReviewStalled);
             return;
         }
-        // The idle clock starts at the later of its last response and the end of its last job.
+        // The idle clock starts at the latest of its last response, the end of its last job and the telling of its outcome.
         var idleSince = row is null ? startedAt
-            : new[] { row.LastResponseAt ?? row.StartedAt }.Concat(ownJobs.Where(j => j.EndedAt is not null).Select(j => j.EndedAt!.Value)).Max();
+            : new[] { row.LastResponseAt ?? row.StartedAt, wait.Spoken ?? DateTimeOffset.MinValue }.Max();
         string? why = row switch
         {
             null when now - startedAt > ShowUpGrace => $"started {Ago(now, startedAt)} ago and never showed up",
