@@ -228,7 +228,7 @@ internal sealed class TranscriptEntryView
     private sealed class KeptRow
     {
         public required TranscriptEntry Entry;
-        public required TranscriptEntry? Result;
+        public required TranscriptEntry? Answer;
         public required bool Open;
         public required bool Live;
         public required SubagentRow? Link;
@@ -304,7 +304,7 @@ internal sealed class TranscriptEntryView
                 link = ReporterOf(entry);
             }
             var open = _expanded.Contains(entry.Index);
-            if (_rows.TryGetValue(entry.Index, out var kept) && ReferenceEquals(kept.Entry, entry) && ReferenceEquals(kept.Result, result)
+            if (_rows.TryGetValue(entry.Index, out var kept) && ReferenceEquals(kept.Entry, entry) && ReferenceEquals(kept.Answer, result)
                 && kept.Open == open && kept.Live == isLive && Equals(kept.Link, link) && kept.LinkLabel == linkLabel)
             {
                 kept.Pass = pass;
@@ -314,7 +314,7 @@ internal sealed class TranscriptEntryView
             }
             // Stretched here, inside the kept node: the owners add no wrapper of their own, whose reference would change every frame.
             var node = (entry.Kind == TranscriptKind.ToolUse ? Call(entry, result, live) : entry.Kind == TranscriptKind.Divider ? Divider(entry) : Row(entry)).WStar();
-            _rows[entry.Index] = new KeptRow { Entry = entry, Result = result, Open = open, Live = isLive, Link = link, LinkLabel = linkLabel, Node = node, Pass = pass };
+            _rows[entry.Index] = new KeptRow { Entry = entry, Answer = result, Open = open, Live = isLive, Link = link, LinkLabel = linkLabel, Node = node, Pass = pass };
             nodes.Add(node);
             seen++;
             RowsBuilt++;

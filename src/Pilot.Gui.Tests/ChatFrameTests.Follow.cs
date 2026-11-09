@@ -1,5 +1,6 @@
 using DIR.Lib;
 using Pilot.Contracts;
+using Pilot.Ui;
 using SharpAstro.Png;
 using Shouldly;
 using Xunit;
@@ -20,7 +21,7 @@ public sealed partial class ChatFrameTests
     // What a frame drew: each text leaf inside the feed's viewport with where it sits, top to bottom.
     private readonly record struct Seen(string Text, float X, float Y, float Bottom);
 
-    private sealed record Frame(Seen[] Texts, RectF32 Feed, bool JumpShown)
+    private sealed record Frame(Seen[] Texts, RectF32 Feed, bool JumpShown, string[] Overlaps)
     {
         public Seen Find(string text) => Texts.First(t => t.Text.Contains(text, StringComparison.Ordinal));
         public bool Has(string text) => Texts.Any(t => t.Text.Contains(text, StringComparison.Ordinal));
@@ -44,7 +45,9 @@ public sealed partial class ChatFrameTests
             .OrderBy(t => t.Y).ThenBy(t => t.X)
             .ToArray();
         var jump = arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "Jump to end" } });
-        return new Frame(texts, new RectF32(feed.X, feed.Y, feed.Width, feed.Height), jump);
+        // The same check PageTextOverlapTests and the live GUI read: text drawn over text. A row cut by the viewport's edge is the scroll's clip, not a fault.
+        var overlaps = TextOverlap.Faults(arranged).Where(f => f.Kind == TextFaultKind.Overlap).Select(f => f.Line).ToArray();
+        return new Frame(texts, new RectF32(feed.X, feed.Y, feed.Width, feed.Height), jump, overlaps);
     }
 
     private static ListScrollController FeedScroll(ChatView<RgbaImage> chat, Frame frame) =>
@@ -98,6 +101,7 @@ public sealed partial class ChatFrameTests
         var chat = held.Chat;
 
         var frame = Draw(renderer, chat);
+        frame.Overlaps.ShouldBeEmpty("no text over text at the end");
         frame.JumpShown.ShouldBeFalse();
         var lastReply = frame.Find($"Paragraph 5 of the report on flight {(Long - 1) / 8}");
         var bubble = frame.Find("writing…");
@@ -165,6 +169,7 @@ public sealed partial class ChatFrameTests
         // Far up into the older rows, a wheel notch at a time as a person does.
         WheelUp(chat, atEnd, 150);
         var before = Draw(renderer, chat);
+        before.Overlaps.ShouldBeEmpty("no text over text, scrolled up");
         before.JumpShown.ShouldBeTrue();
         before.Texts.Length.ShouldBeGreaterThan(3, "older rows are in view");
         before.Has("Paragraph 5 of the report on flight 249").ShouldBeFalse("the reader is not at the end");
@@ -178,6 +183,7 @@ public sealed partial class ChatFrameTests
             await held.AppendAsync(Said($"Arrival number {n}: the flight landed. {LongLine}"));
             var after = Draw(renderer, chat);
 
+            after.Overlaps.ShouldBeEmpty($"no text over text after read {n}");
             after.JumpShown.ShouldBeTrue($"still scrolled up after read {n}");
             FeedScroll(chat, after).Offset.ShouldBe(offset, 0.01f, $"the content offset from the top after read {n}");
             after.Texts.Select(t => (t.Text, t.X, t.Y)).ShouldBe(before.Texts.Select(t => (t.Text, t.X, t.Y)), $"the rows in view are where they were after read {n}");
