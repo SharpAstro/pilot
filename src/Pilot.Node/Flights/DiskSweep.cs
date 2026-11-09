@@ -397,12 +397,12 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
         if (dirty)
         {
             reclaimable.Add(($"worktree {name} (holds changes)", entry.Path));
-            var dirty = state.RaiseCard(CardBin.ForYou, WorktreeDirtyKind, entry.Path,
+            var dirtyCard = state.RaiseCard(CardBin.ForYou, WorktreeDirtyKind, entry.Path,
                 $"Worktree {name} has changes not committed and its PR #{pr.Number} is {pr.State.ToLowerInvariant()}",
                 $"{entry.Path} on branch {branch}: PR #{pr.Number} is {pr.State.ToLowerInvariant()}, so the disk sweep would remove it, but it holds changes not committed ({Size(size)} by unique bytes). Commit or discard them by hand and the next sweep removes it.",
                 [new CardChoice { Label = "I will deal with it", Verb = Verbs.Dismiss, Target = "" }],
                 summary: $"Commit or discard the changes in worktree {name}, and the next sweep removes it: its PR #{pr.Number} is {pr.State.ToLowerInvariant()}.");
-            state.AimDismiss(dirty);
+            state.AimDismiss(dirtyCard);
             return;
         }
         var held = await Planes.RemoveAsync(repo, entry.Path, cancellationToken);
