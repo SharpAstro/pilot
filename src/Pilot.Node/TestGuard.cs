@@ -133,37 +133,20 @@ public static class TestGuard
     /// </summary>
     private static string? DotnetReason(List<string> args)
     {
-        var at = args.FindIndex(a => !a.StartsWith('-'));
-        if (at < 0)
+        // The verb and the targets as DotnetCommand reads them: one reading for the guard and the job queue's heavy rule.
+        if (!DotnetCommand.Compiles(args))
         {
             return null;
         }
-        var rest = args.Skip(at + 1).ToList();
-        switch (args[at].ToLowerInvariant())
+        var verb = DotnetCommand.Verb(args);
+        if (verb == "test")
         {
-            case "test":
-                return "`dotnet test`";
-            // Every build, not only a solution's: a pilot-driven session builds through the job system, always (the owner, 2026-11-09:
-            // "make sure that pilot driven sessions do not call dotnet build without the job system"). run, publish and pack build too.
-            case "build" or "run" or "publish" or "pack" or "msbuild":
-                return rest.FirstOrDefault(IsSolutionOrTestProject) is { } target ? $"`dotnet {args[at].ToLowerInvariant()} {target}`" : $"`dotnet {args[at].ToLowerInvariant()}`";
-            default:
-                return null;
+            return "`dotnet test`";
         }
-    }
-
-    // MSBuild's own switches are not targets; a target is a path whose file is a .sln or .slnx, or a *Tests*.csproj.
-    private static bool IsSolutionOrTestProject(string arg)
-    {
-        if (arg.StartsWith('-'))
-        {
-            return false;
-        }
-        var path = arg.TrimEnd('/', '\\');
-        var file = path[(path.LastIndexOfAny(['/', '\\']) + 1)..];
-        return file.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
-            || file.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase)
-            || file.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) && file.Contains("Tests", StringComparison.OrdinalIgnoreCase);
+        // Every build, not only a solution's: a pilot-driven session builds through the job system, always (the owner, 2026-11-09:
+        // "make sure that pilot driven sessions do not call dotnet build without the job system"). run, publish and pack build too.
+        return DotnetCommand.Targets(args).FirstOrDefault(t => DotnetCommand.KindOf(t) is DotnetCommand.TargetKind.Solution or DotnetCommand.TargetKind.TestProject) is { } target
+            ? $"`dotnet {verb} {target}`" : $"`dotnet {verb}`";
     }
 
     private static string Refusal(string what) =>
