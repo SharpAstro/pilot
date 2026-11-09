@@ -450,7 +450,7 @@ public sealed partial class LegCommander
         state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "branch needs a force push", Wait = null });
         state.RaiseCard(CardBin.Ring, PushBlockedKind, target,
             $"{flight.Code}/{leg.Name} is done, but its branch was rebased and is not pushed",
-            $"Check passed at {CommitRefs.Short(blocked.Head)}, origin/{flight.Branch} at {CommitRefs.Short(blocked.Origin)} is not an ancestor of it, so a plain push is refused. Nothing was pushed or overwritten. Overwriting is a push with lease; the other way merges origin/{flight.Branch} into the plane and pushes plain.{(report.Length > 0 ? $"\nThe worker said: {report}" : "")}",
+            $"Check passed at {CommitRefs.Short(blocked.Head)}, origin/{flight.Branch} at {CommitRefs.Short(blocked.Origin)} is not an ancestor of it, so a plain push is refused. Nothing was pushed or overwritten.\nOverwriting is a push with lease; the other way merges origin/{flight.Branch} into the plane and pushes plain.{(report.Length > 0 ? $"\nThe worker said: {report}" : "")}",
             [
                 new CardChoice { Label = "Overwrite origin's branch", Verb = Verbs.FinishLeg, Target = target, Args = [PushedWithLease, blocked.Origin] },
                 new CardChoice { Label = "Merge origin's branch in", Verb = Verbs.FinishLeg, Target = target, Args = [MergedWithOrigin] },
