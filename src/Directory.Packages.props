@@ -25,16 +25,16 @@
   <!-- Pilot.Gui: the SharpAstro stack. A local build compiles the sibling clones instead (the UseLocal* switches in
        Pilot.Gui.csproj); these are what CI restores. -->
   <ItemGroup>
-    <PackageVersion Include="DIR.Lib" Version="11.46.*" />
-    <PackageVersion Include="DIR.Lib.Debug" Version="11.46.*" />
+    <PackageVersion Include="DIR.Lib" Version="11.54.*" />
+    <PackageVersion Include="DIR.Lib.Debug" Version="11.54.*" />
     <PackageVersion Include="Console.Lib" Version="5.12.*" />
     <PackageVersion Include="Console.Lib.Debug" Version="5.12.*" />
     <PackageVersion Include="LAN.Lib" Version="2.4.*" />
     <!-- The per-user node's socket location, lock, Kestrel hosting, event queue and ring buffer (SharpAstro/Node.Lib), shared with tianwen. -->
     <PackageVersion Include="Node.Lib" Version="1.2.*" />
     <PackageVersion Include="Node.Lib.Hosting" Version="1.2.*" />
-    <PackageVersion Include="SdlVulkan.Renderer" Version="7.81.*" />
-    <PackageVersion Include="SdlVulkan.Renderer.Debug" Version="7.81.*" />
+    <PackageVersion Include="SdlVulkan.Renderer" Version="7.85.*" />
+    <PackageVersion Include="SdlVulkan.Renderer.Debug" Version="7.85.*" />
     <PackageVersion Include="SharpAstro.AppShell" Version="1.2.*" />
     <PackageVersion Include="SharpAstro.Png" Version="3.32.*" />
     <PackageVersion Include="SharpAstro.Jpeg" Version="3.32.*" />
