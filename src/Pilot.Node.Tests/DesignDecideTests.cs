@@ -131,7 +131,11 @@ public sealed class DesignDecideTests : PrFixTestsBase
         detail.ShouldContain("- Keep a library: no new process; misses: the sentence of the README that says it runs as a service (recommended)");
         detail.ShouldContain("- Make it a service: more to run; misses: the AC that no new process is added");
         detail.ShouldContain("It rings because no option reaches the criteria.");
-        card.Summary.ShouldNotBeNull().ShouldContain("no option reaches");
+        // The body is the question in the reviewer's own words and why it rings, within what the panel draws, not the kind's fixed words.
+        var summary = card.Summary.ShouldNotBeNull();
+        summary.ShouldStartWith("should this be a service at all?");
+        summary.ShouldEndWith("It rings because no option reaches the criteria.");
+        summary.Length.ShouldBeLessThanOrEqualTo(240);
         card.Choices.Select(c => c.Label).ShouldBe(["Keep a library", "Make it a service", PrReviews.AnswerLabel]);
     }
 
@@ -146,7 +150,11 @@ public sealed class DesignDecideTests : PrFixTestsBase
         var detail = card.Detail.ShouldNotBeNull();
         detail.ShouldContain("misses: none");
         detail.ShouldContain("It rings because 2 options reach the criteria and differ in what you get.");
-        card.Summary.ShouldNotBeNull().ShouldContain("two do and differ");
+        // The body is the question and why it rings, in the question's own words (not only the kind's fixed words).
+        var summary = card.Summary.ShouldNotBeNull();
+        summary.ShouldStartWith("should this be a service at all?");
+        summary.ShouldEndWith("It rings because 2 options reach the criteria and differ in what you get.");
+        summary.Length.ShouldBeLessThanOrEqualTo(240);
     }
 
     [Fact]

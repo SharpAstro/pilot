@@ -9,9 +9,14 @@ is neither built nor tested by CI.
 - A plane is a git worktree at `<repo>/.claude/worktrees/<code>` on `flight/<code>`. Work and commit only there. Do not
   push, open a PR or merge; the controller lands the flight. Leave nothing uncommitted in the plane, and put scratch
   output outside it.
-- Sibling clones are not yours. `Pilot.Gui` compiles the sibling `DIR.Lib`, `SdlVulkan.Renderer` and `AppShell` source
-  when they sit beside this repo, and restores their packages otherwise (as CI does). Editing a sibling changes this
-  build with no version bump, so a change that spans repos is not a step of this plane; name it and leave it.
+- Sibling clones are not yours. **A plane builds against the published packages, as CI does**: the projects' 6-level
+  `SharpAstroRoot` probe is opt-in (`UseLocalSiblings=true`), so nothing in a plane compiles `DIR.Lib`, `SdlVulkan.Renderer`,
+  `AppShell` or another sibling's source, and its jobs never wait on another repo's build. Only the main clone compiles
+  sibling source. A change that spans repos is not a step of this plane; name it and leave it.
+- Exceptions are named: a flight whose issue carries `pilot: sibling source` builds on the sibling clones (the node runs
+  its jobs with `UseLocalSiblings=true` and holds the clones while they build). A feature that needs an unreleased sibling
+  otherwise takes that sibling's preview (prerelease) package. A consumer connected to a producer flies once the
+  producer's package is on nuget.org, and its leg bumps the pin to that version.
 - The live node is the controller's, one per machine. A plane must not start, stop or restart it, install an update,
   or run `pilot-node setup`: it would touch the real socket, settings and store under `%LOCALAPPDATA%\pilot2\`. Tests
   run a node in memory or on a temporary socket; use those.
@@ -25,6 +30,10 @@ is neither built nor tested by CI.
   `pilot leg wait --for-file <path> [--until <time>]` and end the turn; the node wakes the leg once. Long builds and
   test runs go through `pilot run -- <command>`.
 - The machine is shared with other flights, so a job may wait its turn first. That costs the leg nothing.
+- A worker runs `dotnet test` and the build of a solution or test project only through `pilot run -- <command>` or the
+  leg's check; a hook refuses them run directly and names the way. The node also looks every few minutes for strays in
+  its own process tree (a job's or session's leftovers), raises a card for each with the kill command, and ends only
+  what it launched once its owner has ended. A process of yours that outlives its job or session is flagged.
 
 ## How a flight merges
 
@@ -66,6 +75,10 @@ dotnet test Pilot.Gui.Tests -c Release --no-build
 ```
 
 - A `Pilot.Node.Tests` test over 5 s fails on CI (GITHUB_ACTIONS=true or PILOT_TEST_TIME_STRICT=1) unless tagged `[Trait("Category", "Slow")]`; elsewhere a `slow-test:` line on stderr reports it without failing, since a loaded machine inflates wall clock.
+- A git run costs 100 to 400 ms on Windows, so the git-backed `Pilot.Node.Tests` bases (`ReviewTestsBase`, `LegCommanderTestsBase`, `OverlapTestsBase`, `PrMarksTestsBase`, `LegHoldTestsBase`)
+  run on `FakeRepoGit`, an in-memory git (`TestGit`), unless the test is about git itself: a test calls `RealGit()` first, or a class passes
+  `realGit: true`. A command the model cannot answer throws, so the test says it needs real git; `PILOT_TEST_REAL_GIT=1` runs everything on real
+  git, and `FakeRepoGitTests.TheModelAnswersAsGitDoes` holds the model to git's answers.
 - Repo-wide guard tests carry `[Trait("Category", "Invariant")]` and run in seconds (`--filter Category=Invariant`); a new repo-wide guard gets the trait too.
 - CI builds the whole solution and runs exactly two test projects, `Pilot.Node.Tests` and `Pilot.Gui.Tests`, on
   ubuntu and windows (win-x64). A check that matches CI runs both; a narrower one filters with

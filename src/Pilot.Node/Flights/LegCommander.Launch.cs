@@ -373,7 +373,10 @@ public sealed partial class LegCommander
                 Slots.SetIssuePriority(flight.Code, !read.HasField && hasLabel);
                 var hasField = read.HasField;
                 var human = labels.Contains(PilotMarks.HumanVerification, StringComparer.OrdinalIgnoreCase);
-                state.UpdateFlight(flight.Code, f => f.HasPriorityField == hasField && f.IssuePriority == level && f.HumanVerification == human ? f : f with { HasPriorityField = hasField, IssuePriority = level, HumanVerification = human });
+                var siblings = labels.Contains(PilotMarks.SiblingSource, StringComparer.OrdinalIgnoreCase);
+                state.UpdateFlight(flight.Code, f => f.HasPriorityField == hasField && f.IssuePriority == level && f.HumanVerification == human && f.SiblingSource == siblings
+                    ? f
+                    : f with { HasPriorityField = hasField, IssuePriority = level, HumanVerification = human, SiblingSource = siblings });
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

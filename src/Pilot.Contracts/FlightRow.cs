@@ -139,6 +139,14 @@ public sealed record FlightRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool HumanVerification { get; init; }
 
+    /// <summary>
+    /// Whether the flight's issue carries the <c>pilot: sibling source</c> label as of the node's last start of the flight: the exception
+    /// to the rule that a flight builds on the published packages, as CI does (PIL802). Its node jobs in a plane run with
+    /// <c>UseLocalSiblings=true</c>, so they compile the sibling clones and hold them. Optional and additive, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool SiblingSource { get; init; }
+
     /// <summary>Whether the issue's repo has the Priority field (and the token can read it): where it does, it alone says priority and the <c>pilot: priority</c> label is ignored.</summary>
     public bool HasPriorityField { get; init; }
 
@@ -230,6 +238,18 @@ public sealed record FlightRow
     }
 
     private readonly PackageWait[]? _packageWaits;
+
+    /// <summary>
+    /// The producers' packages that met this flight's waits, each with the version found on nuget.org: the consumer's leg bumps its
+    /// pin to it (PIL802). Optional and additive, so the wire version does not move; null-safe as <see cref="PackageWaits"/>.
+    /// </summary>
+    public PackagePin[] PackagePins
+    {
+        get => _packagePins ?? [];
+        init => _packagePins = value;
+    }
+
+    private readonly PackagePin[]? _packagePins;
 
     /// <summary>
     /// Where the flight came from when another node handed it over (<c>receive-flight</c>, #376): which node, after which leg,
@@ -456,6 +476,19 @@ public sealed record PackageWait
 
     /// <summary>The producer's clone, for a producer that is a repo and no flight (<see cref="Producer"/> is then its name); null otherwise.</summary>
     public string? RepoPath { get; init; }
+}
+
+/// <summary>A producer's package a connected consumer now takes: the version the node found on nuget.org when the consumer's wait was met.</summary>
+public sealed record PackagePin
+{
+    /// <summary>The package id.</summary>
+    public required string Id { get; init; }
+
+    /// <summary>The version found on nuget.org, which the consumer's pin is bumped to.</summary>
+    public required string Version { get; init; }
+
+    /// <summary>The code of the producer flight (or the producer repo's name).</summary>
+    public required string Producer { get; init; }
 }
 
 /// <summary>

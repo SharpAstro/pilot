@@ -247,6 +247,12 @@ public sealed class PageTextOverlapTests
         chrome.About.Newer = () => "2.0.9-beta.1";
         chrome.About.Restart = () => { };
         setup?.Invoke(chrome);
+        // The Settings page reads its rows from the node: the sample page (the role ranges among them) answers, so the sweep sees a range row (#770).
+        if (page == "settings" && chrome.Settings.Load is null && PageData.SettingsFor(state) is { } settingsPage)
+        {
+            chrome.Settings.Load = _ => Task.FromResult(settingsPage);
+            chrome.Settings.LoadRepos ??= _ => Task.FromResult<RepoInfo[]>(data.WizardRepos.Length > 0 ? data.WizardRepos : [new RepoInfo { Name = "pilot", Path = @"C:\work\pilot" }]);
+        }
         chrome.Show(PageOf(page));
 
         // The room the chrome gives the page is the chrome's own: one frame arranges the window (rail, page and the cards panel, which
@@ -307,6 +313,11 @@ public sealed class PageTextOverlapTests
                 tree = chrome.Fleet.Tree(data.Fleet);
                 break;
             case "settings":
+                // The frame above started the read; the sample answers at once, so this wait is a few turns of the loop at most (the bound RoleRangeRowsTests keeps).
+                for (var i = 0; i < 200 && chrome.Settings.Load is not null && chrome.Settings.Page is null; i++)
+                {
+                    await Task.Delay(25, TestContext.Current.CancellationToken);
+                }
                 tree = chrome.Settings.Tree(PageData.Now);
                 break;
             case "repos":

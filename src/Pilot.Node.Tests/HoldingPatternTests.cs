@@ -400,6 +400,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     {
         AutopilotOn();
         _github.Checks = ChoiceStatus.Passing;
+        RealGit(); // the test builds a merge in the plane with checkout, add, commit and merge: git work the model has no checkout for
         var flight = await Reviewed("26", Notes);
         await WithoutTheFixerLeg(flight.Code);
         var reviewed = F(flight.Code).Review!.ReviewedHead!;

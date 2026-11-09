@@ -1068,8 +1068,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             // Reviewed and passed, but no longer merging into its base: main moved. The base is merged in by itself, once a head, and
-            // it is reviewed afresh; a merge that conflicts is put to a worker. The card says so meanwhile, offering the go-around
-            // that does it by hand, not a Merge GitHub would refuse.
+            // it is reviewed afresh; a merge that conflicts is put to a worker. Nobody is asked anything meanwhile.
             var conflicts = pr is { Mergeable: "CONFLICTING" } && pr.Number == number || merge is { Kind: MergeKinds.Conflicts };
             if (conflicts || merge is { Kind: MergeKinds.Behind })
             {
@@ -1078,17 +1077,13 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 {
                     await HandConflictOverInSweepAsync(flight.Code, why, cancellationToken);
                 }
-                // The update closes the card when it starts a fresh review; one still open says what is wrong and offers the go-around.
-                if (legs is not null && state.Cards(openOnly: true).Any(c => c.Id == card.Id))
+                // The node's own work, said to no one (PIL846, owner 2026-11-09: "I THOUGHT WE TAUGHT THIS SYSTEM NOT TO BOTHER ME ABOUT
+                // REBASES"): the base is merged in, or the conflict is with a worker, and the fresh review after its push raises a new ready
+                // card. The ready card, whose Merge GitHub would refuse now, is closed as handled, never turned into a ring.
+                if (state.Cards(openOnly: true).Any(c => c.Id == card.Id))
                 {
                     var what = conflicts ? "conflicts with its base" : "is behind its base";
-                    legs.ShowMergeFailed(flight.Code, head, "", $"{flight.Code}'s PR #{number} {what}",
-                        conflicts ? $"GitHub cannot merge it until the conflict is resolved. The node merges the base in by itself, once a head; one that conflicts is put to a worker to resolve in the plane."
-                            : $"GitHub will not merge it until it is up to date with its base. The node merges the base in by itself, once a head; redoing the leg (a go-around) does it by hand.",
-                        pr?.Url ?? card.Link, rerun: false,
-                        goAroundWhy: $"the PR {what}: {LegCommander.UpdateInstruction}",
-                        mergeAgain: false, kind: LegCommander.PrReady,
-                        because: $"because the PR {(conflicts ? "conflicts with" : "is behind")} {(flight.Base.Length > 0 ? flight.Base : "origin/main")}");
+                    state.CloseCard(card.Id, $"handled: the PR {what}; the node brings it up to date (a conflict goes to a worker) and a fresh review follows", "node");
                 }
                 continue;
             }

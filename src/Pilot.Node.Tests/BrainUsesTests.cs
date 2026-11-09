@@ -123,6 +123,31 @@ public sealed class BrainUsesTests
     }
 
     /// <summary>
+    /// A design card's title and summary are the reviewer's question and the recommended option: the brain's rewording (up to 600
+    /// characters, "what happened") would replace them, so the card rings with the brain's one action in its detail and keeps its words.
+    /// </summary>
+    [Fact]
+    public async Task ADesignCardRingsWithItsQuestionAndIsNotReworded()
+    {
+        var (state, brain) = Judged(new()
+        {
+            ["ring"] = """{"ring": true, "action": "Pick an option.", "reason": "Only the person can choose."}""",
+            ["wording"] = """{"title": "Something else entirely", "summary": "The brain's own words."}""",
+        });
+        var raised = state.RaiseCard(CardBin.Ring, PrReviews.DesignKind, "pr/acme/widget#7", "acme/widget#7: the review asks a question of design: should this be a service?", "detail",
+            [new CardChoice { Label = "Keep a library", Verb = Verbs.FixPr, Target = "pr/acme/widget#7", Args = ["Keep a library"] }], summary: "should this be a service? Recommended: Keep a library.");
+
+        await state.RingJudge!.SettledAsync();
+
+        var card = state.Cards(openOnly: true).Single(c => c.Id == raised.Id);
+        card.Bin.ShouldBe(CardBin.Ring);
+        card.Detail.ShouldNotBeNull().ShouldStartWith("What to do: Pick an option.");
+        card.Title.ShouldBe("acme/widget#7: the review asks a question of design: should this be a service?");
+        card.Summary.ShouldBe("should this be a service? Recommended: Keep a library.");
+        brain.Asked.Select(a => a.Kind).ShouldBe(["ring"]);
+    }
+
+    /// <summary>
     /// #853 with PIL855: the brain rewords a ringing card's title, the person dismisses it, and the next look raises it again with its
     /// first title. The dismissal is remembered by the key fixed at raise time, so the card stays dismissed and is not judged again.
     /// </summary>

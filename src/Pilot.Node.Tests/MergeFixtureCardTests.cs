@@ -99,10 +99,14 @@ public sealed class MergeFixtureCardTests
         summary.ShouldNotContain("is ready");
     }
 
+    /// <summary>
+    /// A reviewed PR that conflicts with its base, or is behind it, is the node's own work (PIL846; owner 2026-11-09: never bother the owner
+    /// about rebases): the ready card is closed as handled, and nothing rings. The fresh review after the update raises a new ready card.
+    /// </summary>
     [Theory]
     [InlineData("conflicts", "conflicts with its base")]
     [InlineData("behind", "is behind its base")]
-    public async Task ConflictsAndBehindShowAsAGoAroundAndLinkTheirPr(string fixture, string title)
+    public async Task ConflictsAndBehindRingNothingAndTheReadyCardClosesAsHandled(string fixture, string what)
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         var ready = Ready(node);
@@ -110,10 +114,9 @@ public sealed class MergeFixtureCardTests
         await Look(node, Read(fixture));
 
         var card = Card(node, ready);
-        card.State.ShouldBe(CardState.Open);
-        card.Title.ShouldContain(title);
-        card.Link.ShouldBe(PrUrl);
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start a fresh worker on parser (the last one left the PR unmergeable)", Verbs.GoAround)]);
+        card.State.ShouldBe(CardState.Closed);
+        card.Outcome.ShouldNotBeNull().ShouldContain(what);
+        node.State.Cards(openOnly: true).ShouldNotContain(c => c.Bin == CardBin.Ring);
     }
 
     [Fact]

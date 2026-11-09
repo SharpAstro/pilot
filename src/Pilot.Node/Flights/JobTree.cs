@@ -47,7 +47,14 @@ public sealed class JobTree(IProcessTable table)
                 }
                 var childStart = table.StartOf(child.Pid);
                 // A child cannot have started before its parent: such a "child" has the parent id of a process that ended, and is not its.
-                if (start is { } parentStart && childStart is { } started && started < parentStart - JobProcess.StartTolerance)
+                if (start is { } parentStart && childStart is { } started && started < parentStart)
+                {
+                    continue;
+                }
+                // Nor one whose start the OS will not tell: what a job starts runs as this user and says when it started; a process that
+                // will not (wininit, WmiPrvSE: protected, or another user's) is not the job's, only a holder of a reused parent id. Taken
+                // as the job's, it was "still running after job j2356 ended" for good, 151 strays on SE1 (2026-11-09).
+                if (childStart is null)
                 {
                     continue;
                 }
@@ -118,12 +125,80 @@ public sealed class JobTree(IProcessTable table)
         return [.. killed];
     }
 
-    /// <summary>Forgets what was seen of a job, once it has ended.</summary>
+    // What an ended job's descendants were, kept for the stray sweep while any of them still lives (pilot #909); dropped once none does.
+    private readonly Dictionary<string, List<KnownProcess>> _afterEnd = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Forgets what was seen of a job, once it has ended. The descendants seen are kept apart (<see cref="KnownOf"/>) until none of them
+    /// lives: one that outlives its job is what the stray sweep looks for.
+    /// </summary>
     public void Forget(string jobId)
     {
         lock (_gate)
         {
-            _seen.Remove(jobId);
+            if (_seen.Remove(jobId, out var map) && map.Count > 0)
+            {
+                _afterEnd[jobId] = [.. map.Values.Select(s => new KnownProcess(s.Pid, s.Start))];
+            }
+            DropGone();
+        }
+    }
+
+    // Bounded: a job older than the sweep's memory is never queried again, so its entry would stay until the node restarts.
+    // Each job's end drops the entries none of whose processes lives any more; what still lives stays, as that is what the sweep looks for.
+    // Under _gate.
+    private void DropGone()
+    {
+        if (_afterEnd.Count == 0)
+        {
+            return;
+        }
+        var snapshot = table.Snapshot();
+        // A table that could not be read says nothing: it is not "everything is gone" (as in Read).
+        if (snapshot.Count == 0)
+        {
+            return;
+        }
+        var alive = snapshot.Select(e => e.Pid).ToHashSet();
+        foreach (var jobId in _afterEnd.Keys.ToList())
+        {
+            if (!_afterEnd[jobId].Any(k => alive.Contains(k.Pid) && JobProcess.SameStart(table.StartOf(k.Pid), k.Start)))
+            {
+                _afterEnd.Remove(jobId);
+            }
+        }
+    }
+
+    /// <summary>The descendants seen of a job that still live, with the start each had; none for a job never seen or whose processes are all gone.</summary>
+    public IReadOnlyList<KnownProcess> KnownOf(string jobId)
+    {
+        lock (_gate)
+        {
+            List<KnownProcess> known = _seen.TryGetValue(jobId, out var map) ? [.. map.Values.Select(s => new KnownProcess(s.Pid, s.Start))]
+                : _afterEnd.TryGetValue(jobId, out var kept) ? kept : [];
+            // Nothing known: no process table read for it (the sweep asks for every job of the last days).
+            if (known.Count == 0)
+            {
+                _afterEnd.Remove(jobId);
+                return known;
+            }
+            var snapshot = table.Snapshot();
+            // A table that could not be read says nothing: what was known is kept, not dropped as gone.
+            if (snapshot.Count == 0)
+            {
+                return known;
+            }
+            var alive = snapshot.Select(e => e.Pid).ToHashSet();
+            known = [.. known.Where(k => alive.Contains(k.Pid) && JobProcess.SameStart(table.StartOf(k.Pid), k.Start))];
+            if (known.Count == 0)
+            {
+                _afterEnd.Remove(jobId);
+            }
+            else if (!_seen.ContainsKey(jobId))
+            {
+                _afterEnd[jobId] = known;
+            }
+            return known;
         }
     }
 

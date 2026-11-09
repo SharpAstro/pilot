@@ -477,6 +477,7 @@ public static partial class NodeApp
         if (options.MachineSampling)
         {
             builder.Services.AddHostedService(services => services.GetRequiredService<MachineSampler>());
+            builder.Services.AddHostedService(services => new StraySweep(services.GetRequiredService<NodeState>(), OsProcessTable.Instance, services.GetRequiredService<TimeProvider>()) { LivePids = () => services.GetRequiredService<SessionTracker>().LivePids().Select(p => (p.Id, p.Pid)).ToList(), KnownOf = services.GetRequiredService<JobRunner>().KnownOf });
             // The node's own row rides the same tick of the clock (a settings change has no event to hook).
             builder.Services.AddHostedService(services =>
             {
@@ -513,7 +514,7 @@ public static partial class NodeApp
                 MaxRunning = Math.Max(1, nodeOptions.MaxJobs),
                 MinFreeMemory = (long)(Math.Max(0, nodeOptions.JobMemoryGigabytes) * (1L << 30)),
                 Priority = nodeOptions.JobPriority,
-                PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? false,
+                PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? NodeSettings.JobPlaneOutputDefault,
                 EndedForGood = id => services.GetRequiredService<SessionTracker>().IsEndedForGood(id),
                 EndedAfterTurn = id => services.GetRequiredService<SessionTracker>().EndedAfterFinishedTurn(id),
                 // A job's end is told to its owner only once the tracker has listed the sessions (pilot #810), as the watchtower waits.
@@ -656,7 +657,7 @@ public static partial class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.
         builder.Services.AddSingleton<ISessionDelivery>(services => new ClaudeCliDelivery(
-            services.GetRequiredService<IClaudeAgents>(), relayFolder, services.GetRequiredService<SessionTrackerOptions>().Profile));
+            services.GetRequiredService<IClaudeAgents>(), relayFolder, services.GetRequiredService<SessionTrackerOptions>().Profile) { RosterFile = SessionRoster.FileIn(options.DataFolder) });
         builder.Services.AddSingleton(services => new SessionMessenger(
             services.GetRequiredService<NodeState>(),
             services.GetRequiredService<SessionTracker>(),

@@ -27,7 +27,7 @@
   <!-- Console.Lib from the sibling clone when it is there, as the GUI takes DIR.Lib: see the GUI's project for SharpAstroRoot. -->
   <PropertyGroup>
     <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\Console.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
-    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\Console.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND '$(UseLocalSiblings)' == 'true' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\Console.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
     <UseLocalConsoleLib Condition="'$(UseLocalConsoleLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)Console.Lib\src\Console.Lib\Console.Lib.csproj')">true</UseLocalConsoleLib>
   </PropertyGroup>
   <ItemGroup Condition="'$(UseLocalConsoleLib)' == 'true'">

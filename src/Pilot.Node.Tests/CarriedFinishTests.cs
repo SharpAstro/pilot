@@ -13,7 +13,7 @@ namespace Pilot.Node.Tests;
 /// </summary>
 [Collection(JobsCollection.Name)]
 [Trait("Category", "Slow")]
-public sealed class CarriedFinishTests : LegCommanderTestsBase
+public sealed class CarriedFinishTests() : LegCommanderTestsBase(realGit: true)
 {
     private static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(60);
 
