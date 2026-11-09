@@ -155,7 +155,9 @@ public abstract class FlightDesignTestsBase : ReviewTestsBase
         _reviews.RunAsync(new CommandRequest { Verb = verb, Target = PrTarget, Args = args, Who = who }, Ct);
 
     /// <summary>A flight whose last leg is done, its PR open (number 71), and a PR review of it that asked a question of design.</summary>
-    private protected async Task<FlightRow> AskedDesign(string? question = null)
+    /// <param name="question">The finding of the question; the plain one by default.</param>
+    /// <param name="beforeVerdict">Runs once the flight and its PR review exist, before the review's verdict is taken and posted: where a test sets the flight up for the post.</param>
+    private protected async Task<FlightRow> AskedDesign(string? question = null, Action<FlightRow>? beforeVerdict = null)
     {
         var flight = await NewFlight("1", "parser");
         await Fly(flight, "parser");
@@ -178,6 +180,7 @@ public abstract class FlightDesignTestsBase : ReviewTestsBase
             State = PrReviewState.Reviewing,
             StartedAt = DateTimeOffset.UtcNow,
         });
+        beforeVerdict?.Invoke(flight);
         (await RunPr(Verbs.PrVerdict, "du1-review-tianwen-71", "comment", "A question.", question ?? Question)).Error.ShouldBeNull();
         // The node does not post it here, so the controller does: the post is when the design card is raised.
         (await RunPr(Verbs.PostReview, "controller")).Error.ShouldBeNull();

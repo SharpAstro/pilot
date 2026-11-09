@@ -293,7 +293,10 @@ public sealed partial class PrReviews
             }
             var questions = string.Join('\n', review.Findings.Where(IsDesign).Select(f => f.ToString()));
             var round = $"The review of {pr} asked a question of design:\n{questions}\nThe answer (by {who}):\n{given}\nMake the changes the answer calls for.";
-            if (await send(flight.Code, round, who, personsWord, cancellationToken) is { } refused)
+            // The round's text names who answered, but the sender is the node when it decided: only a person's word passes the go-around cap, a held
+            // review loop and the review cap (LegCommander.IsPerson), and a decision of the node's own is not that.
+            var sender = decision is not null ? LegWatch.Who : who;
+            if (await send(flight.Code, round, sender, personsWord, cancellationToken) is { } refused)
             {
                 throw new FlightException(refused);
             }

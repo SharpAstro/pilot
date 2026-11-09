@@ -91,8 +91,9 @@ public sealed class DesignRingClearsTests : PrFixTestsBase
     private static string Short(string head) => CommitRefs.Short(head);
 
     [Fact]
-    public async Task ARecheckOfAMovedHeadLeavesTheDesignCardForTheNewerReviewButAPlainSweepStillClosesItAsMoved()
+    public async Task CloseCardsPastHeadLeavesTheDesignCardWhenANewerReviewFollowsButStillClosesItAsMovedOtherwise()
     {
+        // The wiring of a recheck (PrRecheck passes newerReviewFollows: true) is driven in PrRecheckTests.
         var ring = await Asked();
         var review = Row;
         var moved = FixerPushes("moved on");

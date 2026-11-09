@@ -341,6 +341,53 @@ public sealed class FlightDesignDecideTests : FlightDesignTestsBase
         _github.IssueComments.ShouldAllBe(c => c.Body.Contains("**Chosen by:** the pilot node (node)") && c.Body.Contains("the others miss: Make it a service"));
     }
 
+    // The node's decision is not a person's word: it goes round as the node, so the caps that stop the node's own rounds hold for it.
+    private void ShouldBeRefusedWithNoRound(FlightRow flight, int started, string why)
+    {
+        LastLeg(flight.Code).State.ShouldBe(LegState.Done);
+        _workers.Started.Count.ShouldBe(started);
+        Fixers.ShouldBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.DesignKind);
+        var failed = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixFailedKind).ShouldHaveSingleItem();
+        failed.Bin.ShouldBe(CardBin.ForYou);
+        failed.Detail.ShouldNotBeNull().ShouldContain(why);
+        failed.Detail.ShouldContain(DecidableDesign.Answer);
+        _state.Decisions(kind: DecisionKinds.Design).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ADecidedAnswerIsRefusedWhenTheLastLegIsAtTheGoAroundCapAsTheNodesOwnRoundIsNotAPersonsWord()
+    {
+        var started = 0;
+        var flight = await AskedDesign(DecidableDesign.OneReaches, f =>
+        {
+            _state.PutLeg(LastLeg(f.Code) with { GoArounds = NodeSettings.DefaultMaxGoArounds });
+            started = _workers.Started.Count;
+        });
+
+        ShouldBeRefusedWithNoRound(flight, started, "the cap is");
+    }
+
+    [Fact]
+    public async Task ADecidedAnswerIsRefusedWhenTheReviewLoopIsHeldAndAllowsNoRoundInThePersonsName()
+    {
+        var started = 0;
+        var flight = await AskedDesign(DecidableDesign.OneReaches, f =>
+        {
+            ReviewRound[] rounds = [.. Enumerable.Range(1, LegCommander.ReviewLoopRound).Select(n => new ReviewRound { Round = n, Verdict = ReviewState.Changes, Findings = $"finding of round {n}" })];
+            _state.PutFlight(F(f.Code) with
+            {
+                Review = new ReviewRow { State = ReviewState.Changes, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow },
+                ReviewRounds = rounds,
+            });
+            started = _workers.Started.Count;
+        });
+
+        ShouldBeRefusedWithNoRound(flight, started, "rounds with changes");
+        // The held loop stays held: no round was allowed in the person's name.
+        F(flight.Code).ReviewRoundsAllowed.ShouldBeNull();
+    }
+
     [Fact]
     public async Task NoReachingOptionOnAFlightsPrStillRingsTheDesignCardNamingTheFlightAndWhatEachOptionMisses()
     {

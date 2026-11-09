@@ -959,10 +959,12 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     }
 
     /// <summary>
-    /// A worker that asks a person something: a question (a question mark) or a tool call that needs approval. Its jobs do not answer it,
-    /// so it rings whatever they are doing.
+    /// A worker that asks a person something: a question (a question mark), a tool call that needs approval, or a session blocked on an
+    /// approval Claude Code cannot ask for in the background (<see cref="SessionStates.BlockedWaitingFor"/>, no question mark and no
+    /// pending call). Its jobs do not answer it, so it rings whatever they are doing.
     /// </summary>
-    private static bool AsksThePerson(SessionRow worker) => worker.WaitingFor?.Contains('?') == true || worker.Asking is not null;
+    private static bool AsksThePerson(SessionRow worker) =>
+        worker.WaitingFor?.Contains('?') == true || worker.Asking is not null || worker.WaitingFor == SessionStates.BlockedWaitingFor;
 
     /// <summary>
     /// A waiting worker that waits on its own work: an open Waiting card of the leg closes saying so, and a job of its own raises the

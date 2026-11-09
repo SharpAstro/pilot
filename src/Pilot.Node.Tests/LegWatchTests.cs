@@ -1,5 +1,6 @@
 using Pilot.Contracts;
 using Pilot.Node.Flights;
+using Pilot.Node.Sessions;
 using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
@@ -738,6 +739,23 @@ public sealed class LegWatchTests
         card.Kind.ShouldBe(LegWatch.Waiting);
         // A question keeps its own words; a permission prompt is said by the call it asks leave for.
         card.Title.ShouldBe(title);
+        Handled().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AWorkerBlockedOnAnApprovalItCannotAskForInTheBackgroundStillRingsWhileAJobOfItsOwnRuns()
+    {
+        // Only a person can answer it (it has no question mark and no pending call), so no job of the worker's holds the ring back.
+        Worker(SessionState.Waiting, waitingFor: SessionStates.BlockedWaitingFor);
+        _state.PutJob(new JobRow
+        {
+            Id = "j31", Command = "dotnet build", Cwd = "/work/tia1", State = JobState.Running, Owner = "a1b2c3d4", OwnerName = "du1-tia1-parser",
+            LogPath = "/tmp/j31.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        });
+
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldHaveSingleItem().Kind.ShouldBe(LegWatch.Waiting);
         Handled().ShouldBeEmpty();
     }
 
