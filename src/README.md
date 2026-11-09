@@ -1701,9 +1701,40 @@ with `<machine>-` (case-insensitive) is denied, the reason giving the prefixed n
 resolved as the node does, without asking it: the `machine` it saved in `settings.json` of the default data folder, else
 `PILOT_MACHINE`, else the machine name's; a `claude` call without `--bg` or a name passes. Every brief (worker, validator, planner,
 reviewer, PR reviewer, watchtower) tells the session the same rule, with the node's machine code written out. Everything else, a push of a
-flight branch included, passes untouched. Like `pilot-node hook` it
+flight branch included, passes untouched.
+
+**The test guard** is a second rule of the same handler (one entry installed and checked, not two; `TestGuard`). In a session the node
+started (worker, validator, planner, reviewer, fixer, watchtower) it refuses a direct `dotnet test` and a `dotnet build` of a `.sln`,
+`.slnx` or `*Tests*.csproj`, pointing at `pilot run -- <command>` or the leg's check; `dotnet --version`, `--list-sdks`, `--info`, `restore`,
+a `dotnet build` of anything else and anything under `pilot run --` pass, and a person's own session is untouched. The command line is
+read exactly as the merge rule reads it (wrappers, `cd x &&`, `bash -c`, `pwsh -Command`, PowerShell quoting). The hook is its own
+process and cannot ask the node who a session is, so the node marks its sessions two ways and either is enough: `PILOT_SESSION=<role>` on
+the `claude` call that starts or resumes it (`ClaudeCli.StartInfo`), and its job id in `node-sessions.json` in the data folder
+(`SessionRoster`), because `claude --bg` hands the session to a daemon whose hooks may not see that call's environment. The roster is
+read from the default data folder, as the merge rule reads the machine's prefix. Like `pilot-node hook` it
 is fail-open (input it cannot read passes, exit 0 always) and never calls the node; the node's own merge
 (`pilot flight merge` runs `gh pr merge` itself) is not a session's tool call, so the hook never sees it.
+
+**The stray sweep** (`StraySweep`, pilot #909) is what catches what the guard did not stop: a process of the node's own tree that
+outlived what started it (a job's `testhost`, a shell that never ended; one such fixture spun a core for four days). Every 5 minutes
+(a `PeriodicTimer` on the node's `TimeProvider`, first look a minute after start) it reads the OS process table once through
+`IProcessTable` and hands `StrayFinder` the jobs (their wrapper's pid and start, time limit, and the descendants `JobTree` saw below
+them, which it keeps after the job ends while any lives) and the sessions (the tracker's live pids; ended rows by their plane and end
+time, a live session before an ended one in the same plane). The finder names a stray when its owner ended more than 2 minutes ago,
+when a running job is over its time limit by more than a minute, or when it is busy (0.5 cores or more over 30 s or longer) under a
+session that has been idle for 10 minutes; a process under a session the node did not launch (a person's own) is never one. Each stray
+gets one For you card (`stray-process`, subject `process:<pid>@<start>`) naming the process (pid, name, command line, start, age, CPU
+time), its owner, why, and the exact kill command for the OS (`Stop-Process -Id <pid> -Force`, `kill -9 <pid>`). A dismissal holds for the same
+pid and start (not for a later process that reuses the pid), and the card closes by itself once the process is gone. The node ends a stray
+itself, through `IProcessTable.Kill`, only when it started the owner, the owner has ended, the process descends from the owner (a process
+that only works in the owner's plane or names it on its command line may be a person's editor, so it is named and left) and the start still
+matches; it tries once, says so on a Handled `stray-killed` card, and a process that survives is named again with "tried to end it and it is
+still here". Anything else is only named. The strays also ride on the machine row (`MachineRow.Strays`, optional, so `NodeWire.Version`
+stays), which `pilot strays` lists with each one's why, command line and kill command, and the Machine part of `pilot status` shows
+as a `strays` line with one line under it for each. The sweep remembers a session's last process (pid and start, the first start seen for
+that pid) in memory only, so that a leftover of a session that ended can be tied to it by the lost parent's pid; a pid whose start
+changes while the session lives is forgotten, and a session that ends across a node restart is tied only by its folder or command line,
+so it is named on a card and never ended: a safe limitation.
 
 A session the API stopped (its transcript's `apiError`, `usage_limit_reached` with when the limit resets) shows as
 **stopped** with why and when it can go on, hooks or not.

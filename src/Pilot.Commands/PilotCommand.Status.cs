@@ -71,6 +71,10 @@ public static partial class PilotCommand
         if (!newestOnly && code is null && snapshot.Machine is { } machine)
         {
             text.AppendLine($"machine  {machine.Line()}");
+            foreach (var line in StrayLines(machine))
+            {
+                text.AppendLine(line);
+            }
         }
         if (!newestOnly && code is null)
         {

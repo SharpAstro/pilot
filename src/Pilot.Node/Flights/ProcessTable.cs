@@ -34,7 +34,16 @@ public interface IProcessTable
 
     /// <summary>Stops (<paramref name="stop"/>) or continues every process of the group <paramref name="pgid"/>; only where there are process groups (Linux, where a job is its own session).</summary>
     bool SignalGroup(int pgid, bool stop) => false;
+
+    /// <summary>The CPU time the process <paramref name="pid"/> has used so far (itself only, not its children); null when it is gone or cannot be read.</summary>
+    TimeSpan? CpuTimeOf(int pid) => null;
+
+    /// <summary>How the process <paramref name="pid"/> was started and where it works; null when the table has nothing to read or the process is gone.</summary>
+    ProcessDetail? DetailsOf(int pid) => null;
 }
+
+/// <summary>A process's command line and working folder; either is null where the OS would not say.</summary>
+public readonly record struct ProcessDetail(string? CommandLine, string? WorkingDirectory);
 
 /// <summary>
 /// The real table: on Windows one <c>NtQuerySystemInformation</c> read of every process (<see cref="SystemProcesses"/>), and a
@@ -136,6 +145,25 @@ public sealed class OsProcessTable : IProcessTable
         {
             return null;
         }
+    }
+
+    public TimeSpan? CpuTimeOf(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return process.TotalProcessorTime;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or Win32Exception or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    public ProcessDetail? DetailsOf(int pid)
+    {
+        var (commandLine, workingDirectory) = ProcessDetails.Read(pid);
+        return commandLine is null && workingDirectory is null ? null : new ProcessDetail(commandLine, workingDirectory);
     }
 
     public void Kill(int pid)

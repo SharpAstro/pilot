@@ -25,6 +25,10 @@ is neither built nor tested by CI.
   `pilot leg wait --for-file <path> [--until <time>]` and end the turn; the node wakes the leg once. Long builds and
   test runs go through `pilot run -- <command>`.
 - The machine is shared with other flights, so a job may wait its turn first. That costs the leg nothing.
+- A worker runs `dotnet test` and the build of a solution or test project only through `pilot run -- <command>` or the
+  leg's check; a hook refuses them run directly and names the way. The node also looks every few minutes for strays in
+  its own process tree (a job's or session's leftovers), raises a card for each with the kill command, and ends only
+  what it launched once its owner has ended. A process of yours that outlives its job or session is flagged.
 
 ## How a flight merges
 

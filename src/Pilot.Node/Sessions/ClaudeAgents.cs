@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Pilot.Contracts;
 
 namespace Pilot.Node.Sessions;
 
@@ -120,12 +121,13 @@ public static class ClaudeCli
     /// Runs <c>claude</c> with <paramref name="args"/>, <paramref name="stdin"/> on its standard input (closed when
     /// null), in <paramref name="cwd"/> (the node's own when null). Killed, its children with it, when
     /// <paramref name="timeout"/> passes or <paramref name="cancellationToken"/> fires; a timeout throws
-    /// <see cref="TimeoutException"/>.
+    /// <see cref="TimeoutException"/>. <paramref name="role"/> is the role of the session the call starts or resumes, when the arguments
+    /// do not name it (see <see cref="StartInfo"/>).
     /// </summary>
-    public static async Task<ClaudeRun> RunAsync(IReadOnlyList<string> args, string? stdin, string? cwd, TimeSpan timeout, CancellationToken cancellationToken)
+    public static async Task<ClaudeRun> RunAsync(IReadOnlyList<string> args, string? stdin, string? cwd, TimeSpan timeout, CancellationToken cancellationToken, string? role = null)
     {
         var exe = FindOnPath() ?? throw new FileNotFoundException("claude is not on PATH");
-        var start = StartInfo(exe, args, cwd);
+        var start = StartInfo(exe, args, cwd, role);
 
         using var process = await NodeTraffic.Shared.StartProcessAsync("claude", start, cancellationToken);
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -153,8 +155,13 @@ public static class ClaudeCli
         }
     }
 
-    /// <summary>What <see cref="RunAsync"/> starts: <paramref name="exe"/> with <paramref name="args"/>, windowless, with the build environment and none of the node's own session variables.</summary>
-    internal static ProcessStartInfo StartInfo(string exe, IReadOnlyList<string> args, string? cwd)
+    /// <summary>
+    /// What <see cref="RunAsync"/> starts: <paramref name="exe"/> with <paramref name="args"/>, windowless, with the build environment and none of the
+    /// node's own session variables, and <c>PILOT_SESSION</c> (<see cref="TestGuard.SessionVariable"/>) set to the role of the session it starts,
+    /// which a hook reads to tell the node's sessions from a person's: <paramref name="role"/> when given, else the role of the session
+    /// the <c>-n</c> name in <paramref name="args"/> says. A call for no session of the node's (<c>claude agents</c>, <c>stop</c>, the relay) sets none.
+    /// </summary>
+    internal static ProcessStartInfo StartInfo(string exe, IReadOnlyList<string> args, string? cwd, string? role = null)
     {
         var start = new ProcessStartInfo(exe)
         {
@@ -183,10 +190,36 @@ public static class ClaudeCli
             start.Environment.Remove(key);
         }
 
+        start.Environment.Remove(TestGuard.SessionVariable);
+        var marked = role ?? RoleOf(args);
+        if (marked is { Length: > 0 })
+        {
+            start.Environment[TestGuard.SessionVariable] = marked;
+        }
+
         // The build environment, which a worker session's own builds (its Bash and PowerShell tools, and the jobs it
         // starts) inherit, so they leave no reused nodes behind and size themselves as a job's builds do.
         return BuildEnvironment.Apply(start);
     }
+
+    /// <summary>The role, in lower case, of the node session whose name (<c>-n</c>) is in <paramref name="args"/>; null for none, or for an ad hoc one.</summary>
+    internal static string? RoleOf(IReadOnlyList<string> args)
+    {
+        for (var i = 0; i + 1 < args.Count; i++)
+        {
+            if (args[i] == "-n")
+            {
+                return RoleOf(args[i + 1]);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>The role, in lower case, of the session named <paramref name="name"/>; null for an ad hoc one (a person's).</summary>
+    internal static string? RoleOf(string? name) =>
+        SessionRoles.Resolve(name, background: true).Role is var role && role is not (SessionRole.AdHoc or SessionRole.Pilot)
+            ? role.ToString().ToLowerInvariant()
+            : null;
 
     internal static string? FindOnPath()
     {
