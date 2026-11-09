@@ -21,6 +21,12 @@ public sealed partial class RepoWatch
     /// </summary>
     public TimeSpan StatusInterval { get; init; } = TimeSpan.FromMinutes(15);
 
+    /// <summary>How old a git status an explicit refresh still takes (#914, the owner: "unless that was within like 5s ago").</summary>
+    public TimeSpan RefreshFresh { get; init; } = TimeSpan.FromSeconds(5);
+
+    // The freshness the read running holds git status to: the refresh's when it is an explicit one.
+    private TimeSpan StatusFresh => _runningStrict ? RefreshFresh : StatusInterval;
+
     /// <summary>The longest any kept reading is trusted, fingerprint or not: a net under whatever the fingerprint cannot see (a config change, a locked worktree).</summary>
     public TimeSpan Revalidate { get; init; } = TimeSpan.FromHours(1);
 
@@ -129,7 +135,7 @@ public sealed partial class RepoWatch
         {
             dirty = main.Dirty;
             sync = main.Sync;
-            if (!Fresh(main.StatusAt, StatusInterval, now))
+            if (!Fresh(main.StatusAt, StatusFresh, now))
             {
                 var before = errors.Count;
                 dirty = await reads.Value("main checkout's status", () => planes.IsDirtyAsync(repo.Path, cancellationToken, withoutPlanes: true));
@@ -156,7 +162,7 @@ public sealed partial class RepoWatch
                 wDirty = last.Dirty;
                 diff = last.Diff;
                 var current = last;
-                if (!Fresh(last.StatusAt, StatusInterval, now))
+                if (!Fresh(last.StatusAt, StatusFresh, now))
                 {
                     var before = errors.Count;
                     wDirty = await reads.Value($"{entry.Path}'s status", () => planes.IsDirtyAsync(entry.Path, cancellationToken));
