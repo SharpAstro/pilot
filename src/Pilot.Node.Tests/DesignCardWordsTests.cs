@@ -116,7 +116,11 @@ public sealed class DesignCardWordsTests
         choices[0].Label.Length.ShouldBeLessThanOrEqualTo(PrReviews.MaxOptionLabel);
         choices[0].Label.ShouldEndWith("...");
         choices[0].Args.ShouldBe([Recommended.Answer]);
+        // The whole option, the answer the button sends, is the hover of a button that was cut; a whole label has none.
+        choices[0].Hint.ShouldBe(Recommended.Answer);
+        choices[^1].Hint.ShouldBeNull();
         choices[^1].Label.ShouldBe(PrReviews.AnswerLabel);
         PrReviews.DesignChoices(Subject, [new DesignQuestion(null!, "should it?", [new DesignOption("Keep a library", "", true)])])[0].Label.ShouldBe("Keep a library");
+        PrReviews.DesignChoices(Subject, [new DesignQuestion(null!, "should it?", [new DesignOption("Keep a library", "", true)])])[0].Hint.ShouldBeNull();
     }
 }
