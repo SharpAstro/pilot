@@ -238,6 +238,10 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
                     // process took it (the session's own died): the start is then cleared, never overwritten, so once the row ends
                     // that other process is not taken for the session's own and ended. A start that could not be read (null) says nothing
                     // about reuse: the remembered one is kept, and only a different start that was read clears it.
+                    // A known limit, left on purpose: a start never read at first sight stays unread (a null before is kept as
+                    // (pid, null)), so a later successful read does not fill it in, and the leftovers of that session are named
+                    // on a card and never ended. That is the safe direction, and a cleared start cannot be told from a never-read
+                    // one without a second field.
                     _lastSeen[row.Id] = _lastSeen.TryGetValue(row.Id, out var before) && before.Pid == pid
                         ? (before.Start is null || (start is not null && !JobProcess.SameStart(start, before.Start)) ? (pid, null) : before)
                         : (pid, start);

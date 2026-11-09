@@ -220,7 +220,7 @@ public sealed class JobTreeTests
         tree.KnownOf("j1").Select(k => k.Pid).ShouldBe([102, 103]);
         _table.Entries.AddRange(all);
 
-        // Read again, the entry is still there and still pruned when its processes are really gone.
+        // Asked again (through KnownOf, not JobTree.Read), the entry is still there and still pruned when its processes are really gone.
         tree.KnownOf("j1").Select(k => k.Pid).ShouldBe([102, 103]);
         _table.Remove(102);
         _table.Remove(103);
