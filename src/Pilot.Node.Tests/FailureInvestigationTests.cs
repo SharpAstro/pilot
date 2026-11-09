@@ -175,6 +175,52 @@ public sealed class FailureInvestigationTests
         _failures.Ledger.All().Select(r => (r.Pr, r.Issue, r.Investigation)).ShouldBe([(71, 1, "TIA901"), (74, 1, "TIA901")]);
     }
 
+    // --log-failed of a run with two failed jobs: another test fails in the ubuntu job, the test of interest only in the windows one,
+    // where a skipped test follows it (#931); the gate job fails on neither.
+    private static string TwoJobs()
+    {
+        const string other = "Pilot.Node.Tests.JobTests3.AWorkerIdleWhileItsJobRunsIsNotNudged";
+        static string Gh(string job, string[] lines) => string.Join('\n', lines.Select(l => $"{job}\tTest\t2026-11-09T09:00:00.0000000Z{l}"));
+        return Gh("test (ubuntu-latest)",
+            [$" [xUnit.net 00:00:41.52]     {other} [FAIL]", " [xUnit.net 00:00:41.52]       Shouldly.ShouldAssertException : nudged", $"   Passed {Test} [3 ms]"])
+            + "\n" + Gh("test (windows-latest)",
+            [$" [xUnit.net 00:00:41.52]     {Test} [FAIL]", $" [xUnit.net 00:00:41.52]       Shouldly.ShouldAssertException : {Message} \"a refused start says why\")",
+             $"   Failed {Test} [10 s]", "   Error Message:", $"    Shouldly.ShouldAssertException : {Message} \"a refused start says why\")",
+             "   Stack Trace:", $"      at {Test}() in /_/x.cs:line 88", "",
+             "   Skipped Pilot.Node.Tests.StreamLiveTests.ATurnStreamsItsWordsAndEnds [1 ms]", "   Error Message:", "    Starts the real claude: set PILOT_LIVE_CLAUDE=1 to run it."]);
+    }
+
+    [Fact]
+    public async Task AnIssuesSeenNamesOnlyTheJobsTheTestFailedInAndTheMessageIsItsOwn()
+    {
+        Flight("TIA71", 71);
+        _github.PrFiles[71] = ["a.cs"];
+        _github.FailedRuns[(71, true)] = new FailedRun(5001, "https://github.com/x/tianwen/actions/runs/5001", ["test (ubuntu-latest)", "test (windows-latest)", "gate"], TwoJobs());
+        QueueRemoval(Head('a'));
+
+        await Checks().LookAsync(Ct);
+
+        var body = _github.IssuesCreated.Single(i => i.Title.Contains("NodePlanetaryTests")).Body.ShouldNotBeNull();
+        body.ShouldContain("in test (windows-latest)");
+        body.ShouldNotContain("ubuntu");
+        body.ShouldNotContain("gate");
+        body.ShouldContain(Message);
+        body.ShouldNotContain("PILOT_LIVE_CLAUDE");
+        _github.IssuesCreated.Single(i => i.Title.Contains("JobTests3")).Body.ShouldNotBeNull().ShouldContain("in test (ubuntu-latest)");
+
+        // A later occurrence in another PR, failing in the ubuntu job only, comments that job alone.
+        Flight("TIA74", 74, armed: [Head('d'), "squash"]);
+        _github.Queue = null;
+        _github.Pr = new PullRequest(74, "OPEN", Head('d'), "https://github.com/x/tianwen/pull/74");
+        _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 1, 2, "build", null);
+        _github.PrFiles[74] = ["b.cs"];
+        _github.FailedRuns[(74, false)] = new FailedRun(5003, "https://github.com/x/tianwen/actions/runs/5003", ["test (ubuntu-latest)", "gate"],
+            Log().Replace("[xUnit.net 00:00:41.52]     ", "test (ubuntu-latest)\tTest\t2026-11-09T09:00:00.0000000Z [xUnit.net 00:00:41.52]     "));
+        await Checks().LookAsync(Ct);
+
+        _github.IssueComments.ShouldContain(c => c.Body.Contains("run 5003") && c.Body.Contains("in test (ubuntu-latest)") && !c.Body.Contains("gate") && !c.Body.Contains("windows"));
+    }
+
     [Fact]
     public async Task AFailureInATestFileThePrChangesFilesNothing()
     {

@@ -113,14 +113,14 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
             var read = FailureSignature.Tests(output).FirstOrDefault(t => FailureSignature.NameOf(t.Test) is var n && (n == name || n.EndsWith("." + name, StringComparison.Ordinal)));
             var full = read?.Test ?? test;
             var message = read?.Message is { Length: > 0 } said ? said : "its output named no assertion message";
-            var failure = new Found(full, message, FailureSignature.Of(new FailureSignature.TestFailure(full, message)));
+            var failure = new Found(full, message, FailureSignature.Of(new FailureSignature.TestFailure(full, message)), read is null ? [] : [.. read.Jobs]);
             var others = ledger.OnAnother(site.Name, failure.Signature, site.Flight, site.Pr);
             if (ledger.Has(site.Name, site.Pr, site.Flight, site.Head, site.Where, failure.Signature))
             {
                 return ledger.InvestigationOf(site.Name, failure.Signature) is { } known
                     ? new FailureFinding(failure.Test, failure.Message, failure.Signature, known.Investigation, known.Issue, 0, others) : null;
             }
-            return await FileAsync(site, 0, null, [], failure, cancellationToken, open) is { } filed
+            return await FileAsync(site, 0, null, failure, cancellationToken, open) is { } filed
                 ? new FailureFinding(failure.Test, failure.Message, failure.Signature, filed.Code, filed.Issue, 0, others) : null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -142,7 +142,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
     }
 
     /// <summary>One failure found in a log, ready to be filed.</summary>
-    private sealed record Found(string Test, string Message, string Signature);
+    private sealed record Found(string Test, string Message, string Signature, string[] Jobs);
 
     private async Task<FailureLook> LookAsync(FailureSite site, long runId, string? runUrl, string[] jobs, string log, Func<Task<string[]>> changedFiles, CancellationToken cancellationToken)
     {
@@ -150,7 +150,8 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
         var found = new List<Found>();
         if (tests.Count > 0)
         {
-            found.AddRange(tests.Select(t => new Found(t.Test, t.Message, FailureSignature.Of(t))));
+            // The jobs a test failed in are the ones whose lines carry it; a log with no job prefix says only which jobs failed.
+            found.AddRange(tests.Select(t => new Found(t.Test, t.Message, FailureSignature.Of(t), t.Jobs.Count > 0 ? [.. t.Jobs] : jobs)));
         }
         else
         {
@@ -159,7 +160,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
             {
                 return FailureLook.Nothing;
             }
-            found.Add(new Found("", FailureSignature.ErrorText(log) ?? signature, signature));
+            found.Add(new Found("", FailureSignature.ErrorText(log) ?? signature, signature, jobs));
         }
         string[] files;
         try
@@ -187,7 +188,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
                 }
                 continue;
             }
-            if (await FileAsync(site, runId, runUrl, jobs, failure, cancellationToken) is { } filed)
+            if (await FileAsync(site, runId, runUrl, failure, cancellationToken) is { } filed)
             {
                 findings.Add(new FailureFinding(failure.Test, failure.Message, failure.Signature, filed.Code, filed.Issue, runId, others));
             }
@@ -195,7 +196,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
         return new FailureLook(true, findings);
     }
 
-    private async Task<(string Code, int Issue)?> FileAsync(FailureSite site, long runId, string? runUrl, string[] jobs, Found failure, CancellationToken cancellationToken, IssueInfo? open = null)
+    private async Task<(string Code, int Issue)?> FileAsync(FailureSite site, long runId, string? runUrl, Found failure, CancellationToken cancellationToken, IssueInfo? open = null)
     {
         var existing = ledger.InvestigationOf(site.Name, failure.Signature);
         var run = runId > 0 ? $"run {runId}{(runUrl is { Length: > 0 } ? $" ({runUrl})" : "")}" : "its leg check";
@@ -204,7 +205,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
             try
             {
                 await github.CommentIssueAsync(site.RepoPath, existing.Issue,
-                    $"Seen again in {Place(site)}: {run}, {WhereWords(site.Where)}.\n\nAssertion message: {failure.Message}", cancellationToken);
+                    $"Seen again in {Place(site)}: {run}, {WhereWords(site.Where)}{InJobs(failure.Jobs)}.\n\nAssertion message: {failure.Message}", cancellationToken);
             }
             catch (FlightException ex)
             {
@@ -235,11 +236,11 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
             if (open is { } adopted)
             {
                 issue = adopted;
-                await github.CommentIssueAsync(site.RepoPath, issue.Number, $"{Body(site, run, jobs, failure)}\n\nThis issue is now the investigation of this failure, with priority high.", cancellationToken);
+                await github.CommentIssueAsync(site.RepoPath, issue.Number, $"{Body(site, run, failure)}\n\nThis issue is now the investigation of this failure, with priority high.", cancellationToken);
             }
             else
             {
-                issue = await github.CreateIssueAsync(site.RepoPath, title, Body(site, run, jobs, failure), cancellationToken);
+                issue = await github.CreateIssueAsync(site.RepoPath, title, Body(site, run, failure), cancellationToken);
             }
         }
         catch (FlightException ex)
@@ -300,18 +301,21 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
         return (code, issue.Number);
     }
 
-    private static string Body(FailureSite site, string run, string[] jobs, Found failure) =>
+    private static string Body(FailureSite site, string run, Found failure) =>
         $"""
         A test the PR does not touch failed. This is a bug with a cause to find.
 
         - Run: {run}
-        - Seen: {WhereWords(site.Where)}{(jobs.Length > 0 ? $", in {string.Join(", ", jobs)}" : "")}
+        - Seen: {WhereWords(site.Where)}{InJobs(failure.Jobs)}
         - Test: {(failure.Test.Length > 0 ? failure.Test : "none, an error line")}
         - Assertion message: {failure.Message}
         - PRs hit: {Place(site)}
 
         Later occurrences of this failure are added to this issue as comments.
         """;
+
+    // ", in a, b" for the jobs a failure was seen in; nothing when none are known.
+    private static string InJobs(string[] jobs) => jobs.Length > 0 ? $", in {string.Join(", ", jobs)}" : "";
 
     private static string Place(FailureSite site) =>
         (site.Pr, site.Flight) switch
