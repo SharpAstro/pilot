@@ -205,4 +205,45 @@ public sealed class AdmissionTests
             Flight("PIL15", "pilot", FlightPhase.Ready)], 1, true);
         Admission.Decide(input, Start("PIL15")).ShouldBeOfType<AdmissionDecision.Wait>().Why.ShouldStartWith("waiting for an Opus slot");
     }
+
+    [Fact]
+    public void OfFlightsThatEachHoldTheRepoAlreadyOnlyTheFirstGoesAndTheOthersWaitForIt()
+    {
+        // Released from a hold together, each with a leg done: each held the repo and each was admitted, five at once (SE1, 2026-11-09).
+        var input = Repo(
+            Flight("PIL895", "pilot", FlightPhase.Flying, age: 0),
+            Flight("PIL891", "pilot", FlightPhase.Flying, age: 5),
+            Flight("PIL893", "pilot", FlightPhase.InReview, age: 10),
+            Flight("TIA9", "tianwen", FlightPhase.Flying, age: 20));
+
+        Admission.Decide(input, Start("PIL895")).ShouldBeOfType<AdmissionDecision.Admit>();
+        var waits = Admission.Decide(input, Start("PIL891")).ShouldBeOfType<AdmissionDecision.Wait>();
+        waits.Why.ShouldContain("PIL895 goes first");
+        waits.Why.ShouldContain("one flight per repo");
+        Admission.Decide(input, Start("PIL893")).ShouldBeOfType<AdmissionDecision.Wait>().Why.ShouldContain("PIL895");
+        // Another repo is its own turn.
+        Admission.Decide(input, Start("TIA9")).ShouldBeOfType<AdmissionDecision.Admit>();
+        // With the mode off, every holder goes as before.
+        Admission.Decide(input with { OneFlightPerRepo = false }, Start("PIL891")).ShouldBeOfType<AdmissionDecision.Admit>();
+    }
+
+    [Fact]
+    public void AHoldingFlightIsNeverTheFirstHolderSoTheFlightItWaitsForStillGoes()
+    {
+        // PIL12 is held with its plane up, waiting for PIL15's package, and outranks it (Urgent, which the ranking puts before the
+        // flights others wait for): were it a candidate, PIL15 would wait for the flight that waits for it. PIL15 goes.
+        var input = Repo(
+            Holding("PIL12", "pilot", waits: new FlightWait("DE1", "PIL15", WaitKind.Package)) with { Level = Pilot.Contracts.IssuePriority.Urgent, Since = T0 },
+            Flight("PIL15", "pilot", FlightPhase.Flying, age: 30) with { Level = Pilot.Contracts.IssuePriority.Low });
+        Admission.Decide(input, Start("PIL15")).ShouldBeOfType<AdmissionDecision.Admit>();
+    }
+
+    [Fact]
+    public void APriorityFlightIsOutsideTheOneHolderRule()
+    {
+        // PIL2 is a priority flight and the older holder, so it would rank first; it is outside the rule, so PIL1 does not wait for it.
+        var input = Repo(Flight("PIL2", "pilot", FlightPhase.Flying, age: 0) with { Priority = true }, Flight("PIL1", "pilot", FlightPhase.Flying, age: 5));
+        Admission.Decide(input, Start("PIL1")).ShouldBeOfType<AdmissionDecision.Admit>();
+        Admission.Decide(input, Start("PIL2")).ShouldBeOfType<AdmissionDecision.Admit>();
+    }
 }

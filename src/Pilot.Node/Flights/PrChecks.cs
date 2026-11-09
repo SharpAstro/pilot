@@ -1152,6 +1152,13 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 {
                     continue;
                 }
+                // A leg still to fly keeps the card's leg wait (its Merge a mark), whatever GitHub could not say: GitHub gives no merge state
+                // right after a push (UNKNOWN), which is when a review-notes leg has just pushed, and writing the checks' status here
+                // turned the Merge back into a button the node refuses (review of #924).
+                if (legs is not null && legs.ShowLegWait(current))
+                {
+                    continue;
+                }
                 var choices = current.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = status } : c).ToList();
                 state.UpdateChoices(current.Id, choices, ifStill: current.Choices);
             }

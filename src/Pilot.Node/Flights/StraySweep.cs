@@ -128,13 +128,13 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     private static string KeyOf(int pid, DateTimeOffset? start) =>
         $"process:{pid.ToString(CultureInfo.InvariantCulture)}@{(start is { } at ? at.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture) : "unknown")}";
 
-    // Only what the node launched, whose owner has ended, and that descends from it; never itself, and never the desktop's or the
-    // system's own processes, whatever the attribution says: a misattributed tree ended Explorer, Edge, RuntimeBroker and TabTip as
-    // strays of job j2356 (SE1, 2026-11-09). A stray of those names is said on a card, never ended.
-    private static bool CanEnd(Stray stray) =>
-        stray is { NodeLaunched: true, OwnerEnded: true, ByFolder: false, Start: not null } && stray.Pid != Environment.ProcessId && !NeverEnded(stray.Name);
+    // The sweep ends nothing: it names a stray on a card, with its kill command, and the person decides. It used to end what it
+    // attributed to an ended job, and an attribution through a reused pid ended Explorer, Edge, RuntimeBroker and TabTip (SE1,
+    // 2026-11-09 22:04). The owner: "I NEVER MEANT FOR YOU TO KILL NOTHING YOU DIDN'T LAUNCH". What a job starts dies with the job
+    // already, through its kill-on-close Job Object (KillOnCloseJob), which knows its members exactly; nothing here guesses.
+    private static bool CanEnd(Stray stray) => false;
 
-    /// <summary>The processes the sweep never ends: the shell, the browser and its views, and Windows' own, by image name.</summary>
+    /// <summary>The processes the sweep would never end, whatever the attribution: kept as a backstop should ending ever come back (it is off: CanEnd).</summary>
     internal static readonly HashSet<string> NeverEnd = new(StringComparer.OrdinalIgnoreCase)
     {
         "explorer", "dwm", "sihost", "ShellExperienceHost", "StartMenuExperienceHost", "SearchHost", "SearchApp", "SearchIndexer", "TextInputHost",

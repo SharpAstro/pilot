@@ -54,4 +54,8 @@
     <!-- One root for the run's temp files, deleted when the run ends (TestTempRoot). -->
     <Compile Include="..\TestShared\TestTempRoot.cs" Link="TestShared\TestTempRoot.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- At most two tests at once (one per core took the machine: 106 test files start real git/pwsh processes). -->
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

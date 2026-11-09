@@ -40,6 +40,28 @@ internal static class TestTempRoot
 
     private static FileStream? _lock;
 
+    /// <summary>
+    /// A test run never competes with the person's desktop: the test host runs below normal, and every git, pwsh or pilot it starts
+    /// inherits that priority class. A run at normal priority, one test per core, each starting real processes, took SE1's CPU,
+    /// memory and disk (2026-11-09). <c>PILOT_TEST_PRIORITY=normal</c> keeps the normal class (a CI runner has no desktop to spare).
+    /// </summary>
+    [ModuleInitializer]
+    internal static void LowerPriority()
+    {
+        if (string.Equals(Environment.GetEnvironmentVariable("PILOT_TEST_PRIORITY"), "normal", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+        try
+        {
+            System.Diagnostics.Process.GetCurrentProcess().PriorityClass = System.Diagnostics.ProcessPriorityClass.BelowNormal;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or PlatformNotSupportedException)
+        {
+            // Not allowed here: the run goes on at the class it has.
+        }
+    }
+
     [ModuleInitializer]
     internal static void Redirect()
     {

@@ -69,10 +69,20 @@ public sealed partial class NodeState
         {
             return;
         }
-        foreach (var card in _cards.Values.Where(c => c.State == CardState.Open && c.Kind == LegCommander.PlannedKind && c.Subject == Verbs.FlightTarget(after.Code)).ToList())
+        var subject = Verbs.FlightTarget(after.Code);
+        var open = _cards.Values.Where(c => c.State == CardState.Open && c.Kind == LegCommander.PlannedKind && c.Subject == subject).ToList();
+        foreach (var card in open)
         {
             var choices = LegCommander.PlannedChoices(after, first);
             UpdateCard(card.Id, card.Title, LegCommander.PlannedDetail(card.Detail, after), choices, card.Link, summary: CardSummaries.For(LegCommander.PlannedKind, card.Subject, card.Title, choices));
+        }
+        // A held flight's plan was logged as Handled (nothing to press then): the hold lifted, so the plan comes to the person now, with its Start.
+        if (open.Count == 0 && after.State == FlightState.Flying
+            && _cards.Values.Where(c => c.Kind == LegCommander.PlannedKind && c.Subject == subject && c.Bin == CardBin.Handled).OrderByDescending(c => c.At).FirstOrDefault() is { } logged)
+        {
+            var choices = LegCommander.PlannedChoices(after, first);
+            RaiseCard(CardBin.ForYou, LegCommander.PlannedKind, subject, logged.Title, LegCommander.PlannedDetail(logged.Detail, after), choices, logged.Link,
+                summary: CardSummaries.For(LegCommander.PlannedKind, subject, logged.Title, choices));
         }
     }
 
@@ -102,6 +112,12 @@ public sealed partial class NodeState
                     return;
                 }
                 Publish(new LegChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Leg = leg });
+                // A leg of the flight took off, by the person's Start, the autopilot or a go-around: the planned card's Start is done, and a
+                // card left offering it is a stale one (COD74, PIL894 and TIA2083 offered "Start <leg>" with that leg flying, 2026-11-09).
+                if (known.State != LegState.Flying && leg.State == LegState.Flying)
+                {
+                    CloseCardsAbout(Verbs.FlightTarget(leg.Flight), $"{leg.Name} took off", LegCommander.PlannedKind);
+                }
             }
             else
             {

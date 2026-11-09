@@ -176,7 +176,7 @@ public sealed class StraySweepTests
 
         _sweep.SweepOnce();
 
-        _table.Killed.ShouldBe([650], "the job's own leftover only; Explorer started before the process whose pid is its parent id");
+        _table.Killed.ShouldBeEmpty("the sweep ends nothing: it names, the person decides");
     }
 
     [Fact]
@@ -191,7 +191,7 @@ public sealed class StraySweepTests
 
         var named = _sweep.SweepOnce();
 
-        _table.Killed.ShouldBe([660]);
+        _table.Killed.ShouldBeEmpty("the sweep ends nothing: it names, the person decides");
         named.Select(s => s.Pid).ShouldContain(661);
         StraySweep.NeverEnded("Explorer.EXE").ShouldBeTrue();
         StraySweep.NeverEnded("testhost.exe").ShouldBeFalse();
@@ -217,20 +217,16 @@ public sealed class StraySweepTests
 
         var named = _sweep.SweepOnce();
 
-        _table.Killed.ShouldBe([601]);
-        named.Select(s => s.Pid).Order().ShouldBe([500, 501, 700]);
-        var ended = _state.Cards().Single(c => c.Kind == StraySweep.KilledKind);
-        ended.Bin.ShouldBe(CardBin.Handled);
-        ended.Detail.ShouldNotBeNull().ShouldContain("Stop-Process -Id 601 -Force");
-        Open(StraySweep.Kind).Select(c => c.Subject.Split('@')[0]).Order().ShouldBe(["process:500", "process:501", "process:700"]);
+        // Nothing is ended: each stray is named on a card with its kill command, and the person decides (SE1, 2026-11-09 22:04).
+        _table.Killed.ShouldBeEmpty("the sweep ends nothing: it names, the person decides");
+        named.Select(s => s.Pid).Order().ShouldBe([500, 501, 601, 700]);
+        _state.Cards().ShouldNotContain(c => c.Kind == StraySweep.KilledKind);
+        Open(StraySweep.Kind).Single(c => c.Subject.StartsWith("process:601@", StringComparison.Ordinal)).Detail.ShouldNotBeNull().ShouldContain("Stop-Process -Id 601 -Force");
         Open(StraySweep.Kind).Single(c => c.Subject.StartsWith("process:700@", StringComparison.Ordinal)).Detail.ShouldNotBeNull()
             .ShouldContain("tied to its owner by its folder or command line only");
 
-        // The one the node ended that stays alive is not ended a second time: it is named, and the card says it is still there.
         _sweep.SweepOnce();
-        _table.Killed.ShouldBe([601]);
-        Open(StraySweep.Kind).Single(c => c.Subject.StartsWith("process:601@", StringComparison.Ordinal)).Detail.ShouldNotBeNull()
-            .ShouldContain("tried to end it and it is still here");
+        _table.Killed.ShouldBeEmpty();
     }
 
     [Fact]
@@ -268,9 +264,9 @@ public sealed class StraySweepTests
 
         var named = _sweep.SweepOnce();
 
-        _table.Killed.ShouldBe([951]);
-        named.ShouldBeEmpty();
-        _state.Cards().Single(c => c.Kind == StraySweep.KilledKind).Detail.ShouldNotBeNull().ShouldContain("Stop-Process -Id 951 -Force");
+        _table.Killed.ShouldBeEmpty("the sweep ends nothing: it names, the person decides");
+        named.Select(s => s.Pid).ShouldBe([951], "named on a card, not ended");
+        _state.Cards(openOnly: true).Single(c => c.Kind == StraySweep.Kind && c.Subject.StartsWith("process:951@", StringComparison.Ordinal)).Detail.ShouldNotBeNull().ShouldContain("Stop-Process -Id 951 -Force");
     }
 
     [Fact]
@@ -322,8 +318,8 @@ public sealed class StraySweepTests
         _table.Remove(970);
         _table.Add(971, 970, "node.exe", Began.AddMinutes(11), commandLine: "node.exe mcp-server.js");
 
-        _sweep.SweepOnce().ShouldBeEmpty();
+        _sweep.SweepOnce().Select(s => s.Pid).ShouldBe([971], "named on a card, not ended");
 
-        _table.Killed.ShouldBe([971]);
+        _table.Killed.ShouldBeEmpty("the sweep ends nothing: it names, the person decides");
     }
 }
