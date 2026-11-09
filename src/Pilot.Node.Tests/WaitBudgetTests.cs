@@ -119,6 +119,11 @@ public sealed class WaitBudgetTests
         throw new InvalidOperationException("no folder holding src/Pilot.slnx above the test's directory");
     }
 
+    // Generated sources under bin/ and obj/ are not the test code.
+    private static bool IsBuildOutput(string tests, string file) =>
+        Path.GetRelativePath(tests, file).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Any(part => part is "bin" or "obj");
+
     [Fact]
     public void NoWaitInPilotNodeTestsCeilsAtThirtySecondsOrMoreWithoutSayingWhy()
     {
