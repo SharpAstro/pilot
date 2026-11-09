@@ -230,7 +230,8 @@ public sealed class AdmissionTests
     public void UnderTheMemoryFloorNothingStarts()
     {
         const long Gb = 1024L * 1024 * 1024;
-        var starved = new AdmissionInput([], [], 3, false) { FreeMemory = Gb / 2, MemoryFloor = Gb * 3 / 2 };
+        // A session of the node's runs: what it frees is what the next start waits for.
+        var starved = new AdmissionInput([Reviewing("se1-pil895-teardown", AdmissionRole.Worker)], [], 3, false) { FreeMemory = Gb / 2, MemoryFloor = Gb * 3 / 2 };
         foreach (var role in new[] { AdmissionRole.Worker, AdmissionRole.Planner, AdmissionRole.Reviewer, AdmissionRole.Fixer })
         {
             Admission.Decide(starved, new AdmissionRequest(role, "sonnet", "SE1")).ShouldBeOfType<AdmissionDecision.Wait>().Why.ShouldStartWith("waiting for memory: 0.5 GB free, 1.5 GB needed");
@@ -238,5 +239,7 @@ public sealed class AdmissionTests
         Admission.Decide(starved with { FreeMemory = Gb * 2 }, new AdmissionRequest(AdmissionRole.Reviewer, "sonnet", "SE1")).ShouldBeOfType<AdmissionDecision.Admit>();
         // A memory that was not read holds nothing back.
         Admission.Decide(starved with { FreeMemory = null }, new AdmissionRequest(AdmissionRole.Worker, "sonnet", "SE1")).ShouldBeOfType<AdmissionDecision.Admit>();
+        // Nothing of the node's running: nothing would free memory, so a start goes whatever it is (as the job queue's head does).
+        Admission.Decide(starved with { Sessions = [] }, new AdmissionRequest(AdmissionRole.Worker, "sonnet", "SE1")).ShouldBeOfType<AdmissionDecision.Admit>();
     }
 }

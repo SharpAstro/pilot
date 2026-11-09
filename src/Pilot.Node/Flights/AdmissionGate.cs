@@ -81,8 +81,8 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
         var starts = _starts.Values.Concat(recorded).Where(s => ignoring?.Contains(s.Label) != true && !Listed(s)).ToArray();
         var sessions = counted.Select(c => new FleetSession(machine, c.Row.Name, c.Row.Model) { Identity = FleetAdmission.IdentityOf(RoleOf(c.Row), c.Row.Flight), Note = c.Note, Role = RoleOf(c.Row) })
             .Concat(starts.Select(s => new FleetSession(machine, s.Label, s.Model) { Identity = FleetAdmission.IdentityOf(s.Role, s.Flight), Role = s.Role })).ToArray();
-        var machineRow = state.Machine();
-        var free = machineRow is { MemoryTotal: > 0 } m ? m.MemoryTotal - m.MemoryUsed : (long?)null;
+        // The live reading the job queue takes too (one source of free memory), not the sampled machine row.
+        var free = FreeMemory();
         if (localOnly)
         {
             return new AdmissionInput(sessions, [], settings.OpusCap, settings.OneFlightPerRepo) { ReviewLimit = settings.ReviewLimit, FreeMemory = free, MemoryFloor = SessionMemoryFloor };
@@ -182,6 +182,9 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
 
     /// <summary>The free memory a session start needs (#912): a claude session and its build take 0.5 to 1 GB, so under 1.5 GB nothing starts.</summary>
     public long SessionMemoryFloor { get; set; } = 1536L * 1024 * 1024;
+
+    /// <summary>The machine's free memory now, as the job queue reads it; a test swaps it.</summary>
+    public Func<long?> FreeMemory { get; init; } = MachineMemory.Available;
 
     /// <summary>
     /// Whether a session of <paramref name="role"/> on <paramref name="model"/> may start now for <paramref name="flight"/> (null for a bare PR's, named by

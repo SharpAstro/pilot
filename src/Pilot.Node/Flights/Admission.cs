@@ -162,8 +162,10 @@ public static class Admission
                     break;
             }
         }
-        // A starved machine takes on no other session: under the floor, every start waits until memory comes back (#912).
-        if (input.FreeMemory is { } free && free < input.MemoryFloor)
+        // A starved machine takes on no other session: under the floor, a start waits until memory comes back (#912). Only while a
+        // session of the node's runs, as the job queue's head starts whatever the memory: with none running, nothing of pilot's will
+        // free any, and a browser eating the memory would park every flight for good (review of #934).
+        if (input.FreeMemory is { } free && free < input.MemoryFloor && input.Sessions.Any(s => !s.Meta))
         {
             return new AdmissionDecision.Wait($"waiting for memory: {free / (1024.0 * 1024 * 1024):0.0} GB free, {input.MemoryFloor / (1024.0 * 1024 * 1024):0.0} GB needed to start a session");
         }
