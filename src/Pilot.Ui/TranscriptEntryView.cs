@@ -304,7 +304,7 @@ internal sealed class TranscriptEntryView
                 link = ReporterOf(entry);
             }
             var open = _expanded.Contains(entry.Index);
-            if (_rows.TryGetValue(entry.Index, out var kept) && ReferenceEquals(kept.Entry, entry) && ReferenceEquals(kept.Result, result)
+            if (Environment.GetEnvironmentVariable("PIL907_NOCACHE") is null && _rows.TryGetValue(entry.Index, out var kept) && ReferenceEquals(kept.Entry, entry) && ReferenceEquals(kept.Result, result)
                 && kept.Open == open && kept.Live == isLive && Equals(kept.Link, link) && kept.LinkLabel == linkLabel)
             {
                 kept.Pass = pass;
