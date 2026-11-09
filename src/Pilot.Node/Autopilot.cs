@@ -122,7 +122,7 @@ public sealed class Autopilot(NodeState state, IServiceProvider services)
     {
         string Flight()
         {
-            var code = target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? target[Verbs.FlightTargetPrefix.Length..] : target;
+            var code = Verbs.FlightCodeOf(target) ?? target;
             return state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) is { } flight
                 ? flight.PullRequest is { } number ? $"#{number} ({flight.Code})" : flight.Code
                 : target;

@@ -1605,55 +1605,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     }
 
     /// <summary>Whether a job's command runs tests or builds a solution or a test project: the jobs two of which take the machine.</summary>
-    internal static bool IsHeavy(string command)
-    {
-        foreach (var segment in command.Split(["&&", "||", ";", "|"], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
-        {
-            var words = segment.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Select(w => w.Trim('"', '\'')).ToList();
-            var at = words.FindIndex(w => Path.GetFileNameWithoutExtension(w).Equals("dotnet", StringComparison.OrdinalIgnoreCase));
-            if (at < 0 || at + 1 >= words.Count)
-            {
-                continue;
-            }
-            var verb = words[at + 1].ToLowerInvariant();
-            if (verb == "test")
-            {
-                return true;
-            }
-            if (verb != "build")
-            {
-                continue;
-            }
-            // What it builds: the words that are no switch and no switch's value. None is the folder's solution; a folder, a
-            // solution or a test project is heavy, one other project is not.
-            var targets = new List<string>();
-            for (var k = at + 2; k < words.Count; k++)
-            {
-                var w = words[k];
-                if (w.StartsWith('-'))
-                {
-                    if (!w.Contains(':') && !w.Contains('=') && ValueSwitches.Contains(w))
-                    {
-                        k++;
-                    }
-                    continue;
-                }
-                targets.Add(w);
-            }
-            if (targets.Count == 0 || targets.Any(t => !Path.HasExtension(t) || t.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) || t.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase)
-                || t.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) && Path.GetFileName(t).Contains("Tests", StringComparison.OrdinalIgnoreCase)))
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // The dotnet build switches that take the next word as their value.
-    private static readonly HashSet<string> ValueSwitches = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "-c", "--configuration", "-f", "--framework", "-o", "--output", "-r", "--runtime", "-v", "--verbosity", "-a", "--arch", "--os", "-bl",
-    };
+    internal static bool IsHeavy(string command) => DotnetCommand.IsHeavyLine(command);
 
     // Jobs that have let go of their sibling clones, once and for good: their tree moved past the last building segment.
     private readonly ConcurrentDictionary<string, byte> _released = new(StringComparer.Ordinal);

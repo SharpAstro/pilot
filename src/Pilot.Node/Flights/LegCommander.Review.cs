@@ -144,7 +144,7 @@ public sealed partial class LegCommander
                 // The flight as it is now: landed, or its review replaced meanwhile (a fresh start, a verdict), is no flight this
                 // reviewer was started for.
                 if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is not { State: not FlightState.Landed } now
-                    || now.Review?.ReviewerJob != before || state.Legs(flight.Code).Any(l => l.State != LegState.Done) || plan is null)
+                    || now.Review?.ReviewerJob != before || state.OpenLegs(flight.Code).Count > 0 || plan is null)
                 {
                     return $"{flight.Code} changed while {reviewer} was being started";
                 }

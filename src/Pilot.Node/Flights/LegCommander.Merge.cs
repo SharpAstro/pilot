@@ -311,7 +311,7 @@ public sealed partial class LegCommander
         {
             throw new MergeBlockedException(MergeRefusals.Unclassified, $"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}");
         }
-        if (state.Legs(flight.Code).Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is { Count: > 0 } open)
+        if (state.OpenLegs(flight.Code) is { Count: > 0 } open)
         {
             throw new MergeBlockedException(MergeRefusals.NodeWait, $"{flight.Code} has legs not done: {string.Join(", ", open)}");
         }
@@ -487,7 +487,7 @@ public sealed partial class LegCommander
     {
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind is PrReady or MergeFailed && c.Subject == target && c.Choices.Any(ch => ch.Verb == Verbs.Merge)))
         {
-            var code = target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? target[Verbs.FlightTargetPrefix.Length..] : target;
+            var code = Verbs.FlightCodeOf(target) ?? target;
             var flight = state.Flights().FirstOrDefault(f => f.Code == code);
             var merge = card.Choices.First(ch => ch.Verb == Verbs.Merge);
             _beforeMerging.TryRemove(card.Id, out _);
@@ -560,7 +560,7 @@ public sealed partial class LegCommander
     /// </summary>
     public void ShowMergeState(CardRow card, MergeState merge, string head, bool replaceWords = false)
     {
-        var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : card.Subject;
+        var code = Verbs.FlightCodeOf(card.Subject) ?? card.Subject;
         var flight = state.Flights().FirstOrDefault(f => f.Code == code);
         var number = flight?.PullRequest;
         if (ShowLegWait(card))
@@ -619,9 +619,9 @@ public sealed partial class LegCommander
     /// </summary>
     public bool ShowLegWait(CardRow card)
     {
-        var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : card.Subject;
+        var code = Verbs.FlightCodeOf(card.Subject) ?? card.Subject;
         if (state.Flights().FirstOrDefault(f => f.Code == code) is not { } flight || !card.Choices.Any(c => c.Verb == Verbs.Merge)
-            || state.Legs(code).Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is not { Count: > 0 } open)
+            || state.OpenLegs(code) is not { Count: > 0 } open)
         {
             return false;
         }

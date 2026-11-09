@@ -862,7 +862,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         var flights = state.Flights();
         foreach (var card in cards)
         {
-            var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : null;
+            var code = Verbs.FlightCodeOf(card.Subject);
             if (flights.FirstOrDefault(f => f.Code == code) is not { State: not FlightState.Landed, Holding: not null })
             {
                 state.CloseCard(card.Id, "the hold ended", "node");
@@ -1002,7 +1002,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         await LookAtMarksAsync(cancellationToken);
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind is LegCommander.PrReady or LegCommander.MergeFailed))
         {
-            var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : null;
+            var code = Verbs.FlightCodeOf(card.Subject);
             // A flight that landed (here, or on the node it moved to) has nothing to merge: its merge card closes, as a landing here does.
             if (state.Flights().FirstOrDefault(f => f.Code == code) is { State: FlightState.Landed })
             {
@@ -1190,7 +1190,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             || flight.Holding is not null
             // A leg still to fly (a review-notes leg, say) is the merge's own refusal: not asked, and the head not marked as tried, so
             // it merges once that leg lands. Asking rang "merge on autopilot was refused: has legs not done" (PDF446, PIL841, 2026-11-07).
-            || state.Legs(flight.Code).Any(l => l.State != LegState.Done)
+            || state.OpenLegs(flight.Code).Count > 0
             || card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { } merge
             // Another merge of its repo holds the turn: asked at a later look, and only an ask made marks the head as tried.
             || legs.TurnHeld(flight.Repo)
