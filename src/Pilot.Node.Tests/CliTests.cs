@@ -737,6 +737,9 @@ public sealed class CliTests : IAsyncLifetime
     [Trait("Category", "Slow")]
     public async Task StatusWritesMarkdownForOutputFormatMarkdownAndPlainTextWhenNoHostCanRenderAuto()
     {
+        // A leg start that outlasts the node's 90 s reply deadline on a loaded machine is answered queued, and the leg is not flying yet for the
+        // check below: this test waits for the real answer.
+        _node.App.Services.GetRequiredService<NodeCommands>().ReplyDeadline = TimeSpan.FromMinutes(10);
         await Ok(Repo, "flight", "create", "1611", "Planets", "on", "the", "GPU");
         var flight = _node.State.Flights().Single();
         await Ok(_root, "leg", "plan", "TIA1611", "gpu", "--goal", "Draw the planets", "--done-when", "The capture shows them", "--item", "Write the shader", "--item", "Capture it");
