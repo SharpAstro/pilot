@@ -139,6 +139,14 @@ public sealed record FlightRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool HumanVerification { get; init; }
 
+    /// <summary>
+    /// Whether the flight's issue carries the <c>pilot: sibling source</c> label as of the node's last start of the flight: the exception
+    /// to the rule that a flight builds on the published packages, as CI does (PIL802). Its node jobs in a plane run with
+    /// <c>UseLocalSiblings=true</c>, so they compile the sibling clones and hold them. Optional and additive, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool SiblingSource { get; init; }
+
     /// <summary>Whether the issue's repo has the Priority field (and the token can read it): where it does, it alone says priority and the <c>pilot: priority</c> label is ignored.</summary>
     public bool HasPriorityField { get; init; }
 
@@ -232,6 +240,18 @@ public sealed record FlightRow
     private readonly PackageWait[]? _packageWaits;
 
     /// <summary>
+    /// The producers' packages that met this flight's waits, each with the version found on nuget.org: the consumer's leg bumps its
+    /// pin to it (PIL802). Optional and additive, so the wire version does not move; null-safe as <see cref="PackageWaits"/>.
+    /// </summary>
+    public PackagePin[] PackagePins
+    {
+        get => _packagePins ?? [];
+        init => _packagePins = value;
+    }
+
+    private readonly PackagePin[]? _packagePins;
+
+    /// <summary>
     /// Where the flight came from when another node handed it over (<c>receive-flight</c>, #376): which node, after which leg,
     /// when. Null for a flight made on this node.
     /// </summary>
@@ -265,6 +285,16 @@ public sealed record FlightRow
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public FlightHolding? Holding { get; init; }
+
+    /// <summary>
+    /// The owner's hold (<c>flight ground</c>, #771): while it stands the node starts nothing for the flight and takes no outward
+    /// step (no leg, worker, planner, reviewer, go-around, base merge, push, PR open or merge), from the autopilot, the sweeps, the
+    /// watchtower or a card's button alike, until <c>flight unground</c>. Not <see cref="Holding"/> (the review-notes holding pattern, which
+    /// only holds the merge) and not <see cref="LegRow.Hold"/> (a leg's wait for a package). Null while the flight is not held.
+    /// Optional, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public FlightOnHold? OnHold { get; init; }
 
     /// <summary>
     /// What the node says went stale about the flight (#736): the timeline since it last moved and the one-line cause, kept
@@ -324,6 +354,35 @@ public sealed record FlightHolding
 
     /// <summary>Who put the flight in the hold (the node, for a pass with notes); null when not said.</summary>
     public string? By { get; init; }
+
+    /// <summary>
+    /// When the watchtower took the hold: it committed in the plane after the review's head, or said <c>flight hold</c>. Null while
+    /// nobody has: the node releases such a hold after a short grace (or at once with no live watchtower) and the flight merges at
+    /// the reviewed head, its notes left on a For-you card. Only a taken hold keeps the merge held, until it is cleared or rings
+    /// after the holding bound. Optional, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? TakenAt { get; init; }
+}
+
+/// <summary>The owner's hold on a flight (<see cref="FlightRow.OnHold"/>): why, since when, and who put it on.</summary>
+public sealed record FlightOnHold
+{
+    /// <summary>Why the owner holds the flight, in a line.</summary>
+    public required string Reason { get; init; }
+
+    /// <summary>When the hold began (a repeat of the hold keeps it).</summary>
+    public required DateTimeOffset Since { get; init; }
+
+    /// <summary>Who put the flight on hold.</summary>
+    public required string By { get; init; }
+
+    /// <summary>
+    /// Whether the <c>pilot: hold</c> label is on the flight's issue: true when it is, false when the write failed (the repo sweep retries it),
+    /// null when the tracker has no such label. Optional on the wire.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Labelled { get; init; }
 }
 
 /// <summary>A move whose outcome is not known yet (<see cref="FlightRow.MoveUnknown"/>).</summary>
@@ -419,11 +478,62 @@ public sealed record PackageWait
     public string? RepoPath { get; init; }
 }
 
+/// <summary>A producer's package a connected consumer now takes: the version the node found on nuget.org when the consumer's wait was met.</summary>
+public sealed record PackagePin
+{
+    /// <summary>The package id.</summary>
+    public required string Id { get; init; }
+
+    /// <summary>The version found on nuget.org, which the consumer's pin is bumped to.</summary>
+    public required string Version { get; init; }
+
+    /// <summary>The code of the producer flight (or the producer repo's name).</summary>
+    public required string Producer { get; init; }
+}
+
+/// <summary>
+/// How many flights fly, wait held and are on the owner's hold (<see cref="FlightRow.OnHold"/>), each counted once: the one count the
+/// Flights header, Home, the Fleet line and the digest all read. A flight on the owner's hold keeps its <see cref="FlightRow.State"/>
+/// (Flying or Held as far as its legs go) but is not flying: only the owner's release moves it, so it counts as on hold and in no
+/// other column. A landed flight is none of the three.
+/// </summary>
+public readonly record struct FlightCounts(int Flying, int Held, int OnHold)
+{
+    /// <summary>Counts <paramref name="flights"/>, each in one column.</summary>
+    public static FlightCounts Of(IEnumerable<FlightRow> flights)
+    {
+        int flying = 0, held = 0, onHold = 0;
+        foreach (var flight in flights)
+        {
+            if (flight.State == FlightState.Landed)
+            {
+                continue;
+            }
+            if (flight.OnHold is not null)
+            {
+                onHold++;
+            }
+            else if (flight.State == FlightState.Flying)
+            {
+                flying++;
+            }
+            else if (flight.State == FlightState.Held)
+            {
+                held++;
+            }
+        }
+        return new FlightCounts(flying, held, onHold);
+    }
+}
+
 /// <summary>What a held flight waits for, in one place for every client's <c>held, waiting for …</c>.</summary>
 public static class FlightWaiting
 {
     /// <summary>What a flight in a holding pattern says in place of its merge stage (<c>holding: the watchtower is making the review's small fixes</c>); null when it is not holding.</summary>
     public static string? HoldingText(FlightRow flight) => flight.Holding is { } holding ? $"holding: {holding.Reason}" : null;
+
+    /// <summary>What a flight on the owner's hold says in a status line (<c>on hold by seb: waiting for the release</c>); null when it is not on hold.</summary>
+    public static string? OnHoldText(FlightRow flight) => flight.OnHold is { } hold ? $"on hold by {hold.By}: {hold.Reason}" : null;
 
     /// <summary>A wait as a status line says it: <c>Drawboard.Core 1.2 on nuget.org</c>.</summary>
     public static string Text(PackageWait wait) => $"{wait.Id} {wait.Line} on nuget.org";

@@ -204,7 +204,7 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
         choice.Label.ShouldBe("Start a fresh worker on parser (the last one did not start)");
     }
 
-    private LegCommander Bounded(TimeSpan bound) => new(_state, _workers, _checks, _github, new GitCli(), new Planes(new GitCli()), _flights,
+    private LegCommander Bounded(TimeSpan bound) => new(_state, _workers, _checks, _github, _git, new Planes(_git), _flights,
         new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1"), TimeProvider.System)
     {
         StartBound = bound,

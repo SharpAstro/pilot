@@ -21,6 +21,18 @@ public sealed partial class NodeState
         }
     }
 
+    /// <summary>How many clients are attached to the feed now (<see cref="Subscribe"/> not yet disposed, and not dropped for lagging).</summary>
+    public int ClientsAttached
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _sinks.Count;
+            }
+        }
+    }
+
     /// <summary>Everything a client shows, as of now.</summary>
     public SnapshotEvent Snapshot()
     {
@@ -49,7 +61,9 @@ public sealed partial class NodeState
             }
             else
             {
-                sink.TryWrite(Serialize(SnapshotLocked()));
+                // As the rows, not as bytes: the event stream serialises it while it sends, a fragment at a time, so a
+                // snapshot of tens of MB is never one array on the LOH nor one write into Kestrel's pinned blocks (#794).
+                sink.TryWriteSnapshot(SnapshotLocked());
             }
             _sinks.Add(sink);
         }
@@ -96,7 +110,13 @@ public sealed partial class NodeState
         ApplyToState(delta);
         _seq = delta.Seq;
         Hold(delta.Seq, json);
+        WriteToSinks(json);
+        ReportSnapshotOutcome();
+    }
 
+    /// <summary>Writes one serialized event to every live client; one that cannot keep up is dropped and told. Under the lock.</summary>
+    private void WriteToSinks(byte[] json)
+    {
         for (var i = _sinks.Count - 1; i >= 0; i--)
         {
             var sink = _sinks[i];
@@ -106,8 +126,6 @@ public sealed partial class NodeState
                 sink.Overflowed();
             }
         }
-
-        ReportSnapshotOutcome();
     }
 
     private void Hold(long seq, byte[] json)

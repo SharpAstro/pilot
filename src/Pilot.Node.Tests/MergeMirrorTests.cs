@@ -195,22 +195,21 @@ public sealed class MergeMirrorTests
     public async Task ConflictsOrBehindTurnTheCardToAGoAroundThatMergesTheBaseInWithNoMerge(string kind, string title)
     {
         await using var node = await NodeHarness.StartAsync(Ct);
-        // Its review is not a passed one, so the node cannot send it back by itself and the card is where the person acts.
+        // Even with its review not a passed one, a rebase is the node's own work (PIL846; owner 2026-11-09: never bother the owner about
+        // rebases): the conflict hand-over sends the last leg round, and the ready card closes as handled with no ring in its place.
         var ready = Ready(node, ReviewState.Changes);
 
         await Look(node, new MergeState(kind));
 
         var card = Card(node, ready);
-        card.State.ShouldBe(CardState.Open);
-        card.Kind.ShouldBe(LegCommander.PrReady);
-        card.Title.ShouldContain(title);
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start a fresh worker on parser (the last one left the PR unmergeable)", Verbs.GoAround)]);
-        card.Choices[0].Args.Single().ShouldContain("merge origin/<base> into the plane");
+        card.State.ShouldBe(CardState.Closed);
+        card.Outcome.ShouldNotBeNull().ShouldContain(title);
+        node.State.Cards(openOnly: true).ShouldNotContain(c => c.Bin == CardBin.Ring);
         node.GitHub.Merged.ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task ACardTurnedToAGoAroundOffersMergeAgainOnceGitHubSaysItMerges()
+    public async Task ACardClosedForAConflictStaysClosedAndMergesNothingOnceGitHubSaysItMerges()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         var ready = Ready(node, ReviewState.Changes);
@@ -218,10 +217,9 @@ public sealed class MergeMirrorTests
 
         await Look(node, new MergeState(MergeKinds.Ready, 3, 3));
 
-        var card = Card(node, ready);
-        card.Choices.Select(c => c.Verb).ShouldBe([Verbs.Merge]);
-        (Merge(card).Status, Merge(card).Args[0]).ShouldBe((ChoiceStatus.Passing, PrHead));
-        card.Title.ShouldContain("ready to merge");
+        // The fresh review after the update raises a new ready card; the closed one is not reopened, and nothing merges by itself.
+        Card(node, ready).State.ShouldBe(CardState.Closed);
+        node.GitHub.Merged.ShouldBeEmpty();
     }
 
     [Fact]

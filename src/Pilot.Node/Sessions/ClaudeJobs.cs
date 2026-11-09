@@ -13,9 +13,9 @@ namespace Pilot.Node.Sessions;
 public sealed record ClaudeJobFolder(string Id, string State, string? Name, string? SessionId, string? WorktreePath, DateTimeOffset? CreatedAt, DateTimeOffset? UpdatedAt)
 {
     /// <summary>
-    /// The plane guard: whether the job's <c>worktreePath</c> is still on disk. <c>claude rm</c> also deletes that worktree "when that is safe",
-    /// and every pilot session in a plane records the plane as its worktreePath, so such a job is stopped and not removed; the node's own
-    /// removal of the plane takes the folder, and the next sweep removes the job.
+    /// Whether the job's worktree is still on disk. <c>claude rm</c> deletes that worktree "when that is safe", and every pilot session in a
+    /// plane records the plane as its worktreePath, so such a job is stopped and not removed: the node's own removal of the plane takes the
+    /// folder, and the next sweep removes the job. The sweep and the removal at a session's end share this one guard.
     /// </summary>
     public bool HoldsWorktree => WorktreePath is { Length: > 0 } worktree && Directory.Exists(worktree);
 }

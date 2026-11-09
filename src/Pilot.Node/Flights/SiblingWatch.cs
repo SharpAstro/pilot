@@ -67,9 +67,13 @@ public sealed partial class SiblingWatch(IGit git, TimeProvider time)
     }
 
     // A SharpAstroRoot property: its value, set when its Condition's Exists() probe resolves (pilot's projects reach the org
-    // root through one, 3 levels up from a main clone, 6 from a plane).
-    [GeneratedRegex(@"<SharpAstroRoot([^>]*)>([^<]*)</SharpAstroRoot>", RegexOptions.CultureInvariant)]
+    // root through one, 3 levels up from a main clone, 6 from a plane, the latter only with UseLocalSiblings on).
+    [GeneratedRegex(@"<SharpAstroRoot\b([^>]*)>([^<]*)</SharpAstroRoot>", RegexOptions.CultureInvariant)]
     private static partial Regex SharpAstroRootElement();
+
+    // A condition that opens only with UseLocalSiblings on: '$(UseLocalSiblings)' == 'true', either side.
+    [GeneratedRegex(@"'\$\(UseLocalSiblings\)'\s*==\s*'true'|'true'\s*==\s*'\$\(UseLocalSiblings\)'", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex OptIn();
 
     private const string ThisFileDirectory = "$(MSBuildThisFileDirectory)";
 
@@ -80,9 +84,18 @@ public sealed partial class SiblingWatch(IGit git, TimeProvider time)
     /// clone lives, so a tianwen or DIR.Lib plane, which builds on the published packages, holds nothing: the node held the
     /// clones beside the main clone for it anyway, and every plane job queued behind any build of them (PIL802, 2026-11-07).
     /// </summary>
-    public static IReadOnlyList<string> ReachedClones(string checkout)
+    /// <remarks>
+    /// <paramref name="useLocalSiblings"/> is the build's <c>UseLocalSiblings</c>: true opens a <c>SharpAstroRoot</c> probe whose
+    /// condition asks for it (pilot's 6-level plane probe, opt-in since PIL802), false reaches nothing (the repo's props then
+    /// turn every <c>UseLocal*</c> off), null leaves each probe to its own <c>Exists()</c>.
+    /// </remarks>
+    public static IReadOnlyList<string> ReachedClones(string checkout, bool? useLocalSiblings = null)
     {
         var clones = new List<string>();
+        if (useLocalSiblings == false)
+        {
+            return clones;
+        }
         foreach (var file in BuildFiles(checkout, depth: 4))
         {
             string text;
@@ -98,6 +111,11 @@ public sealed partial class SiblingWatch(IGit git, TimeProvider time)
             string? root = null;
             foreach (Match element in SharpAstroRootElement().Matches(text))
             {
+                // A probe that asks for UseLocalSiblings is shut unless the build turns it on (pilot's planes, PIL802).
+                if (OptIn().IsMatch(element.Groups[1].Value) && useLocalSiblings != true)
+                {
+                    continue;
+                }
                 if (root is null && ExistsCall().Matches(element.Groups[1].Value).Any(e => Resolve(e.Groups[1].Value, folder, null) is { } at && (Directory.Exists(at) || File.Exists(at)))
                     && Resolve(element.Groups[2].Value.Trim(), folder, null) is { } value)
                 {

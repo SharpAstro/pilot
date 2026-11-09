@@ -21,6 +21,9 @@ public sealed record SessionTrackerOptions(
     /// </summary>
     public IReadOnlyList<string> HiddenFolders { get; init; } = [];
 
+    /// <summary>Whether a process still runs, for a say's look at one session; null asks the OS. Tests say it of their fixture pids.</summary>
+    public Func<int, bool>? IsAlive { get; init; }
+
     /// <summary>Whether a session working in <paramref name="cwd"/> is the node's own and gets no row.</summary>
     public bool IsHidden(string? cwd)
     {

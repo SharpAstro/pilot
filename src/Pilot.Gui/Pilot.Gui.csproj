@@ -49,8 +49,10 @@
     what CI restores.
 
     SharpAstroRoot is the org root. From src/Pilot.Gui it is ..\..\.. in a clone; a Claude Code worktree sits three
-    folders deeper (pilot\.claude\worktrees\<name>), so there it is three more up. Without the second probe every
-    switch would silently fall back to the package in a worktree, which still builds and so would go unnoticed.
+    folders deeper (pilot\.claude\worktrees\<name>), so there it is three more up, and that second probe is opt-in:
+    a plane builds on the published packages, as CI does, unless UseLocalSiblings is true (PIL802). The node sets it
+    for the jobs of a flight whose issue carries the `pilot: sibling source` label, the exception that needs a
+    sibling's unreleased source; anything else that needs an unreleased sibling takes its preview package.
 
     A publish with a runtime identifier (dotnet publish -r win-arm64) takes the packages, as CI does. It has to: -r
     reaches every project restore walks, and the SdlVulkan.Renderer clone also targets net10.0-android, for which a
@@ -59,7 +61,7 @@
   -->
   <PropertyGroup>
     <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\DIR.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
-    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\DIR.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND '$(UseLocalSiblings)' == 'true' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\DIR.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
     <UseLocalDirLib Condition="'$(UseLocalDirLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)DIR.Lib\src\DIR.Lib\DIR.Lib.csproj')">true</UseLocalDirLib>
     <UseLocalSdlVulkanRenderer Condition="'$(UseLocalSdlVulkanRenderer)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)SdlVulkan.Renderer\src\SdlVulkan.Renderer\SdlVulkan.Renderer.csproj')">true</UseLocalSdlVulkanRenderer>
     <UseLocalAppShell Condition="'$(UseLocalAppShell)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)AppShell\src\SharpAstro.AppShell\SharpAstro.AppShell.csproj')">true</UseLocalAppShell>

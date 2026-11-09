@@ -102,6 +102,9 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
         var waiting = state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && j.Owner is not null).Select(j => j.Owner!).ToHashSet(StringComparer.Ordinal);
         var watching = watchtower.Keeping() is not null;
         var current = watchtower.Current()?.Id;
+        // A stream watchtower is never stopped for being quiet, so an idle one with nothing to watch is kept small too: it never fills up
+        // mid-turn when the next card arrives (PIL855).
+        var streaming = watchtower.CurrentStream() is not null;
         foreach (var row in state.Sessions().Where(r => r is { Kind: SessionKind.Background, State: SessionState.Idle }))
         {
             if (row.Name == watchtower.Name && row.Id != current)
@@ -118,7 +121,7 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
             {
                 yield return (row, row.Name == watchtower.Name ? WatchtowerFocus : JobFocus);
             }
-            else if (row.Name == watchtower.Name && watching)
+            else if (row.Name == watchtower.Name && (watching || streaming))
             {
                 yield return (row, WatchtowerFocus);
             }
@@ -140,7 +143,8 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
             var isTower = row.Name == watchtower.Name;
             var share = isTower ? Models.WatchtowerCompactShare / 100.0 : WindowShare;
             var full = row.ContextWindow > 0 && row.ContextTokens > share * row.ContextWindow;
-            var cooling = now - last >= IdleFor && row.ContextTokens > Above;
+            // The watchtower's idle time and context threshold are node settings (Settings); a worker waiting on its job keeps the fixed ones.
+            var cooling = now - last >= (isTower ? Models.WatchtowerCompactIdle : IdleFor) && row.ContextTokens > (isTower ? Models.WatchtowerCompactAbove : Above);
             string? chatty = null;
             if (isTower)
             {

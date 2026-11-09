@@ -26,8 +26,8 @@ public static partial class MergeGuard
     public const string Instead = "pilot flight merge <code> <head>";
 
     /// <summary>The two shell tools the guard reads (<c>tool_name</c>); the matcher it installs names both.</summary>
-    private const string Bash = "Bash";
-    private const string PowerShell = "PowerShell";
+    internal const string Bash = "Bash";
+    internal const string PowerShell = "PowerShell";
 
     /// <summary>The <c>PreToolUse</c> matcher the guard is installed under.</summary>
     internal const string Matcher = Bash + "|" + PowerShell;
@@ -53,19 +53,25 @@ public static partial class MergeGuard
         ["xargs"] = ["-I", "-n", "-L", "-P", "-s", "-d", "-E", "-a", "--max-args", "--max-procs", "--max-lines", "--max-chars", "--delimiter", "--eof", "--arg-file"],
     };
 
-    private static readonly string[] Shells =["bash", "sh", "zsh", "dash"];
+    internal static readonly string[] Shells = ["bash", "sh", "zsh", "dash"];
 
     // gh api's merge endpoint: PUT repos/{owner}/{repo}/pulls/{n}/merge, with or without a leading slash or host.
     [GeneratedRegex(@"(^|/)pulls/\d+/merge/?($|\?)", RegexOptions.IgnoreCase)]
     private static partial Regex MergeEndpoint();
 
-    /// <summary>The hook's whole run: stdin in, the answer (if any) on <paramref name="stdout"/>, and 0.</summary>
-    public static async Task<int> RunAsync(Stream stdin, TextWriter stdout, GitQuery? git = null)
+    /// <summary>
+    /// The hook's whole run: stdin in, the answer (if any) on <paramref name="stdout"/>, and 0. It holds two rules behind the one
+    /// installed handler: the merge rule (<see cref="Decide"/>) and the test rule (<see cref="TestGuard"/>, which refuses a direct
+    /// <c>dotnet test</c> in a session the node started), so setup installs and checks one entry, not two.
+    /// </summary>
+    /// <param name="roster">The roster of node-started sessions the test rule reads; null takes the default data folder's.</param>
+    public static async Task<int> RunAsync(Stream stdin, TextWriter stdout, GitQuery? git = null, string? roster = null)
     {
         try
         {
             using var reader = new StreamReader(stdin, Encoding.UTF8);
-            if (Decide(await reader.ReadToEndAsync(), git) is { } reason)
+            var json = await reader.ReadToEndAsync();
+            if ((Decide(json, git) ?? TestGuard.Decide(json, () => TestGuard.IsNodeSession(json, rosterFile: roster))) is { } reason)
             {
                 await stdout.WriteAsync(Answer(reason));
                 await stdout.FlushAsync();
@@ -143,7 +149,7 @@ public static partial class MergeGuard
         }
     }
 
-    private static string? Text(JsonNode? node) => node?.GetValueKind() == JsonValueKind.String ? node.GetValue<string>() : null;
+    internal static string? Text(JsonNode? node) => node?.GetValueKind() == JsonValueKind.String ? node.GetValue<string>() : null;
 
     /// <summary>
     /// The machine's prefix as the node resolves it, without asking the node: the setting it saved in the default data folder,
@@ -291,20 +297,20 @@ public static partial class MergeGuard
     }
 
     // bash -c's script: the word after the flag, which may be one of several in a word (-lc, -ec, -xc: login, errexit and so on, then c).
-    private static string? ShellScript(List<string> args)
+    internal static string? ShellScript(List<string> args)
     {
         var at = args.FindIndex(a => a.Length > 1 && a[0] == '-' && a[1..].All(char.IsAsciiLetter) && a.Contains('c'));
         return at >= 0 && at + 1 < args.Count ? args[at + 1] : null;
     }
 
     // pwsh -c / -Command / -EncodedCommand's script: the word after the flag, or everything after it (-Command takes the rest of the line).
-    private static string? NestedPowerShell(List<string> args)
+    internal static string? NestedPowerShell(List<string> args)
     {
         var at = args.FindIndex(a => a.StartsWith('-') && a.Length > 1 && ("command".StartsWith(a[1..], StringComparison.OrdinalIgnoreCase) && a.Length <= 8 || a.Equals("-c", StringComparison.OrdinalIgnoreCase)));
         return at >= 0 && at + 1 < args.Count ? string.Join(' ', args.Skip(at + 1)) : null;
     }
 
-    private static string Resolve(string folder, string to)
+    internal static string Resolve(string folder, string to)
     {
         try
         {
@@ -522,7 +528,7 @@ public static partial class MergeGuard
         $"A push to the default branch goes through a PR, not around it ({what}). Push a flight branch and merge it through the node: `{Instead}`.";
 
     /// <summary>The program's words with leading <c>VAR=x</c> assignments, shell keywords (<c>then</c>, <c>do</c>, <c>!</c>...) and wrappers (<c>sudo</c>, <c>env</c>, <c>timeout 60</c>, <c>xargs</c>...) taken off.</summary>
-    private static List<string> Strip(List<string> segment, bool powershell = false)
+    internal static List<string> Strip(List<string> segment, bool powershell = false)
     {
         var words = segment;
         var i = 0;
@@ -592,7 +598,7 @@ public static partial class MergeGuard
     private static partial Regex AssignmentOperator();
 
     /// <summary>A program's name: no folder, no <c>.exe</c>.</summary>
-    private static string Name(string program)
+    internal static string Name(string program)
     {
         var name = program[(program.LastIndexOfAny(['/', '\\']) + 1)..];
         return name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? name[..^4] : name;
@@ -610,11 +616,11 @@ public static partial class MergeGuard
         Parse(command, powershell).Where(part => part is not ([ScopeOpen] or [ScopeClose])).ToList();
 
     /// <summary>The one-word parts <see cref="Parse"/> puts where a <c>( ... )</c>, <c>$( ... )</c> or backtick pair opens and closes: a <c>cd</c> inside does not move the folder outside.</summary>
-    private const string ScopeOpen = "\0(";
-    private const string ScopeClose = "\0)";
+    internal const string ScopeOpen = "\0(";
+    internal const string ScopeClose = "\0)";
 
     /// <summary><see cref="Split"/> with <see cref="ScopeOpen"/> and <see cref="ScopeClose"/> parts where a subshell or command substitution starts and ends.</summary>
-    private static List<List<string>> Parse(string command, bool powershell)
+    internal static List<List<string>> Parse(string command, bool powershell)
     {
         var escape = powershell ? '`' : '\\';
         var parts = new List<List<string>>();

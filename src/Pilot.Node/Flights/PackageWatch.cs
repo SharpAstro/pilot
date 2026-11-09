@@ -127,18 +127,21 @@ public sealed class PackageWatch(NodeState state, FlightCommander flights, INuGe
         foreach (var flight in state.Flights().Where(f => f.State != FlightState.Landed && f.PackageWaits.Length > 0))
         {
             var met = new List<(string Id, string Producer)>();
+            var found = new Dictionary<(string Id, string Producer), string>();
             foreach (var wait in flight.PackageWaits)
             {
                 if (await LookAtAsync(flight.Code, Verbs.FlightTarget(flight.Code), "waits for", wait,
                         new CardChoice { Label = "Fly anyway", Verb = Verbs.FlyAnyway, Target = Verbs.FlightTarget(flight.Code) },
-                        () => flights.MarkPackageWaitLateAsync(flight.Code, wait.Id, wait.Producer, cancellationToken)) is not null)
+                        () => flights.MarkPackageWaitLateAsync(flight.Code, wait.Id, wait.Producer, cancellationToken)) is { } up)
                 {
                     met.Add((wait.Id, wait.Producer));
+                    found[(wait.Id, wait.Producer)] = up;
                 }
             }
             if (met.Count > 0)
             {
-                await flights.DropPackageWaitsAsync(flight.Code, met, cancellationToken);
+                // The version that met each wait goes on the flight, so its next leg bumps the pin to it (PIL802).
+                await flights.DropPackageWaitsAsync(flight.Code, met, cancellationToken, found);
             }
         }
 

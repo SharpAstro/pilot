@@ -55,12 +55,14 @@ var nodeWhere = remote ?? client.SocketPath;
 using var vessel = new RgbaImageRenderer(1, 1);
 var sessions = new SessionsView<RgbaImage>(vessel) { CanSay = true };
 var chrome = new PilotChrome<RgbaImage>(vessel, sessions);
-// Each node streamed from is told when the Pull requests page is shown and when it is left, so its watch reads every minute only meanwhile.
+// Each node streamed from is told when the Pull requests page or Home is shown and when it is left, so its PR watch reads every
+// minute, and its machine sampler every 5 s, only meanwhile. The first page is shown with no switch, so it is said here.
 chrome.OnPageShown = page =>
 {
     feed.SayPage(page);
     fleetWatch.SayPage(page);
 };
+chrome.OnPageShown(chrome.SaidPage);
 var flights = chrome.Flights;
 flights.CanvasAvailable = false; // cells cannot draw an arrow: the terminal keeps the list
 var jobs = chrome.Jobs;
@@ -225,6 +227,36 @@ chrome.Ideas.OnChatAbout = text =>
     chat.SwitchTo(null);
     chat.Prefill(text);
 };
+chat.OnAnswerNow = async sendId =>
+{
+    var refused = await ChatCommands.AnswerNowAsync(client, sendId, Who, stop.Token);
+    Redraw();
+    return refused;
+};
+chat.OnAnswerNowOn = async (node, sendId) =>
+{
+    var refused = clients.For(node) is { } to
+        ? await ChatCommands.AnswerNowAsync(to, sendId, Who, stop.Token)
+        : FleetClients.WatchOnly(node);
+    Redraw();
+    return refused;
+};
+chat.OnAnswerAsk = async (requestId, decision, words) =>
+{
+    var refused = await ChatCommands.AnswerAskAsync(client, requestId, decision, words, Who, stop.Token);
+    Redraw();
+    return refused;
+};
+chat.OnAnswerAskOn = async (node, requestId, decision, words) =>
+{
+    var refused = clients.For(node) is { } to
+        ? await ChatCommands.AnswerAskAsync(to, requestId, decision, words, Who, stop.Token)
+        : FleetClients.WatchOnly(node);
+    Redraw();
+    return refused;
+};
+// The node says the chat changed as the watchtower's words stream: read the feed now, not at the page's next look.
+feed.ChatChanged = chat.Refresh;
 chat.OnRestart = async () =>
 {
     var refused = await ChatCommands.RestartWatchtowerAsync(client, Who, stop.Token);
@@ -411,7 +443,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.PullRequests => pullRequests.Tree(pages.PullRequests ?? new PullRequestsScreen(null, pages.Sessions.Source, now), width),
             PilotPage.Jobs => jobs.Tree(pages.Jobs),
             PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, now)),
-            PilotPage.Settings => settings.Tree(now),
+            PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };
         var cardsScreen = pages.Cards;

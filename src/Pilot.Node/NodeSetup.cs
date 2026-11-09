@@ -347,7 +347,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         {
             var text = File.Exists(SettingsFile) ? File.ReadAllText(SettingsFile) : "";
             return MergeGuard.Installed(text, nodePath)
-                ? new SetupCheck { Key = MergeGuardKey, Title = Title, Ok = true, Line = $"in {SettingsFile}: gh pr merge, a merge by gh api and a push to a default branch are refused, pointing at pilot flight merge" }
+                ? new SetupCheck { Key = MergeGuardKey, Title = Title, Ok = true, Line = $"in {SettingsFile}: gh pr merge, a merge by gh api and a push to a default branch are refused, pointing at pilot flight merge; a node session's direct dotnet test is refused, pointing at pilot run" }
                 : new SetupCheck { Key = MergeGuardKey, Title = Title, Ok = false, Line = $"not in {SettingsFile} for {nodePath}: a session can merge a PR, or push to main, around the node", Fix = "Install merge guard" };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)

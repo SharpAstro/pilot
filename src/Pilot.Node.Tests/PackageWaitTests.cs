@@ -91,7 +91,7 @@ public abstract class PackageWaitTestsBase : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private protected static string Git(string cwd, params string[] args)
@@ -219,6 +219,10 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
         flying.State.ShouldBe(FlightState.Flying);
         flying.PackageWaits.ShouldBeEmpty();
         node.State.Cards().ShouldNotContain(c => c.Kind == PackageWatch.LateKind);
+        // The version that met the wait stays on the flight, and the consumer's leg is told to bump its pin to it (PIL802).
+        var pin = flying.PackagePins.ShouldHaveSingleItem();
+        (pin.Id, pin.Version, pin.Producer).ShouldBe(("Drawboard.Core", "1.2.7", "TIA1"));
+        Briefs.PinBumps(flying).ShouldNotBeNull().ShouldContain("- `Drawboard.Core` 1.2.7 (from TIA1)");
     }
 
     [Fact]
