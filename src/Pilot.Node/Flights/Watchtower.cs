@@ -368,9 +368,10 @@ public sealed partial class Watchtower(
                     at = _generations.Count - 1;
                     changed = true;
                 }
-                else if (_generations[at].SessionId != row.SessionId && !_generations.Any(g => g.IsCompaction && g.Job.StartsWith(row.Id + CompactionMark, StringComparison.Ordinal)))
+                else if (_generations[at].SessionId != row.SessionId && !_compactingRows.ContainsKey(row.Id) && !_generations.Any(g => g.IsCompaction && g.Job.StartsWith(row.Id + CompactionMark, StringComparison.Ordinal)))
                 {
-                    // (A stream watchtower's compactions are generations of their own, which keep the sessions after them: this one keeps its own.)
+                    // (A stream watchtower's compactions are generations of their own, which keep the sessions after them: this one keeps its own,
+                    // and while a compaction is under way the new session id is the coming generation's, not this one's.)
                     _generations[at] = _generations[at] with { SessionId = row.SessionId };
                     changed = true;
                 }

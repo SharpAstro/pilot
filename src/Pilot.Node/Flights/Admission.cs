@@ -151,6 +151,15 @@ public static class Admission
             return new AdmissionDecision.Admit();
         }
         string? card = null;
+        // Several flights that each hold the repo already (released from a hold together, each with a leg done): one flight per repo
+        // means one of them, the first in the queue's order, and the others wait for it. Each was admitted as a holder before, so
+        // five pilot flights flew at once with the mode on (SE1, 2026-11-09). A deterministic order, so two holders never wait on
+        // each other.
+        if (input.OneFlightPerRepo && flight is not null && flight.HoldsRepo && flight.Phase != FlightPhase.Landed
+            && FirstHolder(input, flight) is { } first && first.Key != flight.Key)
+        {
+            return new AdmissionDecision.Wait($"waiting for the repo {flight.Repo}: {Name(first, flight)} goes first ({HoldsBecause(first)}); one flight per repo");
+        }
         if (input.OneFlightPerRepo && flight is not null && !flight.HoldsRepo && flight.Phase != FlightPhase.Landed)
         {
             switch (RepoVerdict(input, flight))
@@ -231,6 +240,16 @@ public static class Admission
                 + (count > 0 ? $" ({count} {(count == 1 ? "flight waits" : "flights wait")} for it)" : ""));
         }
         return null;
+    }
+
+    // Of the flights that hold flight's repo (flight among them), the one that goes. Priority flights are outside the rule, and a
+    // held flight (its plane up while it waits for another) cannot go, so it is never the one the others wait for: that would be a
+    // flight waiting on the flight that waits on it.
+    private static FleetFlight? FirstHolder(AdmissionInput input, FleetFlight flight)
+    {
+        var live = input.Flights.Where(f => f.Phase != FlightPhase.Landed).ToArray();
+        var dependents = Dependents(live, live.ToDictionary(f => f.Key, StringComparer.Ordinal));
+        return live.Where(f => f.HoldsRepo && !f.Priority && f.Phase != FlightPhase.Held && SameRepo(f, flight)).OrderBy(f => f, Ranking(dependents)).FirstOrDefault();
     }
 
     private static bool SameRepo(FleetFlight a, FleetFlight b) => a.Repo.Equals(b.Repo, StringComparison.OrdinalIgnoreCase);

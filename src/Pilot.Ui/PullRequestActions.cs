@@ -45,7 +45,13 @@ internal static class PullRequestActions
         var name = $"{pr.Repo}#{pr.Number}";
         if (pr.Flight is { } code)
         {
-            if (pr.Kind is PullRequestKind.Ready or PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck && Choice(cards, code, Verbs.Merge) is { } merge)
+            // A Merge the card shows waiting on a leg still to fly is no button here either (pressed, the node refuses it): the slot says
+            // what it waits for, in the card's words (#918).
+            if (Choice(cards, code, Verbs.Merge) is { } waiting && waiting.Card.Choices[waiting.Number - 1] is { Status: ChoiceStatus.WaitsForLegs } wait)
+            {
+                offered.Add(new(PullRequestActionKind.Merge, CardsView<object>.StatusLabel(wait), waiting.Card.Title, waiting.Card, waiting.Number, ChoiceStatus.WaitsForLegs));
+            }
+            else if (pr.Kind is PullRequestKind.Ready or PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck && Choice(cards, code, Verbs.Merge) is { } merge)
             {
                 var choice = merge.Card.Choices[merge.Number - 1];
                 var pending = pr.Kind is PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck;
