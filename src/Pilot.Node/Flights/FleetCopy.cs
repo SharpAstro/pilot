@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Pilot.Contracts;
 
 namespace Pilot.Node.Flights;
@@ -82,16 +81,21 @@ public sealed class FleetCopy
             {
                 return;
             }
-            var root = JsonNode.Parse(File.ReadAllBytes(_file));
-            foreach (var item in root?["peers"]?.AsArray() ?? [])
+            // Read with the document model and the source-generated contexts, so it is trim and AOT clean.
+            using var doc = JsonDocument.Parse(File.ReadAllBytes(_file));
+            if (doc.RootElement.ValueKind != JsonValueKind.Object || !doc.RootElement.TryGetProperty("peers", out var list) || list.ValueKind != JsonValueKind.Array)
             {
-                if (item?["peer"]?.GetValue<string>() is not { Length: > 0 } peer || item["lastHeard"]?.GetValue<DateTimeOffset>() is not { } heard)
+                return;
+            }
+            foreach (var item in list.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object
+                    || !item.TryGetProperty("peer", out var name) || name.ValueKind != JsonValueKind.String || name.GetString() is not { Length: > 0 } peer
+                    || !item.TryGetProperty("lastHeard", out var at) || !at.TryGetDateTimeOffset(out var heard))
                 {
                     continue;
                 }
-                var flights = (item["flights"] as JsonArray ?? []).Select(f => f.Deserialize(PilotJsonContext.Default.FlightRow)).OfType<FlightRow>().ToArray();
-                var legs = (item["legs"] as JsonArray ?? []).Select(l => l.Deserialize(PilotJsonContext.Default.LegRow)).OfType<LegRow>().ToArray();
-                _peers[peer] = new PeerCopy(peer, heard, flights, legs);
+                _peers[peer] = new PeerCopy(peer, heard, Items(item, "flights", PilotJsonContext.Default.FlightRow), Items(item, "legs", PilotJsonContext.Default.LegRow));
             }
         }
         catch (Exception ex) when (ex is JsonException or IOException or InvalidOperationException or UnauthorizedAccessException or FormatException)
@@ -100,6 +104,11 @@ public sealed class FleetCopy
             _peers.Clear();
         }
     }
+
+    private static T[] Items<T>(JsonElement item, string property, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> info) where T : class
+        => item.TryGetProperty(property, out var array) && array.ValueKind == JsonValueKind.Array
+            ? [.. array.EnumerateArray().Select(e => e.Deserialize(info)).OfType<T>()]
+            : [];
 
     // Called under the lock. A temporary file moved over the old one, so a reader never sees half of it.
     private void Save()
@@ -110,23 +119,34 @@ public sealed class FleetCopy
         }
         try
         {
-            var peers = new JsonArray();
-            foreach (var copy in _peers.Values.OrderBy(p => p.Peer, StringComparer.OrdinalIgnoreCase))
-            {
-                peers.Add(new JsonObject
-                {
-                    ["peer"] = copy.Peer,
-                    ["lastHeard"] = copy.LastHeard,
-                    ["flights"] = new JsonArray([.. copy.Flights.Select(f => JsonSerializer.SerializeToNode(f, PilotJsonContext.Default.FlightRow))]),
-                    ["legs"] = new JsonArray([.. copy.Legs.Select(l => JsonSerializer.SerializeToNode(l, PilotJsonContext.Default.LegRow))]),
-                });
-            }
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(_file))!);
             var temp = _file + ".tmp";
             using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
             using (var json = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
             {
-                new JsonObject { ["peers"] = peers }.WriteTo(json);
+                json.WriteStartObject();
+                json.WriteStartArray("peers");
+                foreach (var copy in _peers.Values.OrderBy(p => p.Peer, StringComparer.OrdinalIgnoreCase))
+                {
+                    json.WriteStartObject();
+                    json.WriteString("peer", copy.Peer);
+                    json.WriteString("lastHeard", copy.LastHeard);
+                    json.WriteStartArray("flights");
+                    foreach (var flight in copy.Flights)
+                    {
+                        JsonSerializer.Serialize(json, flight, PilotJsonContext.Default.FlightRow);
+                    }
+                    json.WriteEndArray();
+                    json.WriteStartArray("legs");
+                    foreach (var leg in copy.Legs)
+                    {
+                        JsonSerializer.Serialize(json, leg, PilotJsonContext.Default.LegRow);
+                    }
+                    json.WriteEndArray();
+                    json.WriteEndObject();
+                }
+                json.WriteEndArray();
+                json.WriteEndObject();
             }
             File.Move(temp, _file, overwrite: true);
         }
