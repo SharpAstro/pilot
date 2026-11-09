@@ -98,7 +98,7 @@ public sealed class PushBlockedTests : IDisposable
 
         var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
         card.Kind.ShouldBe("leg-failed");
-        card.Title.ShouldBe("TIA9/parser stopped: the parser is wrong");
+        card.Title.ShouldBe("TIA9/parser: the parser is wrong");
     }
 
     [Fact]
@@ -189,7 +189,7 @@ public sealed class PushBlockedTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private static void Commit(string cwd, string message)

@@ -215,10 +215,14 @@ public sealed partial class RepoWatch(NodeState state, RepoCatalog repos, Planes
 
             // This node's label on an open issue no flight of this node (flying or held) is on is stale, left by a flight that
             // went without landing: taken off. Another node's label is never touched. Shortcut stories are covered by landing.
+            var issues = await Ref("open issues", async () => await github.IssuesAsync(repo.Path, cancellationToken));
+            if (issues is not null)
+            {
+                await SweepHoldsAsync(repo, flights, issues, Ref<string[]>, cancellationToken);
+            }
             if (Machine.Length > 0)
             {
                 var own = PilotMarks.NodeLabel(Machine);
-                var issues = await Ref("open issues", async () => await github.IssuesAsync(repo.Path, cancellationToken));
                 foreach (var issue in (issues ?? []).Where(i => i.Labels.Contains(own, StringComparer.OrdinalIgnoreCase)
                              && !flights.Any(f => f.State != FlightState.Landed && f.Tracker == TrackerKind.GitHub && f.Issue == i.Number)))
                 {
@@ -265,6 +269,78 @@ public sealed partial class RepoWatch(NodeState state, RepoCatalog repos, Planes
             Errors = [.. errors],
             UpdatedAt = now,
         };
+    }
+
+    /// <summary>
+    /// The owner's hold on GitHub (#771): <c>pilot: hold</c> on a local flight's issue holds the flight (by the label, the why from the newest
+    /// hold comment pilot wrote); a hold that had been labelled whose label is gone is released; a hold whose label write failed gets it again.
+    /// Each change is confirmed on a fresh read of the issue's labels, so a hold or unhold that is mid-way is not undone by an older list.
+    /// A read that fails leaves the rows as they were.
+    /// </summary>
+    private async Task SweepHoldsAsync(RepoInfo repo, FlightRow[] flights, IssueInfo[] issues,
+        Func<string, Func<Task<string[]?>>, Task<string[]?>> read, CancellationToken cancellationToken)
+    {
+        foreach (var local in flights.Where(f => f.State != FlightState.Landed && f.Tracker == TrackerKind.GitHub))
+        {
+            if (issues.FirstOrDefault(i => i.Number == local.Issue) is not { } issue)
+            {
+                continue;
+            }
+            var listed = issue.Labels.Contains(PilotMarks.Hold, StringComparer.OrdinalIgnoreCase);
+            var hold = state.Flights().FirstOrDefault(f => f.Code == local.Code)?.OnHold;
+            if (!(listed ? hold is null or { Labelled: not true } : hold is { Labelled: not null }))
+            {
+                continue;
+            }
+            // Confirmed on a fresh read that throws when gh fails (the plain read answers no labels then, which would read as a label
+            // taken off); one that fails leaves the row as it was.
+            var fresh = await read($"labels of #{issue.Number}", async () => await github.IssueLabelsOrThrowAsync(repo.Path, issue.Number, cancellationToken));
+            if (fresh is null)
+            {
+                continue;
+            }
+            var labelled = fresh.Contains(PilotMarks.Hold, StringComparer.OrdinalIgnoreCase);
+            if (state.Flights().FirstOrDefault(f => f.Code == local.Code) is not { State: not FlightState.Landed } current)
+            {
+                continue;
+            }
+            var target = Verbs.FlightTarget(current.Code);
+            if (labelled && current.OnHold is null)
+            {
+                // The comments come from a gh call; the hold is then put on the row as it stands, not on the copy read before it.
+                var comments = await read($"comments of #{issue.Number}", async () => await LabelHold.CommentsAsync(github, repo.Path, issue.Number, cancellationToken));
+                await LabelHold.ApplyAsync(state, github, time, current.Code, comments, cancellationToken);
+            }
+            else if (!labelled && current.OnHold is { Labelled: true } held)
+            {
+                if (state.UpdateFlight(current.Code, f => f.OnHold is { Labelled: true } ? f with { OnHold = null } : null) is not null)
+                {
+                    state.CloseCardsAbout(target, $"{PilotMarks.Hold} was taken off {current.Item.Display}", LegCommander.OnHoldKind);
+                    state.LiftHoldFromCards(current.Code);
+                    state.RaiseCard(CardBin.Handled, LegCommander.OnHoldKind, target, $"{current.Code} is off hold",
+                        $"{PilotMarks.Hold} was taken off {current.Item.Noun} {current.Item.Display} on GitHub, so the hold by {held.By} ({held.Reason}) ends. The node takes its next due step.");
+                }
+            }
+            else if (!labelled && current.OnHold is { Labelled: false } retry)
+            {
+                // The label write failed when the flight was put on hold: the hold stands, and the label is tried again.
+                await read($"{PilotMarks.Hold} on #{issue.Number}", async () =>
+                {
+                    await github.AddIssueLabelAsync(repo.Path, issue.Number, PilotMarks.Hold, cancellationToken);
+                    return Array.Empty<string>();
+                });
+                if (state.Flights().FirstOrDefault(f => f.Code == local.Code) is { OnHold: { } now } && now == retry
+                    && (await read($"labels of #{issue.Number}", async () => await github.IssueLabelsOrThrowAsync(repo.Path, issue.Number, cancellationToken))) is { } again
+                    && again.Contains(PilotMarks.Hold, StringComparer.OrdinalIgnoreCase))
+                {
+                    state.UpdateFlight(local.Code, f => f.OnHold == retry ? f with { OnHold = retry with { Labelled = true } } : null);
+                }
+            }
+            else if (labelled && current.OnHold is { Labelled: not true } known)
+            {
+                state.UpdateFlight(local.Code, f => f.OnHold == known ? f with { OnHold = known with { Labelled = true } } : null);
+            }
+        }
     }
 
     private static bool SamePath(string a, string b) =>

@@ -280,7 +280,7 @@ public sealed class MergeArmTests
 
         var detail = Card(node, ready).Detail.ShouldNotBeNull();
         detail.ShouldContain("Dropped from the merge queue: merge conflict");
-        detail.ShouldContain("The watchtower merges the base into the plane");
+        detail.ShouldContain("A worker merges the base into the plane");
         detail.ShouldNotContain("rebase it");
     }
 

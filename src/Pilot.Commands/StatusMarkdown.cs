@@ -85,7 +85,7 @@ internal static class StatusMarkdown
         }
         foreach (var flight in flights)
         {
-            var state = flight.State switch
+            var state = FlightWaiting.OnHoldText(flight) is { } onHold && flight.State != FlightState.Landed ? onHold : flight.State switch
             {
                 FlightState.Held => $"held, waiting for {FlightWaiting.For(flight)}",
                 FlightState.Landed => flight.MovedTo?.Text ?? "landed",

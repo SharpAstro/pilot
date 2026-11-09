@@ -917,7 +917,11 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
 }
 
 /// <summary>A flight command that could not be done, with why: the command's error.</summary>
-public class FlightException(string message) : Exception(message);
+public class FlightException(string message) : Exception(message)
+{
+    /// <summary>The class of a merge refusal, given where it was made (<see cref="MergeRefusals"/>); null for an exception that is no merge refusal or was given none.</summary>
+    public virtual MergeRefusal? Refusal => null;
+}
 
 /// <summary>A landing refused after the merge because the plane holds work of its own the merge left out: the commits, to open a PR with.</summary>
 public sealed class LeftOutCommitsException(string message, IReadOnlyList<string> commits) : FlightException(message)
