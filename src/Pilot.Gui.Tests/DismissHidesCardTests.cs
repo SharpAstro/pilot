@@ -179,6 +179,33 @@ public sealed class DismissHidesCardTests
     }
 
     [Fact]
+    public void APressWorkingOnOrRefusedForOneNodesCardLeavesAnotherNodesCardOfTheSameIdAtRest()
+    {
+        // #922: the press state was keyed by card id alone, so a working or refused press on SE1's c2 showed on DE1's c2 too.
+        using var renderer = new RgbaImageRenderer(1, 1);
+        var (view, _) = Fresh(renderer);
+        var se1 = new NodeMark("se1", "http://se1", "SE1", Here: false);
+        var de1 = new NodeMark("de1", "http://de1", "DE1", Here: false);
+        var screen = CardsScreen.Merge(
+        [
+            (se1, CardsScreen.From([Card("c2", "SE1 card", CardBin.Ring, 2)])),
+            (de1, CardsScreen.From([Card("c2", "DE1 card", CardBin.ForYou, 1)])),
+        ], watchtower: null);
+        Words(view, screen);
+        var seCard = view.Visible(screen).Open.Single(c => view.Visible(screen).NodeOf(c)?.Name == "SE1");
+        var deCard = view.Visible(screen).Open.Single(c => view.Visible(screen).NodeOf(c)?.Name == "DE1");
+
+        view.NoteWorking(seCard, "card:c2:dismiss");
+        view.WorkingOn(seCard).ShouldBe("card:c2:dismiss");
+        view.WorkingOn(deCard).ShouldBeNull("DE1's c2 has no press with its node");
+
+        view.NoteWorking(seCard, null);
+        view.NoteRefused("c2", "SE1", "the node refused: card c2 is held");
+        view.RefusedOn("c2", "SE1").ShouldNotBeNull();
+        view.RefusedOn("c2", "DE1").ShouldBeNull();
+    }
+
+    [Fact]
     public void ADismissTheHostDidNotSendBringsTheCardBackUnlessADismissOfItIsStillWorking()
     {
         using var renderer = new RgbaImageRenderer(1, 1);
@@ -291,6 +318,24 @@ public sealed class DismissHidesCardTests
         var back = Words(view, screen);
         back.ShouldContain("Gone card");
         back.ShouldContain("the command did not finish");
+    }
+
+    // #923: a card whose title is cut by the three-line cap ends its last line in an ellipsis, at the narrowest and the widest panel.
+    [Theory]
+    [InlineData(240)]
+    [InlineData(300)]
+    public void CaptureOfACardWhoseTitleIsCutByItsCap(int width)
+    {
+        var given = Environment.GetEnvironmentVariable("PILOT_DISMISS_CAPTURES");
+        var folder = Directory.CreateDirectory(given is { Length: > 0 } ? given : Path.Combine(AppContext.BaseDirectory, "captures")).FullName;
+        var title = "PIL853's PR #920 could not merge: the merge queue dropped it because the required check gate did not report within the queue's timeout, "
+            + "and GitHub asks for the branch to be brought up to date with main before it can be queued again, which the node does by itself";
+        var screen = CardsScreen.From([Keep with { Title = title, Summary = "The node brings the branch up to date and queues it again.", At = DateTimeOffset.UtcNow.AddMinutes(-2) }]);
+        const int height = 400;
+        using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+        var (view, _) = Fresh(renderer);
+        view.Render(screen, new RectF32(0, 0, width, height));
+        File.WriteAllBytes(Path.Combine(folder, $"card-title-cut-{width}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, height));
     }
 
     // The panel before and after a dismiss at the narrowest and the widest panel width, with long words and a refusal that must wrap.

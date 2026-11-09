@@ -97,6 +97,8 @@ internal static class CardKindCatalog
         new("next-step", "Ring|Handled", [LegAdvance, LegStart, LegPlanners, LegReview, FlightCommanderCreate], "FlightMoveTests.AnAdvanceThatThrowsAfterTheReceiveIsACardNotAFailedReceive", "the node's own next step after a receive was refused, on a flight that has not landed", [nameof(Verbs.GoAround)]),
         new("sibling-behind", "ForYou", [LegStart], "LegTests.ALegStartedWithASiblingBehindItsOriginRaisesOneCardNamingItAndThePullAndStillStarts"),
         new("sibling-pulled", "Handled", [LegStart], "LegTests.AStaleSiblingWhoseOriginWentUnreachableAfterTheCountIsStillPulled"),
+        new("reboot", "Handled", ["RebootPrep.cs"], "RebootPrepTests.ARequestTurnsMaintenanceOnAndTellsEachLiveNodeSessionOnce"),
+        new("reboot-ready", "ForYou", ["RebootPrep.cs"], "RebootPrepTests.AFileArrivingEndsItsSessionAndTheReadyCardComesOnlyWhenAllAreIn"),
         new("planner-started", "Handled", [LegPlanners], "LockFreeStartTests.APlanFlightAnswersStartedAtOnceAndItsCardComesWhenThePlannerIsUp"),
         new("planned", "ForYou|Handled", [LegPlanners, "NodeState.Flights.cs"], "LegTests.APlannerIsStartedInThePlaneAndItsPlannedOffersTheFirstLeg"),
         new("overlap", "Ring", ["Flights/LegCommander.Overlap.cs", "Flights/LegCommander.LegEnd.cs"], "OverlapTests.TheRecordedAnswerSurvivesAReplayOfTheJournal", "the flight's files overlap another flight's and the controller has not answered", [nameof(Verbs.Fold), nameof(Verbs.ConnectOverlap), nameof(Verbs.Separate)]),

@@ -448,6 +448,14 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The node a card shown was raised on, whom its buttons command; null is this window's.</summary>
     public NodeMark? NodeOf(CardRow card) => _shown.NodeOf(card);
 
+    /// <summary>
+    /// The key a card's press state (working, refused) is kept under: its node and id, as the dismissed set's (#922: by id alone, a
+    /// press on one node's card showed on another node's card of the same id in a merged panel). The one source for that key.
+    /// </summary>
+    internal static string PressKeyOf(string? node, string cardId) => node is null ? cardId : $"{node}/{cardId}";
+
+    private string PressKey(CardRow card) => PressKeyOf(NodeOf(card)?.Name, card.Id);
+
     /// <summary>The least the panel is given: a window that would give it less shows the page alone (the panel is dropped, as an optional column is).</summary>
     public const float MinWidth = 240f;
 
@@ -584,7 +592,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// </summary>
     public void NoteNotSent(CardRow card)
     {
-        if (WorkingOn(card.Id) == DismissHit(card))
+        if (WorkingOn(card) == DismissHit(card))
         {
             return;
         }
@@ -625,7 +633,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// </summary>
     public void NoteRefused(string cardId, string? node, string? why)
     {
-        Presses.NoteRefused(cardId, why);
+        Presses.NoteRefused(PressKeyOf(node, cardId), why);
         if (why is not null)
         {
             System.Collections.Immutable.ImmutableInterlocked.Update(ref _dismissed, d => d.Remove((node, cardId)));
@@ -636,7 +644,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// Marks the button <paramref name="action"/> (its hit id, <c>card:c9:1</c>) of card <paramref name="cardId"/> as with the
     /// node: it reads "…" and the card's buttons take no press until it is cleared (null), when the node has answered.
     /// </summary>
-    public void NoteWorking(string cardId, string? action) => Presses.NotePending(cardId, action);
+    public void NoteWorking(string cardId, string? action, string? node = null) => Presses.NotePending(PressKeyOf(node, cardId), action);
+
+    /// <summary><see cref="NoteWorking(string, string?, string?)"/> for <paramref name="card"/>, under its node's key.</summary>
+    public void NoteWorking(CardRow card, string? action) => Presses.NotePending(PressKey(card), action);
 
     // Cards whose detail fold is open, by id: swapped whole, as the presses are.
     private System.Collections.Immutable.ImmutableHashSet<string> _detailOpen = System.Collections.Immutable.ImmutableHashSet<string>.Empty;
@@ -648,10 +659,16 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     public bool DetailOpenOn(string cardId) => Volatile.Read(ref _detailOpen).Contains(cardId);
 
     /// <summary>The button of card <paramref name="cardId"/> whose press is with the node now, or null: the flight page reads it too.</summary>
-    public string? WorkingOn(string cardId) => Presses.PendingOf(cardId);
+    public string? WorkingOn(string cardId, string? node = null) => Presses.PendingOf(PressKeyOf(node, cardId));
+
+    /// <summary><see cref="WorkingOn(string, string?)"/> for <paramref name="card"/>, under its node's key.</summary>
+    public string? WorkingOn(CardRow card) => Presses.PendingOf(PressKey(card));
 
     /// <summary>The card's refusal as it stands, for a test or a dump; null when none.</summary>
-    public string? RefusedOn(string cardId) => Presses.RefusedOf(cardId);
+    public string? RefusedOn(string cardId, string? node = null) => Presses.RefusedOf(PressKeyOf(node, cardId));
+
+    /// <summary><see cref="RefusedOn(string, string?)"/> for <paramref name="card"/>, under its node's key.</summary>
+    public string? RefusedOn(CardRow card) => Presses.RefusedOf(PressKey(card));
 
     /// <summary>The panel's foot, which stays in view while the cards above scroll: the way into the chat with the watchtower.</summary>
     private Layout.Node Foot(CardsScreen screen)
@@ -964,8 +981,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             lines.Add(ideaLinks);
         }
         // What the node said to the last button pressed here, when it refused: on the card, never only in a log.
-        var working = Presses.PendingOf(card.Id);
-        if (Presses.RefusalLine(card.Id, 11f, Ring, DetailLines, LineChars) is { } refusal)
+        var pressKey = PressKey(card);
+        var working = Presses.PendingOf(pressKey);
+        if (Presses.RefusalLine(pressKey, 11f, Ring, DetailLines, LineChars) is { } refusal)
         {
             lines.Add(refusal);
         }
@@ -982,7 +1000,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             closed ? Dead(label) : working is not null ? Dead(action == working ? $"{label} …" : label) : Pill(label, action, onClick, tint);
         // A button that asks the node goes through the shared helper, which says it is working and takes no second press.
         Layout.Node NodeButton(string label, string action, Action onClick) =>
-            closed ? Dead(label) : Presses.Button(card.Id, action, () => Pill(label, action, onClick), pressed => Dead(pressed ? $"{label} …" : label));
+            closed ? Dead(label) : Presses.Button(PressKey(card), action, () => Pill(label, action, onClick), pressed => Dead(pressed ? $"{label} …" : label));
         var watched = node is { Here: false } && CanSteer?.Invoke(node) == false ? node : null;
         if (watched is not null)
         {
@@ -995,7 +1013,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             {
                 if (OnConnect is { } connect)
                 {
-                    _ = Presses.PressAsync(card.Id, connectHit, _ => connect(watched));
+                    _ = Presses.PressAsync(PressKey(card), connectHit, _ => connect(watched));
                 }
             }));
         }
@@ -1021,7 +1039,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 lines.Add(Layout.Builder.TextInput(words, 14f, Palette.Input).RowH(28f));
                 Put(closed
                     ? DeadChoice(label, false)
-                    : Presses.Button(card.Id, action, () => ChoicePill(label, false, action, () =>
+                    : Presses.Button(PressKey(card), action, () => ChoicePill(label, false, action, () =>
                     {
                         var typed = words.Text.Trim();
                         if (typed.Length > 0)
@@ -1035,7 +1053,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 ? DeadChoice(label, false)
                 : IsChip(choice.Status)
                     ? ChoiceControl(choice, card.Detail, action, () => { }, wrap: true)
-                    : Presses.Button(card.Id, action, () => ChoiceControl(choice, card.Detail, action, () => OnAnswer?.Invoke(card, number), wrap: true), pressed => DeadChoice(label, pressed)), label);
+                    : Presses.Button(PressKey(card), action, () => ChoiceControl(choice, card.Detail, action, () => OnAnswer?.Invoke(card, number), wrap: true), pressed => DeadChoice(label, pressed)), label);
         }
         // A waiting session is answered where its Remote Control has it: the card's link, one click away.
         if (card.Kind == CardKinds.SessionWaiting && card.Link is { } answerUrl)
@@ -1066,7 +1084,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 // with the node: the host sends no second press then (CardCommandAsync), so nothing would bring the row back.
                 if (OnDismiss is { } dismiss)
                 {
-                    if (WorkingOn(card.Id) is null)
+                    if (WorkingOn(card) is null)
                     {
                         NoteDismissed(card);
                     }

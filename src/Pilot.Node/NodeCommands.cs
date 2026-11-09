@@ -537,6 +537,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return Get<NodeSettingsCommands>().RestartNode(command);
         }
+        if (command.Verb == Verbs.Reboot)
+        {
+            return await Get<RebootPrep>().RunAsync(command, cancellationToken);
+        }
         if (command.Verb == Verbs.Say)
         {
             return await Get<SessionMessenger>().SayAsync(command, cancellationToken);

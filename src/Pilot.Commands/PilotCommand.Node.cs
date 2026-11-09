@@ -36,7 +36,19 @@ public static partial class PilotCommand
             var nodeRestart = Action(new Command("restart", "Restart the node in place: its flights, sessions and jobs carry on (jobs are not waited for; the answer says how many)")
                 { Arguments = { nodeRestartWhy }, Options = { actingOn } },
                 (p, client, ct) => Send(client, Verbs.RestartNode, Verbs.NodeTarget, p.GetValue(nodeRestartWhy) ?? [], who, ct, p.GetValue(actingOn)));
-            var nodeCommand = new Command("node", "This machine's pilot node") { Subcommands = { nodeRestart } };
+            // node reboot: the machine made ready to reboot (#916), never rebooted by the node itself.
+            var rebootWhy = Words("why", "Why, for its Handled line", required: false);
+            var rebootRequest = Action(new Command("request", "Make the machine ready to reboot: maintenance mode, and every live session told to commit, push and write its state to a file; the node collects them and says when it can reboot")
+                { Arguments = { rebootWhy }, Options = { actingOn } },
+                (p, client, ct) => Send(client, Verbs.Reboot, Verbs.NodeTarget, ["request", .. p.GetValue(rebootWhy) ?? []], who, ct, p.GetValue(actingOn)));
+            var rebootStatus = Action(new Command("status", "How many sessions have saved their state, and whether the machine can reboot"),
+                (p, client, ct) => Send(client, Verbs.Reboot, Verbs.NodeTarget, ["status"], who, ct));
+            var rebootCancel = Action(new Command("cancel", "Drop the reboot request before the reboot and leave maintenance mode") { Options = { actingOn } },
+                (p, client, ct) => Send(client, Verbs.Reboot, Verbs.NodeTarget, ["cancel"], who, ct, p.GetValue(actingOn)));
+            var rebootDone = Action(new Command("done", "After the reboot: leave maintenance mode, each flight resuming from its saved state") { Options = { actingOn } },
+                (p, client, ct) => Send(client, Verbs.Reboot, Verbs.NodeTarget, ["done"], who, ct, p.GetValue(actingOn)));
+            var reboot = new Command("reboot", "Make the machine ready to reboot, and resume after it") { Subcommands = { rebootRequest, rebootStatus, rebootCancel, rebootDone } };
+            var nodeCommand = new Command("node", "This machine's pilot node") { Subcommands = { nodeRestart, reboot } };
 
             // the LAN: find nodes, ask one for control, and see or take back what this node has granted
             var nodes = new Command("nodes", "The pilot nodes announcing themselves on the LAN");

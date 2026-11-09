@@ -56,6 +56,14 @@ is neither built nor tested by CI.
   constant (`pilot session end` stores `<by>: <why>`): a replaced watchtower, a duplicate, a flight that landed or merged,
   or `pilot session end` from a person or the watchtower. A session that finishes or crashes on its own is out of scope;
   the ledger closes it as finished or crashed. A session never stops another with `claude stop`.
+- A reboot made ready (`pilot node reboot request`, #916) puts the node in maintenance mode and tells every live session it
+  started to save itself. A session told so stops where it is, **commits and pushes** what it can (unpushed work is lost
+  work), and writes the file it was named (`<data>/reboot/flight-<code>-reboot-<stamp>.md`, `watchtower-reboot-…`, or its
+  name's) with four parts: what it was doing and where it stopped; what is committed and pushed and what is not; what it
+  was waiting on; the exact next step. Then it ends its turn, and the node ends the session once the file is in. A session
+  silent for 5 minutes gets a file the node writes from what it knows and is ended. `pilot node reboot status` says how far
+  it is, a "Ready to reboot" card says when all are in, and `pilot node reboot done` (after the reboot) or `cancel` leaves
+  maintenance mode. The node never reboots the machine.
 - One live watchtower per node. A change to how the node finds, messages, resumes or stops a session keeps
   `OneWatchtowerTests`, `WatchtowerTests` and `ResumeOptionsTests` passing.
 - The fleet summary is kept by the watchtower: the node has it remade after changes while a client is attached, asks

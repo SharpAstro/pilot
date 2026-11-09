@@ -546,6 +546,13 @@ public static class Verbs
     public const string RestartNode = "restart-node";
 
     /// <summary>
+    /// <c>reboot node &lt;request [why]|status|cancel|done&gt;</c> (#916): a reboot made ready. request puts the node in maintenance mode and
+    /// tells every live session it started to save its state to a file; status says how many are in; cancel drops the request; done
+    /// (after the reboot) leaves maintenance mode. The person's alone; the node never reboots the machine itself.
+    /// </summary>
+    public const string Reboot = "reboot";
+
+    /// <summary>
     /// <c>set node &lt;key&gt; [value…]</c>: saves a setting in the node's settings file (no value, or <c>default</c>, takes
     /// it out); the node restarts to run with it at once; jobs carry on under the next node. This machine only.
     /// </summary>

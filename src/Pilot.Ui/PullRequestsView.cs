@@ -176,10 +176,10 @@ internal sealed partial class PullRequestsView<TSurface>(Renderer<TSurface> rend
     public Func<PullRequestRow, CancellationToken, Task>? OnFixReview { get; set; }
 
     /// <summary>What the node said to the last press on a card, by card id (the panel keeps it); null when it did not refuse.</summary>
-    public Func<string, string?>? RefusedOf { get; set; }
+    public Func<CardRow, string?>? RefusedOf { get; set; }
 
     /// <summary>The hit id of the press of a card with the node now, by card id, or null: a row's Merge or Go around reads its working state here.</summary>
-    public Func<string, string?>? CardWorking { get; set; }
+    public Func<CardRow, string?>? CardWorking { get; set; }
 
     /// <summary>Called when a refresh starts or ends, from whichever thread: the host redraws.</summary>
     public Action? Changed { get => Presses.Changed; set => Presses.Changed = value; }
