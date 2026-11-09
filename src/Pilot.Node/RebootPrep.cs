@@ -355,18 +355,30 @@ public sealed class RebootPrep(NodeState state, TimeProvider time, string folder
     /// <summary>Where <see cref="MarkRead"/> moves a reboot file: <c>read/</c> beside it.</summary>
     public static string ReadPathOf(string file) => Path.Combine(Path.GetDirectoryName(file) ?? "", "read", Path.GetFileName(file));
 
-    /// <summary>Moves a reboot file handed to a session to <c>read/</c>, so no later brief carries it again; a file that cannot be moved stays.</summary>
+    /// <summary>
+    /// Moves a reboot file handed to a session to <c>read/</c>, with every older one of the same flight (an earlier reboot's, which the
+    /// newer supersedes and no later brief may carry as current), so none is handed on again; a file that cannot be moved stays.
+    /// </summary>
     public static void MarkRead(string file)
     {
-        try
+        var folder = Path.GetDirectoryName(file) ?? "";
+        var name = Path.GetFileName(file);
+        var older = FlightOf(file) is { } code && Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, $"flight-{code}-reboot-*.md").Where(f => string.Equals(FlightOf(f), code, StringComparison.OrdinalIgnoreCase)
+                && StringComparer.Ordinal.Compare(Path.GetFileName(f), name) < 0).ToList()
+            : [];
+        foreach (var each in older.Prepend(file))
         {
-            var to = ReadPathOf(file);
-            Directory.CreateDirectory(Path.GetDirectoryName(to)!);
-            File.Move(file, to, overwrite: true);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Left in place: the next brief carries it again, which is better than none.
+            try
+            {
+                var to = ReadPathOf(each);
+                Directory.CreateDirectory(Path.GetDirectoryName(to)!);
+                File.Move(each, to, overwrite: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Left in place (or moved already by a leg started at the same time): the next brief carries it again, which is better than none.
+            }
         }
     }
 

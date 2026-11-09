@@ -1026,13 +1026,14 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 // A merge that finished: only what it came to, as the chip it was; nothing else on it is pressed.
                 if (IsChip(choice.Status))
                 {
-                    Put(ChoiceControl(choice, card.Detail, $"card:{card.Id}:{number}", () => { }, wrap: true), StatusLabel(choice, card.Detail));
+                    Put(ChoiceControl(choice, card.Detail, $"card:{card.Id}:{number}", () => { }, wrap: true), StatusLabel(choice, card.Detail, WrappedNoteFits));
                 }
                 continue;
             }
             var action = $"card:{card.Id}:{number}";
             // A choice shown as a chip stays one while a press is with the node; a button is dead, and says "…" if it is the one pressed.
-            var label = StatusLabel(choice, card.Detail);
+            // The same words the wrapping control shows, so its row and its dead twin are the size of the live one (review of #939).
+            var label = StatusLabel(choice, card.Detail, WrappedNoteFits);
             if (choice.AsksFor is not null)
             {
                 var words = WordsOf(card, choice);

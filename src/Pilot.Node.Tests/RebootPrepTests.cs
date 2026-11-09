@@ -150,7 +150,8 @@ public sealed class RebootPrepTests
 
         RebootPrep.MarkRead(found.File);
         File.Exists(RebootPrep.ReadPathOf(found.File)).ShouldBeTrue();
-        Path.GetFileName(RebootPrep.FileFor(_folder, "PIL895")!.Value.File).ShouldBe("flight-PIL895-reboot-20261108-1000.md", "the newer one is read; the older is next");
+        RebootPrep.FileFor(_folder, "PIL895").ShouldBeNull("the older file is superseded by the newer and moves with it (review of #939)");
+        RebootPrep.FileFor(_folder, "PIL89").ShouldNotBeNull("another flight's file stays");
         RebootPrep.FileFor(_folder, "PIL1").ShouldBeNull();
         RebootPrep.FileFor(Path.Combine(_folder, "none"), "PIL895").ShouldBeNull();
     }
