@@ -17,7 +17,7 @@ public sealed class MergingCardTests : ReviewTestsBase
 
     private LegCommander Commander()
     {
-        var git = new GitCli();
+        var git = _git;
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
         return new LegCommander(_state, _workers, new FakeChecks(), _github, git, new Planes(git), _flights, options, TimeProvider.System)
         {

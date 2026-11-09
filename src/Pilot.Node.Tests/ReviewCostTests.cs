@@ -26,7 +26,7 @@ public sealed class ReviewCostTests : IDisposable
     {
         try
         {
-            Directory.Delete(_folder, recursive: true);
+            TestDirs.DeleteTree(_folder);
         }
         catch (IOException)
         {

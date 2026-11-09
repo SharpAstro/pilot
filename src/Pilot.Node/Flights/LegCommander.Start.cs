@@ -86,13 +86,15 @@ public sealed partial class LegCommander
 
     /// <summary>
     /// Starts the ticking pass of a flying leg for the leg watch, under the lock so a leg that moved meanwhile (finished, sent round,
-    /// ticked, or already given a ticker) starts nothing. Throws a <see cref="FlightException"/> saying why not.
+    /// ticked, or already given a ticker) starts nothing, nor one on a flight put on the owner's hold since the watch looked (#771).
+    /// Throws a <see cref="FlightException"/> saying why not.
     /// </summary>
     internal async Task StartTickerAsync(string code, string legName, CancellationToken cancellationToken)
     {
         await _one.WaitAsync(cancellationToken);
         try
         {
+            RefuseIfOnHold(code);
             var (flight, leg) = LegOf(Verbs.LegTarget(code, legName));
             if (flight.State != FlightState.Flying || leg.State != LegState.Flying)
             {
@@ -165,6 +167,7 @@ public sealed partial class LegCommander
 
     private void StartValidator(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs)
     {
+        RefuseIfOnHold(flight.Code);
         var validator = ValidatorName(flight, leg);
         var target = Verbs.LegTarget(flight.Code, leg.Name);
         var brief = Briefs.Validate(flight, leg, legs, Briefs.Run(Cli, Socket), options.Machine);
@@ -230,6 +233,7 @@ public sealed partial class LegCommander
 
     private void StartWorker(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs)
     {
+        RefuseIfOnHold(flight.Code);
         RingSpendAlert(flight, leg, leg.GoArounds);
         var worker = WorkerName(flight, leg);
         var target = Verbs.LegTarget(flight.Code, leg.Name);

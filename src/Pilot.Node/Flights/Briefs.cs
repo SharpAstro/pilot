@@ -51,6 +51,27 @@ public static partial class Briefs
     }
 
     /// <summary>
+    /// The owner's hard rule, in every brief that writes or reviews code: nothing busy-spins. A leaked test fixture spun a core on SE1
+    /// for four days (busy.ps1, 2026-11-04 to 11-08, about 52 h of CPU).
+    /// </summary>
+    internal const string NoSpinRule =
+        "- NO BUSY SPINNING, anywhere in the code base, tests and scripts included: no loop on the CPU waiting for a condition, and no\n" +
+        "  SpinWait, SpinUntil or SpinOnce. Wait on an event, a task, a process exit or a timer (await Task.Delay, Start-Sleep, sleep), and give\n" +
+        "  every waiting loop a deadline so it ends with its owner. A unit test runs in milliseconds, in memory, against fakes: no real\n" +
+        "  process, no network, no wall-clock wait. A review finds any spin a blocking finding.\n";
+
+    /// <summary>
+    /// How a session runs a command so Claude Code's allow rules match it (#896): a rule matches the command's text as written, so a
+    /// chained, quoted or variable call of pilot misses <c>Bash(pilot answer:*)</c> and goes to the auto-mode classifier, which denied
+    /// the watchtower's card answers as acting on the person's behalf (SE1, 2026-11-08).
+    /// </summary>
+    internal const string CommandShapeRule =
+        "- Run each pilot command alone, exactly as this brief writes it: no `cd … &&` before it, no `;` or `&&` chain, no quotes added\n" +
+        "  around its path and no variable for it. Run git in another folder as `git -C <folder> …`, never by cd. Pilot's MCP tools\n" +
+        "  (answer, dismiss, cards, status and the rest) need no shell at all. Keep a note through the node (`pilot note`), never as a\n" +
+        "  file under ~/.claude: a session writing its own settings or memory is refused.\n";
+
+    /// <summary>
     /// How a branch takes the base, for the worker and both reviewers: merging it in is the way, and merge commits on a
     /// working branch are never a finding, because the merge queue lands each PR linear (squashed, or rebased where the repo's queue rebases; the node reshapes a branch only
     /// for a rebasing queue). A review that called

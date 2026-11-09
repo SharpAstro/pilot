@@ -137,6 +137,12 @@ public sealed partial class ClaudeWorkerLauncher(
             throw new FlightException($"claude --bg did not start {start.Name} ({run.ExitCode}): {Clip(run.Output + run.Error)}");
         }
         timings?.Record(SendTimings.Start, clock.Elapsed, $"name={start.Name} job={job.Groups[1].Value}");
+        // The node's own session, for the hooks that refuse a direct test run in it (TestGuard): PILOT_SESSION is on the call (ClaudeCli.StartInfo,
+        // from the -n name), and the job id goes on the roster too, since claude --bg hands the session to a daemon whose hooks may not see that environment.
+        if (options is not null)
+        {
+            SessionRoster.Mark(SessionRoster.FileIn(options.DataFolder), job.Groups[1].Value);
+        }
         starts?.Record(new SessionStartOptions(start.Name, job.Groups[1].Value, [.. SessionArguments(start)]));
         ledger?.Started(job.Groups[1].Value, start.Name, SessionRoles.Resolve(start.Name, background: true), start.Reason ?? SessionStartReasons.Other, start.Model, start.Pr);
         return job.Groups[1].Value;

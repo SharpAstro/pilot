@@ -186,7 +186,10 @@ public abstract class PrRecheckTestsBase : IDisposable
         _github.Pr = Pr("OPEN") with { Head = head };
         _state.PutFlight(_state.Flights().Single() with { PullRequest = 7, PullRequestUrl = "https://github.com/acme/widget/pull/7" });
         _github.Prs["acme/widget#7"] = _github.Pr;
-        await Run(Verbs.Review, "flight/" + flight.Code, _state.Flights().Single().Review!.Reviewer, "pass", "fine");
+        // A reviewer that was held or queued at the open (a loaded machine, a limit) leaves no review: say why, not a null.
+        var opened = _state.Flights().Single();
+        opened.Review.ShouldNotBeNull($"no review after the PR opened; queued: {opened.Queued}; cards: {string.Join("; ", _state.Cards(openOnly: true).Select(c => $"{c.Kind}: {c.Title}"))}");
+        await Run(Verbs.Review, "flight/" + flight.Code, opened.Review.Reviewer, "pass", "fine");
         _github.Labels[7] = [PilotMarks.Recheck];
         return _state.Flights().Single();
     }
@@ -418,6 +421,33 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
         now.Head.ShouldNotBe(review.Head);
         Handled().ShouldBe([$"recheck of widget#7: head {Short(moved)} was not the one reviewed ({Short(_head)}), review restarted"]);
         _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARecheckOfAMovedHeadLeavesTheOpenDesignRingForTheReviewItStartsInsteadOfClosingItAsMoved()
+    {
+        // A review whose design question has no option that reaches the criteria: its ring is open.
+        (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = "pr/acme/widget#7", Who = "controller" }, Ct)).Error.ShouldBeNull();
+        (await _reviews.RunAsync(new CommandRequest
+        {
+            Verb = Verbs.PrVerdict, Target = "pr/acme/widget#7", Who = Review()!.Reviewer, Args = ["comment", "A question.", DecidableDesign.NoneReaches],
+        }, Ct)).Error.ShouldBeNull();
+        // The node does not post it here, so the controller does: the post is when the design card is raised.
+        (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.PostReview, Target = "pr/acme/widget#7", Who = "controller" }, Ct)).Error.ShouldBeNull();
+        var ring = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.DesignKind).ShouldHaveSingleItem();
+        _github.Labels[7] = [PilotMarks.Recheck];
+        var moved = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, "a later push");
+        _github.Prs["acme/widget#7"] = Pr("OPEN") with { Head = moved };
+
+        await LookAsync();
+
+        // The recheck started a review of the new head, which settles the question: the ring is not closed for the head here
+        // (PrRecheck passes newerReviewFollows: true), where a plain sweep would close it as "the head moved".
+        Review().ShouldNotBeNull().Head.ShouldBe(moved);
+        var now = _state.Cards().Single(c => c.Id == ring.Id);
+        now.State.ShouldBe(CardState.Open);
+        now.Outcome.ShouldBeNull();
     }
 }
 
@@ -668,7 +698,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
 {
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AFlightsPrWhoseBaseMergeConflictsIsHandedToTheWatchtowerAndTheHandledLineSaysSo()
+    public async Task AFlightsPrWhoseBaseMergeConflictsSendsTheLastLegRoundAndTheHandledLineSaysSo()
     {
         await PassedFlightAsync(readme: "theirs\n");
         MainMoves("README.md", "ours\n");
@@ -676,14 +706,13 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
 
         await LookAsync();
 
-        // No go-around: the review stays passed and the watchtower is told by a ring card.
-        _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        // The last leg went round once with the conflict (a review round it is not), and nothing rings: the Handled line says a worker has it.
         var said = Handled().ShouldHaveSingleItem();
         said.ShouldStartWith("recheck of widget#7: merging ");
         said.ShouldContain("conflicts");
-        said.ShouldContain("the watchtower is told");
-        _state.Legs(_state.Flights().Single().Code).ShouldAllBe(l => l.GoArounds == 0);
-        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.PrConflictsKind && c.Bin == CardBin.Ring);
+        said.ShouldContain(LegCommander.WorkerResolves);
+        _state.Legs(_state.Flights().Single().Code).ShouldAllBe(l => l.GoArounds == 1 && l.ReviewGoArounds == 0 && l.State == LegState.Flying);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Bin == CardBin.Ring);
     }
 
     [Fact]
