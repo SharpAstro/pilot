@@ -41,7 +41,12 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     /// <summary>Where the sweep says what it did: node.log.</summary>
     public TextWriter Error { get; init; } = TextWriter.Null;
 
-    private readonly StrayFinder _finder = new(table, time);
+    /// <summary>Whose kill command the cards name: null reads the OS the node runs on (a seam for tests).</summary>
+    public bool? Windows { get; init; }
+
+    private StrayFinder? _finder;
+
+    private StrayFinder Finder => _finder ??= new StrayFinder(table, time, Windows);
 
     // What the last sweep saw of each process's CPU and of when each session was last busy: the finder reads a rate from two sweeps.
     private StrayHistory _history = StrayHistory.Empty;
@@ -79,7 +84,7 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     public IReadOnlyList<MachineStray> SweepOnce()
     {
         var now = time.GetUtcNow();
-        var reading = _finder.Find(GatherJobs(now), GatherSessions(now), _history);
+        var reading = Finder.Find(GatherJobs(now), GatherSessions(now), _history);
         _history = new StrayHistory(reading.Cpu, BusyOwners(now));
 
         var named = new List<MachineStray>();
