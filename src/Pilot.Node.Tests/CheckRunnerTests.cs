@@ -32,7 +32,7 @@ public sealed class CheckRunnerTests
     [InlineData("git --no-such-option; git --version", "git --no-such-option; git --version", 0)]
     public async Task TheJobPathRunsTheSameCommandsAsTheShellPath(string windows, string other, int exit)
     {
-        var root = Path.Combine(Path.GetTempPath(), "p2c-" + Guid.NewGuid().ToString("N")[..8]);
+        var root = TestTemp.NewPath();
         Directory.CreateDirectory(root);
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var jobs = new JobRunner(state, new NodeOptions(Path.Combine(root, "n.sock"), Path.Combine(root, "data")), TimeProvider.System);
@@ -53,7 +53,7 @@ public sealed class CheckRunnerTests
             await jobs.StopAsync(CancellationToken.None);
             try
             {
-                Directory.Delete(root, recursive: true);
+                TestTemp.Delete(root);
             }
             catch (IOException)
             {

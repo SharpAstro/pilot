@@ -13,11 +13,11 @@ namespace Pilot.Node.Tests;
 /// </summary>
 public sealed class NodeCardTests : IDisposable
 {
-    private readonly string _data = Path.Combine(Path.GetTempPath(), "pilot-nodecard-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _data = TestTemp.NewPath();
 
     public void Dispose()
     {
-        try { Directory.Delete(_data, true); } catch (IOException) { }
+        try { TestTemp.Delete(_data); } catch (IOException) { }
     }
 
     [Fact]

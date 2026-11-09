@@ -15,7 +15,7 @@ public abstract class ReviewTestsBase : IDisposable
 {
     private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2r-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly string _root = TestTemp.NewPath();
     private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private protected readonly FakeWorkers _workers = new();
     private protected readonly FakeGitHub _github = new();

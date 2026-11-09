@@ -17,7 +17,7 @@ public sealed class PushBlockedTests : IDisposable
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2blocked-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private readonly FakeChecks _checks = new();
     private readonly LegCommander _legs;
@@ -185,11 +185,7 @@ public sealed class PushBlockedTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        TestTemp.Delete(_root);
     }
 
     private static void Commit(string cwd, string message)

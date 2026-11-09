@@ -7,7 +7,7 @@ namespace Pilot.Node.Tests;
 
 public sealed class SessionStartLogTests : IDisposable
 {
-    private readonly string _jobs = Path.Combine(Path.GetTempPath(), "pilot-startlog-" + Guid.NewGuid().ToString("N"));
+    private readonly string _jobs = TestTemp.NewPath();
 
     private readonly StringWriter _log = new();
 
@@ -15,7 +15,7 @@ public sealed class SessionStartLogTests : IDisposable
 
     public SessionStartLogTests() => Directory.CreateDirectory(_jobs);
 
-    public void Dispose() => Directory.Delete(_jobs, recursive: true);
+    public void Dispose() => TestTemp.Delete(_jobs);
 
     private LoggingWorkerLauncher Launcher() => new(_inner, _log, new ClaudeJobState(_jobs), TimeProvider.System);
 

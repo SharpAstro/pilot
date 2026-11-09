@@ -7,7 +7,7 @@ namespace Pilot.Node.Tests;
 
 public sealed class DiskUsageTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "pilot-diskusage-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = TestTemp.NewPath();
 
     public DiskUsageTests() => Directory.CreateDirectory(_root);
 
@@ -15,7 +15,7 @@ public sealed class DiskUsageTests : IDisposable
     {
         try
         {
-            Directory.Delete(_root, recursive: true);
+            TestTemp.Delete(_root);
         }
         catch (IOException)
         {

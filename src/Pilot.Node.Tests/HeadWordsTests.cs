@@ -15,7 +15,7 @@ public sealed class HeadWordsTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _dir = Path.Combine(Path.GetTempPath(), "hw-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _dir = TestTemp.NewPath();
 
     public HeadWordsTests()
     {
@@ -30,11 +30,7 @@ public sealed class HeadWordsTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var file in Directory.EnumerateFiles(_dir, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_dir, recursive: true);
+        TestTemp.Delete(_dir);
     }
 
     private string G(params string[] args)

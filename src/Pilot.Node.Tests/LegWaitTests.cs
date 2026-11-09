@@ -18,7 +18,7 @@ public sealed class LegWaitTests : IDisposable
 
     private static readonly DateTimeOffset Start = new(2026, 10, 26, 9, 0, 0, TimeSpan.Zero);
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2w-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private readonly ManualTime _time = new(Start);
     private readonly NodeState _state;
     private readonly FakeWorkers _workers = new();
@@ -57,11 +57,7 @@ public sealed class LegWaitTests : IDisposable
         catch (InvalidOperationException)
         {
         }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        TestTemp.Delete(_root);
     }
 
     private static string Git(string cwd, params string[] args)

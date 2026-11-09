@@ -18,7 +18,7 @@ public sealed class ReviewCostTests : IDisposable
 
     private static readonly DateTimeOffset Landed = new(2026, 10, 25, 12, 0, 0, TimeSpan.Zero);
 
-    private readonly string _folder = Path.Combine(Path.GetTempPath(), "p2rc-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _folder = TestTemp.NewPath();
 
     private ClaudeProfile Profile => new(_folder);
 
@@ -26,7 +26,7 @@ public sealed class ReviewCostTests : IDisposable
     {
         try
         {
-            Directory.Delete(_folder, recursive: true);
+            TestTemp.Delete(_folder);
         }
         catch (IOException)
         {

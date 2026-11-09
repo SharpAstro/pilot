@@ -9,7 +9,7 @@ public sealed class SiblingWatchTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _org = Path.Combine(Path.GetTempPath(), "p2s-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _org = TestTemp.NewPath();
 
     private string Repo => Path.Combine(_org, "tianwen");
 
@@ -17,7 +17,7 @@ public sealed class SiblingWatchTests : IDisposable
     {
         if (Directory.Exists(_org))
         {
-            Directory.Delete(_org, recursive: true);
+            TestTemp.Delete(_org);
         }
     }
 

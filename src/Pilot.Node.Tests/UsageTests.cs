@@ -12,7 +12,7 @@ public sealed class UsageTests : IDisposable
     private static readonly DateTimeOffset Now = new DateTimeOffset(2026, 10, 20, 12, 0, 0, TimeSpan.Zero);
     private static readonly DateTimeOffset Reset = Now.AddHours(2);
 
-    private readonly string _folder = Path.Combine(Path.GetTempPath(), "p2u-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _folder = TestTemp.NewPath();
     private readonly ManualTime _time = new(Now);
     private readonly NodeState _state;
 
@@ -22,7 +22,7 @@ public sealed class UsageTests : IDisposable
         _state = new NodeState(new InMemoryJournal(), _time);
     }
 
-    public void Dispose() => Directory.Delete(_folder, recursive: true);
+    public void Dispose() => TestTemp.Delete(_folder);
 
     private string File => Path.Combine(_folder, "rate-limits.json");
 

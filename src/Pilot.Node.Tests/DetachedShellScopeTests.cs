@@ -111,7 +111,7 @@ public sealed class DetachedShellScopeTests
         {
             Assert.Skip("needs Linux with a systemd user bus that answers `systemctl --user`");
         }
-        var dir = Path.Combine(Path.GetTempPath(), $"pilot-scope-{Guid.NewGuid():N}");
+        var dir = TestTemp.NewPath();
         Directory.CreateDirectory(dir);
         var log = Path.Combine(dir, "j1.log");
         var exit = log + ".exit";
@@ -139,7 +139,7 @@ public sealed class DetachedShellScopeTests
         finally
         {
             NodeRestarter.UnitMainProcessOverride = null;
-            Directory.Delete(dir, true);
+            TestTemp.Delete(dir);
         }
     }
 

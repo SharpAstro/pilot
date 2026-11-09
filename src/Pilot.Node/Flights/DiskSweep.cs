@@ -5,7 +5,7 @@ namespace Pilot.Node.Flights;
 /// <summary>
 /// Deletes what jobs and probes leave on disk (pilot #711): the <c>tmp</c> folder of a job (<c>~/.claude/jobs/&lt;id&gt;/tmp</c>)
 /// once its session has ended in a flight that landed, or once nothing in it was written for <see cref="ScratchDays"/>; and
-/// <c>p2o-*</c> probe outputs in the temp folder older than <see cref="ProbeAge"/>. Only <c>tmp</c> goes: a job's
+/// <c>p2o-*</c> probe outputs and test temp roots (<see cref="TestFolderPrefix"/>) in the temp folder older than <see cref="ProbeAge"/>. Only <c>tmp</c> goes: a job's
 /// <c>state.json</c> and timeline stay, and no job whose session is live is touched. A sweep that freed something says
 /// so on one Handled card, the size counted by unique bytes (<see cref="DiskUsage"/>).
 /// </summary>
@@ -22,6 +22,9 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
 
     /// <summary>How old a <c>p2o-*</c> folder in the temp folder is before it goes.</summary>
     public TimeSpan ProbeAge { get; init; } = TimeSpan.FromDays(1);
+
+    /// <summary>The prefix of the temp roots the tests make (<c>TestTemp</c>); a folder of it older than <see cref="ProbeAge"/> goes as a <c>p2o-*</c> probe does.</summary>
+    public const string TestFolderPrefix = "p2tt-";
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
@@ -86,11 +89,22 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
             }
         }
 
-        if (scratch + probes + obj > 0)
+        // Test temp roots (pilot #895): a teardown that could not delete one (a file held on Windows) leaves it here.
+        int tests = 0;
+        foreach (var test in Safe(() => Directory.EnumerateDirectories(tempFolder, TestFolderPrefix + "*")))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Newest(test) < probeCutoff)
+            {
+                Remove(test, ref tests, ref bytes);
+            }
+        }
+
+        if (scratch + probes + tests + obj > 0)
         {
             state.RaiseCard(CardBin.Handled, Kind, Verbs.NodeTarget,
-                $"Disk sweep freed {Size(bytes)}: {scratch} job scratch folder{(scratch == 1 ? "" : "s")}, {probes} probe folder{(probes == 1 ? "" : "s")}{(obj > 0 ? $", {obj} obj folder{(obj == 1 ? "" : "s")} of finished legs" : "")}",
-                $"Deleted {scratch} job scratch folders (jobs/<id>/tmp of landed flights' ended sessions, or older than the scratch-days setting) and {probes} p2o-* probe folders older than a day{(obj > 0 ? $", and {obj} obj folders in planes whose legs are done and idle (bin kept)" : "")}; {Size(bytes)} by unique bytes. state.json and the timeline of each job stay.");
+                $"Disk sweep freed {Size(bytes)}: {scratch} job scratch folder{(scratch == 1 ? "" : "s")}, {probes} probe folder{(probes == 1 ? "" : "s")}{(tests > 0 ? $", {tests} test folder{(tests == 1 ? "" : "s")}" : "")}{(obj > 0 ? $", {obj} obj folder{(obj == 1 ? "" : "s")} of finished legs" : "")}",
+                $"Deleted {scratch} job scratch folders (jobs/<id>/tmp of landed flights' ended sessions, or older than the scratch-days setting) and {probes} p2o-* probe folders older than a day{(tests > 0 ? $", {tests} {TestFolderPrefix}* test folders older than a day (left by a test teardown)" : "")}{(obj > 0 ? $", and {obj} obj folders in planes whose legs are done and idle (bin kept)" : "")}; {Size(bytes)} by unique bytes. state.json and the timeline of each job stay.");
         }
 
         var reclaimable = new List<(string Name, string Path)>();

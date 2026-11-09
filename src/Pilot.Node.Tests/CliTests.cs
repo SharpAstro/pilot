@@ -13,7 +13,7 @@ public sealed class CliTests : IAsyncLifetime
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2c-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private NodeHarness _node = null!;
 
     private string Repo => Path.Combine(_root, "tianwen");

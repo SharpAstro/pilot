@@ -21,7 +21,7 @@ public sealed class EndedSessionJobsTests : IDisposable
 
     private readonly TempProfile _profile = new TempProfile();
     private readonly FakeClaudeAgents _agents = new FakeClaudeAgents();
-    private readonly string _root = Directory.CreateTempSubdirectory("ended-jobs-").FullName;
+    private readonly string _root = TestTemp.Create();
     private readonly NodeState _state = new NodeState(new InMemoryJournal(), TimeProvider.System);
     private readonly ConcurrentQueue<CommandRequest> _said = new();
     private readonly SessionTracker _tracker;
@@ -50,7 +50,7 @@ public sealed class EndedSessionJobsTests : IDisposable
         _profile.Dispose();
         try
         {
-            Directory.Delete(_root, recursive: true);
+            TestTemp.Delete(_root);
         }
         catch (IOException)
         {

@@ -16,7 +16,7 @@ public sealed class JobRetellTests : IDisposable
     }
 
     private static readonly TimeSpan After = TimeSpan.FromMinutes(4);
-    private readonly string _root = Directory.CreateTempSubdirectory("retell-").FullName;
+    private readonly string _root = TestTemp.Create();
     private readonly Clock _clock = new(new DateTimeOffset(2026, 11, 6, 10, 0, 0, TimeSpan.Zero));
     private readonly NodeState _state;
     private readonly JobRunner _jobs;
@@ -44,7 +44,7 @@ public sealed class JobRetellTests : IDisposable
         _jobs.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
         try
         {
-            Directory.Delete(_root, recursive: true);
+            TestTemp.Delete(_root);
         }
         catch (IOException)
         {

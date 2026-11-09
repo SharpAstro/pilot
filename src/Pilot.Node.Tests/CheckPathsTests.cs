@@ -15,7 +15,7 @@ public sealed class CheckPathsTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2k-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private readonly NodeState _state = new(new InMemoryJournal(), new ManualTime(new DateTimeOffset(2026, 10, 27, 9, 0, 0, TimeSpan.Zero)));
     private readonly LegCommander _legs;
 
@@ -36,7 +36,7 @@ public sealed class CheckPathsTests : IDisposable
 
     private string Plane => Path.Combine(_root, "plane");
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose() => TestTemp.Delete(_root);
 
     private void Write(string relative)
     {

@@ -15,7 +15,7 @@ public sealed class WholeSuiteJobTests : IDisposable
 {
     private const string Unfiltered = "dotnet test Pilot.Node.Tests -c Release";
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2w-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private readonly ChangedGit _git = new();
     private readonly JobRunner _jobs;
@@ -39,7 +39,7 @@ public sealed class WholeSuiteJobTests : IDisposable
         });
     }
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose() => TestTemp.Delete(_root);
 
     private CommandResult Run(string command, string? why = null) =>
         _jobs.Run(new CommandRequest

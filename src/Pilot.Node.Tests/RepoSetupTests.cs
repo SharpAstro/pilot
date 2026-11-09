@@ -70,7 +70,7 @@ public sealed class RepoSetupTests
     [Fact]
     public async Task ARefusedFieldStillLetsTheFlightBeMade()
     {
-        var root = Path.Combine(Path.GetTempPath(), "p2s-" + Guid.NewGuid().ToString("N")[..8]);
+        var root = TestTemp.NewPath();
         var repo = Path.Combine(root, "tianwen");
         Directory.CreateDirectory(repo);
         try
@@ -94,11 +94,7 @@ public sealed class RepoSetupTests
         }
         finally
         {
-            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(root, recursive: true);
+            TestTemp.Delete(root);
         }
     }
 

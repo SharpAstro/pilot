@@ -12,7 +12,7 @@ public sealed class ValidatorTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2v-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private readonly FakeWorkers _workers = new();
     private readonly FlightCommander _flights;
@@ -45,11 +45,7 @@ public sealed class ValidatorTests : IDisposable
         catch (InvalidOperationException)
         {
         }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        TestTemp.Delete(_root);
     }
 
     private static string Git(string cwd, params string[] args)

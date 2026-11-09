@@ -80,11 +80,7 @@ internal static class SeedRepo
     {
         try
         {
-            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(root, recursive: true);
+            TestTemp.Delete(root);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

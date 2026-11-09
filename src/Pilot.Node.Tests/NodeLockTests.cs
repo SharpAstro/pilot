@@ -44,7 +44,7 @@ public sealed class NodeLockTests
             held.ClearStaleSocket();
             File.Exists(socketPath).ShouldBeFalse();
         }
-        Directory.Delete(Path.GetDirectoryName(socketPath)!, recursive: true);
+        TestTemp.Delete(Path.GetDirectoryName(socketPath)!);
     }
 
     [Fact]
@@ -100,7 +100,7 @@ public sealed class NodeCommandLineTests
         }
         finally
         {
-            Directory.Delete(Path.GetDirectoryName(file)!, recursive: true);
+            TestTemp.Delete(Path.GetDirectoryName(file)!);
         }
     }
 }

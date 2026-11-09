@@ -321,7 +321,7 @@ public sealed class LegWatchTests
     public async Task AnIdleWorkerWithAnEndedUntoldJobIsToldItAndNeitherNudgedNorRung()
     {
         // The hook goes through a real JobRunner's tell, as the node wires it (NodeApp.Services.cs).
-        var root = Directory.CreateTempSubdirectory("legwatch-tell-").FullName;
+        var root = TestTemp.Create();
         try
         {
             var jobs = new JobRunner(_state, new NodeOptions(Path.Combine(root, "n.sock"), Path.Combine(root, "data")), _time) { Say = Run };
@@ -342,7 +342,7 @@ public sealed class LegWatchTests
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            TestTemp.Delete(root);
         }
     }
 

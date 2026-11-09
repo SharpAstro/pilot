@@ -225,7 +225,7 @@ public sealed class PlaneOutputTests : JobTestsBase
         // Nothing of the build lands outside the planes: removing the planes (what landing does) leaves the org as it was.
         foreach (var plane in planes)
         {
-            Directory.Delete(plane, recursive: true);
+            TestTemp.Delete(plane);
         }
         var left = Directory.EnumerateFiles(org, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(org, f).Replace(Path.DirectorySeparatorChar, '/')).Order().ToArray();
         left.ShouldBe(["lib/Lib.cs", "lib/lib.csproj"], "nothing of the per-plane build remains once the planes are gone");

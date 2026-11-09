@@ -7,13 +7,13 @@ namespace Pilot.Node.Tests;
 /// <summary>Standing orders (#782): kept by the node as notes with an id, listed, retired, and still there after a restart.</summary>
 public sealed class StandingOrderTests : IDisposable
 {
-    private readonly string _folder = Path.Combine(Path.GetTempPath(), "p2o-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _folder = TestTemp.NewPath();
 
     public void Dispose()
     {
         if (Directory.Exists(_folder))
         {
-            Directory.Delete(_folder, recursive: true);
+            TestTemp.Delete(_folder);
         }
     }
 

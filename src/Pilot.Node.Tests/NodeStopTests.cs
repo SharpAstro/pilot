@@ -27,7 +27,7 @@ public sealed class NodeStopTests
         {
             try
             {
-                Directory.Delete(node.Folder, recursive: true);
+                TestTemp.Delete(node.Folder);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {

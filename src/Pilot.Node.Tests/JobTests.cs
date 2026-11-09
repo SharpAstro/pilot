@@ -22,7 +22,7 @@ public abstract class JobTestsBase : IDisposable
 {
     private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2j-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly string _root = TestTemp.NewPath();
     private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private protected readonly ConcurrentQueue<CommandRequest> _said = new();
     private protected readonly JobRunner _jobs;
@@ -62,11 +62,7 @@ public abstract class JobTestsBase : IDisposable
         try
         {
             // Git's object files are read-only, and a test that made a repo here would fail the delete.
-            foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(_root, recursive: true);
+            TestTemp.Delete(_root);
         }
         catch (IOException)
         {

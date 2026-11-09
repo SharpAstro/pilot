@@ -18,7 +18,7 @@ public sealed class UpdateTests : IDisposable
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2u-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private readonly string _install;
 
     public UpdateTests() => _install = Directory.CreateDirectory(Path.Combine(_root, "bin")).FullName;
@@ -27,7 +27,7 @@ public sealed class UpdateTests : IDisposable
     {
         if (Directory.Exists(_root))
         {
-            Directory.Delete(_root, recursive: true);
+            TestTemp.Delete(_root);
         }
     }
 

@@ -146,7 +146,7 @@ public sealed class NodeTrafficTests
     [Fact]
     public void TheHourlyRollWritesOneLineWithTheHoursInAndOut()
     {
-        var folder = Path.Combine(Path.GetTempPath(), "p2t-" + Guid.NewGuid().ToString("N")[..8]);
+        var folder = TestTemp.NewPath();
         try
         {
             var clock = new Clock(new DateTimeOffset(2026, 10, 30, 9, 20, 0, TimeSpan.Zero));
@@ -171,7 +171,7 @@ public sealed class NodeTrafficTests
         {
             if (Directory.Exists(folder))
             {
-                Directory.Delete(folder, recursive: true);
+                TestTemp.Delete(folder);
             }
         }
     }

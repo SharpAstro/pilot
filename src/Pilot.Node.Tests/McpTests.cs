@@ -593,7 +593,7 @@ public sealed class McpTests : IAsyncLifetime
     [Fact]
     public async Task TheToolsComeFromTheCommandTreeNotTheNode_ANodeStartedLaterAnswersTheNextCall()
     {
-        var folder = Path.Combine(Path.GetTempPath(), "p2t-" + Guid.NewGuid().ToString("N")[..8]);
+        var folder = TestTemp.NewPath();
         Directory.CreateDirectory(folder);
         var socket = Path.Combine(folder, NodeSocket.DefaultFileName);
         var input = new FedReader();
@@ -628,7 +628,7 @@ public sealed class McpTests : IAsyncLifetime
             }
             else
             {
-                Directory.Delete(folder, recursive: true);
+                TestTemp.Delete(folder);
             }
         }
     }

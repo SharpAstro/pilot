@@ -10,7 +10,7 @@ public sealed class JobMemoryTests : IDisposable
 {
     private const long Gb = 1L << 30;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2m-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private readonly string _clone;
     private readonly string _plane;
 
@@ -35,7 +35,7 @@ public sealed class JobMemoryTests : IDisposable
     {
         try
         {
-            Directory.Delete(_root, recursive: true);
+            TestTemp.Delete(_root);
         }
         catch (IOException)
         {

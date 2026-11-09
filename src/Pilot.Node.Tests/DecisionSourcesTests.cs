@@ -80,7 +80,7 @@ public sealed class DecisionGoAroundTests : IDisposable
     private const string PrUrl = "https://github.com/x/tianwen/pull/63";
     private const string Subject = "flight/TIA1";
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2k-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
 
     private string Repo => Path.Combine(_root, "tianwen");
 
@@ -93,11 +93,7 @@ public sealed class DecisionGoAroundTests : IDisposable
                 return;
             }
             Git(Repo, "worktree", "prune");
-            foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(_root, recursive: true);
+            TestTemp.Delete(_root);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {

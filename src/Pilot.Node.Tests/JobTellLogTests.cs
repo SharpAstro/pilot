@@ -8,7 +8,7 @@ namespace Pilot.Node.Tests;
 /// <summary>Every job tell is logged with its outcome and the target's state, and the told row says when and how (#756).</summary>
 public sealed class JobTellLogTests : IDisposable
 {
-    private readonly string _root = Directory.CreateTempSubdirectory("tell-log-").FullName;
+    private readonly string _root = TestTemp.Create();
     private readonly NodeState _state = new NodeState(new InMemoryJournal(), TimeProvider.System);
     private readonly StringWriter _log = new();
     private readonly JobRunner _jobs;
@@ -34,7 +34,7 @@ public sealed class JobTellLogTests : IDisposable
         _jobs.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
         try
         {
-            Directory.Delete(_root, recursive: true);
+            TestTemp.Delete(_root);
         }
         catch (IOException)
         {

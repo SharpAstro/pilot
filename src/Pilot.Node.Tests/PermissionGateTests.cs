@@ -20,7 +20,7 @@ public sealed class PermissionGateTests
 
     private static readonly DateTimeOffset Start = new(2026, 11, 7, 9, 0, 0, TimeSpan.Zero);
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2pg-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private readonly ManualTime _time = new(Start);
     private readonly NodeState _state;
     private readonly PermissionGate _gate;

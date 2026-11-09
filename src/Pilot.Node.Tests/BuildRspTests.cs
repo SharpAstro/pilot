@@ -12,13 +12,13 @@ public sealed class BuildRspTests : IDisposable
 
     private const string Rsp = "# node reuse off\n-nodeReuse:false\n";
 
-    private readonly string _root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "p2r-" + Guid.NewGuid().ToString("N")[..8])).FullName;
+    private readonly string _root = Directory.CreateDirectory(TestTemp.NewPath()).FullName;
 
     public void Dispose()
     {
         if (Directory.Exists(_root))
         {
-            Directory.Delete(_root, recursive: true);
+            TestTemp.Delete(_root);
         }
     }
 

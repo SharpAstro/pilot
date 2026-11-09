@@ -22,7 +22,7 @@ public abstract class FlightMoveTestsBase : IAsyncDisposable
     private protected const string Code = "TIA900";
     private protected const string Branch = "flight/tia900";
 
-    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2v-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly string _root = TestTemp.NewPath();
     private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private protected readonly NodeState _sender = new(new InMemoryJournal(), TimeProvider.System);
     private protected readonly RoleModels _models = new(null);
@@ -93,11 +93,7 @@ public abstract class FlightMoveTestsBase : IAsyncDisposable
         catch (InvalidOperationException)
         {
         }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        TestTemp.Delete(_root);
     }
 
     private protected static string Git(string cwd, params string[] args)

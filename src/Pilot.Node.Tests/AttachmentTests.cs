@@ -19,7 +19,7 @@ public sealed class AttachmentTests : IAsyncDisposable
 
     private static readonly byte[] Png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4];
 
-    private readonly string _plane = Path.Combine(Path.GetTempPath(), "p2a-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _plane = TestTemp.NewPath();
     private NodeHarness? _node;
 
     public AttachmentTests() => Directory.CreateDirectory(_plane);
@@ -32,7 +32,7 @@ public sealed class AttachmentTests : IAsyncDisposable
         }
         if (Directory.Exists(_plane))
         {
-            Directory.Delete(_plane, recursive: true);
+            TestTemp.Delete(_plane);
         }
     }
 
@@ -194,7 +194,7 @@ public sealed class AttachmentTests : IAsyncDisposable
     [Trait("Category", "Slow")]
     public async Task LandingAFlightRemovesItsCopiesAndLeavesAnotherFlightsAlone()
     {
-        var root = Path.Combine(Path.GetTempPath(), "p2a-" + Guid.NewGuid().ToString("N")[..8]);
+        var root = TestTemp.NewPath();
         var repo = Path.Combine(root, "tianwen");
         Directory.CreateDirectory(repo);
         try
@@ -236,11 +236,7 @@ public sealed class AttachmentTests : IAsyncDisposable
             catch (InvalidOperationException)
             {
             }
-            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(root, recursive: true);
+            TestTemp.Delete(root);
         }
     }
 

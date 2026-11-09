@@ -11,15 +11,11 @@ namespace Pilot.Node.Tests;
 /// </summary>
 public sealed class GitOfflineTests : IDisposable
 {
-    private readonly string _dir = Directory.CreateTempSubdirectory("p2o-").FullName;
+    private readonly string _dir = TestTemp.Create();
 
     public void Dispose()
     {
-        foreach (var file in Directory.EnumerateFiles(_dir, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_dir, recursive: true);
+        TestTemp.Delete(_dir);
     }
 
     private static Task<GitRun> Git(string cwd, params string[] args) => new GitCli(budget: TimeSpan.FromSeconds(30)).RunAsync(args, cwd, TestContext.Current.CancellationToken);

@@ -115,7 +115,7 @@ public sealed class IdeaImageTests : IDisposable
 
     private static readonly byte[] Png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4];
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2im-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private readonly FakeGitHub _github = new();
     private readonly Attachments _attachments;
@@ -142,11 +142,7 @@ public sealed class IdeaImageTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        TestTemp.Delete(_root);
     }
 
     private static string Git(string cwd, params string[] args)

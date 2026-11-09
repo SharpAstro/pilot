@@ -47,7 +47,7 @@ public sealed class CardScreenshotTests
     public async Task ACardRaisedWithALegsArtifactCopyKeepsACopyOfItsOwnThatOutlivesTheLeg()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
-        var plane = Path.Combine(Path.GetTempPath(), "p2c-" + Guid.NewGuid().ToString("N")[..8]);
+        var plane = TestTemp.NewPath();
         Directory.CreateDirectory(plane);
         try
         {
@@ -73,7 +73,7 @@ public sealed class CardScreenshotTests
         }
         finally
         {
-            Directory.Delete(plane, recursive: true);
+            TestTemp.Delete(plane);
         }
     }
 

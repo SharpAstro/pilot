@@ -13,15 +13,11 @@ public sealed class RepoStatusTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "p2s-" + Guid.NewGuid().ToString("N")[..8])).FullName;
+    private readonly string _root = Directory.CreateDirectory(TestTemp.NewPath()).FullName;
 
     public void Dispose()
     {
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        TestTemp.Delete(_root);
     }
 
     // A folder that looks like a clone: a .git folder, with an origin on GitHub.

@@ -15,15 +15,11 @@ public sealed class ReposRowTests : IDisposable
 
     private static readonly DateTimeOffset Noon = new(2026, 10, 30, 12, 0, 0, TimeSpan.Zero);
 
-    private readonly string _root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "p2r-" + Guid.NewGuid().ToString("N")[..8])).FullName;
+    private readonly string _root = Directory.CreateDirectory(TestTemp.NewPath()).FullName;
 
     public void Dispose()
     {
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        TestTemp.Delete(_root);
     }
 
     private string Clone(string name)

@@ -283,7 +283,7 @@ public sealed class HookInstallerTests
         }
         finally
         {
-            Directory.Delete(Path.GetDirectoryName(file)!, recursive: true);
+            TestTemp.Delete(Path.GetDirectoryName(file)!);
         }
     }
 }

@@ -9,9 +9,9 @@ namespace Pilot.Node.Tests;
 /// <summary>The new-flight wizard's repos: the clones under the roots, their GitHub names, the busiest first.</summary>
 public sealed class RepoCatalogTests : IDisposable
 {
-    private readonly string _root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "p2r-" + Guid.NewGuid().ToString("N")[..8])).FullName;
+    private readonly string _root = Directory.CreateDirectory(TestTemp.NewPath()).FullName;
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose() => TestTemp.Delete(_root);
 
     // A folder that looks like a clone: a .git folder, with an origin when given.
     private string Clone(string name, string? origin = null)

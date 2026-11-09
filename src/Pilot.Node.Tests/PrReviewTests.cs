@@ -79,7 +79,7 @@ public abstract class PrReviewTestsBase : IDisposable
 {
     private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2p-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly string _root = TestTemp.NewPath();
     private protected readonly InMemoryJournal _journal = new();
     private protected readonly NodeState _state;
     private protected readonly FakeWorkers _workers = new();
@@ -1012,7 +1012,7 @@ public sealed class PrReviewCliTests : IAsyncLifetime
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2q-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private NodeHarness _node = null!;
     private string _head = "";
 

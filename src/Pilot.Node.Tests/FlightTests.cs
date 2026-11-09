@@ -76,7 +76,7 @@ public sealed class FlightCommanderTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2f-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private readonly FlightCommander _commander;
 
@@ -101,11 +101,7 @@ public sealed class FlightCommanderTests : IDisposable
         catch (InvalidOperationException)
         {
         }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        TestTemp.Delete(_root);
     }
 
     private static string Git(string cwd, params string[] args)
@@ -431,13 +427,13 @@ public sealed class FlightCommanderTests : IDisposable
 /// <summary>Flights are in the store, and on the stream.</summary>
 public sealed class FlightStoreTests : IDisposable
 {
-    private readonly string _folder = Path.Combine(Path.GetTempPath(), "p2fs-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _folder = TestTemp.NewPath();
 
     public void Dispose()
     {
         if (Directory.Exists(_folder))
         {
-            Directory.Delete(_folder, recursive: true);
+            TestTemp.Delete(_folder);
         }
     }
 
@@ -512,9 +508,9 @@ public sealed class FlightStoreTests : IDisposable
 /// <summary>A plane's own Claude Code settings: the repo's MCP servers disabled, so no session there waits on their approval.</summary>
 public sealed class PlaneSettingsTests : IDisposable
 {
-    private readonly string _plane = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "p2p-" + Guid.NewGuid().ToString("N")[..8])).FullName;
+    private readonly string _plane = Directory.CreateDirectory(TestTemp.NewPath()).FullName;
 
-    public void Dispose() => Directory.Delete(_plane, recursive: true);
+    public void Dispose() => TestTemp.Delete(_plane);
 
     [Fact]
     public void ThePlanesLocalSettingsDisableTheRepoMcpServersAndKeepTheRest()

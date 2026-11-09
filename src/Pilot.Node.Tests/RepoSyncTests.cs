@@ -12,15 +12,23 @@ public sealed class RepoSyncTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "p2y-" + Guid.NewGuid().ToString("N")[..8])).FullName;
+    private readonly string _root = Directory.CreateDirectory(TestTemp.NewPath()).FullName;
 
     public void Dispose()
     {
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        TestTemp.Delete(_root);
+    }
+
+    [Fact]
+    public void DisposeWhileAFileUnderTheRootIsHeldOpenReturnsWithoutThrowingAndLeavesTheFolderForTheSweep()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "only Windows refuses to delete a folder holding an open file");
+        var file = Path.Combine(Clone("held"), "held.log");
+        using var held = new FileStream(file, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
+
+        Should.NotThrow(() => Dispose());
+
+        Directory.Exists(_root).ShouldBeTrue();
     }
 
     private string Clone(string name)

@@ -18,32 +18,13 @@ public sealed class PullRequestsTests : IDisposable
 
     private static readonly DateTimeOffset Noon = new(2026, 10, 28, 12, 0, 0, TimeSpan.Zero);
 
-    private readonly string _root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "p2p-" + Guid.NewGuid().ToString("N")[..8])).FullName;
+    private readonly string _root = Directory.CreateDirectory(TestTemp.NewPath()).FullName;
 
     public void Dispose()
     {
         // A node just disposed can still hold a clone for a moment on Windows (its git or watcher handles): the delete is tried
-        // again for a few seconds, then left, as a temp folder is no reason to fail a test (#546's run 41183059493).
-        for (var attempt = 0; ; attempt++)
-        {
-            try
-            {
-                foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-                {
-                    File.SetAttributes(file, FileAttributes.Normal);
-                }
-                Directory.Delete(_root, recursive: true);
-                return;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                if (attempt >= 50)
-                {
-                    return;
-                }
-                Thread.Sleep(100);
-            }
-        }
+        // again for a moment, then left for the node's DiskSweep, as a temp folder is no reason to fail a test (#546's run 41183059493).
+        TestTemp.Delete(_root);
     }
 
     // A recorded answer of GitHub's search: Fixtures/PullRequests/<name>.json.

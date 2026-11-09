@@ -28,7 +28,7 @@ public class CheckLimitTests
     [Fact]
     public void APassFromARemovedPlaneCountsForALivePlane()
     {
-        var clone = Path.Combine(Path.GetTempPath(), "checklimit-real-" + Guid.NewGuid().ToString("N"));
+        var clone = TestTemp.NewPath();
         try
         {
             var planes = Path.Combine(clone, ".claude", "worktrees");
@@ -52,7 +52,7 @@ public class CheckLimitTests
         }
         finally
         {
-            Directory.Delete(clone, true);
+            TestTemp.Delete(clone);
         }
     }
 

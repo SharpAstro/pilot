@@ -7,11 +7,11 @@ namespace Pilot.Node.Tests;
 /// <summary>A role is a range of model and effort pairs (#599): a default and a max, never effort max, with old settings read as the nearest range.</summary>
 public sealed class RoleRangeTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "pilot-range-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = TestTemp.NewPath();
 
     public RoleRangeTests() => Directory.CreateDirectory(_root);
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose() => TestTemp.Delete(_root);
 
     private NodeSettings ReadOld(string json)
     {

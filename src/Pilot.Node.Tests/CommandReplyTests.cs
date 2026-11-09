@@ -14,7 +14,7 @@ public sealed class CommandReplyTests : IAsyncLifetime
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2o-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private NodeHarness _node = null!;
 
     private string Repo => Path.Combine(_root, "tianwen");
@@ -28,11 +28,7 @@ public sealed class CommandReplyTests : IAsyncLifetime
     public async ValueTask DisposeAsync()
     {
         await _node.DisposeAsync();
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        TestTemp.Delete(_root);
     }
 
     private CommandRequest CreateIssue() => new()

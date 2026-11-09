@@ -19,7 +19,7 @@ public abstract class PrMarksTestsBase : IDisposable
 
     private protected const string Moved = "beef1111beef1111";
 
-    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2m-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly string _root = TestTemp.NewPath();
     private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private protected readonly FakeWorkers _workers = new();
     private protected readonly FakeGitHub _github = new();
@@ -50,11 +50,7 @@ public abstract class PrMarksTestsBase : IDisposable
         catch (InvalidOperationException)
         {
         }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        TestTemp.Delete(_root);
     }
 
     private protected static string Git(string cwd, params string[] args)

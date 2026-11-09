@@ -21,7 +21,7 @@ public sealed class WatchtowerChatTests : IDisposable
     private readonly ManualTime _time = new(Start);
     private readonly NodeState _state;
     private readonly FakeWorkers _workers = new();
-    private readonly string _data = Path.Combine(Path.GetTempPath(), "pilot-chat-" + Guid.NewGuid().ToString("N"));
+    private readonly string _data = TestTemp.NewPath();
     private readonly NodeOptions _options;
     private readonly Watchtower _tower;
     private readonly TranscriptBook _book;
@@ -41,7 +41,7 @@ public sealed class WatchtowerChatTests : IDisposable
         _profile.Dispose();
         if (Directory.Exists(_data))
         {
-            Directory.Delete(_data, recursive: true);
+            TestTemp.Delete(_data);
         }
     }
 

@@ -229,7 +229,7 @@ public sealed class DisconnectCliTests : IAsyncDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _nodeRoot = Path.Combine(Path.GetTempPath(), "p2d-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _nodeRoot = TestTemp.NewPath();
     private NodeHarness? _node;
 
     public async ValueTask DisposeAsync()
@@ -240,11 +240,7 @@ public sealed class DisconnectCliTests : IAsyncDisposable
         }
         if (Directory.Exists(_nodeRoot))
         {
-            foreach (var file in Directory.EnumerateFiles(_nodeRoot, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(_nodeRoot, recursive: true);
+            TestTemp.Delete(_nodeRoot);
         }
     }
 

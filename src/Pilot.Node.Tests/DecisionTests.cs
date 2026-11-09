@@ -10,13 +10,13 @@ public sealed class DecisionTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _folder = Path.Combine(Path.GetTempPath(), "p2d-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _folder = TestTemp.NewPath();
 
     public void Dispose()
     {
         if (Directory.Exists(_folder))
         {
-            Directory.Delete(_folder, recursive: true);
+            TestTemp.Delete(_folder);
         }
     }
 

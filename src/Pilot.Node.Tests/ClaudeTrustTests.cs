@@ -8,11 +8,11 @@ namespace Pilot.Node.Tests;
 /// <summary>The node trusts a folder in Claude Code's file before a background session starts there, carefully.</summary>
 public sealed class ClaudeTrustTests : IDisposable
 {
-    private readonly string _root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "p2t-" + Guid.NewGuid().ToString("N")[..8])).FullName;
+    private readonly string _root = Directory.CreateDirectory(TestTemp.NewPath()).FullName;
 
     private string File => Path.Combine(_root, ".claude.json");
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose() => TestTemp.Delete(_root);
 
     [Fact]
     public void AFolderIsTrustedAndEverythingElseInTheFileIsKept()

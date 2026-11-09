@@ -20,7 +20,7 @@ public sealed class WatchtowerTests : IDisposable
     private readonly FakeWorkers _workers = new();
     private readonly List<CommandRequest> _said = [];
     // A data folder of its own: the watchtower keeps the fingerprint of its brief there.
-    private readonly string _data = Path.Combine(Path.GetTempPath(), "pilot-watchtower-" + Guid.NewGuid().ToString("N"));
+    private readonly string _data = TestTemp.NewPath();
     private readonly NodeOptions _options;
     private readonly Watchtower _tower;
     // Claude Code's state.json of each job, by job id.
@@ -67,7 +67,7 @@ public sealed class WatchtowerTests : IDisposable
     {
         if (Directory.Exists(_data))
         {
-            Directory.Delete(_data, recursive: true);
+            TestTemp.Delete(_data);
         }
     }
 
@@ -857,7 +857,7 @@ public sealed class WatchtowerTests : IDisposable
     private sealed class RealEnd : IDisposable
     {
         private readonly TempProfile _profile = new();
-        private readonly string _folder = Path.Combine(Path.GetTempPath(), "pilot-wt-end-" + Guid.NewGuid().ToString("N"));
+        private readonly string _folder = TestTemp.NewPath();
         public readonly FakeClaudeAgents Agents = new();
         public readonly SessionLedger Ledger;
         public readonly SessionTracker Tracker;
@@ -885,7 +885,7 @@ public sealed class WatchtowerTests : IDisposable
             _profile.Dispose();
             if (Directory.Exists(_folder))
             {
-                Directory.Delete(_folder, recursive: true);
+                TestTemp.Delete(_folder);
             }
         }
     }

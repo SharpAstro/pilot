@@ -18,7 +18,7 @@ public sealed class PilotMdTests : IDisposable
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2k-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private readonly NodeState _state = new(new InMemoryJournal(), new ManualTime(new DateTimeOffset(2026, 10, 29, 9, 0, 0, TimeSpan.Zero)));
     private readonly GitCli _git = new();
     private readonly LegCommander _legs;
@@ -45,11 +45,7 @@ public sealed class PilotMdTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        TestTemp.Delete(_root);
     }
 
     private async Task CommitAsync(string? pilotMd)

@@ -28,7 +28,7 @@ public sealed class DiskSweepTests : IDisposable
 
     private string Temp => Path.Combine(_root, "temp");
 
-    public void Dispose() => RemovalQueue.TryDelete(_root, out _);
+    public void Dispose() => TestTemp.Delete(_root);
 
     // A job folder with a state.json, a timeline and a tmp folder holding a file, all last written <paramref name="age"/> ago.
     private string Job(string id, TimeSpan age)
@@ -137,6 +137,23 @@ public sealed class DiskSweepTests : IDisposable
         Directory.Exists(old).ShouldBeFalse();
         Directory.Exists(fresh).ShouldBeTrue();
         Directory.Exists(other).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task TestTempFoldersOlderThanADayGoAsProbesDoAndTheSummaryLineSaysSo()
+    {
+        var old = Probe(TestTemp.Prefix + "old", TimeSpan.FromDays(2));
+        var fresh = Probe(TestTemp.Prefix + "fresh", TimeSpan.FromHours(2));
+        var other = Probe("unrelated-old", TimeSpan.FromDays(9));
+
+        await _sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        Directory.Exists(old).ShouldBeFalse();
+        Directory.Exists(fresh).ShouldBeTrue();
+        Directory.Exists(other).ShouldBeTrue();
+        var card = _state.Cards().Single(c => c.Kind == "disk-swept");
+        card.Title.ShouldContain("1 test folder");
+        card.Detail.ShouldNotBeNull().ShouldContain($"{TestTemp.Prefix}* test folders older than a day");
     }
 
     [Fact]

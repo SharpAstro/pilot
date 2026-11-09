@@ -22,7 +22,7 @@ public sealed class WatchtowerEndsByDesignTests : IDisposable
     private readonly NodeState _state;
     private readonly FakeWorkers _workers = new();
     private readonly List<CommandRequest> _said = [];
-    private readonly string _data = Path.Combine(Path.GetTempPath(), "pilot-bydesign-" + Guid.NewGuid().ToString("N"));
+    private readonly string _data = TestTemp.NewPath();
     private readonly NodeOptions _options;
     private readonly Watchtower _tower;
     // Claude Code's state.json of each job, by job id.
@@ -51,7 +51,7 @@ public sealed class WatchtowerEndsByDesignTests : IDisposable
     {
         if (Directory.Exists(_data))
         {
-            Directory.Delete(_data, recursive: true);
+            TestTemp.Delete(_data);
         }
     }
 

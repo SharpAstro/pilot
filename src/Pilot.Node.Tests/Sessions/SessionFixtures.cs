@@ -154,7 +154,7 @@ internal sealed class TempProfile : IDisposable
 {
     public TempProfile()
     {
-        Folder = Path.Combine(Path.GetTempPath(), "p2s-" + Guid.NewGuid().ToString("N")[..8]);
+        Folder = TestTemp.NewPath();
         Directory.CreateDirectory(Path.Combine(Folder, "claude", "projects", "proj-a"));
         Directory.CreateDirectory(Path.Combine(Folder, "claude", "sessions"));
         Profile = new ClaudeProfile(Path.Combine(Folder, "claude"));
@@ -186,7 +186,7 @@ internal sealed class TempProfile : IDisposable
     {
         try
         {
-            Directory.Delete(Folder, recursive: true);
+            TestTemp.Delete(Folder);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

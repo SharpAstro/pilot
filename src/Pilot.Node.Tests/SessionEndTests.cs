@@ -15,7 +15,7 @@ public sealed class SessionEndTests : IDisposable
     private readonly TempProfile _profile = new TempProfile();
     private readonly FakeClaudeAgents _agents = new FakeClaudeAgents();
     private readonly NodeState _state = new NodeState(new InMemoryJournal(), TimeProvider.System);
-    private readonly string _folder = Path.Combine(Path.GetTempPath(), "pilot-end-" + Guid.NewGuid().ToString("N"));
+    private readonly string _folder = TestTemp.NewPath();
     private readonly SessionLedger _ledger;
     private readonly SessionTracker _tracker;
     private readonly FakeSessionDelivery _delivery;
@@ -42,7 +42,7 @@ public sealed class SessionEndTests : IDisposable
         _profile.Dispose();
         if (Directory.Exists(_folder))
         {
-            Directory.Delete(_folder, recursive: true);
+            TestTemp.Delete(_folder);
         }
     }
 

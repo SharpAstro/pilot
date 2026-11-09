@@ -466,7 +466,7 @@ public sealed class MergeBatchTests
     public async Task ABatchOfARealRepoStartsFromOriginMainAndLandsBothPrsOnMainWithAPlainPush()
     {
         // The git the batch runs, against a bare origin: what a faked git cannot show (the remote's names, the merges, the pushes).
-        var root = Path.Combine(Path.GetTempPath(), "p2batch-" + Guid.NewGuid().ToString("N")[..8]);
+        var root = TestTemp.NewPath();
         Directory.CreateDirectory(root);
         try
         {
@@ -514,11 +514,7 @@ public sealed class MergeBatchTests
         }
         finally
         {
-            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(root, recursive: true);
+            TestTemp.Delete(root);
         }
     }
 

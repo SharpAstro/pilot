@@ -29,7 +29,7 @@ public abstract class OverlapTestsBase : IDisposable
 {
     private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2o-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly string _root = TestTemp.NewPath();
     private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private protected readonly FakeWorkers _workers = new();
     private protected readonly FlightCommander _flights;

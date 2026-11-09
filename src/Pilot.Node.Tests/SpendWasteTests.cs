@@ -133,7 +133,7 @@ public sealed class SpendWasteTests
     [Fact]
     public void OnlyWhatWasSpentInTheWindowCountsAndMarksSurviveARestart()
     {
-        var folder = Path.Combine(Path.GetTempPath(), "pilot-waste-" + Guid.NewGuid().ToString("N"));
+        var folder = TestTemp.NewPath();
         try
         {
             var file = SpendLedger.FileIn(folder);
@@ -154,7 +154,7 @@ public sealed class SpendWasteTests
         {
             if (Directory.Exists(folder))
             {
-                Directory.Delete(folder, recursive: true);
+                TestTemp.Delete(folder);
             }
         }
     }

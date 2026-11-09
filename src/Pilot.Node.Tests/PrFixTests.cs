@@ -15,7 +15,7 @@ public abstract class PrFixTestsBase : IDisposable
 {
     private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2f-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly string _root = TestTemp.NewPath();
     private protected readonly InMemoryJournal _journal = new();
     private protected readonly NodeState _state;
     private protected readonly FakeWorkers _workers = new();

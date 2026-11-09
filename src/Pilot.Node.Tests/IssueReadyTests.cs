@@ -43,7 +43,7 @@ public abstract class IssueBoardFixture : IDisposable
 {
     protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2r-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     internal readonly NodeState State = new(new InMemoryJournal(), TimeProvider.System);
     internal readonly FakeGitHub GitHub = new();
     internal readonly FakeIssueReadinessChecker Checker = new();
@@ -86,11 +86,7 @@ public abstract class IssueBoardFixture : IDisposable
         catch (InvalidOperationException)
         {
         }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        TestTemp.Delete(_root);
         GC.SuppressFinalize(this);
     }
 

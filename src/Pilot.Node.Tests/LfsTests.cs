@@ -11,23 +11,13 @@ public sealed class LfsTests : IDisposable
 {
     private static readonly Lazy<bool> HasLfs = new(() => Run(Path.GetTempPath(), "lfs", "version").Code == 0);
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "pilot-lfs-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private string Remote => Path.Combine(_root, "remote.git");
     private string Main => Path.Combine(_root, "main");
 
     public LfsTests() => Directory.CreateDirectory(_root);
 
-    public void Dispose()
-    {
-        try
-        {
-            ClearReadOnly(_root);
-            Directory.Delete(_root, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
+    public void Dispose() => TestTemp.Delete(_root);
 
     private static (int Code, string Out) Run(string cwd, params string[] args)
     {
@@ -63,7 +53,7 @@ public sealed class LfsTests : IDisposable
 
     private static string BuildTemplate()
     {
-        var root = Path.Combine(Path.GetTempPath(), "pilot-lfs-template-" + Guid.NewGuid().ToString("N")[..8]);
+        var root = TestTemp.NewPath();
         Directory.CreateDirectory(root);
         var remote = Path.Combine(root, "remote.git");
         var main = Path.Combine(root, "main");
@@ -79,26 +69,8 @@ public sealed class LfsTests : IDisposable
         Git(main, "commit", "-m", "lfs file");
         Git(main, "push", "origin", "HEAD:main");
         Git(main, "lfs", "pull");
-        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
-        {
-            try
-            {
-                ClearReadOnly(root);
-                Directory.Delete(root, recursive: true);
-            }
-            catch (IOException)
-            {
-            }
-        };
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => TestTemp.Delete(root);
         return root;
-    }
-
-    private static void ClearReadOnly(string root)
-    {
-        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
     }
 
     private static void CopyTree(string from, string to)

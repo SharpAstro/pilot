@@ -137,7 +137,7 @@ public sealed class SessionModelCheckTests : IDisposable
         public readonly NodeState State;
         public readonly FakeWorkers Workers = new FakeWorkers();
         public readonly Watchtower Watchtower;
-        private readonly string _data = Path.Combine(Path.GetTempPath(), "pilot-modelcheck-" + Guid.NewGuid().ToString("N"));
+        private readonly string _data = TestTemp.NewPath();
         private readonly DateTimeOffset _now = new DateTimeOffset(2026, 10, 20, 9, 0, 0, TimeSpan.Zero);
 
         public Tower()
@@ -171,7 +171,7 @@ public sealed class SessionModelCheckTests : IDisposable
         {
             if (Directory.Exists(_data))
             {
-                Directory.Delete(_data, recursive: true);
+                TestTemp.Delete(_data);
             }
         }
     }

@@ -9,9 +9,9 @@ namespace Pilot.Node.Tests.Sessions;
 /// <summary>The lean MCP config of every session: pilot's server only, a repo's declared extras, auto-compaction kept in the options.</summary>
 public sealed class SessionMcpConfigTests : IDisposable
 {
-    private readonly string _root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "mcp-" + Guid.NewGuid().ToString("N")[..8])).FullName;
+    private readonly string _root = Directory.CreateDirectory(TestTemp.NewPath()).FullName;
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose() => TestTemp.Delete(_root);
 
     private string Repo(string? pilotMd, string? mcpJson)
     {

@@ -31,7 +31,7 @@ public sealed class CiShapedCheckTests : IDisposable
             - run: dotnet publish src/Pilot.Node -c Debug -r win-x64
         """;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2c-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private readonly NodeState _state = new(new InMemoryJournal(), new ManualTime(new DateTimeOffset(2026, 10, 26, 9, 0, 0, TimeSpan.Zero)));
     private readonly LegCommander _legs;
 
@@ -59,7 +59,7 @@ public sealed class CiShapedCheckTests : IDisposable
 
     private string Plane => Path.Combine(_root, "plane");
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose() => TestTemp.Delete(_root);
 
     private void WriteWorkflow(string yaml, string file = "dotnet.yml")
     {

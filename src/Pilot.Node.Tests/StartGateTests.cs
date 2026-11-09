@@ -22,7 +22,7 @@ public sealed class StartGateTests : IDisposable
     private readonly StartGate _gate;
     private readonly FakeWorkers _workers = new();
     private readonly List<CommandRequest> _said = [];
-    private readonly string _data = Path.Combine(Path.GetTempPath(), "pilot-tower-" + Guid.NewGuid().ToString("N"));
+    private readonly string _data = TestTemp.NewPath();
     private readonly NodeOptions _options;
 
     public StartGateTests()
@@ -43,7 +43,7 @@ public sealed class StartGateTests : IDisposable
     {
         if (Directory.Exists(_data))
         {
-            Directory.Delete(_data, recursive: true);
+            TestTemp.Delete(_data);
         }
     }
 

@@ -116,7 +116,7 @@ public sealed class GitBashTests
         {
             return;
         }
-        var dir = Path.Combine(Path.GetTempPath(), "gb-" + Guid.NewGuid().ToString("N")[..8]);
+        var dir = TestTemp.NewPath();
         Directory.CreateDirectory(dir);
         try
         {
@@ -131,7 +131,7 @@ public sealed class GitBashTests
         }
         finally
         {
-            Directory.Delete(dir, recursive: true);
+            TestTemp.Delete(dir);
         }
     }
 }

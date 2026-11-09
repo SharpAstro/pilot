@@ -17,7 +17,7 @@ public sealed class CompactorTests : IDisposable
     private static readonly DateTimeOffset Start = new DateTimeOffset(2026, 10, 20, 9, 0, 0, TimeSpan.Zero);
 
     private readonly ManualTime _time = new(Start);
-    private readonly string _data = Path.Combine(Path.GetTempPath(), "pilot-tower-" + Guid.NewGuid().ToString("N"));
+    private readonly string _data = TestTemp.NewPath();
     private readonly NodeState _state;
     private readonly List<CommandRequest> _said = [];
     private readonly Compactor _compactor;
@@ -44,7 +44,7 @@ public sealed class CompactorTests : IDisposable
     {
         if (Directory.Exists(_data))
         {
-            Directory.Delete(_data, recursive: true);
+            TestTemp.Delete(_data);
         }
     }
 

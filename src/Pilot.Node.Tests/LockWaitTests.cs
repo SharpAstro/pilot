@@ -45,7 +45,7 @@ public sealed class LockWaitTests : LegCommanderTestsBase, IDisposable
         return node;
     }
 
-    private readonly string _nodeRoot = Path.Combine(Path.GetTempPath(), "p2w-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _nodeRoot = TestTemp.NewPath();
     private NodeHarness? _node;
 
     public new void Dispose()
@@ -53,11 +53,7 @@ public sealed class LockWaitTests : LegCommanderTestsBase, IDisposable
         _node?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         if (Directory.Exists(_nodeRoot))
         {
-            foreach (var file in Directory.EnumerateFiles(_nodeRoot, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(_nodeRoot, recursive: true);
+            TestTemp.Delete(_nodeRoot);
         }
         base.Dispose();
     }

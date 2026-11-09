@@ -8,13 +8,13 @@ namespace Pilot.Node.Tests;
 /// <summary>A brief too long for <c>claude --bg</c>'s command line goes through a file the session is told to read.</summary>
 public sealed class LongBriefTests : IDisposable
 {
-    private readonly string _folder = Path.Combine(Path.GetTempPath(), "pilot-long-brief-" + Guid.NewGuid().ToString("N"));
+    private readonly string _folder = TestTemp.NewPath();
 
     public void Dispose()
     {
         if (Directory.Exists(_folder))
         {
-            Directory.Delete(_folder, recursive: true);
+            TestTemp.Delete(_folder);
         }
     }
 

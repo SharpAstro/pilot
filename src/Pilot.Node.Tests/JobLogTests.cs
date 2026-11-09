@@ -10,7 +10,7 @@ public sealed class JobLogTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2l-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
 
     public JobLogTests() => Directory.CreateDirectory(_root);
 
@@ -18,7 +18,7 @@ public sealed class JobLogTests : IDisposable
     {
         try
         {
-            Directory.Delete(_root, recursive: true);
+            TestTemp.Delete(_root);
         }
         catch (IOException)
         {

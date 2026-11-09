@@ -12,13 +12,13 @@ public sealed class DefenderTests : IDisposable
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     /// <summary>The node's data folder in a test, where the elevated fix's record goes; its own for each test, as they run side by side.</summary>
-    private readonly string _data = Path.Combine(Path.GetTempPath(), "pilot-defender-" + Guid.NewGuid().ToString("N"));
+    private readonly string _data = TestTemp.NewPath();
 
     public void Dispose()
     {
         if (Directory.Exists(_data))
         {
-            Directory.Delete(_data, recursive: true);
+            TestTemp.Delete(_data);
         }
     }
 

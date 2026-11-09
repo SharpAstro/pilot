@@ -17,7 +17,7 @@ public sealed class WindDownTests : IDisposable
 
     private static readonly DateTimeOffset Start = new(2026, 10, 31, 9, 0, 0, TimeSpan.Zero);
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2w-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private readonly ManualTime _time = new(Start);
     private readonly NodeState _state;
     private readonly SessionLedger _ledger;
@@ -58,13 +58,13 @@ public sealed class WindDownTests : IDisposable
 
     private string Repo => Path.Combine(_root, "pilot");
 
-    private readonly string _data = Path.Combine(Path.GetTempPath(), "pilot-tower-" + Guid.NewGuid().ToString("N"));
+    private readonly string _data = TestTemp.NewPath();
 
     public void Dispose()
     {
         if (Directory.Exists(_data))
         {
-            Directory.Delete(_data, recursive: true);
+            TestTemp.Delete(_data);
         }
         try
         {
@@ -73,11 +73,7 @@ public sealed class WindDownTests : IDisposable
         catch (InvalidOperationException)
         {
         }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        TestTemp.Delete(_root);
     }
 
     private static string Git(string cwd, params string[] args)

@@ -11,7 +11,7 @@ namespace Pilot.Node.Tests;
 /// </summary>
 public sealed class SiblingReachTests : IDisposable
 {
-    private readonly string _org = Path.Combine(Path.GetTempPath(), "sibreach-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _org = TestTemp.NewPath();
 
     public SiblingReachTests()
     {
@@ -56,7 +56,7 @@ public sealed class SiblingReachTests : IDisposable
     {
         try
         {
-            Directory.Delete(_org, recursive: true);
+            TestTemp.Delete(_org);
         }
         catch (IOException)
         {

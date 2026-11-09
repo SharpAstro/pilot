@@ -1086,7 +1086,7 @@ public abstract class LegCommanderTestsBase : IDisposable
 {
     private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2l-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly string _root = TestTemp.NewPath();
     /// <summary>The state's journal, so a test can load what it holds into a fresh state as a restart does.</summary>
     private protected readonly InMemoryJournal _journal = new();
     private protected readonly NodeState _state;
@@ -2454,7 +2454,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     [Fact]
     public void ALegInAnOrgWithAUiChecklistIsToldToWorkByItAndShowACapture()
     {
-        var root = Directory.CreateTempSubdirectory("pilot-org-").FullName;
+        var root = TestTemp.Create();
         try
         {
             var repo = Directory.CreateDirectory(Path.Combine(root, "tianwen")).FullName;
@@ -2474,7 +2474,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            TestTemp.Delete(root);
         }
     }
 

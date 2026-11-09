@@ -14,7 +14,7 @@ public sealed class CheckScopeTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2s-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private readonly NodeState _state = new(new InMemoryJournal(), new ManualTime(new DateTimeOffset(2026, 11, 6, 9, 0, 0, TimeSpan.Zero)));
     private readonly ChangedFilesGit _git = new();
     private readonly LegCommander _legs;
@@ -40,7 +40,7 @@ public sealed class CheckScopeTests : IDisposable
 
     private string Plane => Path.Combine(_root, "plane");
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose() => TestTemp.Delete(_root);
 
     private Task<CommandResult> PlanLeg(string check, string? wholeSuite = null) =>
         _legs.RunAsync(new CommandRequest

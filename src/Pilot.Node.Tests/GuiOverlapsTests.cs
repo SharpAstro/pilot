@@ -20,7 +20,7 @@ public sealed class GuiOverlapsTests : IAsyncDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _registry = Path.Combine(Path.GetTempPath(), "p2-insp-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _registry = TestTemp.NewPath();
     private readonly List<FakeInspector> _fakes = [];
 
     public GuiOverlapsTests() => Directory.CreateDirectory(_registry);
@@ -31,7 +31,7 @@ public sealed class GuiOverlapsTests : IAsyncDisposable
         {
             await fake.DisposeAsync();
         }
-        Directory.Delete(_registry, recursive: true);
+        TestTemp.Delete(_registry);
     }
 
     private FakeInspector Fake(Action<FakeInspector>? setup = null)

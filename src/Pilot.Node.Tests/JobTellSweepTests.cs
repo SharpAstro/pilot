@@ -11,7 +11,7 @@ public sealed class JobTellSweepTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Directory.CreateTempSubdirectory("tell-sweep-").FullName;
+    private readonly string _root = TestTemp.Create();
     private readonly NodeState _state = new NodeState(new InMemoryJournal(), TimeProvider.System);
     private readonly ConcurrentQueue<CommandRequest> _said = new();
     private readonly JobRunner _jobs;
@@ -41,7 +41,7 @@ public sealed class JobTellSweepTests : IDisposable
         _jobs.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
         try
         {
-            Directory.Delete(_root, recursive: true);
+            TestTemp.Delete(_root);
         }
         catch (IOException)
         {

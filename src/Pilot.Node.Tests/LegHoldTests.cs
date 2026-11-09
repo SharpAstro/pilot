@@ -21,7 +21,7 @@ public abstract class LegHoldTestsBase : IDisposable
 
     private protected const string Nu1102 = "/w/src/App/App.csproj : error NU1102: Unable to find package Drawboard.Core with version (>= 1.2.7) [/w/src/App/App.csproj]";
 
-    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2h-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly string _root = TestTemp.NewPath();
     private protected readonly ManualTime _time = new(Start);
     private protected readonly NodeState _state;
     private protected readonly FakeWorkers _workers = new();
@@ -67,11 +67,7 @@ public abstract class LegHoldTestsBase : IDisposable
         catch (InvalidOperationException)
         {
         }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        TestTemp.Delete(_root);
     }
 
     private protected static string Git(string cwd, params string[] args)

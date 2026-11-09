@@ -18,7 +18,7 @@ public sealed class OneWatchtowerTests : IDisposable
     private readonly ManualTime _time = new(Start);
     private readonly NodeState _state;
     private readonly FakeWorkers _workers = new();
-    private readonly string _data = Path.Combine(Path.GetTempPath(), "pilot-onetower-" + Guid.NewGuid().ToString("N"));
+    private readonly string _data = TestTemp.NewPath();
     private readonly NodeOptions _options;
     private readonly Watchtower _tower;
 
@@ -39,7 +39,7 @@ public sealed class OneWatchtowerTests : IDisposable
     {
         if (Directory.Exists(_data))
         {
-            Directory.Delete(_data, recursive: true);
+            TestTemp.Delete(_data);
         }
     }
 

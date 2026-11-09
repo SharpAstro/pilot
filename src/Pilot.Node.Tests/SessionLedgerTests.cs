@@ -20,7 +20,7 @@ public sealed class SessionLedgerTests : IDisposable
     private readonly TempProfile _profile = new TempProfile();
     private readonly FakeClaudeAgents _agents = new FakeClaudeAgents();
     private readonly ManualTime _time = new ManualTime(Start);
-    private readonly string _folder = Path.Combine(Path.GetTempPath(), "pilot-ledger-" + Guid.NewGuid().ToString("N"));
+    private readonly string _folder = TestTemp.NewPath();
     private readonly NodeState _state;
     private readonly SessionLedger _ledger;
     private readonly SessionTracker _tracker;
@@ -37,7 +37,7 @@ public sealed class SessionLedgerTests : IDisposable
         _profile.Dispose();
         if (Directory.Exists(_folder))
         {
-            Directory.Delete(_folder, recursive: true);
+            TestTemp.Delete(_folder);
         }
     }
 

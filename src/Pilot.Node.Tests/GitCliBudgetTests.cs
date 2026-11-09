@@ -8,9 +8,9 @@ namespace Pilot.Node.Tests;
 [Trait("Category", "Slow")]
 public sealed class GitCliBudgetTests : IDisposable
 {
-    private readonly string _dir = Directory.CreateTempSubdirectory("p2g-").FullName;
+    private readonly string _dir = TestTemp.Create();
 
-    public void Dispose() => Directory.Delete(_dir, recursive: true);
+    public void Dispose() => TestTemp.Delete(_dir);
 
     // An alias that says something, marks that it said it, and then waits: a git that does not exit.
     private static string[] SlowGit(string marker) =>

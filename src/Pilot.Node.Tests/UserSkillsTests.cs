@@ -12,13 +12,13 @@ public sealed class UserSkillsTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "p2s-" + Guid.NewGuid().ToString("N")[..8])).FullName;
+    private readonly string _root = Directory.CreateDirectory(TestTemp.NewPath()).FullName;
 
     public void Dispose()
     {
         if (Directory.Exists(_root))
         {
-            Directory.Delete(_root, recursive: true);
+            TestTemp.Delete(_root);
         }
     }
 

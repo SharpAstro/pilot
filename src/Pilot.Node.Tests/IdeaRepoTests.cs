@@ -26,7 +26,7 @@ public sealed class IdeaRepoTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2r-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _root = TestTemp.NewPath();
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private readonly FakeGitHub _github = new();
     private readonly FakeIdeaRepoChooser _chooser = new();
@@ -63,11 +63,7 @@ public sealed class IdeaRepoTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        TestTemp.Delete(_root);
     }
 
     private static string Git(string cwd, params string[] args)
@@ -230,7 +226,7 @@ public sealed class IdeaRepoTests : IDisposable
     public void ThePromptNamesTheImagesAndTheLocalCopiesAtNoteTime()
     {
         RepoOption[] repos = [new("tianwen", ".NET", "/r/tianwen")];
-        var root = Path.Combine(Path.GetTempPath(), "p2r-" + Guid.NewGuid().ToString("N")[..8]);
+        var root = TestTemp.NewPath();
         try
         {
             var attachments = new Attachments(root);
@@ -249,7 +245,7 @@ public sealed class IdeaRepoTests : IDisposable
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            TestTemp.Delete(root);
         }
     }
 }

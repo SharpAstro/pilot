@@ -20,7 +20,7 @@ public sealed class McpParentTests : IDisposable
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _folder = Path.Combine(Path.GetTempPath(), "pilot-mcpparent-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _folder = TestTemp.NewPath();
     private readonly List<Process> _started = [];
     private readonly List<int> _pids = [];
     private readonly List<IDisposable> _streams = [];
@@ -80,7 +80,7 @@ public sealed class McpParentTests : IDisposable
         }
         try
         {
-            Directory.Delete(_folder, recursive: true);
+            TestTemp.Delete(_folder);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

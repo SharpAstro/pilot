@@ -296,9 +296,9 @@ public sealed class LanTests
 /// <summary>An ask's card lives as long as its ask: closed when its asker gives up, and never reused by a newer ask.</summary>
 public sealed class GrantAskCardTests : IDisposable
 {
-    private readonly string _data = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "p2g-" + Guid.NewGuid().ToString("N")[..8])).FullName;
+    private readonly string _data = Directory.CreateDirectory(TestTemp.NewPath()).FullName;
 
-    public void Dispose() => Directory.Delete(_data, recursive: true);
+    public void Dispose() => TestTemp.Delete(_data);
 
     [Fact]
     public void AnAskThatLapsedClosesItsCardAndANewerAskGetsACardOfItsOwn()
