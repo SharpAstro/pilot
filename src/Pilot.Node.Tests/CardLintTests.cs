@@ -98,9 +98,7 @@ public sealed class CardLintTests
             // Where a developer reads the whole list when it is long: outside the repo, never in it.
             File.WriteAllLines(Path.Combine(Path.GetTempPath(), "pilot-card-lint-findings.txt"), found);
         }
-        found.ShouldBeEmpty($"these break a plain-words rule (CardLint); rewrite them:
-{string.Join('
-', found)}");
+        found.ShouldBeEmpty($"these break a plain-words rule (CardLint); rewrite them:\n{string.Join('\n', found)}");
     }
 
     [Theory]
