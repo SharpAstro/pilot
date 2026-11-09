@@ -93,6 +93,12 @@ public sealed partial class NodeState
     internal static bool SameFlight(FlightRow a, FlightRow b) => Same(a, b);
 
     /// <summary>The legs of <paramref name="flight"/>, in their order; every leg when it is null.</summary>
+    /// <summary>
+    /// The names of <paramref name="flight"/>'s legs not done (planned, flying, failed, waiting), in order: what holds its merge, its PR
+    /// and its review. The one reading of "legs not done", so the merge's refusal, the card's wait and the autopilot cannot drift apart.
+    /// </summary>
+    public List<string> OpenLegs(string flight) => [.. Legs(flight).Where(l => l.State != LegState.Done).OrderBy(l => l.Order).Select(l => l.Name)];
+
     public LegRow[] Legs(string? flight = null)
     {
         lock (_gate)

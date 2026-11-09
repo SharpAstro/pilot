@@ -853,6 +853,10 @@ public static class Verbs
 
     public static string FlightTarget(string code) => FlightTargetPrefix + code;
 
+    /// <summary>The flight's code of a subject or target (<c>flight/&lt;code&gt;</c>); null for one that names no flight. The one reading of it.</summary>
+    public static string? FlightCodeOf(string subject) =>
+        subject.StartsWith(FlightTargetPrefix, StringComparison.Ordinal) ? subject[FlightTargetPrefix.Length..] : null;
+
     /// <summary>The target naming leg <paramref name="leg"/> of flight <paramref name="code"/>.</summary>
     public static string LegTarget(string code, string leg) => $"{FlightTargetPrefix}{code}/{leg}";
 
