@@ -19,7 +19,7 @@ public sealed class IssuePriorityTests : LegCommanderTestsBase
 
     public IssuePriorityTests()
     {
-        var git = new GitCli();
+        var git = _git;
         _trackedFlights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers, _github);
         _tracked = new LegCommander(_state, _workers, _checks, _github, git, new Planes(git), _trackedFlights,
             new NodeOptions(Path.Combine(_root, "node2.sock"), Path.Combine(_root, "data2"), MachinePrefix: "DU1"), TimeProvider.System);

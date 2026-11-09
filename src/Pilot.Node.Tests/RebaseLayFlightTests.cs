@@ -10,7 +10,7 @@ namespace Pilot.Node.Tests;
 /// queue that rebases (pilot #523). Real git over the seed's bare origin; FakeGitHub answers the queue's method.
 /// </summary>
 [Trait("Category", "Slow")]
-public sealed class RebaseLayFlightTests : ReviewTestsBase
+public sealed class RebaseLayFlightTests() : ReviewTestsBase(realGit: true)
 {
     private static void Commit(string cwd, string message) =>
         Git(cwd, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-a", "-m", message);
