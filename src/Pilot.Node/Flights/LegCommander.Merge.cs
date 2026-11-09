@@ -625,11 +625,12 @@ public sealed partial class LegCommander
         {
             return false;
         }
-        var legsLeft = string.Join(", ", open);
-        var waitTitle = $"{code}'s PR #{flight.PullRequest} merges once {legsLeft} {(open.Count == 1 ? "is" : "are")} done";
+        var legs = state.Legs(code);
+        var legsLeft = LegWaitWords(legs);
+        var waitTitle = $"{code}'s PR #{flight.PullRequest} merges once {string.Join(", ", open)} {(open.Count == 1 ? "is" : "are")} done (legs {legs.Length - open.Count}/{legs.Length} done)";
         var waitWhy = Models.Autopilot
-            ? $"The {legsLeft} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; the node merges the PR once {(open.Count == 1 ? "it lands" : "they land")}."
-            : $"The {legsLeft} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; Merge is offered once {(open.Count == 1 ? "it lands" : "they land")}.";
+            ? $"The {string.Join(", ", open)} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; the node merges the PR once {(open.Count == 1 ? "it lands" : "they land")}."
+            : $"The {string.Join(", ", open)} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; Merge is offered once {(open.Count == 1 ? "it lands" : "they land")}.";
         if (card.Title != waitTitle || card.Choices.Any(c => c.Verb == Verbs.Merge && (c.Status != ChoiceStatus.WaitsForLegs || c.Note != legsLeft)))
         {
             state.UpdateCard(card.Id, waitTitle, waitWhy,
@@ -638,6 +639,14 @@ public sealed partial class LegCommander
         }
         return true;
     }
+
+    /// <summary>
+    /// What a held merge waits for, in the words its Merge mark shows (#918): each leg not done, a leg whose check reruns marked so
+    /// (<c>review-notes-3 (check rerunning)</c>). No minutes: the words change only when the wait does, so the card is not rewritten every tick.
+    /// </summary>
+    internal static string LegWaitWords(IEnumerable<LegRow> legs) =>
+        string.Join(", ", legs.Where(l => l.State != LegState.Done).OrderBy(l => l.Order)
+            .Select(l => l is { State: LegState.Flying, Recheck: { Outcome: null } } ? $"{l.Name} (check rerunning)" : l.Name));
 
     /// <summary>What a PR-ready card says of the merge state it shows: its own sentence for each state, never the table's "is ready" for a PR GitHub holds back.</summary>
     internal static string MergeSummary(string code, MergeState merge) => merge.Kind switch

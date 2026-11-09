@@ -1303,7 +1303,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// armed merge says what it does and how far its checks are (<paramref name="detail"/>, the card's, holds the count):
     /// <c>Merging when checks pass · 6 of 7</c>.
     /// </summary>
-    internal static string StatusLabel(CardChoice choice, string? detail = null) => choice.Status switch
+    /// <param name="fits">The longest note the label carries before an ellipsis: <see cref="NoteFits"/> for a one-line chip (the PR row's), <see cref="WrappedNoteFits"/> for a card's button that wraps.</param>
+    internal static string StatusLabel(CardChoice choice, string? detail = null, int fits = NoteFits) => choice.Status switch
     {
         ChoiceStatus.Pending => choice.Note is { Length: > 0 } running ? $"{choice.Label} · checks running · {running}" : $"{choice.Label} · checks running",
         ChoiceStatus.Failing => $"{choice.Label} · checks failed",
@@ -1311,9 +1312,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         ChoiceStatus.Armed => (choice.Note is { Length: > 0 } note ? note : ArmedProgress.Read(detail)) is { } progress ? $"{ArmedLabel} · {progress}" : ArmedLabel,
         ChoiceStatus.Queued => choice.Note is { Length: > 0 } place ? $"{QueuedLabel} · {place}" : QueuedLabel,
         ChoiceStatus.Behind => BehindLabel,
-        ChoiceStatus.Blocked => choice.Note is { Length: > 0 } why ? $"{BlockedLabel} · {Ellipsize(why, NoteFits)}" : BlockedLabel,
+        ChoiceStatus.Blocked => choice.Note is { Length: > 0 } why ? $"{BlockedLabel} · {Ellipsize(why, fits)}" : BlockedLabel,
         ChoiceStatus.ChangesRequested => ChangesRequestedLabel,
-        ChoiceStatus.WaitsForLegs => choice.Note is { Length: > 0 } legs ? $"Waits for {Ellipsize(legs, NoteFits)}" : "Waits for its legs",
+        ChoiceStatus.WaitsForLegs => choice.Note is { Length: > 0 } legs ? $"Waits for {Ellipsize(legs, fits)}" : "Waits for its legs",
         ChoiceStatus.Merged => MergedLabel,
         ChoiceStatus.Merging => choice.Note is { Length: > 0 } doing ? $"{MergingLabel} {doing}" : MergingLabel,
         _ => choice.Label,
@@ -1329,6 +1330,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     /// <summary>How much of a note (a failed check's name) a chip shows before it ends in an ellipsis; its tooltip has the whole of it.</summary>
     internal const int NoteFits = 16;
+
+    /// <summary>
+    /// The note a card's wrapping button carries (#918: "Waits for review-notes-3 (check rerunning)"): its two lines end in an ellipsis
+    /// of their own past that, with the whole of it on hover, so the label says what it waits for wherever there is room.
+    /// </summary>
+    internal const int WrappedNoteFits = 64;
 
     internal static string Ellipsize(string text, int fits) => text.Length <= fits ? text : text[..(fits - 1)].TrimEnd() + "…";
 
@@ -1377,6 +1384,6 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// </summary>
     internal static Layout.Node ChoiceControl(CardChoice choice, string? detail, string action, Action onClick, bool wrap = false) =>
         IsChip(choice.Status)
-            ? ChoicePill(StatusLabel(choice, detail), false, null, null, null, ArmedText, ChipTooltip(choice), Layout.DockSide.Left, wrap, StatusTint(choice.Status)!.Value.Bg)
-            : ChoicePill(StatusLabel(choice, detail), false, action, onClick, StatusTint(choice.Status), Bright, choice.Hint, wrap: wrap);
+            ? ChoicePill(StatusLabel(choice, detail, wrap ? WrappedNoteFits : NoteFits), false, null, null, null, ArmedText, ChipTooltip(choice), Layout.DockSide.Left, wrap, StatusTint(choice.Status)!.Value.Bg)
+            : ChoicePill(StatusLabel(choice, detail, wrap ? WrappedNoteFits : NoteFits), false, action, onClick, StatusTint(choice.Status), Bright, choice.Hint, wrap: wrap);
 }
