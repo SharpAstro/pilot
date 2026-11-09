@@ -113,7 +113,7 @@ public abstract class ReviewTestsBase : IDisposable
         while (legs.Starting(code))
         {
             // Git and the plane's setup run inside the start; below-normal jobs on a saturated machine took over 20 s for it.
-            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(90), $"{code}'s session was not recorded");
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(90), $"{code}'s session was not recorded"); // budget: git and the plane's setup on a saturated machine took over 20 s (#856)
             await Task.Delay(10, Ct);
         }
     }
