@@ -803,6 +803,11 @@ once; a short spike never does. `--job-memory <GB>` (0 by default) is a floor: a
 the order they came, each saying what it needs (median and peak) and the memory free now. A job's log is kept in the node's data folder
 (`jobs/<id>.log`), and its end is served for the GUI (`GET /api/v1/jobs/<id>/log`, a grant's on the LAN).
 
+Sessions are admitted the same way. Reviews and PR fixers wait in a queue: at most `review-limit` of them run on a node at once
+(2 by default, 0 for no limit, whatever their model), since each builds and tests in its own worktree, and a start past it waits
+for a slot, saying which ones run. And no session starts while the machine's free memory is under 1.5 GB: a claude session and its
+build take 0.5 to 1 GB, so a starved machine takes on no other one until memory comes back (#912).
+
 A job runs **detached** from the node (its own session via `setsid`, and under a Linux systemd unit also its own transient user scope, `systemd-run --user --scope`, outside the node unit's cgroup so the unit's default `KillMode=control-group` does not kill it when the node exits; or on Windows its own hidden console outside the
 node's job object, in a named job object of its own, inheriting only the log and NUL, so no pipe the node holds): its
 shell writes stdout and stderr straight to the log and its exit code to `jobs/<id>.log.exit` when it ends. The Running row carries `Pid`, `ProcessStartedAt` and `ExitPath`; the node

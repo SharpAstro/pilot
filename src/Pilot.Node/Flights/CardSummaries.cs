@@ -66,6 +66,8 @@ public static partial class CardSummaries
                 ? $"{what} has a plan of legs, but its flight is held and cannot start yet. The detail says what it waits for; Start is offered here once that lifts."
                 : $"{what} has a plan of legs. Start it to fly them, or change the plan first.",
             "landed" => $"{what} landed: its PR is merged and its legs are done. Nothing to do; dismiss it when read.",
+            RebootPrep.Kind => "The machine is being made ready to reboot, or was resumed after one. Maintenance mode says whether anything new starts; pilot node reboot status says how far it is.",
+            RebootPrep.ReadyKind => "Every session's state is saved and none is running: the machine can reboot now. After it, pilot node reboot done leaves maintenance mode, each flight resuming from its file.",
             LegCommander.OnHoldKind => $"{what} is on its owner's hold, or was just released from it. While held the node starts nothing for it and takes no outward step; a session already running finishes its turn. Nothing to do; `pilot flight unground` releases it.",
             LegWatch.TickerSentRound => $"The ticking pass of {what} stopped with steps unticked, so the node sent the leg round once with a fresh worker told which steps remain. Nothing to do.",
             "worker-told-job" => $"The worker of {what} was idle because a job of its own had ended untold, and the node told it. Nothing to do.",

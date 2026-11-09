@@ -191,11 +191,12 @@ internal sealed class PilotChrome<TSurface>
         More = new RailMoreMenu<TSurface>(renderer);
         // A flight page's Merge is its card's own choice, run as the panel runs it.
         Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
-        Flights.CardWorking = Cards.WorkingOn;
+        // The pages read a card's press state by the card, so its node is part of the key, as in the panel (#922).
+        Flights.CardWorking = card => Cards.WorkingOn(card);
         // So is a PR row's Merge or Go around: the same card button, so the node is told what the card's button tells it.
         PullRequests.OnAnswer = (card, number) => Cards.OnAnswer?.Invoke(card, number);
-        PullRequests.RefusedOf = Cards.RefusedOn;
-        PullRequests.CardWorking = Cards.WorkingOn;
+        PullRequests.RefusedOf = card => Cards.RefusedOn(card);
+        PullRequests.CardWorking = card => Cards.WorkingOn(card);
         // One route to a PR's row: a card's title, a flight's PR link and chip, and the Repos page's open-PRs line all take it.
         Cards.OnPullRequest = (_, pr) => OpenPullRequest(pr.Repo, pr.Number);
         Flights.OnPullRequest = OpenPullRequest;

@@ -326,7 +326,7 @@ internal sealed partial class PullRequestsView<TSurface>
         }
         // Merge and Go around ask through the card, whose own press says the card is with the node.
         return action.Card is { } card
-            ? Presses.ButtonOf($"pr:{pr.Url}:{ActionId(action.Kind)}", () => CardWorking?.Invoke(card.Id), Idle,
+            ? Presses.ButtonOf($"pr:{pr.Url}:{ActionId(action.Kind)}", () => CardWorking?.Invoke(card), Idle,
                 _ => Layout.Builder.Text($"{action.Label} …", ChipSize, P.Dim, TextAlign.Center, TextAlign.Center).Bg(bg).WFixed(width).HStar())
             : Idle();
     }

@@ -19,6 +19,9 @@ public sealed partial class RepoWatch(NodeState state, RepoCatalog repos, Planes
 
     private readonly object _gate = new();
     private Task<RepoStatus[]>? _running;
+
+    // Whether the read running is an explicit refresh's, whose git status is no older than RefreshFresh (#914).
+    private bool _runningStrict;
     private RepoStatus[]? _latest;
     private CancellationToken _stopping;
 
@@ -35,19 +38,39 @@ public sealed partial class RepoWatch(NodeState state, RepoCatalog repos, Planes
     /// </summary>
     public Task<RepoStatus[]> StatusAsync(bool refresh, CancellationToken cancellationToken)
     {
-        return !refresh && _latest is { } cached ? Task.FromResult(cached) : RefreshAsync(cancellationToken);
+        return !refresh && _latest is { } cached ? Task.FromResult(cached) : RefreshAsync(cancellationToken, strict: refresh);
     }
 
-    /// <summary>Reads every repo afresh; joins the refresh already running, if one is.</summary>
-    public Task<RepoStatus[]> RefreshAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Reads every repo afresh; joins the refresh already running, if one is. <paramref name="strict"/> (an explicit
+    /// <c>pilot repos --refresh</c>, a pull) re-reads every repo's git status unless it was read within <see cref="RefreshFresh"/>,
+    /// where a background read keeps it for <see cref="StatusInterval"/> (#914: the 15-minute memory showed a dirty repo as clean).
+    /// A strict refresh that finds a background read running waits for it, then reads strictly itself.
+    /// </summary>
+    public async Task<RepoStatus[]> RefreshAsync(CancellationToken cancellationToken, bool strict = false)
     {
         Task<RepoStatus[]> run;
+        Task<RepoStatus[]>? lenient = null;
         lock (_gate)
         {
+            if (strict && _running is { } running && !_runningStrict)
+            {
+                lenient = running;
+            }
             // A background read even when a command asked for it: its git starts share the budget (ProcessGate), never the command's priority.
-            run = _running ??= ProcessGate.Run(ReadAllAsync);
+            if (_running is null)
+            {
+                _runningStrict = strict;
+                _running = ProcessGate.Run(ReadAllAsync);
+            }
+            run = _running;
         }
-        return run.WaitAsync(cancellationToken);
+        if (lenient is not null)
+        {
+            await lenient.WaitAsync(cancellationToken);
+            return await RefreshAsync(cancellationToken, strict: true);
+        }
+        return await run.WaitAsync(cancellationToken);
     }
 
     /// <remarks>The seed is put here, not in the background loop, so it is on the stream before anything starts after it.</remarks>

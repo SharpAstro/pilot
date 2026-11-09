@@ -306,6 +306,35 @@ public sealed class RepoWatchStartsTests : IDisposable
     }
 
     [Fact]
+    public async Task AnExplicitRefreshReReadsAStatusOlderThanFiveSecondsAndAPlainReadKeepsTheMemory()
+    {
+        // #914, the owner: "pilot repos --refresh" re-reads git "unless that was within like 5s ago"; the 15-minute memory stays for
+        // every other read. (This rig drives real git; #933 moves it onto a fake.)
+        MakeRepoWithTwoPlanes(out _, out var b);
+        var rig = NewRig();
+        await rig.RoundAsync();
+        rig.Git.Clear();
+        File.AppendAllText(Path.Combine(b, "README.md"), "edited, not added" + Environment.NewLine);
+
+        // 2 s later: an explicit refresh takes the status it has.
+        rig.Time.Advance(TimeSpan.FromSeconds(2));
+        await rig.Watch.RefreshAsync(Ct, strict: true);
+        rig.Git.Runs.ShouldBeEmpty();
+
+        // 6 s after the read: an explicit refresh reads every checkout's status again, and sees the edit.
+        rig.Time.Advance(TimeSpan.FromSeconds(4));
+        var strict = (await rig.Watch.RefreshAsync(Ct, strict: true)).Single(r => r.Name == "tianwen");
+        rig.Git.Runs.ShouldBe([.. Runs("tianwen", MainStatus), .. Runs("a", Status), .. Runs("b", Status)], ignoreOrder: true);
+        strict.Worktrees.Single(w => Path.GetFileName(w.Path) == "b").Dirty.ShouldBeTrue();
+        rig.Git.Clear();
+
+        // A plain round a minute on keeps the memory: no status read.
+        rig.Time.Advance(TimeSpan.FromMinutes(1));
+        await rig.RoundAsync();
+        rig.Git.Runs.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task AFolderWhoseGitFilesCannotBeFingerprintedIsReadAgainEveryRound()
     {
         // A .git folder with no HEAD (a half-made clone, which every fake clone of these tests is): there is nothing to compare, so git is asked each round.
