@@ -95,7 +95,7 @@ public sealed record StaleItem
 public sealed record StalenessReading(IReadOnlyList<StaleItem> Stale, IReadOnlyList<StaleItem> Nearing);
 
 /// <summary>
-/// A pure reading of what has gone stale (#736): no I/O, the time passed in. A flight open too long, a PR with green CI open too long, a
+/// A pure reading of what has gone stale (#736; a flight on the owner's hold is skipped, it is parked on purpose and the digest and summary say so): no I/O, the time passed in. A flight open too long, a PR with green CI open too long, a
 /// leg rechecking too long, a card ringing too long, a hold that passed its timeout more than once.
 /// </summary>
 public static class Staleness
@@ -120,7 +120,8 @@ public static class Staleness
             }
         }
 
-        foreach (var flight in flights.Where(InAir))
+        // A held flight is waiting on its owner on purpose, so it is never read as stale or nearing it.
+        foreach (var flight in flights.Where(f => InAir(f) && f.OnHold is null))
         {
             var mine = legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order).ToList();
             var flightCards = cards.Where(c => c.Subject == Verbs.FlightTarget(flight.Code) || c.Subject.StartsWith(Verbs.FlightTarget(flight.Code) + "/", StringComparison.Ordinal)).ToList();

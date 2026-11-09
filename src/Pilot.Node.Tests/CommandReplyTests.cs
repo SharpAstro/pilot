@@ -32,7 +32,7 @@ public sealed class CommandReplyTests : IAsyncLifetime
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private CommandRequest CreateIssue() => new()

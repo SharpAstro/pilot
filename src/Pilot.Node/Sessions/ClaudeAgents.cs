@@ -188,7 +188,7 @@ public static class ClaudeCli
         return BuildEnvironment.Apply(start);
     }
 
-    private static string? FindOnPath()
+    internal static string? FindOnPath()
     {
         string[] names = OperatingSystem.IsWindows() ? ["claude.exe", "claude.cmd", "claude"] : ["claude"];
         foreach (var folder in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))

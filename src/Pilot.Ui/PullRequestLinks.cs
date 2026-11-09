@@ -9,11 +9,11 @@ namespace Pilot.Ui;
 internal static class PullRequestLinks
 {
     // The cards about an open PR, by their kind (the words the node raises them with): a flight's PR ready to merge, its review asking
-    // for changes, its merge dropped or its queue entry, a conflict, and a review of any PR (pilot review pr) ready, or left behind.
+    // for changes, its merge dropped or its queue entry, and a review of any PR (pilot review pr) ready, or left behind.
     // A landed flight's card has its PR as a link too, but that PR is merged and has no row, so it is not one of these.
     private static readonly HashSet<string> PullRequestCards = new(StringComparer.Ordinal)
     {
-        "pr-ready", "review-changes", "queue-dropped", "merge-dropped", "pr-conflicts", "pr-marks-refused",
+        "pr-ready", "review-changes", "queue-dropped", "merge-dropped", "pr-marks-refused",
         "pr-review-ready", "pr-review-started", "pr-review-left", "pr-review-restarted", "pr-review-lost", "autopilot-merge-refused",
     };
 

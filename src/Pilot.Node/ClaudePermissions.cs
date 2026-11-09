@@ -26,7 +26,8 @@ public static class ClaudePermissions
 
     /// <summary>
     /// Every rule pilot wants: each of <see cref="Verbs"/> as <c>pilot &lt;verb&gt;</c>, then the node's own binary and the
-    /// <c>pilot</c> CLI beside it by full path (a restart is run by path), each for both <see cref="Tools"/>, in that order.
+    /// <c>pilot</c> CLI beside it by full path (a restart is run by path), then those paths again in double quotes, each for both
+    /// <see cref="Tools"/>, in that order.
     /// </summary>
     public static IReadOnlyList<string> Rules(string nodePath)
     {
@@ -38,6 +39,10 @@ public static class ClaudePermissions
         {
             commands = commands.Append(cli);
         }
+        // A path is also ruled in quotes, as a shell writes it ("C:\…\pilot.exe" answer …): a rule matches the command's text as
+        // written, so the unquoted rule misses the quoted call and it goes to the auto-mode classifier, which denies it (#896).
+        var paths = commands.Where(c => !c.StartsWith("pilot ", StringComparison.Ordinal)).ToList();
+        commands = commands.Concat(paths.Select(p => $"\"{p}\""));
         return commands.SelectMany(c => Tools.Select(t => Rule(t, c))).ToList();
     }
 

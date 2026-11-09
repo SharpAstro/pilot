@@ -191,6 +191,8 @@ public static partial class Briefs
         text.AppendLine($"  git plainly, one command or a few joined by `&&`, never inside a loop: tick steps as `{run} check 1 && {run} check 2`.");
         text.AppendLine("  " + JobShellRule);
         text.Append(BranchHistoryRule);
+        text.Append(NoSpinRule);
+        text.Append(CommandShapeRule);
         text.AppendLine();
         text.AppendLine(InvariantRule);
         text.AppendLine("## When you stop");
