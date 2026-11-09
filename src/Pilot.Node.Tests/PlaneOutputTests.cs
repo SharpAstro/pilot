@@ -99,10 +99,11 @@ public sealed class PlaneOutputTests : JobTestsBase
     }
 
     [Fact]
-    public async Task ByDefaultTwoPlanesRunAtOnceBecauseAPlaneReachesNoSibling()
+    public async Task ByDefaultTheSettingIsOffAndTwoPlanesWhoseCommandsHoldNoCloneRunAtOnce()
     {
-        // Nothing is set on the runner: the setting is off (PIL802), and the real sibling sets are asked. A plane builds on the
-        // packages, so it reaches no clone and neither plane holds the other back.
+        // Nothing is set on the runner: the setting is off (PIL802), and the real sibling sets are asked. These commands are no dotnet
+        // build, so they hold no clone and neither plane holds the other back; that a plane's build reaches no clone is SiblingReachTests'
+        // and SiblingSourceTests' to show, with a project file in the plane.
         var jobs = Runner(planeOutput: null);
         jobs.PlaneOutput.ShouldBeFalse();
         jobs.SiblingsOf = null;

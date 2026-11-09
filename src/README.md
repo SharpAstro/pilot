@@ -181,6 +181,8 @@ prefix, `--machine` or `PILOT_MACHINE`, else from its name).
 | `connect flight/<code> <other>` | The flight holds until the other has landed (a cycle is refused). The other is a flight of this node, or else one a reachable peer flies (found by its code on the repo's GitHub remote): the flight is then held on a `PeerConnection` (the code and the node, kept over a restart), which the flight page, `status` and the digest name (`waiting for PIL294 on DE1`). The node asks each peer on a cycle (every 60 s, `PeerConnectionWatch`) what it flies: the wait ends, and the flight flies if nothing else holds it, when that node says the flight landed or its PR merged (as GitHub says); a flight folded into another there is waited for as that one. A node that cannot be asked, or lists no such flight, keeps the flight held and the reason is on the wait (`PIL294 on DE1 (DE1 could not be asked: …)`). A flight that has landed already is nothing to wait for; a peer's flight that waits for this one is refused as a cycle; no node listing the flight refuses the connect (naming any node that could not be asked), except when an overlap answer named the node, where the connect holds with the reason shown. |
 | `sync-repos node` | `git fetch -p --all` in each tracked repo, then a fast-forward-only merge of `origin/<default>` into its main checkout. Never a merge commit or a pull, and a checkout that is dirty, on another branch, diverged from origin or without an origin default is left alone and the outcome says why; a failed fetch or fast-forward is that repo's `failed`. Each git call is cut off after 2 minutes. The result's `made` is one `name<TAB>updated\|current\|skipped\|failed<TAB>detail` line per repo, and the repo status is read afresh after it. The controller's: refused from the watchtower, and from the LAN without a grant. |
 | `create-issue repo/<path> <title> [body…]` | A new issue through `gh issue create`; the result's `made` is its number. The controller's, as `sync-repos` is. |
+| `ground flight/<code> <why…>` | The owner's hold (#771; `pilot flight ground`, not `flight hold`, which takes a review's holding pattern): records who, why and when on the flight (`FlightRow.OnHold`), puts the label `pilot: hold` on its issue so every node sees it from GitHub, and lets go of a merge the flight armed. While it stands the node starts nothing for the flight and takes no outward step (no leg, worker, planner, validator, reviewer, fixer, go-around, base merge, push, PR open or merge), from the autopilot, the sweeps, the watchtower or a card's button alike; a running worker finishes its turn (its finish is let through) and nothing follows it (the leg is recorded done, the base is not merged into the plane, nothing is pushed and GitHub's auto-merge is not touched; the release's next sweep brings the base in, pushes and starts the review), but a reviewer or planner already running is refused its report, so its review or plan is run again after the release (its tokens are spent twice). A hold read from the label on GitHub (put from another node, by hand, or while this node was down) means the same: the repo sweep, the start of a leg, plan, validation or review, and a PR open or merge read it, and the merge the flight armed is let go of just as `ground` does. The leg watch leaves it alone too (no restart of a session that took no first turn, no nudge of an idle worker, no resume after a usage limit, no wake when a wait ends), and takes each stall up afresh once it is released. Needs a why; a repeat updates it. Shown as `on hold by <who>: <why>` (`the owner` when it was held from the CLI or the GUI; for a label read from GitHub, who pilot's newest hold comment since the last release names, or `the owner` with no such comment: a hold comment older than a `pilot: off hold` one is spent) ahead of every other stage in `status`, the summary, the digest, the watchtower's brief (which leaves a held flight alone) and the GUI, where the flight's state reads `on hold` (in the held colour, not `flying`) and the row and page offer **Release** (the page says the hold and offers no Plan it, even with no legs); a held flight is counted as on hold and not as flying, once, by one helper (`FlightCounts`) that the Flights header (`3 flights · 1 flying · 2 on hold`), Home, the Fleet line and the digest all read; a flight not held offers **Hold**, asking why. A card about a held flight says so and keeps its choices, which the hold refuses with its words; the release takes the note off the card. |
+| `unground flight/<code> [why…]` | Releases the hold, removes the label, and the flight takes its next due step. |
 | `land flight/<code>` | Its work is in: the worktree goes when clean (never with changes not committed, nor with a commit on no remote and not in its base), the branch and code stay, and flights waiting for it are cleared. |
 
 **Trackers (#254).** A flight's work item is a GitHub issue or a Shortcut story, and the flight records which. The code
@@ -361,13 +363,19 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   a review round starts ready, as the review runs on it; the merge card's merge still refuses a moved head.
 - A passed PR whose checks then fail is taken as changes, once a head: the PR goes back to draft, the merge card
   closes, and the ring, "fails its checks", offers **Fix the failing checks**, told to read the failed checks and make them pass on every runner.
-- A PR that conflicts with its base goes to the **watchtower**, not to a fresh worker. The node's update is
-  `git fetch` + `git merge --no-edit origin/<base>` in the plane, aborted with `git merge --abort` when it conflicts. A Ring `pr-conflicts`
-  card (once a head) names the conflict and the plane and carries the brief the watchtower follows (`LegCommander.UpdateInstruction`, the
-  watchtower's "Getting reviewed work in"): merge the base in there, resolve every file so both sides' work stays, rerun the leg's check
-  and push plain, then `pilot flight review <code>`. The card's **Resolve the conflict** choice (a go-around of the last leg on its work as
-  it stands) is the watchtower's only when it finds the conflict is real work (two designs, a goal to drop); no leg goes round for a conflict
-  by itself, and the review stays as it was.
+- A PR that conflicts with its base is the **node's own work, said to no one**: no card of any kind, no ring, no summary line. The node's
+  update is `git fetch` + `git merge --no-edit origin/<base>` in the plane, aborted with `git merge --abort` when it conflicts, and then
+  `LegCommander.ResolveConflictAsync` (one entry point for the PR sweep, a queue drop, the merge card, a PR recheck, the merge command and a
+  PR open) puts it to a worker, once for each head of the base. A leg flying on the plane with a live worker is **told** to merge the base in
+  and nothing else starts; with none flying, the last leg is **sent round** by the node. Either way the worker gets the conflict brief
+  (`LegCommander.ConflictBrief`): the conflicting files (a test merge, `git merge-tree`), the merge base, what each side added in each file, the
+  base's commits that touch it (`git log --oneline <merge-base>..<base> -- <file>`), and the rule: `git merge --no-edit origin/<base>`, keep both
+  sides' work, on a version pin take the higher, rerun the check, push plain, never `--force`. A conflict round is not counted against the
+  review go-around cap and is not held by the review loop, for a flight with a PR or without, but it does count toward the overall
+  `max-go-arounds` cap (5 by default), so a base that keeps moving ends at the go-around-cap card; a passed review is turned to changes as for any
+  done leg sent round. A worker that fails is followed at once by the next rung of the escalation, and only the last rung's failure reaches the person
+  (one decision card); a worker that stops otherwise is the leg-failed card's to say. When no worker could be put on the conflict at all, a sweep
+  writes why on the node's log and rings no one.
 - **How a flight's branch is brought up to date** (`BringUpToDateAsync`, before every push and before the merge queue) is always a merge,
   in every repo, whatever its merge queue or the node's merge method: `git fetch`, `git merge --no-edit origin/<base>`, a plain push. There is
   no rebase way and no `UpdateWay`; a repaired base (a base that is no branch on the remote) is the remote's default merged in, not rebased onto.
@@ -700,7 +708,7 @@ pilot say-all <text…> [--all] [--role worker|planner|reviewer|pilot|adHoc|watc
 pilot compact <session> [focus…]               # an idle background session's /compact, as its next turn (see Compaction)
 pilot note <text…>
 pilot summary [<code>] [--fresh] [--fleet]     # the kept summary (Needs you, Where it is) with its age, tokens and cost; made when none or --fresh (see The summary)
-pilot summarise [<code>]                       # one Haiku call now over the flights in play (or one flight); keeps and prints the answer
+pilot summarise [<code>]                       # asks the watchtower now for a new summary of the flights in play (or one flight), one Haiku call only when it is down; keeps and prints the answer
 pilot review-cost [--since <date>] [--until <date>] [--repo <repo>]   # per landed flight: its reviewer sessions (round, model, head) and their tokens, with totals and an average; pilot-node review-cost reads the data folder with no node
 pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
 pilot node restart [why…]                      # the node restarts in place: its successor starts, jobs carry on and are counted in the answer
@@ -723,11 +731,21 @@ when its node is not on the default socket. Exit codes: 0 done, 1 refused by the
 
 `pilot summary` answers "where are we" in two sections: `## Needs you` (what stays stuck unless the person acts, or the
 word *Nothing*) and `## Where it is`. The node makes it from what it holds, as plain records of each flight (legs with
-state, checklist and go-arounds, its PR and review, its open cards, the sessions on it), with one Haiku call (no tools,
-no MCP, no saved session; never run by itself), and keeps the latest per scope with when it was made, its tokens and its
-cost, on the feed for every client. So `pilot summary` costs nothing when a summary is kept: it prints that one and
-says its age (`made 5 min ago (2026-10-28 09:00 UTC) · 1,234 tokens · $0.0021`), and it makes one, as `pilot summarise`
-does, when there is none yet or `--fresh` asks. `pilot summary <code>` is the same for one flight.
+state, checklist and go-arounds, its PR and review, its open cards, the sessions on it) and keeps the latest per scope
+with when it was made, its tokens and its cost, on the feed for every client.
+
+**How it is kept current.** While a client is attached (a window, a TUI, a stream), the node asks the watchtower to
+remake the fleet summary after the fleet changes, and keeps the answer; the watchtower's work is part of its own
+session, so it adds no Haiku call. With no client attached nothing is asked and nothing is spent. A person can ask at
+once: the **Refresh** button on the Summary panel and `pilot summarise` both ask the watchtower now and replace the kept
+summary for everyone. Only when the watchtower is down does the node make it itself, with one Haiku call (no tools, no
+MCP, no saved session); the row then says why it is not following (`SummaryRow.NotFollowing`), the panel reads `from
+09:12; the watchtower is down`, and Refresh names the price of the press. The panel otherwise reads `made 3 min ago ·
+follows changes` and shows no cost.
+
+So `pilot summary` costs nothing when a summary is kept: it prints that one and says its age (`made 5 min ago
+(2026-10-28 09:00 UTC) · 1,234 tokens · $0.0021`), and it makes one, as `pilot summarise` does, when there is none yet
+or `--fresh` asks. `pilot summary <code>` is the same for one flight.
 
 `--fleet` covers every node this machine holds a grant for (`pilot connect`) as well as this one: the node asks each of
 them for its records (`records node`, a read that makes no call and keeps nothing), puts each node's under its own

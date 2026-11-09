@@ -241,7 +241,6 @@ public sealed class PullRequestLinksTests
     [InlineData("review-changes", true)]
     [InlineData("queue-dropped", true)]
     [InlineData("merge-dropped", true)]
-    [InlineData("pr-conflicts", true)]
     [InlineData("pr-review-ready", true)]
     [InlineData("autopilot-merge-refused", true)]
     [InlineData("landed", false)]
@@ -295,7 +294,7 @@ public sealed class PullRequestLinksTests
         var chrome = Window(renderer);
         var screen = Prs();
         var pr = screen.Row!.PullRequests.Single(p => p.Number == 1799);
-        var card = Card("c9", "pr-conflicts", Verbs.FlightTarget("TIA1799"), "TIA1799's PR #1799 conflicts with its base", pr.Url);
+        var card = Card("c9", "merge-dropped", Verbs.FlightTarget("TIA1799"), "TIA1799's PR #1799 left the merge queue", pr.Url);
 
         // What a click on a notification for the card does: the same as its title.
         Draw(chrome, null, CardsScreen.From([card]), screen);
@@ -602,7 +601,7 @@ public sealed class PullRequestLinksTests
         [
             Card("c1", "pr-ready", Verbs.FlightTarget("PIL252"), longTitle, "https://github.com/SharpAstro/pilot/pull/252"),
             Card("c2", "pr-review-ready", "pr/example-org/orbit#205", "example-org/orbit#205: review ready", "https://github.com/example-org/orbit/pull/205", CardBin.ForYou),
-            Card("c3", "pr-conflicts", Verbs.FlightTarget("TIA1799"), "TIA1799's PR #1799 conflicts", "https://github.com/SharpAstro/tianwen/pull/1799"),
+            Card("c3", "merge-dropped", Verbs.FlightTarget("TIA1799"), "TIA1799's PR #1799 left the merge queue", "https://github.com/SharpAstro/tianwen/pull/1799"),
         ]);
         var flights = Flights(
             Flight("PIL252", "pilot", 252, 252), Flight("PIL261", "pilot", 261, 261), Flight("TIA1799", "tianwen", 1799, 1799), Flight("DIR9", "DIR.Lib", 9, 9));

@@ -31,7 +31,7 @@ public sealed class CommandTimeoutTests : IAsyncLifetime
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private async Task<(int Exit, string Output, string Error)> Pilot(TimeSpan timeout, string? requestId, params string[] args)

@@ -139,7 +139,7 @@ public sealed partial class GhCli
         var failed = checks.FirstOrDefault(c => c.Bucket == "fail");
         var dropped = queue is { Queued: false, RemovedAt: not null, RemovedReason: { Length: > 0 } reason } && !reason.Equals("merged", StringComparison.OrdinalIgnoreCase)
             ? reason.Replace('_', ' ').ToLowerInvariant() : null;
-        MergeState Say(string kind, string? why = null, bool awaits = false) => new(kind, done, total, queue is { Queued: true } ? queue.Position : null, why, failed.Name, failed.Link, dropped, awaits);
+        MergeState Say(string kind, string? why = null, bool awaits = false, bool draft = false) => new(kind, done, total, queue is { Queued: true } ? queue.Position : null, why, failed.Name, failed.Link, dropped, awaits, draft);
 
         var mergeState = facts.MergeStateStatus;
         if (queue is { Queued: true })
@@ -156,7 +156,7 @@ public sealed partial class GhCli
         }
         if (mergeState == "DRAFT" || facts.Draft)
         {
-            return Say(MergeKinds.Blocked, "it is a draft");
+            return Say(MergeKinds.Blocked, "it is a draft", draft: true);
         }
         if (failed.Name is not null)
         {
@@ -259,6 +259,93 @@ public sealed partial class GhCli
             }
         }
         return runs.Count;
+    }
+
+    // The most of a failed log kept: the failed tests are named near the end of each job's output.
+    private const int FailedLogLimit = 1_000_000;
+
+    public async Task<FailedRun?> FailedRunAsync(string repoPath, int number, bool mergeGroup, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var ids = new List<long>();
+            if (mergeGroup)
+            {
+                var (exit, output, _) = await RunAsync(["run", "list", "--event", "merge_group", "--limit", "40", "--json", "databaseId,headBranch,conclusion"], repoPath, cancellationToken);
+                if (exit == 0 && QueueRun(output, number) is { } queued)
+                {
+                    ids.Add(queued);
+                }
+            }
+            else
+            {
+                var (_, output, _) = await RunAsync(["pr", "checks", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "bucket,link"], repoPath, cancellationToken);
+                ids.AddRange(FailedRuns(output).Select(r => long.Parse(r, System.Globalization.CultureInfo.InvariantCulture)));
+            }
+            foreach (var id in ids)
+            {
+                if (await ReadFailedRunAsync(repoPath, id, cancellationToken) is { } run)
+                {
+                    return run;
+                }
+            }
+            return null;
+        }
+        catch (Exception ex) when (ex is FlightException or JsonException or InvalidOperationException or FormatException or System.ComponentModel.Win32Exception or IOException)
+        {
+            return null;
+        }
+    }
+
+    private async Task<FailedRun?> ReadFailedRunAsync(string repoPath, long id, CancellationToken cancellationToken)
+    {
+        var run = id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var (jobsExit, jobsOutput, _) = await RunAsync(["run", "view", run, "--json", "url,jobs"], repoPath, cancellationToken);
+        var (logExit, log, _) = await RunAsync(["run", "view", run, "--log-failed"], repoPath, cancellationToken);
+        if (logExit != 0 || log.Trim().Length == 0)
+        {
+            return null;
+        }
+        var (url, jobs) = jobsExit == 0 ? ParseRunJobs(jobsOutput) : ("", []);
+        return new FailedRun(id, url, jobs, log.Length > FailedLogLimit ? log[^FailedLogLimit..] : log);
+    }
+
+    /// <summary>The page and the failed jobs of <c>gh run view --json url,jobs</c>'s answer; empty when it is no JSON.</summary>
+    internal static (string Url, string[] FailedJobs) ParseRunJobs(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var jobs = doc.RootElement.TryGetProperty("jobs", out var all) && all.ValueKind == JsonValueKind.Array
+                ? all.EnumerateArray().Where(j => TextOf(j, "conclusion") is "failure" or "timed_out").Select(j => TextOf(j, "name")).OfType<string>().ToArray()
+                : [];
+            return (TextOf(doc.RootElement, "url") ?? "", jobs);
+        }
+        catch (JsonException)
+        {
+            return ("", []);
+        }
+    }
+
+    /// <summary>
+    /// The newest failed <c>merge_group</c> run (<c>gh run list --json databaseId,headBranch,conclusion</c>) whose branch is PR
+    /// <paramref name="number"/>'s queue entry, <c>gh-readonly-queue/&lt;base&gt;/pr-&lt;number&gt;-&lt;sha&gt;</c>; null with none.
+    /// </summary>
+    internal static long? QueueRun(string json, int number)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var marker = $"/pr-{number.ToString(System.Globalization.CultureInfo.InvariantCulture)}-";
+            return doc.RootElement.EnumerateArray()
+                .Where(r => TextOf(r, "headBranch") is { } branch && branch.Contains(marker, StringComparison.Ordinal) && TextOf(r, "conclusion") is "failure" or "timed_out")
+                .Select(r => r.TryGetProperty("databaseId", out var id) && id.TryGetInt64(out var value) ? value : 0)
+                .Where(id => id > 0).OrderByDescending(id => id).Select(id => (long?)id).FirstOrDefault();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>The workflow runs (their ids, from the checks' links) behind the failed checks of <c>gh pr checks --json bucket,link</c>'s answer.</summary>

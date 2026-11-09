@@ -603,6 +603,17 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ChatNowReachesTheNodeAsChatNowAndItsRefusalSaysWhyNothingWasCancelled()
+    {
+        var now = await Pilot(_root, "chat", "now", "s1");
+        (now.Exit, now.Output.Trim()).ShouldBe((1, "refused: chat-now watchtower: nothing is running: the watchtower is idle, so there is no turn to cancel and a message sent to it is answered at once"));
+
+        var none = await Pilot(_root, "chat", "now");
+        none.Exit.ShouldNotBe(0);
+        _node.State.Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
     public void ACommandFromAClaudeSessionIsFromThatSessionByName()
     {
         var snapshot = new SnapshotEvent

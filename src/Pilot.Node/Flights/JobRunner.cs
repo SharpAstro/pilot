@@ -357,7 +357,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             }
             var candidates = ownerRow.Role == SessionRole.Worker ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray() : sessions;
             var replacement = Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates);
-            if (replacement is null && (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true))
+            if (replacement is null && OwnerEnded(ownerRow, row))
             {
                 continue;
             }
@@ -1436,6 +1436,20 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         && Flights.PlaneOutput.PlaneOf(job.Cwd) is not null
         && state.Flights().FirstOrDefault(f => f.Code == code) is { SiblingSource: true };
 
+    /// <summary>The variables the node adds to <paramref name="job"/>'s environment: the plane's output variables, and <c>UseLocalSiblings=true</c> for a sibling-source flight's plane job.</summary>
+    internal Dictionary<string, string> EnvironmentOf(JobRow job)
+    {
+        var variables = new Dictionary<string, string>(Flights.PlaneOutput.Variables(PlaneOutput, job.Cwd), StringComparer.Ordinal);
+        if (SiblingSource(job))
+        {
+            variables[Flights.PlaneOutput.UseLocalSiblings] = "true";
+        }
+        return variables;
+    }
+
+    /// <summary>The clones <paramref name="job"/> would hold while it builds, as the queue asks for them; internal so a test can read it without running the job.</summary>
+    internal IReadOnlyCollection<string> HeldBy(JobRow job) => SiblingsOfJob(job);
+
     private readonly ConcurrentDictionary<string, IReadOnlyCollection<string>> _siblings = new(StringComparer.Ordinal);
 
     private IReadOnlyCollection<string> SiblingsFor(JobRow job)
@@ -1634,11 +1648,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             // An exit file of an earlier run of this id would end the job at once: there is none.
             File.Delete(exitPath);
-            var variables = new Dictionary<string, string>(Flights.PlaneOutput.Variables(PlaneOutput, job.Cwd), StringComparer.Ordinal);
-            if (SiblingSource(job))
-            {
-                variables[Flights.PlaneOutput.UseLocalSiblings] = "true";
-            }
+            var variables = EnvironmentOf(job);
             shell = DetachedShell.For(job.Id, job.Command, job.Cwd, job.LogPath, exitPath, Priority, variables,
                 Flights.PlaneOutput.NoBuildNotice(PlaneOutput, job.Command, job.Cwd));
             var started = shell.Start();
@@ -2205,7 +2215,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     target = replacement.Id;
                     handed = $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; what it shows so far is passed on to you.\n";
                 }
-                else if (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true)
+                else if (OwnerEnded(ownerRow, job))
                 {
                     return;
                 }
@@ -2324,9 +2334,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 replacedTo = replacement.Id;
                 text = $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; its result is passed on to you.\n{text}";
             }
-            else if (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true)
+            else if (OwnerEnded(ownerRow, job))
             {
                 // The owner ended (finished, crashed or stopped) and nothing took its place: nobody is waiting on this job.
+                // A finished turn that came while this job was open is not one: the say below resumes the session (#893).
                 LogTell(job, target, ownerRow, "owner ended");
                 MarkTold(job, "owner-ended");
                 return;
@@ -2436,9 +2447,40 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     public Func<string, bool>? EndedForGood { get; set; }
 
+    /// <summary>
+    /// Whether the row ended after a finished turn (a --bg session Claude Code ended by design), as the tracker sees it. Set by the
+    /// node; null in a bare runner, where no end counts so (#893).
+    /// </summary>
+    public Func<string, bool>? EndedAfterTurn { get; set; }
+
+    /// <summary>
+    /// Whether the owner's end was a finished turn that came while <paramref name="job"/> was still queued or running: the job's
+    /// outcome is said to it, which resumes the background session, so it is not "owner ended" for this job (#893).
+    /// A wound-down or stopped owner is not one, and neither is a crash.
+    /// </summary>
+    private bool EndedWhileJobOpen(SessionRow row, JobRow job)
+    {
+        if (EndedAfterTurn?.Invoke(row.Id) != true || WindDown.Why(state, Ledger, row) is not null)
+        {
+            return false;
+        }
+        var entry = Ledger?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []]);
+        if (entry is { EndReason: not null and not SessionEndReasons.Finished })
+        {
+            return false;
+        }
+        // The job was open at the end unless it had ended before it; with no ledger time the row's own end is what is known.
+        var endedAt = entry?.EndedAt ?? row.EndedAt;
+        return endedAt is not { } at || at <= (job.EndedAt ?? time.GetUtcNow());
+    }
+
     private bool EndedNormally(SessionRow row) =>
         WindDown.Why(state, Ledger, row) is not null
         || Ledger?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []]) is { EndReason: SessionEndReasons.Finished };
+
+    /// <summary>The owner ended and nothing took its place, for this job: nobody is waiting on it.</summary>
+    private bool OwnerEnded(SessionRow row, JobRow job) =>
+        !EndedWhileJobOpen(row, job) && (EndedNormally(row) || EndedForGood?.Invoke(row.Id) == true);
 
     internal string WakeTarget(string owner, string? ownerName)
     {

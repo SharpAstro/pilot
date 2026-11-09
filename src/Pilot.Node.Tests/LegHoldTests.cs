@@ -71,7 +71,7 @@ public abstract class LegHoldTestsBase : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private protected static string Git(string cwd, params string[] args)
@@ -380,7 +380,8 @@ public sealed class LegHoldTests2 : LegHoldTestsBase
 
         FlightWaiting.LegState(L("parser")).ShouldBe("holding for Drawboard.Core 1.2.7");
         FlightWaiting.LegState(L("render")).ShouldBe("planned");
-        Briefs.Watchtower("wt", _state.Flights(), _state.Legs(), _state.Cards(), "pilot").ShouldContain("1. parser: holding for Drawboard.Core 1.2.7");
+        // The brief carries counts and the held flights, not each leg: `pilot status` has the leg lines (PIL855).
+        Briefs.Watchtower("wt", _state.Flights(), _state.Legs(), _state.Cards(), "pilot").ShouldContain("1 held");
 
         var snapshot = new SnapshotEvent { Seq = 1, At = DateTimeOffset.UnixEpoch, Stream = "s", Notes = [], Sessions = [], Flights = _state.Flights(), Legs = _state.Legs() };
         var status = StatusMarkdown.Build(snapshot);

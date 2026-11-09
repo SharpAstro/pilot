@@ -38,6 +38,9 @@ internal sealed record NodeSummary
 
     public int Held { get; init; }
 
+    /// <summary>Flights on the owner's hold, counted in no other column (<see cref="FlightCounts"/>).</summary>
+    public int OnHold { get; init; }
+
     public int JobsRunning { get; init; }
 
     public int JobsQueued { get; init; }
@@ -186,8 +189,8 @@ internal sealed record FleetLine
     {
         var lastKnown = !summary.Connected && summary.Node is not null;
         var health = summary.Connected ? summary.Node?.Watchtower : null;
-        string Counted(int a, string aWord, int b, string bWord, string none) =>
-            a == 0 && b == 0 ? none : b == 0 ? $"{a} {aWord}" : a == 0 ? $"{b} {bWord}" : $"{a} {aWord} · {b} {bWord}";
+        string Counted(string none, params (int N, string Word)[] counts) =>
+            counts.Where(c => c.N > 0).Select(c => $"{c.N} {c.Word}").ToArray() is { Length: > 0 } parts ? string.Join(" · ", parts) : none;
         return new FleetLine
         {
             Where = where,
@@ -214,8 +217,8 @@ internal sealed record FleetLine
             // A node heard and quiet keeps its last words (dimmed, dated); one never heard has none, and its dashes say so.
             Sessions = !summary.Connected && !lastKnown ? "—" : summary.WaitingOnYou > 0 ? $"{summary.LiveSessions} live · {summary.WaitingOnYou} waiting on you" : $"{summary.LiveSessions} live",
             WaitingOnYou = summary.Connected ? summary.WaitingOnYou : 0,
-            Flights = !summary.Connected && !lastKnown ? "—" : Counted(summary.Flying, "flying", summary.Held, "held", "none in the air") + (summary.LegWait is { } wait ? $" · {wait}" : ""),
-            Jobs = !summary.Connected && !lastKnown ? "—" : Counted(summary.JobsRunning, "running", summary.JobsQueued, "queued", "none"),
+            Flights = !summary.Connected && !lastKnown ? "—" : Counted("none in the air", (summary.Flying, "flying"), (summary.Held, "held"), (summary.OnHold, "on hold")) + (summary.LegWait is { } wait ? $" · {wait}" : ""),
+            Jobs = !summary.Connected && !lastKnown ? "—" : Counted("none", (summary.JobsRunning, "running"), (summary.JobsQueued, "queued")),
             JobHolder = summary.Connected || lastKnown ? summary.JobHolder : null,
             JobFailing = summary.Connected || lastKnown ? summary.JobFailing : null,
             Rings = summary.Connected || lastKnown ? summary.Rings : 0,

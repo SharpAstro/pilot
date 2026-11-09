@@ -67,7 +67,7 @@ public sealed class IdeaRepoTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private static string Git(string cwd, params string[] args)

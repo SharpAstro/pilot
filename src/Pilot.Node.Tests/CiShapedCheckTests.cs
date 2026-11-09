@@ -59,7 +59,7 @@ public sealed class CiShapedCheckTests : IDisposable
 
     private string Plane => Path.Combine(_root, "plane");
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose() => TestDirs.DeleteTree(_root);
 
     private void WriteWorkflow(string yaml, string file = "dotnet.yml")
     {

@@ -31,7 +31,7 @@ public sealed class GuiOverlapsTests : IAsyncDisposable
         {
             await fake.DisposeAsync();
         }
-        Directory.Delete(_registry, recursive: true);
+        TestDirs.DeleteTree(_registry);
     }
 
     private FakeInspector Fake(Action<FakeInspector>? setup = null)
