@@ -1058,10 +1058,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// A benchmark is never held this way. <see cref="StartWhatCan"/> walks past such a job to start a later one that shares nothing with it.
     /// </summary>
     private bool WaitsOnlyOnAHold(JobRow job) =>
-        (SiblingHold(job) is not null || BuildHold(job) is not null)
+        (SiblingHold(job) is not null || BuildHold(job) is not null || RepoHold(job) is not null || HeavyHold(job) is not null || FlightHold(job) is not null)
         && BenchHold(job) is null
         && job.Kind != JobKind.Bench
-        && WhyWait(job, ignoreSibling: true, ignoreBuild: true) is null;
+        // The repo, heavy and flight holds are holds too: a job behind one of them is walked past, so a light job or another repo's
+        // starts in a free slot (review of #924: a held heavy job at the head stopped the queue).
+        && WhyWait(job, ignoreSibling: true, ignoreBuild: true, ignoreHolds: true) is null;
 
     /// <summary>
     /// A benchmark at the head of the queue that has waited past <see cref="BenchQuietWait"/> with nothing of pilot's running and the
@@ -1357,7 +1359,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// the only memory it could wait for is what its own queue's jobs hold, and a head that waits for memory nothing will
     /// free is a queue that never moves. Otherwise it starts when the machine has free what its kind of command needs.
     /// </summary>
-    private string? WhyWait(JobRow job, bool ignoreSibling = false, bool ignoreBuild = false)
+    private string? WhyWait(JobRow job, bool ignoreSibling = false, bool ignoreBuild = false, bool ignoreHolds = false)
     {
         if (job.Kind == JobKind.Bench)
         {
@@ -1381,11 +1383,15 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             return holds;
         }
-        if (RepoHold(job) is { } repoHeld)
+        if (!ignoreHolds && FlightHold(job) is { } flightHeld)
+        {
+            return flightHeld;
+        }
+        if (!ignoreHolds && RepoHold(job) is { } repoHeld)
         {
             return repoHeld;
         }
-        if (HeavyHold(job) is { } heavyHeld)
+        if (!ignoreHolds && HeavyHold(job) is { } heavyHeld)
         {
             return heavyHeld;
         }
@@ -1571,6 +1577,14 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     }
 
     /// <summary>
+    /// Why a job of a flight on hold may not start: a held flight loads the machine no more (the owner's "hold all flights" left PIL895's
+    /// whole-suite run going, 2026-11-09). A leg's check waits as any job does; the release lets it start. Null for a flight not held.
+    /// </summary>
+    private string? FlightHold(JobRow job) =>
+        job.Flight is { } code && state.Flights().FirstOrDefault(f => f.Code == code) is { OnHold: { } hold }
+            ? $"its flight {code} is on hold ({hold.Reason})" : null;
+
+    /// <summary>
     /// Why a heavy job (a test run, or a build of a solution or a test project) may not start while another heavy job runs on this
     /// machine, of any repo: max-jobs 2 means two jobs, never two heavy suites (the owner, 2026-11-09). Light jobs run beside one.
     /// </summary>
@@ -1591,9 +1605,55 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     }
 
     /// <summary>Whether a job's command runs tests or builds a solution or a test project: the jobs two of which take the machine.</summary>
-    internal static bool IsHeavy(string command) =>
-        System.Text.RegularExpressions.Regex.IsMatch(command, @"\bdotnet\s+(test\b|build\b[^&|;]*\.(slnx?|\S*Tests\S*\.csproj)\b)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
-        || System.Text.RegularExpressions.Regex.IsMatch(command, @"\bdotnet\s+build\s*($|[&|;]|-)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    internal static bool IsHeavy(string command)
+    {
+        foreach (var segment in command.Split(["&&", "||", ";", "|"], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            var words = segment.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Select(w => w.Trim('"', '\'')).ToList();
+            var at = words.FindIndex(w => Path.GetFileNameWithoutExtension(w).Equals("dotnet", StringComparison.OrdinalIgnoreCase));
+            if (at < 0 || at + 1 >= words.Count)
+            {
+                continue;
+            }
+            var verb = words[at + 1].ToLowerInvariant();
+            if (verb == "test")
+            {
+                return true;
+            }
+            if (verb != "build")
+            {
+                continue;
+            }
+            // What it builds: the words that are no switch and no switch's value. None is the folder's solution; a folder, a
+            // solution or a test project is heavy, one other project is not.
+            var targets = new List<string>();
+            for (var k = at + 2; k < words.Count; k++)
+            {
+                var w = words[k];
+                if (w.StartsWith('-'))
+                {
+                    if (!w.Contains(':') && !w.Contains('=') && ValueSwitches.Contains(w))
+                    {
+                        k++;
+                    }
+                    continue;
+                }
+                targets.Add(w);
+            }
+            if (targets.Count == 0 || targets.Any(t => !Path.HasExtension(t) || t.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) || t.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase)
+                || t.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) && Path.GetFileName(t).Contains("Tests", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // The dotnet build switches that take the next word as their value.
+    private static readonly HashSet<string> ValueSwitches = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "-c", "--configuration", "-f", "--framework", "-o", "--output", "-r", "--runtime", "-v", "--verbosity", "-a", "--arch", "--os", "-bl",
+    };
 
     // Jobs that have let go of their sibling clones, once and for good: their tree moved past the last building segment.
     private readonly ConcurrentDictionary<string, byte> _released = new(StringComparer.Ordinal);
@@ -1892,6 +1952,23 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         var count = 0;
         foreach (var job in state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued
             && (string.Equals(j.Flight, flight, StringComparison.OrdinalIgnoreCase) || (j.Owner is not null && owners.Contains(j.Owner, StringComparer.Ordinal)))))
+        {
+            if (CancelJob(job.Id, who, force: false) is null)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// Cancels <paramref name="flight"/>'s running jobs other than a leg's check, which runs to its end (a cancelled check reads as a
+    /// failed one); its queued jobs are left to wait on the flight's hold (<see cref="FlightHold"/>). Returns how many were cancelled.
+    /// </summary>
+    public int CancelRunningFor(string flight, string who)
+    {
+        var count = 0;
+        foreach (var job in state.Jobs().Where(j => j.State == JobState.Running && j.Kind != JobKind.Check && string.Equals(j.Flight, flight, StringComparison.OrdinalIgnoreCase)))
         {
             if (CancelJob(job.Id, who, force: false) is null)
             {

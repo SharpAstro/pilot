@@ -77,8 +77,11 @@ public sealed partial class NodeState
             UpdateCard(card.Id, card.Title, LegCommander.PlannedDetail(card.Detail, after), choices, card.Link, summary: CardSummaries.For(LegCommander.PlannedKind, card.Subject, card.Title, choices));
         }
         // A held flight's plan was logged as Handled (nothing to press then): the hold lifted, so the plan comes to the person now, with its Start.
+        // Only a plan none of whose legs took off yet, promoted once: a held flight released after its first leg flew, or a plan
+        // the person dismissed after it came to them, raises nothing (review of #924).
         if (open.Count == 0 && after.State == FlightState.Flying
-            && _cards.Values.Where(c => c.Kind == LegCommander.PlannedKind && c.Subject == subject && c.Bin == CardBin.Handled).OrderByDescending(c => c.At).FirstOrDefault() is { } logged)
+            && _legs.Values.Where(l => l.Flight == after.Code).All(l => l.State == LegState.Planned)
+            && _cards.Values.Where(c => c.Kind == LegCommander.PlannedKind && c.Subject == subject).OrderByDescending(c => c.At).FirstOrDefault() is { Bin: CardBin.Handled } logged)
         {
             var choices = LegCommander.PlannedChoices(after, first);
             RaiseCard(CardBin.ForYou, LegCommander.PlannedKind, subject, logged.Title, LegCommander.PlannedDetail(logged.Detail, after), choices, logged.Link,

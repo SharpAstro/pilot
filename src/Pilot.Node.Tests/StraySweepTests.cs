@@ -182,7 +182,8 @@ public sealed class StraySweepTests
     [Fact]
     public void AShellOrBrowserProcessIsNeverEndedWhateverTheAttributionSays()
     {
-        // Even attributed cleanly (started after the job's process, below it), the desktop's own processes are named, never ended.
+        // Even attributed cleanly (started after the job's process, below it), the desktop's own processes are neither ended nor named:
+        // one read as a stray is a misattribution, and a card would offer its kill command.
         Job("j9", 600, Began, TimeSpan.FromHours(2), ended: _time.GetUtcNow().AddMinutes(-10));
         _table.Add(660, 1, "pwsh.exe", Began.AddMinutes(1), commandLine: "pwsh.exe");
         _known["j9"] = [new KnownProcess(660, Began.AddMinutes(1))];
@@ -192,7 +193,7 @@ public sealed class StraySweepTests
         var named = _sweep.SweepOnce();
 
         _table.Killed.ShouldBeEmpty("the sweep ends nothing: it names, the person decides");
-        named.Select(s => s.Pid).ShouldContain(661);
+        named.Select(s => s.Pid).ShouldBe([660], "pwsh, the job's own; never msedgewebview2 or explorer");
         StraySweep.NeverEnded("Explorer.EXE").ShouldBeTrue();
         StraySweep.NeverEnded("testhost.exe").ShouldBeFalse();
     }
@@ -219,11 +220,11 @@ public sealed class StraySweepTests
 
         // Nothing is ended: each stray is named on a card with its kill command, and the person decides (SE1, 2026-11-09 22:04).
         _table.Killed.ShouldBeEmpty("the sweep ends nothing: it names, the person decides");
-        named.Select(s => s.Pid).Order().ShouldBe([500, 501, 601, 700]);
+        // 700 is Code.exe, a person's editor in the plane: on the never-named list, so no card offers its kill command.
+        named.Select(s => s.Pid).Order().ShouldBe([500, 501, 601]);
         _state.Cards().ShouldNotContain(c => c.Kind == StraySweep.KilledKind);
         Open(StraySweep.Kind).Single(c => c.Subject.StartsWith("process:601@", StringComparison.Ordinal)).Detail.ShouldNotBeNull().ShouldContain("Stop-Process -Id 601 -Force");
-        Open(StraySweep.Kind).Single(c => c.Subject.StartsWith("process:700@", StringComparison.Ordinal)).Detail.ShouldNotBeNull()
-            .ShouldContain("tied to its owner by its folder or command line only");
+        Open(StraySweep.Kind).ShouldNotContain(c => c.Subject.StartsWith("process:700@", StringComparison.Ordinal));
 
         _sweep.SweepOnce();
         _table.Killed.ShouldBeEmpty();

@@ -362,6 +362,12 @@ public sealed class FalseRingTests : ReviewTestsBase
         var parser = _state.Legs(flight.Code).Single(l => l.Name == "parser");
         _state.PutLeg(parser with { State = LegState.Flying, StartedAt = DateTimeOffset.UtcNow });
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.PlannedKind);
+
+        // Held again and released after a leg flew: no stale plan comes back offering a Start (review of #924).
+        var flying = _state.Flights().Single(f => f.Code == flight.Code);
+        _state.PutFlight(flying with { State = FlightState.Held });
+        _state.PutFlight(flying with { State = FlightState.Flying });
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.PlannedKind);
     }
 
     [Fact]
