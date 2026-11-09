@@ -168,12 +168,12 @@ public sealed class ClaudeJobSweep(NodeState state, SessionLedger ledger, IClaud
             // claude rm also deletes the job's worktree "when that is safe", and every pilot session in a plane records the plane as its
             // worktreePath: a clean, pushed plane of a live flight would go with its job. So a job whose worktreePath is still on disk is
             // stopped and not removed; the node's own removal of the plane takes the folder, and the next sweep removes the job.
-            if (job.WorktreePath is { Length: > 0 } worktree && Directory.Exists(worktree))
+            if (job.HoldsWorktree)
             {
                 kept++;
                 if (stoppedNow)
                 {
-                    await Error.WriteLineAsync($"{label}: stopped, kept while its worktree {worktree} exists");
+                    await Error.WriteLineAsync($"{label}: stopped, kept while its worktree {job.WorktreePath} exists");
                 }
                 continue;
             }

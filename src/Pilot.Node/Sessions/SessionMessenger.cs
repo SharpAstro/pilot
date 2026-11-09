@@ -146,6 +146,10 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         var cancelled = cancelJobs ? CancelJobs?.Invoke(ids, command.Who) ?? 0 : 0;
         tracker.Kick();
         await log.WriteLineAsync($"stop: who={command.Who} target={command.Target} stopped reason={reason}{(cancelJobs ? $" jobs-cancelled={cancelled}" : "")}");
+        if (Removal is not null)
+        {
+            await Removal.RemoveAsync([row.Id, row.SessionId], reason, cancellationToken);
+        }
         return state.Complete(command, null);
     }
 
@@ -156,6 +160,9 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
 
     /// <summary>How long a delivered request id is remembered, as long as the node remembers a command's request id.</summary>
     internal static readonly TimeSpan DeliveredRetention = TimeSpan.FromMinutes(15);
+
+    /// <summary>Removes the stopped session's Claude Code job once a stop is confirmed (#891); null removes none.</summary>
+    public ClaudeJobRemoval? Removal { get; init; }
 
     /// <summary>The sends delivered, kept for the chat to give each one's transcript entry and queued line its id (PIL595). Null keeps none.</summary>
     public SendLog? Sends { get; init; }
