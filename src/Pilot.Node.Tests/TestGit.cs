@@ -10,7 +10,7 @@ namespace Pilot.Node.Tests;
 /// its constructor, a test by <see cref="UseReal"/> before it has used the repo. <c>PILOT_TEST_REAL_GIT=1</c> runs everything on real git, which is
 /// the fidelity check of the model and the "before" of a timing: CI's Linux Slow job sets it (a git run is 1 to 3 ms there), so every Slow-tagged
 /// test meets real git on every PR (the build job's other tests meet only the model). A drift of the model shows on Windows, which runs it: a command the
-/// model refuses is red there and green on Linux, and only a model more lenient than git is red on Linux alone. A Windows red that Linux passes: look for a model gap.
+/// model refuses is red there and green on Linux, and only a model more lenient than git is red on Linux alone. A Windows red that Linux passes: look for a model gap, or for a test that races a background start the slow real git used to hide (a sweep called directly returns before the planner it starts is up: wait for its card).
 /// </summary>
 internal sealed class TestGit : IGit
 {
