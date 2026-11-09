@@ -83,6 +83,32 @@ public sealed class MergeFixtureCardTests
     }
 
     [Theory]
+    [InlineData("ready")]
+    [InlineData("pending")]
+    public async Task AReadyCardOfAFlightWithALegStillToFlyOffersNoMergeAndSaysWhatItWaitsForUntilTheLegLands(string fixture)
+    {
+        // PIL853: a review-notes leg was planned after the card was raised; the card and the PR row said "ready" with a Merge that
+        // answered "has legs not done: review-notes-2".
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var ready = Ready(node);
+        node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "review-notes", Order = 2, Goal = "g", DoneWhen = "d", State = LegState.Flying });
+
+        await Look(node, Read(fixture));
+
+        var card = Card(node, ready);
+        card.State.ShouldBe(CardState.Open);
+        // A mark, not a button: Blocked, naming the leg, with the reviewed head kept for the autopilot and the holding bound.
+        var mark = card.Choices.Single(c => c.Verb == Verbs.Merge);
+        (mark.Status, mark.Note, mark.Args[0]).ShouldBe((ChoiceStatus.Blocked, "waits for review-notes", PrHead));
+        card.Title.ShouldBe("TIA1's PR #63 merges once review-notes is done");
+
+        // The leg lands: the next look offers the Merge again, as GitHub has the PR.
+        node.State.PutLeg(node.State.Legs("TIA1").Single(l => l.Name == "review-notes") with { State = LegState.Done });
+        await Look(node, Read(fixture));
+        Card(node, ready).Choices.Single(c => c.Verb == Verbs.Merge).Status.ShouldBe(fixture == "ready" ? ChoiceStatus.Passing : ChoiceStatus.Pending);
+    }
+
+    [Theory]
     [InlineData("blocked-check", "build (windows-latest, win-x64) failed")]
     [InlineData("review-required", "a review is required")]
     [InlineData("changes-requested", "asks for changes")]

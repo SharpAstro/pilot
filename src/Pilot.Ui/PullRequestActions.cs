@@ -45,7 +45,10 @@ internal static class PullRequestActions
         var name = $"{pr.Repo}#{pr.Number}";
         if (pr.Flight is { } code)
         {
-            if (pr.Kind is PullRequestKind.Ready or PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck && Choice(cards, code, Verbs.Merge) is { } merge)
+            // A Merge the card shows as a mark (Blocked: a leg still to fly, GitHub blocking it) is no button here either: pressed, the
+            // node refuses it (#918).
+            if (pr.Kind is PullRequestKind.Ready or PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck && Choice(cards, code, Verbs.Merge) is { } merge
+                && merge.Card.Choices[merge.Number - 1].Status != ChoiceStatus.Blocked)
             {
                 var choice = merge.Card.Choices[merge.Number - 1];
                 var pending = pr.Kind is PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck;
