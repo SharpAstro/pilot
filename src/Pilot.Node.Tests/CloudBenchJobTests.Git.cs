@@ -59,7 +59,7 @@ public sealed partial class CloudBenchJobTests
     {
         var (repo, _, _) = TwoCommits();
         File.WriteAllText(Path.Combine(repo, "README.md"), "edited, not committed\n");
-        var jobs = await StartedRunner(Settings(), git: new GitCli());
+        var jobs = await StartedRunner(Settings(), git: new GitCli(), realLauncher: true);
 
         var id = RunAlone(jobs, repo, "echo", "benched");
         var ended = await Until(id, j => j.State == JobState.Succeeded);
@@ -77,7 +77,7 @@ public sealed partial class CloudBenchJobTests
     {
         var folder = Path.Combine(_root, "plain");
         Directory.CreateDirectory(folder);
-        var jobs = await StartedRunner(Settings(), git: new GitCli());
+        var jobs = await StartedRunner(Settings(), git: new GitCli(), realLauncher: true);
 
         var id = RunAlone(jobs, folder, "echo", "benched");
         var ended = await Until(id, j => j.State == JobState.Succeeded);
@@ -208,7 +208,7 @@ public sealed partial class CloudBenchJobTests
     public async Task ALocalBenchsCardSaysItRanOnThisMachineBecauseItWasAskedTo()
     {
         var (_, first, _) = TwoCommits();
-        var jobs = await StartedRunner(Settings(), git: new GitCli());
+        var jobs = await StartedRunner(Settings(), git: new GitCli(), realLauncher: true);
 
         await BenchCommand(BenchRunOn(jobs), "--ref", first, "--local", "--", "echo", "benched");
         var card = await BenchCard();

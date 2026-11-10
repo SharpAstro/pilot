@@ -120,11 +120,11 @@ public sealed partial class CloudBenchJobTests : JobTestsBase, IAsyncDisposable
     }
 
     // A runner whose dispatcher loop runs, as the node's does: for the tests that stop it, or hand a bench through BenchRun.
-    private async Task<JobRunner> StartedRunner(NodeSettings? settings, ICloudBench? cloud = null, IGit? git = null)
+    private async Task<JobRunner> StartedRunner(NodeSettings? settings, ICloudBench? cloud = null, IGit? git = null, bool realLauncher = false)
     {
         var jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), TimeProvider.System)
         {
-            Launcher = new FakeJobLauncher(TimeProvider.System),
+            Launcher = realLauncher ? RealJobLauncher.Instance : new FakeJobLauncher(TimeProvider.System),
             FreeMemory = () => null,
             MachineOutsideCpu = () => 0,
             MachineCpu = () => 0,
