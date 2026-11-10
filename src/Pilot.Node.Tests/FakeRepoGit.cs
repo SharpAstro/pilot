@@ -1032,7 +1032,7 @@ internal sealed class FakeRepoGit : IGit
                 case "--detach":
                     detach = true;
                     break;
-                case "--force" or "-f" or "--quiet" or "-q":
+                case "--force" or "-f" or "--quiet" or "-q" or "--track":
                     break;
                 default:
                     positional.Add(a[i]);
@@ -1093,6 +1093,8 @@ internal sealed class FakeRepoGit : IGit
         var wt = new Worktree(path, branch, branch is null ? commit : null, new Dictionary<string, string>(tree));
         Directory.CreateDirectory(path);
         Materialize(wt, tree, new Dictionary<string, string>());
+        // A linked worktree has a .git file naming its admin folder; the node tells a worktree from a folder around it by that file.
+        File.WriteAllText(Path.Combine(path, ".git"), $"gitdir: {Norm(Path.Combine(_repo.Path, ".git", "worktrees", Path.GetFileName(path)))}\n");
         Worktrees.Add(wt);
         return Ok("");
     }

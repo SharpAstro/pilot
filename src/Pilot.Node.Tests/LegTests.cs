@@ -823,7 +823,11 @@ internal sealed class FakeGitHub : IGitHub
             throw new FlightException($"gh could not clone {repo}: not found");
         }
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var run = await new GitCli().RunAsync(["clone", "-q", origin, path], Path.GetDirectoryName(path)!, cancellationToken);
+        // An origin a test's model owns (PrFixTestsBase on FakeRepoGit) is cloned by the model, so the clone starts no git process.
+        var folder = Path.GetDirectoryName(path)!;
+        var run = FakeRepoGit.Owning(origin) is { } fake
+            ? fake.Run(["clone", "-q", origin, path], folder)
+            : await new GitCli().RunAsync(["clone", "-q", origin, path], folder, cancellationToken);
         if (!run.Ok)
         {
             throw new FlightException($"gh could not clone {repo}: {run.Why}");
