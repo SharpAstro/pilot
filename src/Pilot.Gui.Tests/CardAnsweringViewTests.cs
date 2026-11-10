@@ -159,7 +159,7 @@ public sealed class CardAnsweringViewTests
         var (view, renderer) = Panel();
         using var _ = renderer;
         Arrange(view, renderer, Open());
-        view.NoteRefused("c9", Refusal);
+        view.NoteRefused("c9", null, Refusal);
         Drawn(Arrange(view, renderer, Open())).ShouldBeTrue("an old refusal is on the card until the card moves on");
 
         var underway = Arrange(view, renderer, Open(Underway()));
@@ -176,7 +176,7 @@ public sealed class CardAnsweringViewTests
         var (view, renderer) = Panel();
         using var _ = renderer;
         Arrange(view, renderer, Open());
-        view.NoteRefused("c9", Refusal);
+        view.NoteRefused("c9", null, Refusal);
 
         Arrange(view, renderer, Open(Underway()));
 
@@ -189,7 +189,7 @@ public sealed class CardAnsweringViewTests
         var (view, renderer) = Panel();
         using var _ = renderer;
         Arrange(view, renderer, Open());
-        view.NoteRefused("c9", Refusal);
+        view.NoteRefused("c9", null, Refusal);
         Drawn(Arrange(view, renderer, Open())).ShouldBeTrue();
 
         Arrange(view, renderer, Gone);
@@ -206,7 +206,7 @@ public sealed class CardAnsweringViewTests
         using var _ = renderer;
         var open = Open();
         Arrange(view, renderer, open);
-        view.NoteRefused("c9", Refusal);
+        view.NoteRefused("c9", null, Refusal);
         Drawn(Arrange(view, renderer, open)).ShouldBeTrue();
 
         // The pointer is over the panel: the card closed since stays where it was, dead, as the panel was held.
@@ -224,7 +224,7 @@ public sealed class CardAnsweringViewTests
         Arrange(view, renderer, Open());
         // A choice that closes its card first, then is refused: the node reopens the card, and its answer may beat that event to the window.
         Arrange(view, renderer, Gone);
-        view.NoteRefused("c9", Refusal);
+        view.NoteRefused("c9", null, Refusal);
 
         var reopened = Arrange(view, renderer, Open());
 
@@ -240,7 +240,7 @@ public sealed class CardAnsweringViewTests
         Arrange(view, renderer, Open());
         Arrange(view, renderer, Open(Underway()));
         // This press's own answer was refused: the node's reply beats the stream's "answer ended".
-        view.NoteRefused("c9", Refusal);
+        view.NoteRefused("c9", null, Refusal);
 
         Drawn(Arrange(view, renderer, Open(Underway()))).ShouldBeFalse("no refusal beside the line that says an answer is underway");
         view.RefusedOn("c9").ShouldBe(Refusal);
@@ -291,9 +291,9 @@ public sealed class CardAnsweringViewTests
         // What the GUI does with the answer: its refusal (null for an ok one) is what is kept, so a joined press leaves no "was refused".
         var (view, renderer) = Panel();
         using var _ = renderer;
-        view.NoteRefused("c9", Refusal);
+        view.NoteRefused("c9", null, Refusal);
 
-        view.NoteRefused("c9", DashboardCommands.RefusalOf(Answered(ok: true, "already on its way, started by cli at 10:42")));
+        view.NoteRefused("c9", null, DashboardCommands.RefusalOf(Answered(ok: true, "already on its way, started by cli at 10:42")));
 
         view.RefusedOn("c9").ShouldBeNull();
     }

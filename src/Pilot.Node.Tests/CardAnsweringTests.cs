@@ -23,6 +23,10 @@ public sealed class CardAnsweringTests : IDisposable
     private const string Subject = "flight/TIA1";
     private const string Why = "the PR conflicts with its base: resolve it keeping both sides' work";
 
+    // The merge-failed card's go-around: a choice that keeps its card open while it runs (the conflict card these tests first used is
+    // gone since #869, which resolves a conflict without ringing).
+    private const string FixLastLeg = "Fix its last leg";
+
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2a-" + Guid.NewGuid().ToString("N")[..8]);
 
     private string Repo => Path.Combine(_root, "tianwen");
@@ -97,7 +101,7 @@ public sealed class CardAnsweringTests : IDisposable
     public void AnAnswerTakenIsOnTheCardAndOnTheStreamAndEndsWithTheCard()
     {
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
-        var card = state.RaiseCard(CardBin.Ring, LegCommander.PrConflictsKind, Subject, "TIA1's PR #63 conflicts with its base");
+        var card = state.RaiseCard(CardBin.Ring, LegCommander.MergeFailed, Subject, "TIA1's PR #63 conflicts with its base");
         var events = new List<NodeEvent>();
         using var subscription = state.Subscribe(state.Seq, state.Stream, new RecordingSink(events));
 
@@ -124,7 +128,7 @@ public sealed class CardAnsweringTests : IDisposable
     public void AnAnswerTakenWhileOneIsUnderwayGetsTheFirstAndChangesNothing()
     {
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
-        var card = state.RaiseCard(CardBin.Ring, LegCommander.PrConflictsKind, Subject, "TIA1's PR #63 conflicts with its base");
+        var card = state.RaiseCard(CardBin.Ring, LegCommander.MergeFailed, Subject, "TIA1's PR #63 conflicts with its base");
         var (first, _) = state.BeginAnswering(card.Id, "Resolve the conflict", "cli", null, TimeSpan.FromMinutes(10));
         var seq = state.Seq;
 
@@ -141,7 +145,7 @@ public sealed class CardAnsweringTests : IDisposable
     {
         var clock = new ShiftedClock();
         var state = new NodeState(new InMemoryJournal(), clock);
-        var card = state.RaiseCard(CardBin.Ring, LegCommander.PrConflictsKind, Subject, "TIA1's PR #63 conflicts with its base");
+        var card = state.RaiseCard(CardBin.Ring, LegCommander.MergeFailed, Subject, "TIA1's PR #63 conflicts with its base");
         var stuck = TimeSpan.FromMinutes(10);
         var (old, _) = state.BeginAnswering(card.Id, "Resolve the conflict", "cli", null, stuck);
         clock.Advance(stuck + TimeSpan.FromSeconds(1));
@@ -162,7 +166,7 @@ public sealed class CardAnsweringTests : IDisposable
     public void ACardThatIsNotOpenTakesNoAnswer()
     {
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
-        var card = state.RaiseCard(CardBin.Ring, LegCommander.PrConflictsKind, Subject, "TIA1's PR #63 conflicts with its base");
+        var card = state.RaiseCard(CardBin.Ring, LegCommander.MergeFailed, Subject, "TIA1's PR #63 conflicts with its base");
         state.CloseCard(card.Id, "dismissed", "cli");
 
         foreach (var id in new[] { card.Id, "c99" })
@@ -178,7 +182,7 @@ public sealed class CardAnsweringTests : IDisposable
     {
         var journal = new InMemoryJournal();
         var first = new NodeState(journal, TimeProvider.System);
-        var card = first.RaiseCard(CardBin.Ring, LegCommander.PrConflictsKind, Subject, "TIA1's PR #63 conflicts with its base");
+        var card = first.RaiseCard(CardBin.Ring, LegCommander.MergeFailed, Subject, "TIA1's PR #63 conflicts with its base");
         first.BeginAnswering(card.Id, "Resolve the conflict", "cli", null, TimeSpan.FromMinutes(10)).Taken.ShouldNotBeNull();
 
         // The journal holds the mark, as it holds every change: it is the answer's runner that is gone with the node.
@@ -219,9 +223,9 @@ public sealed class CardAnsweringTests : IDisposable
             new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Subject, Args = [PrHead] },
             new CardChoice { Label = "Redo leg parser", Verb = Verbs.GoAround, Target = leg, Args = ["redo it"] },
         ], link: PrUrl);
-        var conflicts = node.State.RaiseCard(CardBin.Ring, LegCommander.PrConflictsKind, Subject, "TIA1's PR #63 conflicts with its base", "Conflicts.",
+        var conflicts = node.State.RaiseCard(CardBin.Ring, LegCommander.MergeFailed, Subject, "TIA1's PR #63 did not merge", "The merge failed.",
         [
-            new CardChoice { Label = LegCommander.ResolveConflict, Verb = Verbs.GoAround, Target = leg, Args = [Why] },
+            new CardChoice { Label = FixLastLeg, Verb = Verbs.GoAround, Target = leg, Args = [Why] },
             new CardChoice { Label = "Redo leg parser from scratch", Verb = Verbs.GoAround, Target = leg, Args = ["redo it from scratch"] },
         ], link: PrUrl);
         return (ready, conflicts);
@@ -249,22 +253,22 @@ public sealed class CardAnsweringTests : IDisposable
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AGuiPressOfResolveTheConflictWhileTheClisIdenticalAnswerIsStillInsideTheGoAroundsCallingWindowGetsOkNotRefused()
+    public async Task AGuiPressOfAGoAroundWhileTheClisIdenticalAnswerIsStillInsideTheGoAroundsCallingWindowGetsOkNotRefused()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         var (_, conflicts) = Conflicted(node);
         var (open, reached) = HoldTheDraft(node);
-        var cli = Press(node, "cli", conflicts, LegCommander.ResolveConflict);
+        var cli = Press(node, "cli", conflicts, FixLastLeg);
         await Reaches(reached);
         var underway = node.State.Cards().Single(c => c.Id == conflicts.Id);
         underway.State.ShouldBe(CardState.Open);
         underway.Answering.ShouldNotBeNull().ShouldSatisfyAllConditions(
-            a => a.Choice.ShouldBe(LegCommander.ResolveConflict),
+            a => a.Choice.ShouldBe(FixLastLeg),
             a => a.By.ShouldBe("cli"));
 
-        var gui = await Press(node, "gui", conflicts, LegCommander.ResolveConflict);
+        var gui = await Press(node, "gui", conflicts, FixLastLeg);
 
-        // Not "Resolve the conflict was refused: TIA1 is being sent round already": it is on its way, and who started it is said.
+        // Not "Fix its last leg was refused: TIA1 is being sent round already": it is on its way, and who started it is said.
         gui.Ok.ShouldBeTrue(gui.Error);
         gui.Made.ShouldBe($"already on its way, started by cli at {Local(underway.Answering!.At)}");
         node.Workers.Started.ShouldNotContain(w => w.Brief.Contains("keeping both sides' work"), "a press that joins runs nothing");
@@ -277,7 +281,7 @@ public sealed class CardAnsweringTests : IDisposable
         node.State.Legs("TIA1").Single().State.ShouldBe(LegState.Flying);
         node.Workers.Started.Count(w => w.Brief.Contains("keeping both sides' work")).ShouldBe(1);
         var closed = node.State.Cards().Single(c => c.Id == conflicts.Id);
-        (closed.State, closed.Outcome, closed.ClosedBy).ShouldBe((CardState.Closed, LegCommander.ResolveConflict, "cli"));
+        (closed.State, closed.Outcome, closed.ClosedBy).ShouldBe((CardState.Closed, FixLastLeg, "cli"));
         closed.Answering.ShouldBeNull();
     }
 
@@ -288,7 +292,7 @@ public sealed class CardAnsweringTests : IDisposable
         await using var node = await NodeHarness.StartAsync(Ct);
         var (_, conflicts) = Conflicted(node);
         var (open, reached) = HoldTheDraft(node);
-        var cli = Press(node, "cli", conflicts, LegCommander.ResolveConflict);
+        var cli = Press(node, "cli", conflicts, FixLastLeg);
         await Reaches(reached);
         var at = node.State.Cards().Single(c => c.Id == conflicts.Id).Answering!.At;
 
@@ -297,13 +301,13 @@ public sealed class CardAnsweringTests : IDisposable
             new CommandRequest { Verb = Verbs.Dismiss, Target = Verbs.CardTarget(conflicts.Id), Args = ["not needed"], Who = "gui" }, Ct);
 
         other.Ok.ShouldBeFalse();
-        other.Error.ShouldNotBeNull().ShouldContain(LegCommander.ResolveConflict);
+        other.Error.ShouldNotBeNull().ShouldContain(FixLastLeg);
         other.Error.ShouldContain("is underway");
         other.Error.ShouldContain($"pressed by cli at {Local(at)}");
         dismiss.Ok.ShouldBeFalse();
         dismiss.Error.ShouldNotBeNull().ShouldContain("is being answered");
         // Neither touched the answer underway: it still holds the card and still goes through.
-        node.State.Cards().Single(c => c.Id == conflicts.Id).Answering.ShouldNotBeNull().Choice.ShouldBe(LegCommander.ResolveConflict);
+        node.State.Cards().Single(c => c.Id == conflicts.Id).Answering.ShouldNotBeNull().Choice.ShouldBe(FixLastLeg);
         open.SetResult();
         (await cli).Ok.ShouldBeTrue();
         node.Workers.Started.Count(w => w.Brief.Contains("keeping both sides' work")).ShouldBe(1);
@@ -317,7 +321,7 @@ public sealed class CardAnsweringTests : IDisposable
         await using var node = await NodeHarness.StartAsync(Ct);
         var (ready, conflicts) = Conflicted(node);
         var (open, reached) = HoldTheDraft(node);
-        var cli = Press(node, "cli", conflicts, LegCommander.ResolveConflict);
+        var cli = Press(node, "cli", conflicts, FixLastLeg);
         await Reaches(reached);
         var events = new List<NodeEvent>();
         using var subscription = node.State.Subscribe(node.State.Seq, node.State.Stream, new RecordingSink(events));
@@ -350,10 +354,10 @@ public sealed class CardAnsweringTests : IDisposable
         await using var node = await NodeHarness.StartAsync(Ct);
         var (_, conflicts) = Conflicted(node);
         // A go-around needs a why: refused, the card stays for the person to try again.
-        var blank = node.State.UpdateChoices(conflicts.Id, [new CardChoice { Label = LegCommander.ResolveConflict, Verb = Verbs.GoAround, Target = Verbs.LegTarget("TIA1", "parser"), Args = [" "] }]);
+        var blank = node.State.UpdateChoices(conflicts.Id, [new CardChoice { Label = FixLastLeg, Verb = Verbs.GoAround, Target = Verbs.LegTarget("TIA1", "parser"), Args = [" "] }]);
         blank.ShouldBeTrue();
 
-        var refused = await Press(node, "gui", conflicts, LegCommander.ResolveConflict);
+        var refused = await Press(node, "gui", conflicts, FixLastLeg);
 
         refused.Ok.ShouldBeFalse();
         refused.Error.ShouldNotBeNull().ShouldContain("needs why");
@@ -361,7 +365,7 @@ public sealed class CardAnsweringTests : IDisposable
         card.State.ShouldBe(CardState.Open);
         card.Answering.ShouldBeNull();
         // And pressed again it is taken afresh and refused afresh, never told it is on its way.
-        var again = await Press(node, "gui", conflicts, LegCommander.ResolveConflict);
+        var again = await Press(node, "gui", conflicts, FixLastLeg);
         again.Made.ShouldBeNull();
         again.Error.ShouldNotBeNull().ShouldContain("needs why");
     }
@@ -374,7 +378,7 @@ public sealed class CardAnsweringTests : IDisposable
         // Not a refusal: the node is cut off in the middle of its gh call.
         node.GitHub.OnCall = call => call == nameof(IGitHub.SetDraftAsync) ? throw new InvalidOperationException("the node is stopping") : Task.CompletedTask;
 
-        await Should.ThrowAsync<InvalidOperationException>(Press(node, "gui", conflicts, LegCommander.ResolveConflict));
+        await Should.ThrowAsync<InvalidOperationException>(Press(node, "gui", conflicts, FixLastLeg));
 
         var card = node.State.Cards().Single(c => c.Id == conflicts.Id);
         card.State.ShouldBe(CardState.Open);
