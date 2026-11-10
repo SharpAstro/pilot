@@ -46,8 +46,6 @@ public sealed partial class JobRunner
     /// <summary>Where a bench may run in Azure, read when the bench is handed over (the keys are in force at once): the saved settings file unless a test puts its own.</summary>
     public Func<NodeSettings> BenchSettings { get; init; } = () => NodeSettings.Read(options.SettingsFile);
 
-    /// <summary>Git, to read the checkout a <c>run --alone</c> job is in; without it such a job runs on this machine.</summary>
-    public IGit? Git { get; init; }
 
     // What each handed-over bench needs to go to a VM, by job id.
     private readonly ConcurrentDictionary<string, CloudBenchPlan> _plans = new(StringComparer.Ordinal);
@@ -373,10 +371,6 @@ public sealed partial class JobRunner
         if (plan.Refs is not null && plan.RepoPath is not null)
         {
             return (plan, null);
-        }
-        if (Git is null)
-        {
-            return (null, "this node has no git to read the folder with, so the bench runs on this machine");
         }
         var prefix = await Git.RunAsync(["rev-parse", "--show-prefix"], job.Cwd, cancellationToken);
         if (!prefix.Ok)
