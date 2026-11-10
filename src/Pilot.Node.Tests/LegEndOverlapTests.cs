@@ -896,6 +896,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     /// <summary>A peer holding the repo and flying <see cref="Flights"/>; it answers flight-changes from <see cref="Changes"/> (the lines it says per flight code).</summary>
     private sealed class FakePeer(string name) : IFleetPeer
     {
+        public string Name => name;
+
         public string Endpoint => $"{name.ToLowerInvariant()}.local:47731";
 
         public bool HasGrant => true;

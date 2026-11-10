@@ -264,6 +264,8 @@ public abstract class FlightMoveTestsBase : IAsyncDisposable
     /// <summary>DE1 as SE1 reaches it: its node, its repos and load as it says them, and its receive-flight as this test node's.</summary>
     private protected sealed class MovePeer(FlightCommander receiver) : IFleetPeer
     {
+        public string Name => "DE1";
+
         public string Endpoint => "de1.local:47731";
 
         public bool HasGrant => true;
@@ -337,6 +339,8 @@ public abstract class FlightMoveTestsBase : IAsyncDisposable
     /// <summary>A peer whose receive-flight is this node's: what the sender's node reaches over the LAN, under its grant.</summary>
     private protected sealed class HandingPeer(FlightCommander receiver) : IFleetPeer
     {
+        public string Name => "DE1";
+
         public string Endpoint => "de1.local:47731";
 
         public bool HasGrant => true;

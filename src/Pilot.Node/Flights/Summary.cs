@@ -536,11 +536,11 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
 
     private static async Task<(string Name, string? Records, string? Why)> FetchAsync(IFleetPeer peer, CancellationToken cancellationToken)
     {
-        var name = peer.Endpoint;
+        var name = peer.Name;
         try
         {
             var info = await peer.NodeAsync(cancellationToken);
-            name = info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Endpoint;
+            name = info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Name;
             var result = await peer.SendAsync(new CommandRequest { Verb = Verbs.Records, Target = Verbs.NodeTarget, Who = "summary" }, cancellationToken);
             return result.Ok
                 ? (name, result.Made, null)

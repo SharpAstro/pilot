@@ -47,7 +47,7 @@ public sealed partial class FlightCommander
                 return null;
             }
             var info = await peer.NodeAsync(cancellationToken);
-            return new PeerFlight(info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Endpoint, flies.Code);
+            return new PeerFlight(info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Name, flies.Code);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or OperationCanceledException or System.Net.WebSockets.WebSocketException)
         {
@@ -118,7 +118,7 @@ public sealed partial class FlightCommander
             return (code, way);
         }
 
-        var why = verdicts.Where(v => v.Reason is not null).Select(v => $"{v.Name}: {v.Reason}").Concat(refused);
+        var why = verdicts.Where(v => v.Reason is not null).Select(v => v.Said!).Concat(refused);
         throw new FlightException($"{refusal}, and no node of the fleet takes it either: {string.Join("; ", why)}");
     }
 
@@ -127,13 +127,13 @@ public sealed partial class FlightCommander
     {
         if (!peer.HasGrant)
         {
-            return (peer, new FleetPeerFacts(peer.Endpoint, Reached: false, Granted: false, false, false, null, null, 0));
+            return (peer, new FleetPeerFacts(peer.Name, Reached: false, Granted: false, false, false, null, null, 0));
         }
-        var name = peer.Endpoint;
+        var name = peer.Name;
         try
         {
             var info = await peer.NodeAsync(cancellationToken);
-            name = info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Endpoint;
+            name = info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Name;
             if (await peer.ReposAsync(cancellationToken) is not { } repos)
             {
                 return (peer, new FleetPeerFacts(name, Reached: true, Granted: false, info.Maintenance, info.AcceptsFleetFlights, null, null, 0));

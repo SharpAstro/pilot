@@ -224,6 +224,8 @@ public sealed class SummaryCliTests : IAsyncLifetime
     /// <summary>A node of the fleet that answers <c>records node</c> with what it is given, or does not answer.</summary>
     private sealed class FakePeer(string name, string? records, bool unreachable = false, string? refuse = null) : IFleetPeer
     {
+        public string Name => name;
+
         public string Endpoint => $"{name.ToLowerInvariant()}.local:47731";
 
         public bool HasGrant { get; init; } = true;

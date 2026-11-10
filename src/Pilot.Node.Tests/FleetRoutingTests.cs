@@ -195,7 +195,7 @@ public sealed class FleetRoutingTests : IDisposable
             (new FakePeer("AA1") { Maintenance = true, AcceptsFleetFlights = true }, "AA1: in maintenance"),
             (new FakePeer("BB1"), "BB1: not willing (accept-fleet-flights is off)"),
             (new FakePeer("CC1") { Unreachable = true }, "cc1.local:47731: unreachable"),
-            (new FakePeer("DD1") { Granted = false }, "DD1: no grant"),
+            (new FakePeer("DD1") { Granted = false }, "DD1 refused the held grant: Connect again"),
             (new FakePeer("EE1") { HasToken = false }, "ee1.local:47731: no grant"),
             (NoCheckout("FF1"), $"FF1: no checkout of {GitHub}"),
         };
@@ -286,6 +286,8 @@ public sealed class FleetRoutingTests : IDisposable
 
     private sealed class FakePeer(string name) : IFleetPeer
     {
+        public string Name => name;
+
         public string Endpoint => $"{name.ToLowerInvariant()}.local:47731";
 
         public bool HasToken { get; init; } = true;

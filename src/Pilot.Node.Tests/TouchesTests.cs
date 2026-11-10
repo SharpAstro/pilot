@@ -376,6 +376,8 @@ public sealed class TouchesTests : IDisposable
 
     private sealed class FakePeer(string name) : IFleetPeer
     {
+        public string Name => name;
+
         public string Endpoint => $"{name.ToLowerInvariant()}.local:47731";
 
         public bool HasGrantHeld { get; init; } = true;

@@ -170,7 +170,9 @@ public static partial class NodeApp
             // The nodes this user's own grants reach (pilot connect): the file beside the node's data, as the clients keep it.
             flights.Fleet = new HeldTokenFleet(Environment.GetEnvironmentVariable("PILOT_CLIENT_GRANTS") is { Length: > 0 } grants
                 ? grants
-                : Path.Combine(options.DataFolder, "client-grants.json"));
+                : Path.Combine(options.DataFolder, "client-grants.json"),
+                // Where each held node announces itself now, when this node runs LAN discovery; else the last address it answered at.
+                services.GetService<LAN.Lib.LanDiscovery>() is { } lan ? () => lan.PeersOf(NodeWire.LanService) : null);
             // The last copy of each peer's flights and legs, so a flight of a node that went down can still be read (#894).
             flights.Copy = services.GetRequiredService<FleetCopy>();
             return flights;

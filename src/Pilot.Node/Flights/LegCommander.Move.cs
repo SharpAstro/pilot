@@ -180,7 +180,7 @@ public sealed partial class LegCommander
         {
             return (null, Failed(flight, null, peers.Count == 0
                 ? "this node knows no other node of the fleet. Grant it one, or fly the flight on here."
-                : $"no node of the fleet takes it ({string.Join("; ", verdicts.Select(v => $"{v.Name}: {v.Reason}"))}). Put one out of maintenance and willing (accept-fleet-flights on), or move it again later."), null);
+                : $"no node of the fleet takes it ({string.Join("; ", verdicts.Select(v => v.Said))}). Put one out of maintenance and willing (accept-fleet-flights on), or move it again later."), null);
         }
 
         // The node it is named for in a failure: the one chosen, when it is the only one willing.
@@ -302,7 +302,7 @@ public sealed partial class LegCommander
             {
                 return (null, false);
             }
-            var peer = flights.Fleet?.Peers().FirstOrDefault(p => string.Equals(p.Endpoint, unknown.Endpoint, StringComparison.OrdinalIgnoreCase));
+            var peer = flights.Fleet?.Peers().FirstOrDefault(p => string.Equals(p.Name, unknown.To, StringComparison.OrdinalIgnoreCase) || string.Equals(p.Endpoint, unknown.Endpoint, StringComparison.OrdinalIgnoreCase));
             var holds = peer is null ? PeerHolds.Unreachable : await OffLockAsync(null, () => AskPeerAsync(peer, flight.Code));
             // Whatever changed the row meanwhile (a settling by another call) is that call's.
             if (state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) is not { MoveUnknown: not null } now)

@@ -220,6 +220,8 @@ public sealed class FleetRangeTests : IAsyncLifetime
         /// <summary>The admission-setting commands this peer was sent.</summary>
         public int Settings { get; private set; }
 
+        public string Name => node.Options.Machine;
+
         public string Endpoint => $"{node.Options.Machine.ToLowerInvariant()}.local:47731";
 
         public bool HasGrant => true;

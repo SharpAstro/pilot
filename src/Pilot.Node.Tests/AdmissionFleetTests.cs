@@ -278,6 +278,8 @@ public sealed class AdmissionFleetTests : IAsyncLifetime
 
         public bool Down { get; set; }
 
+        public string Name => node.Options.Machine;
+
         public string Endpoint => $"{node.Options.Machine.ToLowerInvariant()}.local:47731";
 
         public bool HasGrant => true;

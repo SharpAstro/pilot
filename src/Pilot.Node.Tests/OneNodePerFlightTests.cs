@@ -249,6 +249,8 @@ public sealed class OneNodePerFlightTests : IDisposable
 
     private sealed class FakePeer(string name) : IFleetPeer
     {
+        public string Name => name;
+
         public string Endpoint => $"{name.ToLowerInvariant()}.local:47731";
 
         public bool HasGrant => true;
