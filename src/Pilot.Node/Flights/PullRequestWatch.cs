@@ -20,6 +20,7 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
 
     private readonly object _gate = new();
     private Task<PullRequestsRow?>? _running;
+    private bool _runningAsked;
     private string? _viewer;
     private DateTimeOffset? _limitedUntil;
     private DateTimeOffset? _lastRead;
@@ -76,7 +77,31 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
     }
 
     /// <summary>Reads the repos afresh and puts the row on the stream; joins the refresh already running, if one is; asks GitHub nothing while its rate limit holds. Null when the node has no GitHub repo to read.</summary>
-    public Task<PullRequestsRow?> RefreshAsync(CancellationToken cancellationToken) => RunAsync("refresh asked", asked: true).WaitAsync(cancellationToken);
+    public async Task<PullRequestsRow?> RefreshAsync(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            Task<PullRequestsRow?> joined;
+            lock (_gate)
+            {
+                // A read already running for a person is joined. One on the watch's pace may have taken a peer's read or left a repo to its
+                // reader, which a person who asked for fresh PRs must not get, so it is waited out and a read of the person's own follows.
+                if (_running is null || _runningAsked)
+                {
+                    return await RunAsync("refresh asked", asked: true).WaitAsync(cancellationToken);
+                }
+                joined = _running;
+            }
+            try
+            {
+                await joined.WaitAsync(cancellationToken);
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                // The pace's read failed; the person's read is its own.
+            }
+        }
+    }
 
     /// <summary>The read the watch makes on its pace (a minute while the page is viewed, else the idle interval), here for a test to ask at a time it sets: it may take a peer's read and leave a repo to its reader, as a refresh may not.</summary>
     public Task<PullRequestsRow?> ReadOnPaceAsync(CancellationToken cancellationToken) => RunAsync("on pace").WaitAsync(cancellationToken);
@@ -90,7 +115,12 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
         lock (_gate)
         {
             // A background read even when a command asked for it: its gh starts share the budget (ProcessGate), never the command's priority.
-            return _running ??= ProcessGate.Run(() => ReadAsync(why, asked));
+            if (_running is null)
+            {
+                _runningAsked = asked;
+                _running = ProcessGate.Run(() => ReadAsync(why, asked));
+            }
+            return _running;
         }
     }
 
@@ -158,6 +188,8 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
                     // Opened between the check above and here: it is not slept through.
                     if (_opened)
                     {
+                        // Not left for Wake to cancel once the using above has disposed it.
+                        _sleeping = null;
                         continue;
                     }
                 }
@@ -251,7 +283,9 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
             DateTimeOffset? limitedUntil = null;
             // The fleet shares the read (#834): a repo a peer read freshly is taken from its row, one left to its chosen reader keeps what
             // was held, and only the rest is searched. Merges, labels and a flight's own reads never come through here.
-            var plans = await PlanAsync(tracked, flights, now, heldPrs, asked);
+            // Known means read before, its PRs or its stamp showing it: a repo with no open PRs has a stamp only.
+            var known = new HashSet<string>(heldPrs.Select(p => p.Repo).Concat((held?.RepoReads ?? []).Select(s => s.Repo).Where(scope.Contains)), StringComparer.OrdinalIgnoreCase);
+            var plans = await PlanAsync(tracked, flights, now, known, asked);
             var taken = plans.OfType<PrReadPlan.Taken>().ToArray();
             var readHere = plans.OfType<PrReadPlan.ReadHere>().Select(p => p.Repo).ToArray();
             var searches = PullRequestSearch.Batches(readHere);
@@ -335,13 +369,14 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
             {
                 _lastRead = time.GetUtcNow();
                 _running = null;
+                _runningAsked = false;
             }
         }
     }
 
     // What each repo's read is to be (#834): the peers asked in parallel, each within the fleet's read budget; one that fails is not counted.
     // A read a person asked for (a refresh) takes only a peer's read a few seconds old, and leaves nothing to a reader.
-    private async Task<PrReadPlan[]> PlanAsync(string[] tracked, FlightRow[] flights, DateTimeOffset now, PullRequestRow[] heldPrs, bool asked)
+    private async Task<PrReadPlan[]> PlanAsync(string[] tracked, FlightRow[] flights, DateTimeOffset now, HashSet<string> known, bool asked)
     {
         var peers = Fleet?.Peers().Where(p => p.HasGrant).ToList() ?? [];
         if (peers.Count == 0)
@@ -366,7 +401,6 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
                 return null;
             }
         }));
-        var known = new HashSet<string>(heldPrs.Select(p => p.Repo), StringComparer.OrdinalIgnoreCase);
         if (asked)
         {
             // Only a peer's read younger than FreshForRefresh is taken; nothing is left to a reader, the rest is searched here.

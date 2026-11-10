@@ -312,6 +312,50 @@ public sealed class PullRequestShareTests : IDisposable
     }
 
     [Fact]
+    public async Task ARepoWithNoOpenPrsIsLeftToItsReaderLikeAnyOther()
+    {
+        var a = NewNode("A1", "pilot");
+        var b = NewNode("B1", "pilot");
+        // A read the empty repo itself before B came into the fleet: it holds a stamp and no PR of it.
+        await a.Watch.RefreshAsync(Ct);
+        a.Searches.ShouldBe(1);
+        Fly(b, "pilot", "PIL1");
+        await b.Watch.RefreshAsync(Ct);
+        a.Link(new Peer(b));
+
+        // B's read is a pace old, not fresh to take, yet within its grace: A leaves the repo to B.
+        _clock.Advance(TimeSpan.FromSeconds(61));
+        await a.Watch.ReadOnPaceAsync(Ct);
+
+        a.Searches.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ARefreshAPersonAsksForDoesNotJoinAnOnPaceReadThatTookAPeersRead()
+    {
+        var a = NewNode("A1", "pilot", "tianwen");
+        var b = NewNode("B1", "pilot");
+        Fly(b, "pilot", "PIL1");
+        b.GitHub.PutPullRequest(Pr("pilot", 7));
+        await b.Watch.RefreshAsync(Ct);
+        a.Link(new Peer(b));
+        _clock.Advance(TimeSpan.FromSeconds(10));
+        var hold = a.GitHub.HoldSearches();
+
+        // The pace's read takes pilot from B and waits in its search of tianwen.
+        var onPace = a.Watch.ReadOnPaceAsync(Ct);
+        var refresh = a.Watch.RefreshAsync(Ct);
+        hold.SetResult();
+        var paced = (await onPace)!;
+        var asked = (await refresh)!;
+
+        paced.RepoReads.Single(s => s.Repo.EndsWith("/pilot", StringComparison.Ordinal)).By.ShouldBe("B1");
+        // The person's refresh read pilot from GitHub itself, a peer's read ten seconds old being too old for it.
+        asked.RepoReads.Single(s => s.Repo.EndsWith("/pilot", StringComparison.Ordinal)).By.ShouldBe("A1");
+        a.Searches.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task ATakenRepoReachesTheLookedListenersLikeItsOwn()
     {
         var a = NewNode("A1", "pilot", "tianwen");
@@ -343,10 +387,16 @@ public sealed class PullRequestShareTests : IDisposable
             dir = dir.Parent;
         }
         dir.ShouldNotBeNull("no folder holding Pilot.slnx above the test's directory");
-        var flights = Path.Combine(dir.FullName, "Pilot.Node", "Flights");
+        var node = Path.Combine(dir.FullName, "Pilot.Node");
+        var flights = Path.Combine(node, "Flights");
 
-        var sharing = Directory.EnumerateFiles(flights, "*.cs").Where(f => File.ReadAllText(f).Contains("PrReadShare")).Select(Path.GetFileName).Order().ToArray();
+        // The scan is the guard because a future acting file is not known to a behavioural test: it reads every source of the node, so one
+        // added anywhere that takes the fleet's reads is named here, not only one in Flights. The two wirings are the node's composition.
+        var sources = Directory.EnumerateFiles(node, "*.cs", SearchOption.AllDirectories).Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}") && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")).ToArray();
+        var sharing = sources.Where(f => File.ReadAllText(f).Contains("PrReadShare")).Select(Path.GetFileName).Order().ToArray();
         sharing.ShouldBe(["PrReadShare.cs", "PullRequestWatch.cs"]);
+        var holding = sources.Where(f => File.ReadAllText(f).Contains("PeerPullRequests")).Select(Path.GetFileName).Order().ToArray();
+        holding.ShouldBe(["NodeApp.Services.cs", "PeerPullRequests.cs", "PullRequestWatch.cs"]);
 
         var acting = Directory.EnumerateFiles(flights, "*.cs")
             .Where(f => Path.GetFileName(f) is { } n && (n.StartsWith("LegCommander", StringComparison.Ordinal) || n.StartsWith("FlightCommander", StringComparison.Ordinal) || n.StartsWith("LegTools", StringComparison.Ordinal) || n.StartsWith("LabelHold", StringComparison.Ordinal)))

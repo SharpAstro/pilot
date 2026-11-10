@@ -472,6 +472,40 @@ public sealed class PullRequestsTests : IDisposable
         state.Snapshot().PullRequests!.PullRequests.Single().Kind.ShouldBe(PullRequestKind.Behind);
     }
 
+    private sealed class CountingSink : INodeEventSink
+    {
+        public int Written;
+        public int Capacity => 1024;
+        public bool TryWrite(byte[] message) { Written++; return true; }
+        public void Overflowed() { }
+    }
+
+    [Fact]
+    public void ARenewedStampIsPutOnTheStreamForAnAttachedClientAndOnlyKeptInTheStateWithNone()
+    {
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var row = RowOf(Row("SharpAstro/a", 1, PullRequestKind.Ready)) with { RepoReads = [new PullRequestRepoRead("SharpAstro/a", Noon, "A1", false)] };
+        state.PutPullRequests(row);
+        var seq = state.Seq;
+        var renewed = row with { ReadAt = row.ReadAt.AddMinutes(1), RepoReads = [new PullRequestRepoRead("SharpAstro/a", Noon.AddMinutes(1), "A1", false)] };
+
+        // No client: the state holds the renewed stamps (a peer asks for them), and the journal gets nothing.
+        state.PutPullRequests(renewed);
+        state.Seq.ShouldBe(seq);
+        state.Snapshot().PullRequests!.RepoReads.Single().ReadAt.ShouldBe(Noon.AddMinutes(1));
+
+        // A client attached: the same renewal is a delta (by design: a peer following this node is a client, and takes a read by its stamps).
+        var sink = new CountingSink();
+        using var subscription = state.Subscribe(state.Seq, state.Stream, sink);
+        var before = sink.Written;
+        state.PutPullRequests(renewed with { ReadAt = row.ReadAt.AddMinutes(1), RepoReads = [new PullRequestRepoRead("SharpAstro/a", Noon.AddMinutes(1).AddSeconds(30), "A1", false)] });
+        state.Seq.ShouldBe(seq + 1);
+        sink.Written.ShouldBe(before + 1);
+        // Stamps within the lag are not renewed at all.
+        state.PutPullRequests(renewed with { RepoReads = [new PullRequestRepoRead("SharpAstro/a", Noon.AddMinutes(1).AddSeconds(31), "A1", false)] });
+        state.Seq.ShouldBe(seq + 1);
+    }
+
     // ---- the node's watch
 
     // A folder that looks like a clone: a .git folder, with an origin on GitHub.
