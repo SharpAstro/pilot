@@ -326,7 +326,7 @@ public sealed partial class CloudBenchJobTests : JobTestsBase, IAsyncDisposable
         clock.VirtualTimers = true;
 
         var bench = HandCloudBench(jobs, timeout: TimeSpan.FromMinutes(5));
-        await running.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await running.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         // The timeout is on the node's clock, so the test moves it past the limit: nothing waits on the wall clock.
         clock.Advance(TimeSpan.FromMinutes(6));
         var ended = await Until(bench, j => j.EndedAt is not null);
