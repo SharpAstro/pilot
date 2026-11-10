@@ -168,9 +168,9 @@ public sealed class FlightHoldLabelTests : ReviewTestsBase
             _github.Issues[3] = "not labelled";
             _github.IssueLabels[1] = [PilotMarks.Hold, "pilot node: DE1"];
             _github.IssueLabels[2] = [PilotMarks.Hold, "pilot node: DE1"];
-            _github.PrConversation.Add((1, new PrComment("seb", "pilot: on hold by seb from SE1: the first reason", DateTimeOffset.UtcNow.AddMinutes(-9))));
-            _github.PrConversation.Add((1, new PrComment("seb", "unrelated chatter: not this", DateTimeOffset.UtcNow.AddMinutes(-1))));
-            _github.PrConversation.Add((1, new PrComment("seb", "pilot: on hold by seb from SE1: the newest reason", DateTimeOffset.UtcNow.AddMinutes(-5))));
+            _github.PrConversation.Enqueue((1, new PrComment("seb", "pilot: on hold by seb from SE1: the first reason", DateTimeOffset.UtcNow.AddMinutes(-9))));
+            _github.PrConversation.Enqueue((1, new PrComment("seb", "unrelated chatter: not this", DateTimeOffset.UtcNow.AddMinutes(-1))));
+            _github.PrConversation.Enqueue((1, new PrComment("seb", "pilot: on hold by seb from SE1: the newest reason", DateTimeOffset.UtcNow.AddMinutes(-5))));
             Fly(repo, 1);
             Fly(repo, 2);
             Fly(repo, 3);
@@ -194,11 +194,11 @@ public sealed class FlightHoldLabelTests : ReviewTestsBase
             _github.Issues[2] = "held, released, held again by pilot";
             _github.IssueLabels[1] = [PilotMarks.Hold, "pilot node: DE1"];
             _github.IssueLabels[2] = [PilotMarks.Hold, "pilot node: DE1"];
-            _github.PrConversation.Add((1, new PrComment("seb", "pilot: on hold by seb from SE1: the earlier reason", DateTimeOffset.UtcNow.AddMinutes(-9))));
-            _github.PrConversation.Add((1, new PrComment("seb", "pilot: off hold, released by seb from SE1", DateTimeOffset.UtcNow.AddMinutes(-5))));
-            _github.PrConversation.Add((2, new PrComment("seb", "pilot: on hold by seb from SE1: the earlier reason", DateTimeOffset.UtcNow.AddMinutes(-9))));
-            _github.PrConversation.Add((2, new PrComment("seb", "pilot: off hold, released by seb from SE1", DateTimeOffset.UtcNow.AddMinutes(-5))));
-            _github.PrConversation.Add((2, new PrComment("ana", "pilot: on hold by ana from DE1: the newer reason", DateTimeOffset.UtcNow.AddMinutes(-1))));
+            _github.PrConversation.Enqueue((1, new PrComment("seb", "pilot: on hold by seb from SE1: the earlier reason", DateTimeOffset.UtcNow.AddMinutes(-9))));
+            _github.PrConversation.Enqueue((1, new PrComment("seb", "pilot: off hold, released by seb from SE1", DateTimeOffset.UtcNow.AddMinutes(-5))));
+            _github.PrConversation.Enqueue((2, new PrComment("seb", "pilot: on hold by seb from SE1: the earlier reason", DateTimeOffset.UtcNow.AddMinutes(-9))));
+            _github.PrConversation.Enqueue((2, new PrComment("seb", "pilot: off hold, released by seb from SE1", DateTimeOffset.UtcNow.AddMinutes(-5))));
+            _github.PrConversation.Enqueue((2, new PrComment("ana", "pilot: on hold by ana from DE1: the newer reason", DateTimeOffset.UtcNow.AddMinutes(-1))));
             Fly(repo, 1);
             Fly(repo, 2);
 
@@ -278,7 +278,7 @@ public sealed class FlightHoldLabelTests : ReviewTestsBase
             var flight = Fly(repo, 1);
             var pr = new PullRequest(7, "OPEN", "abc12345abc12345", "https://github.com/SharpAstro/tianwen/pull/7");
             _github.PrOf[flight.Branch] = pr;
-            _github.AutoMergeArmed.Add((7, pr.Head, "squash"));
+            _github.AutoMergeArmed.Enqueue((7, pr.Head, "squash"));
             _github.Queue = new MergeQueueState("OPEN", pr.Head, Queued: true, Position: 1);
             _state.PutFlight(F(1) with { PullRequest = 7, MergeWhenGreen = ["abc12345", "now", LegCommander.ArmedByGitHub] });
 

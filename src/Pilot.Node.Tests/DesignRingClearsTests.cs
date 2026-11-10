@@ -189,7 +189,7 @@ public sealed class DesignRingClearsTests : PrFixTestsBase
     public async Task ACommentAnswerOnThePrSettlesTheRingNamingTheCommentAndWhyItCounts()
     {
         var ring = await Asked();
-        _github.PrConversation.Add((7, new PrComment("ada", "Keep it a library.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
+        _github.PrConversation.Enqueue((7, new PrComment("ada", "Keep it a library.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
 
         await _reviews.SweepAsync(Ct);
 
@@ -206,7 +206,7 @@ public sealed class DesignRingClearsTests : PrFixTestsBase
         var ring = await Asked();
         _reviews.Models = AdmissionHeld.CapOfOne();
         _state.PutSession(AdmissionHeld.Opus("du1-other-worker"));
-        _github.PrConversation.Add((7, new PrComment("ada", "Keep it a library.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
+        _github.PrConversation.Enqueue((7, new PrComment("ada", "Keep it a library.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
 
         await _reviews.SweepAsync(Ct);
 
