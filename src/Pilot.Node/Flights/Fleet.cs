@@ -122,7 +122,7 @@ public static class FleetChoice
     }
 }
 
-/// <summary>The fleet as a node reaches it: a <see cref="NodeClient.Remote"/> per held endpoint of <c>client-grants.json</c>.</summary>
+/// <summary>The fleet as a node reaches it: a <see cref="NodeClient.Remote(string, string?, string?)"/> per held endpoint of <c>client-grants.json</c>.</summary>
 public sealed class HeldTokenFleet(string tokenFile) : IFleet
 {
     /// <summary>How long a peer has to answer a read before it counts as unreachable.</summary>
