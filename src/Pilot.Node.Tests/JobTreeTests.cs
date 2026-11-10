@@ -87,6 +87,15 @@ public sealed class JobTreeTests
     }
 
     [Fact]
+    public void AChildWhoseStartTheOsWillNotTellIsNotTheJobs()
+    {
+        // A protected process (wininit) whose parent id is the wrapper's, reused: it says no start time, and is not the job's.
+        _table.Entries.Add(new ProcessEntry(1616, Wrapper, "wininit.exe"));
+
+        Describe(Running()).Tree.ShouldNotBeNull().Select(p => p.Pid).ShouldNotContain(1616);
+    }
+
+    [Fact]
     public void AProcessUnrelatedToTheWrapperIsNotInTheTree()
     {
         _table.Add(201, 200, "chrome.exe", Began.AddSeconds(5));
@@ -199,6 +208,32 @@ public sealed class JobTreeTests
         _table.Entries.AddRange(all);
 
         Describe(Running()).Tree!.Select(p => p.Pid).ShouldBe([101, 102, 103]);
+    }
+
+    [Fact]
+    public void ATableThatCannotBeReadDoesNotDropWhatAnEndedJobLeftNorWhatAskingForItPrunes()
+    {
+        var tree = new JobTree(_table);
+        var wrapper = new JobProcess(Wrapper, Began);
+        tree.Read("j1", wrapper);
+        tree.Forget("j1");
+        // The wrapper and its first child are gone; the rest lives on.
+        _table.Remove(Wrapper);
+        _table.Remove(101);
+        tree.KnownOf("j1").Select(k => k.Pid).ShouldBe([102, 103]);
+
+        // The table cannot be read: that says nothing, so what was kept stays, across another job's end too.
+        var all = _table.Entries.ToList();
+        _table.Entries.Clear();
+        tree.Forget("j2");
+        tree.KnownOf("j1").Select(k => k.Pid).ShouldBe([102, 103]);
+        _table.Entries.AddRange(all);
+
+        // Asked again (through KnownOf, not JobTree.Read), the entry is still there and still pruned when its processes are really gone.
+        tree.KnownOf("j1").Select(k => k.Pid).ShouldBe([102, 103]);
+        _table.Remove(102);
+        _table.Remove(103);
+        tree.KnownOf("j1").ShouldBeEmpty();
     }
 
     [Fact]

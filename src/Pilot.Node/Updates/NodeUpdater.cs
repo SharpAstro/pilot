@@ -147,7 +147,7 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
             state.CloseCardsAbout(Verbs.NodeTarget, $"pilot {latest.Version} is out", Kind);
             state.RaiseCard(CardBin.ForYou, Kind, Verbs.NodeTarget, $"pilot {latest.Version} is out (this is {Version})",
                 $"The node installs it and restarts; flights, sessions and jobs carry on.",
-                [new CardChoice { Label = $"Install pilot {latest.Version} and restart the node", Verb = Verbs.Update, Target = Verbs.NodeTarget, Args = [UpdateArgs.Install] }],
+                [new CardChoice { Label = $"Install {latest.Version} and restart", Verb = Verbs.Update, Target = Verbs.NodeTarget, Args = [UpdateArgs.Install] }],
                 latest.Url);
         }
     }

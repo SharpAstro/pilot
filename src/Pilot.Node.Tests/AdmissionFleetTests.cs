@@ -148,7 +148,7 @@ public sealed class AdmissionFleetTests : IAsyncLifetime
         ToB.Down = true;
         var held = TryStart(_a, GateA, "PIL1").Decision.ShouldBeOfType<AdmissionDecision.Wait>();
         held.Why.ShouldContain("PIL2-worker on BB1");
-        held.Why.ShouldContain("peers not counted: bb1.local:47731");
+        held.Why.ShouldContain("peers not counted: BB1");
 
         await Task.Delay(900, Ct);
 
@@ -233,7 +233,7 @@ public sealed class AdmissionFleetTests : IAsyncLifetime
 
         var decision = TryStart(_b, GateB, "PIL2").Decision.ShouldBeOfType<AdmissionDecision.Admit>();
 
-        decision.Note.ShouldBe("peers not counted: aa1.local:47731 (did not answer: connection refused)");
+        decision.Note.ShouldBe("peers not counted: AA1 (did not answer: connection refused)");
 
         // The keeper answers again: its count is read, and a further start waits for it.
         ToA.Down = false;
@@ -277,6 +277,8 @@ public sealed class AdmissionFleetTests : IAsyncLifetime
         private AdmissionGate Gate => node.App.Services.GetRequiredService<AdmissionGate>();
 
         public bool Down { get; set; }
+
+        public string Name => node.Options.Machine;
 
         public string Endpoint => $"{node.Options.Machine.ToLowerInvariant()}.local:47731";
 

@@ -69,8 +69,21 @@ internal sealed record FlightLine
 
     /// <summary>What the node says went stale about the flight (#736), the timeline and cause in a line; null while nothing is stale.</summary>
     /// A flight that landed, folded or moved is done, so a summary left on it is not shown (and no Ask the watchtower is offered).
+    /// Its first line only: a summary attached before the leg's table of check runs moved to the brief carries the table after a
+    /// line break, and the page showed it as a wall of text.
     public string? StaleSummary =>
-        Row is { State: not FlightState.Landed, FoldedInto: null, MovedTo: null, StaleSummary: { Length: > 0 } summary } ? summary : null;
+        Row is { State: not FlightState.Landed, FoldedInto: null, MovedTo: null, StaleSummary: { Length: > 0 } summary } ? FirstLine(summary) : null;
+
+    // A first line that ends in a colon introduced what followed it, so that last phrase goes with it ("…(card c1). Its check runs:").
+    private static string FirstLine(string text)
+    {
+        if (text.IndexOfAny(['\r', '\n']) is not (var at and >= 0))
+        {
+            return text;
+        }
+        var first = text[..at].TrimEnd();
+        return first.EndsWith(':') && first.LastIndexOf(". ", StringComparison.Ordinal) is var stop and > 0 ? first[..(stop + 1)] : first;
+    }
 
     /// <summary>The node's last priority raise for a stale bound (<c>raised to high: open 19 h</c>), or why it could not be made; null before the first.</summary>
     public string? StaleRaise => Row.StaleRaises is { Length: > 0 } raises ? raises[^1].Note : null;
@@ -125,9 +138,10 @@ internal sealed record FlightLine
     /// <summary>
     /// What says the last attempt to move the flight to another node failed, in words so the red it is drawn in never carries it
     /// alone (#376); null while none failed. The reason is <see cref="MoveFailure"/>. A stale row keeps its stale mark and no red: it
-    /// is the last row the node told, and says nothing of what it is doing now.
+    /// is the last row the node told, and says nothing of what it is doing now. A landed flight has none: there is nothing left to
+    /// move, and no Retry move to press, so a failure a node left on it (before landings cleared it) is no band and no red row.
     /// </summary>
-    public string? MoveMark => Row.MoveFailure is { Length: > 0 } && Stale is null ? "move failed" : null;
+    public string? MoveMark => Row is { MoveFailure.Length: > 0, State: not FlightState.Landed } && Stale is null ? "move failed" : null;
 
     /// <summary>Why the move failed, as the node worded it (what happened, what to do); null when <see cref="MoveMark"/> is.</summary>
     public string? MoveFailure => MoveMark is null ? null : Row.MoveFailure;
@@ -206,9 +220,14 @@ internal sealed record FlightLine
             Code = flight.Code,
             Title = flight.Title ?? flight.Item.Noun,
             Where = $"{flight.Repo} {flight.Item.Display}",
-            State = flight.State switch { FlightState.Flying => "flying", FlightState.Held => "held", _ => flight.MovedTo is null ? "landed" : "moved" },
+            // The owner's hold is the state a person sees (#771): the flight still flies as far as the row goes, but nothing is done for it.
+            State = flight is { OnHold: not null, State: not FlightState.Landed } ? "on hold"
+                : flight.State switch { FlightState.Flying => "flying", FlightState.Held => "held", _ => flight.MovedTo is null ? "landed" : "moved" },
             StateDetail = flight.State switch
             {
+                // The owner's hold comes ahead of every other stage (#771).
+                // The state says "on hold"; the detail says who and why, without saying it twice.
+                not FlightState.Landed when flight.OnHold is { } onHold => $"by {onHold.By}: {onHold.Reason}",
                 FlightState.Held => $"waiting for {FlightWaiting.For(flight)}",
                 FlightState.Landed when flight.MovedTo is { } to => to.Text,
                 FlightState.Landed when flight.LandedAt is { } at => SessionLine.Ago(now - at),

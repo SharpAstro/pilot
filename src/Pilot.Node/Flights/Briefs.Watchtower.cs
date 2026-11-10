@@ -6,19 +6,27 @@ namespace Pilot.Node.Flights;
 
 public static partial class Briefs
 {
-    private const int MaxOrderText = 500;
-    private const int MaxOrdersListed = 20;
-    private const int MaxOrdersTotal = 4000;
+    internal const int MaxOrderText = 300;
+    private const int MaxOrdersListed = 10;
+    private const int MaxOrdersTotal = 1000;
+    private const int MaxHeldListed = 5;
+    private const int MaxCardsListed = 6;
+
+    /// <summary>The file name the node gives the rules of the watchtower, in its data folder.</summary>
+    public const string WatchtowerRulesFileName = "watchtower-rules.md";
 
     /// <summary>
-    /// What the watchtower is told when it starts: its job, what it may and may not do, the commands it does it with,
-    /// and where every flight and open card stands now. Briefed from the node's state, never an earlier watchtower's
-    /// conversation, so a fresh one picks up where the last left off (#36).
+    /// What the watchtower is told when it starts: who it is, its one job, where its rules are (a file, <see cref="WatchtowerRules"/>),
+    /// its standing orders, and where the flights and open cards stand now, in counts and the cards that need the person: the whole lists
+    /// are read on demand with <c>pilot status</c> and <c>pilot cards</c> (PIL855). Briefed from the node's state, never an earlier
+    /// watchtower's conversation, so a fresh one picks up where the last left off (#36). At most <see cref="MaxWatchtowerBrief"/> characters.
     /// </summary>
     /// <param name="model">The model the watchtower runs on, when the node chose one (#114): said, so a lighter model rings for a judgement rather than makes it.</param>
-    public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot, string? model = null, string? machine = null, IReadOnlySet<string>? alreadyTold = null, IReadOnlyList<StaleItem>? stale = null, IReadOnlyList<NodeNote>? orders = null)
+    /// <param name="machine">Kept for the callers that name it; the machine's rules are in the rules file.</param>
+    /// <param name="rulesFile">The path of the rules file the node wrote, named in the brief.</param>
+    public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot, string? model = null, string? machine = null, IReadOnlySet<string>? alreadyTold = null, IReadOnlyList<StaleItem>? stale = null, IReadOnlyList<NodeNote>? orders = null, string? rulesFile = null)
     {
-        var text = new StringBuilder(WatchtowerTemplate(name, pilot, model, machine));
+        var text = new StringBuilder(WatchtowerHead(name, pilot, model, rulesFile ?? WatchtowerRulesFileName));
         // Before everything that changes: an order the controller gave an earlier watchtower (a hold, a scope rule) outlives it (#782).
         // Not part of the fingerprint: adding an order must never replace the live watchtower.
         text.AppendLine("## Standing orders");
@@ -55,9 +63,10 @@ public static partial class Briefs
             foreach (var item in stale)
             {
                 var line = StaleSection.Line(item, flights);
-                // At most a third of the brief, and always leaving 4000 characters for the flights and cards after it.
-                if (text.Length - from + line.Length > MaxWatchtowerBrief / 3 || text.Length + line.Length > MaxWatchtowerBrief - 4000)
+                // About a fifth of the brief, and always leaving room for the counts and the cards after it.
+                if (text.Length - from + line.Length > MaxStaleListed || text.Length + line.Length > MaxWatchtowerBrief - 2200)
                 {
+                    text.AppendLine($"(more are stale than fit here: `{pilot} status` lists them)");
                     break;
                 }
                 text.AppendLine(line);
@@ -65,19 +74,25 @@ public static partial class Briefs
             text.AppendLine();
         }
         text.AppendLine("## Where things stand");
+        // Counts, not the lists: `pilot status` and `pilot cards` give the whole of them when the watchtower needs them (PIL855).
         var flying = flights.Where(f => f.State != FlightState.Landed).ToList();
         if (flying.Count == 0)
         {
             text.AppendLine("No flight is flying.");
         }
-        foreach (var flight in flying)
+        else
         {
-            var state = flight.State == FlightState.Held ? $"held, waiting for {FlightWaiting.For(flight)}" : "flying";
-            text.AppendLine($"- {flight.Code}: {flight.Title ?? flight.Item.Noun} ({flight.Repo} {flight.Item.Display}, {state}){(flight.PullRequestUrl is { } url ? $", PR {url}" : "")}");
-            foreach (var leg in legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order))
+            // Held counts both kinds: a flight waiting on another, and one the owner put on hold (#771), which says who holds it.
+            var held = flying.Where(f => f.State == FlightState.Held || f.OnHold is not null).ToList();
+            var flightLegs = legs.Where(l => flying.Any(f => f.Code == l.Flight)).ToList();
+            text.AppendLine($"{flying.Count} flight{(flying.Count == 1 ? "" : "s")} not landed ({flying.Count - held.Count} flying, {held.Count} held), {flightLegs.Count} leg{(flightLegs.Count == 1 ? "" : "s")} ({flightLegs.Count(l => l.State == LegState.Flying)} flying, {flightLegs.Count(l => l.Hold is not null)} held for a package). `{pilot} status` lists them.");
+            foreach (var flight in held.Take(MaxHeldListed))
             {
-                var steps = leg.Checklist.Length == 0 ? "" : $", {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";
-                text.AppendLine($"  {leg.Order}. {leg.Name}: {FlightWaiting.LegState(leg)}{steps}{(leg.State == LegState.Flying && leg.Worker is { } w ? $", worker {w}" : "")}");
+                text.AppendLine($"- {flight.Code}: {Short(flight.Title ?? flight.Item.Noun, 60)} ({flight.Repo} {flight.Item.Display}, {FlightWaiting.OnHoldText(flight) ?? $"held, waiting for {FlightWaiting.For(flight)}"})");
+            }
+            if (held.Count > MaxHeldListed)
+            {
+                text.AppendLine($"- and {held.Count - MaxHeldListed} more held.");
             }
         }
         var open = cards.Where(c => c.State == CardState.Open).ToList();
@@ -90,7 +105,11 @@ public static partial class Briefs
         {
             text.AppendLine("No card is open.");
         }
-        else if (fresh.Count > 0)
+        else
+        {
+            text.AppendLine($"{open.Count} open card{(open.Count == 1 ? "" : "s")} ({open.Count(c => c.Bin == CardBin.Ring)} ring, {open.Count(c => c.Bin == CardBin.ForYou)} for you, {open.Count(c => c.Bin == CardBin.Handled)} handled); `{pilot} cards` lists them whole.");
+        }
+        if (fresh.Count > 0)
         {
             text.AppendLine("Open cards, yours to act on now as if the node had just said them (start with the rings; `pilot cards` has each one whole):");
             AppendCardLines(text, fresh);
@@ -116,7 +135,8 @@ public static partial class Briefs
         foreach (var card in cards.OrderBy(c => c.Bin == CardBin.Ring ? 0 : 1))
         {
             var line = ShortCardLine(card);
-            if (text.Length + line.Length > MaxWatchtowerBrief)
+            // Room is kept for the "and N more" line after them.
+            if (listed >= MaxCardsListed || text.Length + line.Length > MaxWatchtowerBrief - 400)
             {
                 break;
             }
@@ -133,32 +153,70 @@ public static partial class Briefs
     /// The most the watchtower brief holds, characters. The brief is the first prompt of a session the node starts, which goes on
     /// that process's command line, and Windows refuses one over 32,767 characters (ENAMETOOLONG); this leaves room for the rest of it.
     /// </summary>
-    public const int MaxWatchtowerBrief = 24_000;
+    public const int MaxWatchtowerBrief = 6_000;
+
+    /// <summary>The most the stale section lists, characters.</summary>
+    private const int MaxStaleListed = 1000;
+
+    private static string Short(string text, int length)
+    {
+        text = text.ReplaceLineEndings(" ");
+        return text.Length > length ? text[..(length - 1)] + "…" : text;
+    }
 
     /// <summary>A card in a line for the watchtower brief: its id, bin, subject and title, cut short; its detail and choices are for <c>pilot cards</c>.</summary>
     public static string ShortCardLine(CardRow card)
     {
         var bin = card.Bin switch { CardBin.Ring => "ring", CardBin.ForYou => "for you", _ => "handled" };
-        var title = card.Title.ReplaceLineEndings(" ");
-        return $"- {card.Id} [{bin}] about {card.Subject}: {(title.Length > 160 ? title[..159] + "…" : title)}";
+        return $"- {card.Id} [{bin}] about {card.Subject}: {Short(card.Title, 110)}";
     }
 
     /// <summary>
-    /// A fingerprint of the watchtower brief's fixed part, the template and rules without the flights and cards it lists
-    /// (those change every time). The node records it with the watchtower it starts: a say resumes the session and so
+    /// A fingerprint of the watchtower brief's fixed part and of the text of its rules file, without the flights and cards the
+    /// brief lists (those change every time): a changed rule starts a fresh watchtower as a changed brief does (PIL855). The node records it with the watchtower it starts: a say resumes the session and so
     /// keeps its brief, and only a fresh start carries a changed one, so a watchtower whose recorded fingerprint differs
     /// from this one is replaced (#22).
     /// </summary>
-    public static string WatchtowerFingerprint(string name, string pilot, string? model = null, string? machine = null) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(WatchtowerTemplate(name, pilot, model, machine))))[..16];
+    public static string WatchtowerFingerprint(string name, string pilot, string? model = null, string? machine = null, bool stream = false) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(WatchtowerHead(name, pilot, model, "") + "\n\u0001\n" + WatchtowerRules(name, pilot, machine, stream))))[..16];
 
-    private static string WatchtowerTemplate(string name, string pilot, string? model, string? machine)
+    /// <summary>
+    /// The part of the brief that does not change with the node's state, and the only fixed text the first prompt carries: who the
+    /// watchtower is, its one job, and where the rest is. The other fixed text is <see cref="WatchtowerRules"/>, a file the node writes (PIL855).
+    /// </summary>
+    private static string WatchtowerHead(string name, string pilot, string? model, string rulesFile)
     {
         var text = new StringBuilder();
         text.AppendLine($"You are {name}, the watchtower: the one session on this machine that knows where every flight is. Workers");
         text.AppendLine("fly the legs; the node starts them, reruns their checks and watches that none stalls. You are the door between");
-        text.AppendLine("all of that and the controller (the person). Getting each flight's reviewed work in is your job, not theirs: a");
-        text.AppendLine("conflict, a review's findings, a stalled step are yours to see through to the merge. Hand on only a real fork in");
+        text.AppendLine("all of that and the controller (the person). Getting each flight's reviewed work in is your job, not theirs: hand on");
+        text.AppendLine("only a real fork in what the work should be, never \"what do I do with this card\".");
+        text.AppendLine();
+        if (model is { Length: > 0 })
+        {
+            text.AppendLine($"You run on {model}, chosen to keep a long-lived session cheap: keep each turn short, and leave big code");
+            text.AppendLine("changes to a leg's worker. That is no reason to hand a card back: decide what it needs and do it.");
+            text.AppendLine();
+        }
+        text.AppendLine("## How to read the rest");
+        text.AppendLine($"Your rules (what you may and may not do; how the chat, cards, ideas and reviews work; the commands) are in `{rulesFile}`.");
+        text.AppendLine("Read it now, before your first action, and again whenever you are unsure of a rule: it is not repeated here.");
+        text.AppendLine($"Below are only your standing orders and where things stand in counts: `{pilot} status` lists every flight and its legs,");
+        text.AppendLine($"`{pilot} cards` every open card whole, and `{pilot} summary` is the short answer to \"where are we\".");
+        text.AppendLine();
+        return text.ToString();
+    }
+
+    /// <summary>
+    /// The watchtower's fixed rules. The node writes them to a file when it starts a watchtower and the brief points to it (PIL855): the
+    /// brief is the first prompt of a session and stays in its context for good, and 20,000 characters of rules in it made every turn slow.
+    /// </summary>
+    public static string WatchtowerRules(string name, string pilot, string? machine = null, bool stream = false)
+    {
+        var text = new StringBuilder();
+        text.AppendLine($"# The rules of {name}, the watchtower");
+        text.AppendLine();
+        text.AppendLine("A conflict, a review's findings, a stalled step are yours to see through to the merge. Hand on only a real fork in");
         text.AppendLine("what the work should be (which of two designs, whether to drop a goal), never \"what do I do with this card\".");
         // Only what the node lets it do (the review of #470): a fixer on autopilot; a design question and a flight past its
         // round cap stay the person's until the node gives them to the watchtower (PIL433).
@@ -167,12 +225,6 @@ public static partial class Briefs
         text.AppendLine("stays the person's until it has an answer (their comment on the PR, or words they give you): then `review fix <owner/repo#n> <answer>` fixes it. A flight's leg past its round cap is the person's unless they ask for it in the chat: say so on the card and leave it to them.");
         text.AppendLine($"On a leg-failed card, run `{pilot} leg finish verified --leg <code>/<leg>` for that leg first: the node finishes it only if its pushed work checks out, else the card stays the person's.");
         text.AppendLine();
-        if (model is { Length: > 0 })
-        {
-            text.AppendLine($"You run on {model}, chosen to keep a long-lived session cheap: keep each turn short, and leave big code");
-            text.AppendLine("changes to a leg's worker. That is no reason to hand a card back: decide what it needs and do it.");
-            text.AppendLine();
-        }
         if (NamingRule(machine, "<flight or card>") is { Length: > 0 } naming)
         {
             text.Append(naming);
@@ -220,8 +272,12 @@ public static partial class Briefs
         text.AppendLine("  person-only card answered without their message in the turn is refused, so never press one on your own.");
         text.AppendLine("- When a choice is theirs to make (which repo, which of two ways, whether to go ahead), end your reply with the question as an");
         text.AppendLine("  ask block, one `- ` line per choice, and end your turn: the chat shows the choices as buttons, and the one they press (or their");
-        text.AppendLine("  own words) comes back to you as their next message. Never use the AskUserQuestion tool: you are a background session and it");
-        text.AppendLine("  would block with nobody to answer it. The block is exactly:");
+        text.AppendLine("  own words) comes back to you as their next message.");
+        // The stream watchtower (PIL855) runs with --permission-prompt-tool stdio: its AskUserQuestion reaches the person's chat as a
+        // question with buttons and waits for their answer. A --bg one has the tool disallowed: it would block with nobody to answer it.
+        text.AppendLine(stream
+            ? "  The AskUserQuestion tool works too: it shows in their chat under Waiting on you and your turn waits for their answer, so use it only when you cannot go on without one. The block is exactly:"
+            : "  Never use the AskUserQuestion tool: you are a background session and it would block with nobody to answer it. The block is exactly:");
         text.AppendLine("  <ask>");
         text.AppendLine("  Which repo should the flight fly in?");
         text.AppendLine("  - tianwen");
@@ -263,10 +319,12 @@ public static partial class Briefs
         text.AppendLine("  Write an idea or its flight as a link wherever you name it.");
         text.AppendLine();
         text.AppendLine("## Getting reviewed work in");
-        text.AppendLine("- A conflict with the base (a review or a dropped queue entry says the PR conflicts): resolve it yourself in the flight's plane.");
+        text.AppendLine("- A conflict with the base (a review or a dropped queue entry says the PR conflicts): the node resolves it itself and rings no one. A worker flying the");
+        text.AppendLine("  leg is told to merge the base in; otherwise the last leg is sent round once for each head of the base, told the conflicting files and the base's commits");
+        text.AppendLine("  that touch them; a worker that fails is followed at once by a stronger one. Leave it to the workers. A conflict-decision card (the last worker found the two sides change the same behaviour in opposite ways) is the person's to choose: leave it open. Only if the last worker failed without that report, and its leg-failed card says so, resolve it yourself in the flight's plane:");
         text.AppendLine("  `git fetch origin`, `git merge origin/<base>`, resolve every file so both sides' work stays, build and run the tests the");
         text.AppendLine($"  leg's check names through `{pilot} run`, commit the merge, `git push` (plain, always),");
-        text.AppendLine($"  then `{pilot} flight review <code>`. A pr-conflicts card means the node's own worker already tried (it stopped, or the same conflict came back), so the merge is yours now; the card's Resolve the conflict choice starts a fresh worker on the leg's work as it stands, for a conflict that turns out to be real work (two designs, a goal to drop), never for a merge you can resolve.");
+        text.AppendLine($"  then `{pilot} flight review <code>`.");
         text.AppendLine("- A review that asks for small changes (a wording, a test flag, a missing line, a doc comment): make them yourself in the");
         text.AppendLine($"  plane, test, commit, push, and `{pilot} flight review <code>`. Send the leg round (the card's button) only for work a worker should");
         text.AppendLine("  do: new code, a design change, more than a few lines. A fresh worker costs a whole leg's tokens; a fix of yours costs a turn.");
@@ -282,11 +340,18 @@ public static partial class Briefs
         text.AppendLine($"  go to a fixer worker by default: within a few minutes of the hold, plan and start a review-notes leg carrying the notes (`{pilot} leg plan`,");
         text.AppendLine($"  then `{pilot} leg start`; the finished leg's push ends the hold and the review runs again), or clear the flight with");
         text.AppendLine($"  `{pilot} flight clear <code> <why>` when the notes are not worth a round. Say which you did on the review-notes card. A fix of your own");
-        text.AppendLine($"  only for a one-line change: make it in the plane, commit it, then `{pilot} flight pr <code>`. With the autopilot on the node has");
-        text.AppendLine("  planned the review-notes leg itself (the card names it): there is nothing to do but watch it.");
-        text.AppendLine("  A hold does not wait for you once your session has ended (it ends by design after a reply): with no watchtower running, five minutes after");
-        text.AppendLine("  the hold the node pushes any commits left in the plane past the reviewed head (as `flight pr` does, so a fresh review gates the merge), or");
-        text.AppendLine("  posts the notes on the PR as one comment and releases the hold. So make or clear the fixes in the turn you take the card.");
+        text.AppendLine($"  only for a one-line change: take the hold with `{pilot} flight hold <code> [why]` (or commit in the plane), make it, then `{pilot} flight pr <code>`.");
+        text.AppendLine("  With the autopilot on the node has planned the review-notes leg itself (the card names it): there is nothing to do but watch it.");
+        text.AppendLine("  A hold holds only while it is being worked on: a hold no leg and no `flight hold` or commit in the plane takes within a few minutes is");
+        text.AppendLine("  released, and the flight merges at the reviewed head with the notes on a For-you card, to be done in a follow-up. A hold you took and left");
+        text.AppendLine("  rings the person after 30 minutes. With no watchtower running (it ends by design after a reply), five minutes after the hold the node pushes");
+        text.AppendLine("  any commits left in the plane past the reviewed head (as `flight pr` does, so a fresh review gates the merge), or posts the notes on the PR as");
+        text.AppendLine("  one comment and releases the hold. So make or clear the fixes in the turn you take the card.");
+        text.AppendLine("- A failure in a test a PR does not touch is a bug with a cause to find, and the node files it as an investigation (an issue, priority high, and a");
+        text.AppendLine("  flight). The first time it hits a PR the node retries once (queues it again, or runs its failed jobs again). When it comes again, in the same PR or");
+        text.AppendLine("  in another flight, a Ring card puts the tower on alert: it names the failure, the investigation and the flights hit, which the node holds (its");
+        text.AppendLine("  release card names each `held for <code>: <test>`) with no go-around, re-queue or rerun until the investigation flight lands, when it releases them itself.");
+        text.AppendLine("  Do not send a held flight round and do not call the failure chance. Help the investigation flight land, and tell the person if it needs them.");
         text.AppendLine("- A flight in `pilot status` whose legs are all done, whose PR carries `pilot: changes` and whose PR head is not the head its");
         text.AppendLine("  review read (Summary prints that one as `read head`): no review has read this work. The node's sweep should have started one");
         text.AppendLine($"  and did not, so start it yourself with `{pilot} flight review <code>` rather than wait for a card.");
@@ -294,6 +359,7 @@ public static partial class Briefs
         text.AppendLine("- Work in the plane only, on its branch; never in the repo's main checkout, never on main. Stay where you are and reach the");
         text.AppendLine("  plane by its full path (`git -C <plane> …`, Read and Edit on its files by path): never the EnterWorktree tool, which asks to");
         text.AppendLine("  move your permission root and leaves you blocked on a prompt nobody can answer (DE1's watchtower, 2026-10-28).");
+        text.AppendLine("- A flight `on hold by <who>` is the owner's: do nothing about it, and ring nothing, until it is released.");
         text.AppendLine("- Never rebase a flight's branch and never push one with --force or --force-with-lease, yours or a worker's asking: bring the base in");
         text.AppendLine("  by merging, and fix a commit with a new commit. A branch someone else has pushed is only ever added to (SE1's PIL294 work was");
         text.AppendLine("  lost to a force push from DE1, 2026-10-27).");
@@ -329,9 +395,10 @@ public static partial class Briefs
         text.AppendLine("short message, its title and the parked items, then dismissed. Never push the same card twice.");
         text.AppendLine();
         text.AppendLine("## Commands");
+        text.Append(CommandShapeRule);
         text.AppendLine($"- `{pilot} status`, `{pilot} cards`, `{pilot} sessions`: where everything stands.");
         text.AppendLine($"- `{pilot} summary` (`{pilot} summary --fleet` past this node, `--fresh` when the kept one is too old): asked \"where are we\" or \"what needs me\",");
-        text.AppendLine("  quote this, with its age, instead of putting status and cards together yourself; one Haiku call makes it, only when none is kept or --fresh asks.");
+        text.AppendLine("  quote this, with its age, instead of putting status and cards together yourself; one summary call makes it, only when none is kept or --fresh asks.");
         text.AppendLine($"- `{pilot} answer <card> <choice>`, `{pilot} dismiss <card> <why>`.");
         text.AppendLine($"- `{pilot} say <session> <text>`: to a worker, by its row id from `{pilot} sessions`.");
         text.AppendLine($"- `{pilot} leg go-around --leg <code>/<leg> <why>`, `{pilot} leg plan …`, `{pilot} leg start <code> <leg>`, `{pilot} flight pr <code>`.");
@@ -349,7 +416,7 @@ public static partial class Briefs
     public static string FlightStatus(FlightRow flight, IReadOnlyList<LegRow> legs)
     {
         var text = new StringBuilder();
-        var state = flight.State == FlightState.Held ? $"held, waiting for {FlightWaiting.For(flight)}" : flight.State.ToString().ToLowerInvariant();
+        var state = FlightWaiting.OnHoldText(flight) ?? (flight.State == FlightState.Held ? $"held, waiting for {FlightWaiting.For(flight)}" : flight.State.ToString().ToLowerInvariant());
         text.Append($"{flight.Code}: {flight.Title ?? flight.Item.Noun} ({flight.Repo} {flight.Item.Display}, {state})");
         text.Append(flight.PullRequestUrl is { } url ? $", PR {url}" : ", no PR yet");
         text.Append(flight.Review is { } review ? $", review {review.State.ToString().ToLowerInvariant()}" : ", no review yet");

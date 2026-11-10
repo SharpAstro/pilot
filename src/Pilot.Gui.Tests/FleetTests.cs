@@ -95,6 +95,39 @@ public sealed class FleetTests
         }
     }
 
+    /// <summary>The slowest verb's p95 is a line under the traffic, drawn in full and clear of the lines above it (PIL794).</summary>
+    [Theory]
+    [InlineData(1280)]
+    [InlineData(700)]
+    public void TheSlowestCommandsP95IsShownAndNeverOverlaps(int width)
+    {
+        var info = Summary("s2", "bo@example.org").Node! with
+        {
+            Traffic = new NodeTrafficRow { Hour = Live.At, HttpIn = 3_000_000, HttpOut = 1_000_000, ChildBytes = 9_000_000, GitRuns = 4, GhRuns = 20 },
+            CommandTimings = [new CommandTimingRow { Verb = "say", Count = 40, P50Ms = 300, P95Ms = 1200 }, new CommandTimingRow { Verb = "merge", Count = 2, P50Ms = 100, P95Ms = 4800 }],
+        };
+        var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, Summary("s2", "bo@example.org") with { Node = info }, Live.At);
+
+        line.Commands.ShouldBe("commands p95 4.8 s");
+        FleetLine.From("node.sock", here: true, canCommand: true, null, Summary("s1", "ada@example.org"), Live.At).Commands.ShouldBeNull();
+        using var renderer = new RgbaImageRenderer((uint)width, 400);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Show(PilotPage.Fleet);
+
+        var arranged = Layout.Engine.Arrange(chrome.Fleet.Tree(new FleetScreen([line], Live.At)), new Rect<float>(0, 0, width, 400), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        var leaves = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text }).ToArray();
+        string TextOf(dynamic a) => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value;
+        var previousBottom = leaves.Where(a => TextOf(a).StartsWith("10.0.0.9:47731", StringComparison.Ordinal)).ShouldHaveSingleItem() is var where ? where.Bounds.Y + where.Bounds.Height : 0f;
+        line.TrafficLines.Length.ShouldBe(3);
+        foreach (var part in line.TrafficLines)
+        {
+            var leaf = leaves.Where(a => TextOf(a) == part).ShouldHaveSingleItem();
+            leaf.Bounds.Y.ShouldBeGreaterThanOrEqualTo(previousBottom - 0.5f, part);
+            leaf.Bounds.Width.ShouldBeGreaterThanOrEqualTo(renderer.MeasureText(part.AsSpan(), SessionsCapture.FontPath, 11f).Width - 0.5f, part);
+            previousBottom = leaf.Bounds.Y + leaf.Bounds.Height;
+        }
+    }
+
     [Fact]
     public void ARowOffersOpenAndConnectAsItsGrantAllows()
     {
@@ -255,6 +288,60 @@ public sealed class FleetTests
         watch.Forget("10.0.0.1:47731");
 
         Screen().Lines.Select(l => l.Where).ShouldBe(["node.sock", "10.0.0.5:47731"]);
+    }
+
+    /// <summary>A node held by its machine name and heard at a new address keeps its Held mark; a node of a name with no grant, while an old address entry no longer answers, says to Connect again.</summary>
+    [Fact]
+    public async Task ANodeHeldByNameHeardAtANewAddressStaysHeldAndAnUnheldNameIsToldToConnectAgain()
+    {
+        var nodes = new Dictionary<string, FakeNode>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["10.0.0.9:47731"] = new(),
+            ["10.0.0.5:47731"] = new(),
+        };
+        await using var watch = new FleetWatch(endpoint => new NodeFeed(nodes[endpoint].Open, endpoint, TimeSpan.FromMilliseconds(20)));
+        // SE2 is held under its name at a hint that no longer answers; it is heard now at 10.0.0.9. LE1 has no grant by name, only an old address entry.
+        watch.Know([("10.0.0.9:47731", "SE2 DESKTOP-7", "SE2"), ("10.0.0.5:47731", "LE1 LAPTOP", "LE1")]);
+        for (var i = 0; i < 500 && nodes.Values.Any(n => n.OpenCount == 0); i++)
+        {
+            await Task.Delay(10, Ct);
+        }
+        nodes["10.0.0.9:47731"].Send(Live.Snapshot(1, "s2"));
+        nodes["10.0.0.5:47731"].Send(Live.Snapshot(1, "le1"));
+        var held = new Pilot.Contracts.HeldGrant[]
+        {
+            new("SE2", "10.0.0.1:47731", "tok-se2"),
+            new(null, "10.0.0.3:47731", "tok-old"),
+        };
+        var view = new HeldView(held);
+        FleetScreen Screen() => watch.Screen("node.sock", Summary("laptop", "ada@example.org"), view.Holds, held, Live.At);
+        for (var i = 0; i < 500 && Screen().Lines.Count(l => l.Connected) < 2; i++)
+        {
+            await Task.Delay(10, Ct);
+        }
+
+        var lines = Screen().Lines;
+        var se2 = lines.Single(l => l.Where == "10.0.0.9:47731");
+        se2.Held.ShouldBeTrue();
+        se2.CanCommand.ShouldBeTrue();
+        se2.ConnectAgain.ShouldBeNull();
+        var le1 = lines.Single(l => l.Where == "10.0.0.5:47731");
+        le1.CanCommand.ShouldBeFalse();
+        le1.ConnectAgain.ShouldBe("Connect again (held for 10.0.0.3:47731)");
+        le1.ToDumpLine().ShouldContain("Connect again (held for 10.0.0.3:47731)");
+    }
+
+    /// <summary>The held view finds a token by the node's name first and its address after, and the LAN's moved node is not watched at its old hint.</summary>
+    [Fact]
+    public void TheHeldViewFindsTokensByNameAndSkipsAHintTheLanMovedFrom()
+    {
+        var view = new HeldView([new("SE2", "10.0.0.1:47731", "tok-se2"), new(null, "10.0.0.3:47731", "tok-old")]);
+
+        view.TokenFor("10.0.0.9:47731", "se2").ShouldBe("tok-se2");
+        view.TokenFor("10.0.0.3:47731", null).ShouldBe("tok-old");
+        view.Holds("10.0.0.9:47731", "LE1").ShouldBeFalse();
+        HeldView.Known(view.Entries, [new LanNode("10.0.0.9:47731", "SE2 DESKTOP-7", "SE2")])
+            .Select(k => k.Endpoint).ShouldBe(["10.0.0.3:47731", "10.0.0.9:47731"]);
     }
 
     private static NodeSummary InMaintenance(string stream, bool connected = true) =>

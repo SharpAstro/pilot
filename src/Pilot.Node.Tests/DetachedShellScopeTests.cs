@@ -105,6 +105,7 @@ public sealed class DetachedShellScopeTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")] // a real systemd transient scope (Linux with a user bus, probed by a real systemctl): no fake stands in for it
     public void ARealScopedJobHasItsPidInAPilotJobScopeCgroup()
     {
         if (!OperatingSystem.IsLinux() || !UserBusAnswers())

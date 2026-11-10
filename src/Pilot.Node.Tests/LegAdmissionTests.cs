@@ -147,7 +147,7 @@ public sealed class LegAdmissionTests : LegCommanderTestsBase
         Leg1("TIA2", "two").Queued.ShouldNotBeNull();
 
         // Marked priority on its issue (read at the start): it goes at once.
-        var git = new GitCli();
+        var git = _git;
         var flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers, _github);
         var legs = new LegCommander(_state, _workers, _checks, _github, git, new Planes(git), flights,
             new NodeOptions(Path.Combine(_root, "node2.sock"), Path.Combine(_root, "data2"), MachinePrefix: "DU1"), TimeProvider.System) { Models = _legs.Models };

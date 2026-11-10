@@ -72,6 +72,12 @@ public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder,
         return Clients.Contains(name[(name.LastIndexOf('/') + 1)..], StringComparer.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// The roster (<see cref="SessionRoster"/>) the sessions this resumes are added to, so a hook can tell the node's session from a person's
+    /// by its id when the environment of the resume did not reach it (<c>claude --bg</c> hands the session to a daemon). Null for none.
+    /// </summary>
+    public string? RosterFile { get; init; }
+
     /// <summary>How long a stopped session's process may take to go.</summary>
     private static readonly TimeSpan StopWait = TimeSpan.FromSeconds(20);
 
@@ -160,6 +166,13 @@ public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder,
             await StopAsync(request.SessionId, cancellationToken);
         }
 
+        // The node's own session, resumed under whatever id Claude Code gives it: marked before the call, by the roster for the id it has now
+        // and below for the one it comes back under, and by PILOT_SESSION on the call (RunResumeAsync).
+        var mine = NodeRole(request) is not null;
+        if (mine)
+        {
+            SessionRoster.Mark(RosterFile, request.SessionId);
+        }
         var args = ResumeArguments(request);
         var run = await RunResumeAsync(args, request, cancellationToken);
         for (var attempt = 1; run.ExitCode != 0 && IsTransientConfigRead(run.Output + run.Error) && attempt <= ConfigRetries; attempt++)
@@ -181,6 +194,10 @@ public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder,
         // started another beside it (DE1, 2026-10-24). So the session's own id, running again, wins; the printed job only
         // when it stays the one running.
         var id = job.Groups[1].Value;
+        if (mine)
+        {
+            SessionRoster.Mark(RosterFile, id);
+        }
         var until = DateTimeOffset.UtcNow + ListedWait;
         DateTimeOffset? jobSeen = null;
         string? jobSession = null;
@@ -199,10 +216,18 @@ public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder,
             }
             if (jobSeen is { } seen && DateTimeOffset.UtcNow - seen > InPlaceWait)
             {
+                if (mine)
+                {
+                    SessionRoster.Mark(RosterFile, jobSession);
+                }
                 return jobSession!;
             }
             if (DateTimeOffset.UtcNow > until)
             {
+                if (mine)
+                {
+                    SessionRoster.Mark(RosterFile, jobSession);
+                }
                 return jobSession ?? throw new SessionDeliveryException($"the session was continued as job {id}, but claude agents did not list it within {ListedWait.TotalSeconds:0} s");
             }
             await Task.Delay(Step, cancellationToken);
@@ -218,9 +243,16 @@ public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder,
     /// <summary>The wait between tries; a test replaces it so it does not sleep.</summary>
     public Func<TimeSpan, CancellationToken, Task> ConfigRetryDelay { get; init; } = Task.Delay;
 
+    /// <summary>
+    /// The role of the session to resume when it is one the node started (<c>PILOT_SESSION</c> and the roster mark it), else null: its name
+    /// says a role, or the node has its start options on record, which it keeps only for sessions it started (a retitled session keeps its row's role).
+    /// </summary>
+    private static string? NodeRole(ResumeRequest request) =>
+        ClaudeCli.RoleOf(request.Name) ?? (request.StartOptions is { Count: > 0 } ? "session" : null);
+
     /// <summary>Runs <c>claude --bg --resume</c>; a test overrides it to give the output it wants.</summary>
     protected virtual Task<ClaudeRun> RunResumeAsync(IReadOnlyList<string> args, ResumeRequest request, CancellationToken cancellationToken) =>
-        ClaudeCli.RunAsync(args, request.Text, request.Cwd, ResumeTimeout, cancellationToken);
+        ClaudeCli.RunAsync(args, request.Text, request.Cwd, ResumeTimeout, cancellationToken, role: NodeRole(request));
 
     /// <summary>
     /// Whether claude's output says it read its config file (~/.claude.json) mid-write: Claude Code's own wording

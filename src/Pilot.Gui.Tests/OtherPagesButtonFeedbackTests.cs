@@ -289,7 +289,7 @@ public sealed class OtherPagesButtonFeedbackTests
     // ---- Summary ----
 
     [Fact]
-    public async Task SummariseReadsSummarisingAtOnceTakesNoSecondPressAndSaysTheNodesRefusalOnTheCard()
+    public async Task RefreshReadsRefreshingAtOnceTakesNoSecondPressAndSaysTheNodesRefusalOnTheCard()
     {
         using var renderer = new RgbaImageRenderer(1, 1);
         var board = NewChrome(renderer).Summaries;
@@ -299,8 +299,15 @@ public sealed class OtherPagesButtonFeedbackTests
         board.Track = (run, _) => tracked.Add(run());
         var ask = new SummaryAsk(SummaryRow.FleetScope, new NodeMark("node.sock", "node.sock", "this node", true), "the flights in play");
 
+        var card = new SummaryCard();
+        string Card() => Words(card.Build(board, ask, Palette.Standard, Now).ShouldNotBeNull());
+        Card().ShouldContain("Refresh");
+        Card().ShouldNotContain("Summarise");
+
         board.Press(ask);
         board.Running(ask).ShouldBeTrue();
+        // At once, on the press's own frame: the button reads Refreshing…, and a second press sends nothing.
+        Card().ShouldContain("Refreshing…");
         board.Press(ask);
         node.Asked.ShouldBe(["summarise " + SummaryRow.FleetScope]);
 
@@ -308,6 +315,8 @@ public sealed class OtherPagesButtonFeedbackTests
         await Task.WhenAll(tracked);
         board.Running(ask).ShouldBeFalse();
         board.Refused(ask).ShouldBe("one is being made already");
+        Card().ShouldContain("The node did not make one: one is being made already. Press Refresh to try again.");
+        Card().ShouldNotContain("Refreshing…");
 
         // Pressed again, the old words go while the node thinks; taken, the card has none.
         board.Press(ask);

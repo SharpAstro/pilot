@@ -50,7 +50,7 @@ public sealed class EndedSessionJobsTests : IDisposable
         _profile.Dispose();
         try
         {
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
         catch (IOException)
         {

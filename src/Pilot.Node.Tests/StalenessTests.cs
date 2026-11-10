@@ -115,7 +115,7 @@ public class StalenessTests
     }
 
     [Fact]
-    public void ALegPastTheGoAroundLimitIsStaleWithItsLegStaleCardsTableAsItsCause()
+    public void ALegPastTheGoAroundLimitIsStaleWithItsLegStaleCardsTableAsItsDetailNotInItsSummary()
     {
         var leg = Leg("DIR178", started: Now - TimeSpan.FromHours(1)) with { GoArounds = StaleLegs.MostGoArounds + 1 };
         var card = Card("c4", "flight/DIR178/main", LegWatch.LegStale, CardBin.Handled, TimeSpan.FromMinutes(5), CardState.Closed) with
@@ -126,7 +126,10 @@ public class StalenessTests
         (item.Kind, item.Subject).ShouldBe((StaleKind.Leg, "DIR178/main"));
         item.Cause.ShouldContain($"go-around {StaleLegs.MostGoArounds + 1}");
         item.Cause.ShouldContain("card c4");
-        item.Cause.ShouldContain("ParserTests.Parses (the flight's)");
+        item.Cause.ShouldNotContain("ParserTests", Case.Sensitive, "the cause is the flight's one-line summary; the table is its detail");
+        item.Summary.ShouldNotContain("job | started");
+        item.Detail.ShouldNotBeNull().ShouldContain("ParserTests.Parses (the flight's)");
+        StaleSection.Line(item).ShouldContain("ParserTests.Parses (the flight's)", Case.Sensitive, "the digest and the brief still carry the table");
     }
 
     [Fact]
@@ -140,8 +143,8 @@ public class StalenessTests
             .Stale.Single(i => i.Kind == StaleKind.Leg);
         item.AgeText.ShouldBe("7 h", "the leg's first start is its earliest check job when that is older than its start");
         item.Cause.ShouldContain("flying 7 h");
-        item.Cause.ShouldContain("j7");
-        item.Cause.ShouldContain("ParserTests.Parses (the flight's)");
+        item.Detail.ShouldNotBeNull().ShouldContain("j7");
+        item.Detail.ShouldContain("ParserTests.Parses (the flight's)");
     }
 
     [Fact]
@@ -179,6 +182,15 @@ public class StalenessTests
     {
         Code = "PIL735", Node = "SE1", Since = Now - TimeSpan.FromHours(5), UnreachableSince = unreachableFor is { } f ? Now - f : null,
     };
+
+    [Fact]
+    public void AHoldOnANodeThatIsNotAKnownPeerIsNeverAnUnreachableItemHoweverOldItIs_780()
+    {
+        // AnswerAsync sets no UnreachableSince on a wait whose node is not a peer this one holds a grant for, so the node is not called unreachable.
+        var reading = Read([Flight(state: FlightState.Held, peers: [Peer(null)])]);
+        reading.Stale.ShouldNotContain(i => i.Kind == StaleKind.Unreachable);
+        reading.Nearing.ShouldNotContain(i => i.Kind == StaleKind.Unreachable);
+    }
 
     [Fact]
     public void AHoldOnAnUnreachableNodePastAnHourIsStaleNamingTheNode_753()
@@ -293,16 +305,29 @@ public class StalenessTests
     [Fact]
     public void WaitsOnNamesAReviewRoundAHoldAConnectedFlightAndARingingCard()
     {
-        var reviewing = new ReviewRow { State = ReviewState.Reviewing, Reviewer = "DE1-DIR178-review", StartedAt = Now - TimeSpan.FromHours(1) };
+        var reviewing = new ReviewRow { State = ReviewState.Reviewing, Reviewer = "DE1-DIR178-review", StartedAt = Now - TimeSpan.FromHours(7) };
         Read([Flight(age: TimeSpan.FromHours(13), review: reviewing)], [Leg("DIR178", state: LegState.Done)]).Stale.Single().WaitsOn.ShouldContain("a review round");
 
-        var holding = new FlightHolding { Reason = "small fixes", Since = Now - TimeSpan.FromHours(1) };
+        // A review or a hold that began within half the bound is a move: these began longer ago, so the flight is stale and says on what.
+        var holding = new FlightHolding { Reason = "small fixes", Since = Now - TimeSpan.FromHours(7) };
         Read([Flight(age: TimeSpan.FromHours(13), holding: holding)]).Stale.Single().WaitsOn.ShouldContain("a hold");
 
         Read([Flight(age: TimeSpan.FromHours(13), state: FlightState.Held, connections: ["PIL9"])]).Stale.Single().WaitsOn.ShouldBe("a connected flight (PIL9)");
 
         Read([Flight(age: TimeSpan.FromHours(13))], [Leg("DIR178", state: LegState.Done)], [Card("c7", "flight/DIR178", age: TimeSpan.FromMinutes(10))])
             .Stale.Single().WaitsOn.ShouldContain("a ringing card (c7");
+    }
+
+    [Fact]
+    public void AFlightOpenLongButMovingIsNeitherStaleNorNearing()
+    {
+        // Released from a hold, a leg started 12 minutes ago: the row read "stale · no progress for 12 m" (SE1, 2026-11-09).
+        var reading = Read([Flight(age: TimeSpan.FromHours(30))], [Leg("DIR178", state: LegState.Flying) with { StartedAt = Now - TimeSpan.FromMinutes(12) }]);
+        reading.Stale.ShouldBeEmpty();
+        reading.Nearing.ShouldBeEmpty();
+
+        // Still for longer than the bound, it is stale again.
+        Read([Flight(age: TimeSpan.FromHours(30))], [Leg("DIR178", state: LegState.Flying) with { StartedAt = Now - TimeSpan.FromHours(13) }]).Stale.ShouldNotBeEmpty();
     }
 
     [Fact]

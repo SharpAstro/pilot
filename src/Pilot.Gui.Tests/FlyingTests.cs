@@ -37,13 +37,14 @@ public sealed class FlyingTests
     [Fact]
     public void AFlightOffersWhatItsStageAllows()
     {
-        Labels(Line(Flight())).ShouldBe(["Plan a leg"]);
-        Labels(Line(Flight(), Leg("parser", 1, LegState.Planned), Leg("render", 2, LegState.Planned))).ShouldBe(["Start parser", "Remove parser", "Plan a leg"]);
-        Labels(Line(Flight(), Leg("parser", 1, LegState.Done), Leg("render", 2, LegState.Flying))).ShouldBe(["Redo leg render", "Plan a leg"]);
-        Labels(Line(Flight(), Leg("parser", 1, LegState.Done))).ShouldBe(["Open PR", "Plan a leg"]);
+        // Every flight not landed (and not on the owner's hold) also offers Hold, last (#771).
+        Labels(Line(Flight())).ShouldBe(["Plan a leg", "Hold"]);
+        Labels(Line(Flight(), Leg("parser", 1, LegState.Planned), Leg("render", 2, LegState.Planned))).ShouldBe(["Start parser", "Remove parser", "Plan a leg", "Hold"]);
+        Labels(Line(Flight(), Leg("parser", 1, LegState.Done), Leg("render", 2, LegState.Flying))).ShouldBe(["Redo leg render", "Plan a leg", "Hold"]);
+        Labels(Line(Flight(), Leg("parser", 1, LegState.Done))).ShouldBe(["Open PR", "Plan a leg", "Hold"]);
         Labels(Line(Flight(pr: 7, review: new ReviewRow { State = ReviewState.Changes, Reviewer = "r", StartedAt = Live.At }), Leg("parser", 1, LegState.Done)))
-            .ShouldBe(["Review again", "Plan a leg"]);
-        Labels(Line(Flight(FlightState.Held), Leg("parser", 1, LegState.Planned))).ShouldBe(["Remove parser", "Plan a leg"]);
+            .ShouldBe(["Review again", "Plan a leg", "Hold"]);
+        Labels(Line(Flight(FlightState.Held), Leg("parser", 1, LegState.Planned))).ShouldBe(["Remove parser", "Plan a leg", "Hold"]);
         Labels(Line(Flight(FlightState.Landed), Leg("parser", 1, LegState.Done))).ShouldBeEmpty();
 
         // What needs words asks for them: a why under its button (Go around, Remove), the chat's box (Plan a leg); what does not is a verb at once.
@@ -53,9 +54,10 @@ public sealed class FlyingTests
         FlightAction.For(Line(Flight(), Leg("parser", 1, LegState.Planned)))[0]
             .ShouldBe(new FlightAction("Start parser", Verbs.StartLeg, "flight/TIA1611/parser", []), new FlightActionComparer());
         FlightAction.For(Line(Flight(), Leg("parser", 1, LegState.Planned)))[1].WhyPrompt.ShouldBe("why remove parser?");
-        FlightAction.For(Line(Flight())).Single().ChatMessage.ShouldBe("plan a leg on TIA1611: ");
-        FlightAction.For(Line(Flight())).Single().WhyPrompt.ShouldBeNull();
-        Labels(Line(Flight(), Leg("parser", 1, LegState.Flying), Leg("render", 2, LegState.Planned))).ShouldBe(["Redo leg parser", "Remove render", "Plan a leg"]);
+        FlightAction.For(Line(Flight()))[0].ChatMessage.ShouldBe("plan a leg on TIA1611: ");
+        FlightAction.For(Line(Flight()))[0].WhyPrompt.ShouldBeNull();
+        FlightAction.For(Line(Flight()))[1].WhyPrompt.ShouldBe("why hold TIA1611?");
+        Labels(Line(Flight(), Leg("parser", 1, LegState.Flying), Leg("render", 2, LegState.Planned))).ShouldBe(["Redo leg parser", "Remove render", "Plan a leg", "Hold"]);
     }
 
     [Fact]
@@ -287,11 +289,11 @@ public sealed class FlyingTests
             At = Live.At, State = CardState.Open,
         };
 
-        cards.NoteRefused("c144", "#195 conflicts with its base, so GitHub cannot merge it: it is being rebased onto its base and reviewed afresh");
+        cards.NoteRefused("c144", null, "#195 conflicts with its base, so GitHub cannot merge it: it is being rebased onto its base and reviewed afresh");
         cards.Render(CardsScreen.From([card], []), new RectF32(0, 0, 460, 800));
 
         cards.RefusedOn("c144").ShouldNotBeNull().ShouldContain("conflicts with its base");
-        cards.NoteRefused("c144", null);
+        cards.NoteRefused("c144", null, null);
         cards.RefusedOn("c144").ShouldBeNull();
     }
 

@@ -30,11 +30,13 @@ public sealed partial class LegCommander
     /// <summary>
     /// A hold whose watchtower is not running (it ended by design, or crashed) is not left to circle. With commits past the reviewed
     /// head in the plane they are pushed as <c>flight pr</c> does (that ends the hold and a fresh review gates the merge); with none
-    /// the hold is released, the review's not-blocking notes written on the PR (<see cref="ReleaseUntakenHoldAsync"/>).
+    /// the hold is released, the review's not-blocking notes written on the PR (<see cref="ReleaseUntakenHoldAsync"/>). A flight on the
+    /// owner's hold (#771) is handled not at all: nothing is pushed or written for it until it is released.
     /// </summary>
     internal async Task<HoldHandling> HandleHoldWithoutWatchtowerAsync(string code, CancellationToken cancellationToken)
     {
-        if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying, Holding: not null, PullRequest: not null } flight)
+        if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying, Holding: not null, PullRequest: not null } flight
+            || OnHoldRefusal(flight) is not null)
         {
             return HoldHandling.None;
         }
@@ -50,7 +52,7 @@ public sealed partial class LegCommander
     /// Releases a hold nobody is making the fixes of: the review's not-blocking notes go onto the PR as one comment (naming the reviewed
     /// head and that the flight merges with them), the hold ends, its cards close and the PR-ready card is raised again, no longer
     /// holding, for autopilot's merge. GitHub is asked with the lock let go; a refused comment is a Handled card, never a kept hold.
-    /// True when the hold was released.
+    /// True when the hold was released; false, writing nothing, for a flight on the owner's hold (#771).
     /// </summary>
     internal async Task<bool> ReleaseUntakenHoldAsync(string code, CancellationToken cancellationToken)
     {
@@ -58,7 +60,8 @@ public sealed partial class LegCommander
         try
         {
             var subject = Verbs.FlightTarget(code);
-            if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying, Holding: not null, PullRequest: { } number, Review: { State: ReviewState.Passed } review } flight)
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying, Holding: not null, PullRequest: { } number, Review: { State: ReviewState.Passed } review } flight
+                || OnHoldRefusal(flight) is not null)
             {
                 return false;
             }
