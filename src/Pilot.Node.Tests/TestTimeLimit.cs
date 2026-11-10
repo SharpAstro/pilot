@@ -48,19 +48,27 @@ namespace Pilot.Node.Tests;
 /// excused for that time; its line then says "also slow at the time: none" (no victims), which is how to tell it apart.
 /// </para>
 /// <para>
-/// What stalled the process, as far as it is measured (#801, PIL801). Not a GC pause (3 ms and 0 ms over test windows of 32 s
-/// and 10 s), not the runtime's create-process lock (0 lock waits; git reached its main in 29 ms at the median, 210 ms at
-/// the most, over 237 traced git runs), and not the node's own counter (<c>NodeTraffic.Start</c> takes no shared lock). Locally
-/// the stalls are the whole test process starved of CPU: the leg checks run below normal priority on a machine whose
-/// normal-priority work holds every core, so a test's threads got 0.03 cores for seconds (process CPU 234 ms over 9.1 s of pool
-/// lag) and its git children, starved the same way, took 0.22 s at the median and up to 3.9 s for a push where an idle machine
-/// takes tens of milliseconds. A test that runs a dozen git processes in a row then crosses its limit with an idle process. On
-/// CI (run 42215014819, 4 cores) the stall was not process wide: only the three tests that ran real git stood still for 14 to 16 s
-/// while a fourth slot without git kept finishing a test every 2 to 3 s, which points at git process starts, but no reading
-/// existed then to say which; the readings above (process CPU, pool items, lock waits, sampler lateness) now name it at the next
-/// occurrence. The fix made is the git the tests start for nothing: <c>LegCommanderTestsBase</c> (23 classes) ran init, add
-/// and commit in each constructor and worktree prune in Dispose, four git processes and four blocked threads a test, and now
-/// copies a repo built once a run (<c>SeedRepo.MakePlain</c>), so a test starts none.
+/// What stalled the process (#801, PIL801), with the readings that showed it. A job started through pilot carries
+/// <c>DOTNET_PROCESSOR_COUNT=4</c> (<c>BuildEnvironment</c>), so the test process's pool starts with 4 threads, as on CI's 4-core
+/// runner, and once more than 4 of its threads are blocked it adds one about every half second. The whole suite on the head before
+/// main's fakes (j4467, 4134 tests, 31.7 min) had 4 process stalls, 1.9 to 4.5 s lost each, all pool starvation, with 7 to 13 pool
+/// threads, the process using 0.05 to 0.17 cores, its sampler thread on time, 65 to 97 pool items still finishing and 1 to 7 lock
+/// waits: a pool whose threads were blocked, not a process the machine gave no CPU (an earlier whole-suite run on a machine at 100%
+/// CPU, j4189, had 43 stalls). Each fell while 3 to 4 tests tagged Slow, which run real git, ran alongside (ReviewTests2 and 3,
+/// FixFollowUpTests, QueuedPushTests, LockFreeGitTests and PassedWithoutCardTests among them). Not a GC pause (2 to 20 ms over those
+/// windows) and not a throttle in the node (<c>NodeTraffic.Start</c> takes none). What blocks is a child process start: a synchronous
+/// call that holds its thread until the process exists, one at a time under the runtime's create-process lock on Windows (#794), at
+/// 0.2 s a git run at the median and up to 3.9 s for a push on a busy machine. That fits the readings, and CI (run 42215014819, 4
+/// cores: the three tests that ran real git stood still for 14 to 16 s while a fourth slot without git kept finishing), but no
+/// reading counted the starts then, so it is not proven: the readings now carry the starts begun while the pool lagged, and name it
+/// at the next occurrence.
+/// </para>
+/// <para>
+/// The fix is fewer starts in the default run, not a longer limit or a rerun. Main's in-memory git (#933, PIL933 and PIL952: the
+/// git-backed test bases run on <c>FakeRepoGit</c>, and a guard fails a test outside Slow and Integration that starts a real
+/// process) took out the git that tests started for nothing, among it the four git processes and four blocked threads each test of
+/// the 23 <c>LegCommanderTestsBase</c> classes ran. The same whole suite on the merged head (j4491, 5005 tests, 14.1 min) had 0
+/// process stalls and 0 slow-test lines. Only the tests that are about git itself still start it.
 /// </para>
 /// </summary>
 [AttributeUsage(AttributeTargets.Assembly | AttributeTargets.Class | AttributeTargets.Method, AllowMultiple = false)]
