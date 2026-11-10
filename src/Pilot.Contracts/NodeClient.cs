@@ -7,7 +7,7 @@ using System.Text.Json;
 namespace Pilot.Contracts;
 
 /// <summary>
-/// A typed client of one node: over its socket on this machine, or over TCP to a node on the LAN (<see cref="Remote"/>),
+/// A typed client of one node: over its socket on this machine, or over TCP to a node on the LAN (<see cref="Remote(string, string?)"/>),
 /// with a grant's bearer token for commands. The HTTP routes, and the event stream as a WebSocket over the same
 /// connection. What the GUI, the TUI and the CLI talk to the node through.
 /// </summary>
