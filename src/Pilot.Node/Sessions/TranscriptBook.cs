@@ -787,7 +787,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         };
     }
 
-    private static string ResultText(JsonElement result)
+    internal static string ResultText(JsonElement result)
     {
         if (!result.TryGetProperty("content", out var content))
         {

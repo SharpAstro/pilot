@@ -158,7 +158,8 @@ public sealed class CardKindTests
         var problems = new List<string>();
         foreach (var entry in CardKindCatalog.All)
         {
-            var dot = entry.Pin.IndexOf('.');
+            // The last dot: a partial's file (WatchtowerChatTests.Refused) has one in its name.
+            var dot = entry.Pin.LastIndexOf('.');
             var (cls, method) = (entry.Pin[..dot], entry.Pin[(dot + 1)..]);
             if (!tests.TryGetValue(cls, out var text) || Regex.Match(text, $@"public (?:async Task|void) {Regex.Escape(method)}\(") is not { Success: true } at)
             {

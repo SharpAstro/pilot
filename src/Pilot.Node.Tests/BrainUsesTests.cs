@@ -94,6 +94,43 @@ public sealed class BrainUsesTests
     }
 
     [Fact]
+    public async Task AQuietVerdictLeavesACardThatRangMeanwhileRinging()
+    {
+        // The watchtower's press of the card was refused while the brain was still judging it: the refusal rang it, and the verdict
+        // about the card as raised does not file it back in For you.
+        var (state, _) = Judged(new() { ["ring"] = """{"ring": false, "action": "", "reason": "The watchtower can press it."}""" });
+        var card = state.RaiseCard(CardBin.ForYou, "review-changes", "flight/COD70", "COD70's review found things to fix", "the rule applies to tmap too",
+            [new CardChoice { Label = "Fix the review's findings", Verb = Verbs.GoAround, Target = "flight/COD70/review-notes-2" }]);
+        state.UpdateCard(card.Id, Watchtower.RefusedPrefix + card.Title, "What to do: press it yourself.", card.Choices, null, bin: CardBin.Ring);
+
+        await state.RingJudge!.JudgeAsync(card, Ct);
+
+        var now = state.Cards(openOnly: true).Single(c => c.Id == card.Id);
+        now.Bin.ShouldBe(CardBin.Ring);
+        now.Detail.ShouldNotBeNull().ShouldNotStartWith(RingJudge.QuietPrefix);
+    }
+
+    [Fact]
+    public async Task ARingVerdictAndItsWordingLeaveACardThatRangMeanwhileAsTheRefusalWordedIt()
+    {
+        // The other half: the brain says ring, and words it, after a refused press already rang the card with its own lead and title.
+        var (state, _) = Judged(new()
+        {
+            ["ring"] = """{"ring": true, "action": "Send the leg round", "reason": "It needs the person."}""",
+            ["wording"] = """{"title": "COD70 needs a fix", "summary": "The review found a problem. Send the leg round."}""",
+        });
+        var card = state.RaiseCard(CardBin.ForYou, "review-changes", "flight/COD70", "COD70's review found things to fix", "the rule applies to tmap too",
+            [new CardChoice { Label = "Fix the review's findings", Verb = Verbs.GoAround, Target = "flight/COD70/review-notes-2" }]);
+        const string Refused = "What to do: press \"Fix the review's findings\" yourself.\n\nthe rule applies to tmap too";
+        state.UpdateCard(card.Id, Watchtower.RefusedPrefix + card.Title, Refused, card.Choices, null, bin: CardBin.Ring);
+
+        await state.RingJudge!.JudgeAsync(card, Ct);
+
+        var now = state.Cards(openOnly: true).Single(c => c.Id == card.Id);
+        (now.Bin, now.Title, now.Detail).ShouldBe((CardBin.Ring, Watchtower.RefusedPrefix + "COD70's review found things to fix", Refused));
+    }
+
+    [Fact]
     public async Task ACardTheBrainJudgesQuietStaysInForYouWithItsReason()
     {
         var (state, brain) = Judged(new() { ["ring"] = """{"ring": false, "action": "", "reason": "The node sends a fresh worker by itself."}""" });
@@ -210,6 +247,7 @@ public sealed class BrainUsesTests
     {
         RingJudge.Wants(Watchtower.AskKind).ShouldBeFalse();
         RingJudge.Wants(Watchtower.Down).ShouldBeFalse();
+        RingJudge.Wants(Watchtower.RefusedKind).ShouldBeFalse("a refusal the brain judged quiet is how COD70 waited seven hours");
         RingJudge.Wants("leg-failed").ShouldBeTrue();
     }
 
