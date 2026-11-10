@@ -52,4 +52,15 @@
     <UseLocalNodeLib Condition="'$(UseLocalNodeLib)' == ''">$(UseLocalSiblings)</UseLocalNodeLib>
   </PropertyGroup>
 
+  <!--
+    Opt-in build cache (Microsoft.MSBuildCache, local file-system store), see docs/build-cache.md. Nothing here exists unless
+    the build is given -p:MSBuildCacheEnabled=true, so a plain build, CI and every restore are as they were. PrivateAssets keeps
+    the packages out of anything this repo packs; SharedCompilation reports the compiler server's file accesses (a detached
+    process MSBuild cannot see), without which a changed source file would not reach the cache's fingerprint.
+  -->
+  <ItemGroup Condition="'$(MSBuildCacheEnabled)' == 'true'">
+    <PackageReference Include="Microsoft.MSBuildCache.Local" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.MSBuildCache.SharedCompilation" PrivateAssets="all" />
+  </ItemGroup>
+
 </Project>
