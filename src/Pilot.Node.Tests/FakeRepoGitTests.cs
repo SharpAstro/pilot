@@ -395,6 +395,38 @@ public sealed class FakeRepoGitTests : IDisposable
     }
 
     [Fact]
+    public void CheckoutLsTreeTheShowOfNamesAWorktreeListAQuietSymbolicRefAndRemoteRemoveAnswerAsTheNodeAndTheTestsAskThem()
+    {
+        RunOn(_git, Repo, "checkout", "-q", "-b", "flight/x", "main");
+        RunOn(_git, Repo, "symbolic-ref", "--short", "HEAD").ShouldBe("flight/x");
+        Directory.CreateDirectory(Path.Combine(Repo, ".github", "workflows"));
+        File.WriteAllText(Path.Combine(Repo, ".github", "workflows", "dotnet.yml"), "on: push\n");
+        File.WriteAllText(Path.Combine(Repo, "other.txt"), "x\n");
+        RunOn(_git, Repo, "add", ".");
+        RunOn(_git, Repo, [.. Who, "commit", "-q", "-m", "ci"]);
+
+        RunOn(_git, Repo, "show", "--name-only", "--format=", "HEAD").ShouldBe(".github/workflows/dotnet.yml\nother.txt");
+        RunOn(_git, Repo, "ls-tree", "--name-only", "HEAD", ".github/workflows/").ShouldBe(".github/workflows/dotnet.yml");
+        RunOn(_git, Repo, "ls-tree", "--name-only", "HEAD", ".github/").ShouldBe(".github/workflows");
+        RunOn(_git, Repo, "checkout", "-q", "main");
+        RunOn(_git, Repo, "symbolic-ref", "--short", "HEAD").ShouldBe("main");
+        _git.Run(["checkout", "-q", "-b", "flight/x"], Repo).Error.ShouldContain("already exists");
+
+        var detached = Path.Combine(Repo, ".claude", "worktrees", "d");
+        RunOn(_git, Repo, "worktree", "add", "--detach", detached, "HEAD");
+        var list = RunOn(_git, Repo, "worktree", "list");
+        list.ShouldContain("[main]");
+        list.ShouldContain("(detached HEAD)");
+        var quiet = _git.Run(["symbolic-ref", "-q", "HEAD"], detached);
+        (quiet.Ok, quiet.Output, quiet.Error).ShouldBe((false, "", ""));
+
+        RunOn(_git, Repo, "remote", "remove", "origin");
+        _git.Run(["show-ref", "--verify", "--quiet", "refs/remotes/origin/main"], Repo).Ok.ShouldBeFalse();
+        _git.Run(["remote", "get-url", "origin"], Repo).Ok.ShouldBeFalse();
+        _git.Unsupported.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void ABranchGivenByNameAloneIsMadeAtHeadAndHeadStaysWhereItWas()
     {
         var head = RunOn(_git, Repo, "rev-parse", "HEAD");

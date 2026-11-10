@@ -359,6 +359,8 @@ internal sealed class FakeRepoGit : IGit
             "config" => Config(a),
             "ls-remote" => LsRemote(a),
             "switch" => Switch(a, wt),
+            "checkout" => Checkout(a, wt),
+            "ls-tree" => LsTree(a, wt),
             "update-ref" => UpdateRef(a, wt),
             _ => throw new NotSupportedException("verb"),
         };
@@ -574,13 +576,15 @@ internal sealed class FakeRepoGit : IGit
     private GitRun SymbolicRef(List<string> a, Worktree? wt)
     {
         a.Remove("--short");
+        var quiet = a.Remove("-q");
         if (a is ["refs/remotes/origin/HEAD"])
         {
             return OriginHead ? Ok($"origin/{_bare?.Head ?? "main"}\n") : Fail("fatal: ref refs/remotes/origin/HEAD is not a symbolic ref", 128);
         }
         if (a is ["HEAD"] && wt is not null)
         {
-            return wt.Branch is { } b ? Ok(b + "\n") : Fail("fatal: ref HEAD is not a symbolic ref", 128);
+            // -q: a detached HEAD is a silent exit 1, not git's fatal.
+            return wt.Branch is { } b ? Ok(b + "\n") : quiet ? new GitRun(1, "", "") : Fail("fatal: ref HEAD is not a symbolic ref", 128);
         }
         throw new NotSupportedException("symbolic-ref form");
     }
@@ -606,6 +610,22 @@ internal sealed class FakeRepoGit : IGit
                 return Ok("");
             case ["get-url", "origin"]:
                 return Ok(FetchUrl(_repo) + "\n");
+            case ["remove" or "rm", "origin"]:
+                // The remote, its remote-tracking branches and the branch settings that name it go; the commits stay in the object store.
+                RemoteUrl = null;
+                Cfg.Remove("remote.origin.url");
+                foreach (var tracking in Refs.Keys.Where(k => k.StartsWith("refs/remotes/origin/", StringComparison.Ordinal)).ToList())
+                {
+                    Refs.Remove(tracking);
+                }
+                foreach (var branch in Cfg.Where(c => c.Key.StartsWith("branch.", StringComparison.Ordinal) && c.Key.EndsWith(".remote", StringComparison.Ordinal) && c.Value == "origin").Select(c => c.Key[..^".remote".Length]).ToList())
+                {
+                    Cfg.Remove(branch + ".remote");
+                    Cfg.Remove(branch + ".merge");
+                }
+                OriginHead = false;
+                WriteConfigFile(_repo);
+                return Ok("");
             case ["set-head", "origin", "--auto"]:
                 OriginHead = _bare is not null;
                 return Ok("");
@@ -997,6 +1017,10 @@ internal sealed class FakeRepoGit : IGit
     {
         switch (a)
         {
+            case ["list"]:
+                // One line a worktree: its path padded to the longest, the short commit and [branch] (or "(detached HEAD)"), as git prints them for a person.
+                var width = Worktrees.Max(w => w.Path.Length);
+                return Ok(string.Concat(Worktrees.Select(w => $"{w.Path.PadRight(width)}  {(HeadId(w) ?? new string('0', 7))[..7]} {(w.Branch is { } name ? $"[{name}]" : "(detached HEAD)")}\n")));
             case ["list", "--porcelain"]:
                 var text = new StringBuilder();
                 foreach (var w in Worktrees)
@@ -1334,6 +1358,21 @@ internal sealed class FakeRepoGit : IGit
 
     private GitRun Show(List<string> a, Worktree? wt)
     {
+        // git show --name-only --format= <commit>: the paths the commit changed against its first parent (a merge shows none), one a line.
+        if (a is ["--name-only", "--format=", var shown] && !shown.StartsWith('-'))
+        {
+            if (Resolve(shown, wt) is not { } commitId)
+            {
+                return Fail($"fatal: bad object {shown}", 128);
+            }
+            var commit = _commits[commitId];
+            if (commit.Parents.Count > 1)
+            {
+                return Ok("");
+            }
+            var before = commit.Parents.Count == 1 ? _commits[commit.Parents[0]].Tree : new Dictionary<string, string>();
+            return Ok(string.Concat(Changes(before, commit.Tree).Select(c => c.Path + "\n")));
+        }
         var colon = a.Count == 1 ? a[0].IndexOf(':') : -1;
         if (colon <= 0)
         {
@@ -1347,6 +1386,62 @@ internal sealed class FakeRepoGit : IGit
             return Fail($"fatal: invalid object name '{rev}'.", 128);
         }
         return _commits[id].Tree.TryGetValue(path, out var content) ? Ok(content) : Fail($"fatal: path '{path}' does not exist in '{rev}'", 128);
+    }
+
+    /// <summary><c>git ls-tree --name-only &lt;commit&gt; &lt;folder&gt;/</c>: the paths directly in the folder of the commit, folders as their path without a slash.</summary>
+    private GitRun LsTree(List<string> a, Worktree? wt)
+    {
+        if (a is not ["--name-only", var rev, var folder] || !folder.EndsWith('/') || rev.StartsWith('-'))
+        {
+            throw new NotSupportedException("ls-tree form");
+        }
+        if (Resolve(rev, wt) is not { } id)
+        {
+            return Fail($"fatal: Not a valid object name {rev}", 128);
+        }
+        var names = _commits[id].Tree.Keys.Where(k => k.StartsWith(folder, StringComparison.Ordinal))
+            .Select(k =>
+            {
+                var slash = k.IndexOf('/', folder.Length);
+                return slash < 0 ? k : k[..slash];
+            })
+            .Distinct().Order(StringComparer.Ordinal);
+        return Ok(string.Concat(names.Select(n => n + "\n")));
+    }
+
+    /// <summary><c>git checkout [-q] [-b &lt;new&gt; [&lt;start&gt;]] | &lt;branch&gt;</c>: a branch made at the start (HEAD by default) and moved to, or an existing one moved to.</summary>
+    private GitRun Checkout(List<string> a, Worktree? wt)
+    {
+        a.RemoveAll(x => x is "-q" or "--quiet");
+        if (wt is not null && a.Count is 2 or 3 && a[0] == "-b" && !a[1].StartsWith('-') && (a.Count == 2 || !a[2].StartsWith('-')))
+        {
+            var made = a[1];
+            if (Refs.ContainsKey("refs/heads/" + made))
+            {
+                return Fail($"fatal: a branch named '{made}' already exists", 128);
+            }
+            var start = a.Count == 3 ? Resolve(a[2], wt) : HeadId(wt);
+            if (start is null)
+            {
+                return a.Count == 3 ? Fail($"fatal: '{a[2]}' is not a commit and a branch '{made}' cannot be created from it", 128) : throw new NotSupportedException("checkout -b on an unborn branch");
+            }
+            var moves = start != HeadId(wt);
+            Refs["refs/heads/" + made] = start;
+            var before = wt.Index;
+            wt.Branch = made;
+            wt.Detached = null;
+            if (moves)
+            {
+                wt.Index = new Dictionary<string, string>(_commits[start].Tree);
+                Materialize(wt, _commits[start].Tree, before);
+            }
+            return Ok("");
+        }
+        if (wt is not null && a is [var branch] && !branch.StartsWith('-'))
+        {
+            return Switch([branch], wt);
+        }
+        throw new NotSupportedException("checkout form");
     }
 
     private GitRun CatFile(List<string> a, Worktree? wt)
