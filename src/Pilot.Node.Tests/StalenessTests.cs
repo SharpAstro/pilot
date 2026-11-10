@@ -115,7 +115,7 @@ public class StalenessTests
     }
 
     [Fact]
-    public void ALegPastTheGoAroundLimitIsStaleWithItsLegStaleCardsTableAsItsCause()
+    public void ALegPastTheGoAroundLimitIsStaleWithItsLegStaleCardsTableAsItsDetailNotInItsSummary()
     {
         var leg = Leg("DIR178", started: Now - TimeSpan.FromHours(1)) with { GoArounds = StaleLegs.MostGoArounds + 1 };
         var card = Card("c4", "flight/DIR178/main", LegWatch.LegStale, CardBin.Handled, TimeSpan.FromMinutes(5), CardState.Closed) with
@@ -126,7 +126,10 @@ public class StalenessTests
         (item.Kind, item.Subject).ShouldBe((StaleKind.Leg, "DIR178/main"));
         item.Cause.ShouldContain($"go-around {StaleLegs.MostGoArounds + 1}");
         item.Cause.ShouldContain("card c4");
-        item.Cause.ShouldContain("ParserTests.Parses (the flight's)");
+        item.Cause.ShouldNotContain("ParserTests", Case.Sensitive, "the cause is the flight's one-line summary; the table is its detail");
+        item.Summary.ShouldNotContain("job | started");
+        item.Detail.ShouldNotBeNull().ShouldContain("ParserTests.Parses (the flight's)");
+        StaleSection.Line(item).ShouldContain("ParserTests.Parses (the flight's)", Case.Sensitive, "the digest and the brief still carry the table");
     }
 
     [Fact]
@@ -140,8 +143,8 @@ public class StalenessTests
             .Stale.Single(i => i.Kind == StaleKind.Leg);
         item.AgeText.ShouldBe("7 h", "the leg's first start is its earliest check job when that is older than its start");
         item.Cause.ShouldContain("flying 7 h");
-        item.Cause.ShouldContain("j7");
-        item.Cause.ShouldContain("ParserTests.Parses (the flight's)");
+        item.Detail.ShouldNotBeNull().ShouldContain("j7");
+        item.Detail.ShouldContain("ParserTests.Parses (the flight's)");
     }
 
     [Fact]
