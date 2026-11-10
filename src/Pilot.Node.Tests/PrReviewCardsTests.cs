@@ -20,7 +20,7 @@ public sealed class PrReviewCardsTests : PrFixTestsBase
     private PrReviews Restarted(out NodeState state)
     {
         state = new NodeState(_journal, TimeProvider.System);
-        var git = new GitCli();
+        var git = _git;
         return new PrReviews(state, _workers, _github, git, new Planes(git), new RepoCatalog(state, _options), _options, TimeProvider.System)
         {
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),

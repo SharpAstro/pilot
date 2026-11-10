@@ -9,7 +9,8 @@ namespace Pilot.Node.Tests;
 /// <summary>
 /// A changes verdict from pilot's review of a PR no flight owns starts a fixer on the PR's branch (#290): on the controller's
 /// own PR in a repo the node tracks, by itself; on anyone else's, from a For-you card's Fix it; never for a design question,
-/// an untracked repo, or a PR a flight owns. GitHub is a fake gh over bare repos; git is real.
+/// an untracked repo, or a PR a flight owns. GitHub is a fake gh over bare repos; git is the in-memory <see cref="FakeRepoGit"/> (see
+/// <see cref="TestGit"/>), or real git for a class that passes <c>realGit: true</c>, a test that calls <c>RealGit()</c>, or a run with <c>PILOT_TEST_REAL_GIT=1</c>.
 /// </summary>
 public abstract class PrFixTestsBase : IDisposable
 {
@@ -22,6 +23,11 @@ public abstract class PrFixTestsBase : IDisposable
     private protected readonly FakeGitHub _github = new();
     private protected readonly PrReviews _reviews;
     private protected readonly NodeOptions _options;
+
+    /// <summary>The git the node under test runs: the model, or <see cref="GitCli"/> on a real-git run.</summary>
+    private protected readonly IGit _git;
+
+    private readonly TestGit _testGit;
 
     /// <summary>acme/widget has a clone under the repo roots and a branch on its origin; acme/gadget has no clone.</summary>
     // The two origins, widget's branch and its clone, built once a run and copied into each test's folder, as PrReviewTests'
@@ -41,18 +47,21 @@ public abstract class PrFixTestsBase : IDisposable
         return (root, widgetHead, gadgetHead);
     }, LazyThreadSafetyMode.ExecutionAndPublication);
 
-    protected PrFixTestsBase()
+    /// <param name="realGit">The class is about git itself, or needs a git behaviour the model lacks: it runs on real git (say which in a comment at the class).</param>
+    protected PrFixTestsBase(bool realGit = false)
     {
         _state = new NodeState(_journal, TimeProvider.System);
-        SeedRepo.CopyTree(Seed.Value.Root, _root);
-        var (widgetHead, gadgetHead) = (Seed.Value.WidgetHead, Seed.Value.GadgetHead);
+        // The model builds the fixture in memory; on real git the seed is built once a run and copied in.
+        FakePrOrigins.Shape? shape = null;
+        _git = _testGit = new TestGit(_root, realGit, () => SeedRepo.CopyTree(Seed.Value.Root, _root), makeFake: () => (shape = FakePrOrigins.Build(_root)).Git);
+        var (widgetHead, gadgetHead) = shape is { } built ? (built.WidgetHead, built.GadgetHead) : (Seed.Value.WidgetHead, Seed.Value.GadgetHead);
         var gadget = Path.Combine(_root, "github", "gadget.git");
         _github.Origins["acme/gadget"] = gadget;
         _github.Login = "ada";
         _github.Prs["acme/widget#7"] = Pr("acme/widget", 7, widgetHead, "ada") with { HeadRef = "feature/seven" };
         _github.Prs["acme/gadget#9"] = Pr("acme/gadget", 9, gadgetHead, "ada") with { HeadRef = "feature/nine" };
 
-        var git = new GitCli();
+        var git = _git;
         _options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [Roots]);
         _reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, _options), _options, TimeProvider.System)
         {
@@ -67,16 +76,34 @@ public abstract class PrFixTestsBase : IDisposable
     private protected static PullRequest Pr(string repo, int number, string head, string author) =>
         new(number, "OPEN", head, $"https://github.com/{repo}/pull/{number}", Title: $"PR {number} of {repo}", Author: author, Base: "main");
 
+    /// <summary>
+    /// Runs this test on git itself, for a test that checks what git does in a class that otherwise checks what the node decides. Called first,
+    /// before the test has used the repos: the model's folders are replaced by the real seed, and the PR heads are the seed's.
+    /// </summary>
+    private protected void RealGit()
+    {
+        _testGit.UseReal();
+        var (widgetHead, gadgetHead) = (Seed.Value.WidgetHead, Seed.Value.GadgetHead);
+        _github.Prs["acme/widget#7"] = Pr("acme/widget", 7, widgetHead, "ada") with { HeadRef = "feature/seven" };
+        _github.Prs["acme/gadget#9"] = Pr("acme/gadget", 9, gadgetHead, "ada") with { HeadRef = "feature/nine" };
+    }
+
     public void Dispose()
     {
-        try
+        if (_testGit.IsReal)
         {
-            PrOrigins.Git(WidgetClone, "worktree", "prune");
+            try
+            {
+                PrOrigins.Git(WidgetClone, "worktree", "prune");
+            }
+            catch (InvalidOperationException)
+            {
+            }
         }
-        catch (InvalidOperationException)
-        {
-        }
+        _testGit.Release();
         PrOrigins.Delete(_root);
+        // A command the model could not answer may have been swallowed by the node's own catch: the test still fails.
+        _testGit.Verify();
     }
 
     private protected Task<CommandResult> Run(string verb, string pr, string who, params string[] args) =>

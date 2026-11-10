@@ -101,7 +101,7 @@ public sealed class IdeaTests : IDisposable
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
@@ -424,7 +424,7 @@ public sealed class IdeaCliTests : IDisposable
     {
         var repo = Path.Combine(_root, "tianwen");
         Directory.CreateDirectory(repo);
-        using (var git = Process.Start(new ProcessStartInfo("git") { ArgumentList = { "init", "-q", "-b", "main" }, WorkingDirectory = repo, UseShellExecute = false })!)
+        using (var git = TestEnvironment.Start(new ProcessStartInfo("git") { ArgumentList = { "init", "-q", "-b", "main" }, WorkingDirectory = repo, UseShellExecute = false })!)
         {
             await git.WaitForExitAsync(Ct);
         }
@@ -457,12 +457,12 @@ public sealed class IdeaCliTests : IDisposable
     {
         var repo = Path.Combine(_root, "tianwen");
         Directory.CreateDirectory(repo);
-        using (var git = Process.Start(new ProcessStartInfo("git") { ArgumentList = { "init", "-q", "-b", "main" }, WorkingDirectory = repo, UseShellExecute = false })!)
+        using (var git = TestEnvironment.Start(new ProcessStartInfo("git") { ArgumentList = { "init", "-q", "-b", "main" }, WorkingDirectory = repo, UseShellExecute = false })!)
         {
             await git.WaitForExitAsync(Ct);
         }
         // Planning makes a flight, whose plane needs a commit to branch from.
-        using (var commit = Process.Start(new ProcessStartInfo("git") { ArgumentList = { "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "first" }, WorkingDirectory = repo, UseShellExecute = false })!)
+        using (var commit = TestEnvironment.Start(new ProcessStartInfo("git") { ArgumentList = { "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "first" }, WorkingDirectory = repo, UseShellExecute = false })!)
         {
             await commit.WaitForExitAsync(Ct);
         }

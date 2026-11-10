@@ -83,7 +83,7 @@ public sealed class PersonsWordTests
         // Finishing a leg looks at its plane, so the plane is a real (empty) repository.
         var plane = Path.Combine(node.Folder, "plane");
         Directory.CreateDirectory(plane);
-        using (var init = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("git", ["init", "-q", plane]) { CreateNoWindow = true })!)
+        using (var init = TestEnvironment.Start(new System.Diagnostics.ProcessStartInfo("git", ["init", "-q", plane]) { CreateNoWindow = true })!)
         {
             init.WaitForExit();
         }

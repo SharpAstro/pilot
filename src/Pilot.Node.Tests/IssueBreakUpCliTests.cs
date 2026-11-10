@@ -44,7 +44,7 @@ public sealed class IssueBreakUpCliTests : IDisposable
             {
                 start.ArgumentList.Add(arg);
             }
-            using var git = Process.Start(start)!;
+            using var git = TestEnvironment.Start(start)!;
             await git.WaitForExitAsync(Ct);
         }
         return repo;
