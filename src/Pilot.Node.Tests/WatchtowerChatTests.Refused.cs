@@ -42,7 +42,7 @@ public sealed partial class WatchtowerChatTests
         rung.Choices.Select(c => c.Label).ShouldBe(["Fix the review's findings"]);
 
         // The watchtower tries again and is refused again: still one lead, the review's words once.
-        process.Emit(ShellCall("r2", $"pilot answer {card.Id} \"Fix the review's findings\""));
+        process.Emit(ShellCall("r2", $"pilot answer {card.Id} \"Fix the review's findings\" 2>&1 && pilot status"));
         process.Emit(ShellResult("r2", AutoModeRefusal, error: true));
         // Lines are read in order: once a later refusal's card is up, the second refusal has been handled.
         process.Emit(ShellCall("r3", "pilot cards"));
@@ -64,7 +64,7 @@ public sealed partial class WatchtowerChatTests
         process.Emit(JsonSerializer.Serialize(new
         {
             type = "assistant",
-            message = new { role = "assistant", content = new object[] { new { type = "tool_use", id = "p1", name = "mcp__pilot__answer", input = new { card = card.Id, choice = "1" } } } },
+            message = new { role = "assistant", content = new object[] { new { type = "tool_use", id = "p1", name = "mcp__pilot__answer", input = new { choice = "1", why = "round-3", card = card.Id } } } },
         }));
         process.Emit(ShellResult("p1", AutoModeRefusal, error: true));
         await UntilAsync(() => _state.Cards(openOnly: true).Single(c => c.Id == card.Id).Bin == CardBin.Ring, "the card to ring");
@@ -97,6 +97,20 @@ public sealed partial class WatchtowerChatTests
         refused.Bin.ShouldBe(CardBin.Ring);
         refused.Title.ShouldBe("The watchtower could not run pilot flight merge: auto mode: [Auto-Mode Bypass] refused it");
         refused.Detail.ShouldNotBeNull().ShouldContain("flight merge PIL1 abc123");
+        refused.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([(Watchtower.DoneMyselfLabel, Verbs.Say)], "a ringing card offers the press that moves it");
+
+        // Another flight's refused merge is a card of its own; the person's own no, and a verb's words, ring nothing more.
+        process.Emit(ShellCall("m2", "pilot flight merge PIL2 def456"));
+        process.Emit(ShellResult("m2", AutoModeRefusal, error: true));
+        process.Emit(ShellCall("no", "pilot flight land PIL1"));
+        process.Emit(ShellResult("no", "The user doesn't want to proceed with this tool use. The tool use was rejected.", error: true));
+        process.Emit(ShellCall("say", "pilot say hello there"));
+        process.Emit(ShellResult("say", AutoModeRefusal, error: true));
+        await UntilAsync(() => _state.Cards(openOnly: true).Count(c => c.Kind == Watchtower.RefusedKind) == 3, "the second merge's and the say's cards");
+        _state.Cards(openOnly: true).Where(c => c.Kind == Watchtower.RefusedKind).Select(c => c.Title).ShouldBe(
+            ["The watchtower could not run pilot flight merge: auto mode: [Auto-Mode Bypass] refused it",
+             "The watchtower could not run pilot flight merge: auto mode: [Auto-Mode Bypass] refused it",
+             "The watchtower could not run pilot say: auto mode: [Auto-Mode Bypass] refused it"], ignoreOrder: true);
         _state.Cards(openOnly: true).Single(c => c.Id == card.Id).Bin.ShouldBe(CardBin.ForYou, "its press ran");
     }
 }

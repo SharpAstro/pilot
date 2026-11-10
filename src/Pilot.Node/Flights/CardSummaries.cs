@@ -231,6 +231,7 @@ public static partial class CardSummaries
             PackageWatch.LateKind => "A package a leg waits for is late on nuget.org. The card's choice says what to do about it.",
             PilotMd.TooLongKind => "A repo's PILOT.md is over the line limit and was not quoted into briefs. Shorten it to its rules.",
             Watchtower.Down => "The watchtower could not be started. The card says why and what to do; the node tries again by itself.",
+            Watchtower.RefusedKind => "Claude Code refused a pilot command the watchtower ran, so what it was for has not happened. Run it yourself, then press the button so the watchtower goes on.",
             Watchtower.Stopped => "The watchtower was stopped by the API or hit the usage limit. The node resumes it after the reset, or the card offers a fresh one.",
             "watchtower-resumed" => "The watchtower resumed after its usage limit reset. Nothing to do.",
             "watchtower-started" => "The node started a fresh watchtower. Nothing to do.",

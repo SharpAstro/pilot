@@ -891,15 +891,21 @@ public sealed class StreamSession : IAsyncDisposable
             }
             else if (name.StartsWith(PilotMcpTool, StringComparison.Ordinal) && input.ValueKind == JsonValueKind.Object)
             {
-                // The tool's name is the command's path joined by '_' (McpServer), its input the arguments in the command's order.
-                var words = input.EnumerateObject().SelectMany(p => p.Value.ValueKind == JsonValueKind.Array ? p.Value.EnumerateArray().ToArray() : new[] { p.Value })
-                    .Select(v => v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : v.GetRawText());
-                yield return (id, string.Join(' ', ["pilot", .. name[PilotMcpTool.Length..].Split('_'), .. words]));
+                // The tool's name is the command's path joined by '_' (McpServer). Its input is by name, in the model's order, options among the
+                // arguments: a card and its choice are put where pilot answer takes them, and an option (why, words, node) is no word of the line.
+                var path = name[PilotMcpTool.Length..].Split('_');
+                string? Word(string key) => input.TryGetProperty(key, out var v) ? v.ValueKind == JsonValueKind.String ? v.GetString() : v.GetRawText() : null;
+                string[] given = Word("card") is { } card ? [card, .. Word("choice") is { } choice ? [choice.Contains(' ') ? $"\"{choice}\"" : choice] : Array.Empty<string>()]
+                    : [.. input.EnumerateObject().Where(p => !McpOptions.Contains(p.Name) && p.Value.ValueKind == JsonValueKind.String).Select(p => p.Value.GetString() ?? "")];
+                yield return (id, string.Join(' ', ["pilot", .. path, .. given]));
             }
         }
     }
 
     private const string PilotMcpTool = "mcp__pilot__";
+
+    // The options pilot's MCP tools take beside their arguments, which name no target and are left out of the line.
+    private static readonly HashSet<string> McpOptions = new(StringComparer.Ordinal) { "why", "words", "node", "acting-on", "output-format", "detail" };
 
     /// <summary>The tool results of a user message, by the tool_use id they answer, as text.</summary>
     private static IEnumerable<(string Id, string Text)> ToolResults(JsonElement user)
