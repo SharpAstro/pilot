@@ -43,65 +43,148 @@ internal sealed class FakeRepoGit : IGit
         public string? Rebasing { get; set; }
     }
 
+    /// <summary>A bare repo the model serves as a remote: its branches (and the pull heads GitHub keeps), and the commits it holds.</summary>
+    private sealed class Bare(string path, string head)
+    {
+        public string Path { get; } = path;
+
+        /// <summary>The branch the bare repo's HEAD names, which a clone checks out.</summary>
+        public string Head { get; } = head;
+
+        public Dictionary<string, string> Refs { get; } = [];
+
+        public HashSet<string> Present { get; } = [];
+    }
+
+    /// <summary>One non-bare repo of the model: a clone or a work repo, with its refs, worktrees, config and the commits its object store holds.</summary>
+    private sealed class Repo(string raw)
+    {
+        public string Raw { get; } = raw;
+
+        public string Path { get; } = Norm(raw);
+
+        public Dictionary<string, string> Refs { get; } = [];
+
+        public List<Worktree> Worktrees { get; } = [];
+
+        public Dictionary<string, string> Cfg { get; } = [];
+
+        /// <summary>The URL of the remote <c>origin</c>; null when the repo has none.</summary>
+        public string? RemoteUrl { get; set; }
+
+        public bool OriginHead { get; set; }
+
+        /// <summary>The commit the last fetch of a named ref brought, which <c>FETCH_HEAD</c> names.</summary>
+        public string? FetchHead { get; set; }
+
+        /// <summary>The commits in the repo's object store: made here, fetched, or reachable from what was. Git never forgets one, so neither does this.</summary>
+        public HashSet<string> Present { get; } = [];
+    }
+
     private static readonly ConcurrentDictionary<string, FakeRepoGit> Roots = new(StringComparer.OrdinalIgnoreCase);
 
     private static int _seq;
 
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Commit> _commits = [];
-    private readonly Dictionary<string, string> _origin = [];
-    private readonly Dictionary<string, string> _refs = [];
-    private readonly List<Worktree> _worktrees = [];
+    private readonly List<Repo> _repos = [];
+    private readonly Dictionary<string, Bare> _bares = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _root;
-    private readonly string _originPath;
     private readonly List<string> _unsupported = [];
-    private readonly Dictionary<string, string> _config = [];
-    private bool _originHead;
 
-    /// <summary>Whether a bare origin repo exists to fetch from and push to; a remote can be configured (<see cref="_remoteUrl"/>) with none reachable, as a GitHub URL is offline.</summary>
-    private bool _hasOrigin;
+    // What the git run being answered addresses: the repo of its folder (an empty one in a bare repo or none), and the bare repo it reads
+    // as origin (the one its folder is in, or its remote reaches). Set under the gate by each Run.
+    private Repo _repo = null!;
+    private Bare? _bare;
 
-    /// <summary>The URL of the remote <c>origin</c>; null when the repo has none.</summary>
-    private string? _remoteUrl;
+    private Dictionary<string, string> Refs => _repo.Refs;
+
+    private List<Worktree> Worktrees => _repo.Worktrees;
+
+    private Dictionary<string, string> Cfg => _repo.Cfg;
+
+    private string? RemoteUrl
+    {
+        get => _repo.RemoteUrl;
+        set => _repo.RemoteUrl = value;
+    }
+
+    private bool OriginHead
+    {
+        get => _repo.OriginHead;
+        set => _repo.OriginHead = value;
+    }
+
+    /// <summary>The refs of the bare origin addressed; none when the remote cannot be reached.</summary>
+    private Dictionary<string, string> OriginRefs => _bare?.Refs ?? [];
 
     /// <summary>
-    /// A repo <c>tianwen</c> under <paramref name="root"/>, with one commit on main. With <paramref name="withOrigin"/> it has a bare origin beside it
+    /// A model of the repo the review tests build: <c>tianwen</c> under <paramref name="root"/>, with one commit on main. With <paramref name="withOrigin"/> it has a bare origin beside it
     /// holding that commit, as <see cref="SeedRepo"/> makes them; without, it is a <c>git init</c> repo with no remote, as the leg and overlap tests build.
     /// <paramref name="withSolution"/> adds the stub solution a check that builds or tests needs in the plane's root (leg plan refuses a repo without one).
     /// </summary>
     public FakeRepoGit(string root, bool withOrigin = true, bool withSolution = true)
+        : this(root)
     {
-        _root = Norm(root);
-        _hasOrigin = withOrigin;
-        _originHead = withOrigin;
-        RepoPath = Path.Combine(root, "tianwen");
-        _originPath = Path.Combine(root, "origin.git");
-        _remoteUrl = withOrigin ? _originPath : null;
-        Directory.CreateDirectory(Path.Combine(RepoPath, ".git"));
-        if (withOrigin)
-        {
-            Directory.CreateDirectory(_originPath);
-        }
-        WriteConfigFile();
+        var repoPath = Path.Combine(root, "tianwen");
+        var originPath = Path.Combine(root, "origin.git");
+        var repo = AddRepo(repoPath, "main");
+        _repo = repo;
+        repo.RemoteUrl = withOrigin ? originPath : null;
+        WriteConfigFile(repo);
         var tree = new Dictionary<string, string> { ["README.md"] = "hello\n" };
         if (withSolution)
         {
             tree["Tianwen.slnx"] = "<Solution />\n";
         }
         var first = MakeCommit([], tree, "first");
-        _refs["refs/heads/main"] = first.Id;
+        repo.Refs["refs/heads/main"] = first.Id;
         if (withOrigin)
         {
-            _origin["refs/heads/main"] = first.Id;
-            _refs["refs/remotes/origin/main"] = first.Id;
+            var bare = AddBare(originPath, "main");
+            bare.Refs["refs/heads/main"] = first.Id;
+            Take(bare.Present, first.Id);
+            repo.Refs["refs/remotes/origin/main"] = first.Id;
+            repo.OriginHead = true;
         }
-        var main = new Worktree(Norm(RepoPath), "main", null, new Dictionary<string, string>(tree));
-        _worktrees.Add(main);
-        Materialize(main, tree, new Dictionary<string, string>());
+        repo.Worktrees[0].Index = new Dictionary<string, string>(tree);
+        Materialize(repo.Worktrees[0], tree, new Dictionary<string, string>());
+    }
+
+    private FakeRepoGit(string root)
+    {
+        _root = Norm(root);
+        _repo = new Repo(root);
         Roots[_root] = this;
     }
 
-    public string RepoPath { get; }
+    /// <summary>
+    /// A model with nothing in it yet, under <paramref name="root"/>: its repos and bare origins are made by the git commands themselves
+    /// (<c>init</c>, <c>clone</c>, <c>remote add</c>, <c>push</c>), as <see cref="FakePrOrigins"/> does for the PR tests' shape. Unlike the default model it has no tianwen.
+    /// </summary>
+    public static FakeRepoGit Empty(string root)
+    {
+        Directory.CreateDirectory(root);
+        return new FakeRepoGit(root);
+    }
+
+    private Repo AddRepo(string path, string branch)
+    {
+        var repo = new Repo(path);
+        Directory.CreateDirectory(Path.Combine(path, ".git"));
+        repo.Worktrees.Add(new Worktree(repo.Path, branch, null, []));
+        _repos.Add(repo);
+        return repo;
+    }
+
+    private Bare AddBare(string path, string head)
+    {
+        Directory.CreateDirectory(path);
+        return _bares[Norm(path)] = new Bare(Norm(path), head);
+    }
+
+    /// <summary>The first repo made: tianwen in the default model.</summary>
+    public string RepoPath => _repos[0].Raw;
 
     /// <summary>Git runs answered.</summary>
     public int Runs { get; private set; }
@@ -164,10 +247,12 @@ internal sealed class FakeRepoGit : IGit
     public void DeleteFolders()
     {
         Release();
-        Directory.Delete(RepoPath, recursive: true);
-        if (Directory.Exists(_originPath))
+        foreach (var folder in _repos.Select(r => r.Path).Concat(_bares.Keys))
         {
-            Directory.Delete(_originPath, recursive: true);
+            if (Directory.Exists(folder))
+            {
+                Directory.Delete(folder, recursive: true);
+            }
         }
     }
 
@@ -202,20 +287,24 @@ internal sealed class FakeRepoGit : IGit
 
     private GitRun Dispatch(string verb, List<string> a, string cwd)
     {
+        // The repo whose worktree the folder is in; failing that, the bare repo whose folder it is in (the answers of a bare repo are its refs').
         var wt = WorktreeOf(cwd);
-        // A bare origin is made, or cloned from the repo, beside it: the only repos made besides the one modelled.
-        if (wt is null && verb is "init" or "clone" && Under(Norm(cwd), _root))
+        var inBare = wt is null ? _bares.Values.FirstOrDefault(b => Under(Norm(cwd), b.Path)) : null;
+        _repo = wt is null ? new Repo(_root) : _repos.First(r => r.Worktrees.Contains(wt));
+        _bare = inBare ?? RemoteBare(_repo);
+        // Repos and bare origins are made, and cloned, under the model's root.
+        if (wt is null && inBare is null && verb is "init" or "clone" && Under(Norm(cwd), _root))
         {
             return verb == "init" ? Init(a, cwd) : Clone(a, cwd);
         }
-        if (wt is null && !Under(Norm(cwd), Norm(_originPath)))
+        if (wt is null && inBare is null)
         {
             return Fail($"fatal: not a git repository (or any of the parent directories): .git", 128);
         }
         if (a.Any(x => x is "origin" or "refs/remotes/origin/HEAD") && verb is "remote" or "fetch" or "push" or "ls-remote" or "symbolic-ref")
         {
             // A repo made by git init has no remote; one whose remote is a URL no model serves (GitHub's) cannot be reached: each fails as git says.
-            if (_remoteUrl is null && !(verb == "remote" && a is ["add", ..]))
+            if (RemoteUrl is null && !(verb == "remote" && a is ["add", ..]))
             {
                 switch (verb)
                 {
@@ -227,14 +316,15 @@ internal sealed class FakeRepoGit : IGit
                         return Fail("fatal: 'origin' does not appear to be a git repository\nfatal: Could not read from remote repository.", 128);
                 }
             }
-            if (!Reachable() && verb is "fetch" or "push" or "ls-remote")
+            if (_bare is null && verb is "fetch" or "push" or "ls-remote")
             {
-                return Fail($"fatal: unable to access '{FetchUrl()}': Could not resolve host: github.com", 128);
+                return Fail($"fatal: unable to access '{FetchUrl(_repo)}': Could not resolve host: github.com", 128);
             }
         }
         return verb switch
         {
             "rev-parse" => RevParse(a, wt),
+            "show-ref" => ShowRef(a, wt),
             "symbolic-ref" => SymbolicRef(a, wt),
             "remote" => Remote(a),
             "fetch" => Fetch(a),
@@ -277,16 +367,35 @@ internal sealed class FakeRepoGit : IGit
         var id = Convert.ToHexStringLower(SHA1.HashData(Encoding.UTF8.GetBytes(text.ToString())));
         var commit = new Commit(id, seq, parents, new Dictionary<string, string>(tree), message);
         _commits[id] = commit;
+        Take(_repo.Present, id);
         return commit;
+    }
+
+    /// <summary>Puts <paramref name="id"/> and every commit it descends from into an object store, as a fetch or a push sends them.</summary>
+    private void Take(HashSet<string> store, string id)
+    {
+        var stack = new Stack<string>([id]);
+        while (stack.Count > 0)
+        {
+            var next = stack.Pop();
+            if (!store.Add(next))
+            {
+                continue;
+            }
+            foreach (var parent in _commits[next].Parents)
+            {
+                stack.Push(parent);
+            }
+        }
     }
 
     private Worktree? WorktreeOf(string cwd)
     {
         var path = Norm(cwd);
-        return _worktrees.Where(w => Under(path, w.Path)).OrderByDescending(w => w.Path.Length).FirstOrDefault();
+        return _repos.SelectMany(r => r.Worktrees).Where(w => Under(path, w.Path)).OrderByDescending(w => w.Path.Length).FirstOrDefault();
     }
 
-    private string? HeadId(Worktree wt) => wt.Detached ?? (wt.Branch is { } b && _refs.TryGetValue("refs/heads/" + b, out var id) ? id : null);
+    private string? HeadId(Worktree wt) => wt.Detached ?? (wt.Branch is { } b && Refs.TryGetValue("refs/heads/" + b, out var id) ? id : null);
 
     /// <summary>The commit <paramref name="rev"/> names in the repo <paramref name="wt"/> is in (the origin when null); null when it names none.</summary>
     private string? Resolve(string rev, Worktree? wt)
@@ -333,11 +442,15 @@ internal sealed class FakeRepoGit : IGit
     {
         if (name == "HEAD")
         {
-            return wt is null ? Origin("refs/heads/main") : HeadId(wt);
+            return wt is null ? Origin("refs/heads/" + (_bare?.Head ?? "main")) : HeadId(wt);
+        }
+        if (name == "FETCH_HEAD" && wt is not null)
+        {
+            return _repo.FetchHead;
         }
         if (name.StartsWith("refs/", StringComparison.Ordinal))
         {
-            return wt is null ? Origin(name) : _refs.GetValueOrDefault(name);
+            return wt is null ? Origin(name) : Refs.GetValueOrDefault(name);
         }
         if (name.Contains('@'))
         {
@@ -347,27 +460,29 @@ internal sealed class FakeRepoGit : IGit
         {
             return pushed;
         }
-        if (wt is not null && _refs.TryGetValue("refs/heads/" + name, out var local))
+        if (wt is not null && Refs.TryGetValue("refs/heads/" + name, out var local))
         {
             return local;
         }
-        if (wt is not null && _refs.TryGetValue("refs/remotes/" + name, out var remote))
+        if (wt is not null && Refs.TryGetValue("refs/remotes/" + name, out var remote))
         {
             return remote;
         }
-        if (_commits.ContainsKey(name))
+        // A commit is named by its id only where the repo's object store has it: one of a PR's head is not in a clone until it is fetched.
+        var present = wt is null ? _bare?.Present : _repo.Present;
+        if (present is not null && present.Contains(name))
         {
             return name;
         }
-        if (name.Length >= 4 && name.All(Uri.IsHexDigit))
+        if (present is not null && name.Length >= 4 && name.All(Uri.IsHexDigit))
         {
-            var found = _commits.Keys.Where(k => k.StartsWith(name, StringComparison.OrdinalIgnoreCase)).Take(2).ToList();
+            var found = present.Where(k => k.StartsWith(name, StringComparison.OrdinalIgnoreCase)).Take(2).ToList();
             return found.Count == 1 ? found[0] : null;
         }
         return null;
     }
 
-    private string? Origin(string name) => _origin.GetValueOrDefault(name);
+    private string? Origin(string name) => OriginRefs.GetValueOrDefault(name);
 
     private HashSet<string> Ancestors(string id, bool firstParent = false)
     {
@@ -407,7 +522,7 @@ internal sealed class FakeRepoGit : IGit
     {
         if (a is ["--path-format=absolute", "--git-common-dir"])
         {
-            return Ok(Norm(Path.Combine(RepoPath, ".git")) + "\n");
+            return Ok(Norm(Path.Combine(_repo.Path, ".git")) + "\n");
         }
         if (a is ["--abbrev-ref", "HEAD"] && wt is not null)
         {
@@ -416,7 +531,7 @@ internal sealed class FakeRepoGit : IGit
         if (a is ["--git-common-dir"])
         {
             // Relative to where it is asked: ".git" in the main checkout, absolute in a linked worktree.
-            return Ok((wt == _worktrees[0] ? ".git" : Norm(Path.Combine(RepoPath, ".git"))) + "\n");
+            return Ok((wt == Worktrees[0] ? ".git" : Norm(Path.Combine(_repo.Path, ".git"))) + "\n");
         }
         var quiet = a.Remove("--quiet");
         var verify = a.Remove("--verify");
@@ -434,12 +549,24 @@ internal sealed class FakeRepoGit : IGit
         return Ok((treeOf ? TreeId(_commits[id].Tree) : id) + "\n");
     }
 
+    /// <summary><c>git show-ref --verify [--quiet] &lt;ref&gt;</c>: the ref's commit and name, or git's refusal of a ref that is not there.</summary>
+    private GitRun ShowRef(List<string> a, Worktree? wt)
+    {
+        var quiet = a.Remove("--quiet") | a.Remove("-q");
+        if (!a.Remove("--verify") || a.Count != 1 || a[0].StartsWith('-'))
+        {
+            throw new NotSupportedException("show-ref form");
+        }
+        var found = (wt is null ? OriginRefs : Refs).TryGetValue(a[0], out var id);
+        return found ? Ok(quiet ? "" : $"{id} {a[0]}\n") : quiet ? new GitRun(1, "", "") : Fail($"fatal: '{a[0]}' - not a valid ref", 128);
+    }
+
     private GitRun SymbolicRef(List<string> a, Worktree? wt)
     {
         a.Remove("--short");
         if (a is ["refs/remotes/origin/HEAD"])
         {
-            return _originHead ? Ok("origin/main\n") : Fail("fatal: ref refs/remotes/origin/HEAD is not a symbolic ref", 128);
+            return OriginHead ? Ok($"origin/{_bare?.Head ?? "main"}\n") : Fail("fatal: ref refs/remotes/origin/HEAD is not a symbolic ref", 128);
         }
         if (a is ["HEAD"] && wt is not null)
         {
@@ -453,96 +580,195 @@ internal sealed class FakeRepoGit : IGit
         switch (a)
         {
             case ["add", "origin", var url]:
-                if (_remoteUrl is not null)
+                if (RemoteUrl is not null)
                 {
                     return Fail("error: remote origin already exists.", 3);
                 }
-                _remoteUrl = url;
-                _config["remote.origin.url"] = url;
-                WriteConfigFile();
+                RemoteUrl = url;
+                Cfg["remote.origin.url"] = url;
+                WriteConfigFile(_repo);
                 return Ok("");
             case ["set-url", "origin", var url] when !url.StartsWith('-'):
                 // A GitHub URL names the repo as a peer's checkout does; it reaches the bare origin only through a url.<origin>.insteadOf rewrite.
-                _remoteUrl = url;
-                _config["remote.origin.url"] = url;
-                WriteConfigFile();
+                RemoteUrl = url;
+                Cfg["remote.origin.url"] = url;
+                WriteConfigFile(_repo);
                 return Ok("");
             case ["get-url", "origin"]:
-                return Ok(FetchUrl() + "\n");
+                return Ok(FetchUrl(_repo) + "\n");
             case ["set-head", "origin", "--auto"]:
-                _originHead = Reachable();
+                OriginHead = _bare is not null;
                 return Ok("");
             case ["set-head", "origin", "--delete"]:
-                _originHead = false;
+                OriginHead = false;
                 return Ok("");
             case ["set-head", "origin", var branch] when !branch.StartsWith('-'):
-                _originHead = _refs.ContainsKey("refs/remotes/origin/" + branch);
-                return _originHead ? Ok("") : Fail($"error: Not a valid ref: refs/remotes/origin/{branch}", 1);
+                OriginHead = Refs.ContainsKey("refs/remotes/origin/" + branch);
+                return OriginHead ? Ok("") : Fail($"error: Not a valid ref: refs/remotes/origin/{branch}", 1);
             default:
                 throw new NotSupportedException("remote form");
         }
     }
 
-    /// <summary>The URL git fetches origin from: the remote's, with a <c>url.&lt;base&gt;.insteadOf</c> rewrite of it applied (as <c>remote get-url</c> prints it).</summary>
-    private string? FetchUrl()
+    /// <summary>
+    /// The URL git fetches origin from: the remote's, with the <c>url.&lt;base&gt;.insteadOf</c> rewrite of its longest matching prefix applied
+    /// (as <c>remote get-url</c> prints it).
+    /// </summary>
+    private static string? FetchUrl(Repo repo)
     {
-        var rewrite = _config.Where(c => c.Key.StartsWith("url.", StringComparison.Ordinal) && c.Key.EndsWith(".insteadOf", StringComparison.Ordinal) && c.Value == _remoteUrl)
-            .Select(c => c.Key["url.".Length..^".insteadOf".Length]).FirstOrDefault();
-        return rewrite ?? _remoteUrl;
+        if (repo.RemoteUrl is not { } url)
+        {
+            return null;
+        }
+        string? prefix = null;
+        string? replacement = null;
+        foreach (var (key, value) in repo.Cfg)
+        {
+            if (key.StartsWith("url.", StringComparison.Ordinal) && key.EndsWith(".insteadOf", StringComparison.Ordinal) && value.Length > 0
+                && url.StartsWith(value, StringComparison.Ordinal) && (prefix is null || value.Length > prefix.Length))
+            {
+                prefix = value;
+                replacement = key["url.".Length..^".insteadOf".Length];
+            }
+        }
+        return prefix is null ? url : replacement + url[prefix.Length..];
     }
 
-    /// <summary>Whether a fetch or push reaches the modelled bare origin: it exists, and the remote's URL (rewritten) is its folder. A GitHub URL is offline.</summary>
-    private bool Reachable() =>
-        _hasOrigin && FetchUrl() is { } url && !url.Contains("://", StringComparison.Ordinal)
+    /// <summary>
+    /// The bare repo a fetch or push of <paramref name="repo"/> reaches: the one the remote's URL (rewritten) is the folder of. A GitHub URL is offline,
+    /// reaching nothing unless a rewrite sends it to a bare repo of the model.
+    /// </summary>
+    private Bare? RemoteBare(Repo repo)
+    {
+        if (FetchUrl(repo) is not { } url || url.Contains("://", StringComparison.Ordinal))
+        {
+            return null;
+        }
         // A relative remote (../origin.git) is relative to the repo, as git reads it, not to the test process's folder.
-        && Norm(System.IO.Path.IsPathRooted(url) ? url : System.IO.Path.Combine(RepoPath, url)).Equals(Norm(_originPath), StringComparison.OrdinalIgnoreCase);
+        return _bares.GetValueOrDefault(Norm(Path.IsPathRooted(url) ? url : Path.Combine(repo.Path, url)));
+    }
 
-    /// <summary><c>git init --bare [-b main] origin.git</c>: the origin the repo's remote can be pointed at.</summary>
+    /// <summary>
+    /// <c>git init [--bare] [-b main] [&lt;folder&gt;]</c>: a repo or a bare origin made under the model's root, with no commit (the model's other repos are made so).
+    /// </summary>
     private GitRun Init(List<string> a, string cwd)
     {
         a.RemoveAll(x => x is "-q" or "--quiet");
         var bare = a.Remove("--bare");
+        string? branch = null;
         var at = a.IndexOf("-b");
-        if (at >= 0)
+        if (at >= 0 && at + 1 < a.Count)
         {
+            branch = a[at + 1];
             a.RemoveRange(at, 2);
         }
-        if (!bare || a.Count != 1 || Norm(Path.Combine(cwd, a[0])) != Norm(_originPath))
+        if (a.Count > 1 || a.Any(x => x.StartsWith('-')))
         {
-            throw new NotSupportedException("init of a repo other than the origin");
+            throw new NotSupportedException("init form");
         }
-        Directory.CreateDirectory(_originPath);
-        _hasOrigin = true;
+        var target = Path.GetFullPath(a.Count == 1 ? Path.Combine(cwd, a[0]) : cwd);
+        if (!Under(Norm(target), _root))
+        {
+            throw new NotSupportedException("init outside the model's folders");
+        }
+        if (bare)
+        {
+            AddBare(target, branch ?? "master");
+        }
+        else
+        {
+            var made = AddRepo(target, branch ?? "master");
+            WriteConfigFile(made);
+        }
         return Ok("");
     }
 
-    /// <summary><c>git clone --bare &lt;the repo&gt; origin.git</c>: the origin holding the repo's branches.</summary>
+    /// <summary>
+    /// <c>git clone --bare &lt;a repo&gt; &lt;folder&gt;</c>: a bare origin holding the repo's branches; or <c>git clone &lt;a bare origin&gt; &lt;folder&gt;</c>: a
+    /// repo with the origin's branches as remote-tracking ones and its default branch checked out (what the origin holds under refs/pull is not copied, as git's is not).
+    /// </summary>
     private GitRun Clone(List<string> a, string cwd)
     {
         a.RemoveAll(x => x is "-q" or "--quiet");
         var bare = a.Remove("--bare");
-        if (!bare || a.Count != 2 || Norm(Path.Combine(cwd, a[0])) != Norm(RepoPath) || Norm(Path.Combine(cwd, a[1])) != Norm(_originPath))
+        if (a.Count != 2 || a.Any(x => x.StartsWith('-')))
         {
-            throw new NotSupportedException("clone of anything but the repo into the origin");
+            throw new NotSupportedException("clone form");
         }
-        Directory.CreateDirectory(_originPath);
-        foreach (var (name, id) in _refs.Where(r => r.Key.StartsWith("refs/heads/", StringComparison.Ordinal)).ToList())
+        var source = Norm(Path.IsPathRooted(a[0]) ? a[0] : Path.Combine(cwd, a[0]));
+        var target = Path.GetFullPath(Path.Combine(cwd, a[1]));
+        if (!Under(Norm(target), _root))
         {
-            _origin[name] = id;
+            throw new NotSupportedException("clone outside the model's folders");
         }
-        _hasOrigin = true;
+        if (bare)
+        {
+            var from = _repos.FirstOrDefault(r => r.Path.Equals(source, StringComparison.OrdinalIgnoreCase))
+                ?? throw new NotSupportedException("clone --bare of anything but a repo of the model");
+            var made = AddBare(target, from.Worktrees[0].Branch ?? "main");
+            foreach (var (name, id) in from.Refs.Where(r => r.Key.StartsWith("refs/heads/", StringComparison.Ordinal)).ToList())
+            {
+                made.Refs[name] = id;
+                Take(made.Present, id);
+            }
+            return Ok("");
+        }
+        var origin = _bares.GetValueOrDefault(source) ?? throw new NotSupportedException("clone of anything but a bare origin of the model");
+        if (!origin.Refs.TryGetValue("refs/heads/" + origin.Head, out var tip))
+        {
+            throw new NotSupportedException("clone of an origin with no default branch");
+        }
+        if (Directory.Exists(target) && Directory.EnumerateFileSystemEntries(target).Any())
+        {
+            return Fail($"fatal: destination path '{a[1]}' already exists and is not an empty directory.", 128);
+        }
+        var repo = AddRepo(target, origin.Head);
+        repo.RemoteUrl = source;
+        repo.OriginHead = true;
+        repo.Refs["refs/heads/" + origin.Head] = tip;
+        repo.Cfg[$"branch.{origin.Head}.remote"] = "origin";
+        repo.Cfg[$"branch.{origin.Head}.merge"] = "refs/heads/" + origin.Head;
+        foreach (var (name, id) in origin.Refs.Where(r => r.Key.StartsWith("refs/heads/", StringComparison.Ordinal)))
+        {
+            repo.Refs["refs/remotes/origin/" + name["refs/heads/".Length..]] = id;
+            Take(repo.Present, id);
+        }
+        var tree = _commits[tip].Tree;
+        repo.Worktrees[0].Index = new Dictionary<string, string>(tree);
+        Materialize(repo.Worktrees[0], tree, new Dictionary<string, string>());
+        WriteConfigFile(repo);
         return Ok("");
     }
 
     /// <summary><c>git branch --list &lt;pattern&gt;</c>: the local branches that match, one per line, the checked out one starred.</summary>
     private GitRun Branch(List<string> a, Worktree? wt)
     {
+        // A branch made at a start point, tracking it when that is a remote-tracking branch (git branch --track <name> origin/<name>).
+        a.Remove("--track");
+        if (wt is not null && a is [var made, var start] && !made.StartsWith('-') && !start.StartsWith('-'))
+        {
+            if (Refs.ContainsKey("refs/heads/" + made))
+            {
+                return Fail($"fatal: a branch named '{made}' already exists", 128);
+            }
+            if (Resolve(start, wt) is not { } at)
+            {
+                return Fail($"fatal: not a valid object name: '{start}'", 128);
+            }
+            Refs["refs/heads/" + made] = at;
+            if (start.StartsWith("origin/", StringComparison.Ordinal))
+            {
+                Cfg[$"branch.{made}.remote"] = "origin";
+                Cfg[$"branch.{made}.merge"] = "refs/heads/" + start["origin/".Length..];
+            }
+            return Ok("");
+        }
         if (wt is null || a is not ["--list", var pattern])
         {
             throw new NotSupportedException("branch form");
         }
         var regex = new System.Text.RegularExpressions.Regex("^" + System.Text.RegularExpressions.Regex.Escape(pattern).Replace("\\*", ".*") + "$");
-        return Ok(string.Concat(_refs.Keys.Where(k => k.StartsWith("refs/heads/", StringComparison.Ordinal)).Select(k => k["refs/heads/".Length..])
+        return Ok(string.Concat(Refs.Keys.Where(k => k.StartsWith("refs/heads/", StringComparison.Ordinal)).Select(k => k["refs/heads/".Length..])
             .Where(b => regex.IsMatch(b)).Order(StringComparer.Ordinal).Select(b => (b == wt.Branch ? "* " : "  ") + b + "\n")));
     }
 
@@ -552,25 +778,37 @@ internal sealed class FakeRepoGit : IGit
         switch (a)
         {
             case [var key, var value] when !key.StartsWith('-'):
-                _config[key] = value;
+                Cfg[key] = value;
                 if (key == "remote.origin.url")
                 {
-                    WriteConfigFile();
+                    RemoteUrl = value;
+                }
+                if (key == "remote.origin.url" || key.StartsWith("url.", StringComparison.Ordinal))
+                {
+                    WriteConfigFile(_repo);
                 }
                 return Ok("");
             case ["--get", var key]:
-                return _config.TryGetValue(key, out var found) ? Ok(found + "\n") : new GitRun(1, "", "");
+                return Cfg.TryGetValue(key, out var found) ? Ok(found + "\n") : new GitRun(1, "", "");
             default:
                 throw new NotSupportedException("config form");
         }
     }
 
-    /// <summary>The clone's <c>.git/config</c> as the repo catalog reads it from the folder, without asking git (it names the clone by its origin's URL).</summary>
-    private void WriteConfigFile() =>
-        File.WriteAllText(Path.Combine(RepoPath, ".git", "config"),
-            "[core]\n\trepositoryformatversion = 0\n" + (_remoteUrl is not null
-                ? $"[remote \"origin\"]\n\turl = {_config.GetValueOrDefault("remote.origin.url", _remoteUrl)}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
-                : ""));
+    /// <summary>A repo's <c>.git/config</c> as the repo catalog reads it from the folder, without asking git (it names the clone by its origin's URL).</summary>
+    private static void WriteConfigFile(Repo repo)
+    {
+        var text = new StringBuilder("[core]\n\trepositoryformatversion = 0\n");
+        if (repo.RemoteUrl is { } url)
+        {
+            text.Append($"[remote \"origin\"]\n\turl = {url}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n");
+        }
+        foreach (var (key, value) in repo.Cfg.Where(c => c.Key.StartsWith("url.", StringComparison.Ordinal) && c.Key.EndsWith(".insteadOf", StringComparison.Ordinal)))
+        {
+            text.Append($"[url \"{key["url.".Length..^".insteadOf".Length]}\"]\n\tinsteadOf = {value}\n");
+        }
+        File.WriteAllText(Path.Combine(repo.Path, ".git", "config"), text.ToString());
+    }
 
     /// <summary><c>git ls-remote origin &lt;pattern&gt;</c>: the origin's branches whose name ends with the pattern.</summary>
     private GitRun LsRemote(List<string> a)
@@ -581,7 +819,7 @@ internal sealed class FakeRepoGit : IGit
             throw new NotSupportedException("ls-remote form");
         }
         var pattern = a.Count == 2 ? a[1] : null;
-        return Ok(string.Concat(_origin.Where(o => o.Key.StartsWith("refs/heads/", StringComparison.Ordinal) && (pattern is null || o.Key == pattern || o.Key.EndsWith("/" + pattern, StringComparison.Ordinal)))
+        return Ok(string.Concat(OriginRefs.Where(o => o.Key.StartsWith("refs/heads/", StringComparison.Ordinal) && (pattern is null || o.Key == pattern || o.Key.EndsWith("/" + pattern, StringComparison.Ordinal)))
             .OrderBy(o => o.Key, StringComparer.Ordinal).Select(o => $"{o.Value}\t{o.Key}\n")));
     }
 
@@ -597,16 +835,16 @@ internal sealed class FakeRepoGit : IGit
         var head = HeadId(wt);
         if (create)
         {
-            if (_refs.ContainsKey("refs/heads/" + a[0]))
+            if (Refs.ContainsKey("refs/heads/" + a[0]))
             {
                 return Fail($"fatal: a branch named '{a[0]}' already exists", 128);
             }
-            _refs["refs/heads/" + a[0]] = head ?? throw new NotSupportedException("switch -c on an unborn branch");
+            Refs["refs/heads/" + a[0]] = head ?? throw new NotSupportedException("switch -c on an unborn branch");
             wt.Branch = a[0];
             wt.Detached = null;
             return Ok("");
         }
-        if (!_refs.TryGetValue("refs/heads/" + a[0], out var target))
+        if (!Refs.TryGetValue("refs/heads/" + a[0], out var target))
         {
             return Fail($"fatal: invalid reference: {a[0]}", 128);
         }
@@ -628,16 +866,17 @@ internal sealed class FakeRepoGit : IGit
         }
         if (a.Count == 1)
         {
-            foreach (var (name, id) in _origin.Where(o => o.Key.StartsWith("refs/heads/", StringComparison.Ordinal)))
+            foreach (var (name, id) in OriginRefs.Where(o => o.Key.StartsWith("refs/heads/", StringComparison.Ordinal)))
             {
-                _refs["refs/remotes/origin/" + name["refs/heads/".Length..]] = id;
+                Refs["refs/remotes/origin/" + name["refs/heads/".Length..]] = id;
+                Take(_repo.Present, id);
             }
             if (prune)
             {
-                foreach (var stale in _refs.Keys.Where(k => k.StartsWith("refs/remotes/origin/", StringComparison.Ordinal) && k != "refs/remotes/origin/HEAD"
-                    && !_origin.ContainsKey("refs/heads/" + k["refs/remotes/origin/".Length..])).ToList())
+                foreach (var stale in Refs.Keys.Where(k => k.StartsWith("refs/remotes/origin/", StringComparison.Ordinal) && k != "refs/remotes/origin/HEAD"
+                    && !OriginRefs.ContainsKey("refs/heads/" + k["refs/remotes/origin/".Length..])).ToList())
                 {
-                    _refs.Remove(stale);
+                    Refs.Remove(stale);
                 }
             }
             return Ok("");
@@ -645,15 +884,28 @@ internal sealed class FakeRepoGit : IGit
         foreach (var spec in a.Skip(1))
         {
             var parts = spec.TrimStart('+').Split(':');
-            if (parts.Length != 2)
+            if (parts.Length > 2)
             {
                 throw new NotSupportedException("fetch refspec");
             }
-            if (!_origin.TryGetValue(parts[0], out var id))
+            // A short name is looked up as git does: as given, under refs/, under refs/tags/, under refs/heads/.
+            var from = new[] { parts[0], "refs/" + parts[0], "refs/tags/" + parts[0], "refs/heads/" + parts[0] }.FirstOrDefault(OriginRefs.ContainsKey);
+            if (from is null)
             {
                 return Fail($"fatal: couldn't find remote ref {parts[0]}", 128);
             }
-            _refs[parts[1]] = id;
+            var id = OriginRefs[from];
+            Take(_repo.Present, id);
+            _repo.FetchHead = id;
+            if (parts.Length == 2)
+            {
+                Refs[parts[1]] = id;
+            }
+            else if (from.StartsWith("refs/heads/", StringComparison.Ordinal))
+            {
+                // A branch fetched by name also moves its remote-tracking ref, as git does when the remote's fetch refspec covers it.
+                Refs["refs/remotes/origin/" + from["refs/heads/".Length..]] = id;
+            }
         }
         return Ok("");
     }
@@ -682,7 +934,7 @@ internal sealed class FakeRepoGit : IGit
         {
             return Fail($"error: src refspec {src} does not match any", 1);
         }
-        var known = _origin.TryGetValue(dstRef, out var old);
+        var known = OriginRefs.TryGetValue(dstRef, out var old);
         var moves = !known || old != id;
         if (known && moves)
         {
@@ -690,19 +942,20 @@ internal sealed class FakeRepoGit : IGit
             var leased = lease is not null && lease.Split('=', 2)[1].Split(':') is [_, var expected] && Resolve(expected, wt) == old;
             if (!fastForward && !force && !leased)
             {
-                return Fail($" ! [rejected]        {src} -> {dst} (non-fast-forward)\nerror: failed to push some refs to '{_originPath}'", 1);
+                return Fail($" ! [rejected]        {src} -> {dst} (non-fast-forward)\nerror: failed to push some refs to '{_bare!.Path}'", 1);
             }
         }
         // The origin's pre-receive hook sees the update before any ref moves (an up-to-date push sends none); git relays a refusal line by line as "remote: ...".
         if (moves && _preReceive?.Invoke(dstRef) is { } refusal)
         {
             var relayed = string.Concat(refusal.Select(l => "remote: " + l + "\n"));
-            return Fail($"{relayed}To {_originPath}\n ! [remote rejected] {src} -> {dst} (pre-receive hook declined)\nerror: failed to push some refs to '{_originPath}'", 1);
+            return Fail($"{relayed}To {_bare!.Path}\n ! [remote rejected] {src} -> {dst} (pre-receive hook declined)\nerror: failed to push some refs to '{_bare!.Path}'", 1);
         }
-        _origin[dstRef] = id;
+        OriginRefs[dstRef] = id;
+        Take(_bare!.Present, id);
         if (dstRef.StartsWith("refs/heads/", StringComparison.Ordinal))
         {
-            _refs["refs/remotes/origin/" + dstRef["refs/heads/".Length..]] = id;
+            Refs["refs/remotes/origin/" + dstRef["refs/heads/".Length..]] = id;
         }
         return Ok("");
     }
@@ -715,7 +968,7 @@ internal sealed class FakeRepoGit : IGit
         {
             case ["list", "--porcelain"]:
                 var text = new StringBuilder();
-                foreach (var w in _worktrees)
+                foreach (var w in Worktrees)
                 {
                     text.Append("worktree ").Append(w.Path).Append('\n').Append("HEAD ").Append(HeadId(w)).Append('\n');
                     text.Append(w.Branch is { } b ? $"branch refs/heads/{b}\n" : "detached\n");
@@ -727,7 +980,7 @@ internal sealed class FakeRepoGit : IGit
                 }
                 return Ok(text.ToString());
             case ["prune"]:
-                _worktrees.RemoveAll(w => w != _worktrees[0] && !Directory.Exists(w.Path));
+                Worktrees.RemoveAll(w => w != Worktrees[0] && !Directory.Exists(w.Path));
                 return Ok("");
             case ["unlock", _]:
                 return Fail("fatal: not locked", 128);
@@ -744,8 +997,8 @@ internal sealed class FakeRepoGit : IGit
     {
         var force = a.Contains("--force");
         var path = Norm(a.Last());
-        var wt = _worktrees.FirstOrDefault(w => string.Equals(w.Path, path, StringComparison.OrdinalIgnoreCase));
-        if (wt is null || wt == _worktrees[0])
+        var wt = Worktrees.FirstOrDefault(w => string.Equals(w.Path, path, StringComparison.OrdinalIgnoreCase));
+        if (wt is null || wt == Worktrees[0])
         {
             return Fail($"fatal: '{a.Last()}' is not a working tree", 128);
         }
@@ -757,7 +1010,7 @@ internal sealed class FakeRepoGit : IGit
         {
             Directory.Delete(wt.Path, recursive: true);
         }
-        _worktrees.Remove(wt);
+        Worktrees.Remove(wt);
         return Ok("");
     }
 
@@ -791,7 +1044,7 @@ internal sealed class FakeRepoGit : IGit
             throw new NotSupportedException("worktree add form");
         }
         var path = Norm(positional[0]);
-        if (Directory.Exists(path) && Directory.EnumerateFileSystemEntries(path).Any() || _worktrees.Any(w => string.Equals(w.Path, path, StringComparison.OrdinalIgnoreCase)))
+        if (Directory.Exists(path) && Directory.EnumerateFileSystemEntries(path).Any() || Worktrees.Any(w => string.Equals(w.Path, path, StringComparison.OrdinalIgnoreCase)))
         {
             return Fail($"fatal: '{positional[0]}' already exists", 128);
         }
@@ -800,12 +1053,12 @@ internal sealed class FakeRepoGit : IGit
         if (newBranch is not null)
         {
             var from = positional.Count == 2 ? positional[1] : "HEAD";
-            commit = Resolve(from, _worktrees[0]) ?? "";
+            commit = Resolve(from, Worktrees[0]) ?? "";
             if (commit.Length == 0)
             {
                 return Fail($"fatal: invalid reference: {from}", 128);
             }
-            if (!reset && _refs.ContainsKey("refs/heads/" + newBranch))
+            if (!reset && Refs.ContainsKey("refs/heads/" + newBranch))
             {
                 return Fail($"fatal: a branch named '{newBranch}' already exists", 128);
             }
@@ -814,7 +1067,7 @@ internal sealed class FakeRepoGit : IGit
         else
         {
             var target = positional.Count == 2 ? positional[1] : "HEAD";
-            if (!detach && _refs.ContainsKey("refs/heads/" + target))
+            if (!detach && Refs.ContainsKey("refs/heads/" + target))
             {
                 branch = target;
             }
@@ -822,25 +1075,25 @@ internal sealed class FakeRepoGit : IGit
             {
                 throw new NotSupportedException("worktree add of a new branch by name");
             }
-            commit = Resolve(target, _worktrees[0]) ?? "";
+            commit = Resolve(target, Worktrees[0]) ?? "";
             if (commit.Length == 0)
             {
                 return Fail($"fatal: invalid reference: {target}", 128);
             }
         }
-        if (branch is not null && _worktrees.FirstOrDefault(w => w.Branch == branch) is { } holder)
+        if (branch is not null && Worktrees.FirstOrDefault(w => w.Branch == branch) is { } holder)
         {
             return Fail($"fatal: '{branch}' is already checked out at '{holder.Path}'", 128);
         }
         if (branch is not null)
         {
-            _refs["refs/heads/" + branch] = commit;
+            Refs["refs/heads/" + branch] = commit;
         }
         var tree = _commits[commit].Tree;
         var wt = new Worktree(path, branch, branch is null ? commit : null, new Dictionary<string, string>(tree));
         Directory.CreateDirectory(path);
         Materialize(wt, tree, new Dictionary<string, string>());
-        _worktrees.Add(wt);
+        Worktrees.Add(wt);
         return Ok("");
     }
 
@@ -882,7 +1135,7 @@ internal sealed class FakeRepoGit : IGit
             }
             if (token == "--remotes")
             {
-                foreach (var id in _refs.Where(r => r.Key.StartsWith("refs/remotes/", StringComparison.Ordinal)).Select(r => r.Value))
+                foreach (var id in Refs.Where(r => r.Key.StartsWith("refs/remotes/", StringComparison.Ordinal)).Select(r => r.Value))
                 {
                     (negate ? exclude : include).UnionWith(Ancestors(id));
                 }
@@ -1537,7 +1790,7 @@ internal sealed class FakeRepoGit : IGit
     {
         if (wt.Branch is { } b)
         {
-            _refs["refs/heads/" + b] = id;
+            Refs["refs/heads/" + b] = id;
         }
         else
         {
