@@ -15,6 +15,9 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
     /// <summary>Claude Code's <c>.claude.json</c>, whose login names the account; null reads none.</summary>
     public string? AccountFile { get; init; }
 
+    /// <summary>Told when the login changes, since no session takes a turn on the old one (PIL791); the node sets it.</summary>
+    public Flights.TurnOutage? Outage { get; set; }
+
     public const string HighKind = "usage-high";
 
     /// <summary>The 5-hour share past which a card says workers will stop soon.</summary>
@@ -56,6 +59,7 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
             if ((_email ?? state.Usage()?.Account?.Email) is { } was && was != email)
             {
                 _switchedAt = time.GetUtcNow();
+                Outage?.AccountChanged(_switchedAt.Value);
             }
             _email = email;
         }

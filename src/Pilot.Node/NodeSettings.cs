@@ -135,6 +135,8 @@ public sealed record NodeSettings
 
     /// <summary>The most reviews and fixers this node runs at once (#912); a start past it waits for a slot.</summary>
     public const string ReviewLimitKey = "review-limit";
+    /// <summary>The most jobs of one repo the node runs at once; jobs of other repos fill the other slots (owner, 2026-11-10).</summary>
+    public const string JobsPerRepoKey = "jobs-per-repo";
     public const string OneFlightPerRepoKey = "one-flight-per-repo";
     /// <summary>The repos whose flights keep their legs as sub-tasks of the work item (a GitHub sub-issue, a Shortcut task); off for a repo left out.</summary>
     public const string SubTaskReposKey = "sub-task-repos";
@@ -150,7 +152,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -169,6 +171,12 @@ public sealed record NodeSettings
 
     /// <summary>How many reviews and fixers this node runs at once (<see cref="ReviewLimitKey"/>); 0 for no limit, 2 unless set.</summary>
     public int? ReviewLimit { get; init; }
+
+    /// <summary>The most jobs of one repo this node runs at once (<see cref="JobsPerRepoKey"/>); 0 for no limit, 1 unless set.</summary>
+    public int? JobsPerRepo { get; init; }
+
+    /// <summary>What <see cref="JobsPerRepoKey"/> is when the settings file does not say.</summary>
+    public const int JobsPerRepoDefault = 1;
 
     /// <summary>Whether only one flight per repo is in the air at a time (<see cref="OneFlightPerRepoKey"/>); off unless set.</summary>
     public bool? OneFlightPerRepo { get; init; }
@@ -406,6 +414,7 @@ public sealed record NodeSettings
                     OneFlightPerRepoKey => JsonValue.Create(OneFlightPerRepo),
                     OpusCapKey => JsonValue.Create(OpusCap),
                     ReviewLimitKey => JsonValue.Create(ReviewLimit),
+                    JobsPerRepoKey => JsonValue.Create(JobsPerRepo),
                     AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
                     AutopilotKey => JsonValue.Create(Autopilot),
                     ReviewDeepFirstKey => JsonValue.Create(ReviewDeepFirst),
@@ -454,6 +463,7 @@ public sealed record NodeSettings
         OneFlightPerRepoKey => OneFlightPerRepo is { } one ? [one ? "on" : "off"] : null,
         OpusCapKey => OpusCap is { } cap ? [cap.ToString(CultureInfo.InvariantCulture)] : null,
         ReviewLimitKey => ReviewLimit is { } reviews ? [reviews.ToString(CultureInfo.InvariantCulture)] : null,
+        JobsPerRepoKey => JobsPerRepo is { } perRepo ? [perRepo.ToString(CultureInfo.InvariantCulture)] : null,
         AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
         AutopilotKey => Autopilot is { } autopilot ? [autopilot ? "on" : "off"] : null,
         ReviewDeepFirstKey => ReviewDeepFirst is { } deepFirst ? [deepFirst ? "on" : "off"] : null,
@@ -549,6 +559,14 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var reviewLimit) && reviewLimit is >= 0 and <= 16
                     ? (settings with { ReviewLimit = reviewLimit }, null)
                     : (null, "review-limit takes the most reviews and fixers this node runs at once, 0 to 16 (0 for no limit)");
+            case JobsPerRepoKey:
+                if (clear)
+                {
+                    return (settings with { JobsPerRepo = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var perRepoJobs) && perRepoJobs is >= 0 and <= 16
+                    ? (settings with { JobsPerRepo = perRepoJobs }, null)
+                    : (null, "jobs-per-repo takes the most jobs of one repo the node runs at once, 0 to 16 (0 for no limit)");
             case AcceptFleetFlightsKey:
                 if (clear)
                 {

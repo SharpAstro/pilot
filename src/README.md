@@ -88,11 +88,46 @@ curl --unix-socket <path> http://localhost/api/v1/node
   `journal.jsonl` (each change after it, appended and flushed; folded into a new snapshot every 4096), and
   `blackbox.jsonl` (one line per command: when, who, verb, target, and what became of it; never compacted). A restart,
   a crash included, carries on with the same stream, the same numbers and every record.
+- **A start that cannot read the store does not stop the node.** Each compaction first keeps the snapshot and the journal as
+  `snapshot.json.bak-<seq>` and `journal.jsonl.bak-<seq>` (the last 3 of each): together the state as of `<seq>`. When
+  loading `store.json`, `snapshot.json` and `journal.jsonl`, or replaying them into the node's state, fails for any reason
+  but one (a store written by a newer node is still refused, with nothing moved, and the node exits with its message), the
+  node moves those three files into `store/unreadable-<UTC stamp>/` (nothing is deleted, and they are there byte for
+  byte), starts from the newest backup pair that loads (the older ones next, an empty store last; a pair that does not
+  load goes into the same folder), and rings one Ring card of kind `store`. The card, and one line in `logs/node.log` and
+  `node-start.log`, name the folder, the backup it started from, what was lost (the seqs after that backup) and the error.
+  The backup is copied, not consumed, and the restored state gets a stream of its own, so a client that held a lost
+  number takes a snapshot. `decisions.jsonl` is not moved: a line of it the build cannot read still stops the start. A
+  store nothing can start from is put back as it was found, and the node stops with the first error.
 - **Logs:** `logs/gui.log` (pilot-gui) and `logs/node.log` (pilot-node) in the pilot2 folder, a timestamp on each line,
   each rolled to `<name>.1.log` at 4 MB (one old file is kept). Neither writes to stderr; only a catastrophic error the
   log cannot take (the log cannot be opened, or the process dies before it can write) goes there. `pilot logs [gui|node]
   [--tail N]` prints the last 50 lines (or N, taking the rest from the rolled file when the current one is short) of
   each, under a heading with its path; it reads the files locally and needs no node.
+
+### Stored records
+
+The store outlives the build that wrote it, so a member added to a stored record is nullable or defaulted (PILOT.md has
+the rule). The reader sets every init property from the file, a missing one to null whatever its initialiser says, and
+writing that row back is refused (`RespectNullableAnnotations`); that is how beta 1718 stopped every node it reached.
+
+- **The fixtures** are a folder per release under `src/Pilot.Node.Tests/Fixtures/Store/<version>/`, a store written by
+  that release's own code. `StoreCompatibilityTests` loads each, replays it into `NodeState`, writes a fresh snapshot,
+  starts a second time, and fails naming `Type.Member` for any member null where its type forbids it. Older folders stay
+  while a node may still hold such a store.
+- **Refreshing them:** `release.yml` runs the writer (`StoreFixtureWriterTests`, skipped unless `PILOT_WRITE_STORE_FIXTURE`
+  names a folder) with each release's code and attaches `store-fixture-<version>.zip` to the GitHub release. The PR that
+  adds or changes a stored member downloads the latest release's zip (`gh release download v<version> --pattern
+  "store-fixture-*.zip"`) and unzips it into `Fixtures/Store/`, so the test reads what the old code stored, never what the
+  PR's own branch writes.
+- **By hand** (a release before the zip existed, or a beta): a detached worktree of that release's commit, the writer
+  (`StoreFixtureWriter.cs`) copied in if it predates it, then `PILOT_WRITE_STORE_FIXTURE=<folder>
+  PILOT_STORE_FIXTURE_VERSION=<version>` with `dotnet test src/Pilot.Node.Tests -c Release --filter
+  FullyQualifiedName~StoreFixtureWriterTests`. `2.1.1-beta.1711` was written so.
+- **A contract bump** (`FileJournal.StoreContract` raised) cannot take its fixture from a release, since none carries the
+  new contract yet, and `TheStoreContractIsNoNewerThanTheNewestFixture` fails until one is there. So the bumping PR writes
+  one by hand from its own commit, in a folder named `<next version>-contract<n>`; the older release folders keep checking
+  that the stores already out there are still read, and the next release's zip replaces the hand-written one.
 
 ## Install and update
 
@@ -154,6 +189,19 @@ and stops; the new one waits for it and takes the socket. Flights, legs and card
 resume their stream, workers, the watchtower and jobs keep running. A GUI or TUI open at the time runs on from its renamed
 binary until it is reopened. At every start the node sweeps each aside it finds (`~old`, `~old<n>` of older installs,
 `~old-<n>`), deleting those nothing holds any more and leaving the held ones for the start after.
+
+**Going back** (`UpdateRollback`). An update to a version that cannot start does not stop the node for good. Before the
+swap an install keeps the release it replaces, the files its `VERSION` marker lists with the marker, in `previous/` beside
+the binaries (the sweep leaves it alone, and the next install replaces it), and writes `update.json` in the data folder:
+from, to and the failed starts so far. A build of one's own has no marker, so nothing is kept and it is never rolled back.
+The new node counts each start of the `to` version before it builds the host, and deletes the record once the host has
+started with the store read. A start that fails with an exception during that trial starts the node once more; the second
+failed start in a row, or a start that finds two counted (a crash nothing caught), puts `previous/` back with the same
+all-or-nothing swap, starts that node and exits, and the failing release's files are replaced. A store a newer node
+wrote is not the new version's fault and rolls nothing back. The restored node rings one card, *pilot 2.0.13 did not start
+twice; back on 2.0.12*, with the last error, and auto-update (and `ask`) does not offer that version again; a newer
+release, or `pilot update` by hand, still installs. If `previous/` cannot be written the install is refused, since it
+would have no way back.
 
 The update code (`Pilot.Node/Updates`: `ReleaseFeed`, `ReleaseInstall`, `UpdatePolicy`) holds no pilot type: it began
 as a copy of YtPlayer's self-update and is meant to move to SharpAstro.AppShell once a second app updates itself the
@@ -983,6 +1031,25 @@ beside its choices (`CardsView.OnChatAbout`; dead while a press of the card is w
 closed card and from a watch-only card of a node with no grant); the flight page's merge block has the same button for its
 card. It shows the Chat page with the card quoted above the box (see below) and the keyboard in the box.
 
+A choice the node would refuse right now (`ChoiceStatus.Unavailable`, #792: its flight is held, its session is gone) is drawn dead,
+the same size as the live button and answering nothing, with the node's reason (`TIA1 is held: waiting for TIA0`) beside it, or under
+it when the label is long enough to take a row of its own (`CardsView.UnavailableChoice`); the card's other choices and Dismiss stay
+as they were.
+
+A card whose answer is underway (`CardRow.Answering`, #792) says so where its buttons are: one line, `Merge: pressed by cli at 20:35,
+waiting on TIA1's PR #7 being merged` (local time; no `waiting on` part when the node names nothing), the same wording
+`CardAnswering.Line` gives `pilot cards` (plain and Markdown, under the card's words) and the TUI. Every node-bound button of
+that card is dead while it is set: both choices and Dismiss (and a grant's Connect) draw as words with no hit, the choice
+pressed reading `Merge …`. A card's refusal is not drawn beside that line. A kept refusal (what the node said to the last
+press) is dropped as the panel is built when the stream shows the card **closed** (gone from the open cards, or held closed
+under the pointer) or **answering**, and when a closed card comes back open if the refusal had been drawn, so an open card never
+keeps a "was refused" about a state it has left. A refusal that lands after the change (the node's reply beating the stream: a
+choice that closed its card first and was refused, or this press's own answer ending refused) is kept and drawn: it is the
+outcome of the press that made the change. An ok answer is never a refusal: a press that joined an answer (`already on its way,
+started by cli at 20:35`, `already answered by cli at 20:35`, recognised by `CardAnswering.IsJoined`) clears an older refusal
+and is logged by the GUI and TUI as `joined: ...`, not `done`; `pilot answer` (and so the MCP `answer` tool) prints the same
+`joined: ...` line under its `ok:`.
+
 A node the window cannot reach (its stream is down: the same `Connected` the Fleet page shows) leaves the panel with its
 cards, which may be long answered and cannot be commanded now (#325). In their place, at the foot of **For you**, one dim
 line per such node reads `DE1 is unreachable since 10:31 · 3 ringing, 2 for you held` (the time is today's clock, or the
@@ -1649,6 +1716,38 @@ Each choice is a command; `answer card/<id> <n or label>` runs it as the one ans
 command, and closes the card (opening it again if the command is refused). `dismiss card/<id> [why]` closes it with
 nothing done. The GUI shows open cards down the right, with their buttons, when there are any; `pilot cards`,
 `pilot answer` and `pilot dismiss` do the same from a terminal.
+
+**An answer underway is on the card** (#792). A choice that takes time (a merge or a re-run of checks, a go-around, a move again, the
+conflict card's Resolve the conflict) is taken before it runs: the card stays open and carries `CardRow.Answering`, the choice's label,
+who pressed it, when, and what it waits on (`TIA1 is being sent round`, when the flight has a call out, else none). It is one
+`cardChanged` event, so every client can show "pressed by cli at 20:35, waiting on ..." where the buttons were. A second press of the
+same choice while it is underway joins it: the answer is ok and says `already on its way, started by <who> at <HH:mm>`, and nothing
+runs twice. Another choice on the card is refused naming the answer underway, and a dismiss waits for it. The mark ends with the
+answer: the card closes with the choice as its outcome, or, when the choice is refused or cut off (the node stopping mid-merge), the mark
+is cleared and the buttons are back; a card whose merge is armed or queued stays open with its own status and no mark. An answer
+underway for longer than the leg commander's stuck limit (10 minutes) no longer shields the card, so a hung one rings as before, and a
+node that restarts does not bring a mark back. A choice that closes its card first (a landing) answers a repeat of itself in the
+next few minutes with ok and `already answered by <who> at <HH:mm>`, not "closed already"; any other choice on a closed card is
+refused as before. The field is optional, so it does not raise `NodeWire.Version`: an older client ignores it and keeps its buttons.
+The GUI's cards panel, the TUI and `pilot cards` show the mark (see the cards panel under the GUI above): the line, dead buttons, and
+no refusal left on a card that moved on.
+
+**A choice the node would refuse is marked before it is pressed** (#792). A choice has a `Status` where the node can tell how ready it
+is (`passing`, `pending`, `failing`, `conflicting`, `armed`, `queued`, `behind`, `blocked`, `changes-requested`, `waits-for-legs`,
+`merging`, `merged`), and one more: `unavailable` (`ChoiceStatus.Unavailable`), with the reason in the choice's `Note`. It is set on an open card's choice
+that needs its flight flying (a go-around, a merge, a re-run of its checks, a leg's start) while the flight is **held**
+(`PIL501 is held: waiting for PIL500`, or just `PIL501 is held` when no wait is named), and on one that names a session the node
+**no longer has** (`session a1b2c3d4 no longer exists`; an ended session that is still listed is not gone, a say to it resumes it).
+One rule, `ChoiceAvailability`, both marks the choice and refuses its answer. `NodeState` applies it on every write of a card's choices
+(a card raised, turned, or given new choices, so the merge's check refresh never offers a held flight's Merge again) and sweeps the
+open cards where the fact changes: a flight's hold changing (`PutFlight`, `UpdateFlight`) and a session row added or removed. There is no
+polling, a card already right publishes nothing, and a flight that flies again (or a session that is back) clears the mark; a merge that is
+a chip (`ChoiceStatus.IsChip`, the one list the node and the card view share: armed, queued, merging, merged, blocked, changes requested
+or waiting for its legs) keeps its own status, which says more. A mark that covered a `passing` or `pending` Merge clears to no status,
+and the next look at the PR writes its checks back. An **answer** of such a choice is refused before anything
+is taken, closed or run, reading the flight and the sessions as they are then: `Merge was refused: PIL501 is held: waiting for PIL500`,
+the card staying open, so a client that pressed before it saw the mark runs nothing. The status is optional on the wire like the rest: an
+older client draws the button as it did and is refused with the reason.
 
 ## Hooks
 

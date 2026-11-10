@@ -35,6 +35,11 @@ public static partial class Briefs
         text.AppendLine("Leave nothing behind in the plane: every change is committed before you finish (the node refuses a done leg");
         text.AppendLine("whose plane holds files not committed), and scratch output goes outside the plane, never into it. Once your");
         text.AppendLine("leg is done, commit nothing more here: a late commit would miss the PR; a change after it is a redo of the leg (a go-around).");
+        // A plane behind its base builds against what main has moved past: PIL818's plane, 77 commits behind, failed its check on
+        // CS0108 from a sibling main had already moved off (j4448, owner 2026-11-10: "always update the branch when starting, or restarting").
+        text.AppendLine($"First, every time you start (a go-around and a resume included), bring the base in: `git fetch origin` then");
+        var baseRef = flight.Base.StartsWith("origin/", StringComparison.Ordinal) ? flight.Base : $"origin/{flight.Base}";
+        text.AppendLine($"`git merge --no-edit {baseRef}`, resolve any conflict so both sides' work stays, and commit the merge before your own work.");
 
         var before = legs.Where(l => l.Order < leg.Order).ToList();
         if (before.Count > 0)
