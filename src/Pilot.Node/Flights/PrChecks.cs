@@ -370,7 +370,9 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             state.RaiseCard(CardBin.ForYou, QueueDropped, subject, $"{flight.Code}'s PR #{number} left the merge queue unmerged",
                 $"GitHub took it out of the queue ({why}) after the node queued it. The PR page says which check failed, or what the queue met.",
                 [new CardChoice { Label = "Queue the merge again", Verb = Verbs.Merge, Target = subject, Args = [queue.Head] }], link: flight.PullRequestUrl,
-                summary: $"GitHub took it out of the merge queue: {LegCommander.OneLine(why)}. Once that is dealt with, queue it again.");
+                summary: $"GitHub took it out of the merge queue: {LegCommander.OneLine(why)}. Once that is dealt with, queue it again.",
+                // The reason is no longer in the title, so what a dismissal is remembered by is this removal itself (#853).
+                cause: $"queue-dropped:{number}:{removedAt:O}");
         }
     }
 

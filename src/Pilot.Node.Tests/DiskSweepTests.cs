@@ -152,7 +152,7 @@ public sealed class DiskSweepTests : IDisposable
         var card = _state.Cards().Single(c => c.Kind == "disk-swept");
         card.Bin.ShouldBe(CardBin.Handled);
         card.Detail.ShouldNotBeNull().ShouldContain("2 job scratch folders");
-        card.Title.ShouldContain("1 probe folder");
+        card.Detail.ShouldNotBeNull().ShouldContain("1 p2o-* probe folders");
         card.Title.ShouldContain("2.4 KB");
 
         // A second sweep has nothing left to free and says nothing.

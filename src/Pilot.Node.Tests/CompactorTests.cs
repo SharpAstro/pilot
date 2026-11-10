@@ -273,7 +273,7 @@ public sealed class CompactorTests : IDisposable
         await _compactor.LookAsync(Ct);
 
         _said.Count.ShouldBe(1);
-        Handled().ShouldHaveSingleItem().ShouldStartWith("Could not compact du1-watchtower (idle 50 min with 180k of context");
+        Handled().ShouldHaveSingleItem().ShouldStartWith("Could not compact du1-watchtower; trying again in ");
         _refuse = null;
         _time.Advance(TimeSpan.FromMinutes(10));
         await _compactor.LookAsync(Ct);

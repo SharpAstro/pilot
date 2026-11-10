@@ -232,7 +232,7 @@ public sealed class StaleWatchTests
 
         _said.ShouldBeEmpty();
         _tracker.Sets.ShouldBeEmpty();
-        _state.Cards().ShouldContain(c => c.Kind == StaleWatch.ActedKind && c.Title.Contains("told its worker of a job that had ended"));
+        _state.Cards().ShouldContain(c => c.Kind == StaleWatch.ActedKind && c.Title.Contains("told its worker of an ended job"));
     }
 
     [Fact]

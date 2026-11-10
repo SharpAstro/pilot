@@ -440,7 +440,7 @@ public sealed class MergedUnderLegTests : IDisposable
         ring.Summary.ShouldNotBeNull().ShouldContain("PIL819: review notes");
         var choice = ring.Choices.ShouldHaveSingleItem();
         choice.Verb.ShouldBe(Verbs.OpenPr);
-        choice.Label.ShouldBe("Open a PR with the commit");
+        choice.Label.ShouldBe("Open a PR for it");
     }
 
     /// <summary>A plane that only took main after the merge (another flight's commit and the merge of main) holds nothing of its own: it lands.</summary>

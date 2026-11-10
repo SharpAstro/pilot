@@ -553,7 +553,7 @@ public sealed class MergeArmTests
         card.Detail.ShouldContain("not armed any more");
         var merge = card.Choices.Single(c => c.Verb == Verbs.Merge);
         merge.Status.ShouldBe(ChoiceStatus.Passing);
-        merge.Label.ShouldBe("Merge");
+        merge.Label.ShouldBe("Merge the PR");
         node.GitHub.Merged.ShouldBeEmpty();
 
         // And it stays that way: the card is no longer an armed one, so the next look leaves it as GitHub shows it.

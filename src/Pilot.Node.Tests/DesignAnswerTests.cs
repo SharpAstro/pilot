@@ -322,7 +322,8 @@ public sealed class DesignOptionsCardTests : PrFixTestsBase
         await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions);
 
         var card = OpenDesign();
-        card.Title.ShouldContain("should this be a service at all?");
+        card.Title.ShouldBe("acme/widget#7: the review asks a question of design");
+        card.Summary.ShouldNotBeNull().ShouldContain("should this be a service at all?");
         card.Detail.ShouldNotBeNull().ShouldContain("README.md:1 should this be a service at all?");
         card.Detail.ShouldContain("Make it a service: more to run");
         card.Choices.Select(c => c.Label).ShouldBe(["Pick option A", "Pick option B", PrReviews.AnswerLabel]);
