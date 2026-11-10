@@ -263,7 +263,10 @@ public sealed class RestartTests
             // The recovery has read the exit file and ended the row; its tell waits for the first poll the test holds.
             await Until(node, id, j => j.EndedAt is not null);
             // A tell the runner made too early would follow the row's end on its next turns, not on a timer: give those turns to the pool
-            // (no wall-clock wait, no spin), so a premature tell shows in the checks below.
+            // (no wall-clock wait, no spin), so a premature tell shows in the checks below. The 50 turns are a bound, not a measure: the
+            // tell is a few continuations on the pool and each turn here queues behind the ones already there, so 50 leaves room for a
+            // slow runner at a cost of microseconds, and a tell the turns miss still shows in the checks after the poll (Deliveries must
+            // be exactly 1). Left as it is, by decision.
             for (var turn = 0; turn < 50; turn++)
             {
                 await Task.Yield();

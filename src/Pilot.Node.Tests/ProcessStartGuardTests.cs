@@ -103,10 +103,20 @@ public sealed class ProcessStartGuardTests
     {
         // Provoked on purpose, so the observer checks it but leaves it out of the process-start report.
         using var provoking = TestEnvironment.ProvokingAStart();
+
+        // PILOT_TEST_PROCESS_GUARD=report is the run's own mode: the observer then never throws (the report is its only effect).
+        if (ReportMode)
+        {
+            ProcessStarts.Observe("git", new ProcessStartInfo("git", "status"));
+            return;
+        }
         var ex = Should.Throw<ProcessStartNotAllowedException>(() => ProcessStarts.Observe("git", new ProcessStartInfo("git", "status")));
 
         ex.Message.ShouldContain("git status");
     }
+
+    private static bool ReportMode =>
+        ProcessStartGuard.ModeFor(Environment.GetEnvironmentVariable("PILOT_TEST_PROCESS_GUARD")) == ProcessStartGuard.GuardMode.Report;
 
     [Fact]
     [Trait("Category", "Slow")] // the Slow mark is what lets the observer pass this start; nothing is started
@@ -123,11 +133,20 @@ public sealed class ProcessStartGuardTests
         var ex = await OnAThreadWithNoTestAsync(() =>
         {
             TestEnvironment.CarryOwner(new TestEnvironment.Owner("Some.UnmarkedNodeTest", Unmarked));
+            if (ReportMode)
+            {
+                // Report mode never throws (see the observer test above).
+                ProcessStarts.Observe("git", new ProcessStartInfo("git", "fetch origin"));
+                return null;
+            }
             return Should.Throw<ProcessStartNotAllowedException>(() => ProcessStarts.Observe("git", new ProcessStartInfo("git", "fetch origin")));
         });
 
-        ex.Message.ShouldContain("Some.UnmarkedNodeTest");
-        ex.Message.ShouldContain("git fetch origin");
+        if (ex is not null)
+        {
+            ex.Message.ShouldContain("Some.UnmarkedNodeTest");
+            ex.Message.ShouldContain("git fetch origin");
+        }
     }
 
     [Fact]

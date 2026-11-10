@@ -2159,6 +2159,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 }
                 if (failure is { } found)
                 {
+                    // The grace counts from the moment the failure was read, before the row that says so is published: a clock moved on that
+                    // change (the tests') or a late turn of the loop must not give the report a fresh grace (it hung a test for its ceiling).
+                    if (job.FailFast)
+                    {
+                        failedAt ??= time.GetUtcNow();
+                    }
                     NoteFailure(job, found);
                 }
                 // The step, put on the stream now and then: a long run shows it is alive, without a delta per line.
