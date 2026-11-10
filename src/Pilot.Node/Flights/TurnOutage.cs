@@ -9,6 +9,7 @@ namespace Pilot.Node.Flights;
 /// ends when any session shows a turn later than the outage began (<see cref="Look"/>). While it is open the first-turn ladders
 /// neither restart nor ring per session; the window it covered is kept in <see cref="LastWindow"/> for what redoes the work.
 /// </summary>
+// The outage is kept in memory only, on purpose: a node restart forgets it, and the next stalled sessions or account change open it again.
 public sealed class TurnOutage(NodeState state)
 {
     /// <summary>The kind of the one card an outage raises.</summary>
@@ -112,6 +113,12 @@ public sealed class TurnOutage(NodeState state)
         }
     }
 
+    /// <summary>A subject showed a first turn after all: it no longer counts toward an outage.</summary>
+    public void Turned(string subject)
+    {
+        lock (_gate) { _stalled.Remove(subject); }
+    }
+
     /// <summary>One look at the sessions: a turn later than the outage's start (a response, or more context than at the first look) ends it, closes its card and keeps its window.</summary>
     public void Look(SessionRow[] sessions, DateTimeOffset now)
     {
@@ -157,7 +164,7 @@ public sealed class TurnOutage(NodeState state)
             _waiting.Clear();
             _probedAt = at;
             _probeKey = null;
-            var card = state.RaiseCard(CardBin.ForYou, CardKind, Verbs.NodeTarget, $"Sessions are not taking turns since {at.ToLocalTime():HH:mm}: {why}",
+            var card = state.RaiseCard(CardBin.ForYou, CardKind, Verbs.NodeTarget, $"Sessions are not taking turns since {at.ToLocalTime():HH:mm}",
                 $"outage opened at {at:O}: {why}; first-turn restarts and rings are held until a session takes a turn",
                 [new CardChoice { Label = "Mark it read", Verb = Verbs.Dismiss, Target = "" }],
                 summary: $"No session has taken a turn since {at.ToLocalTime():HH:mm} ({why}). The node holds its restarts and rings for first turns and closes this card by itself once any session takes a turn.");

@@ -82,7 +82,8 @@ public sealed class TurnOutageTests
         var card = Open().ShouldHaveSingleItem();
         (card.Bin, card.Kind, card.Subject).ShouldBe((CardBin.ForYou, "turns-outage", Verbs.NodeTarget));
         card.Title.ShouldStartWith("Sessions are not taking turns since ");
-        card.Title.ShouldEndWith("the account changed");
+        card.Title.Length.ShouldBeLessThanOrEqualTo(70);
+        card.Summary.ShouldContain("the account changed");
 
         // A session whose last turn was before the outage does not end it.
         Session("a1b2c3d4", "parser", context: 5_000, response: Start.AddMinutes(10));
@@ -159,7 +160,7 @@ public sealed class TurnOutageTests
 
         _outage.IsOpen.ShouldBeTrue();
         // The first ladder to look already acted (one subject alone is a stuck session); the second is held and one outage card is up.
-        _restarted.Count.ShouldBeLessThanOrEqualTo(1);
+        _restarted.Count.ShouldBe(1);
         Open().Where(c => c.Kind == TurnOutage.CardKind).ShouldHaveSingleItem();
         var restartsBefore = _restarted.Count;
 
