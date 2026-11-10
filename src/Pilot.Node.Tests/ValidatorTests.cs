@@ -158,7 +158,7 @@ public sealed class ValidatorTests : IDisposable
         card.Detail.ShouldBe("Planet.cs is gone: ls src/Planet.cs");
         // The golden card (#797): what happened, what to do, and short verbs.
         card.Title.ShouldBe("TIA1/render cannot start: its brief no longer fits the tree");
-        card.Summary.ShouldBe("The check of TIA1/render against the tree found its brief out of date. Fly it unchanged, drop it, or replan the flight.");
+        card.Summary.ShouldBe("Take render off the flight or plan TIA1 again: the check against the tree found its brief out of date.");
         card.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe(
         [
             ("Start it as it is", Verbs.StartLeg, Render),
