@@ -649,7 +649,7 @@ internal sealed class FakeRepoGit : IGit
     }
 
     /// <summary>
-    /// <c>git init [--bare] [-b main] [&lt;folder&gt;]</c>: a repo or a bare origin made under the model's root, with no commit (the model's other repos are made so).
+    /// <c>git init [--bare] [-b main] [&lt;folder&gt;]</c>: a repo or a bare origin made under the model's root, with no commit. With no <c>-b</c> its branch is main, as the tests' git is set up (init.defaultBranch), not git's own master.
     /// </summary>
     private GitRun Init(List<string> a, string cwd)
     {
@@ -673,11 +673,11 @@ internal sealed class FakeRepoGit : IGit
         }
         if (bare)
         {
-            AddBare(target, branch ?? "master");
+            AddBare(target, branch ?? "main");
         }
         else
         {
-            var made = AddRepo(target, branch ?? "master");
+            var made = AddRepo(target, branch ?? "main");
             WriteConfigFile(made);
         }
         return Ok("");
