@@ -73,6 +73,7 @@ public sealed record SpendReport
     public required SpendRow[] Roles { get; init; }
 
     /// <summary>This month's cloud bench VMs and the cap; null when cloud benches are not set and none has run.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public SpendBench? Bench { get; init; }
 }
 
