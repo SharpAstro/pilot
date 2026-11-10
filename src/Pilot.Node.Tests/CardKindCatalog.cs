@@ -158,7 +158,7 @@ internal static class CardKindCatalog
         new("issue-left-open", "ForYou", [FlightCommanderLand], SourcePinned),
         new("disk-swept", "Handled", ["Flights/DiskSweep.cs"], "DiskSweepTests.ASweepThatFreedSomethingRaisesOneHandledLineNamingTheCountsAndTheUniqueBytes"),
         new("worktree-removed", "Handled", ["Flights/DiskSweep.cs"], "DiskSweepTests.AHandMadeWorktreeWhosePrMergedAndIsCleanIsRemovedWithAHandledLine"),
-        new("worktree-dirty", "Handled", ["Flights/DiskSweep.cs"], "DiskSweepTests.ADirtyHandMadeWorktreeRaisesOneForYouCardAndNoSecondOnTheNextSweep"),
+        new("worktree-dirty", "Handled", ["Flights/DiskSweep.cs"], "DiskSweepTests.ADirtyHandMadeWorktreeIsKeptWithOneHandledLineAndNoSecondOnTheNextSweep"),
         new("disk-low", "ForYou", ["Flights/DiskSweep.cs"], "DiskSweepTests.FreeSpaceBelowTheThresholdRaisesOneRingNamingTheLargestItemsAndClosesWhenSpaceIsBack"),
         new("stray-process", "ForYou", ["Flights/StraySweep.cs"], "StraySweepTests.OneCardPerStrayNamesTheProcessItsOwnerAndTheKillCommand"),
         new("stray-killed", "Handled", ["Flights/StraySweep.cs"], "StraySweepTests.AProcessOfAnEndedJobTheNodeLaunchedIsKilledThroughTheTableAndNothingElseIs"),

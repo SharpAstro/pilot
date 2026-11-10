@@ -253,7 +253,7 @@ public sealed class DiskSweepTests : IDisposable
     }
 
     [Fact]
-    public async Task ADirtyHandMadeWorktreeRaisesOneForYouCardAndNoSecondOnTheNextSweep()
+    public async Task ADirtyHandMadeWorktreeIsKeptWithOneHandledLineAndNoSecondOnTheNextSweep()
     {
         var (sweep, git, _) = WorktreeSweep();
         var path = MakeWt(git, "dirty");
@@ -264,11 +264,12 @@ public sealed class DiskSweepTests : IDisposable
 
         Directory.Exists(path).ShouldBeTrue();
         var card = _state.Cards().Single(c => c.Kind == DiskSweep.WorktreeDirtyKind);
-        card.Bin.ShouldBe(CardBin.ForYou);
+        // A Handled line (#797): nothing to press, so no For-you card whose only button would say the panel's Dismiss again.
+        card.Bin.ShouldBe(CardBin.Handled);
         card.Subject.ShouldBe(path);
-        // The golden card (#797): the title says what is wrong, the first line what to do, one button.
-        card.Summary.ShouldNotBeNull().ShouldStartWith("Commit or discard the changes in worktree ");
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("I will deal with it", Verbs.Dismiss)]);
+        card.Title.ShouldStartWith("Kept worktree ");
+        card.Detail.ShouldNotBeNull().ShouldContain("Commit or discard them by hand");
+        card.Choices.ShouldBeEmpty();
     }
 
     [Fact]
