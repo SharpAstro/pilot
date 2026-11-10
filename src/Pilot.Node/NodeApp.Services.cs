@@ -49,6 +49,9 @@ public static partial class NodeApp
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton(NodeTraffic.Shared);
+        // Who made each request, per clock hour (#870): kept by the node's traffic count, whose hourly line names the top callers,
+        // and counted by one middleware ahead of every route (UseCommandCallers).
+        builder.Services.AddSingleton(services => services.GetRequiredService<NodeTraffic>().Callers);
         // What GET /node reads the heap with: the live figures, unless a test host registers a fixed reading after this (a live
         // working set moves between any two calls, so two `pilot status` outputs of one node would never be equal).
         builder.Services.AddSingleton<Func<NodeHeapRow>>(_ => () => NodeHeap.Read());

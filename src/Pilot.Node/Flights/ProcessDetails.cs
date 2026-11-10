@@ -53,6 +53,42 @@ public static class ProcessDetails
         return string.Join(' ', arguments[..end].Select(a => a.Contains(' ') ? $"\"{a}\"" : a));
     }
 
+    /// <summary>
+    /// One process's parent and program name, read from that process alone (a handle on it on Windows, its <c>/proc</c> file on
+    /// Linux), never from the whole table: a process that started after the last snapshot (each <c>pilot</c> command is one)
+    /// can be walked up without reading every process again. Null when it is gone or not ours to read.
+    /// </summary>
+    public static (int ParentPid, string Name)? EntryOf(int pid)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return Environment.Is64BitProcess ? EntryWindows(pid) : null;
+            }
+            if (OperatingSystem.IsLinux())
+            {
+                return EntryLinux(pid);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DllNotFoundException or EntryPointNotFoundException
+            or FormatException or ArgumentOutOfRangeException or IndexOutOfRangeException)
+        {
+            // Ended since it was asked of, or not ours to read.
+        }
+        return null;
+    }
+
+    private static (int, string)? EntryLinux(int pid)
+    {
+        // pid (comm) state ppid ...: comm may hold spaces and parentheses, so read after the last one.
+        var stat = File.ReadAllText($"/proc/{pid}/stat");
+        var open = stat.IndexOf('(');
+        var close = stat.LastIndexOf(')');
+        var fields = stat[(close + 2)..].Split(' ');
+        return (int.Parse(fields[1], System.Globalization.CultureInfo.InvariantCulture), stat[(open + 1)..close]);
+    }
+
     // ---- Windows ----
 
     private const uint QueryLimitedInformation = 0x1000;
@@ -96,6 +132,39 @@ public static class ProcessDetails
 
     [DllImport("ntdll.dll")]
     private static extern unsafe uint NtQueryInformationProcess(nint process, int infoClass, void* info, int length, out int returned);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern unsafe bool QueryFullProcessImageNameW(nint process, uint flags, char* name, ref uint size);
+
+    private static unsafe (int, string)? EntryWindows(int pid)
+    {
+        var handle = OpenProcess(QueryLimitedInformation, false, pid);
+        if (handle == 0)
+        {
+            return null;
+        }
+        try
+        {
+            BasicInformation basic;
+            if (NtQueryInformationProcess(handle, ProcessBasicInformation, &basic, sizeof(BasicInformation), out _) != 0)
+            {
+                return null;
+            }
+            var size = 1024u;
+            var path = stackalloc char[1024];
+            if (!QueryFullProcessImageNameW(handle, 0, path, ref size))
+            {
+                return null;
+            }
+            var image = new string(path, 0, (int)size);
+            return ((int)basic.InheritedFromUniqueProcessId, image[(image.LastIndexOf('\\') + 1)..]);
+        }
+        finally
+        {
+            CloseHandle(handle);
+        }
+    }
 
     private static (string?, string?) ReadWindows(int pid)
     {
