@@ -145,8 +145,8 @@ public sealed class BuildCacheTests : JobTestsBase
     [Fact]
     public async Task ATestNoBuildJobWithTheSettingOnIsLeftAlone()
     {
-        var launch = await Launched(true, "dotnet test Pilot.Node.Tests -c Release --no-build", PlaneIn("pil1"));
+        var launch = await Launched(true, "dotnet test Pilot.Node.Tests -c Release --no-build --filter FullyQualifiedName~Foo", PlaneIn("pil1"));
 
-        launch.Command.ShouldBe("dotnet test Pilot.Node.Tests -c Release --no-build");
+        launch.Command.ShouldBe("dotnet test Pilot.Node.Tests -c Release --no-build --filter FullyQualifiedName~Foo");
     }
 }
