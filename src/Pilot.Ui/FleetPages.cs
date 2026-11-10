@@ -17,6 +17,9 @@ namespace Pilot.Ui;
 /// <param name="Here">Whether it is the node this window flies.</param>
 internal sealed record NodeMark(string Key, string Where, string Name, bool Here)
 {
+    /// <summary>The node's machine name (<c>SE1</c>) when known: what its held token is found by, so a node heard at a new address keeps its grant.</summary>
+    public string? HeldName { get; init; }
+
     /// <summary>The mark for a node as its feed knows it: its prefix, else its machine, else the name it announced, else where it is.</summary>
     public static NodeMark For(string where, bool here, NodeSummary summary, string? announcedAs = null) =>
         new(where, where,
@@ -330,7 +333,7 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
 /// The client a row's command goes through: this window's own for its node's rows, and for another node's a client of
 /// its own, with the grant saved for it. A node without a grant is read (a transcript, a log) but never commanded.
 /// </summary>
-internal sealed class FleetClients(NodeClient here, Func<string, bool> granted, Func<string, NodeClient>? remote = null, Func<string, string?>? tokenOf = null) : IDisposable
+internal sealed class FleetClients(NodeClient here, Func<string, bool> granted, Func<string, NodeClient>? remote = null, Func<string, string?>? tokenOf = null, Func<string, string?, bool>? grantedByName = null) : IDisposable
 {
     // Swapped whole, never changed in place, as is _revoked: For runs on the render thread (a click, a transcript opened)
     // and on the pool at once, and nothing here makes either wait.
@@ -342,27 +345,22 @@ internal sealed class FleetClients(NodeClient here, Func<string, bool> granted, 
 
     // The tokens held, as the token file last read: For runs on the render thread (a transcript or a log opened, a click),
     // and it read the file on every call. Read again by Refresh, off the render thread (pilot-gui's page builder, every 5 s).
-    private IReadOnlyDictionary<string, string> _held = ReadHeld();
+    private HeldView _held = ReadHeld();
 
-    private string? TokenOf(string endpoint) => _tokenOf is { } given ? given(endpoint) : Volatile.Read(ref _held).GetValueOrDefault(endpoint);
+    // By the node's machine name when it is known, else by the address (an old entry, or a node that has not said its name yet).
+    private string? TokenOf(string where, string? name) => _tokenOf is { } given ? given(where) : Volatile.Read(ref _held).TokenFor(where, name);
 
-    private static IReadOnlyDictionary<string, string> ReadHeld()
+    private static string KeyOf(NodeMark node) => node.HeldName ?? node.Where;
+
+    private static HeldView ReadHeld()
     {
         try
         {
-            var held = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var endpoint in Pilot.Commands.NodeTargets.Granted())
-            {
-                if (Pilot.Commands.NodeTargets.TokenFor(endpoint) is { } token)
-                {
-                    held[endpoint] = token;
-                }
-            }
-            return held;
+            return new HeldView(Pilot.Commands.NodeTargets.Held().Entries);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         {
-            return new Dictionary<string, string>();
+            return HeldView.None;
         }
     }
 
@@ -376,7 +374,7 @@ internal sealed class FleetClients(NodeClient here, Func<string, bool> granted, 
         {
             return true;
         }
-        return granted(node.Where) && !Volatile.Read(ref _revoked).ContainsKey(node.Where);
+        return (grantedByName is { } byName ? byName(node.Where, node.HeldName) : granted(node.Where)) && !Volatile.Read(ref _revoked).ContainsKey(KeyOf(node));
     }
 
     /// <summary>Whether <paramref name="envelope"/> is a node refusing the grant; notes it so the node reads as watch-only.</summary>
@@ -386,8 +384,8 @@ internal sealed class FleetClients(NodeClient here, Func<string, bool> granted, 
         {
             return false;
         }
-        var token = TokenOf(node.Where);
-        System.Collections.Immutable.ImmutableInterlocked.Update(ref _revoked, revoked => revoked.SetItem(node.Where, token));
+        var token = TokenOf(node.Where, node.HeldName);
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _revoked, revoked => revoked.SetItem(KeyOf(node), token));
         return true;
     }
 
@@ -398,7 +396,7 @@ internal sealed class FleetClients(NodeClient here, Func<string, bool> granted, 
         {
             Volatile.Write(ref _held, ReadHeld());
         }
-        System.Collections.Immutable.ImmutableInterlocked.Update(ref _revoked, revoked => revoked.RemoveRange(revoked.Where(r => TokenOf(r.Key) != r.Value).Select(r => r.Key)));
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _revoked, revoked => revoked.RemoveRange(revoked.Where(r => TokenOf(r.Key, r.Key) != r.Value).Select(r => r.Key)));
     }
 
     /// <summary>
@@ -418,7 +416,7 @@ internal sealed class FleetClients(NodeClient here, Func<string, bool> granted, 
         // A remote client fixes its token for life, so one built under another token (none before Connect, the old one
         // after Forget or over a refusal) is replaced by one with the token held now. Two callers racing to make one: the
         // swap that lands keeps its client, the other disposes its own and takes the kept one.
-        var token = TokenOf(node.Where);
+        var token = TokenOf(node.Where, node.HeldName);
         while (true)
         {
             var remote = Volatile.Read(ref _remote);

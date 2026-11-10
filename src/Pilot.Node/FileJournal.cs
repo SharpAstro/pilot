@@ -105,6 +105,9 @@ public sealed class FileJournal : INodeJournal, IDisposable
     public static string RunningVersion { get; } =
         typeof(FileJournal).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
+    /// <summary>The folder the store's files are in.</summary>
+    public string Folder => _folder;
+
     public string RecordPath => Path.Combine(_folder, RecordFile);
 
     public string SnapshotPath => Path.Combine(_folder, SnapshotFile);
@@ -135,7 +138,9 @@ public sealed class FileJournal : INodeJournal, IDisposable
         SnapshotEvent? snapshot = null;
         if (File.Exists(SnapshotPath))
         {
-            snapshot = JsonSerializer.Deserialize(File.ReadAllBytes(SnapshotPath), PilotJsonContext.Default.NodeEvent) as SnapshotEvent
+            // Read from the file, not into one array first: a snapshot of tens of MB would go whole onto the large object heap (#794).
+            using var file = new FileStream(SnapshotPath, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024);
+            snapshot = JsonSerializer.Deserialize(file, PilotJsonContext.Default.NodeEvent) as SnapshotEvent
                 ?? throw new InvalidDataException($"{SnapshotPath} holds no snapshot");
         }
 
@@ -323,7 +328,11 @@ public sealed class FileJournal : INodeJournal, IDisposable
         File.Move(temp, RecordPath, overwrite: true);
     }
 
-    /// <remarks>The first event appended to a new store is the starting snapshot <see cref="NodeState"/> writes.</remarks>
+    /// <remarks>
+    /// The first event appended to a new store is the starting snapshot <see cref="NodeState"/> writes. A snapshot is
+    /// serialised here, streamed to its file, and <paramref name="json"/> is not read for it: the node passes none, so a
+    /// snapshot of tens of MB is never built whole as one array on the large object heap (#794).
+    /// </remarks>
     public void Append(NodeEvent nodeEvent, ReadOnlyMemory<byte> json)
     {
         if (nodeEvent is SnapshotEvent snapshot)
@@ -333,7 +342,7 @@ public sealed class FileJournal : INodeJournal, IDisposable
             {
                 // A journal that holds lines the snapshot does not (a store whose snapshot was lost): keep them before they are emptied.
                 Backup(snapshot.Seq);
-                WriteSnapshot(json.Span);
+                WriteSnapshot(snapshot);
                 RewriteJournal([]);
                 CompactionError = null;
             }
@@ -342,7 +351,7 @@ public sealed class FileJournal : INodeJournal, IDisposable
                 // The journal is the store until a snapshot is written, and a restart needs a snapshot to start from:
                 // the starting one goes in as the journal's first line, which Load takes as the snapshot when the file has none.
                 var kept = _journal ??= Open(JournalPath);
-                kept.Write(json.Span);
+                JsonSerializer.Serialize<NodeEvent>(kept, snapshot, PilotJsonContext.Default.NodeEvent);
                 kept.Write(NewLine);
                 kept.Flush(flushToDisk: true);
                 CompactionError = e;
@@ -413,7 +422,7 @@ public sealed class FileJournal : INodeJournal, IDisposable
             PrReviews = [.. _mirror.PrReviews.Values],
         };
         Backup(snapshot.Seq);
-        WriteSnapshot(JsonSerializer.SerializeToUtf8Bytes<NodeEvent>(snapshot, PilotJsonContext.Default.NodeEvent));
+        WriteSnapshot(snapshot);
         // Only now, with the snapshot in place, does it hold what the journal does, and the journal may be emptied.
         RewriteJournal([]);
     }
@@ -482,14 +491,15 @@ public sealed class FileJournal : INodeJournal, IDisposable
         _decisions.Add(decision);
     }
 
-    private void WriteSnapshot(ReadOnlySpan<byte> json)
+    /// <summary>Writes <paramref name="snapshot"/> beside its file, streamed through the serializer's own small buffer, then moves it into place.</summary>
+    private void WriteSnapshot(SnapshotEvent snapshot)
     {
         // Before the snapshot, so the record is never older than what it describes.
         StampRecord();
         var temp = SnapshotPath + ".tmp";
         using (var file = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
         {
-            file.Write(json);
+            JsonSerializer.Serialize<NodeEvent>(file, snapshot, PilotJsonContext.Default.NodeEvent);
             file.Flush(flushToDisk: true);
         }
         BeforeSnapshotMove?.Invoke();
@@ -519,7 +529,7 @@ public sealed class FileJournal : INodeJournal, IDisposable
         {
             foreach (var delta in deltas)
             {
-                file.Write(JsonSerializer.SerializeToUtf8Bytes(delta, PilotJsonContext.Default.NodeEvent));
+                JsonSerializer.Serialize(file, delta, PilotJsonContext.Default.NodeEvent);
                 file.Write(NewLine);
             }
             file.Flush(flushToDisk: true);

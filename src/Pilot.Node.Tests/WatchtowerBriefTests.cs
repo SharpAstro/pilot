@@ -7,8 +7,65 @@ namespace Pilot.Node.Tests;
 /// <summary>The watchtower's brief lets it press a person-only card only on the person's own word in the chat (PIL473).</summary>
 public class WatchtowerBriefTests
 {
-    /// <summary>The brief with line breaks folded to spaces, so a sentence wrapped across lines still matches.</summary>
-    private static string Brief() => string.Join(' ', Briefs.Watchtower("wt", [], [], [], "pilot").Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()));
+    /// <summary>The watchtower's rules (the file the node writes, PIL855) with line breaks folded to spaces, so a sentence wrapped across lines still matches.</summary>
+    private static string Brief() => string.Join(' ', Briefs.WatchtowerRules("wt", "pilot").Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()));
+
+    private static Pilot.Contracts.FlightRow Flight(int i, bool held) => new()
+    {
+        Code = $"PIL{i}", Repo = "pilot", RepoPath = "/r/pilot", Issue = i, Title = $"A flight about the thing number {i}, with a realistic long title",
+        Branch = $"flight/pil{i}", Worktree = $"/w/PIL{i}", Base = "origin/main", State = held ? Pilot.Contracts.FlightState.Held : Pilot.Contracts.FlightState.Flying,
+        CreatedAt = DateTimeOffset.UnixEpoch,
+    };
+
+    private static Pilot.Contracts.LegRow Leg(int flight, int order) => new()
+    {
+        Flight = $"PIL{flight}", Name = $"leg-number-{order}", Order = order, Goal = "g", DoneWhen = "d", State = order == 1 ? Pilot.Contracts.LegState.Flying : Pilot.Contracts.LegState.Planned, Worker = "du1-worker",
+    };
+
+    [Fact]
+    public void TheBriefOfAHugeStateIsAtMostSixThousandCharacters()
+    {
+        var flights = Enumerable.Range(1, 30).Select(i => Flight(i, held: i % 3 == 0)).ToList();
+        var legs = flights.SelectMany((f, i) => Enumerable.Range(1, 4).Select(o => Leg(i + 1, o))).ToList();
+        var cards = Enumerable.Range(0, 40).Select(i => Card($"c{i}", i % 4 == 0 ? Pilot.Contracts.CardBin.Ring : Pilot.Contracts.CardBin.ForYou, $"PIL{i}: a realistic card title that says what happened and what to do next about it, quite long indeed {new string('y', 80)}")).ToList();
+        var orders = Enumerable.Range(0, 12).Select(i => new Pilot.Contracts.NodeNote { At = DateTimeOffset.UnixEpoch, Who = "gui", Text = $"Order {i}: " + new string('z', 400), Id = $"o{i}" }).ToList();
+        var stale = Enumerable.Range(0, 15).Select(i => Stale($"PIL{i}", "19 h")).ToList();
+
+        var brief = Briefs.Watchtower("du1-watchtower", flights, legs, cards, "pilot", "claude-sonnet-5-5", "DU1", new HashSet<string> { "c1", "c2", "c5", "c6", "c9" }, stale, orders, "C:/data/watchtower-rules.md");
+
+        brief.Length.ShouldBeLessThanOrEqualTo(6000);
+        // The rings are named; the whole lists are left to the commands that give them.
+        brief.ShouldContain("- c0 [ring]");
+        brief.ShouldContain("`pilot status`");
+        brief.ShouldContain("`pilot cards`");
+        brief.ShouldContain("30 flights not landed");
+        brief.ShouldContain("40 open cards (10 ring, 30 for you, 0 handled)");
+        brief.ShouldNotContain("leg-number-2");
+    }
+
+    [Fact]
+    public void TheRulesAreInTheFileTheBriefNamesAndNotInTheBrief()
+    {
+        var rules = Briefs.WatchtowerRules("wt", "pilot", "DU1");
+        var brief = Briefs.Watchtower("wt", [], [], [], "pilot", machine: "DU1", rulesFile: "C:/data/watchtower-rules.md");
+
+        brief.ShouldContain("`C:/data/watchtower-rules.md`");
+        foreach (var moved in new[] { "A review loop is your job", "## What you may not do", "## Getting reviewed work in", "pilot idea I381 plan", "you are the controller's assistant in the window too", "`du1-<flight or card>-<what>`", "## Commands" })
+        {
+            rules.ShouldContain(moved);
+            brief.ShouldNotContain(moved);
+        }
+        brief.ShouldContain("the watchtower: the one session on this machine");
+        brief.ShouldContain("`pilot status`");
+    }
+
+    [Fact]
+    public void TheFingerprintCoversTheRulesText()
+    {
+        // A rule changed in the rules file changes the fingerprint, so a fresh watchtower reads it; the machine is a rule of it.
+        Briefs.WatchtowerFingerprint("wt", "pilot", machine: "DU1").ShouldNotBe(Briefs.WatchtowerFingerprint("wt", "pilot", machine: "SE1"));
+        Briefs.WatchtowerFingerprint("wt", "pilot").ShouldNotBe(Briefs.WatchtowerFingerprint("wt", "other"));
+    }
 
     private static Pilot.Contracts.CardRow Card(string id, Pilot.Contracts.CardBin bin, string title = "a card") =>
         new() { Id = id, Bin = bin, Kind = "k", Subject = "flight/X", Title = title, At = DateTimeOffset.UnixEpoch, State = Pilot.Contracts.CardState.Open };

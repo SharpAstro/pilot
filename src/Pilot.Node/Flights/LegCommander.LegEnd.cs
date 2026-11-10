@@ -547,7 +547,8 @@ public sealed partial class LegCommander
         var told = $"{row.Other} had landed: {now.Code} goes on, no answer needed";
         state.RaiseCard(CardBin.Handled, OverlapLandedKind, target, told,
             $"{now.Code} overlapped {at}, which has landed since, so its work is in and there is nothing to wait for. The node closed the overlap card itself and {now.Code} goes on"
-            + (row.AfterLeg is null ? " (its planner is started again with the answer)." : $"; {row.AfterLeg} stays done."));
+            + (row.AfterLeg is not null ? $"; {row.AfterLeg} stays done."
+                : IsOnHold(now.Code) ? " once it is released (it is on hold, so its planner waits for the release)." : " (its planner is started again with the answer)."));
         Error.WriteLine($"landed overlap: {now.Code} overlapped {at}, which has landed; answered by the node, no card rang");
         try
         {
@@ -671,7 +672,7 @@ public sealed partial class LegCommander
         var named = names.Length > OverlapNamed ? $"{string.Join(", ", names.Take(OverlapNamed))} and {names.Length - OverlapNamed} more" : string.Join(", ", names);
         // The plane holds work, so a fold (which retires it) is never offered. Only flights reach here: a PR is answered by AnswerPrParallel.
         CardChoice connect = new() { Label = $"Connect to {code}", Verb = Verbs.ConnectOverlap, Target = target, Args = [code] };
-        CardChoice parallel = new() { Label = $"Plan {flight.Code} in parallel with {code}", Verb = Verbs.Separate, Target = target, Args = [code] };
+        CardChoice parallel = new() { Label = "Plan both in parallel", Verb = Verbs.Separate, Target = target, Args = [code] };
         List<CardChoice> choices = parallelFirst ? [parallel, connect] : [connect, parallel];
         var at = other.Node is null ? code : $"{code} on {other.Node}";
         var detail = new System.Text.StringBuilder();

@@ -84,6 +84,7 @@ public static partial class Briefs
         text.AppendLine("## Your answer");
         text.AppendLine($"- Every step is ticked: `{run} leg finish done \"ticked by the node's ticking pass: <which commits covered which steps>\"`.");
         text.AppendLine($"- A step is not covered by any commit, or `leg finish done` is refused (its check failing): `{run} leg finish failed \"<the steps not covered, or the check's failure>\"`.");
+        text.AppendLine($"- `{run} leg finish done` may answer that its check is rerunning and that you should end your turn: that is its answer, and the node finishes the leg when the rerun ends. End your turn only after `leg finish` has answered, as finished or with its check rerun started, never before you have run it.");
         text.AppendLine("Then end your turn with the same answer.");
         text.AppendLine(AttachmentRule(run));
         return text.ToString();

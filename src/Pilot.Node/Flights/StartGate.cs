@@ -13,6 +13,11 @@ namespace Pilot.Node.Flights;
 /// The 7-day window is softer: past <see cref="RoleModels.WeekLimit"/> it rings once per window and holds nothing, as a
 /// week spent is the controller's to weigh (SE1 read 99 % on 23 Oct, 2026), not a wait of days the node could end for them.
 /// </para>
+/// <para>
+/// An open <see cref="TurnOutage"/> (<see cref="Outage"/>) holds a start too, with a Handled card saying it waits for sessions to take turns
+/// again, so the sweep starts it once the outage ends. One start, the oldest asking, is let through every <see cref="TurnOutage.ProbeEvery"/>
+/// as a probe: the node has no other way to find out that turns are back than a session taking one (PIL791).
+/// </para>
 /// </summary>
 public sealed class StartGate(NodeState state, TimeProvider time)
 {
@@ -25,6 +30,19 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     // By what waits: the reset it last said so for, so a sweep or a look says it once per window, not every time.
     private readonly ConcurrentDictionary<string, DateTimeOffset> _said = new(StringComparer.Ordinal);
     private DateTimeOffset? _weekRung;
+
+    /// <summary>Whether sessions take turns at all (PIL791): while an outage is open every start waits but one probe per <see cref="TurnOutage.ProbeEvery"/>. Null holds nothing on it.</summary>
+    public TurnOutage? Outage { get; set; }
+
+    /// <summary>
+    /// Why an open turn outage holds the start asking under <paramref name="key"/>: nothing takes a turn, so a fresh session would show none either.
+    /// Null when no outage is open, or when this start is the probe the outage lets through to find out whether turns are back. The reset is the
+    /// outage's start, so a hold says itself once per outage.
+    /// </summary>
+    public StartHeld? CheckOutage(string key) =>
+        Outage is { Since: { } since } outage && !outage.Probe(key, time.GetUtcNow())
+            ? new StartHeld($"sessions are not taking turns since {since.ToLocalTime():HH:mm}, so it waits until they take turns again", since)
+            : null;
 
     /// <summary>Why the 5-hour window holds a start at <paramref name="limit"/> percent, and until when; null when it does not.</summary>
     public StartHeld? Check(double limit)
@@ -73,7 +91,8 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     public bool Hold(string key, double limit, double weekLimit, string kind, string subject, string what, double? paceMargin = null)
     {
         RingWeek(weekLimit);
-        if ((Check(limit) ?? CheckPace(paceMargin)) is not { } held)
+        // The windows first: they say a time they end; the outage is asked last so its probe is only used up by a start nothing else holds.
+        if ((Check(limit) ?? CheckPace(paceMargin) ?? CheckOutage(key)) is not { } held)
         {
             _said.TryRemove(key, out _);
             return false;
@@ -97,10 +116,25 @@ public sealed class StartGate(NodeState state, TimeProvider time)
         }
         _weekRung = resets;
         state.CloseCardsAbout(Verbs.NodeTarget, "a new 7-day window", WeekKind);
+        // What the card's buttons do is what its text asks (the review of #797: c3530 told the person to pause flights and offered no
+        // button to): hold each flying flight the person can spare (the owner's hold, ground), and take no new flights (maintenance).
+        var why = string.Create(CultureInfo.InvariantCulture, $"the 7-day window is {week.UsedPercent:0} % spent");
+        var flying = state.Flights().Where(f => f.State == FlightState.Flying && f.OnHold is null).OrderBy(f => f.Code, StringComparer.Ordinal).ToList();
+        List<CardChoice> choices =
+        [
+            .. flying.Take(MaxHoldChoices).Select(f => new CardChoice { Label = $"Hold {f.Code}", Verb = Verbs.Ground, Target = Verbs.FlightTarget(f.Code), Args = [why] }),
+            new CardChoice { Label = "Take no new flights", Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.MaintenanceKey, "on"] },
+        ];
+        var more = flying.Count > MaxHoldChoices ? $" {flying.Count - MaxHoldChoices} more flights fly: hold them from their pages." : "";
         state.RaiseCard(CardBin.ForYou, WeekKind, Verbs.NodeTarget, $"The 7-day window is {week.UsedPercent:0} % spent; it resets {resets.ToLocalTime():ddd HH:mm}",
-            $"The node still starts sessions of its own (the limit for the week is {weekLimit:0} %, and it only rings); the 5-hour limit is what holds a start. Pause flights by hand if the week should last.");
+            $"The limit for the week is {weekLimit:0} %, and it only rings: the node still starts sessions of its own, and the 5-hour limit is what holds a start.{more}",
+            choices,
+            summary: "Nothing stops by itself: hold the flights you can spare, or take no new ones, if the week should last.");
     }
+
+    /// <summary>How many flying flights the 7-day card offers to hold, each its own button; the rest are held from their pages.</summary>
+    internal const int MaxHoldChoices = 3;
 }
 
-/// <summary>A start held by the 5-hour window: why, in words, and when the window resets.</summary>
+/// <summary>A start held by the 5-hour window, the 7-day pace or an outage of turns: why, in words, and when it resets (an outage's start).</summary>
 public sealed record StartHeld(string Say, DateTimeOffset Resets);

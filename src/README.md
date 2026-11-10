@@ -88,11 +88,46 @@ curl --unix-socket <path> http://localhost/api/v1/node
   `journal.jsonl` (each change after it, appended and flushed; folded into a new snapshot every 4096), and
   `blackbox.jsonl` (one line per command: when, who, verb, target, and what became of it; never compacted). A restart,
   a crash included, carries on with the same stream, the same numbers and every record.
+- **A start that cannot read the store does not stop the node.** Each compaction first keeps the snapshot and the journal as
+  `snapshot.json.bak-<seq>` and `journal.jsonl.bak-<seq>` (the last 3 of each): together the state as of `<seq>`. When
+  loading `store.json`, `snapshot.json` and `journal.jsonl`, or replaying them into the node's state, fails for any reason
+  but one (a store written by a newer node is still refused, with nothing moved, and the node exits with its message), the
+  node moves those three files into `store/unreadable-<UTC stamp>/` (nothing is deleted, and they are there byte for
+  byte), starts from the newest backup pair that loads (the older ones next, an empty store last; a pair that does not
+  load goes into the same folder), and rings one Ring card of kind `store`. The card, and one line in `logs/node.log` and
+  `node-start.log`, name the folder, the backup it started from, what was lost (the seqs after that backup) and the error.
+  The backup is copied, not consumed, and the restored state gets a stream of its own, so a client that held a lost
+  number takes a snapshot. `decisions.jsonl` is not moved: a line of it the build cannot read still stops the start. A
+  store nothing can start from is put back as it was found, and the node stops with the first error.
 - **Logs:** `logs/gui.log` (pilot-gui) and `logs/node.log` (pilot-node) in the pilot2 folder, a timestamp on each line,
   each rolled to `<name>.1.log` at 4 MB (one old file is kept). Neither writes to stderr; only a catastrophic error the
   log cannot take (the log cannot be opened, or the process dies before it can write) goes there. `pilot logs [gui|node]
   [--tail N]` prints the last 50 lines (or N, taking the rest from the rolled file when the current one is short) of
   each, under a heading with its path; it reads the files locally and needs no node.
+
+### Stored records
+
+The store outlives the build that wrote it, so a member added to a stored record is nullable or defaulted (PILOT.md has
+the rule). The reader sets every init property from the file, a missing one to null whatever its initialiser says, and
+writing that row back is refused (`RespectNullableAnnotations`); that is how beta 1718 stopped every node it reached.
+
+- **The fixtures** are a folder per release under `src/Pilot.Node.Tests/Fixtures/Store/<version>/`, a store written by
+  that release's own code. `StoreCompatibilityTests` loads each, replays it into `NodeState`, writes a fresh snapshot,
+  starts a second time, and fails naming `Type.Member` for any member null where its type forbids it. Older folders stay
+  while a node may still hold such a store.
+- **Refreshing them:** `release.yml` runs the writer (`StoreFixtureWriterTests`, skipped unless `PILOT_WRITE_STORE_FIXTURE`
+  names a folder) with each release's code and attaches `store-fixture-<version>.zip` to the GitHub release. The PR that
+  adds or changes a stored member downloads the latest release's zip (`gh release download v<version> --pattern
+  "store-fixture-*.zip"`) and unzips it into `Fixtures/Store/`, so the test reads what the old code stored, never what the
+  PR's own branch writes.
+- **By hand** (a release before the zip existed, or a beta): a detached worktree of that release's commit, the writer
+  (`StoreFixtureWriter.cs`) copied in if it predates it, then `PILOT_WRITE_STORE_FIXTURE=<folder>
+  PILOT_STORE_FIXTURE_VERSION=<version>` with `dotnet test src/Pilot.Node.Tests -c Release --filter
+  FullyQualifiedName~StoreFixtureWriterTests`. `2.1.1-beta.1711` was written so.
+- **A contract bump** (`FileJournal.StoreContract` raised) cannot take its fixture from a release, since none carries the
+  new contract yet, and `TheStoreContractIsNoNewerThanTheNewestFixture` fails until one is there. So the bumping PR writes
+  one by hand from its own commit, in a folder named `<next version>-contract<n>`; the older release folders keep checking
+  that the stores already out there are still read, and the next release's zip replaces the hand-written one.
 
 ## Install and update
 
@@ -155,6 +190,19 @@ resume their stream, workers, the watchtower and jobs keep running. A GUI or TUI
 binary until it is reopened. At every start the node sweeps each aside it finds (`~old`, `~old<n>` of older installs,
 `~old-<n>`), deleting those nothing holds any more and leaving the held ones for the start after.
 
+**Going back** (`UpdateRollback`). An update to a version that cannot start does not stop the node for good. Before the
+swap an install keeps the release it replaces, the files its `VERSION` marker lists with the marker, in `previous/` beside
+the binaries (the sweep leaves it alone, and the next install replaces it), and writes `update.json` in the data folder:
+from, to and the failed starts so far. A build of one's own has no marker, so nothing is kept and it is never rolled back.
+The new node counts each start of the `to` version before it builds the host, and deletes the record once the host has
+started with the store read. A start that fails with an exception during that trial starts the node once more; the second
+failed start in a row, or a start that finds two counted (a crash nothing caught), puts `previous/` back with the same
+all-or-nothing swap, starts that node and exits, and the failing release's files are replaced. A store a newer node
+wrote is not the new version's fault and rolls nothing back. The restored node rings one card, *pilot 2.0.13 did not start
+twice; back on 2.0.12*, with the last error, and auto-update (and `ask`) does not offer that version again; a newer
+release, or `pilot update` by hand, still installs. If `previous/` cannot be written the install is refused, since it
+would have no way back.
+
 The update code (`Pilot.Node/Updates`: `ReleaseFeed`, `ReleaseInstall`, `UpdatePolicy`) holds no pilot type: it began
 as a copy of YtPlayer's self-update and is meant to move to SharpAstro.AppShell once a second app updates itself the
 same way. `NodeUpdater` is pilot's use of it.
@@ -181,6 +229,8 @@ prefix, `--machine` or `PILOT_MACHINE`, else from its name).
 | `connect flight/<code> <other>` | The flight holds until the other has landed (a cycle is refused). The other is a flight of this node, or else one a reachable peer flies (found by its code on the repo's GitHub remote): the flight is then held on a `PeerConnection` (the code and the node, kept over a restart), which the flight page, `status` and the digest name (`waiting for PIL294 on DE1`). The node asks each peer on a cycle (every 60 s, `PeerConnectionWatch`) what it flies: the wait ends, and the flight flies if nothing else holds it, when that node says the flight landed or its PR merged (as GitHub says); a flight folded into another there is waited for as that one. A node that cannot be asked, or lists no such flight, keeps the flight held and the reason is on the wait (`PIL294 on DE1 (DE1 could not be asked: …)`). A flight that has landed already is nothing to wait for; a peer's flight that waits for this one is refused as a cycle; no node listing the flight refuses the connect (naming any node that could not be asked), except when an overlap answer named the node, where the connect holds with the reason shown. |
 | `sync-repos node` | `git fetch -p --all` in each tracked repo, then a fast-forward-only merge of `origin/<default>` into its main checkout. Never a merge commit or a pull, and a checkout that is dirty, on another branch, diverged from origin or without an origin default is left alone and the outcome says why; a failed fetch or fast-forward is that repo's `failed`. Each git call is cut off after 2 minutes. The result's `made` is one `name<TAB>updated\|current\|skipped\|failed<TAB>detail` line per repo, and the repo status is read afresh after it. The controller's: refused from the watchtower, and from the LAN without a grant. |
 | `create-issue repo/<path> <title> [body…]` | A new issue through `gh issue create`; the result's `made` is its number. The controller's, as `sync-repos` is. |
+| `ground flight/<code> <why…>` | The owner's hold (#771; `pilot flight ground`, not `flight hold`, which takes a review's holding pattern): records who, why and when on the flight (`FlightRow.OnHold`), puts the label `pilot: hold` on its issue so every node sees it from GitHub, and lets go of a merge the flight armed. While it stands the node starts nothing for the flight and takes no outward step (no leg, worker, planner, validator, reviewer, fixer, go-around, base merge, push, PR open or merge), from the autopilot, the sweeps, the watchtower or a card's button alike; a running worker finishes its turn (its finish is let through) and nothing follows it (the leg is recorded done, the base is not merged into the plane, nothing is pushed and GitHub's auto-merge is not touched; the release's next sweep brings the base in, pushes and starts the review), but a reviewer or planner already running is refused its report, so its review or plan is run again after the release (its tokens are spent twice). A hold read from the label on GitHub (put from another node, by hand, or while this node was down) means the same: the repo sweep, the start of a leg, plan, validation or review, and a PR open or merge read it, and the merge the flight armed is let go of just as `ground` does. The leg watch leaves it alone too (no restart of a session that took no first turn, no nudge of an idle worker, no resume after a usage limit, no wake when a wait ends), and takes each stall up afresh once it is released. Needs a why; a repeat updates it. Shown as `on hold by <who>: <why>` (`the owner` when it was held from the CLI or the GUI; for a label read from GitHub, who pilot's newest hold comment since the last release names, or `the owner` with no such comment: a hold comment older than a `pilot: off hold` one is spent) ahead of every other stage in `status`, the summary, the digest, the watchtower's brief (which leaves a held flight alone) and the GUI, where the flight's state reads `on hold` (in the held colour, not `flying`) and the row and page offer **Release** (the page says the hold and offers no Plan it, even with no legs); a held flight is counted as on hold and not as flying, once, by one helper (`FlightCounts`) that the Flights header (`3 flights · 1 flying · 2 on hold`), Home, the Fleet line and the digest all read; a flight not held offers **Hold**, asking why. A card about a held flight says so and keeps its choices, which the hold refuses with its words; the release takes the note off the card. |
+| `unground flight/<code> [why…]` | Releases the hold, removes the label, and the flight takes its next due step. |
 | `land flight/<code>` | Its work is in: the worktree goes when clean (never with changes not committed, nor with a commit on no remote and not in its base), the branch and code stay, and flights waiting for it are cleared. |
 
 **Trackers (#254).** A flight's work item is a GitHub issue or a Shortcut story, and the flight records which. The code
@@ -361,13 +411,19 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   a review round starts ready, as the review runs on it; the merge card's merge still refuses a moved head.
 - A passed PR whose checks then fail is taken as changes, once a head: the PR goes back to draft, the merge card
   closes, and the ring, "fails its checks", offers **Fix the failing checks**, told to read the failed checks and make them pass on every runner.
-- A PR that conflicts with its base goes to the **watchtower**, not to a fresh worker. The node's update is
-  `git fetch` + `git merge --no-edit origin/<base>` in the plane, aborted with `git merge --abort` when it conflicts. A Ring `pr-conflicts`
-  card (once a head) names the conflict and the plane and carries the brief the watchtower follows (`LegCommander.UpdateInstruction`, the
-  watchtower's "Getting reviewed work in"): merge the base in there, resolve every file so both sides' work stays, rerun the leg's check
-  and push plain, then `pilot flight review <code>`. The card's **Resolve the conflict** choice (a go-around of the last leg on its work as
-  it stands) is the watchtower's only when it finds the conflict is real work (two designs, a goal to drop); no leg goes round for a conflict
-  by itself, and the review stays as it was.
+- A PR that conflicts with its base is the **node's own work, said to no one**: no card of any kind, no ring, no summary line. The node's
+  update is `git fetch` + `git merge --no-edit origin/<base>` in the plane, aborted with `git merge --abort` when it conflicts, and then
+  `LegCommander.ResolveConflictAsync` (one entry point for the PR sweep, a queue drop, the merge card, a PR recheck, the merge command and a
+  PR open) puts it to a worker, once for each head of the base. A leg flying on the plane with a live worker is **told** to merge the base in
+  and nothing else starts; with none flying, the last leg is **sent round** by the node. Either way the worker gets the conflict brief
+  (`LegCommander.ConflictBrief`): the conflicting files (a test merge, `git merge-tree`), the merge base, what each side added in each file, the
+  base's commits that touch it (`git log --oneline <merge-base>..<base> -- <file>`), and the rule: `git merge --no-edit origin/<base>`, keep both
+  sides' work, on a version pin take the higher, rerun the check, push plain, never `--force`. A conflict round is not counted against the
+  review go-around cap and is not held by the review loop, for a flight with a PR or without, but it does count toward the overall
+  `max-go-arounds` cap (5 by default), so a base that keeps moving ends at the go-around-cap card; a passed review is turned to changes as for any
+  done leg sent round. A worker that fails is followed at once by the next rung of the escalation, and only the last rung's failure reaches the person
+  (one decision card); a worker that stops otherwise is the leg-failed card's to say. When no worker could be put on the conflict at all, a sweep
+  writes why on the node's log and rings no one.
 - **How a flight's branch is brought up to date** (`BringUpToDateAsync`, before every push and before the merge queue) is always a merge,
   in every repo, whatever its merge queue or the node's merge method: `git fetch`, `git merge --no-edit origin/<base>`, a plain push. There is
   no rebase way and no `UpdateWay`; a repaired base (a base that is no branch on the remote) is the remote's default merged in, not rebased onto.
@@ -516,8 +572,14 @@ A PR pilot did not make, in a repo it may not fly, is reviewed from its link (#1
   the report and every finding, the repo's CI build and test (`-c Release` for a SharpAstro repo), and to merge
   `origin/<base>` in rather than rebase, push without force, comment on the PR once with each finding and its fix, and
   end its turn. On anyone else's PR a For-you `pr-fix-offer` card has a **Fix it** choice (`fix-pr pr/<owner>/<repo>#<n>`)
-  that starts the same fixer. A finding the reviewer starts with `design:` is a question for the author: it rings a
-  `pr-review-design` card and starts no fixer. An untracked repo gets nothing. One fixer per PR, never a second, and the
+  that starts the same fixer. A finding the reviewer starts with `design:` is a question for the author with its options
+  listed, each saying what criterion it `misses:` (the PR's issue ACs, the PR description, the repo docs the PR touches).
+  When exactly one option reaches the criteria the node decides it (a `DecisionByKinds.Node` decision, mirrored by
+  `DesignDecisionMirror`, recorded and posted) and the fixer starts or the last leg goes round, as for an answered
+  question. It rings a `pr-review-design` card, naming the criterion each option misses, only when no option reaches them,
+  two reach them and differ in what the owner gets, or the question changes the criteria. An open card clears itself,
+  closing with a Handled `DesignSettledKind` notice, when a later review settles the question, the head no longer asks it,
+  or a fixer, the watchtower or the PR's conversation answers it. An untracked repo gets nothing. One fixer per PR, never a second, and the
   review ending takes neither the fixer nor its worktree (a fresh review of the PR carries them on).
   **Rounds.** Each sweep looks at a PR a fixer is on. A head past the reviewed one means it pushed: the fixer is stopped,
   its worktree removed (one held open is a card, tried again) and one fresh review starts at the new head, carrying
@@ -700,7 +762,7 @@ pilot say-all <text…> [--all] [--role worker|planner|reviewer|pilot|adHoc|watc
 pilot compact <session> [focus…]               # an idle background session's /compact, as its next turn (see Compaction)
 pilot note <text…>
 pilot summary [<code>] [--fresh] [--fleet]     # the kept summary (Needs you, Where it is) with its age, tokens and cost; made when none or --fresh (see The summary)
-pilot summarise [<code>]                       # one Haiku call now over the flights in play (or one flight); keeps and prints the answer
+pilot summarise [<code>]                       # asks the watchtower now for a new summary of the flights in play (or one flight), one summary call only when it is down; keeps and prints the answer
 pilot review-cost [--since <date>] [--until <date>] [--repo <repo>]   # per landed flight: its reviewer sessions (round, model, head) and their tokens, with totals and an average; pilot-node review-cost reads the data folder with no node
 pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
 pilot node restart [why…]                      # the node restarts in place: its successor starts, jobs carry on and are counted in the answer
@@ -723,11 +785,21 @@ when its node is not on the default socket. Exit codes: 0 done, 1 refused by the
 
 `pilot summary` answers "where are we" in two sections: `## Needs you` (what stays stuck unless the person acts, or the
 word *Nothing*) and `## Where it is`. The node makes it from what it holds, as plain records of each flight (legs with
-state, checklist and go-arounds, its PR and review, its open cards, the sessions on it), with one Haiku call (no tools,
-no MCP, no saved session; never run by itself), and keeps the latest per scope with when it was made, its tokens and its
-cost, on the feed for every client. So `pilot summary` costs nothing when a summary is kept: it prints that one and
-says its age (`made 5 min ago (2026-10-28 09:00 UTC) · 1,234 tokens · $0.0021`), and it makes one, as `pilot summarise`
-does, when there is none yet or `--fresh` asks. `pilot summary <code>` is the same for one flight.
+state, checklist and go-arounds, its PR and review, its open cards, the sessions on it) and keeps the latest per scope
+with when it was made, its tokens and its cost, on the feed for every client.
+
+**How it is kept current.** While a client is attached (a window, a TUI, a stream), the node asks the watchtower to
+remake the fleet summary after the fleet changes, and keeps the answer; the watchtower's work is part of its own
+session, so it adds no summary call. With no client attached nothing is asked and nothing is spent. A person can ask at
+once: the **Refresh** button on the Summary panel and `pilot summarise` both ask the watchtower now and replace the kept
+summary for everyone. Only when the watchtower is down does the node make it itself, with one call of the summary model
+(sonnet unless `set node summary-model` says otherwise; no tools, no MCP, no saved session); the row then says why it is
+not following (`SummaryRow.NotFollowing`), the panel reads `from 09:12; the watchtower is down`, and Refresh names the
+price of the press. The panel otherwise reads `made 3 min ago · follows changes` and shows no cost.
+
+So `pilot summary` costs nothing when a summary is kept: it prints that one and says its age (`made 5 min ago
+(2026-10-28 09:00 UTC) · 1,234 tokens · $0.0021`), and it makes one, as `pilot summarise` does, when there is none yet
+or `--fresh` asks. `pilot summary <code>` is the same for one flight.
 
 `--fleet` covers every node this machine holds a grant for (`pilot connect`) as well as this one: the node asks each of
 them for its records (`records node`, a read that makes no call and keeps nothing), puts each node's under its own
@@ -778,6 +850,11 @@ target with other flags, the same verb in the repo, then 1 GB. A run whose media
 once; a short spike never does. `--job-memory <GB>` (0 by default) is a floor: a second job waits for its kind's measured need, or this when that is less. The rest wait in
 the order they came, each saying what it needs (median and peak) and the memory free now. A job's log is kept in the node's data folder
 (`jobs/<id>.log`), and its end is served for the GUI (`GET /api/v1/jobs/<id>/log`, a grant's on the LAN).
+
+Sessions are admitted the same way. Reviews and PR fixers wait in a queue: at most `review-limit` of them run on a node at once
+(2 by default, 0 for no limit, whatever their model), since each builds and tests in its own worktree, and a start past it waits
+for a slot, saying which ones run. And no session starts while the machine's free memory is under 1.5 GB: a claude session and its
+build take 0.5 to 1 GB, so a starved machine takes on no other one until memory comes back (#912).
 
 A job runs **detached** from the node (its own session via `setsid`, and under a Linux systemd unit also its own transient user scope, `systemd-run --user --scope`, outside the node unit's cgroup so the unit's default `KillMode=control-group` does not kill it when the node exits; or on Windows its own hidden console outside the
 node's job object, in a named job object of its own, inheriting only the log and NUL, so no pipe the node holds): its
@@ -954,6 +1031,25 @@ beside its choices (`CardsView.OnChatAbout`; dead while a press of the card is w
 closed card and from a watch-only card of a node with no grant); the flight page's merge block has the same button for its
 card. It shows the Chat page with the card quoted above the box (see below) and the keyboard in the box.
 
+A choice the node would refuse right now (`ChoiceStatus.Unavailable`, #792: its flight is held, its session is gone) is drawn dead,
+the same size as the live button and answering nothing, with the node's reason (`TIA1 is held: waiting for TIA0`) beside it, or under
+it when the label is long enough to take a row of its own (`CardsView.UnavailableChoice`); the card's other choices and Dismiss stay
+as they were.
+
+A card whose answer is underway (`CardRow.Answering`, #792) says so where its buttons are: one line, `Merge: pressed by cli at 20:35,
+waiting on TIA1's PR #7 being merged` (local time; no `waiting on` part when the node names nothing), the same wording
+`CardAnswering.Line` gives `pilot cards` (plain and Markdown, under the card's words) and the TUI. Every node-bound button of
+that card is dead while it is set: both choices and Dismiss (and a grant's Connect) draw as words with no hit, the choice
+pressed reading `Merge …`. A card's refusal is not drawn beside that line. A kept refusal (what the node said to the last
+press) is dropped as the panel is built when the stream shows the card **closed** (gone from the open cards, or held closed
+under the pointer) or **answering**, and when a closed card comes back open if the refusal had been drawn, so an open card never
+keeps a "was refused" about a state it has left. A refusal that lands after the change (the node's reply beating the stream: a
+choice that closed its card first and was refused, or this press's own answer ending refused) is kept and drawn: it is the
+outcome of the press that made the change. An ok answer is never a refusal: a press that joined an answer (`already on its way,
+started by cli at 20:35`, `already answered by cli at 20:35`, recognised by `CardAnswering.IsJoined`) clears an older refusal
+and is logged by the GUI and TUI as `joined: ...`, not `done`; `pilot answer` (and so the MCP `answer` tool) prints the same
+`joined: ...` line under its `ok:`.
+
 A node the window cannot reach (its stream is down: the same `Connected` the Fleet page shows) leaves the panel with its
 cards, which may be long answered and cannot be commanded now (#325). In their place, at the foot of **For you**, one dim
 line per such node reads `DE1 is unreachable since 10:31 · 3 ringing, 2 for you held` (the time is today's clock, or the
@@ -1077,7 +1173,7 @@ never from an earlier watchtower's conversation, and the node says every Ring an
 | nothing to watch and no UI connected | starts none; one already running is stopped once it has been idle 15 min with no flight, job or ring and no UI (GUI or TUI, local or over the LAN; a CLI or MCP call is no UI) connected, counted from when the last UI left or the last flight landed (a Handled line, and a `stopped by the watchtower: quiet: ...` reason in the session ledger). |
 | a flight is in the air, or on a node with no flight a UI is connected | keeps it live, never stopped for quiet, so a message to it is relayed into the live process, not resumed; a UI connecting or a flight in the air starts one when none runs, with no card to wait for (resumed in place only when cards are untold and it is warm); a live idle watchtower is relayed to directly over its intercom, falling back to the resume when there is no live endpoint, and a flight taking off or a job or ring starts one briefed from the state |
 | it is running on a brief that has since changed (a node restarted after an update, or the node's own brief settings changed) | stops it and starts a fresh one before saying it anything, with a Handled line (`its brief changed since the node started it`). A say resumes the same session, which keeps the brief it had, so only a fresh start carries the new one. The node records a fingerprint of the brief's fixed part (its template and rules, not the flights and cards it lists) in `watchtower-brief` in its data folder when it starts a watchtower, so a restarted node still compares; one with no record is taken as started by an older node |
-| idle 50 min with more than 100k of context, or past its share of the window (`watchtower-compact-share`, 60 by default), or after a long chat (`watchtower-chat-messages`, 40 by default) | compacts it (see Compaction), and replaces it by a fresh one when it is still past its share after the compaction; the last compaction shows on its session row |
+| idle 50 min with more than 100k of context, or past its share of the window (`watchtower-compact-share`, 60 by default), or after a long chat (`watchtower-chat-messages`, 40 by default) | compacts it (see Compaction), and replaces it by a fresh one when it is still past its share once the compaction has settled (5 min: the context the node reads is the last turn's, so it is the old size for a while after `/compact`). It is replaced once only: still past its share after that, a `watchtower-still-full` For-you card says so, with what the replacement came to, and the node leaves it alone until it reads under its share, when the card closes. The last compaction shows on its session row |
 | stopped by the usage limit | a For-you card until the reset, then resumes it |
 | it cannot be started | rings with why: Claude Code starts no background session in a folder never trusted, so run `claude` in that folder once and accept the prompt |
 
@@ -1167,7 +1263,7 @@ idle until the job wakes it). Each one idle 50 min with more than 100k of contex
 still warm, and one past its share of the window (`watchtower-compact-share`, 60 by default) as soon as it is idle: `compact session/<id>`, which resumes it with Claude
 Code's `/compact` as its next turn, its focus what the summary keeps (for a worker, its task and the job it waits on).
 Below 100k a cold read costs little more than the summary, and a fresh session starts near 50k anyway. A session is
-compacted once per stretch of idleness, not again until it has answered something; one mid-turn is refused, never sent
+compacted once per stretch of idleness, not again until it has answered something, and is left to settle for 5 min after a compaction or a replacement (a compaction is itself an answer, and its reading is the old size until a fresh turn; SE1, 2026-11-10, was compacted and replaced every 30 s for four minutes on that old reading). A worker compacted for being past its share and still past it once settled is said once on a Handled line and not compacted for its size again until it reads under its share; one mid-turn is refused, never sent
 `/compact` as words, and an interactive session is never touched. Each compaction is a Handled line, and one refused
 is tried again in 10 min. This replaced the watchtower's keep-warm round every 50 min: finding stalls is the leg watch's.
 `pilot compact <session> [focus…]` does it by hand.
@@ -1493,6 +1589,16 @@ file that is not valid JSON (or whose `allow` is not a list) is refused and left
 only lets Claude Code run it: the node still refuses a caller without the role, and merges and a person's cards stay guarded by
 the node and the merge guard.
 
+The optional **User skills** check (`setup node user-skills`) says whether the Claude Code skills the node carries are
+current in the profile's `skills` folder (`~/.claude/skills`, or under `CLAUDE_CONFIG_DIR`). They live in
+`src/Pilot.Node/UserSkills/<name>/`, embedded in the binary (`UserSkills`), today one: `merge-queue`, which reads a PR's place
+in a GitHub merge queue (something `gh pr view --json` cannot see) and says what to do around the merge guard. `pilot-node
+setup` installs them, and so does every node start, so a release that changes a skill reaches the machine with its update.
+Each folder pilot writes carries `.pilot-installed`, the hash of what it wrote: a folder without it is someone else's, and
+one whose files no longer match it was changed by hand; both are kept and named by the check, never overwritten. The
+setting **user-skills** (`set node user-skills on|off`, on by default) turns it off, which also takes out the skills pilot
+wrote and nobody changed.
+
 One more optional check is **Guard hooks** (`setup node guard-hooks`): it says whether three generic guard hooks
 are in `~/.claude/settings.json`: `big_read_guard.sh` (refuses a whole-file `Read` and a bare `cat`),
 `fat_result_notice.sh` (says a tool result was unusually large) and `pgrep_self_match_guard.sh` (refuses an inline
@@ -1611,6 +1717,38 @@ command, and closes the card (opening it again if the command is refused). `dism
 nothing done. The GUI shows open cards down the right, with their buttons, when there are any; `pilot cards`,
 `pilot answer` and `pilot dismiss` do the same from a terminal.
 
+**An answer underway is on the card** (#792). A choice that takes time (a merge or a re-run of checks, a go-around, a move again, the
+conflict card's Resolve the conflict) is taken before it runs: the card stays open and carries `CardRow.Answering`, the choice's label,
+who pressed it, when, and what it waits on (`TIA1 is being sent round`, when the flight has a call out, else none). It is one
+`cardChanged` event, so every client can show "pressed by cli at 20:35, waiting on ..." where the buttons were. A second press of the
+same choice while it is underway joins it: the answer is ok and says `already on its way, started by <who> at <HH:mm>`, and nothing
+runs twice. Another choice on the card is refused naming the answer underway, and a dismiss waits for it. The mark ends with the
+answer: the card closes with the choice as its outcome, or, when the choice is refused or cut off (the node stopping mid-merge), the mark
+is cleared and the buttons are back; a card whose merge is armed or queued stays open with its own status and no mark. An answer
+underway for longer than the leg commander's stuck limit (10 minutes) no longer shields the card, so a hung one rings as before, and a
+node that restarts does not bring a mark back. A choice that closes its card first (a landing) answers a repeat of itself in the
+next few minutes with ok and `already answered by <who> at <HH:mm>`, not "closed already"; any other choice on a closed card is
+refused as before. The field is optional, so it does not raise `NodeWire.Version`: an older client ignores it and keeps its buttons.
+The GUI's cards panel, the TUI and `pilot cards` show the mark (see the cards panel under the GUI above): the line, dead buttons, and
+no refusal left on a card that moved on.
+
+**A choice the node would refuse is marked before it is pressed** (#792). A choice has a `Status` where the node can tell how ready it
+is (`passing`, `pending`, `failing`, `conflicting`, `armed`, `queued`, `behind`, `blocked`, `changes-requested`, `waits-for-legs`,
+`merging`, `merged`), and one more: `unavailable` (`ChoiceStatus.Unavailable`), with the reason in the choice's `Note`. It is set on an open card's choice
+that needs its flight flying (a go-around, a merge, a re-run of its checks, a leg's start) while the flight is **held**
+(`PIL501 is held: waiting for PIL500`, or just `PIL501 is held` when no wait is named), and on one that names a session the node
+**no longer has** (`session a1b2c3d4 no longer exists`; an ended session that is still listed is not gone, a say to it resumes it).
+One rule, `ChoiceAvailability`, both marks the choice and refuses its answer. `NodeState` applies it on every write of a card's choices
+(a card raised, turned, or given new choices, so the merge's check refresh never offers a held flight's Merge again) and sweeps the
+open cards where the fact changes: a flight's hold changing (`PutFlight`, `UpdateFlight`) and a session row added or removed. There is no
+polling, a card already right publishes nothing, and a flight that flies again (or a session that is back) clears the mark; a merge that is
+a chip (`ChoiceStatus.IsChip`, the one list the node and the card view share: armed, queued, merging, merged, blocked, changes requested
+or waiting for its legs) keeps its own status, which says more. A mark that covered a `passing` or `pending` Merge clears to no status,
+and the next look at the PR writes its checks back. An **answer** of such a choice is refused before anything
+is taken, closed or run, reading the flight and the sessions as they are then: `Merge was refused: PIL501 is held: waiting for PIL500`,
+the card staying open, so a client that pressed before it saw the mark runs nothing. The status is optional on the wire like the rest: an
+older client draws the button as it did and is refused with the reason.
+
 ## Hooks
 
 Claude Code's hooks tell the node the moment a session changes, where the agents listing is read every few seconds:
@@ -1667,9 +1805,40 @@ with `<machine>-` (case-insensitive) is denied, the reason giving the prefixed n
 resolved as the node does, without asking it: the `machine` it saved in `settings.json` of the default data folder, else
 `PILOT_MACHINE`, else the machine name's; a `claude` call without `--bg` or a name passes. Every brief (worker, validator, planner,
 reviewer, PR reviewer, watchtower) tells the session the same rule, with the node's machine code written out. Everything else, a push of a
-flight branch included, passes untouched. Like `pilot-node hook` it
+flight branch included, passes untouched.
+
+**The test guard** is a second rule of the same handler (one entry installed and checked, not two; `TestGuard`). In a session the node
+started (worker, validator, planner, reviewer, fixer, watchtower) it refuses a direct `dotnet test` and a `dotnet build` of a `.sln`,
+`.slnx` or `*Tests*.csproj`, pointing at `pilot run -- <command>` or the leg's check; `dotnet --version`, `--list-sdks`, `--info`, `restore`,
+a `dotnet build` of anything else and anything under `pilot run --` pass, and a person's own session is untouched. The command line is
+read exactly as the merge rule reads it (wrappers, `cd x &&`, `bash -c`, `pwsh -Command`, PowerShell quoting). The hook is its own
+process and cannot ask the node who a session is, so the node marks its sessions two ways and either is enough: `PILOT_SESSION=<role>` on
+the `claude` call that starts or resumes it (`ClaudeCli.StartInfo`), and its job id in `node-sessions.json` in the data folder
+(`SessionRoster`), because `claude --bg` hands the session to a daemon whose hooks may not see that call's environment. The roster is
+read from the default data folder, as the merge rule reads the machine's prefix. Like `pilot-node hook` it
 is fail-open (input it cannot read passes, exit 0 always) and never calls the node; the node's own merge
 (`pilot flight merge` runs `gh pr merge` itself) is not a session's tool call, so the hook never sees it.
+
+**The stray sweep** (`StraySweep`, pilot #909) is what catches what the guard did not stop: a process of the node's own tree that
+outlived what started it (a job's `testhost`, a shell that never ended; one such fixture spun a core for four days). Every 5 minutes
+(a `PeriodicTimer` on the node's `TimeProvider`, first look a minute after start) it reads the OS process table once through
+`IProcessTable` and hands `StrayFinder` the jobs (their wrapper's pid and start, time limit, and the descendants `JobTree` saw below
+them, which it keeps after the job ends while any lives) and the sessions (the tracker's live pids; ended rows by their plane and end
+time, a live session before an ended one in the same plane). The finder names a stray when its owner ended more than 2 minutes ago,
+when a running job is over its time limit by more than a minute, or when it is busy (0.5 cores or more over 30 s or longer) under a
+session that has been idle for 10 minutes; a process under a session the node did not launch (a person's own) is never one. Each stray
+gets one For you card (`stray-process`, subject `process:<pid>@<start>`) naming the process (pid, name, command line, start, age, CPU
+time), its owner, why, and the exact kill command for the OS (`Stop-Process -Id <pid> -Force`, `kill -9 <pid>`). A dismissal holds for the same
+pid and start (not for a later process that reuses the pid), and the card closes by itself once the process is gone. The node ends a stray
+itself, through `IProcessTable.Kill`, only when it started the owner, the owner has ended, the process descends from the owner (a process
+that only works in the owner's plane or names it on its command line may be a person's editor, so it is named and left) and the start still
+matches; it tries once, says so on a Handled `stray-killed` card, and a process that survives is named again with "tried to end it and it is
+still here". Anything else is only named. The strays also ride on the machine row (`MachineRow.Strays`, optional, so `NodeWire.Version`
+stays), which `pilot strays` lists with each one's why, command line and kill command, and the Machine part of `pilot status` shows
+as a `strays` line with one line under it for each. The sweep remembers a session's last process (pid and start, the first start seen for
+that pid) in memory only, so that a leftover of a session that ended can be tied to it by the lost parent's pid; a pid whose start
+changes while the session lives is forgotten, and a session that ends across a node restart is tied only by its folder or command line,
+so it is named on a card and never ended: a safe limitation.
 
 A session the API stopped (its transcript's `apiError`, `usage_limit_reached` with when the limit resets) shows as
 **stopped** with why and when it can go on, hooks or not.

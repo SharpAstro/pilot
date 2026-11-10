@@ -41,8 +41,11 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
     /// <summary>How often a node on the beta channel looks: main moves far more often than releases are tagged.</summary>
     public TimeSpan BetaCheckEvery { get; init; } = TimeSpan.FromMinutes(15);
 
+    /// <summary>The folder this process runs from.</summary>
+    public static string DefaultInstallFolder { get; } = Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
+
     /// <summary>The folder the node runs from, which a release replaces.</summary>
-    public string InstallFolder { get; init; } = Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
+    public string InstallFolder { get; init; } = DefaultInstallFolder;
 
     public string Version { get; init; } = CurrentVersion;
 
@@ -60,15 +63,32 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
     // The version a card was last raised for, and the one an install last failed for.
     private string? _offered;
     private string? _failed;
+    // The version auto-update last declined to install again, so the log says it once.
+    private string? _declined;
 
     /// <summary>The release this folder is, when it is one; null for a build of one's own.</summary>
     public ReleaseBuild? Installed => ReleaseInstall.Installed(InstallFolder, Version);
+
+    /// <summary>The way back from an update that does not start, for this install, data folder and version.</summary>
+    private UpdateRollback Rollback => new(InstallFolder, options.DataFolder, Version);
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         if (Installed is not null && ReleaseInstall.CleanAside(InstallFolder) is > 0 and var left)
         {
             logger.LogInformation("update: {Left} file(s) a former release left aside are still in use; they go at a later start", left);
+        }
+        try
+        {
+            // A node that was put back on the last release says so once, with the error the new one died of.
+            if (Installed is not null && Rollback.Tell(state) is { } told)
+            {
+                logger.LogWarning("update: {Title}", told.Title);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "update: the card about the update that was rolled back could not be raised");
         }
         if (options.UpdatePolicy == UpdatePolicy.Off || Installed is null)
         {
@@ -106,6 +126,17 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
         {
             return;
         }
+        // A version that did not start twice here is not offered or installed again, under any policy; a newer one is, and
+        // update node install by hand still installs it (RunAsync does not come through here).
+        if (Rollback.IsRolledBack(latest.Version))
+        {
+            if (_declined != latest.Version)
+            {
+                _declined = latest.Version;
+                logger.LogInformation("update: pilot {Latest} did not start twice on this node and it went back to {Version}; it is not installed again, a newer release or pilot update node install does", latest.Version, Version);
+            }
+            return;
+        }
         if (options.UpdatePolicy == UpdatePolicy.Auto)
         {
             await InstallAsync(latest, "node", cancellationToken);
@@ -116,7 +147,7 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
             state.CloseCardsAbout(Verbs.NodeTarget, $"pilot {latest.Version} is out", Kind);
             state.RaiseCard(CardBin.ForYou, Kind, Verbs.NodeTarget, $"pilot {latest.Version} is out (this is {Version})",
                 $"The node installs it and restarts; flights, sessions and jobs carry on.",
-                [new CardChoice { Label = $"Install pilot {latest.Version} and restart the node", Verb = Verbs.Update, Target = Verbs.NodeTarget, Args = [UpdateArgs.Install] }],
+                [new CardChoice { Label = $"Install {latest.Version} and restart", Verb = Verbs.Update, Target = Verbs.NodeTarget, Args = [UpdateArgs.Install] }],
                 latest.Url);
         }
     }
@@ -167,8 +198,21 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
             {
                 throw new ReleaseInstallException($"the staged pilot-node did not start: {broken}");
             }
+            // The way back, before the swap: the release this folder is, kept whole in previous/, and the record the new node counts its
+            // starts in. A build of one's own has no release to keep: it is never rolled back, and no record of an older update stays.
+            var rollback = Rollback;
+            if (old is not null)
+            {
+                rollback.KeepPrevious(old);
+                rollback.Expect(release.Version);
+            }
+            else
+            {
+                rollback.Forget();
+            }
             if (ReleaseInstall.Swap(staging, staged, InstallFolder, old) is { } failed)
             {
+                rollback.Forget();
                 throw new ReleaseInstallException($"it could not go in: {failed}");
             }
             var node = Path.Combine(InstallFolder, Executable("pilot-node"));

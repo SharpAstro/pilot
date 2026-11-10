@@ -86,8 +86,63 @@ public sealed record CardRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? AttachmentExt { get; init; }
 
+    /// <summary>
+    /// The answer to this card that is underway (#792): which choice was pressed, by whom, when, and what it waits on. Set while an open
+    /// card's choice runs or waits its turn (a go-around queued behind other node work, a merge in its gh calls), so every client shows the
+    /// card as answered in progress instead of offering its buttons again, and a second press of the same choice joins it. Cleared when
+    /// the answer ends: the card closes with its outcome, or opens again when the answer is refused or cut off. Null when none is underway.
+    /// Optional, so it does not raise <see cref="NodeWire.Version"/>: an older client ignores it and keeps the buttons, and a press of one is joined all the same.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public CardAnswering? Answering { get; init; }
+
+    /// <summary>
+    /// What the card is about: the node remembers a person's dismissal by kind, subject and this key, so the next watch pass does not raise
+    /// the same cause again (#853). The raiser's key where its title carries a part that changes for the same cause (an age, a count), else
+    /// the title the card was raised with, fixed then, so a later rewording of the title (the brain's, PIL855) cannot move it. A card an
+    /// older node wrote has none, and its title is the key; an older client ignores it.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Cause { get; init; }
+
     /// <summary>How many characters of a sha the node and its clients show: the node's CommitRefs and the pages cut to this.</summary>
     public const int ShortShaLength = 9;
+}
+
+/// <summary>An answer to a card that has been taken and is not done yet (<see cref="CardRow.Answering"/>).</summary>
+public sealed record CardAnswering
+{
+    /// <summary>The label of the choice that was pressed: <c>Resolve the conflict</c>.</summary>
+    public required string Choice { get; init; }
+
+    /// <summary>Who pressed it: a client, a session's name, or <c>cli</c>.</summary>
+    public required string By { get; init; }
+
+    /// <summary>When the answer was taken.</summary>
+    public required DateTimeOffset At { get; init; }
+
+    /// <summary>What the answer waits on, in a few words (<c>flight PIL777 being sent round</c>), where the node can tell; null when it simply runs.</summary>
+    public string? Waiting { get; init; }
+
+    /// <summary>How the node starts the ok answer to a press of the choice that is already underway (<c>already on its way, started by cli at 20:35</c>).</summary>
+    public const string JoinedUnderway = "already on its way";
+
+    /// <summary>How the node starts the ok answer to a repeat of a choice that closed its card first (<c>already answered by cli at 20:35</c>).</summary>
+    public const string JoinedClosed = "already answered";
+
+    /// <summary>
+    /// Whether <paramref name="made"/>, the <c>Made</c> of an answer the node called ok, says the press joined an answer already
+    /// taken (<see cref="JoinedUnderway"/> or <see cref="JoinedClosed"/>) rather than running one: a client shows it as taken, never as refused.
+    /// </summary>
+    public static bool IsJoined(string? made) =>
+        made is not null && (made.StartsWith(JoinedUnderway, StringComparison.Ordinal) || made.StartsWith(JoinedClosed, StringComparison.Ordinal));
+
+    /// <summary>
+    /// The line a client puts where the card's buttons were: <c>Resolve the conflict: pressed by cli at 20:35, waiting on TIA1 being sent round</c>
+    /// (local time, no waiting part when <see cref="Waiting"/> is null or empty). One wording for the GUI, the TUI and <c>pilot cards</c>.
+    /// </summary>
+    public string Line() =>
+        $"{Choice}: pressed by {By} at {At.ToLocalTime().ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture)}{(Waiting is { Length: > 0 } waiting ? $", waiting on {waiting}" : "")}";
 }
 
 /// <summary>A card's button: what it says, and the command it runs.</summary>
@@ -118,6 +173,12 @@ public sealed record CardChoice
     /// what was typed after the choice (<c>pilot answer &lt;card&gt; &lt;choice&gt; --words ...</c>). Null for an ordinary button.
     /// </summary>
     public string? AsksFor { get; init; }
+
+    /// <summary>
+    /// The whole of what the label may cut (a design option's text and consequence, which the button's two lines cannot hold): a client
+    /// shows it as the button's hover, so a label ending in an ellipsis still carries its whole words. Null where the label is whole.
+    /// </summary>
+    public string? Hint { get; init; }
 }
 
 /// <summary>Kinds of card a client treats specially, matched by word (<see cref="CardRow.Kind"/>).</summary>
@@ -145,6 +206,12 @@ public static class CardKinds
     /// told either way (<see cref="CardRow.AskedBy"/>). Answering it is the person's alone.
     /// </summary>
     public const string AssistantAsk = "assistant-ask";
+
+    /// <summary>
+    /// The card of a permission prompt or a question the stream watchtower waits on (PIL855). Its detail is the whole tool input, drawn
+    /// whole: Allow from the card runs the whole call, so no line of it is cut.
+    /// </summary>
+    public const string WatchtowerAsk = "watchtower-ask";
 
     /// <summary>
     /// An edit of an idea that contradicts what GitHub has got since (<see cref="Verbs.EditIdea"/>): a For-you card naming the idea
@@ -223,6 +290,12 @@ public static class ChoiceStatus
     public const string ChangesRequested = "changes-requested";
 
     /// <summary>
+    /// The node's own wait: a leg of the flight (a review-notes leg making the review's fixes) is still to fly, and the merge is
+    /// refused until it lands; <see cref="CardChoice.Note"/> names the legs. Not a button, and not a failure: it ends by itself (#918).
+    /// </summary>
+    public const string WaitsForLegs = "waits-for-legs";
+
+    /// <summary>
     /// The node has taken the merge and is working on it: waiting its turn behind another flight of the repo, bringing the PR up to
     /// date, or waiting for its checks. <see cref="CardChoice.Note"/> says which. Not a button: a second press is answered as in progress.
     /// </summary>
@@ -230,6 +303,24 @@ public static class ChoiceStatus
 
     /// <summary>The PR merged: the card reads Merged for a few seconds, then goes.</summary>
     public const string Merged = "merged";
+
+    /// <summary>
+    /// The node would refuse this choice right now (#792): its flight is held (<c>PIL501 is held: waiting for PIL500</c>) or the session it
+    /// names is gone (<c>session a1b2c3d4 no longer exists</c>). <see cref="CardChoice.Note"/> says which. Not a button: a client draws
+    /// it dead with the note beside it, and the node refuses an answer of it with the same words (nothing pressed on a stale client runs).
+    /// The node clears the mark once the choice would run again. Optional on the wire like every status: an older client draws the button
+    /// as before and the press is refused with the reason.
+    /// </summary>
+    public const string Unavailable = "unavailable";
+
+    /// <summary>
+    /// The statuses a choice is not pressed for, which a truth of their own explains: it is waited on (armed, queued, merging, waiting for
+    /// its legs), blocked by something a press cannot move (a failed check, requested changes), or done (merged). A client draws it as a chip
+    /// in the button's size and place; the node keeps it over <see cref="Unavailable"/>, whose reason is not the more telling one. One list,
+    /// so the node and every client agree on what is a chip.
+    /// </summary>
+    public static bool IsChip(string? status) =>
+        status is Armed or Queued or Blocked or ChangesRequested or WaitsForLegs or Merged or Merging;
 }
 
 /// <summary>

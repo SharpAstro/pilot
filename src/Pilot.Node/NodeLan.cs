@@ -88,9 +88,9 @@ public sealed class NodeLan(NodeState state, NodeOptions options, TimeProvider t
         state.CloseCardsAbout(Verbs.NodeTarget, "a newer ask came", AskedKind);
         _sweep ??= time.CreateTimer(_ => Sweep(), null, SweepEvery, SweepEvery);
         state.RaiseCard(CardBin.Ring, AskedKind, Verbs.NodeTarget, $"{label} asks to fly flights on this node",
-            $"from the LAN; an Allow lets it run any command here as {label}/…, until revoked (pilot grants)",
+            $"It asks from the LAN. Allowing lets it run any command here as {label}/… until you revoke it (pilot grants); refusing turns it away.",
             [
-                new CardChoice { Label = $"Allow {label} to run commands here until revoked", Verb = Verbs.AnswerGrant, Target = Verbs.NodeTarget, Args = [invite.Id, "allow"] },
+                new CardChoice { Label = $"Allow {label} to run commands", Verb = Verbs.AnswerGrant, Target = Verbs.NodeTarget, Args = [invite.Id, "allow"] },
                 new CardChoice { Label = $"Refuse {label}", Verb = Verbs.AnswerGrant, Target = Verbs.NodeTarget, Args = [invite.Id, "deny"] },
             ]);
         return new GrantTicket { Id = invite.Id, Outcome = "pending" };

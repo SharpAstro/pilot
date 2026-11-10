@@ -137,7 +137,70 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         }
     }
 
+    private sealed class Mark
+    {
+        public DateTimeOffset? HandlerStarted;
+    }
+
+    // Times the command (PIL794): wait is the time before its handler started, run the handler's own time. A command queued
+    // behind a lock replies at once with a Later; its timing is written when that settles, its run then including the queue.
     private async Task<CommandResult> RunOnceAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var time = Clock;
+        var began = time.GetUtcNow();
+        var mark = new Mark();
+        // The command's own flow is the foreground of the node's process starts (ProcessGate): a git, gh or claude start made
+        // anywhere in what it awaits goes straight to Process.Start, never behind the background readers' starts. An explicit
+        // scope, not a bare flag: it is switched off when the command ends (a Later: when it settles), so a Task.Run or a
+        // fire-and-forget call that outlives the command finds it off and is background, instead of inheriting the command's
+        // priority for as long as it runs. Work started while the command still runs is handed off with ProcessGate.Run or
+        // ProcessGate.Background (the background readers and the advances a create or a receive starts off its reply).
+        var foreground = ProcessGate.Foreground();
+        CommandResult result;
+        try
+        {
+            result = await RunCoreAsync(command, cancellationToken, mark);
+        }
+        catch
+        {
+            foreground.Dispose();
+            Note(command, began, mark.HandlerStarted, time.GetUtcNow());
+            throw;
+        }
+        if (result.Later is { } later)
+        {
+            _ = NoteWhenSettledAsync(command, began, time.GetUtcNow(), later, foreground);
+        }
+        else
+        {
+            foreground.Dispose();
+            Note(command, began, mark.HandlerStarted, time.GetUtcNow());
+        }
+        return result;
+    }
+
+    private void Note(CommandRequest command, DateTimeOffset began, DateTimeOffset? handlerStarted, DateTimeOffset ended)
+    {
+        var started = handlerStarted ?? ended;
+        services.GetService<CommandTimings>()?.Record(command.Verb, command.Target, command.Who, started - began, ended - started);
+    }
+
+    // The queued command is still the person's: its flow keeps the foreground mark until it settles, then the scope ends.
+    private async Task NoteWhenSettledAsync(CommandRequest command, DateTimeOffset began, DateTimeOffset replied, Task<CommandResult> later, IDisposable foreground)
+    {
+        try
+        {
+            await later;
+        }
+        catch (Exception)
+        {
+            // Its failure is told elsewhere; it still took the time.
+        }
+        foreground.Dispose();
+        Note(command, began, replied, Clock.GetUtcNow());
+    }
+
+    private async Task<CommandResult> RunCoreAsync(CommandRequest command, CancellationToken cancellationToken, Mark mark)
     {
         // Who sends it decides what it may do (Standing): the lookout and a flight's session are fenced from what is the
         // person's alone (a merge or a landing by any route, a card's included; the node's settings and setup; a review posted to
@@ -207,6 +270,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         // your-only command run on autopilot is recorded by Autopilot.Handled.
         var fromCard = _fromCard.Value;
         _fromCard.Value = false;
+        mark.HandlerStarted = Clock.GetUtcNow();
         var result = await RouteAsync(command, cancellationToken);
         if (result.Ok && !fromCard && !onAutopilot && DecisionSources.IsDirect(command.Verb, command.Args))
         {
@@ -226,7 +290,11 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             var record = !fromCard && command.Verb is not (Verbs.Answer or Verbs.Dismiss);
             if (result.Later is { } later)
             {
-                _ = HandledWhenDoneAsync(command, later, record);
+                // Not started by the person's command: what it does once the queued one has run is the node's own.
+                using (ProcessGate.Background())
+                {
+                    _ = HandledWhenDoneAsync(command, later, record);
+                }
             }
             else
             {
@@ -347,6 +415,23 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             var said = await Get<SessionMessenger>().SayAsync(command with { Verb = Verbs.Say, Target = target }, cancellationToken);
             return state.Complete(command, said.Error, said.Way, said.SessionId);
         }
+        if (command.Verb == Verbs.ChatNow)
+        {
+            var sendId = (command.Args ?? []).FirstOrDefault()?.Trim() ?? "";
+            if (command.Target != Verbs.WatchtowerTarget || sendId.Length == 0)
+            {
+                return state.Complete(command, $"{Verbs.ChatNow} takes the watchtower and the send id of the queued message to answer now (the chat page's queued ids, or pilot chat now <send id>)");
+            }
+            return state.Complete(command, await Get<WatchtowerChat>().AnswerNowAsync(sendId, cancellationToken));
+        }
+        if (command.Verb == Verbs.AnswerAsk)
+        {
+            if (command.Target != Verbs.WatchtowerTarget)
+            {
+                return state.Complete(command, $"{Verbs.AnswerAsk} takes the watchtower as its target, not {command.Target}");
+            }
+            return state.Complete(command, await Get<Watchtower>().AnswerAskAsync(command.Args ?? [], cancellationToken));
+        }
         if (command.Verb == Verbs.RestartWatchtower)
         {
             var why = string.Join(' ', command.Args ?? []).Trim();
@@ -451,6 +536,16 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (command.Verb == Verbs.RestartNode)
         {
             return Get<NodeSettingsCommands>().RestartNode(command);
+        }
+        if (command.Verb == Verbs.Reboot)
+        {
+            return await Get<RebootPrep>().RunAsync(command, cancellationToken);
+        }
+        if (command.Verb == Verbs.EndStray)
+        {
+            return services.GetService<StraySweep>() is { } sweep
+                ? sweep.EndOnWord(command)
+                : state.Complete(command, "this node does not look for strays (machine sampling is off), so it has none to end");
         }
         if (command.Verb == Verbs.Say)
         {
@@ -557,11 +652,16 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         }
         if (card.State != CardState.Open)
         {
-            return state.Complete(command, $"card {card.Id} is closed already ({card.Outcome})");
+            return ClosedAlready(command, card, args);
         }
 
         if (command.Verb == Verbs.Dismiss)
         {
+            // An answer underway owns the card: closing it from under the answer would lose what the answer comes to (#792).
+            if (card.Answering is { } underway && Get<TimeProvider>().GetUtcNow() - underway.At < Get<LegCommander>().StuckAfter)
+            {
+                return state.Complete(command, $"card {card.Id} is being answered ({underway.Choice}, pressed by {underway.By} at {LocalTime(underway.At)}): wait for its answer, then dismiss");
+            }
             var why = string.Join(' ', args).Trim();
             state.CloseCard(card.Id, why.Length > 0 ? $"dismissed: {why}" : "dismissed", command.Who);
             RecordCardDecision(command, card, DecisionKinds.Dismiss, "dismissed", why);
@@ -604,6 +704,13 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
                 : $"card {card.Id} offers {string.Join(", ", card.Choices.Select((c, i) => $"{i + 1} {c.Label}"))}, not '{which}'");
         }
 
+        // A choice the node would refuse now (its flight is held, its session is gone) is refused here, before anything is taken, closed or run,
+        // with the reason its card shows on it (ChoiceAvailability): a client that pressed before it saw the mark runs nothing (#792).
+        if (ChoiceAvailability.WhyNot(choice, state.Flights(), state.Sessions()) is { } unavailable)
+        {
+            return state.Complete(command, $"{choice.Label} was refused: {unavailable}");
+        }
+
         // An assistant's ask denied: closed with who said so, and the session that asked is told it was not done. Deny is the
         // choice that dismisses the ask card itself; an Allow can be a dismissal too (of a ring card), so the verb alone cannot tell them apart.
         if (card.Kind == CardKinds.AssistantAsk && choice.Verb == Verbs.Dismiss && choice.Target == Verbs.CardTarget(card.Id))
@@ -622,15 +729,71 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         // go-around closes the flight's cards itself once it has started the worker.
         // A move again from the move-failed card stays open as it runs too, so a failure rewrites that card rather than doubling it.
         var inProgress = choice.Verb is Verbs.Merge or Verbs.RerunChecks or Verbs.GoAround && card.Kind is LegCommander.PrReady or LegCommander.MergeFailed
-            || choice.Verb == Verbs.MoveFlight
-            // The conflict card's Resolve the conflict: the go-around reads the open card to know it is for a conflict, then closes it.
-            || choice.Verb == Verbs.GoAround && card.Kind == LegCommander.PrConflictsKind;
-        // Any other choice closes the card by the answer before it runs: it lands its flight, and landing closes the flight's
-        // cards, this one included, as landed rather than as the answer it was. Refused, it opens again.
-        if (!inProgress)
+            || choice.Verb == Verbs.MoveFlight;
+        // An in-progress choice is taken before it runs, so the card says on every client that it is underway, by whom and since when,
+        // instead of offering its buttons again: a second press of the same choice joins it with an ok answer (the controller's CLI press
+        // that sat queued, and the owner's press of the same button two minutes later, was told "refused", #792), and another choice
+        // is refused saying which answer is underway. The mark ends with the answer, whatever it comes to (see RunChoiceAsync).
+        CardAnswering? answering = null;
+        if (inProgress)
         {
-            state.CloseCard(card.Id, choice.Label, command.Who);
+            var legs = Get<LegCommander>();
+            var (taken, underway) = state.BeginAnswering(card.Id, choice.Label, PresserOf(command), legs.CallingOn(choice.Target), legs.StuckAfter);
+            if (taken is null)
+            {
+                return underway is null
+                    ? ClosedAlready(command, state.Cards().First(c => c.Id == card.Id), args)
+                    : string.Equals(underway.Choice, choice.Label, StringComparison.Ordinal)
+                        ? state.Complete(command, null, made: $"{CardAnswering.JoinedUnderway}, started by {underway.By} at {LocalTime(underway.At)}")
+                        : state.Complete(command, $"{choice.Label} was refused: {underway.Choice} is underway on card {card.Id} (pressed by {underway.By} at {LocalTime(underway.At)}): wait for its answer, then ask again");
+            }
+            answering = taken;
         }
+        // Any other choice closes the card by the answer before it runs: it lands its flight, and landing closes the flight's
+        // cards, this one included, as landed rather than as the answer it was. Refused, it opens again. A press that lost the race to
+        // another's close finds the card closed: it is that answer's repeat, and runs nothing twice.
+        else if (!state.CloseCard(card.Id, choice.Label, command.Who))
+        {
+            return ClosedAlready(command, state.Cards().First(c => c.Id == card.Id), args);
+        }
+        try
+        {
+            return await RunChoiceAsync(command, card, choice, given, inProgress, cancellationToken);
+        }
+        finally
+        {
+            // Whatever the answer came to (closed, refused, armed, cut off), none is underway now: the card closed has cleared the mark
+            // already, an open one stops saying so and offers its buttons again.
+            if (answering is not null)
+            {
+                state.ClearAnswering(card.Id, answering);
+            }
+        }
+    }
+
+    /// <summary>How long after a choice closed a card a repeat of that choice is told it is done already, rather than that the card is closed.</summary>
+    internal static readonly TimeSpan RepeatAnswerWindow = TimeSpan.FromMinutes(5);
+
+    // The choice an answer's args name, as the answer reads them, or null: a closed card keeps its choices to tell a repeat from another press.
+    private static CardChoice? ChoiceOf(CardRow card, string[] args) =>
+        FindChoice(card, string.Join(' ', args).Trim()) ?? (args.Length > 1 && FindChoice(card, args[0].Trim()) is { AsksFor: not null } asking ? asking : null);
+
+    // A card closed already: the same choice a moment ago is that answer's repeat (ok, saying who answered and when, like a join of an
+    // answer underway), anything else is refused as before.
+    internal CommandResult ClosedAlready(CommandRequest command, CardRow card, string[] args) =>
+        command.Verb == Verbs.Answer && ChoiceOf(card, args) is { } same && string.Equals(card.Outcome, same.Label, StringComparison.Ordinal)
+            && card.ClosedBy is { } by && card.ClosedAt is { } at && Get<TimeProvider>().GetUtcNow() - at <= RepeatAnswerWindow
+            ? state.Complete(command, null, made: $"{CardAnswering.JoinedClosed} by {by} at {LocalTime(at)}")
+            : state.Complete(command, $"card {card.Id} is closed already ({card.Outcome})");
+
+    private static string LocalTime(DateTimeOffset at) => at.ToLocalTime().ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+
+    // Who pressed, as a card says it: the person when the watchtower acts on their word in its chat.
+    private static string PresserOf(CommandRequest command) => command.PersonsWord is not null ? "the person" : command.Who;
+
+    // Runs the chosen button's command as the one answering and settles the card by what it came to; the answer underway (if any) is ended by the caller.
+    private async Task<CommandResult> RunChoiceAsync(CommandRequest command, CardRow card, CardChoice choice, string? given, bool inProgress, CancellationToken cancellationToken)
+    {
         CommandResult result;
         try
         {
@@ -653,8 +816,9 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             state.ReopenCard(card.Id);
             return state.Complete(command, $"{choice.Label} was refused: {result.Error}");
         }
-        // One decision per answer: a design answer is recorded by the review fix it runs, which knows the question and the options.
-        if (choice.Verb != Verbs.FixPr || card.Kind != PrReviews.DesignKind)
+        // One decision per answer: a design answer is recorded by the review fix it runs, which knows the question and the options. A
+        // fix offer that carries the answer the node decided on (its Fix it has args) is that answer's too.
+        if (choice.Verb != Verbs.FixPr || card.Kind != PrReviews.DesignKind && !(card.Kind == PrReviews.FixOfferKind && choice.Args is { Length: > 0 }))
         {
             // A Fix it off the design card (a fix offer, a fixer to start again) answers no question of design: it is the card's own choice.
             var kind = choice.Verb == Verbs.FixPr ? DecisionKinds.Card : DecisionSources.KindOf(choice.Verb, choice.Args) ?? DecisionKinds.Card;
@@ -674,8 +838,8 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             }
             else if (!state.CloseCard(card.Id, choice.Label, command.Who))
             {
-                // Closed by the landing already, as landed: it says too which answer it was.
-                state.NoteOutcome(card.Id, choice.Label);
+                // Closed by the landing already, as landed: it says too which answer it was, and whose, so a repeat is told who answered.
+                state.NoteOutcome(card.Id, choice.Label, closedBy: command.Who);
             }
             return state.Complete(command, null);
         }
@@ -800,4 +964,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
     }
 
     private T Get<T>() where T : notnull => services.GetRequiredService<T>();
+
+    // The timing every command gets is incidental to it: a host that registered no clock or timings (a test's) still runs it.
+    private TimeProvider Clock => services.GetService<TimeProvider>() ?? TimeProvider.System;
 }

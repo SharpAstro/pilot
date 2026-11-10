@@ -9,6 +9,10 @@ namespace Pilot.Node.Tests;
 [Collection(JobsCollection.Name)]
 public sealed class QueueOrderTests : JobTestsBase
 {
+    public QueueOrderTests() : base(fakeLauncher: true)
+    {
+    }
+
     private JobRow Row(string id) => _state.Jobs().Single(j => j.Id == id);
 
     private static string Clone(string name) => Path.Combine(Path.GetTempPath(), "org-fake", name);
@@ -23,6 +27,8 @@ public sealed class QueueOrderTests : JobTestsBase
     {
         var (jobs, _, _, _) = Idle();
         jobs.MaxRunning = 4;
+        // The build-order rules under test, not the one-heavy-job rule (HeavyJobTests covers that).
+        jobs.OneHeavyAtATime = false;
         jobs.SiblingsOf = job => Sets(job.Command);
         return jobs;
     }

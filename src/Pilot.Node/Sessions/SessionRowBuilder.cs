@@ -45,6 +45,9 @@ public static class SessionStates
 /// <summary>A session's row from its parts. Pure: the same parts always make the same row.</summary>
 public static class SessionRowBuilder
 {
+    /// <summary>The start of <see cref="SessionRow.EndedBecause"/> for a background job Claude Code ended by design once its turn was over (PIL815).</summary>
+    public const string TurnFinishedEnd = "Claude Code ended the job after its turn finished";
+
     /// <param name="agent">The agents row.</param>
     /// <param name="transcripts">What its transcripts say.</param>
     /// <param name="record">Its session record, while its process lives.</param>
@@ -158,7 +161,7 @@ public static class SessionRowBuilder
         }
         if (agent.Pid is null && state == SessionState.Ended && job is { TurnFinished: true })
         {
-            return $"Claude Code ended the job after its turn finished ({job.State.ToLowerInvariant()})";
+            return $"{TurnFinishedEnd} ({job.State.ToLowerInvariant()})";
         }
         if (agent.Pid is null)
         {

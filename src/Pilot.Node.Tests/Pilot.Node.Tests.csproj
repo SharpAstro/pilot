@@ -50,4 +50,18 @@
     <None Include="Fixtures\gh\*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Stores written by the code of an older release, one folder per version (store.json, snapshot.json, journal.jsonl, decisions.jsonl):
+       StoreCompatibilityTests starts a node on each. See PILOT.md for how a fixture is made and refreshed at each release. -->
+  <ItemGroup>
+    <None Include="Fixtures\Store\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- One root for the run's temp files, deleted when the run ends (TestTempRoot). -->
+    <Compile Include="..\TestShared\TestTempRoot.cs" Link="TestShared\TestTempRoot.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- At most two tests at once (one per core took the machine: 106 test files start real git/pwsh processes). -->
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

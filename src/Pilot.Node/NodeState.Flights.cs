@@ -27,10 +27,20 @@ public sealed partial class NodeState
                 }
                 Publish(new FlightChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = flight });
                 RefreshPlannedCard(known, flight);
+                // A flight that turned held (or flies again) changes which of its cards' choices the node would refuse (#792).
+                // After the planned card was rebuilt, so the mark lands on the choices it now offers.
+                if (HoldChanged(known, flight))
+                {
+                    SyncChoiceAvailability();
+                }
             }
             else
             {
                 Publish(new FlightAddedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = flight });
+                if (flight.State == FlightState.Held)
+                {
+                    SyncChoiceAvailability();
+                }
             }
         }
     }
@@ -53,6 +63,10 @@ public sealed partial class NodeState
             {
                 Publish(new FlightChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = changed });
                 RefreshPlannedCard(known, changed);
+                if (HoldChanged(known, changed))
+                {
+                    SyncChoiceAvailability();
+                }
             }
             return changed;
         }
@@ -69,10 +83,23 @@ public sealed partial class NodeState
         {
             return;
         }
-        foreach (var card in _cards.Values.Where(c => c.State == CardState.Open && c.Kind == LegCommander.PlannedKind && c.Subject == Verbs.FlightTarget(after.Code)).ToList())
+        var subject = Verbs.FlightTarget(after.Code);
+        var open = _cards.Values.Where(c => c.State == CardState.Open && c.Kind == LegCommander.PlannedKind && c.Subject == subject).ToList();
+        foreach (var card in open)
         {
             var choices = LegCommander.PlannedChoices(after, first);
             UpdateCard(card.Id, card.Title, LegCommander.PlannedDetail(card.Detail, after), choices, card.Link, summary: CardSummaries.For(LegCommander.PlannedKind, card.Subject, card.Title, choices));
+        }
+        // A held flight's plan was logged as Handled (nothing to press then): the hold lifted, so the plan comes to the person now, with its Start.
+        // Only a plan none of whose legs took off yet, promoted once: a held flight released after its first leg flew, or a plan
+        // the person dismissed after it came to them, raises nothing (review of #924).
+        if (open.Count == 0 && after.State == FlightState.Flying
+            && _legs.Values.Where(l => l.Flight == after.Code).All(l => l.State == LegState.Planned)
+            && _cards.Values.Where(c => c.Kind == LegCommander.PlannedKind && c.Subject == subject).OrderByDescending(c => c.At).FirstOrDefault() is { Bin: CardBin.Handled } logged)
+        {
+            var choices = LegCommander.PlannedChoices(after, first);
+            RaiseCard(CardBin.ForYou, LegCommander.PlannedKind, subject, logged.Title, LegCommander.PlannedDetail(logged.Detail, after), choices, logged.Link,
+                summary: CardSummaries.For(LegCommander.PlannedKind, subject, logged.Title, choices));
         }
     }
 
@@ -80,6 +107,12 @@ public sealed partial class NodeState
     internal static bool SameFlight(FlightRow a, FlightRow b) => Same(a, b);
 
     /// <summary>The legs of <paramref name="flight"/>, in their order; every leg when it is null.</summary>
+    /// <summary>
+    /// The names of <paramref name="flight"/>'s legs not done (planned, flying, failed, waiting), in order: what holds its merge, its PR
+    /// and its review. The one reading of "legs not done", so the merge's refusal, the card's wait and the autopilot cannot drift apart.
+    /// </summary>
+    public List<string> OpenLegs(string flight) => [.. Legs(flight).Where(l => l.State != LegState.Done).OrderBy(l => l.Order).Select(l => l.Name)];
+
     public LegRow[] Legs(string? flight = null)
     {
         lock (_gate)
@@ -102,6 +135,12 @@ public sealed partial class NodeState
                     return;
                 }
                 Publish(new LegChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Leg = leg });
+                // A leg of the flight took off, by the person's Start, the autopilot or a go-around: the planned card's Start is done, and a
+                // card left offering it is a stale one (COD74, PIL894 and TIA2083 offered "Start <leg>" with that leg flying, 2026-11-09).
+                if (known.State != LegState.Flying && leg.State == LegState.Flying)
+                {
+                    CloseCardsAbout(Verbs.FlightTarget(leg.Flight), $"{leg.Name} took off", LegCommander.PlannedKind);
+                }
             }
             else
             {

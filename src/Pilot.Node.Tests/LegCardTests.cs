@@ -92,7 +92,7 @@ public sealed class LegCardTests
         var card = Open().ShouldHaveSingleItem();
         card.Title.ShouldBe("TIA1/parser's worker was stopped by the API: overloaded");
         card.Detail.ShouldStartWith("the API gave no time the stop clears");
-        card.Choices.Select(c => c.Label).ShouldBe(["Tell du1-tia1-parser to carry on with parser", "Start a fresh worker on parser (the last one was stopped by the API)"]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Tell the worker to carry on", Verbs.RestartWorker]);
     }
 
     [Fact]
@@ -105,10 +105,12 @@ public sealed class LegCardTests
         await _watch.LookAsync(Ct);
 
         var card = Open().ShouldHaveSingleItem();
-        card.Title.ShouldBe("TIA1/parser's worker has been idle 10 min with 1 of 2 steps ticked");
+        // How long and how many steps are the detail's; the title says what happened (#797).
+        card.Title.ShouldBe("TIA1 is stuck: its worker stopped working");
+        card.Detail!.ShouldStartWith("no turn for 10 min, 1 of 2 steps");
         card.Detail!.ShouldContain("idle with room in its context");
         card.Detail!.ShouldContain("nudged 2 times with no answer, and the node nudges no more");
-        card.Choices.Select(c => c.Label).ShouldBe(["Nudge du1-tia1-parser to finish parser or say why not", "Start a fresh worker on parser (the last one went idle with the leg unfinished)"]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Nudge the worker", Verbs.RestartWorker]);
     }
 
     [Fact]
@@ -121,9 +123,10 @@ public sealed class LegCardTests
         await _watch.LookAsync(Ct);
 
         var card = Open().ShouldHaveSingleItem();
-        card.Title.ShouldBe("TIA1/parser's worker has been idle 10 min with 1 of 2 steps ticked, and could not be nudged: the folder is gone");
+        card.Title.ShouldBe("TIA1 is stuck: its worker stopped and cannot be nudged");
         card.Detail.ShouldEndWith("the node tried to nudge it: the folder is gone");
-        card.Detail.ShouldStartWith("idle with room in its context");
+        card.Detail.ShouldStartWith("no turn for 10 min, 1 of 2 steps");
+        card.Detail.ShouldContain("idle with room in its context");
     }
 
     [Fact]
@@ -136,7 +139,7 @@ public sealed class LegCardTests
         var card = Open().ShouldHaveSingleItem();
         card.Title.ShouldBe("TIA1/parser's worker waits on you for permission to run rm -rf build");
         card.Detail.ShouldStartWith("permission to run rm -rf build; the worker cannot go on until it is answered in its own session");
-        card.Choices.Select(c => c.Label).ShouldBe(["Start a fresh worker on parser (the last one waited on you)"]);
+        card.Choices.Select(c => c.Label).ShouldBe([Verbs.RestartWorker]);
     }
 
     [Theory]
@@ -166,7 +169,7 @@ public sealed class LegCardTests
         var summary = card.Summary.ShouldNotBeNull();
         summary.ShouldContain("Answering in its own session lets this worker go on with the call");
         summary.ShouldContain("stops this one and starts another on the leg from the branch");
-        summary.ShouldContain(card.Choices.Single().Label);
+        summary.ShouldNotContain(card.Choices.Single().Label);
         $"{card.Title}{card.Detail}{card.Summary}".ShouldNotContain("—");
         $"{card.Title}{card.Detail}{card.Summary}".ShouldNotContain("--");
     }
@@ -190,7 +193,8 @@ public sealed class LegCardTests
 
         var card = Open().ShouldHaveSingleItem();
         card.Title.ShouldBe("TIA1/parser's worker failed: the API said invalid_request");
-        card.Choices.Select(c => c.Label).ShouldBe(["Tell du1-tia1-parser to carry on with parser", "Start a fresh worker on parser (the last one failed)"]);
+        card.Summary.ShouldBe("The worker of TIA1/parser failed. Telling it to carry on may get it going again; if it does not, a fresh worker takes the leg over from the branch.");
+        card.Choices.Select(c => c.Label).ShouldBe(["Tell the worker to carry on", Verbs.RestartWorker]);
     }
 
     [Fact]
@@ -206,6 +210,7 @@ public sealed class LegCardTests
         var card = Open().ShouldHaveSingleItem();
         card.Title.ShouldBe("TIA1/parser's worker du1-tia1-parser never showed up, 10 min after it started");
         card.Detail.ShouldStartWith("started as job a1b2c3d4");
-        card.Choices.Select(c => c.Label).ShouldBe(["Start a fresh worker on parser (the last one never showed up)"]);
+        card.Summary.ShouldBe("The worker of TIA1/parser never showed up. Only a fresh start gets the leg going again.");
+        card.Choices.Select(c => c.Label).ShouldBe([Verbs.RestartWorker]);
     }
 }

@@ -67,6 +67,13 @@ internal static class DashboardCommands
         : envelope.Response is { Ok: false } answer ? (string.IsNullOrEmpty(answer.Error) ? "the node gave no reason" : answer.Error)
         : null;
 
+    /// <summary>
+    /// What the node said when it answered a card press ok by joining an answer already taken (<see cref="CardAnswering.IsJoined"/>:
+    /// <c>already on its way, started by cli at 20:35</c>); null for any other answer. That is a press taken, never a refusal.
+    /// </summary>
+    public static string? JoinedOf(ResponseEnvelope<Pilot.Contracts.CommandResult> envelope) =>
+        envelope is { Success: true, Response: { Ok: true, Made: { } made } } && CardAnswering.IsJoined(made) ? made : null;
+
     /// <summary>Sends <paramref name="request"/> and returns the node's refusal in its words, or null when it took it; a node that cannot be reached is a refusal too.</summary>
     public static async Task<string?> AskAsync(NodeClient client, CommandRequest request, CancellationToken cancellationToken, Action<ResponseEnvelope<Pilot.Contracts.CommandResult>>? answered = null)
     {
