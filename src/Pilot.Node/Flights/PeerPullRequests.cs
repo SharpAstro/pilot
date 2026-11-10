@@ -41,7 +41,7 @@ public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Fun
 
     private readonly object _gate = new();
     private readonly Dictionary<string, Kept> _peers = new(StringComparer.OrdinalIgnoreCase);
-    private readonly List<Task> _runs = [];
+    private readonly HashSet<Task> _runs = [];
 
     /// <summary>The peer's latest row, or null when none is held or its stream has been down past one pace.</summary>
     public PullRequestsRow? RowOf(string name)
@@ -109,7 +109,25 @@ public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Fun
                 var kept = new Kept { Stop = CancellationTokenSource.CreateLinkedTokenSource(stopping) };
                 _peers[peer.Name] = kept;
                 var token = kept.Stop.Token;
-                _runs.Add(Task.Run(() => KeepAsync(peer, kept, token), CancellationToken.None));
+                var stop = kept.Stop;
+                Task? run = null;
+                // Added under the gate the run takes to remove itself, so a run that ends at once is still pruned; its token source is disposed with it.
+                run = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await KeepAsync(peer, kept, token).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        lock (_gate)
+                        {
+                            _runs.Remove(run!);
+                        }
+                        stop.Dispose();
+                    }
+                }, CancellationToken.None);
+                _runs.Add(run);
             }
         }
     }
@@ -144,10 +162,12 @@ public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Fun
             {
                 kept.DownSince ??= time.GetUtcNow();
             }
+            // The backoff timer is set before the change is said, so a listener that sees the stream down sees the wait begun.
+            var backoff = Task.Delay(wait, time, stopping);
             Changed?.Invoke();
             try
             {
-                await Task.Delay(wait, time, stopping).ConfigureAwait(false);
+                await backoff.ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stopping.IsCancellationRequested)
             {

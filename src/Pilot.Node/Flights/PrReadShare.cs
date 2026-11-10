@@ -14,23 +14,28 @@ public abstract record PrReadPlan(string Repo)
     /// <summary>Search GitHub for it from this node.</summary>
     public sealed record ReadHere(string Repo) : PrReadPlan(Repo);
 
-    /// <summary>The chosen reader reads it, and it is not older than one pace: this node waits.</summary>
+    /// <summary>The chosen reader reads it, and its read is younger than <see cref="PrReadShare.Grace"/> paces: this node waits and keeps what it holds.</summary>
     public sealed record LeftTo(string Repo, string Reader) : PrReadPlan(Repo);
 }
 
 /// <summary>
 /// Which of the fleet reads a repo's PRs from GitHub (#834). Per tracked repo: a peer's read younger than one pace is taken (the newer
 /// of two); else one reader is chosen among the nodes that track it and answer, the one flying a flight in it first, else the lowest
-/// machine name, and every other node leaves it to that reader while the reader's own read is not older than one pace. Pure.
+/// machine name, and every other node leaves it to that reader while the reader's own read is younger than <see cref="Grace"/> paces
+/// (a pace to take, then a pace of grace for the reader to read again), unless this node holds none of the repo's PRs. Pure.
 /// </summary>
 public static class PrReadShare
 {
-    public static PrReadPlan[] Plan(string self, IEnumerable<string> tracked, IReadOnlyCollection<string> flying, TimeSpan pace, DateTimeOffset now, IReadOnlyCollection<PrReadPeer> peers)
+    /// <summary>How many paces old the chosen reader's read may be before this node reads the repo itself.</summary>
+    public const int Grace = 2;
+
+    /// <param name="held">The repos this node holds PRs of; null: every repo. A repo this node holds nothing of is read here rather than left to the reader.</param>
+    public static PrReadPlan[] Plan(string self, IEnumerable<string> tracked, IReadOnlyCollection<string> flying, TimeSpan pace, DateTimeOffset now, IReadOnlyCollection<PrReadPeer> peers, IReadOnlyCollection<string>? held = null)
     {
         var plans = new List<PrReadPlan>();
         foreach (var repo in tracked.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
         {
-            plans.Add(PlanRepo(self, repo, flying, pace, now, peers));
+            plans.Add(PlanRepo(self, repo, flying, pace, now, peers, held is null || held.Any(r => Same(r, repo))));
         }
         return [.. plans];
     }
@@ -40,7 +45,7 @@ public static class PrReadShare
     private static PullRequestRepoRead? StampOf(PrReadPeer peer, string repo) =>
         peer.Row?.RepoReads.Where(s => Same(s.Repo, repo)).OrderByDescending(s => s.ReadAt).FirstOrDefault();
 
-    private static PrReadPlan PlanRepo(string self, string repo, IReadOnlyCollection<string> flying, TimeSpan pace, DateTimeOffset now, IReadOnlyCollection<PrReadPeer> peers)
+    private static PrReadPlan PlanRepo(string self, string repo, IReadOnlyCollection<string> flying, TimeSpan pace, DateTimeOffset now, IReadOnlyCollection<PrReadPeer> peers, bool holds)
     {
         // A peer's fresh read: the newest, ties to the lower name.
         var fresh = peers.Select(p => (Peer: p, Stamp: StampOf(p, repo)))
@@ -68,7 +73,7 @@ public static class PrReadShare
             return new PrReadPlan.ReadHere(repo);
         }
         var readerPeer = trackers.First(p => Same(p.Name, reader));
-        return StampOf(readerPeer, repo) is { } own && now - own.ReadAt <= pace
+        return holds && StampOf(readerPeer, repo) is { } own && now - own.ReadAt < pace * Grace
             ? new PrReadPlan.LeftTo(repo, reader)
             : new PrReadPlan.ReadHere(repo);
     }

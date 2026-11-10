@@ -210,7 +210,7 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services =>
         {
             var models = services.GetRequiredService<RoleModels>();
-            return new PeerPullRequests(() => services.GetRequiredService<FlightCommander>().Fleet, services.GetRequiredService<TimeProvider>(), () => models.PrWatchIdle) { Error = logWriter };
+            return new PeerPullRequests(() => services.GetRequiredService<FlightCommander>().Fleet, services.GetRequiredService<TimeProvider>(), () => services.GetRequiredService<PageViews>().Count(ClientPages.PullRequests) > 0 ? PullRequestWatch.DefaultInterval : models.PrWatchIdle) { Error = logWriter };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PeerPullRequests>());
         builder.Services.AddSingleton(services =>

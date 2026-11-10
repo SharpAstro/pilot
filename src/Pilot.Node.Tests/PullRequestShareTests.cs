@@ -135,7 +135,7 @@ public sealed class PullRequestShareTests : IDisposable
         row.RepoReads.ShouldHaveSingleItem().ShouldBe(new PullRequestRepoRead("SharpAstro/pilot", Noon, "B1", false));
         // A has no flight of its own: the flight is re-derived by A's own flights, never taken from B's row.
         row.PullRequests.Single().Flight.ShouldBeNull();
-        a.Log.ShouldContain("1 repos from peers, 0 read here in 0 searches, 0 GraphQL points");
+        a.Log.ShouldContain("1 repo from peers, 0 read here in 0 searches, 0 GraphQL points");
 
         // A minute on B reads again (its stamp is a pace old) and A takes that read once more, still asking GitHub nothing.
         _clock.Advance(TimeSpan.FromSeconds(61));
@@ -146,6 +146,107 @@ public sealed class PullRequestShareTests : IDisposable
         a.Searches.ShouldBe(0);
         next.PullRequests.Select(p => p.Number).Order().ShouldBe([7, 8]);
         next.RepoReads.Single().ReadAt.ShouldBe(Noon.AddSeconds(61));
+    }
+
+    [Fact]
+    public async Task TheNonReaderOnItsPaceLeavesTheRepoToTheReaderEvenBeforeItReadsAgain()
+    {
+        var a = NewNode("A1", "pilot");
+        var b = NewNode("B1", "pilot");
+        Fly(b, "pilot", "PIL1");
+        b.GitHub.PutPullRequest(Pr("pilot", 7));
+        a.Link(new Peer(b));
+
+        await b.Watch.RefreshAsync(Ct);
+        await a.Watch.ReadOnPaceAsync(Ct);
+        a.Searches.ShouldBe(0);
+
+        // 61 s on, B's read is a pace old and B has not read again; A (looking first) leaves the repo to B and keeps what it held.
+        _clock.Advance(TimeSpan.FromSeconds(61));
+        var row = (await a.Watch.ReadOnPaceAsync(Ct))!;
+
+        a.Searches.ShouldBe(0);
+        b.Searches.ShouldBe(1);
+        row.PullRequests.Select(p => p.Number).ShouldBe([7]);
+        row.RepoReads.Single().By.ShouldBe("B1");
+    }
+
+    [Fact]
+    public async Task ARepoLeftToTheReaderIsReadHereOnceTheReaderIsTwoPacesQuiet()
+    {
+        var a = NewNode("A1", "pilot");
+        var b = NewNode("B1", "pilot");
+        Fly(b, "pilot", "PIL1");
+        b.GitHub.PutPullRequest(Pr("pilot", 7));
+        a.GitHub.PutPullRequest(Pr("pilot", 7));
+        a.Link(new Peer(b));
+
+        await b.Watch.RefreshAsync(Ct);
+        await a.Watch.ReadOnPaceAsync(Ct);
+        _clock.Advance(TimeSpan.FromSeconds(121));
+        var row = (await a.Watch.ReadOnPaceAsync(Ct))!;
+
+        a.Searches.ShouldBe(1);
+        row.RepoReads.Single().By.ShouldBe("A1");
+    }
+
+    [Fact]
+    public async Task ARepoThisNodeHoldsNoPrsOfIsReadHereNotLeftToTheReader()
+    {
+        var a = NewNode("A1", "pilot");
+        var b = NewNode("B1", "pilot");
+        Fly(b, "pilot", "PIL1");
+        b.GitHub.PutPullRequest(Pr("pilot", 7));
+        a.GitHub.PutPullRequest(Pr("pilot", 7));
+        a.Link(new Peer(b));
+
+        await b.Watch.RefreshAsync(Ct);
+        _clock.Advance(TimeSpan.FromSeconds(61));
+        // B's read is a pace old and A holds nothing of the repo: waiting would leave A with no PRs of it.
+        var row = (await a.Watch.ReadOnPaceAsync(Ct))!;
+
+        a.Searches.ShouldBe(1);
+        row.PullRequests.Select(p => p.Number).ShouldBe([7]);
+    }
+
+    [Fact]
+    public async Task AReadOfTheSamePrsStillShowsAPeerAFreshStamp()
+    {
+        var a = NewNode("A1", "pilot");
+        var b = NewNode("B1", "pilot");
+        Fly(b, "pilot", "PIL1");
+        b.GitHub.PutPullRequest(Pr("pilot", 7));
+        a.Link(new Peer(b));
+
+        await b.Watch.RefreshAsync(Ct);
+        _clock.Advance(TimeSpan.FromSeconds(60));
+        await b.Watch.ReadOnPaceAsync(Ct);
+        b.Searches.ShouldBe(2);
+        _clock.Advance(TimeSpan.FromSeconds(10));
+        var row = (await a.Watch.ReadOnPaceAsync(Ct))!;
+
+        // B's second read found the same PRs, yet the stamp A sees is the second read's, 10 s old: A takes it.
+        a.Searches.ShouldBe(0);
+        row.RepoReads.Single().ReadAt.ShouldBe(Noon.AddSeconds(60));
+    }
+
+    [Fact]
+    public async Task ARefreshAPersonAsksForReadsGitHubWhateverAPeerHolds()
+    {
+        var a = NewNode("A1", "pilot");
+        var b = NewNode("B1", "pilot");
+        Fly(b, "pilot", "PIL1");
+        b.GitHub.PutPullRequest(Pr("pilot", 7));
+        a.GitHub.PutPullRequest(Pr("pilot", 7));
+        a.Link(new Peer(b));
+
+        await b.Watch.RefreshAsync(Ct);
+        _clock.Advance(TimeSpan.FromSeconds(30));
+        var row = (await a.Watch.RefreshAsync(Ct))!;
+
+        // B's read is 30 s old, well inside a pace, and a timed read would take it; a refresh asked for searches GitHub.
+        a.Searches.ShouldBe(1);
+        row.RepoReads.Single().By.ShouldBe("A1");
     }
 
     [Fact]

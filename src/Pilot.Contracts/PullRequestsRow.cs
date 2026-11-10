@@ -378,7 +378,7 @@ public sealed record PullRequestsRow
 /// <param name="Repo">The repo, <c>owner/name</c>, as GitHub spells it.</param>
 /// <param name="ReadAt">When the node asked GitHub for this repo's PRs.</param>
 /// <param name="By">The reading node's machine name.</param>
-/// <param name="Flying">Whether that node flies a flight in the repo.</param>
+/// <param name="Flying">Whether the node whose row carries this stamp flies a flight in the repo: on a repo this node took from a peer, <see cref="By"/> is the peer that read it and this is this node's own flag.</param>
 public sealed record PullRequestRepoRead(string Repo, DateTimeOffset ReadAt, string By, bool Flying = false);
 
 /// <summary>The pull requests were read again and differ from the last read, or the last read is a while old.</summary>

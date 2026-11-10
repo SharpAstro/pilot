@@ -8,8 +8,8 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// A node keeps each peer's latest PR read from the peer's event stream (#834): a changed read reaches the cache with no poll, and a peer
-/// whose stream stays down past one pace is forgotten, so the watch reads the repo itself. The peer is in memory; ageing runs on the test's
-/// clock, and the only real waits are the few milliseconds of a backoff.
+/// whose stream stays down past one pace is forgotten, so the watch reads the repo itself. The peer is in memory; ageing and the backoff
+/// before a stream is opened again run on the test's clock, which fires a timer when it is advanced past it. Nothing waits on a real timer.
 /// </summary>
 public sealed class PeerPullRequestsTests : IDisposable
 {
@@ -21,18 +21,9 @@ public sealed class PeerPullRequestsTests : IDisposable
 
     private readonly string _root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "ppr-" + Guid.NewGuid().ToString("N")[..8])).FullName;
 
-    private readonly Clock _clock = new(Noon);
+    private readonly TimerTime _clock = new(Noon);
 
     public void Dispose() => TestDirs.DeleteTree(_root);
-
-    private sealed class Clock(DateTimeOffset start) : TimeProvider
-    {
-        private DateTimeOffset _now = start;
-
-        public override DateTimeOffset GetUtcNow() => _now;
-
-        public void Advance(TimeSpan by) => _now += by;
-    }
 
     /// <summary>A peer whose event stream the test drives: rows pushed arrive, a drop ends the stream, and while it is down no stream opens.</summary>
     private sealed class StreamPeer : IFleetPeer
@@ -105,8 +96,8 @@ public sealed class PeerPullRequestsTests : IDisposable
     private PeerPullRequests Cache(StreamPeer peer) => new(() => new OneFleet(peer), _clock, () => Pace)
     {
         Rescan = TimeSpan.FromHours(1),
-        Backoff = TimeSpan.FromMilliseconds(5),
-        MaxBackoff = TimeSpan.FromMilliseconds(20),
+        Backoff = TimeSpan.FromSeconds(1),
+        MaxBackoff = TimeSpan.FromSeconds(4),
     };
 
     // Completes when the cache says it changed and the condition holds; a test never waits on a poll.
@@ -131,6 +122,9 @@ public sealed class PeerPullRequestsTests : IDisposable
             cache.Changed -= On;
         }
     }
+
+    // The stream is down and the cache waits to open it again (the rescan's timer and the backoff's are set).
+    private Task Backing(PeerPullRequests cache) => Until(cache, () => _clock.Waiting >= 2);
 
     [Fact]
     public async Task AChangedReadReachesTheCacheWithNoPoll()
@@ -163,6 +157,8 @@ public sealed class PeerPullRequestsTests : IDisposable
         await Until(cache, () => cache.RowOf("B1") is not null);
 
         peer.Drop();
+        await Backing(cache);
+        _clock.Advance(cache.Backoff);
         await Until(cache, () => peer.Opened >= 2);
         // Down for no time yet: the read is still held.
         cache.RowOf("B1").ShouldNotBeNull();
@@ -199,6 +195,8 @@ public sealed class PeerPullRequestsTests : IDisposable
 
         // B goes away and stays away longer than one pace: its read is gone, the ask at read time fails, and A searches GitHub.
         peer.Drop();
+        await Backing(cache);
+        _clock.Advance(cache.Backoff);
         await Until(cache, () => peer.Opened >= 2);
         _clock.Advance(Pace + TimeSpan.FromSeconds(1));
         cache.RowOf("B1").ShouldBeNull();

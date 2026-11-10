@@ -58,7 +58,8 @@ public sealed class PrReadShareTests
     [Fact]
     public void TheFlyerIsTheReaderElseTheLowestName()
     {
-        var exact = (int)Pace.TotalSeconds;
+        // A reader a pace and a half old: past the take, inside the grace.
+        var exact = (int)(Pace.TotalSeconds * 1.5);
         // B flies in it, A (lower) does not: A leaves it to B.
         One("A", [], Peer("B", exact, flying: true), Peer("C", exact)).ShouldBeOfType<PrReadPlan.LeftTo>().Reader.ShouldBe("B");
         // No flyer: the lowest name, this node, reads.
@@ -70,9 +71,20 @@ public sealed class PrReadShareTests
     }
 
     [Fact]
-    public void AQuietReaderPastOnePaceMeansReadHere()
+    public void TheReaderGetsTwoPacesBeforeThisNodeReadsItself()
     {
-        One("C", [], Peer("B", 90)).ShouldBeOfType<PrReadPlan.ReadHere>();
+        // 1.5 paces: not fresh enough to take, but the reader is within its grace.
+        One("C", [], Peer("B", 90)).ShouldBeOfType<PrReadPlan.LeftTo>().Reader.ShouldBe("B");
+        // 2.5 paces: the reader has gone quiet.
+        One("C", [], Peer("B", 150)).ShouldBeOfType<PrReadPlan.ReadHere>();
+    }
+
+    [Fact]
+    public void ARepoThisNodeHoldsNoPrsOfIsReadHereNotLeft()
+    {
+        var plan = PrReadShare.Plan("C", [Repo], [], Pace, Now, [Peer("B", 90)], []);
+        plan.Single().ShouldBeOfType<PrReadPlan.ReadHere>();
+        PrReadShare.Plan("C", [Repo], [], Pace, Now, [Peer("B", 90)], [Repo]).Single().ShouldBeOfType<PrReadPlan.LeftTo>();
     }
 
     [Fact]
