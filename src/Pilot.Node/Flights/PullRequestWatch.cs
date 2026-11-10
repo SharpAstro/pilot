@@ -82,15 +82,20 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
         while (true)
         {
             Task<PullRequestsRow?> joined;
+            Task<PullRequestsRow?>? mine = null;
             lock (_gate)
             {
                 // A read already running for a person is joined. One on the watch's pace may have taken a peer's read or left a repo to its
                 // reader, which a person who asked for fresh PRs must not get, so it is waited out and a read of the person's own follows.
                 if (_running is null || _runningAsked)
                 {
-                    return await RunAsync("refresh asked", asked: true).WaitAsync(cancellationToken);
+                    mine = RunAsync("refresh asked", asked: true);
                 }
-                joined = _running;
+                joined = mine ?? _running!;
+            }
+            if (mine is not null)
+            {
+                return await mine.WaitAsync(cancellationToken);
             }
             try
             {
