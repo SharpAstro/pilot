@@ -27,6 +27,11 @@ internal sealed class FakeWorkers : IWorkerLauncher
     /// <summary>What the next start waits for before the worker is up, as a slow claude start; null to start at once.</summary>
     public Task? Hold { get; set; }
 
+    private int _holding;
+
+    /// <summary>True while a test holds a start: one is set to be held, or one is waiting on its hold now.</summary>
+    public bool Holding => Hold is not null || Volatile.Read(ref _holding) > 0;
+
     public async Task<string> StartAsync(WorkerStart start, CancellationToken cancellationToken)
     {
         if (Fail is { } fail)
@@ -35,8 +40,16 @@ internal sealed class FakeWorkers : IWorkerLauncher
         }
         if (Hold is { } hold)
         {
+            Interlocked.Increment(ref _holding);
             Hold = null;
-            await hold;
+            try
+            {
+                await hold;
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _holding);
+            }
         }
         Started.Add(start);
         var job = $"job{++_next:D5}";
@@ -1166,11 +1179,12 @@ public abstract class LegCommanderTestsBase : IDisposable
     {
         var result = await _legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct);
         // A started leg's worker is launched after the command answers, and a loaded machine does not do that within it: every test
-        // that reads what was started after a start waits here for the launch, not each one on its own.
+        // that reads what was started after a start waits here for the launch, not each one on its own. A start the test holds in
+        // the launcher (LockFreeStartTests) is not waited for: it ends only when the test lets it go.
         if (verb == Verbs.StartLeg && result.Ok && target.Split('/') is [_, var code, ..])
         {
             var clock = Stopwatch.StartNew();
-            while (_legs.Starting(code) && clock.Elapsed < TimeSpan.FromSeconds(120))
+            while (_legs.Starting(code) && !_workers.Holding && clock.Elapsed < TimeSpan.FromSeconds(120))
             {
                 await Task.Delay(10, Ct);
             }
