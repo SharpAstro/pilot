@@ -55,6 +55,24 @@ public class BranchHistoryBriefTests
     }
 
     /// <summary>
+    /// Owner, 2026-11-10: a worker brings the base in first, every time it starts (PIL818's plane was 77 commits behind and failed its
+    /// check on a sibling main had moved off), and keeping planes current is the watchtower's duty each time it wakes.
+    /// </summary>
+    [Fact]
+    public void AWorkerMergesTheBaseFirstAtEveryStartAndTheWatchtowerKeepsPlanesCurrent()
+    {
+        var worker = Briefs.For(Flight, Leg, [Leg]);
+        worker.ShouldContain("every time you start (a go-around and a resume included), bring the base in");
+        worker.ShouldContain("`git merge --no-edit origin/main`");
+        worker.ShouldNotContain("origin/origin/");
+        Briefs.For(Flight with { Base = "main" }, Leg, [Leg]).ShouldContain("`git merge --no-edit origin/main`");
+
+        var tower = Briefs.WatchtowerRules("watchtower", "pilot");
+        tower.ShouldContain("Keep every plane current, as a duty each time you wake");
+        tower.ShouldContain("rev-list --count HEAD..origin/<base>");
+    }
+
+    /// <summary>
     /// #896: a chained, quoted or variable call of pilot misses the allow rules and goes to the auto-mode classifier, which denied the
     /// watchtower's card answers. Every session that runs pilot is told to run it alone, as written, and to keep notes through the node.
     /// </summary>

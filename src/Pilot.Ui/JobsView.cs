@@ -189,6 +189,9 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     private const float TreeRowHeight = 18f;
     private const int TreeRows = 4;
 
+    /// <summary>The selected job's facts, scrolled within the details panel when they are taller than it.</summary>
+    private readonly ListScrollController _factsScroll = new() { Mode = ScrollBarMode.Interactive };
+
     private static RGBAColor32 Ground => Palette.Current.Ground;
     private static RGBAColor32 HeaderBg => Palette.Current.HeaderBg;
     private static RGBAColor32 RowAltBg => Palette.Current.RowAltBg;
@@ -825,7 +828,9 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     {
         return Layout.Builder.VStack(
                 Layout.Builder.HStack(
-                        Layout.Builder.VStack([.. facts]).WStar(2f, 0f, FactsColumn),
+                        // The facts scroll inside the panel's height: a running job's pid, tree and failures are taller than the
+                        // panel, and ran under its button bar (owner's screenshot of j4448, 2026-11-10).
+                        Layout.Builder.VStack([.. facts]).WithScroll(_factsScroll).WStar(2f, 0f, FactsColumn).Stretch(),
                         LogTail(line).WStar())
                     .WithGap(24f)
                     .Stretch(),
