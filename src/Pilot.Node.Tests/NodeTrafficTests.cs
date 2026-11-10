@@ -170,6 +170,7 @@ public sealed class NodeTrafficTests
             lines[0].ShouldContain("http in 12000 bytes, out 3000 bytes");
             lines[0].ShouldContain("git runs 1, gh runs 1");
             lines[0].ShouldContain(NodeTraffic.CanMeasureChildren ? "8000 bytes (estimate, upper bound)" : "unknown");
+            lines[0].ShouldEndWith("top callers: none");
         }
         finally
         {
@@ -178,6 +179,56 @@ public sealed class NodeTrafficTests
                 Directory.Delete(folder, recursive: true);
             }
         }
+    }
+
+    [Fact]
+    public void TheHourlyLineEndsWithTheTopThreeCallersOfThatHourAndNoOther()
+    {
+        var clock = new Clock(new DateTimeOffset(2026, 10, 30, 9, 20, 0, TimeSpan.Zero));
+        var boot = clock.Now.AddDays(-1);
+        var table = new FakeProcessTable().Add(1, 0, "systemd", boot)
+            .Add(20, 1, "bash", boot, "bash watch.sh")
+            .Add(30, 1, "pwsh", boot, "pwsh -NoProfile")
+            .Add(40, 1, "python", boot, "python poll.py")
+            .Add(50, 1, "node", boot, "node ui.js");
+        var traffic = new NodeTraffic { Time = clock, Callers = new CommandCallers(table, clock) };
+        foreach (var (pid, calls) in new[] { (20, 9), (30, 7), (40, 5), (50, 3) })
+        {
+            for (var i = 0; i < calls; i++)
+            {
+                traffic.Callers.CountPeer(pid);
+            }
+        }
+        // The next hour's requests are that hour's, however many.
+        clock.Now = new DateTimeOffset(2026, 10, 30, 10, 0, 5, TimeSpan.Zero);
+        for (var i = 0; i < 100; i++)
+        {
+            traffic.Callers.CountPeer(50);
+        }
+
+        var lines = new List<string>();
+        traffic.Roll(lines.Add).ShouldBeTrue();
+
+        var line = lines.ShouldHaveSingleItem();
+        line.ShouldStartWith("traffic 2026-10-30 09:00Z");
+        line.ShouldEndWith("; top callers: bash 20 (bash watch.sh) 9, pwsh 30 (pwsh -NoProfile) 7, python 40 (python poll.py) 5");
+        line.ShouldNotContain("node 50");
+    }
+
+    [Fact]
+    public void ALanClientAndAnUnresolvedPeerAreCallersOfTheHourToo()
+    {
+        var clock = new Clock(new DateTimeOffset(2026, 10, 30, 9, 20, 0, TimeSpan.Zero));
+        var traffic = new NodeTraffic { Time = clock, Callers = new CommandCallers(new FakeProcessTable(), clock) };
+        traffic.Callers.CountLan("laptop");
+        traffic.Callers.CountLan("laptop");
+        traffic.Callers.CountPeer(null);
+        clock.Now = new DateTimeOffset(2026, 10, 30, 10, 0, 5, TimeSpan.Zero);
+
+        var lines = new List<string>();
+        traffic.Roll(lines.Add);
+
+        lines.ShouldHaveSingleItem().ShouldEndWith("; top callers: laptop - (LAN grant) 2, unknown - (peer not resolved) 1");
     }
 
     [Fact]

@@ -841,6 +841,13 @@ public static class Verbs
     public const string EndStray = "end-stray";
 
     /// <summary>
+    /// <c>end-poller process:&lt;pid&gt;@&lt;start&gt;</c>: ends a caller the poller sweep named on a card (one that is none of a job's or a
+    /// session's and has hammered the node for hours), on the person's word only. Refused unless the card is open and the pid still
+    /// starts when the sweep saw it, so a reused pid is never another process ended.
+    /// </summary>
+    public const string EndPoller = "end-poller";
+
+    /// <summary>
     /// <c>end-session session/&lt;id&gt; &lt;why&gt;</c> (<c>pilot session end &lt;id&gt; &lt;why&gt;</c>): the node ends a running background
     /// session, cancels its queued and running jobs, and records <c>why</c> (required) and who asked in the session ledger. For the
     /// watchtower, whose own <c>claude stop</c> is refused under auto mode. An interactive or ended session is refused.

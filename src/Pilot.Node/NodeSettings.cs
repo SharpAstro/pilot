@@ -33,6 +33,10 @@ public sealed record NodeSettings
     /// packages, so it compiles no sibling and has nothing to share; only a <c>pilot: sibling source</c> flight holds clones.
     /// </summary>
     public const bool JobPlaneOutputDefault = false;
+    /// <summary>Whether a job in a plane builds through the content-keyed build cache (Microsoft.MSBuildCache.Local, a trial, PIL860); off unless set on.</summary>
+    public const string JobBuildCacheKey = "job-build-cache";
+    /// <summary>What <see cref="JobBuildCacheKey"/> is when the settings file does not say: off.</summary>
+    public const bool JobBuildCacheDefault = false;
     public const string MergeMethodKey = "merge-method";
     public const string StartLimitKey = "start-limit";
     public const string PriorityStartLimitKey = "priority-start-limit";
@@ -191,7 +195,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. BenchKeys, .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -243,6 +247,9 @@ public sealed record NodeSettings
 
     /// <summary>Whether the node's jobs in a plane build into <c>&lt;plane&gt;/artifacts</c> (<see cref="JobPlaneOutputKey"/>); <see cref="JobPlaneOutputDefault"/> unless set.</summary>
     public bool? JobPlaneOutput { get; init; }
+
+    /// <summary>Whether the node's jobs in a plane build through the build cache (<see cref="JobBuildCacheKey"/>); <see cref="JobBuildCacheDefault"/> unless set.</summary>
+    public bool? JobBuildCache { get; init; }
 
     /// <summary>The Shortcut API token (<see cref="ShortcutTokenKey"/>) that reads a story's title; the <c>SHORTCUT_API_TOKEN</c> variable wins over it. Never shown by the settings output beyond set or not.</summary>
     public string? ShortcutToken { get; init; }
@@ -500,6 +507,7 @@ public sealed record NodeSettings
                     MergeBatchKey => JsonValue.Create(MergeBatch),
                     WorkerLadderKey => JsonValue.Create(WorkerLadder),
                     JobPlaneOutputKey => JsonValue.Create(JobPlaneOutput),
+                    JobBuildCacheKey => JsonValue.Create(JobBuildCache),
                     LanPortKey => JsonValue.Create(LanPort),
                     MaxJobsKey => JsonValue.Create(MaxJobs),
                     MaxGoAroundsKey => JsonValue.Create(MaxGoArounds),
@@ -551,6 +559,7 @@ public sealed record NodeSettings
         MergeBatchKey => MergeBatch is { } batch ? [batch ? "on" : "off"] : null,
         WorkerLadderKey => WorkerLadder is { } ladder ? [ladder ? "on" : "off"] : null,
         JobPlaneOutputKey => JobPlaneOutput is { } planeOutput ? [planeOutput ? "on" : "off"] : null,
+        JobBuildCacheKey => JobBuildCache is { } buildCache ? [buildCache ? "on" : "off"] : null,
         LanPortKey => LanPort is { } port ? [port.ToString(CultureInfo.InvariantCulture)] : null,
         ShortcutTokenKey => ShortcutToken is { } token ? [token] : null,
         BenchSubscriptionKey => BenchSubscription is { } subscription ? [subscription] : null,
@@ -714,6 +723,14 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } planeOut
                     ? (settings with { JobPlaneOutput = planeOut }, null)
                     : (null, "job-plane-output takes on or off");
+            case JobBuildCacheKey:
+                if (clear)
+                {
+                    return (settings with { JobBuildCache = null }, null);
+                }
+                return OnOff(One()) is { } cacheOn
+                    ? (settings with { JobBuildCache = cacheOn }, null)
+                    : (null, "job-build-cache takes on or off");
             case ShortcutTokenKey:
                 return clear
                     ? (settings with { ShortcutToken = null }, null)

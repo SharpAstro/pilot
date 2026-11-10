@@ -683,15 +683,17 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     /// <summary>
     /// The folders a build machine wants Windows Defender to leave alone: each repo root, the NuGet package folder
     /// (<c>NUGET_PACKAGES</c>, else <c>.nuget\packages</c>), the node's data folder, Claude Code's <c>.claude</c> and the dotnet
-    /// root. Only those that exist, in full, and each once.
+    /// root, and the build cache folder (<see cref="Flights.BuildCache"/>). Only those that exist, in full, and each once.
     /// </summary>
-    private IReadOnlyList<string> WantedFolders()
+    internal IReadOnlyList<string> WantedFolders()
     {
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var folders = new List<string>(options.RepoRoots)
         {
             Environment.GetEnvironmentVariable("NUGET_PACKAGES") is { Length: > 0 } packages ? packages : Path.Combine(home, ".nuget", "packages"),
             options.DataFolder,
+            // The build cache (job-build-cache) is written by every build; it is under the data folder, which covers it, and named so it stays wanted if it moves.
+            Flights.BuildCache.RootIn(options.DataFolder),
             Path.Combine(home, ".claude"),
         };
         var (exit, sdks) = Run("dotnet", ["--list-sdks"], TimeSpan.FromSeconds(15));

@@ -1120,6 +1120,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     {
         _plans.TryRemove(ended.Id, out _);
         _localWhy.TryRemove(ended.Id, out _);
+        _seeds.TryRemove(ended.Id, out _);
         if (_benchWaiters.TryRemove(ended.Id, out var bench))
         {
             bench.TrySetResult(ended);
@@ -1697,6 +1698,43 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
 
     private bool _planeOutput = NodeSettings.JobPlaneOutputDefault;
 
+    /// <summary>Whether a job in a plane builds through the content-keyed build cache (<see cref="NodeSettings.JobBuildCacheKey"/>, a trial); off unless set on, live.</summary>
+    public bool BuildCache { get; set; } = NodeSettings.JobBuildCacheDefault;
+
+    /// <summary>The cache root, <c>&lt;data folder&gt;\build-cache</c>.</summary>
+    public string BuildCacheRoot => Flights.BuildCache.RootIn(options.DataFolder);
+
+    // A seed is marked by its job id, and the mark goes when the job ends; between queueing and the id it is known by folder and command.
+    private readonly ConcurrentDictionary<string, byte> _seeds = new();
+    private readonly ConcurrentDictionary<(string Cwd, string Command), byte> _seedsQueueing = new();
+
+    private bool IsSeed(JobRow job) => _seeds.ContainsKey(job.Id) || _seedsQueueing.ContainsKey((job.Cwd, job.Command));
+
+    /// <summary>
+    /// Queues the node's own seed build (<see cref="BuildSeed"/>) of a main clone: an ordinary below-normal job through the queue, owned by
+    /// no session, that gets the build cache's variables and cached form though its folder is no plane. Null when queued, else why not.
+    /// </summary>
+    public string? QueueSeed(string cwd, string command)
+    {
+        _seedsQueueing[(cwd, command)] = 0;
+        try
+        {
+            var result = Run(new CommandRequest { Verb = Verbs.Run, Target = Verbs.NodeTarget, Args = [cwd, "0", command], Who = BuildSeed.Who });
+            if (result.Error is null && result.Made is { } id)
+            {
+                _seeds[id] = 0;
+            }
+            return result.Error;
+        }
+        finally
+        {
+            _seedsQueueing.TryRemove((cwd, command), out _);
+        }
+    }
+
+    /// <summary>Where Visual Studio's MSBuild is; settable so a test gives one without a machine that has it.</summary>
+    public Func<string?> MsBuild { get; set; } = Flights.BuildCache.LocateMsBuild;
+
     /// <summary>The clones a job's build compiles; settable so a test can give fixed sets. Answered once per job, kept until it ends.</summary>
     public Func<JobRow, IReadOnlyCollection<string>>? SiblingsOf { get; set; }
 
@@ -1719,6 +1757,10 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         if (SiblingSource(job))
         {
             variables[Flights.PlaneOutput.UseLocalSiblings] = "true";
+        }
+        foreach (var (name, value) in Flights.BuildCache.Variables(BuildCache, job.Cwd, BuildCacheRoot, IsSeed(job)))
+        {
+            variables[name] = value;
         }
         return variables;
     }
@@ -1978,7 +2020,11 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             // An exit file of an earlier run of this id would end the job at once: there is none.
             File.Delete(exitPath);
             var variables = EnvironmentOf(job);
-            launched = Launcher.Start(new JobLaunch(job.Id, job.Command, job.Cwd, job.LogPath, exitPath, Priority, variables,
+            // The recorded command stays as given; the cached build form is what runs.
+            var command = BuildCache && (Flights.PlaneOutput.PlaneOf(job.Cwd) is not null || IsSeed(job))
+                ? Flights.BuildCache.With(job.Command, true, job.Cwd, BuildCacheRoot, MsBuild(), IsSeed(job), SiblingSource(job))
+                : job.Command;
+            launched = Launcher.Start(new JobLaunch(job.Id, command, job.Cwd, job.LogPath, exitPath, Priority, variables,
                 Flights.PlaneOutput.NoBuildNotice(PlaneOutput, job.Command, job.Cwd)));
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException)
@@ -2513,6 +2559,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             // to RunCheckAsync's look for a carried check: it must not see the row ended with no result yet and queue the check again.
             lock (_checkEndLock)
             {
+                _seeds.TryRemove(ended.Id, out _); // the seed mark goes before the row shows it ended
                 state.PutJob(ended);
                 if (looks > 0)
                 {

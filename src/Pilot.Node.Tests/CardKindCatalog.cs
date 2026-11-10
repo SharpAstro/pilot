@@ -163,6 +163,8 @@ internal static class CardKindCatalog
         new("worktree-dirty", "Handled", ["Flights/DiskSweep.cs"], "DiskSweepTests.ADirtyHandMadeWorktreeIsKeptWithOneHandledLineAndNoSecondOnTheNextSweep"),
         new("disk-low", "ForYou", ["Flights/DiskSweep.cs"], "DiskSweepTests.FreeSpaceBelowTheThresholdRaisesOneRingNamingTheLargestItemsAndClosesWhenSpaceIsBack"),
         new("stray-process", "ForYou", ["Flights/StraySweep.cs"], "StraySweepTests.OneCardPerStrayNamesTheProcessItsOwnerAndTheKillCommand"),
+        new("poller-caller", "Ring", ["Flights/PollerSweep.cs"], "PollerSweepTests.AFakeCallerAt300AnHourFor3HoursRingsExactlyOneCardNamingIt", "the node's own per-caller request tally shows a process that is none of a job's, a session's or pilot's own over 200 requests an hour for 2 full hours", [nameof(Verbs.EndPoller)]),
+        new("poller-ended", "Handled", ["Flights/PollerSweep.cs"], "PollerSweepTests.PressingEndKillsOnlyWhileTheStartStillMatches"),
         new("stray-killed", "Handled", ["Flights/StraySweep.cs"], "StraySweepTests.AProcessOfAnEndedJobTheNodeLaunchedIsKilledThroughTheTableAndNothingElseIs"),
         new("plane-left", "Handled", [Move, FlightCommanderLand], "RemovalQueueTests.ALandedFlightWhosePlaneFolderIsHeldSaysSoOnAHandledLineAndQueuesIt"),
         new("folded", "Handled", [FlightCommanderLand], "OverlapTests.FoldRetiresTheAskingFlightLandedAndMarkedFoldedWithNoLegsAndItsPlaneGoneButItsBranchKept"),

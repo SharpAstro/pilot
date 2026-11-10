@@ -162,7 +162,7 @@ public sealed class PinnedHeapTests
     }
 
     [Fact]
-    public void TheHourlyTrafficLineEndsWithTheHeap()
+    public void TheHourlyTrafficLineCarriesTheHeapBeforeTheCallers()
     {
         var time = new Clock { Now = new DateTimeOffset(2026, 11, 7, 9, 30, 0, TimeSpan.Zero) };
         var traffic = new NodeTraffic
@@ -173,7 +173,8 @@ public sealed class PinnedHeapTests
         time.Now = time.Now.AddHours(1);
         string? line = null;
         traffic.Roll(l => line = l).ShouldBeTrue();
-        line.ShouldNotBeNull().ShouldEndWith("; heap 40 MB · LOH 5 MB (0 KB free) · pinned 3 MB (0 KB free) · committed 60 MB · working set 90 MB · workstation GC");
+        // The caller tally (#870) follows the heap on the same line.
+        line.ShouldNotBeNull().ShouldEndWith("; heap 40 MB · LOH 5 MB (0 KB free) · pinned 3 MB (0 KB free) · committed 60 MB · working set 90 MB · workstation GC; top callers: none");
     }
 
     [Fact]
