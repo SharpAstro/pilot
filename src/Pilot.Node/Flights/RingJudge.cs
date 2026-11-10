@@ -188,7 +188,9 @@ public sealed class RingJudge(NodeState state, Func<IBrain?> brain)
 
     private void Quiet(CardRow card, string reason)
     {
-        if (Open(card.Id) is not { } now)
+        // A card rung while its verdict was pending (a press of it the watchtower was refused, Watchtower.Refused) stays rung: the verdict
+        // was about the card as it was raised, and only the judge files a card in For you on its way to the ring.
+        if (Open(card.Id) is not { Bin: not CardBin.Ring } now)
         {
             return;
         }

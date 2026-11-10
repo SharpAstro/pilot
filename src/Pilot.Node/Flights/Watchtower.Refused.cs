@@ -50,7 +50,10 @@ public sealed partial class Watchtower
             state.UpdateCard(card.Id, RefusedPrefix + was,
                 $"{WhatToDo}{press}. The watchtower pressed it at {at} and {reason} refused it, so nothing moves until you do."
                     + (string.IsNullOrWhiteSpace(detail) ? "" : "\n\n" + detail),
-                card.Choices, card.Link, bin: CardBin.Ring);
+                card.Choices, card.Link,
+                // The panel shows the summary, not the detail: it says the refusal, not the kind's usual sentence the watchtower was to act on.
+                summary: $"The watchtower's press was refused by Claude Code's permission check, so nothing moves. {char.ToUpperInvariant(press[0])}{press[1..]}.",
+                bin: CardBin.Ring);
             LogStream($"the watchtower's press {label ?? choice} on {card.Id} was refused ({reason}): the card rings");
             return;
         }
@@ -72,7 +75,7 @@ public sealed partial class Watchtower
     }
 
     /// <summary>The button of a refused command's card: the person did it, and the watchtower is told to go on.</summary>
-    public const string DoneMyselfLabel = "Done it myself: tell the watchtower";
+    public const string DoneMyselfLabel = "Done: tell the watchtower";
 
     // TranscriptBook.DenialOf's words for the person's own refusal.
     private const string PersonSaidNo = "you said no";

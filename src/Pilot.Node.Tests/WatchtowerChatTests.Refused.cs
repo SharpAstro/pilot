@@ -40,6 +40,7 @@ public sealed partial class WatchtowerChatTests
         rung.Detail.ShouldContain("the rule applies to tmap too");
         rung.Detail.ShouldNotContain(RingJudge.QuietPrefix, Case.Sensitive, "the quiet verdict was wrong once the press was refused");
         rung.Choices.Select(c => c.Label).ShouldBe(["Fix the review's findings"]);
+        rung.Summary.ShouldBe("The watchtower's press was refused by Claude Code's permission check, so nothing moves. Press \"Fix the review's findings\" yourself.");
 
         // The watchtower tries again and is refused again: still one lead, the review's words once.
         process.Emit(ShellCall("r2", $"pilot answer {card.Id} \"Fix the review's findings\" 2>&1 && pilot status"));
