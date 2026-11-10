@@ -226,10 +226,11 @@ public sealed class DesignDecideTests : PrFixTestsBase
         _state.Decisions(kind: DecisionKinds.Design).ShouldBeEmpty();
         var card = OpenDesign().ShouldNotBeNull();
         card.Detail.ShouldNotBeNull().ShouldContain("It rings because README.md:9 no option reaches the criteria.");
-        // Each question's options are offered, each answer naming its question, and then the free text (c3479).
-        card.Choices.Length.ShouldBe(5);
-        card.Choices[^1].Label.ShouldBe(PrReviews.AnswerLabel);
-        card.Choices.Take(4).ShouldAllBe(c => c.Args.Single().Contains(" => ", StringComparison.Ordinal));
+        // One press takes both questions' recommended answers, each line naming its question, and then the free text (c3479): no button
+        // answers one question of the two and closes the card.
+        card.Choices.Select(c => c.Label).ShouldBe([PrReviews.RecommendedLabel(2), PrReviews.AnswerLabel]);
+        card.Choices[0].Args.Single().Split('\n').ShouldAllBe(line => line.Contains(" => ", StringComparison.Ordinal));
+        card.Choices[0].Args.Single().Split('\n').Length.ShouldBe(2);
     }
 
     [Fact]

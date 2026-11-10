@@ -108,7 +108,7 @@ public sealed class DesignCardWordsTests
     [Fact]
     public void ThreeQuestionsTakeAllThreeAndAQuestionWithNoRecommendedAnswerLeavesOnlyOwnWords()
     {
-        Raise(C3479[0], C3479[1], Asked("q3?")).Choices.Select(c => c.Label).ShouldBe(["Take all 3 recommended answers", PrReviews.AnswerLabel]);
+        PrReviews.DesignChoices(Subject, [C3479[0], C3479[1], Asked("q3?")]).Select(c => c.Label).ShouldBe(["Take all 3 recommended answers", PrReviews.AnswerLabel]);
 
         var noneRecommended = new DesignQuestion(null!, "and the name?", [new DesignOption("keep it", "", false), new DesignOption("rename it", "", false)]);
         var card = Raise(C3479[0], noneRecommended);
@@ -164,12 +164,33 @@ public sealed class DesignCardWordsTests
     [Fact]
     public void ThreeQuestionsAreOneLineWithinTheBoundEachCutWithAnEllipsis()
     {
-        var summary = Raise(Asked(LongQuestion), Asked(LongQuestion.Replace("SiblingSource", "SiblingSink")), Asked("should the third be asked too?")).Summary.ShouldNotBeNull();
+        static DesignQuestion Open(string question) => new(null!, question, []);
+
+        var summary = Raise(Open(LongQuestion), Open(LongQuestion.Replace("SiblingSource", "SiblingSink")), Open("should the third be asked too?")).Summary.ShouldNotBeNull();
 
         ItIsTheQuestionsOwnWords(summary, "1. SiblingSource(job)");
         summary.ShouldContain("2. SiblingSink(job)");
         summary.ShouldEndWith("3. should the third be asked too?");
         summary.ShouldContain("...");
+    }
+
+    /// <summary>
+    /// Three long questions with options: no option has a button of its own, so each is in the line whole by its tag, and the questions
+    /// are cut to the floor with an ellipsis to make room. Past the bound the panel ends the line in an ellipsis with the whole on hover.
+    /// </summary>
+    [Fact]
+    public void ThreeQuestionsWithOptionsKeepEveryOptionWholeByItsTagAndCutTheQuestions()
+    {
+        var summary = Raise(Asked(LongQuestion), Asked(LongQuestion.Replace("SiblingSource", "SiblingSink")), Asked("should the third be asked too?")).Summary.ShouldNotBeNull();
+
+        summary.ShouldStartWith("1. SiblingSource(job)");
+        summary.ShouldNotContain("\n");
+        foreach (var n in new[] { 1, 2, 3 })
+        {
+            summary.ShouldContain($"{n}A: export where clones are (recommended). {n}B: always export it.");
+        }
+        summary.ShouldContain("... 1A:");
+        summary.ShouldContain("... 2A:");
     }
 
     [Theory]
