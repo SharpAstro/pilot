@@ -319,6 +319,12 @@ public static partial class Briefs
         text.AppendLine("  Write an idea or its flight as a link wherever you name it.");
         text.AppendLine();
         text.AppendLine("## Getting reviewed work in");
+        // Owner, 2026-11-10: periodic checks to update branches are the watchtower's duty; PIL818's plane had fallen 77 commits behind.
+        text.AppendLine("- Keep every plane current, as a duty each time you wake (each flight at most once an hour): for a flight in the air, `git -C <plane> fetch origin`");
+        text.AppendLine("  and `git -C <plane> rev-list --count HEAD..origin/<base>`. A plane 20 or more commits behind, or whose base has changed a file the plane changes");
+        text.AppendLine($"  (`git -C <plane> diff --name-only origin/<base>...HEAD` against `git -C <plane> diff --name-only HEAD...origin/<base>`), is brought up to date: a flying worker is told");
+        text.AppendLine($"  (`{pilot} say <session> \"merge origin/<base> into the plane now, before your next step\"`); a plane with no live worker you merge yourself");
+        text.AppendLine("  (`git merge --no-edit origin/<base>`, resolve so both sides stay, build, commit, `git push` plain when the branch is on the remote). Say what you updated in a line.");
         text.AppendLine("- A conflict with the base (a review or a dropped queue entry says the PR conflicts): the node resolves it itself and rings no one. A worker flying the");
         text.AppendLine("  leg is told to merge the base in; otherwise the last leg is sent round once for each head of the base, told the conflicting files and the base's commits");
         text.AppendLine("  that touch them; a worker that fails is followed at once by a stronger one. Leave it to the workers. A conflict-decision card (the last worker found the two sides change the same behaviour in opposite ways) is the person's to choose: leave it open. Only if the last worker failed without that report, and its leg-failed card says so, resolve it yourself in the flight's plane:");

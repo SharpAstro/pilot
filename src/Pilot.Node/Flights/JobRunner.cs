@@ -156,6 +156,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     public bool OneHeavyAtATime { get; set; } = true;
 
+    /// <summary>The most jobs of one repo that run at once (<see cref="NodeSettings.JobsPerRepoKey"/>); 0 for no limit. Live.</summary>
+    public int JobsPerRepo { get; set; } = NodeSettings.JobsPerRepoDefault;
+
     /// <summary>The priority every job's process tree runs at, so builds and tests yield the CPU to other work (#629); Normal keeps the node's own.</summary>
     public JobPriority Priority { get; set; } = JobPriority.BelowNormal;
 
@@ -672,6 +675,14 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             return state.Complete(command, WholeSuiteRefusal(whole, owner));
         }
+        // A flight's session can't approve its own whole suite: PIL801's worker gave itself a why and ran every test, the Slow ones
+        // included, for 23 min on a loaded node (j4444, 2026-11-10). Only a leg planned with whole-suite=<why> lets its sessions
+        // run one; the owner (a terminal) and the controller still can.
+        if (wholeSuiteWhy is not null && CheckScope.WholeSuite(line) is { } wholeAsked && owner is { Role: SessionRole.Worker or SessionRole.Reviewer or SessionRole.Planner } asker
+            && !LegAllowsWholeSuite(asker))
+        {
+            return state.Complete(command, $"{WholeSuiteRefusal(wholeAsked, owner)}. A flight's session can't approve its own whole suite: its leg must be planned with {CheckScope.WholeSuiteKey}=<why>, or the owner runs it");
+        }
 
         // A session that replaced another of its name and role takes up the predecessor's queued job of the same command in the
         // same folder, rather than queueing the same work twice (its end already goes to the replacement, #601). A running one only
@@ -740,6 +751,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <see cref="CheckScope.Refusal"/> for a run of a whole suite, with the filter suggested from the owner's flight's plane changes
     /// when the owner has a flight with a plane, and the way past it for a run.
     /// </summary>
+    /// <summary>Whether <paramref name="session"/>'s leg was planned to run the whole suite (its done-when carries <see cref="CheckScope.WholeSuiteMark"/>).</summary>
+    private bool LegAllowsWholeSuite(SessionRow session) =>
+        session.Flight is { Length: > 0 } flight && session.Leg is { Length: > 0 } leg
+        && state.Legs(flight).FirstOrDefault(l => l.Name == leg) is { } row
+        && row.DoneWhen.Contains(CheckScope.WholeSuiteMark, StringComparison.Ordinal);
+
     private string WholeSuiteRefusal(string segment, SessionRow? owner)
     {
         string? suggestion = null;
@@ -1657,19 +1674,17 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     private string? RepoHold(JobRow job)
     {
-        if (SiblingSet.RepoOf(job.Cwd) is not { } repo)
+        if (JobsPerRepo <= 0 || SiblingSet.RepoOf(job.Cwd) is not { } repo)
         {
             return null;
         }
-        foreach (var id in _running.Keys.Order(StringComparer.Ordinal))
-        {
-            if (id != job.Id && state.Jobs().FirstOrDefault(j => j.Id == id) is { } row
+        var same = _running.Keys.Order(StringComparer.Ordinal)
+            .Where(id => id != job.Id && state.Jobs().FirstOrDefault(j => j.Id == id) is { } row
                 && string.Equals(SiblingSet.RepoOf(row.Cwd), repo, StringComparison.OrdinalIgnoreCase))
-            {
-                return $"one job per repo: {id} of {Path.GetFileName(repo)} is running";
-            }
-        }
-        return null;
+            .ToList();
+        return same.Count >= JobsPerRepo
+            ? $"{(JobsPerRepo == 1 ? "one job" : $"{JobsPerRepo} jobs")} per repo: {string.Join(", ", same)} of {Path.GetFileName(repo)} {(same.Count == 1 ? "is" : "are")} running"
+            : null;
     }
 
     /// <summary>
@@ -1692,9 +1707,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         foreach (var id in _running.Keys.Order(StringComparer.Ordinal))
         {
-            if (id != job.Id && state.Jobs().FirstOrDefault(j => j.Id == id) is { } row && IsHeavy(row.Command))
+            // Per repo only: another repo's heavy job runs beside it (owner, 2026-11-10: "we can run 4 jobs of diff repos in parallel, the
+            // rule was only that it shouldn't run 4 pilot heavies or 4 tianwen heavies"); one pilot build held nine jobs of three repos.
+            if (id != job.Id && state.Jobs().FirstOrDefault(j => j.Id == id) is { } row && IsHeavy(row.Command)
+                && string.Equals(SiblingSet.RepoOf(row.Cwd), SiblingSet.RepoOf(job.Cwd), StringComparison.OrdinalIgnoreCase))
             {
-                return $"one heavy job at a time: {id} is running a test run or a solution build";
+                return $"one heavy job of a repo at a time: {id} is running a test run or a solution build of it";
             }
         }
         return null;
