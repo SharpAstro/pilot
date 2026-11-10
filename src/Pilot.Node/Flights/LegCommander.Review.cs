@@ -706,11 +706,17 @@ public sealed partial class LegCommander
     private static string RoundRefusal(FlightRow flight) =>
         $"{flight.Code}'s review has had {ChangesRounds(flight)} rounds with changes: another round is the watchtower's call (`allow-round`), or the person's";
 
-    /// <summary>The watchtower's word, or the person's, that a held review loop may have exactly one more round.</summary>
-    private void AllowRound(CommandRequest command)
+    /// <summary>
+    /// The watchtower's word, or the person's, that a held review loop may have exactly one more round. The person's word sends the
+    /// round itself: the last leg goes around with the review's findings and the person's why. It used to raise only the "Fix the
+    /// review's findings" card, which rang for a second press while the person's allow-round said ok (TIA2054, 2026-11-11). The
+    /// watchtower's word raises that card, as before, for the watchtower to send.
+    /// </summary>
+    private async Task AllowRoundAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var flight = FlightOf(command.Target);
-        if (!IsWatchtower(command.Who) && !IsPerson(flight, command.Who))
+        var person = IsPerson(flight, command.Who);
+        if (!IsWatchtower(command.Who) && !person)
         {
             throw new FlightException("only the watchtower or the person may allow another review round");
         }
@@ -721,7 +727,15 @@ public sealed partial class LegCommander
         var rounds = ChangesRounds(flight);
         Record(flight.Code, f => f with { ReviewRoundsAllowed = rounds + 1 });
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{command.Who} allowed one more round", ReviewLoopKind);
-        RaiseReviewChanges(FlightOf(command.Target), flight.Review!.Report ?? "");
+        var findings = flight.Review!.Report ?? "";
+        if (person && state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault() is { } last)
+        {
+            var why = string.Join(' ', command.Args ?? []).Trim();
+            var brief = $"the review asked for changes: {findings}" + (why.Length > 0 ? $"\n\nThe person allowed this round: {why}" : "");
+            await GoAroundAsync(command with { Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [brief] }, cancellationToken);
+            return;
+        }
+        RaiseReviewChanges(FlightOf(command.Target), findings);
     }
 
     /// <summary>

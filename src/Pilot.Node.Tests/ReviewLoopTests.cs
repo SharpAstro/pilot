@@ -109,6 +109,30 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         (await Run(Verbs.AllowRound, Verbs.FlightTarget(code), "node", "me")).Error.ShouldNotBeNull();
     }
 
+    /// <summary>
+    /// TIA2054, 2026-11-11: the person's allow-round said ok and started nothing; it raised a "Fix the review's findings" card that
+    /// rang for a second press. The person's word sends the round itself, and the next worker is told the findings and the why.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ThePersonsAllowRoundSendsTheLegRoundWithTheirWhyAndRaisesNoSecondCard()
+    {
+        var code = await Looping("1", 3);
+        var before = _workers.Started.Count;
+
+        (await Run(Verbs.AllowRound, Verbs.FlightTarget(code), "controller", "cut the slow tests' causes, not more shards")).Error.ShouldBeNull();
+        await Started(_legs, code);
+
+        F(code).ReviewRoundsAllowed.ShouldBe(4);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewLoopKind);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewChanges);
+        _workers.Started.Count.ShouldBeGreaterThan(before);
+        var worker = _workers.Started.Last();
+        worker.Name.ShouldBe(_state.Legs(code).Single(l => l.Name == "parser").Worker);
+        worker.Brief.ShouldContain("finding of round 3");
+        worker.Brief.ShouldContain("cut the slow tests' causes, not more shards");
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task TheWatchtowersWordAllowsExactlyOneMoreRound()
