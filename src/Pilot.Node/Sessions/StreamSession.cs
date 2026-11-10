@@ -62,6 +62,12 @@ public enum StreamChangeKind
     /// or called off by claude (its turn ended or was interrupted, or the process ended). <see cref="StreamSessionChange.Outcome"/> says which.
     /// </summary>
     Answered,
+    /// <summary>
+    /// Claude Code refused one of its shell calls (the auto mode classifier, a deny rule, a safety check): <see cref="StreamSessionChange.Command"/>
+    /// is the command and <see cref="StreamSessionChange.Outcome"/> what refused it, in <see cref="TranscriptBook.DenialOf"/>'s words. The call's
+    /// result is its only record, so nobody else hears of it.
+    /// </summary>
+    Refused,
 }
 
 /// <param name="Kind">What changed.</param>
@@ -70,8 +76,9 @@ public enum StreamChangeKind
 /// <param name="Requested">True when the node ended it (<see cref="StreamSession.DisposeAsync"/>), false for an unexpected exit.</param>
 /// <param name="Error">The last of its standard error on an exit.</param>
 /// <param name="Ask">The ask that arrived or left (<see cref="StreamChangeKind.Asked"/> and <see cref="StreamChangeKind.Answered"/>).</param>
-/// <param name="Outcome">How an ask left (<see cref="StreamChangeKind.Answered"/>): <c>allowed</c>, <c>denied</c>, <c>answered</c> or <c>cancelled</c>, with the person's words where there are any.</param>
-public sealed record StreamSessionChange(StreamChangeKind Kind, TurnTiming? Turn = null, int? ExitCode = null, bool Requested = false, string? Error = null, PendingAsk? Ask = null, string? Outcome = null);
+/// <param name="Outcome">How an ask left (<see cref="StreamChangeKind.Answered"/>): <c>allowed</c>, <c>denied</c>, <c>answered</c> or <c>cancelled</c>, with the person's words where there are any; what refused a call (<see cref="StreamChangeKind.Refused"/>).</param>
+/// <param name="Command">The shell command that was refused (<see cref="StreamChangeKind.Refused"/> only).</param>
+public sealed record StreamSessionChange(StreamChangeKind Kind, TurnTiming? Turn = null, int? ExitCode = null, bool Requested = false, string? Error = null, PendingAsk? Ask = null, string? Outcome = null, string? Command = null);
 
 /// <summary>One option of a question claude asks (<c>AskUserQuestion</c>).</summary>
 public sealed record AskOption(string Label, string? Description);
@@ -203,6 +210,9 @@ public sealed class StreamSession : IAsyncDisposable
     private bool _working;
     private string _partialText = "";
     private string? _doing;
+
+    // The shell calls asked for and not yet answered, by tool_use id: a refused one is told by its result, which names only the id.
+    private readonly Dictionary<string, string> _shellCalls = new(StringComparer.Ordinal);
     private int? _exitCode;
     private long _contextTokens;
     private DateTimeOffset _turnStarted;
@@ -655,6 +665,10 @@ public sealed class StreamSession : IAsyncDisposable
                         {
                             _contextTokens = context;
                         }
+                        foreach (var (callId, command) in ShellCalls(root))
+                        {
+                            _shellCalls[callId] = command;
+                        }
                         if (ToolUse(root) is { } doing && doing != _doing)
                         {
                             _doing = doing;
@@ -672,6 +686,13 @@ public sealed class StreamSession : IAsyncDisposable
                         {
                             _midTurn.Clear();
                             changes.Add(new StreamSessionChange(StreamChangeKind.Queued));
+                        }
+                        foreach (var (resultId, text) in ToolResults(root))
+                        {
+                            if (_shellCalls.Remove(resultId, out var command) && TranscriptBook.DenialOf(text) is { } refused)
+                            {
+                                changes.Add(new StreamSessionChange(StreamChangeKind.Refused, Outcome: refused, Command: command));
+                            }
                         }
                         break;
                     case "result":
@@ -841,6 +862,40 @@ public sealed class StreamSession : IAsyncDisposable
         long Count(string name) => usage.TryGetProperty(name, out var n) && n.ValueKind == JsonValueKind.Number && n.TryGetInt64(out var v) ? v : 0;
         var total = Count("input_tokens") + Count("cache_creation_input_tokens") + Count("cache_read_input_tokens");
         return total > 0 ? total : null;
+    }
+
+    /// <summary>The shell calls (Bash, PowerShell) of an assistant message of the session itself, by tool_use id.</summary>
+    private static IEnumerable<(string Id, string Command)> ShellCalls(JsonElement assistant)
+    {
+        if (assistant.TryGetProperty("parent_tool_use_id", out var parent) && parent.ValueKind == JsonValueKind.String
+            || !assistant.TryGetProperty("message", out var message) || !message.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+        {
+            yield break;
+        }
+        foreach (var block in content.EnumerateArray())
+        {
+            if (Str(block, "type") == "tool_use" && Str(block, "name") is "Bash" or "PowerShell" && Str(block, "id") is { } id
+                && block.TryGetProperty("input", out var input) && Str(input, "command") is { Length: > 0 } command)
+            {
+                yield return (id, command);
+            }
+        }
+    }
+
+    /// <summary>The tool results of a user message, by the tool_use id they answer, as text.</summary>
+    private static IEnumerable<(string Id, string Text)> ToolResults(JsonElement user)
+    {
+        if (!user.TryGetProperty("message", out var message) || !message.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+        {
+            yield break;
+        }
+        foreach (var block in content.EnumerateArray())
+        {
+            if (Str(block, "type") == "tool_result" && Str(block, "tool_use_id") is { } id)
+            {
+                yield return (id, TranscriptBook.ResultText(block).Trim());
+            }
+        }
     }
 
     /// <summary>The last tool_use of an assistant message, in plain words; null when it has none.</summary>

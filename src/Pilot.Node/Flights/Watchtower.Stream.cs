@@ -267,6 +267,9 @@ public sealed partial class Watchtower : IStreamRoute
             case StreamChangeKind.Answered when change.Ask is { } answered:
                 CloseAskCard(answered, change.Outcome ?? "answered");
                 break;
+            case StreamChangeKind.Refused when change.Command is { } command:
+                Refused(command, change.Outcome ?? "a permission check");
+                break;
             case StreamChangeKind.TurnEnded:
                 lock (_streamsLock)
                 {

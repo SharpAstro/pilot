@@ -47,7 +47,7 @@ public sealed class RingJudge(NodeState state, Func<IBrain?> brain)
     /// asks the person something): those are the person's by definition, and a brain that is down cannot say.
     /// </summary>
     public static bool Wants(string kind) =>
-        kind is not (Watchtower.AskKind or Watchtower.Down or Watchtower.Stopped or Watchtower.Waits or CardKinds.AssistantAsk
+        kind is not (Watchtower.AskKind or Watchtower.Down or Watchtower.Stopped or Watchtower.Waits or Watchtower.RefusedKind or CardKinds.AssistantAsk
             or LegCommander.PrReady or LegCommander.MergeFailed);
 
     /// <summary>
