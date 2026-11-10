@@ -116,7 +116,7 @@ public sealed class LabelsFollowStateTests : PrMarksTestsBase
         // Refused: still missing, said as a disagreement and as a card; the black box has no correction to show.
         Pilot(_github.Labels[71]).ShouldBeEmpty();
         BlackBox().ShouldNotContain(l => l.Verb == PrMarks.LabelCorrectedVerb);
-        Open().ShouldContain(c => c.Kind == PrMarks.RefusedKind);
+        _state.Cards().ShouldContain(c => c.Kind == PrMarks.RefusedKind);
 
         _github.LabelFails = null;
         await _legs.RetryMarksAsync(Ct);
@@ -155,8 +155,8 @@ public sealed class LabelsFollowStateMoveTests : FlightMoveTestsBase
         _senderGitHub.IssueLabels[41].ShouldNotContain(Old);
         _github.IssueLabels[900].ShouldBe([New]);
         _github.IssueLabels[41].ShouldBe([New]);
-        _sender.Cards(openOnly: true).ShouldNotContain(c => c.Kind == "node-label-refused");
-        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == "node-label-refused");
+        _sender.Cards(openOnly: false).ShouldNotContain(c => c.Kind == "node-label-refused");
+        _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == "node-label-refused");
     }
 
     [Fact]
@@ -174,7 +174,7 @@ public sealed class LabelsFollowStateMoveTests : FlightMoveTestsBase
         // The flight moved all the same: a label is a card, never a lost move.
         moved.Ok.ShouldBeTrue(moved.Error);
         MovedAway();
-        var card = _sender.Cards(openOnly: true).First(c => c.Kind == "node-label-refused");
+        var card = _sender.Cards(openOnly: false).First(c => c.Kind == "node-label-refused");
         card.Detail.ShouldNotBeNull().ShouldContain("label refused");
     }
 }

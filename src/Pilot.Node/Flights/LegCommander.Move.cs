@@ -502,7 +502,7 @@ public sealed partial class LegCommander
             }
             catch (FlightException ex)
             {
-                state.RaiseCard(CardBin.ForYou, "node-label-refused", Verbs.FlightTarget(flight.Code), $"{PilotMarks.NodeLabel(options.Machine)} is still on {flight.Code}'s PR #{pr}", ex.Message);
+                state.RaiseCard(CardBin.Handled, "node-label-refused", Verbs.FlightTarget(flight.Code), $"{PilotMarks.NodeLabel(options.Machine)} is still on {flight.Code}'s PR #{pr}", ex.Message);
             }
         }
     }
