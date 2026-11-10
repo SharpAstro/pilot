@@ -591,6 +591,7 @@ public sealed class StreamSession : IAsyncDisposable
             _midTurn.Clear();
             _starting = false;
             CallOffAll(changes);
+            _shellCalls.Clear();
             changes.Add(new StreamSessionChange(StreamChangeKind.Exited, ExitCode: code, Requested: requested, Error: requested ? null : _process.ErrorTail));
         }
         Raise(changes);
@@ -696,8 +697,10 @@ public sealed class StreamSession : IAsyncDisposable
                         }
                         break;
                     case "result":
-                        // Claude waits on nothing once the turn is over: what was asked and not answered is moot.
+                        // Claude waits on nothing once the turn is over: what was asked and not answered is moot, and no result of a later
+                        // turn answers a call of this one.
                         CallOffAll(changes);
+                        _shellCalls.Clear();
                         EndTurn(root, now, changes);
                         break;
                     case "control_request" when arrived is not null:
@@ -864,7 +867,11 @@ public sealed class StreamSession : IAsyncDisposable
         return total > 0 ? total : null;
     }
 
-    /// <summary>The shell calls (Bash, PowerShell) of an assistant message of the session itself, by tool_use id.</summary>
+    /// <summary>
+    /// The shell calls (Bash, PowerShell) of an assistant message of the session itself, by tool_use id, and its calls of pilot's own MCP
+    /// tools as the command line they run (<c>mcp__pilot__answer {"card":"c1","choice":"1"}</c> is <c>pilot answer c1 1</c>): a press refused
+    /// on either road is the same press.
+    /// </summary>
     private static IEnumerable<(string Id, string Command)> ShellCalls(JsonElement assistant)
     {
         if (assistant.TryGetProperty("parent_tool_use_id", out var parent) && parent.ValueKind == JsonValueKind.String
@@ -874,13 +881,25 @@ public sealed class StreamSession : IAsyncDisposable
         }
         foreach (var block in content.EnumerateArray())
         {
-            if (Str(block, "type") == "tool_use" && Str(block, "name") is "Bash" or "PowerShell" && Str(block, "id") is { } id
-                && block.TryGetProperty("input", out var input) && Str(input, "command") is { Length: > 0 } command)
+            if (Str(block, "type") != "tool_use" || Str(block, "id") is not { } id || Str(block, "name") is not { } name || !block.TryGetProperty("input", out var input))
+            {
+                continue;
+            }
+            if (name is "Bash" or "PowerShell" && Str(input, "command") is { Length: > 0 } command)
             {
                 yield return (id, command);
             }
+            else if (name.StartsWith(PilotMcpTool, StringComparison.Ordinal) && input.ValueKind == JsonValueKind.Object)
+            {
+                // The tool's name is the command's path joined by '_' (McpServer), its input the arguments in the command's order.
+                var words = input.EnumerateObject().SelectMany(p => p.Value.ValueKind == JsonValueKind.Array ? p.Value.EnumerateArray().ToArray() : new[] { p.Value })
+                    .Select(v => v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : v.GetRawText());
+                yield return (id, string.Join(' ', ["pilot", .. name[PilotMcpTool.Length..].Split('_'), .. words]));
+            }
         }
     }
+
+    private const string PilotMcpTool = "mcp__pilot__";
 
     /// <summary>The tool results of a user message, by the tool_use id they answer, as text.</summary>
     private static IEnumerable<(string Id, string Text)> ToolResults(JsonElement user)

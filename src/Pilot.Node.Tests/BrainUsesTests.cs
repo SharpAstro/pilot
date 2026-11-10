@@ -210,6 +210,7 @@ public sealed class BrainUsesTests
     {
         RingJudge.Wants(Watchtower.AskKind).ShouldBeFalse();
         RingJudge.Wants(Watchtower.Down).ShouldBeFalse();
+        RingJudge.Wants(Watchtower.RefusedKind).ShouldBeFalse("a refusal the brain judged quiet is how COD70 waited seven hours");
         RingJudge.Wants("leg-failed").ShouldBeTrue();
     }
 

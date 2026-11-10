@@ -30,10 +30,13 @@ public sealed partial class Watchtower
         if (verb == "answer" && AnswerArgs().Match(call.Groups["rest"].Value) is { Success: true } answer
             && state.Cards(openOnly: true).FirstOrDefault(c => c.Id == answer.Groups["card"].Value) is { } card)
         {
-            var n = int.Parse(answer.Groups["n"].Value, CultureInfo.InvariantCulture);
-            var label = n >= 1 && n <= card.Choices.Length ? card.Choices[n - 1].Label : $"choice {n}";
+            // The choice by its number or its label, as pilot answer takes it.
+            var choice = answer.Groups["choice"].Value.Trim().Trim('"', '\'');
+            var label = int.TryParse(choice, NumberStyles.None, CultureInfo.InvariantCulture, out var n)
+                ? n >= 1 && n <= card.Choices.Length ? card.Choices[n - 1].Label : $"choice {n}"
+                : card.Choices.FirstOrDefault(c => string.Equals(c.Label, choice, StringComparison.OrdinalIgnoreCase))?.Label ?? choice;
             var was = card.Title.StartsWith(RefusedPrefix, StringComparison.Ordinal) ? card.Title[RefusedPrefix.Length..] : card.Title;
-            var detail = card.Detail is { } d && d.StartsWith(RingJudge.QuietPrefix, StringComparison.Ordinal) ? Rest(d) : card.Detail;
+            var detail = WithoutLeads(card.Detail);
             state.UpdateCard(card.Id, RefusedPrefix + was,
                 $"What to do: press \"{label}\" yourself. The watchtower pressed it at {at} and {reason} refused it, so nothing moves until you do."
                     + (string.IsNullOrWhiteSpace(detail) ? "" : "\n\n" + detail),
@@ -48,16 +51,29 @@ public sealed partial class Watchtower
         LogStream($"the watchtower's pilot {name} was refused ({reason}): a card rings");
     }
 
-    // A detail after its quiet verdict: the paragraphs that follow the first.
-    private static string? Rest(string detail) => detail.IndexOf("\n\n", StringComparison.Ordinal) is var at and >= 0 ? detail[(at + 2)..] : null;
+    // A detail without the paragraphs the node put in front of it: a quiet verdict, a ring's "What to do:", an earlier refusal's. So a
+    // press refused twice, or a card the judge already rang, leads with one "What to do:".
+    private static string? WithoutLeads(string? detail)
+    {
+        while (detail is not null && (detail.StartsWith(RingJudge.QuietPrefix, StringComparison.Ordinal) || detail.StartsWith(WhatToDo, StringComparison.Ordinal)))
+        {
+            detail = detail.IndexOf("\n\n", StringComparison.Ordinal) is var at and >= 0 ? detail[(at + 2)..] : null;
+        }
+        return detail;
+    }
 
-    // The node's CLI, by name or by path, with or without .exe and quotes, and its verb: "pilot answer c1 1", "C:/…/pilot.exe" merge PIL1 abc.
-    [GeneratedRegex(@"(?:^|[\s""'&;(/\\])pilot(?:\.exe)?[""']?\s+(?<verb>[a-z][a-z-]*)(?<rest>[^\r\n]*)", RegexOptions.IgnoreCase)]
+    private const string WhatToDo = "What to do: ";
+
+    // The node's CLI as the command word (at the start, or after && ; | & ( or a line break, as PowerShell's & "…" calls it), by name or
+    // by a path to it, with or without .exe and quotes, and its verb: "pilot answer c1 1", & "C:/…/pilot.exe" flight merge PIL1 abc.
+    // Not a folder named pilot inside another command's words: "git -C C:/…/sharpastro/pilot push" is git's.
+    [GeneratedRegex(@"(?:^|[;&|(\r\n])\s*(?:&\s*)?(?:""(?:[^""\r\n]*[/\\])?pilot(?:\.exe)?""|'(?:[^'\r\n]*[/\\])?pilot(?:\.exe)?'|(?:[^\s""';&|()]*[/\\])?pilot(?:\.exe)?)\s+(?<verb>[a-z][a-z-]*)(?<rest>[^\r\n]*)", RegexOptions.IgnoreCase)]
     private static partial Regex PilotVerb();
 
     [GeneratedRegex(@"^\s+(?<sub>[a-z][a-z-]*)(?=\s|$)")]
     private static partial Regex SubVerb();
 
-    [GeneratedRegex(@"^\s+(?<card>c\d+)\s+(?<n>\d+)\b")]
+    // The card and the choice, by its number or its label (quoted or not), before any option.
+    [GeneratedRegex(@"^\s+(?<card>c\d+)\s+(?<choice>""[^""]*""|'[^']*'|\d+\b|[^-\s][^\r\n]*?)(?=\s+--|\s*$)")]
     private static partial Regex AnswerArgs();
 }

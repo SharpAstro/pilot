@@ -40,6 +40,36 @@ public sealed partial class WatchtowerChatTests
         rung.Detail.ShouldContain("the rule applies to tmap too");
         rung.Detail.ShouldNotContain(RingJudge.QuietPrefix, Case.Sensitive, "the quiet verdict was wrong once the press was refused");
         rung.Choices.Select(c => c.Label).ShouldBe(["Fix the review's findings"]);
+
+        // The watchtower tries again and is refused again: still one lead, the review's words once.
+        process.Emit(ShellCall("r2", $"pilot answer {card.Id} \"Fix the review's findings\""));
+        process.Emit(ShellResult("r2", AutoModeRefusal, error: true));
+        // Lines are read in order: once a later refusal's card is up, the second refusal has been handled.
+        process.Emit(ShellCall("r3", "pilot cards"));
+        process.Emit(ShellResult("r3", AutoModeRefusal, error: true));
+        await UntilAsync(() => _state.Cards(openOnly: true).Any(c => c.Kind == Watchtower.RefusedKind), "the later refusal's card");
+        var again = _state.Cards(openOnly: true).Single(c => c.Id == card.Id).Detail.ShouldNotBeNull();
+        again.Split("What to do:").Length.ShouldBe(2, "one lead, not one per refusal");
+        again.Split("the rule applies to tmap too").Length.ShouldBe(2);
+        _state.Cards(openOnly: true).Single(c => c.Id == card.Id).Title.ShouldBe(Watchtower.RefusedPrefix + "COD70's review found things to fix");
+    }
+
+    [Fact]
+    public async Task APressThroughPilotsMcpToolThatIsRefusedRingsTheCardToo()
+    {
+        var process = await StreamIdleAsync();
+        var card = _state.RaiseCard(CardBin.ForYou, "review-changes", "flight/COD70", "COD70's review found things to fix", null,
+            [new CardChoice { Label = "Fix the review's findings", Verb = Verbs.GoAround, Target = "flight/COD70/review-notes-2" }]);
+
+        process.Emit(JsonSerializer.Serialize(new
+        {
+            type = "assistant",
+            message = new { role = "assistant", content = new object[] { new { type = "tool_use", id = "p1", name = "mcp__pilot__answer", input = new { card = card.Id, choice = "1" } } } },
+        }));
+        process.Emit(ShellResult("p1", AutoModeRefusal, error: true));
+        await UntilAsync(() => _state.Cards(openOnly: true).Single(c => c.Id == card.Id).Bin == CardBin.Ring, "the card to ring");
+
+        _state.Cards(openOnly: true).Single(c => c.Id == card.Id).Detail.ShouldNotBeNull().ShouldStartWith("What to do: press \"Fix the review's findings\" yourself.");
     }
 
     [Fact]
@@ -54,6 +84,9 @@ public sealed partial class WatchtowerChatTests
         process.Emit(ShellResult("ok", "ok: answer card/" + card.Id, error: false));
         process.Emit(ShellCall("git", "git push origin main"));
         process.Emit(ShellResult("git", AutoModeRefusal, error: true));
+        // The brief's own shape for git elsewhere, in this very repo: a folder named pilot is not the node's CLI.
+        process.Emit(ShellCall("gitc", "git -C C:/Users/x/source/repos/sharpastro/pilot push origin main"));
+        process.Emit(ShellResult("gitc", AutoModeRefusal, error: true));
 
         // A refused pilot verb that pressed no card's button rings one of its own, with the command to run.
         process.Emit(ShellCall("m1", @"""C:\Users\x\AppData\Local\pilot2\bin\pilot.exe"" flight merge PIL1 abc123"));
