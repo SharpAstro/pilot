@@ -164,9 +164,15 @@ async Task CardAsync(string verb, CardRow card, string[] cardArgs)
     // card from the click, and only a refusal said on it brings a refused one back (PIL853).
     var node = cards.NodeOf(card);
     var to = clients.For(node);
+    // A press that joined an answer already underway is said as such (#792).
+    string? joined = null;
     var refused = await CardCommands.SendAsync(cards, verb, card, cardArgs, Who, to is null ? null : to.SendAsync, FleetClients.WatchOnly(node),
-        stop.Token, envelope => clients.NoteRefusal(node, envelope));
-    flights.Say($"{verb} {card.Id}: {refused ?? "done"}");
+        stop.Token, envelope =>
+        {
+            clients.NoteRefusal(node, envelope);
+            joined = DashboardCommands.JoinedOf(envelope);
+        });
+    flights.Say($"{verb} {card.Id}: {refused ?? (joined is null ? "done" : $"joined: {joined}")}");
     Redraw();
 }
 cards.OnAnswer = (card, number) => _ = CardAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)]);

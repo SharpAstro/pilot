@@ -1031,6 +1031,25 @@ beside its choices (`CardsView.OnChatAbout`; dead while a press of the card is w
 closed card and from a watch-only card of a node with no grant); the flight page's merge block has the same button for its
 card. It shows the Chat page with the card quoted above the box (see below) and the keyboard in the box.
 
+A choice the node would refuse right now (`ChoiceStatus.Unavailable`, #792: its flight is held, its session is gone) is drawn dead,
+the same size as the live button and answering nothing, with the node's reason (`TIA1 is held: waiting for TIA0`) beside it, or under
+it when the label is long enough to take a row of its own (`CardsView.UnavailableChoice`); the card's other choices and Dismiss stay
+as they were.
+
+A card whose answer is underway (`CardRow.Answering`, #792) says so where its buttons are: one line, `Merge: pressed by cli at 20:35,
+waiting on TIA1's PR #7 being merged` (local time; no `waiting on` part when the node names nothing), the same wording
+`CardAnswering.Line` gives `pilot cards` (plain and Markdown, under the card's words) and the TUI. Every node-bound button of
+that card is dead while it is set: both choices and Dismiss (and a grant's Connect) draw as words with no hit, the choice
+pressed reading `Merge …`. A card's refusal is not drawn beside that line. A kept refusal (what the node said to the last
+press) is dropped as the panel is built when the stream shows the card **closed** (gone from the open cards, or held closed
+under the pointer) or **answering**, and when a closed card comes back open if the refusal had been drawn, so an open card never
+keeps a "was refused" about a state it has left. A refusal that lands after the change (the node's reply beating the stream: a
+choice that closed its card first and was refused, or this press's own answer ending refused) is kept and drawn: it is the
+outcome of the press that made the change. An ok answer is never a refusal: a press that joined an answer (`already on its way,
+started by cli at 20:35`, `already answered by cli at 20:35`, recognised by `CardAnswering.IsJoined`) clears an older refusal
+and is logged by the GUI and TUI as `joined: ...`, not `done`; `pilot answer` (and so the MCP `answer` tool) prints the same
+`joined: ...` line under its `ok:`.
+
 A node the window cannot reach (its stream is down: the same `Connected` the Fleet page shows) leaves the panel with its
 cards, which may be long answered and cannot be commanded now (#325). In their place, at the foot of **For you**, one dim
 line per such node reads `DE1 is unreachable since 10:31 · 3 ringing, 2 for you held` (the time is today's clock, or the
@@ -1697,6 +1716,38 @@ Each choice is a command; `answer card/<id> <n or label>` runs it as the one ans
 command, and closes the card (opening it again if the command is refused). `dismiss card/<id> [why]` closes it with
 nothing done. The GUI shows open cards down the right, with their buttons, when there are any; `pilot cards`,
 `pilot answer` and `pilot dismiss` do the same from a terminal.
+
+**An answer underway is on the card** (#792). A choice that takes time (a merge or a re-run of checks, a go-around, a move again, the
+conflict card's Resolve the conflict) is taken before it runs: the card stays open and carries `CardRow.Answering`, the choice's label,
+who pressed it, when, and what it waits on (`TIA1 is being sent round`, when the flight has a call out, else none). It is one
+`cardChanged` event, so every client can show "pressed by cli at 20:35, waiting on ..." where the buttons were. A second press of the
+same choice while it is underway joins it: the answer is ok and says `already on its way, started by <who> at <HH:mm>`, and nothing
+runs twice. Another choice on the card is refused naming the answer underway, and a dismiss waits for it. The mark ends with the
+answer: the card closes with the choice as its outcome, or, when the choice is refused or cut off (the node stopping mid-merge), the mark
+is cleared and the buttons are back; a card whose merge is armed or queued stays open with its own status and no mark. An answer
+underway for longer than the leg commander's stuck limit (10 minutes) no longer shields the card, so a hung one rings as before, and a
+node that restarts does not bring a mark back. A choice that closes its card first (a landing) answers a repeat of itself in the
+next few minutes with ok and `already answered by <who> at <HH:mm>`, not "closed already"; any other choice on a closed card is
+refused as before. The field is optional, so it does not raise `NodeWire.Version`: an older client ignores it and keeps its buttons.
+The GUI's cards panel, the TUI and `pilot cards` show the mark (see the cards panel under the GUI above): the line, dead buttons, and
+no refusal left on a card that moved on.
+
+**A choice the node would refuse is marked before it is pressed** (#792). A choice has a `Status` where the node can tell how ready it
+is (`passing`, `pending`, `failing`, `conflicting`, `armed`, `queued`, `behind`, `blocked`, `changes-requested`, `waits-for-legs`,
+`merging`, `merged`), and one more: `unavailable` (`ChoiceStatus.Unavailable`), with the reason in the choice's `Note`. It is set on an open card's choice
+that needs its flight flying (a go-around, a merge, a re-run of its checks, a leg's start) while the flight is **held**
+(`PIL501 is held: waiting for PIL500`, or just `PIL501 is held` when no wait is named), and on one that names a session the node
+**no longer has** (`session a1b2c3d4 no longer exists`; an ended session that is still listed is not gone, a say to it resumes it).
+One rule, `ChoiceAvailability`, both marks the choice and refuses its answer. `NodeState` applies it on every write of a card's choices
+(a card raised, turned, or given new choices, so the merge's check refresh never offers a held flight's Merge again) and sweeps the
+open cards where the fact changes: a flight's hold changing (`PutFlight`, `UpdateFlight`) and a session row added or removed. There is no
+polling, a card already right publishes nothing, and a flight that flies again (or a session that is back) clears the mark; a merge that is
+a chip (`ChoiceStatus.IsChip`, the one list the node and the card view share: armed, queued, merging, merged, blocked, changes requested
+or waiting for its legs) keeps its own status, which says more. A mark that covered a `passing` or `pending` Merge clears to no status,
+and the next look at the PR writes its checks back. An **answer** of such a choice is refused before anything
+is taken, closed or run, reading the flight and the sessions as they are then: `Merge was refused: PIL501 is held: waiting for PIL500`,
+the card staying open, so a client that pressed before it saw the mark runs nothing. The status is optional on the wire like the rest: an
+older client draws the button as it did and is refused with the reason.
 
 ## Hooks
 
