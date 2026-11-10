@@ -1689,10 +1689,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         try
         {
             var result = Run(new CommandRequest { Verb = Verbs.Run, Target = Verbs.NodeTarget, Args = [cwd, "0", command], Who = BuildSeed.Who });
-            if (result.Error is null
-                && state.Jobs().FirstOrDefault(j => j.EndedAt is null && j.Cwd == cwd && j.Command == command && !_seeds.ContainsKey(j.Id)) is { } queued)
+            if (result.Error is null && result.Made is { } id)
             {
-                _seeds[queued.Id] = 0;
+                _seeds[id] = 0;
             }
             return result.Error;
         }

@@ -200,6 +200,27 @@ public sealed class BuildCacheTests : JobTestsBase
         // Another job with the identical command in the clone is no seed.
         var other = seed with { Id = "jother" };
         _jobs.EnvironmentOf(other).ShouldNotContainKey("MSBuildCacheEnabled");
+
+        // When the job ends the mark goes: the same row is no seed any more.
+        Fake!.Exit(seed.Id, 0);
+        await Until(seed.Id, row => row.EndedAt is not null);
+        _jobs.EnvironmentOf(seed).ShouldNotContainKey("MSBuildCacheEnabled");
+    }
+
+    [Fact]
+    public async Task AJobOfASiblingSourceFlightsPlaneIsStartedWithUseLocalSiblingsTrue()
+    {
+        _state.PutFlight(new FlightRow
+        {
+            Code = "TIA1", Repo = "pilot", RepoPath = "/r/pilot", Issue = 1, Branch = "flight/tia1", Worktree = "/w/TIA1", Base = "origin/main",
+            State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch, SiblingSource = true,
+        });
+        _jobs.SiblingsOf = _ => [];
+
+        var launch = await Launched(true, "dotnet build Pilot.slnx -c Release", PlaneIn("tia1"));
+
+        launch.Command.ShouldContain("-p:UseLocalSiblings=true");
+        launch.Command.ShouldNotContain("UseLocalSiblings=false");
     }
 
     [Fact]

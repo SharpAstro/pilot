@@ -163,7 +163,8 @@ trial on one of them, with the same command line and the same staleness probe, b
 
 With `job-build-cache` on, the node seeds the cache from main (`BuildSeed`, called by `RepoSync` after each clone's sync). When a sync
 fast-forwards a tracked repo's main checkout (outcome `updated`, so its HEAD moved), the node queues one build job in that clone: the
-build a plane's check runs, `dotnet build <solution> -c Release` with no further global properties (so the cache keys match a plane's),
+build a plane's check runs, `dotnet build <solution> -c Release`, which the cached form rewrites to the same restore and MSBuild command with the
+same global properties a plane's gets, `UseLocalSiblings=false` among them (a test holds the two commands equal), so the cache keys match,
 in the folder holding the first `.slnx` (else `.sln`) at the repo root or under `src`. A repo with neither gets no seed. The last seeded
 HEAD is remembered per clone, so a resync of the same HEAD queues nothing, and nothing is queued with the setting off or when HEAD did not
 move. The job is an ordinary node job: below normal priority, through the queue, owned by no session. `JobRunner.QueueSeed` marks it, so it
@@ -171,4 +172,10 @@ gets the cache variables and the cached restore plus MSBuild form (`BuildCache.V
 clone is no plane. What was seeded, and which jobs are seeds, is kept in the node's process: after a restart the next moved HEAD seeds again.
 
 Covered by `BuildCacheTests` and `RepoSyncTests` against fakes (setting off, HEAD unmoved, moved once, same HEAD twice, no solution). Turning the
-setting on and measuring a warm plane build on the live node (under 3 minutes or not) is the controller's, not done from a plane.
+setting on and measuring a warm plane build on the live node (under 3 minutes or not) is the controller's, not done from a plane. For that run,
+three things are open and unmeasured:
+
+- Two cached builds sharing one cache root at once (a seed and a plane build, or two planes) are not covered here.
+- The cache has no size cap: `MSBuildCacheLocalCacheSizeInMegabytes` is not passed, so the plugin's default applies.
+- With `job-plane-output` on, plane jobs also get `UseArtifactsOutput` and `ArtifactsPath`, and a seed does not. That setting is off by default
+  and was not measured together with the cache.
