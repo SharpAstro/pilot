@@ -672,8 +672,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         // A bench that ran on a VM has no process to find: the node that ran it is gone, and with it the way to delete the VM from here.
         if (job is { Kind: JobKind.Bench, Pid: null, BenchVm.Size: not null })
         {
-            EndLostCloudBench(job);
-            return;
+            return (EndLostCloudBench(job), []);
         }
 
         // Gone: how it ended is what its wrapper wrote.

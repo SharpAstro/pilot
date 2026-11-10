@@ -393,7 +393,7 @@ public sealed partial class JobRunner
     }
 
     // A bench row a node that crashed left Running on a VM: its watch is gone with the node, and so is any way to delete the VM from here.
-    private void EndLostCloudBench(JobRow job)
+    private JobRow EndLostCloudBench(JobRow job)
     {
         var group = BenchSettings().BenchResourceGroup;
         var ended = job with
@@ -405,6 +405,7 @@ public sealed partial class JobRunner
         _tried[job.Id] = 0;
         state.PutJob(ended);
         Finish(ended, null);
+        return ended;
     }
 
     /// <summary>The job's log, written line by line from several threads while it is read by others.</summary>
