@@ -45,6 +45,14 @@ public sealed class ProcessStartGuardTests
     }
 
     [Fact]
+    public void ANamedKindIsAllowedInAnyTestAndEveryNamedKindHasAReason()
+    {
+        ProcessStartGuard.Check($"git ({ProcessStartGuard.SeedTemplateKind})", "git init", "Some.Test", Unmarked, ProcessStartGuard.GuardMode.Enforce);
+        ProcessStartGuard.Check($"git ({ProcessStartGuard.SeedTemplateKind})", "git init", null, null, ProcessStartGuard.GuardMode.Enforce);
+        ProcessStartGuard.KindsAllowed.Values.ShouldAllBe(reason => !string.IsNullOrWhiteSpace(reason));
+    }
+
+    [Fact]
     public void ReportModeNeverThrows()
     {
         ProcessStartGuard.Check("claude", "claude --version", "Some.Test", Unmarked, ProcessStartGuard.GuardMode.Report);

@@ -28,10 +28,10 @@ internal static class TestEnvironment
             var current = Xunit.TestContext.Current.Test;
             var test = current?.TestDisplayName;
             // Written first, so the report names the start even when the guard throws.
-            var allowedWithNoTest = test is null && ProcessStartGuard.NoTestAllowed.ContainsKey(kind);
-            if (!allowedWithNoTest && (test is null || !ProcessStartGuard.MayStartProcesses(current!.Traits)))
+            if (ProcessStartGuard.Verdict(kind, ProcessStartGuard.Command(start), test, current?.Traits) is not null)
             {
-                _starts.GetOrAdd(test ?? "(no test: a fixture or a background loop)", _ => new()).AddOrUpdate(kind, 1, (_, n) => n + 1);
+                // A start with no test is named by its command and working folder, so its source (a fixture, a background loop) can be traced.
+                _starts.GetOrAdd(test ?? $"(no test: a fixture or a background loop) {ProcessStartGuard.Command(start)} in {start.WorkingDirectory}", _ => new()).AddOrUpdate(kind, 1, (_, n) => n + 1);
             }
             ProcessStartGuard.Check(kind, ProcessStartGuard.Command(start), test, current?.Traits, mode);
         };
@@ -42,9 +42,9 @@ internal static class TestEnvironment
     /// How a test's own helper starts a process (its <c>Git(...)</c> that seeds a repo, a probe): through the same hook as the node's starts, so the report
     /// counts it too. Its kind is the program with <c> (test helper)</c> after it, to tell it from a start the node under test made.
     /// </summary>
-    internal static System.Diagnostics.Process? Start(System.Diagnostics.ProcessStartInfo start)
+    internal static System.Diagnostics.Process? Start(System.Diagnostics.ProcessStartInfo start, string? kindSuffix = null)
     {
-        ProcessStarts.Observe($"{Path.GetFileNameWithoutExtension(start.FileName)} (test helper)", start);
+        ProcessStarts.Observe($"{Path.GetFileNameWithoutExtension(start.FileName)} ({kindSuffix ?? "test helper"})", start);
         return System.Diagnostics.Process.Start(start);
     }
 

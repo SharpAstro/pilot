@@ -156,7 +156,8 @@ internal static class SeedRepo
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = TestEnvironment.Start(start)!;
+        // Named to the guard as the seed template's own kind (ProcessStartGuard.KindsAllowed): built once per run, whichever test first needs it.
+        using var process = TestEnvironment.Start(start, ProcessStartGuard.SeedTemplateKind)!;
         process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();

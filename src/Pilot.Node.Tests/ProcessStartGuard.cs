@@ -29,6 +29,20 @@ internal static class ProcessStartGuard
     /// </summary>
     internal static readonly IReadOnlyDictionary<string, string> NoTestAllowed = new Dictionary<string, string>(StringComparer.Ordinal);
 
+    /// <summary>The suffix of the kind of git the seed repo's template runs (<see cref="SeedRepo"/>).</summary>
+    internal const string SeedTemplateKind = "seed template";
+
+    /// <summary>
+    /// Kinds of start allowed in any test, each with its reason, and not written to the report. The seed template is the one: it is the
+    /// real repo every test copies (a copy is plain file IO, no git), built once per run by 9 git starts in whichever test first asks
+    /// for it, so which test pays is chance and cannot carry a trait. Building it on the in-memory model is not possible: the copy is the
+    /// real .git folders a real-git test then opens.
+    /// </summary>
+    internal static readonly IReadOnlyDictionary<string, string> KindsAllowed = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        [$"git ({SeedTemplateKind})"] = "the seed repo's template, built once per run in whichever test first copies it (SeedRepo)",
+    };
+
     /// <summary>Enforce unless <paramref name="value"/> is <c>report</c> (any case).</summary>
     internal static GuardMode ModeFor(string? value)
         => string.Equals(value?.Trim(), "report", StringComparison.OrdinalIgnoreCase) ? GuardMode.Report : GuardMode.Enforce;
@@ -52,6 +66,10 @@ internal static class ProcessStartGuard
     /// </summary>
     internal static string? Verdict(string kind, string command, string? test, IReadOnlyDictionary<string, IReadOnlyCollection<string>>? traits)
     {
+        if (KindsAllowed.ContainsKey(kind))
+        {
+            return null;
+        }
         if (test is null)
         {
             return NoTestAllowed.ContainsKey(kind)
