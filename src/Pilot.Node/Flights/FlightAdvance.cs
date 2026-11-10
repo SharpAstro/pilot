@@ -12,6 +12,9 @@ public sealed class FlightAdvance(LegCommander legs, TimeProvider time) : Backgr
 
     public TimeSpan Interval { get; init; } = TimeSpan.FromMinutes(1);
 
+    /// <summary>The clock the wait between sweeps runs on; the node's own time when null. Only the test harness sets it, so a test node sweeps again only when a test moves that clock (a sweep a minute into a slow test opened a PR the test was about to open itself); the live node never does.</summary>
+    public TimeProvider? Pacing { get; set; }
+
     private readonly TaskCompletionSource _firstSweep = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>
@@ -33,7 +36,7 @@ public sealed class FlightAdvance(LegCommander legs, TimeProvider time) : Backgr
                 {
                     if (!first)
                     {
-                        await Task.Delay(Interval, time, stopping);
+                        await Task.Delay(Interval, Pacing ?? time, stopping);
                     }
                     first = false;
                     await legs.AdvanceAllAsync(stopping);

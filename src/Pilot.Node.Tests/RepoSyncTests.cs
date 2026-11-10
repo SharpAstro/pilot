@@ -424,7 +424,7 @@ public sealed class RepoSyncTests : IDisposable
         var output = new StringWriter();
         (await PilotCommand.RunAsync(["--node-socket", node.SocketPath, "issue", "create", "--repo", repo, "--body", "text", "Rings"], _root, output, new StringWriter(), Ct)).ShouldBe(0);
         output.ToString().ShouldContain("created issue #2");
-        node.GitHub.IssuesCreated[1].Body.ShouldBe("text");
+        node.GitHub.IssuesCreated.ToArray()[1].Body.ShouldBe("text");
     }
 
     private static int Port()

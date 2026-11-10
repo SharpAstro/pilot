@@ -354,7 +354,7 @@ public sealed class RetryAndHoldTests : IDisposable
         lines.Single(c => c.Subject == "flight/TIA74").Title.ShouldContain("#74's failed checks run again");
         lines.Single(c => c.Subject == "flight/TIA77").Title.ShouldContain("its check was run again");
         _github.Merged.Count.ShouldBe(2);
-        _github.Merged[1].ShouldBe((71, Head('a'), "squash"));
+        _github.Merged.ToArray()[1].ShouldBe((71, Head('a'), "squash"));
         _github.Reruns.ShouldBe([74]);
         _legChecks.ShouldBe(["TIA77"]);
         _state.Cards().Single(c => c.Id == alert.Id).State.ShouldBe(CardState.Closed);

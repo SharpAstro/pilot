@@ -67,7 +67,7 @@ public sealed class DesignSettledTests : PrFixTestsBase
     public async Task AnAnswerCommentOnThePrDowngradesTheCardToANoticeNamingIt()
     {
         await Asked();
-        _github.PrConversation.Add((7, new PrComment("ada", "Keep it a library.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
+        _github.PrConversation.Enqueue((7, new PrComment("ada", "Keep it a library.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
 
         await _reviews.SweepAsync(Ct);
 
@@ -173,7 +173,7 @@ public sealed class DesignSettledTests : PrFixTestsBase
     }
 
     private void AnswerComment() =>
-        _github.PrConversation.Add((7, new PrComment("ada", "Keep it a library.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
+        _github.PrConversation.Enqueue((7, new PrComment("ada", "Keep it a library.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
 
     private void HoldFixers()
     {

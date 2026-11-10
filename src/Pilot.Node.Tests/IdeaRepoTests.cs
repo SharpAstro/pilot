@@ -110,7 +110,7 @@ public sealed class IdeaRepoTests : IDisposable
         filed.Ok.ShouldBeTrue(filed.Error);
         filed.Made.ShouldBe("DIR.Lib I1");
         _chooser.Asked.ShouldHaveSingleItem();
-        (Path.GetFileName(_github.IssuesCreated.ShouldHaveSingleItem().Repo), _github.IssuesCreated[0].Title).ShouldBe(("DIR.Lib", "Scroll the list with the wheel"));
+        (Path.GetFileName(_github.IssuesCreated.ShouldHaveSingleItem().Repo), _github.IssuesCreated.ToArray()[0].Title).ShouldBe(("DIR.Lib", "Scroll the list with the wheel"));
         _state.Cards(openOnly: true).ShouldBeEmpty();
     }
 
@@ -141,7 +141,7 @@ public sealed class IdeaRepoTests : IDisposable
         _github.MilestonesMade.Select(m => Path.GetFileName(m.Repo)).ShouldBe(["pilot", "tianwen"]);
         var ideas = _state.Ideas().ShouldHaveSingleItem();
         (ideas.Repo, ideas.Id, ideas.State, ideas.Title, ideas.Body).ShouldBe(("tianwen", "I2", IdeaState.Noted, "Misfiled idea", "about the sky"));
-        _github.MilestoneIssuesOf[Path_("tianwen")].ShouldHaveSingleItem().Milestone.ShouldBe(IdeaIds.Milestone);
+        _github.MilestoneIssuesOf[Path_("tianwen")].Values.ShouldHaveSingleItem().Milestone.ShouldBe(IdeaIds.Milestone);
         _state.IdeaMoves().ShouldBe([new IdeaMoveRow("pilot", "I1", "tianwen", "I2")]);
 
         // The old id, in the old repo, is the new idea: an edit through it saves there.

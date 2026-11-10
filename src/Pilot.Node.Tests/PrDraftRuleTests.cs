@@ -59,7 +59,7 @@ public sealed class PrDraftRuleOutsideTests : PrReviewTestsBase
         _github.Prs["acme/widget#7"].Draft.ShouldBe(draft);
         if (label is not null)
         {
-            _github.Labels[7].Where(l => l.StartsWith("pilot: ", StringComparison.Ordinal)).ShouldBe([label]);
+            _github.Labels[7].Keys.Where(l => l.StartsWith("pilot: ", StringComparison.Ordinal)).ShouldBe([label]);
         }
         _github.Statuses.Last().State.ShouldBe(status);
     }

@@ -39,7 +39,7 @@ public sealed class IssueBreakUpTests : IssueBoardFixture
 
     private Task<CommandResult> Accept(string target, BreakUpProposal proposal) => Run(Verbs.AcceptBreakUp, target, proposal.UpdatedAt.ToString("O"));
 
-    private MilestoneIssue Now(int number) => GitHub.MilestoneIssuesOf[Path.TrimEndingDirectorySeparator(Path.GetFullPath(Repo))].Single(i => i.Number == number);
+    private MilestoneIssue Now(int number) => GitHub.MilestoneIssuesOf[Path.TrimEndingDirectorySeparator(Path.GetFullPath(Repo))].Values.Single(i => i.Number == number);
 
     [Fact]
     public async Task AProposalCarriesThePartsAndWritesNothingToGitHub()

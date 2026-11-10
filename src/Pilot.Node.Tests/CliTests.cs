@@ -307,7 +307,7 @@ public sealed class CliTests : IAsyncLifetime
             LogPath = Path.Combine(_root, id + ".log"), Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
         };
         // Recovery runs in the background and fails any Running or Queued row it finds as left behind: let it finish first.
-        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         _node.State.PutJob(Job("j1", JobState.Running));
 
         (await Pilot(_root, "jobs")).Output.ShouldNotContain("holds the queue");
@@ -412,7 +412,7 @@ public sealed class CliTests : IAsyncLifetime
         var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
         FakeJobs(runner);
         runner.MinFreeMemory = 0;
-        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         // Not a bare sleep, which the node refuses: the echo makes it a job.
         await Ok(_root, "run", "--", "sleep 30; echo slept");
         var id = (await TheJobUntil(j => j.State == JobState.Running, "the job did not start")).Id;
@@ -431,7 +431,7 @@ public sealed class CliTests : IAsyncLifetime
         var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
         FakeJobs(runner);
         runner.MinFreeMemory = 0;
-        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         await Ok(_root, "run", "--", "sleep 30; echo slept");
         var id = (await TheJobUntil(j => j.State == JobState.Running, "the job did not start")).Id;
 
@@ -444,7 +444,7 @@ public sealed class CliTests : IAsyncLifetime
     [Fact]
     public async Task APausedJobReadsPausedWithItsTimeInJobsAndJob()
     {
-        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         _node.State.PutJob(new JobRow
         {
             Id = "j1", Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = JobState.Running,
@@ -568,11 +568,11 @@ public sealed class CliTests : IAsyncLifetime
     [Fact]
     public async Task FlightAdoptIsSentToTheNodeAsAdoptFlightNamingTheOldNode()
     {
-        var (exit, output, error) = await Pilot(_root, "flight", "adopt", "TIA9", "--from", "DE1");
+        var (exit, output, error) = await Pilot(_root, "flight", "adopt", "TIA9", "--from", "ZZ9");
 
         exit.ShouldBe(1);
         (output + error).ShouldContain("refused: adopt-flight flight/TIA9: ");
-        (output + error).ShouldContain("no copy of DE1's flights");
+        (output + error).ShouldContain("no copy of ZZ9's flights");
         (await Pilot(_root, "flight", "adopt", "TIA9")).Exit.ShouldNotBe(0);
         (await Pilot(_root, "flight", "adopt", "--help")).Output.ShouldContain("--from");
     }

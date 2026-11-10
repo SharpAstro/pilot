@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
@@ -122,7 +123,7 @@ public abstract class PrMarksTestsBase : IDisposable
     private protected Task<CommandResult> Verdict(string code, string verdict, string report) =>
         Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), verdict, report);
 
-    private protected static string[] Pilot(HashSet<string>? labels) => [.. (labels ?? []).Where(l => l.StartsWith("pilot: ", StringComparison.Ordinal))];
+    private protected static string[] Pilot(ConcurrentDictionary<string, byte>? labels) => [.. (labels?.Keys ?? []).Where(l => l.StartsWith("pilot: ", StringComparison.Ordinal))];
 }
 
 /// <summary>Part 1 of PrMarksTests: the class is split so its tests run side by side, not one after another.</summary>
@@ -134,22 +135,22 @@ public sealed class PrMarksTests1 : PrMarksTestsBase
     {
         var flight = await Opened();
 
-        _github.IssueLabels[71].ShouldBe(["pilot node: DU1"]);
+        _github.IssueLabels[71].Keys.ShouldBe(["pilot node: DU1"]);
         // The state label is the PR's one pilot: label; the node label is another kind and stays through every swap.
         Pilot(_github.Labels[71]).ShouldBe(["pilot: reviewing"]);
         (await Verdict(flight.Code, "pass", "every Done-when holds")).Error.ShouldBeNull();
         Pilot(_github.Labels[71]).ShouldBe(["pilot: passed"]);
-        _github.IssueLabels[71].ShouldBe(["pilot node: DU1"]);
+        _github.IssueLabels[71].Keys.ShouldBe(["pilot node: DU1"]);
     }
 
     [Fact]
     public async Task APilotLabelSwapLeavesANodeLabelInPlace()
     {
-        _github.Labels[5] = ["pilot node: DU1", "pilot: reviewing", "bug"];
+        _github.SetLabels(5, "pilot node: DU1", "pilot: reviewing", "bug");
 
         await _github.SetPilotLabelAsync(Repo, 5, "pilot: changes", Ct);
 
-        _github.Labels[5].OrderBy(l => l, StringComparer.Ordinal).ShouldBe(["bug", "pilot node: DU1", "pilot: changes"]);
+        _github.Labels[5].Keys.OrderBy(l => l, StringComparer.Ordinal).ShouldBe(["bug", "pilot node: DU1", "pilot: changes"]);
     }
 
     [Fact]
@@ -211,13 +212,13 @@ public sealed class PrMarksTests1 : PrMarksTestsBase
     {
         var flight = await Opened();
         // A label of someone else's stays; every pilot: label but the current one goes.
-        _github.Labels[71] = ["bug", "pilot: conflicts"];
+        _github.SetLabels(71, "bug", "pilot: conflicts");
 
         (await Verdict(flight.Code, "changes", "- the null check in Parse is gone\n- no test for it")).Error.ShouldBeNull();
 
         _github.Statuses.Last().ShouldBe((Reviewed, "failure", "changes: the null check in Parse is gone", "https://github.com/x/tianwen/pull/71#pullrequestreview-9001"));
         Pilot(_github.Labels[71]).ShouldBe(["pilot: changes"]);
-        _github.Labels[71].ShouldContain("bug");
+        _github.Labels[71].Keys.ShouldContain("bug");
 
         // A fresh review and its pass replace it in turn: one pilot: label throughout.
         (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
@@ -241,8 +242,8 @@ public sealed class PrMarksTests1 : PrMarksTestsBase
 
         _github.Posted.Count.ShouldBe(2);
         _github.Posted.Select(p => System.Text.Json.JsonDocument.Parse(p.Payload).RootElement.GetProperty("event").GetString()).ShouldAllBe(e => e == "COMMENT");
-        _github.Posted[0].Payload.ShouldContain("first round");
-        _github.Posted[1].Payload.ShouldContain("second round");
+        _github.Posted.ToArray()[0].Payload.ShouldContain("first round");
+        _github.Posted.ToArray()[1].Payload.ShouldContain("second round");
         F(flight.Code).Review!.ReviewUrl.ShouldNotBeNull().ShouldEndWith("pullrequestreview-9002");
     }
 }
