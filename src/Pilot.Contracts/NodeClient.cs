@@ -17,6 +17,7 @@ public sealed class NodeClient : IDisposable
     private readonly HttpClient _http;
     private readonly Uri _events;
     private readonly string? _token;
+    private readonly string? _heldName;
 
     /// <param name="socketPath">The node's socket; <see cref="NodeSocket.Resolve"/> finds the one to use.</param>
     public NodeClient(string socketPath)
@@ -28,10 +29,11 @@ public sealed class NodeClient : IDisposable
         _events = new Uri("ws://localhost" + NodeWire.EventsRoute);
     }
 
-    private NodeClient(string endpoint, Uri baseAddress, string? token)
+    private NodeClient(string endpoint, Uri baseAddress, string? token, string? heldName = null)
     {
         SocketPath = endpoint;
         _token = token;
+        _heldName = heldName;
         _handler = new SocketsHttpHandler { ConnectTimeout = TimeSpan.FromSeconds(5) };
         _http = new HttpClient(_handler, disposeHandler: false) { BaseAddress = baseAddress, Timeout = Timeout.InfiniteTimeSpan };
         if (token is not null)
@@ -45,6 +47,16 @@ public sealed class NodeClient : IDisposable
     /// <summary>A node on the LAN at <c>host:port</c>; <paramref name="token"/> is its grant's, without which it can be watched but not commanded.</summary>
     public static NodeClient Remote(string endpoint, string? token = null) =>
         new(endpoint, new Uri($"http://{endpoint.TrimEnd('/')}/"), token);
+
+    /// <summary>
+    /// A node on the LAN reached under the machine name <paramref name="heldName"/> (<c>SE1</c>), whose held <paramref name="token"/> is
+    /// sent: a 401 or 403 in answer is reported as that name refusing its held grant, to be connected again.
+    /// </summary>
+    public static NodeClient Remote(string endpoint, string? token, string? heldName) =>
+        new(endpoint, new Uri($"http://{endpoint.TrimEnd('/')}/"), token, heldName);
+
+    /// <summary>What a refusal of the grant held under <paramref name="name"/> says.</summary>
+    public static string RefusedHeldGrant(string name) => $"{name} refused the held grant: Connect again";
 
     /// <summary>
     /// Whether <paramref name="target"/> names a node on the LAN (<c>host:port</c>, or <c>tcp://host:port</c>) rather than
@@ -90,7 +102,7 @@ public sealed class NodeClient : IDisposable
     /// A reply's envelope, or a failed one when the node sent no JSON (an empty body, or text): never a throw, so a caller
     /// prints a refusal. A command may have run before the node went quiet, so the error says to check.
     /// </summary>
-    private static async Task<ResponseEnvelope<T>> ReadEnvelopeAsync<T>(HttpResponseMessage response, System.Text.Json.Serialization.Metadata.JsonTypeInfo<ResponseEnvelope<T>> type, CancellationToken cancellationToken)
+    private async Task<ResponseEnvelope<T>> ReadEnvelopeAsync<T>(HttpResponseMessage response, System.Text.Json.Serialization.Metadata.JsonTypeInfo<ResponseEnvelope<T>> type, CancellationToken cancellationToken)
     {
         var status = (int)response.StatusCode;
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
@@ -101,7 +113,9 @@ public sealed class NodeClient : IDisposable
             {
                 if (JsonSerializer.Deserialize(body, type) is { } envelope)
                 {
-                    return envelope;
+                    return !envelope.Success && envelope.StatusCode is 401 or 403 && _heldName is not null && _token is not null
+                        ? envelope with { Error = RefusedHeldGrant(_heldName) }
+                        : envelope;
                 }
             }
             catch (JsonException)

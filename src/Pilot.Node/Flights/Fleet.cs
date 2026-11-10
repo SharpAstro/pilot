@@ -136,11 +136,12 @@ public sealed class HeldTokenFleet(string tokenFile) : IFleet
 
     public IReadOnlyList<IFleetPeer> Peers()
     {
-        var held = new LanHeldTokenFile(tokenFile);
-        return [.. held.Endpoints.Select(e => (IFleetPeer)new RemotePeer(e, held.TokenFor(e)))];
+        // Each held grant by the address its node last answered at (the hint); the grant is kept by the node's machine name.
+        return [.. new HeldGrantFile(tokenFile).Read().Where(g => g.Address.Length > 0).OrderBy(g => g.Address, StringComparer.Ordinal)
+            .Select(g => (IFleetPeer)new RemotePeer(g.Address, g.Token, g.Name))];
     }
 
-    private sealed class RemotePeer(string endpoint, string? token) : IFleetPeer
+    private sealed class RemotePeer(string endpoint, string? token, string? name) : IFleetPeer
     {
         public string Endpoint { get; } = endpoint;
 
@@ -179,7 +180,7 @@ public sealed class HeldTokenFleet(string tokenFile) : IFleet
             var allowed = limit ?? ReadBudget;
             using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             budget.CancelAfter(allowed);
-            using var client = NodeClient.Remote(Endpoint, token);
+            using var client = NodeClient.Remote(Endpoint, token, name);
             try
             {
                 return await read(client, budget.Token).ConfigureAwait(false);
