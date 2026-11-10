@@ -34,7 +34,7 @@ public sealed class CoalesceGuardTests : ReviewTestsBase
         legs.RunAsync(new CommandRequest { Verb = verb, Target = Verbs.FlightTarget(code), Args = args, Who = "controller" }, Ct);
 
     private async Task Reaches(TaskCompletionSource reached) =>
-        (await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(20), Ct))).ShouldBe(reached.Task, "the call was not reached");
+        (await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(120), Ct))).ShouldBe(reached.Task, "the call was not reached"); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
 
     /// <summary>GitHub call <paramref name="name"/> held until the returned source is set, and told once it has been reached.</summary>
     private (TaskCompletionSource Open, TaskCompletionSource Reached) HoldGitHub(string name)

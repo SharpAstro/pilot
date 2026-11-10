@@ -159,7 +159,7 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
     {
         var flight = await Flying();
         _github.Pr = new PullRequest(7, "OPEN", "abc", "https://github.com/x/tianwen/pull/7");
-        _github.AutoMergeArmed.Add((7, "abc", "squash"));
+        _github.AutoMergeArmed.Enqueue((7, "abc", "squash"));
         var calls = new List<string>();
         _github.OnCall = call =>
         {

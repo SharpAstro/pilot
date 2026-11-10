@@ -37,7 +37,7 @@ public sealed class CheckRunnerTests
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var jobs = new JobRunner(state, new NodeOptions(Path.Combine(root, "n.sock"), Path.Combine(root, "data")), TimeProvider.System);
         await jobs.StartAsync(Ct);
-        await jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         try
         {
             var run = await new JobCheckRunner(jobs).RunAsync(OperatingSystem.IsWindows() ? windows : other, root, Ct, "TIA1", "parser");

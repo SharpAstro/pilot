@@ -62,20 +62,20 @@ public sealed class RepoWatchTests : IDisposable
         github.Issues[3] = "stale";
         github.Issues[4] = "landed";
         github.Issues[5] = "another node's";
-        github.IssueLabels[1] = ["pilot node: DE1"];
-        github.IssueLabels[2] = ["pilot node: DE1"];
-        github.IssueLabels[3] = ["pilot node: DE1", "bug"];
-        github.IssueLabels[4] = ["pilot node: DE1"];
-        github.IssueLabels[5] = ["pilot node: SE1"];
+        github.SetIssueLabels(1, "pilot node: DE1");
+        github.SetIssueLabels(2, "pilot node: DE1");
+        github.SetIssueLabels(3, "pilot node: DE1", "bug");
+        github.SetIssueLabels(4, "pilot node: DE1");
+        github.SetIssueLabels(5, "pilot node: SE1");
 
         var all = await Look(repo, github, Flight(repo, 1, FlightState.Flying), Flight(repo, 2, FlightState.Held), Flight(repo, 4, FlightState.Landed));
 
         all.Single().Errors.Where(e => e.Contains("node label")).ShouldBeEmpty();
-        github.IssueLabels[1].ShouldBe(["pilot node: DE1"]);
-        github.IssueLabels[2].ShouldBe(["pilot node: DE1"]);
-        github.IssueLabels[3].ShouldBe(["bug"]);
-        github.IssueLabels[4].ShouldBeEmpty();
-        github.IssueLabels[5].ShouldBe(["pilot node: SE1"]);
+        github.IssueLabels[1].Keys.ShouldBe(["pilot node: DE1"]);
+        github.IssueLabels[2].Keys.ShouldBe(["pilot node: DE1"]);
+        github.IssueLabels[3].Keys.ShouldBe(["bug"]);
+        github.IssueLabels[4].Keys.ShouldBeEmpty();
+        github.IssueLabels[5].Keys.ShouldBe(["pilot node: SE1"]);
     }
 
     [Fact]
@@ -87,7 +87,7 @@ public sealed class RepoWatchTests : IDisposable
         github.Issues[1] = "flying, made before the label";
         github.Issues[2] = "flying, another node's label on it";
         github.Issues[3] = "landed";
-        github.IssueLabels[2] = ["pilot node: SE1"];
+        github.SetIssueLabels(2, "pilot node: SE1");
         github.OpenPrs[repo] =
         [
             new PullRequestStatus { Number = 11, Title = "TIA1", Head = "flight/tia1", Labels = ["pilot: changes"] },
@@ -96,9 +96,9 @@ public sealed class RepoWatchTests : IDisposable
 
         await Look(repo, github, Flight(repo, 1, FlightState.Flying), Flight(repo, 2, FlightState.Flying), Flight(repo, 3, FlightState.Landed));
 
-        github.IssueLabels[1].ShouldBe(["pilot node: DE1"]);
-        github.IssueLabels[11].ShouldBe(["pilot node: DE1"]);
-        github.IssueLabels[2].ShouldBe(["pilot node: SE1"]);
+        github.IssueLabels[1].Keys.ShouldBe(["pilot node: DE1"]);
+        github.IssueLabels[11].Keys.ShouldBe(["pilot node: DE1"]);
+        github.IssueLabels[2].Keys.ShouldBe(["pilot node: SE1"]);
         github.IssueLabels.ShouldNotContainKey(3);
         github.IssueLabels.ShouldNotContainKey(12);
     }
@@ -110,7 +110,7 @@ public sealed class RepoWatchTests : IDisposable
         var repo = Clone();
         var github = new FakeGitHub();
         github.Issues[3] = "stale";
-        github.IssueLabels[3] = ["pilot node: DE1"];
+        github.SetIssueLabels(3, "pilot node: DE1");
         github.IssueLabelFails = "no permission";
 
         var status = (await Look(repo, github)).Single();

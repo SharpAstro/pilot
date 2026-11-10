@@ -61,7 +61,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
 
     private async Task Within(Task task, string what)
     {
-        (await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(20), Ct))).ShouldBe(task, what);
+        (await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(120), Ct))).ShouldBe(task, what); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         await task;
     }
 
@@ -325,7 +325,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         var other = await OtherFlight();
         // A merge armed on the node and on GitHub, which plan-leg takes back.
         _state.PutFlight(F(flight.Code) with { MergeWhenGreen = [_github.Pr!.Head, "squash"] });
-        _github.AutoMergeArmed.Add((_github.Pr!.Number, _github.Pr!.Head, "squash"));
+        _github.AutoMergeArmed.Enqueue((_github.Pr!.Number, _github.Pr!.Head, "squash"));
         var gate = new Gate();
         _github.OnCall = call => call == nameof(IGitHub.PullRequestAsync) ? gate.PassAsync() : Task.CompletedTask;
         string[] plan = ["name=render", "goal=Draw the planets", "done-when=The capture shows them", "item=Draw them"];

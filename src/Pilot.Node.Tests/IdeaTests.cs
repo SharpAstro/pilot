@@ -94,7 +94,7 @@ public sealed class IdeaTests : IDisposable
         (await Note("Second")).Ok.ShouldBeTrue();
 
         _github.MilestonesMade.ShouldHaveSingleItem().Title.ShouldBe(IdeaIds.Milestone);
-        _github.MilestoneIssuesOf[Path.GetFullPath(Repo)].ShouldAllBe(i => i.Milestone == IdeaIds.Milestone);
+        _github.MilestoneIssuesOf[Path.GetFullPath(Repo)].Values.ShouldAllBe(i => i.Milestone == IdeaIds.Milestone);
         _github.MilestoneIssuesOf[Path.GetFullPath(Repo)].Count.ShouldBe(2);
     }
 
@@ -106,7 +106,7 @@ public sealed class IdeaTests : IDisposable
 
         first.Made.ShouldBe("pilot I1");
         second.Made.ShouldBe("pilot I2");
-        var created = _github.IssuesCreated[0];
+        var created = _github.IssuesCreated.ToArray()[0];
         (created.Title, created.Body).ShouldBe(("Rings round Saturn", "with the shadow on them"));
 
         var ideas = _state.Ideas();
@@ -451,7 +451,7 @@ public sealed class IdeaCliTests : IDisposable
 
         made.Exit.ShouldBe(0, made.Output + made.Error);
         node.GitHub.MilestonesMade.Select(m => m.Title).ShouldContain("Rings");
-        node.GitHub.MilestonesOf[Path.GetFullPath(repo)].Single(m => m.Title == "Rings").Description.ShouldBe("Ring shadows and tilt");
+        node.GitHub.MilestonesOf[Path.GetFullPath(repo)].Values.Single(m => m.Title == "Rings").Description.ShouldBe("Ring shadows and tilt");
         node.GitHub.Moves.ShouldBe([(1, "Rings")]);
     }
 }

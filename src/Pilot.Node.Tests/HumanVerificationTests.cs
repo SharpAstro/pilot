@@ -139,7 +139,7 @@ public sealed class HumanVerificationTests : LegCommanderTestsBase
     public async Task AStartSetsTheRowsFlagFromTheIssuesLabelsAndClearsItWhenTheLabelIsGone()
     {
         _state.PutFlight(Row(false) with { Repo = "tianwen", RepoPath = Repo });
-        _github.IssueLabels[1] = [PilotMarks.HumanVerification];
+        _github.SetIssueLabels(1, PilotMarks.HumanVerification);
 
         // The base class's commander has no tracker; this one reads the fake GitHub, as the node does.
         var git = _git;
@@ -152,7 +152,7 @@ public sealed class HumanVerificationTests : LegCommanderTestsBase
         await legs.RunAsync(start, Ct);
         _state.Flights().Single().HumanVerification.ShouldBeTrue();
 
-        _github.IssueLabels[1].Remove(PilotMarks.HumanVerification);
+        _github.IssueLabels[1].TryRemove(PilotMarks.HumanVerification, out _);
         await legs.RunAsync(start, Ct);
         _state.Flights().Single().HumanVerification.ShouldBeFalse();
     }

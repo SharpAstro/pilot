@@ -174,6 +174,9 @@ internal sealed class NodeHarness : IAsyncDisposable
             var prChecks = app.Services.GetRequiredService<Pilot.Node.Flights.PrChecks>();
             var prPacing = new TimerTime(DateTimeOffset.UtcNow);
             prChecks.Pacing = prPacing;
+            // The flight sweep likewise: after its sweep at start it waits on a clock no test moves, so a test over a minute long (a
+            // loaded machine) does not meet a second sweep that takes a step the test is about to take (MergedUnderLegTests, PIL743).
+            app.Services.GetRequiredService<Pilot.Node.Flights.FlightAdvance>().Pacing = new TimerTime(DateTimeOffset.UtcNow);
             Took("build", phase);
             await app.StartAsync(cancellationToken);
             Took("host start", phase);

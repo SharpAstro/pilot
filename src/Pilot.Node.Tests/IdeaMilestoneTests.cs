@@ -120,7 +120,7 @@ public sealed class IdeaMilestoneTests : IDisposable
 
         planned.Ok.ShouldBeTrue(planned.Error);
         _github.MilestonesMade.ShouldBe([(Path.GetFullPath(Repo), "v3")]);
-        _github.MilestonesOf[Path.GetFullPath(Repo)].Single(m => m.Title == "v3").Description.ShouldBe("Rings and tilt");
+        _github.MilestonesOf[Path.GetFullPath(Repo)].Values.Single(m => m.Title == "v3").Description.ShouldBe("Rings and tilt");
         _github.Moves.ShouldBe([(1, "v3")]);
         _state.Flights().Single().FromIdea.ShouldBe("I1");
     }
