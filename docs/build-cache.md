@@ -158,3 +158,17 @@ trial on one of them, with the same command line and the same staleness probe, b
   `Microsoft.MSBuildCache.SharedCompilation` pins and references only under `MSBuildCacheEnabled == 'true'`, and `BuildCacheOptInTests`
   (Category=Invariant) fails if either loses that condition. The SharedCompilation package is the README's advice for C# (the
   compiler server is a detached process whose file reads MSBuild cannot see); the trial did not run without it.
+
+## Seeding from main
+
+With `job-build-cache` on, the node seeds the cache from main (`BuildSeed`, called by `RepoSync` after each clone's sync). When a sync
+fast-forwards a tracked repo's main checkout (outcome `updated`, so its HEAD moved), the node queues one build job in that clone: the
+build a plane's check runs, `dotnet build <solution> -c Release` with no further global properties (so the cache keys match a plane's),
+in the folder holding the first `.slnx` (else `.sln`) at the repo root or under `src`. A repo with neither gets no seed. The last seeded
+HEAD is remembered per clone, so a resync of the same HEAD queues nothing, and nothing is queued with the setting off or when HEAD did not
+move. The job is an ordinary node job: below normal priority, through the queue, owned by no session. `JobRunner.QueueSeed` marks it, so it
+gets the cache variables and the cached restore plus MSBuild form (`BuildCache.Variables` / `With` with `seed: true`) although a main
+clone is no plane. What was seeded, and which jobs are seeds, is kept in the node's process: after a restart the next moved HEAD seeds again.
+
+Covered by `BuildCacheTests` and `RepoSyncTests` against fakes (setting off, HEAD unmoved, moved once, same HEAD twice, no solution). Turning the
+setting on and measuring a warm plane build on the live node (under 3 minutes or not) is the controller's, not done from a plane.
