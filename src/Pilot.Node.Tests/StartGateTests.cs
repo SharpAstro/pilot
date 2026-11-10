@@ -131,6 +131,26 @@ public sealed class StartGateTests : IDisposable
     }
 
     [Fact]
+    public void ALandedFlightsHoldButtonLeavesTheWeekCardAndTheOthersStay()
+    {
+        Usage(10, week: 99);
+        _state.PutFlight(_state.Flights().Single() with { Code = "TIA8", Branch = "flight/tia8" });
+        _gate.RingWeek(90);
+
+        // TIA8 lands after the card was raised: its button goes, the other flight's and the node-wide one stay.
+        _state.DropHoldChoiceOfLanded("TIA8");
+        Cards(StartGate.WeekKind).ShouldHaveSingleItem().Choices.Select(c => c.Label).ShouldBe(["Hold TIA9", "Take no new flights"]);
+
+        // Nothing left to drop for it: no change, and a flight with no button is a no-op.
+        _state.DropHoldChoiceOfLanded("TIA8");
+        _state.DropHoldChoiceOfLanded("TIA1");
+        Cards(StartGate.WeekKind).ShouldHaveSingleItem().Choices.Select(c => c.Label).ShouldBe(["Hold TIA9", "Take no new flights"]);
+
+        _state.DropHoldChoiceOfLanded("TIA9");
+        Cards(StartGate.WeekKind).ShouldHaveSingleItem().Choices.Select(c => c.Label).ShouldBe(["Take no new flights"]);
+    }
+
+    [Fact]
     public void TheWeekLimitIsASettingThatTakesPercentAndDefaultsToNinety()
     {
         new RoleModels(null).WeekLimit.ShouldBe(90);

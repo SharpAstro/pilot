@@ -302,6 +302,8 @@ public sealed partial class FlightCommander
             MoveUnknown = null,
         }) ?? flight;
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code} landed", LegCommander.MoveFailedKind);
+        // The 7-day card's Hold button for this flight was fixed when the card was raised: a landed flight has nothing to hold.
+        state.DropHoldChoiceOfLanded(flight.Code);
         // After a merge the entry ends merged whatever it stood at: a look that saw the arm cleared, or a merge refused as the PR was
         // merged already, may have dropped it just before (pilot #395). A landing by hand ends only an entry still open.
         if (mergedHead is not null)

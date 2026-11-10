@@ -155,6 +155,7 @@ public sealed record DesignQuestion(PrFinding Finding, string Question, IReadOnl
     /// becomes its option's answer, one line per question, as a button's answer reads. Words that are not only tags are the person's own
     /// and come back unchanged. Tags that leave a question unanswered, give one question two options or name no option are refused, so an
     /// answer of tags never drops a question (the review of #797: one answer to a card of two questions closed it with the other unanswered).
+    /// A card with a question that has no options takes own words, never tags, as no tag can answer that question.
     /// </summary>
     /// <exception cref="FlightException">The tags do not answer every question once.</exception>
     internal static string ExpandTags(IReadOnlyList<DesignQuestion> questions, string words)
@@ -165,6 +166,11 @@ public sealed record DesignQuestion(PrFinding Finding, string Question, IReadOnl
         if (tokens.Count == 0 || questionsWithOptions.Count == 0 || !tokens.All(t => Tag.IsMatch(t)))
         {
             return words;
+        }
+        // A question with no options has no tag to answer it by: tags alone would close the card with that question unanswered.
+        if (questions.Select((q, n) => (q, n)).Where(x => x.q.Options.Count == 0).Select(x => x.n + 1).ToList() is { Count: > 0 } open)
+        {
+            throw new FlightException($"question {string.Join(" and ", open)} has no options to pick: answer in your own words, since tags would leave it unanswered");
         }
         var picked = new Dictionary<int, DesignOption>();
         foreach (var token in tokens)

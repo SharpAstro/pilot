@@ -425,6 +425,24 @@ public sealed class DesignQuestionTests
 {
     private static PrFinding F(string body) => new() { Path = "a.cs", Line = 3, Body = body };
 
+    /// <summary>
+    /// The review of #797: on a card of several questions where one has no options, <c>1A</c> alone passed (<c>unanswered</c> skipped the
+    /// question without options) and the open question got no answer. Tags are refused then; own words and a card of one question are not.
+    /// </summary>
+    [Fact]
+    public void TagsAreRefusedWhenAnyQuestionHasNoOptionsAndOwnWordsAreNot()
+    {
+        var withOptions = DesignQuestion.Parse(F("design: Keep it? Option: Yes => cheap Option*: No => costly"))!;
+        var open = DesignQuestion.Parse(F("design: and the name?"))!;
+
+        Should.Throw<FlightException>(() => DesignQuestion.ExpandTags([withOptions, open], "1A")).Message.ShouldContain("question 2 has no options");
+        Should.Throw<FlightException>(() => DesignQuestion.ExpandTags([withOptions, open], "1A 2A")).Message.ShouldContain("question 2 has no options");
+
+        DesignQuestion.ExpandTags([withOptions, open], "keep it, and call it Foo").ShouldBe("keep it, and call it Foo");
+        DesignQuestion.ExpandTags([open], "A").ShouldBe("A");
+        DesignQuestion.ExpandTags([withOptions], "A").ShouldBe("No (costly)");
+    }
+
     [Fact]
     public void ParsesTheQuestionAndEachOptionWithItsConsequenceAndTheRecommendedMark()
     {

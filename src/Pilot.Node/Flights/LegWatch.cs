@@ -1863,7 +1863,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         }
         var choices = Choices(leg, worker, kind);
         // What the next worker runs on is for the detail, not the button that starts it.
-        state.RaiseCard(CardBin.Ring, kind, Subject(leg), title, detail is null ? null : detail + NextWorker(leg), choices, summary: RingSummary(leg, kind, choices, lead));
+        state.RaiseCard(CardBin.Ring, kind, Subject(leg), title, detail is null ? null : detail + NextWorker(leg, detail), choices, summary: RingSummary(leg, kind, choices, lead));
     }
 
     /// <summary>
@@ -1924,7 +1924,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         leg.Checklist.Length == 0 ? "no steps listed" : $"{leg.Checklist.Count(i => i.Done)} of {leg.Checklist.Length} steps ticked";
 
     /// <summary>The detail's closing sentence on the next worker's round and model once it is a second round or later; empty before that.</summary>
-    private string NextWorker(LegRow leg) => Models.NextWorkerNote(leg) is { } note ? $". {note}" : "";
+    // The note joins the detail with a full stop only when the detail does not end in one (the review of #797: a detail ending in a stop got "..").
+    private string NextWorker(LegRow leg, string detail) => Models.NextWorkerNote(leg) is { } note ? $"{(detail.TrimEnd().EndsWith('.') ? "" : ".")} {note}" : "";
     private static string Clip(string text) => text.Length <= 70 ? text : text[..67].TrimEnd() + "...";
 
     private static string Subject(LegRow leg) => Verbs.LegTarget(leg.Flight, leg.Name);

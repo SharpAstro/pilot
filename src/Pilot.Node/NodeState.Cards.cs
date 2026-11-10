@@ -268,6 +268,24 @@ public sealed partial class NodeState
     }
 
     /// <summary>
+    /// A flight landed: the open 7-day card (<see cref="StartGate.WeekKind"/>) loses its <c>Hold &lt;code&gt;</c> button for that flight, as
+    /// the buttons were fixed when the card was raised and a landed flight has nothing left to hold (the review of #797). The card keeps
+    /// every other choice; when no flight button is left it still offers the node-wide one. One <see cref="CardChangedEvent"/> per card changed.
+    /// </summary>
+    public void DropHoldChoiceOfLanded(string code)
+    {
+        lock (_gate)
+        {
+            var target = Verbs.FlightTarget(code);
+            foreach (var card in _cards.Values.Where(c => c.State == CardState.Open && c.Kind == StartGate.WeekKind
+                && c.Choices.Any(ch => ch.Verb == Verbs.Ground && ch.Target == target)).ToList())
+            {
+                UpdateCard(card.Id, card.Title, card.Detail, [.. card.Choices.Where(ch => !(ch.Verb == Verbs.Ground && ch.Target == target))], card.Link);
+            }
+        }
+    }
+
+    /// <summary>
     /// Turns an open card into what its thing has become (a merge armed, then failed on one check), keeping its place and id:
     /// one <see cref="CardChangedEvent"/>, none when nothing changed. A <paramref name="kind"/> given is the card's new kind.
     /// False when the card is not open or nothing changed.
