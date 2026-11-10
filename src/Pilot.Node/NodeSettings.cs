@@ -26,8 +26,17 @@ public sealed record NodeSettings
     public const string MaxJobsKey = "max-jobs";
     public const string JobMemoryKey = "job-memory";
     public const string JobPriorityKey = "job-priority";
-    /// <summary>Whether a job in a plane builds into output under the plane (MSBuild artifacts output), so two planes never share a sibling clone's obj and the sibling lock is skipped for it; off unless set.</summary>
+    /// <summary>Whether a job in a plane builds into output under the plane (MSBuild artifacts output), so two planes never share a sibling clone's obj and the sibling lock is skipped for it; off unless set on.</summary>
     public const string JobPlaneOutputKey = "job-plane-output";
+    /// <summary>
+    /// What <see cref="JobPlaneOutputKey"/> is when the settings file does not say: off (PIL802). A plane builds on the published
+    /// packages, so it compiles no sibling and has nothing to share; only a <c>pilot: sibling source</c> flight holds clones.
+    /// </summary>
+    public const bool JobPlaneOutputDefault = false;
+    /// <summary>Whether a job in a plane builds through the content-keyed build cache (Microsoft.MSBuildCache.Local, a trial, PIL860); off unless set on.</summary>
+    public const string JobBuildCacheKey = "job-build-cache";
+    /// <summary>What <see cref="JobBuildCacheKey"/> is when the settings file does not say: off.</summary>
+    public const bool JobBuildCacheDefault = false;
     public const string MergeMethodKey = "merge-method";
     public const string StartLimitKey = "start-limit";
     public const string PriorityStartLimitKey = "priority-start-limit";
@@ -37,10 +46,13 @@ public sealed record NodeSettings
     public const string SpendAlertKey = "spend-alert";
     public const string WatchtowerCompactShareKey = "watchtower-compact-share";
     public const string WatchtowerChatMessagesKey = "watchtower-chat-messages";
+    public const string WatchtowerCompactIdleKey = "watchtower-compact-idle";
+    public const string WatchtowerCompactAboveKey = "watchtower-compact-above";
     public const string MaintenanceKey = "maintenance";
     public const string AcceptFleetFlightsKey = "accept-fleet-flights";
     public const string AutopilotKey = "autopilot";
     public const string ReviewDeepFirstKey = "review-deep-first";
+    public const string UserSkillsKey = "user-skills";
     public const string ShortcutTokenKey = "shortcut-token";
     public const string RepoTrackersKey = "repo-trackers";
     public const string NoAutoMergeReposKey = "no-auto-merge-repos";
@@ -53,6 +65,14 @@ public sealed record NodeSettings
     public const int DefaultScratchDays = 2;
     public const string DiskAlertGbKey = "disk-alert-gb";
     public const int DefaultDiskAlertGb = 20;
+    /// <summary>
+    /// Runner-hours of CI a flight's PR may spend before the node stops pushing for it and rings the owner (PIL795). The same flight
+    /// red for more than <see cref="FlightCiRedHours"/> in a row stops it too.
+    /// </summary>
+    public const string FlightCiBudgetKey = "flight-ci-budget";
+    public const int DefaultFlightCiBudget = 4;
+    /// <summary>Hours a flight's PR may stay red before the node stops pushing for it (PIL795).</summary>
+    public const int FlightCiRedHours = 3;
 
     /// <summary>Hours a flight may stay open before the digest and the brief call it stale (#736).</summary>
     public const string StaleFlightHoursKey = "stale-flight-hours";
@@ -72,6 +92,45 @@ public sealed record NodeSettings
     /// <summary>Hours a flight may be held on a flight of a node that cannot be asked before it is called stale (#753).</summary>
     public const string StaleUnreachableHoursKey = "stale-unreachable-hours";
     public const int DefaultStaleUnreachableHours = 1;
+
+    // Where a bench may run in Azure (#823). A subscription and a resource group both set turn cloud benches on; every other key has a
+    // default, and nothing here is secret but the service principal's secret, which is shown as set or not, never as itself.
+    public const string BenchSubscriptionKey = "bench-subscription";
+    public const string BenchResourceGroupKey = "bench-resource-group";
+    public const string BenchRegionKey = "bench-region";
+    public const string BenchVmSizeKey = "bench-vm-size";
+    public const string BenchImageKey = "bench-image";
+    /// <summary>The most to pay for a spot VM per hour, in USD (<see cref="BenchSpotPrice"/>); the VM is evicted past it.</summary>
+    public const string BenchSpotPriceKey = "bench-spot-price";
+    /// <summary>The most the node's cloud benches may cost in a calendar month, in USD (<see cref="BenchMonthlyCap"/>).</summary>
+    public const string BenchMonthlyCapKey = "bench-monthly-cap";
+    public const string BenchAuthKey = "bench-auth";
+    public const string BenchSpAppIdKey = "bench-sp-app-id";
+    public const string BenchSpTenantKey = "bench-sp-tenant";
+    public const string BenchSpSecretKey = "bench-sp-secret";
+
+    /// <summary>Sign in with the machine's own <c>az login</c>: what <see cref="BenchAuthKey"/> means unless set.</summary>
+    public const string AuthAzLogin = "az-login";
+    /// <summary>Sign in as a service principal, from the app id, tenant and secret settings.</summary>
+    public const string AuthServicePrincipal = "service-principal";
+
+    // What a bench-cloud key takes when the file leaves it out, once cloud benches are on. A fixed size, image and region are what make two
+    // bench runs compare; the price and the cap are what a runaway cannot pass.
+    public const string DefaultBenchRegion = "westeurope";
+    public const string DefaultBenchVmSize = "Standard_F8s_v2";
+    public const string DefaultBenchImage = "Canonical:ubuntu-24_04-lts:server:latest";
+    public const double DefaultBenchSpotPrice = 0.30;
+    public const double DefaultBenchMonthlyCap = 50;
+
+    /// <summary>The bench-cloud keys (#823), in the order the Settings page shows them.</summary>
+    public static IReadOnlyList<string> BenchKeys { get; } =
+        [BenchSubscriptionKey, BenchResourceGroupKey, BenchRegionKey, BenchVmSizeKey, BenchImageKey, BenchSpotPriceKey, BenchMonthlyCapKey, BenchAuthKey, BenchSpAppIdKey, BenchSpTenantKey, BenchSpSecretKey];
+
+    /// <summary>Whether <paramref name="key"/> is a bench-cloud key.</summary>
+    public static bool IsBenchKey(string key) => BenchKeys.Contains(key);
+
+    /// <summary>Whether <paramref name="key"/> holds a secret: shown by the settings output as set or not, never as itself.</summary>
+    public static bool IsSecret(string key) => key is ShortcutTokenKey or BenchSpSecretKey;
 
     /// <summary>The five staleness bounds' keys (#736).</summary>
     public static IReadOnlyList<string> StaleKeys { get; } = [StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey];
@@ -112,13 +171,23 @@ public sealed record NodeSettings
 
     /// <summary>How long the pull request watch waits between reads while no client shows the Pull requests page.</summary>
     public static readonly TimeSpan DefaultPrWatchIdle = TimeSpan.FromMinutes(15);
+    /// <summary>How long a peer must have been unheard before a flight it flew may be taken over by this node (#894).</summary>
+    public const string AdoptAfterKey = "adopt-after";
+    public static readonly TimeSpan DefaultAdoptAfter = TimeSpan.FromHours(1);
     public const string OpusCapKey = "opus-cap";
+
+    /// <summary>The most reviews and fixers this node runs at once (#912); a start past it waits for a slot.</summary>
+    public const string ReviewLimitKey = "review-limit";
+    /// <summary>The most jobs of one repo the node runs at once; jobs of other repos fill the other slots (owner, 2026-11-10).</summary>
+    public const string JobsPerRepoKey = "jobs-per-repo";
     public const string OneFlightPerRepoKey = "one-flight-per-repo";
     /// <summary>The repos whose flights keep their legs as sub-tasks of the work item (a GitHub sub-issue, a Shortcut task); off for a repo left out.</summary>
     public const string SubTaskReposKey = "sub-task-repos";
     public const string MergeBatchKey = "merge-batch";
     /// <summary>Whether a leg's fresh worker steps up a model ladder by attempt; on unless set off.</summary>
     public const string WorkerLadderKey = "worker-ladder";
+    /// <summary>The model the summary's one <c>claude -p</c> call runs on (#797); kept in the role layers (this node's, the fleet's) as the role ranges are.</summary>
+    public const string SummaryModelKey = "summary-model";
 
     /// <summary>How a flight's PR is merged when the merge names no method: rebase keeps every commit's subject, which a
     /// repo's docs may cite (tianwen's rule); squash makes one commit of them; merge adds a merge commit.</summary>
@@ -126,16 +195,31 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
-         .. RoleModels.Roles.Select(RoleModels.RangeKey), WorkerLadderKey];
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+         .. BenchKeys, .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
     public static bool IsRoleKey(string key) => RoleModels.Roles.Any(r => key == RoleModels.RangeKey(r));
+
+    /// <summary>Whether <paramref name="key"/> is the summary's model (<see cref="SummaryModelKey"/>): one model, not a range.</summary>
+    public static bool IsModelKey(string key) => key == SummaryModelKey;
+
+    /// <summary>Whether <paramref name="key"/> has a fleet layer beside this node's own value: a role's range or the summary's model.</summary>
+    public static bool IsLayeredKey(string key) => IsRoleKey(key) || IsModelKey(key);
 
     public bool? Lan { get; init; }
 
     /// <summary>How many Opus sessions the fleet runs at once (<see cref="OpusCapKey"/>); 0 for no cap, 3 unless set.</summary>
     public int? OpusCap { get; init; }
+
+    /// <summary>How many reviews and fixers this node runs at once (<see cref="ReviewLimitKey"/>); 0 for no limit, 2 unless set.</summary>
+    public int? ReviewLimit { get; init; }
+
+    /// <summary>The most jobs of one repo this node runs at once (<see cref="JobsPerRepoKey"/>); 0 for no limit, 1 unless set.</summary>
+    public int? JobsPerRepo { get; init; }
+
+    /// <summary>What <see cref="JobsPerRepoKey"/> is when the settings file does not say.</summary>
+    public const int JobsPerRepoDefault = 1;
 
     /// <summary>Whether only one flight per repo is in the air at a time (<see cref="OneFlightPerRepoKey"/>); off unless set.</summary>
     public bool? OneFlightPerRepo { get; init; }
@@ -155,14 +239,59 @@ public sealed record NodeSettings
     /// <summary>Whether the first review of a large diff runs on the deep model (<see cref="ReviewDeepFirstKey"/>); on unless the person saved it off. A re-review never does.</summary>
     public bool? ReviewDeepFirst { get; init; }
 
+    /// <summary>Whether the node installs and keeps current the Claude Code skills it carries (<see cref="UserSkillsKey"/>, <see cref="Node.UserSkills"/>); on unless the person saved it off.</summary>
+    public bool? UserSkills { get; init; }
+
     /// <summary>Whether a leg's fresh worker steps up the model ladder by attempt (<see cref="WorkerLadderKey"/>); on unless set off.</summary>
     public bool? WorkerLadder { get; init; }
 
-    /// <summary>Whether the node's jobs in a plane build into <c>&lt;plane&gt;/artifacts</c> (<see cref="JobPlaneOutputKey"/>); off unless set.</summary>
+    /// <summary>Whether the node's jobs in a plane build into <c>&lt;plane&gt;/artifacts</c> (<see cref="JobPlaneOutputKey"/>); <see cref="JobPlaneOutputDefault"/> unless set.</summary>
     public bool? JobPlaneOutput { get; init; }
+
+    /// <summary>Whether the node's jobs in a plane build through the build cache (<see cref="JobBuildCacheKey"/>); <see cref="JobBuildCacheDefault"/> unless set.</summary>
+    public bool? JobBuildCache { get; init; }
 
     /// <summary>The Shortcut API token (<see cref="ShortcutTokenKey"/>) that reads a story's title; the <c>SHORTCUT_API_TOKEN</c> variable wins over it. Never shown by the settings output beyond set or not.</summary>
     public string? ShortcutToken { get; init; }
+
+    /// <summary>The Azure subscription a cloud bench's VM is made in (<see cref="BenchSubscriptionKey"/>), a GUID; with <see cref="BenchResourceGroup"/> it turns cloud benches on, and left out they are off.</summary>
+    public string? BenchSubscription { get; init; }
+
+    /// <summary>The resource group a cloud bench's VM is made in (<see cref="BenchResourceGroupKey"/>); left out, cloud benches are off.</summary>
+    public string? BenchResourceGroup { get; init; }
+
+    /// <summary>The Azure region of the VM (<see cref="BenchRegionKey"/>), as <c>az account list-locations</c> names it; <see cref="DefaultBenchRegion"/> unless set.</summary>
+    public string? BenchRegion { get; init; }
+
+    /// <summary>The VM size (<see cref="BenchVmSizeKey"/>), an Azure SKU; <see cref="DefaultBenchVmSize"/> unless set. Fixed, so two bench runs compare.</summary>
+    public string? BenchVmSize { get; init; }
+
+    /// <summary>The VM's image (<see cref="BenchImageKey"/>), a marketplace URN <c>publisher:offer:sku:version</c>; <see cref="DefaultBenchImage"/> unless set.</summary>
+    public string? BenchImage { get; init; }
+
+    /// <summary>The most to pay per VM hour, in USD (<see cref="BenchSpotPriceKey"/>); <see cref="DefaultBenchSpotPrice"/> unless set.</summary>
+    public double? BenchSpotPrice { get; init; }
+
+    /// <summary>The most cloud benches may cost in a calendar month, in USD (<see cref="BenchMonthlyCapKey"/>); <see cref="DefaultBenchMonthlyCap"/> unless set.</summary>
+    public double? BenchMonthlyCap { get; init; }
+
+    /// <summary>How the node signs in to Azure (<see cref="BenchAuthKey"/>): <see cref="AuthAzLogin"/> (the default) or <see cref="AuthServicePrincipal"/>.</summary>
+    public string? BenchAuth { get; init; }
+
+    /// <summary>The service principal's application (client) id (<see cref="BenchSpAppIdKey"/>), used when <see cref="BenchAuth"/> is <see cref="AuthServicePrincipal"/>.</summary>
+    public string? BenchSpAppId { get; init; }
+
+    /// <summary>The service principal's tenant (<see cref="BenchSpTenantKey"/>), a GUID or a domain.</summary>
+    public string? BenchSpTenant { get; init; }
+
+    /// <summary>The service principal's secret (<see cref="BenchSpSecretKey"/>). It lives in the node's settings file and nowhere else; the settings output shows only that it is set.</summary>
+    public string? BenchSpSecret { get; init; }
+
+    /// <summary>
+    /// Where a bench may run in Azure as these settings say it, defaults filled in, or why it may not: no subscription or no resource group
+    /// (cloud benches are off, every bench stays on the node's machine), or a service principal that is missing a part.
+    /// </summary>
+    public (BenchCloud? Cloud, string? Why) BenchCloudOrWhy() => BenchCloud.From(this);
 
     public int? LanPort { get; init; }
 
@@ -184,6 +313,9 @@ public sealed record NodeSettings
 
     /// <summary>Free gigabytes on the repos' drive below which the node rings (<see cref="DiskAlertGbKey"/>); <see cref="DefaultDiskAlertGb"/> unless set.</summary>
     public int? DiskAlertGb { get; init; }
+
+    /// <summary>Runner-hours of CI a flight may spend (<see cref="FlightCiBudgetKey"/>); <see cref="DefaultFlightCiBudget"/> unless set.</summary>
+    public int? FlightCiBudget { get; init; }
 
     /// <summary>The staleness bounds (<see cref="StaleKeys"/>); each its default unless set.</summary>
     public int? StaleFlightHours { get; init; }
@@ -207,6 +339,8 @@ public sealed record NodeSettings
 
     /// <summary>The wait between the pull request watch's reads while no client shows the Pull requests page (<see cref="PrWatchIdleKey"/>); a minute is read while one does.</summary>
     public TimeSpan? PrWatchIdle { get; init; }
+    /// <summary>How long a silent peer must be unheard before its flights may be taken over (<see cref="AdoptAfterKey"/>); <see cref="DefaultAdoptAfter"/> unless set.</summary>
+    public TimeSpan? AdoptAfter { get; init; }
     /// <summary>The margin, in points, a start tolerates between the 7-day window's used share and its elapsed share; null is off.</summary>
     public double? WeekPace { get; init; }
 
@@ -218,6 +352,12 @@ public sealed record NodeSettings
 
     /// <summary>The person messages in a watchtower chat, since its last compaction, after which it is compacted once idle (<see cref="WatchtowerChatMessagesKey"/>); 40 when unset, 0 is off.</summary>
     public int? WatchtowerChatMessages { get; init; }
+
+    /// <summary>How many minutes an idle watchtower (the brain) sits before it is compacted, when its context is over <see cref="WatchtowerCompactAbove"/> (<see cref="WatchtowerCompactIdleKey"/>); 50 when unset.</summary>
+    public int? WatchtowerCompactIdle { get; init; }
+
+    /// <summary>The context, in thousands of tokens, an idle watchtower must hold for the idle compaction to be worth its turn (<see cref="WatchtowerCompactAboveKey"/>); 100 when unset.</summary>
+    public int? WatchtowerCompactAbove { get; init; }
 
     /// <summary>The repos whose flights have runway: they go on past <see cref="StartLimit"/>, up to <see cref="PriorityStartLimit"/>.</summary>
     public IReadOnlyList<string>? PriorityRepos { get; init; }
@@ -243,9 +383,9 @@ public sealed record NodeSettings
     /// <summary>These settings with the fleet's range for <paramref name="key"/> set to <paramref name="values"/> (none, or <c>default</c>, takes it out), or why not.</summary>
     public static (NodeSettings? Settings, string? Error) WithFleet(NodeSettings settings, string key, IReadOnlyList<string> values)
     {
-        if (!IsRoleKey(key))
+        if (!IsLayeredKey(key))
         {
-            return (null, $"{key} has no fleet value; the fleet holds {string.Join(", ", RoleModels.Roles.Select(RoleModels.RangeKey))}");
+            return (null, $"{key} has no fleet value; the fleet holds {string.Join(", ", RoleModels.Roles.Select(RoleModels.RangeKey).Append(SummaryModelKey))}");
         }
         // Checked as an own value is, then the own layer is put back as it was.
         var (checkedRange, error) = With(new NodeSettings(), key, values);
@@ -295,9 +435,8 @@ public sealed record NodeSettings
         }
         if (root[FleetRangesField] is JsonObject fleetRanges)
         {
-            foreach (var role in RoleModels.Roles)
+            foreach (var key in RoleModels.Roles.Select(RoleModels.RangeKey).Append(SummaryModelKey))
             {
-                var key = RoleModels.RangeKey(role);
                 if (fleetRanges[key] is JsonValue v && v.TryGetValue<string>(out var text) && WithFleet(settings, key, [text]) is { Settings: { } withFleet })
                 {
                     settings = withFleet;
@@ -359,19 +498,26 @@ public sealed record NodeSettings
                     MaintenanceKey => JsonValue.Create(Maintenance),
                     OneFlightPerRepoKey => JsonValue.Create(OneFlightPerRepo),
                     OpusCapKey => JsonValue.Create(OpusCap),
+                    ReviewLimitKey => JsonValue.Create(ReviewLimit),
+                    JobsPerRepoKey => JsonValue.Create(JobsPerRepo),
                     AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
                     AutopilotKey => JsonValue.Create(Autopilot),
                     ReviewDeepFirstKey => JsonValue.Create(ReviewDeepFirst),
+                    UserSkillsKey => JsonValue.Create(UserSkills),
                     MergeBatchKey => JsonValue.Create(MergeBatch),
                     WorkerLadderKey => JsonValue.Create(WorkerLadder),
                     JobPlaneOutputKey => JsonValue.Create(JobPlaneOutput),
+                    JobBuildCacheKey => JsonValue.Create(JobBuildCache),
                     LanPortKey => JsonValue.Create(LanPort),
                     MaxJobsKey => JsonValue.Create(MaxJobs),
                     MaxGoAroundsKey => JsonValue.Create(MaxGoArounds),
                     ScratchDaysKey => JsonValue.Create(ScratchDays),
                     DiskAlertGbKey => JsonValue.Create(DiskAlertGb),
+                    FlightCiBudgetKey => JsonValue.Create(FlightCiBudget),
                     StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => JsonValue.Create(StaleValue(key)),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
+                    BenchSpotPriceKey => JsonValue.Create(BenchSpotPrice),
+                    BenchMonthlyCapKey => JsonValue.Create(BenchMonthlyCap),
                     JobPriorityKey => JsonValue.Create(Pilot.Node.Flights.JobPriorities.Name(JobPriority!.Value)),
                     RepoRootsKey or PriorityReposKey or RepoTrackersKey or NoAutoMergeReposKey or SubTaskReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
                     _ => JsonValue.Create(values[0]),
@@ -404,14 +550,29 @@ public sealed record NodeSettings
         MaintenanceKey => Maintenance is { } maintenance ? [maintenance ? "on" : "off"] : null,
         OneFlightPerRepoKey => OneFlightPerRepo is { } one ? [one ? "on" : "off"] : null,
         OpusCapKey => OpusCap is { } cap ? [cap.ToString(CultureInfo.InvariantCulture)] : null,
+        ReviewLimitKey => ReviewLimit is { } reviews ? [reviews.ToString(CultureInfo.InvariantCulture)] : null,
+        JobsPerRepoKey => JobsPerRepo is { } perRepo ? [perRepo.ToString(CultureInfo.InvariantCulture)] : null,
         AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
         AutopilotKey => Autopilot is { } autopilot ? [autopilot ? "on" : "off"] : null,
         ReviewDeepFirstKey => ReviewDeepFirst is { } deepFirst ? [deepFirst ? "on" : "off"] : null,
+        UserSkillsKey => UserSkills is { } skills ? [skills ? "on" : "off"] : null,
         MergeBatchKey => MergeBatch is { } batch ? [batch ? "on" : "off"] : null,
         WorkerLadderKey => WorkerLadder is { } ladder ? [ladder ? "on" : "off"] : null,
         JobPlaneOutputKey => JobPlaneOutput is { } planeOutput ? [planeOutput ? "on" : "off"] : null,
+        JobBuildCacheKey => JobBuildCache is { } buildCache ? [buildCache ? "on" : "off"] : null,
         LanPortKey => LanPort is { } port ? [port.ToString(CultureInfo.InvariantCulture)] : null,
         ShortcutTokenKey => ShortcutToken is { } token ? [token] : null,
+        BenchSubscriptionKey => BenchSubscription is { } subscription ? [subscription] : null,
+        BenchResourceGroupKey => BenchResourceGroup is { } group ? [group] : null,
+        BenchRegionKey => BenchRegion is { } region ? [region] : null,
+        BenchVmSizeKey => BenchVmSize is { } size ? [size] : null,
+        BenchImageKey => BenchImage is { } image ? [image] : null,
+        BenchSpotPriceKey => BenchSpotPrice is { } spot ? [spot.ToString(CultureInfo.InvariantCulture)] : null,
+        BenchMonthlyCapKey => BenchMonthlyCap is { } monthly ? [monthly.ToString(CultureInfo.InvariantCulture)] : null,
+        BenchAuthKey => BenchAuth is { } auth ? [auth] : null,
+        BenchSpAppIdKey => BenchSpAppId is { } appId ? [appId] : null,
+        BenchSpTenantKey => BenchSpTenant is { } tenant ? [tenant] : null,
+        BenchSpSecretKey => BenchSpSecret is { } spSecret ? [spSecret] : null,
         MachineKey => Machine is { } machine ? [machine] : null,
         RepoRootsKey => RepoRoots,
         UpdatePolicyKey => UpdatePolicy is { } policy ? [policy.Name()] : null,
@@ -420,6 +581,7 @@ public sealed record NodeSettings
         MaxGoAroundsKey => MaxGoArounds is { } rounds ? [rounds.ToString(CultureInfo.InvariantCulture)] : null,
         ScratchDaysKey => ScratchDays is { } days ? [days.ToString(CultureInfo.InvariantCulture)] : null,
         DiskAlertGbKey => DiskAlertGb is { } alertGb ? [alertGb.ToString(CultureInfo.InvariantCulture)] : null,
+        FlightCiBudgetKey => FlightCiBudget is { } ciBudget ? [ciBudget.ToString(CultureInfo.InvariantCulture)] : null,
         StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => StaleValue(key) is { } stale ? [stale.ToString(CultureInfo.InvariantCulture)] : null,
         JobPriorityKey => JobPriority is { } priority ? [Pilot.Node.Flights.JobPriorities.Name(priority)] : null,
         JobMemoryKey => JobMemoryGigabytes is { } memory ? [memory.ToString(CultureInfo.InvariantCulture)] : null,
@@ -428,15 +590,18 @@ public sealed record NodeSettings
         PriorityStartLimitKey => PriorityStartLimit is { } high ? [high.ToString(CultureInfo.InvariantCulture)] : null,
         WeekLimitKey => WeekLimit is { } week ? [week.ToString(CultureInfo.InvariantCulture)] : null,
         PrWatchIdleKey => PrWatchIdle is { } idle ? [DurationText(idle)] : null,
+        AdoptAfterKey => AdoptAfter is { } adoptAfter ? [DurationText(adoptAfter)] : null,
         WeekPaceKey => WeekPace is { } pace ? [pace.ToString(CultureInfo.InvariantCulture)] : null,
         SpendAlertKey => SpendAlert is { } alert ? [alert.ToString(CultureInfo.InvariantCulture)] : null,
         WatchtowerCompactShareKey => WatchtowerCompactShare is { } wcs ? [wcs.ToString(CultureInfo.InvariantCulture)] : null,
         WatchtowerChatMessagesKey => WatchtowerChatMessages is { } wcm ? [wcm.ToString(CultureInfo.InvariantCulture)] : null,
+        WatchtowerCompactIdleKey => WatchtowerCompactIdle is { } wci ? [wci.ToString(CultureInfo.InvariantCulture)] : null,
+        WatchtowerCompactAboveKey => WatchtowerCompactAbove is { } wca ? [wca.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityReposKey => PriorityRepos,
         RepoTrackersKey => RepoTrackers,
         NoAutoMergeReposKey => NoAutoMergeRepos,
         SubTaskReposKey => SubTaskRepos,
-        _ when IsRoleKey(key) && Roles?.GetValueOrDefault(key) is { } role => [role],
+        _ when IsLayeredKey(key) && Roles?.GetValueOrDefault(key) is { } role => [role],
         _ => null,
     };
 
@@ -486,6 +651,22 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var opus) && opus is >= 0 and <= 64
                     ? (settings with { OpusCap = opus }, null)
                     : (null, "opus-cap takes the most Opus sessions the fleet runs at once, 0 to 64 (0 for no cap)");
+            case ReviewLimitKey:
+                if (clear)
+                {
+                    return (settings with { ReviewLimit = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var reviewLimit) && reviewLimit is >= 0 and <= 16
+                    ? (settings with { ReviewLimit = reviewLimit }, null)
+                    : (null, "review-limit takes the most reviews and fixers this node runs at once, 0 to 16 (0 for no limit)");
+            case JobsPerRepoKey:
+                if (clear)
+                {
+                    return (settings with { JobsPerRepo = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var perRepoJobs) && perRepoJobs is >= 0 and <= 16
+                    ? (settings with { JobsPerRepo = perRepoJobs }, null)
+                    : (null, "jobs-per-repo takes the most jobs of one repo the node runs at once, 0 to 16 (0 for no limit)");
             case AcceptFleetFlightsKey:
                 if (clear)
                 {
@@ -510,6 +691,14 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } deepFirst
                     ? (settings with { ReviewDeepFirst = deepFirst }, null)
                     : (null, "review-deep-first takes on or off");
+            case UserSkillsKey:
+                if (clear)
+                {
+                    return (settings with { UserSkills = null }, null);
+                }
+                return OnOff(One()) is { } userSkills
+                    ? (settings with { UserSkills = userSkills }, null)
+                    : (null, "user-skills takes on or off");
             case MergeBatchKey:
                 if (clear)
                 {
@@ -534,10 +723,103 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } planeOut
                     ? (settings with { JobPlaneOutput = planeOut }, null)
                     : (null, "job-plane-output takes on or off");
+            case JobBuildCacheKey:
+                if (clear)
+                {
+                    return (settings with { JobBuildCache = null }, null);
+                }
+                return OnOff(One()) is { } cacheOn
+                    ? (settings with { JobBuildCache = cacheOn }, null)
+                    : (null, "job-build-cache takes on or off");
             case ShortcutTokenKey:
                 return clear
                     ? (settings with { ShortcutToken = null }, null)
                     : One() is { } secret ? (settings with { ShortcutToken = secret }, null) : (null, "shortcut-token takes the API token, one word");
+            case BenchSubscriptionKey:
+                if (clear)
+                {
+                    return (settings with { BenchSubscription = null }, null);
+                }
+                return Guid.TryParseExact(One(), "D", out var subscription)
+                    ? (settings with { BenchSubscription = subscription.ToString("D") }, null)
+                    : (null, "bench-subscription takes the Azure subscription id, a GUID (az account show --query id)");
+            case BenchResourceGroupKey:
+                if (clear)
+                {
+                    return (settings with { BenchResourceGroup = null }, null);
+                }
+                return IsResourceGroupName(One())
+                    ? (settings with { BenchResourceGroup = One() }, null)
+                    : (null, "bench-resource-group takes an Azure resource group name: 1 to 90 letters, digits, underscores, hyphens, periods or parentheses, not ending in a period");
+            case BenchRegionKey:
+                if (clear)
+                {
+                    return (settings with { BenchRegion = null }, null);
+                }
+                return One()?.ToLowerInvariant() is { } region && IsRegionName(region)
+                    ? (settings with { BenchRegion = region }, null)
+                    : (null, "bench-region takes an Azure region as az names it (az account list-locations), such as westeurope or eastus2");
+            case BenchVmSizeKey:
+                if (clear)
+                {
+                    return (settings with { BenchVmSize = null }, null);
+                }
+                return IsVmSize(One())
+                    ? (settings with { BenchVmSize = One() }, null)
+                    : (null, "bench-vm-size takes an Azure VM size (a SKU), such as Standard_F8s_v2");
+            case BenchImageKey:
+                if (clear)
+                {
+                    return (settings with { BenchImage = null }, null);
+                }
+                return IsImageUrn(One())
+                    ? (settings with { BenchImage = One() }, null)
+                    : (null, "bench-image takes a marketplace image URN, publisher:offer:sku:version, as in Canonical:ubuntu-24_04-lts:server:latest");
+            case BenchSpotPriceKey:
+                if (clear)
+                {
+                    return (settings with { BenchSpotPrice = null }, null);
+                }
+                return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var spotPrice) && spotPrice is > 0 and <= 1000
+                    ? (settings with { BenchSpotPrice = spotPrice }, null)
+                    : (null, "bench-spot-price takes the most to pay per VM hour in USD, above 0 and up to 1000, as in 0.30");
+            case BenchMonthlyCapKey:
+                if (clear)
+                {
+                    return (settings with { BenchMonthlyCap = null }, null);
+                }
+                return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var monthlyCap) && monthlyCap is > 0 and <= 1_000_000
+                    ? (settings with { BenchMonthlyCap = monthlyCap }, null)
+                    : (null, "bench-monthly-cap takes the most cloud benches may cost in a month in USD, above 0, as in 50");
+            case BenchAuthKey:
+                if (clear)
+                {
+                    return (settings with { BenchAuth = null }, null);
+                }
+                return One()?.ToLowerInvariant() is AuthAzLogin or AuthServicePrincipal
+                    ? (settings with { BenchAuth = One()!.ToLowerInvariant() }, null)
+                    : (null, $"bench-auth takes {AuthAzLogin} (the machine's az login) or {AuthServicePrincipal} (bench-sp-app-id, bench-sp-tenant and bench-sp-secret)");
+            case BenchSpAppIdKey:
+                if (clear)
+                {
+                    return (settings with { BenchSpAppId = null }, null);
+                }
+                return Guid.TryParseExact(One(), "D", out var appId)
+                    ? (settings with { BenchSpAppId = appId.ToString("D") }, null)
+                    : (null, "bench-sp-app-id takes the service principal's application (client) id, a GUID");
+            case BenchSpTenantKey:
+                if (clear)
+                {
+                    return (settings with { BenchSpTenant = null }, null);
+                }
+                return Guid.TryParseExact(One(), "D", out var tenantId)
+                    ? (settings with { BenchSpTenant = tenantId.ToString("D") }, null)
+                    : IsDomainName(One()) ? (settings with { BenchSpTenant = One()!.ToLowerInvariant() }, null)
+                    : (null, "bench-sp-tenant takes the tenant id (a GUID) or its domain, as in contoso.onmicrosoft.com");
+            case BenchSpSecretKey:
+                return clear
+                    ? (settings with { BenchSpSecret = null }, null)
+                    : One() is { } spSecret ? (settings with { BenchSpSecret = spSecret }, null) : (null, "bench-sp-secret takes the service principal's secret, one word");
             case LanPortKey:
                 if (clear)
                 {
@@ -624,6 +906,14 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var diskAlertGb) && diskAlertGb is >= 1 and <= 10000
                     ? (settings with { DiskAlertGb = diskAlertGb }, null)
                     : (null, "disk-alert-gb takes a number, 1 to 10000");
+            case FlightCiBudgetKey:
+                if (clear)
+                {
+                    return (settings with { FlightCiBudget = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var ciBudget) && ciBudget is >= 1 and <= 1000
+                    ? (settings with { FlightCiBudget = ciBudget }, null)
+                    : (null, "flight-ci-budget takes a number of runner-hours, 1 to 1000");
             case JobPriorityKey:
                 if (clear)
                 {
@@ -664,6 +954,14 @@ public sealed record NodeSettings
                 return ParseDuration(One()) is { } idle && idle >= TimeSpan.FromMinutes(1) && idle <= TimeSpan.FromHours(24)
                     ? (settings with { PrWatchIdle = idle }, null)
                     : (null, "pr-watch-idle takes how long to wait between reads while no one looks at the Pull requests page, 1 minute to 24 hours, as 15m or 1h (a bare number is minutes)");
+            case AdoptAfterKey:
+                if (clear)
+                {
+                    return (settings with { AdoptAfter = null }, null);
+                }
+                return ParseDuration(One()) is { } adopt && adopt >= TimeSpan.FromMinutes(1) && adopt <= TimeSpan.FromDays(7)
+                    ? (settings with { AdoptAfter = adopt }, null)
+                    : (null, "adopt-after takes how long a peer node must be unheard before this node may take over its flights, 1 minute to 7 days, as 30m or 1h (a bare number is minutes)");
             case WeekPaceKey:
             {
                 var raw = clear ? "off" : One();
@@ -703,6 +1001,22 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var chatMessages) && chatMessages >= 0
                     ? (settings with { WatchtowerChatMessages = chatMessages }, null)
                     : (null, "watchtower-chat-messages takes a count of person messages, 0 or more (0 is off)");
+            case WatchtowerCompactIdleKey:
+                if (clear)
+                {
+                    return (settings with { WatchtowerCompactIdle = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var compactIdle) && compactIdle > 0
+                    ? (settings with { WatchtowerCompactIdle = compactIdle }, null)
+                    : (null, "watchtower-compact-idle takes the minutes an idle watchtower waits before it is compacted, 1 or more");
+            case WatchtowerCompactAboveKey:
+                if (clear)
+                {
+                    return (settings with { WatchtowerCompactAbove = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var compactAbove) && compactAbove >= 0
+                    ? (settings with { WatchtowerCompactAbove = compactAbove }, null)
+                    : (null, "watchtower-compact-above takes the context in thousands of tokens an idle watchtower must hold to be compacted, 0 or more");
             case PriorityReposKey:
             {
                 if (clear)
@@ -772,6 +1086,21 @@ public sealed record NodeSettings
                 return One()?.ToLowerInvariant() is { } merge && MergeMethods.Contains(merge)
                     ? (settings with { MergeMethod = merge }, null)
                     : (null, $"merge-method takes {string.Join(", ", MergeMethods)}");
+            case SummaryModelKey:
+            {
+                var roles = new Dictionary<string, string>(settings.Roles ?? new Dictionary<string, string>(), StringComparer.Ordinal);
+                if (clear)
+                {
+                    roles.Remove(key);
+                    return (settings with { Roles = roles.Count == 0 ? null : roles }, null);
+                }
+                if (One()?.ToLowerInvariant() is not { } model || !RoleModels.IsModelName(model))
+                {
+                    return (null, "summary-model takes a model: sonnet, opus or haiku, or a full model id such as claude-sonnet-5-5");
+                }
+                roles[key] = model;
+                return (settings with { Roles = roles }, null);
+            }
             case var role when IsRoleKey(role):
             {
                 var roles = new Dictionary<string, string>(settings.Roles ?? new Dictionary<string, string>(), StringComparer.Ordinal);
@@ -791,6 +1120,35 @@ public sealed record NodeSettings
                 return (null, $"there is no setting {key}; there are {string.Join(", ", Keys)}");
         }
     }
+
+    // An Azure resource group's name: 1 to 90 of letters, digits, underscores, hyphens, periods and parentheses, never ending in a period.
+    private static bool IsResourceGroupName(string? text) =>
+        text is { Length: >= 1 and <= 90 } && text[^1] != '.' && text.All(c => char.IsLetterOrDigit(c) || c is '_' or '-' or '.' or '(' or ')');
+
+    // A region as az names it (az account list-locations): lower-case letters and digits, as westeurope, eastus2, uksouth.
+    private static bool IsRegionName(string text) =>
+        text is { Length: >= 3 and <= 30 } && char.IsAsciiLetterLower(text[0]) && text.All(c => char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c));
+
+    // An Azure VM size (a SKU): Standard_ and then one or more parts of letters and digits, as Standard_F8s_v2 or Standard_NC6s_v3. The
+    // first part after the prefix starts with a letter (the family).
+    private static bool IsVmSize(string? text)
+    {
+        if (text is null || !text.StartsWith("Standard_", StringComparison.Ordinal))
+        {
+            return false;
+        }
+        var parts = text["Standard_".Length..].Split('_');
+        return parts.Length > 0 && char.IsAsciiLetter(parts[0].FirstOrDefault()) && parts.All(p => p.Length > 0 && p.All(char.IsAsciiLetterOrDigit));
+    }
+
+    // A marketplace image URN: publisher:offer:sku:version, four non-empty parts of letters, digits, dots, hyphens and underscores.
+    private static bool IsImageUrn(string? text) =>
+        text?.Split(':') is { Length: 4 } parts && parts.All(p => p.Length > 0 && p.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_'));
+
+    // A tenant's domain: dotted labels of letters, digits and hyphens, none starting or ending with a hyphen.
+    private static bool IsDomainName(string? text) =>
+        text is { Length: >= 3 and <= 253 } && text.Split('.') is { Length: >= 2 } labels
+        && labels.All(l => l.Length is >= 1 and <= 63 && l[0] != '-' && l[^1] != '-' && l.All(c => char.IsAsciiLetterOrDigit(c) || c == '-'));
 
     // A repo as the lists name it: its folder's name. A path (what the page's free entry sends for a clone the picker does not
     // list) must be a folder on this machine, and stands for its name; a bare name is taken as it is.

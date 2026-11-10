@@ -74,7 +74,8 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
     {
         lock (_gate)
         {
-            return _running ??= Task.Run(() => ReadAsync(why));
+            // A background read even when a command asked for it: its gh starts share the budget (ProcessGate), never the command's priority.
+            return _running ??= ProcessGate.Run(() => ReadAsync(why));
         }
     }
 

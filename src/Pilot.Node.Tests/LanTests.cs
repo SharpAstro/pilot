@@ -91,7 +91,7 @@ public sealed class LanTests
         (await remote.AskGrantAsync("se3-gui", Ct)).Error.ShouldNotBeNull().ShouldContain("Another ask is waiting");
         var card = node.State.Cards(openOnly: true).ShouldHaveSingleItem();
         (card.Bin, card.Kind, card.Title).ShouldBe((CardBin.Ring, NodeLan.AskedKind, "se2-gui asks to fly flights on this node"));
-        card.Choices.Select(c => c.Label).ShouldBe(["Allow se2-gui to run commands here until revoked", "Refuse se2-gui"]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Allow se2-gui to run commands", "Refuse se2-gui"]);
         (await remote.GrantTicketAsync(ticket.Id, Ct)).Response!.Token.ShouldBeNull();
 
         // This machine's person allows it; the token comes back once.
@@ -298,7 +298,7 @@ public sealed class GrantAskCardTests : IDisposable
 {
     private readonly string _data = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "p2g-" + Guid.NewGuid().ToString("N")[..8])).FullName;
 
-    public void Dispose() => Directory.Delete(_data, recursive: true);
+    public void Dispose() => TestDirs.DeleteTree(_data);
 
     [Fact]
     public void AnAskThatLapsedClosesItsCardAndANewerAskGetsACardOfItsOwn()

@@ -47,7 +47,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
         L("parser").State.ShouldBe(LegState.Failed);
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == "leg-failed");
         card.Bin.ShouldBe(CardBin.Ring);
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Send parser round again to ran out of road", Verbs.GoAround), ("Accept parser as it stands, the failure kept in its report", Verbs.FinishLeg)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([(Verbs.FreshWorker, Verbs.GoAround)]);
         _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.SelfFinishedKind);
         if (detailPart is not null)
         {
@@ -298,7 +298,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
         (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", "ran out of road")).Ok.ShouldBeTrue();
 
         L("parser").State.ShouldBe(LegState.Done);
-        _github.SubIssues[1].Single(i => i.Id == sub.Id).Done.ShouldBeTrue();
+        _github.SubIssues[1].Values.Single(i => i.Id == sub.Id).Done.ShouldBeTrue();
     }
 
     [Fact]
@@ -313,7 +313,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
         (await Verify("du1-watchtower")).Ok.ShouldBeTrue();
 
         L("parser").State.ShouldBe(LegState.Done);
-        _github.SubIssues[1].Single(i => i.Id == sub.Id).Done.ShouldBeTrue();
+        _github.SubIssues[1].Values.Single(i => i.Id == sub.Id).Done.ShouldBeTrue();
     }
 
     [Fact]

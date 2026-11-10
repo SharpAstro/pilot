@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Pilot.Contracts;
@@ -26,6 +27,11 @@ internal sealed class FakeWorkers : IWorkerLauncher
     /// <summary>What the next start waits for before the worker is up, as a slow claude start; null to start at once.</summary>
     public Task? Hold { get; set; }
 
+    private int _holding;
+
+    /// <summary>True while a test holds a start: one is set to be held, or one is waiting on its hold now.</summary>
+    public bool Holding => Hold is not null || Volatile.Read(ref _holding) > 0;
+
     public async Task<string> StartAsync(WorkerStart start, CancellationToken cancellationToken)
     {
         if (Fail is { } fail)
@@ -34,8 +40,16 @@ internal sealed class FakeWorkers : IWorkerLauncher
         }
         if (Hold is { } hold)
         {
+            Interlocked.Increment(ref _holding);
             Hold = null;
-            await hold;
+            try
+            {
+                await hold;
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _holding);
+            }
         }
         Started.Add(start);
         var job = $"job{++_next:D5}";
@@ -114,10 +128,26 @@ internal sealed class FakeGitHub : IGitHub
     private Task Called(string call) => OnCall?.Invoke(call) ?? Task.CompletedTask;
 
     /// <summary>The open issues, by number, with their titles.</summary>
-    public Dictionary<int, string> Issues { get; } = [];
+    public ConcurrentDictionary<int, string> Issues { get; } = [];
+
+    /// <summary>Takes the next free issue number for <paramref name="title"/>; TryAdd keeps two calls at once from taking the same one.</summary>
+    private int NewIssue(string title)
+    {
+        while (true)
+        {
+            var number = Issues.IsEmpty ? 1 : Issues.Keys.Max() + 1;
+            if (Issues.TryAdd(number, title))
+            {
+                return number;
+            }
+        }
+    }
+
+    /// <summary>When set, IssuesAsync fails with it, as a gh that could not reach GitHub.</summary>
+    public string? OpenIssuesFail { get; set; }
 
     public Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken) =>
-        Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value, Labels = IssueLabels.TryGetValue(i.Key, out var labels) ? [.. labels] : [] })]);
+        OpenIssuesFail is { } why ? Task.FromException<IssueInfo[]>(new FlightException(why)) : Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value, Labels = IssueLabels.TryGetValue(i.Key, out var labels) ? [.. InOrder(labels)] : [] })]);
 
     /// <summary>Each repo's open PRs, by repo folder path; a repo with none listed has none.</summary>
     public Dictionary<string, PullRequestStatus[]> OpenPrs { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -155,13 +185,27 @@ internal sealed class FakeGitHub : IGitHub
             : Task.FromResult(PrFiles.TryGetValue(number, out var files) ? files : []);
 
     /// <summary>Every open PR GitHub holds, as the search reads them: a search answers those of the repos it names.</summary>
-    public List<PullRequestRow> PullRequestsOnGitHub { get; } = [];
+    public ConcurrentDictionary<(string Repo, int Number), PullRequestRow> PullRequestsOnGitHub { get; } = [];
+
+    /// <summary>Puts rows on GitHub, each under its (repo, number): a row put again replaces its earlier one.</summary>
+    public void PutPullRequests(IEnumerable<PullRequestRow> rows)
+    {
+        foreach (var row in rows)
+        {
+            PullRequestsOnGitHub[(row.Repo, row.Number)] = row;
+        }
+    }
+
+    public void PutPullRequest(PullRequestRow row) => PutPullRequests([row]);
+
+    /// <summary>Takes a PR off GitHub, as a merge or a close does.</summary>
+    public void RemovePullRequest(string repo, int number) => PullRequestsOnGitHub.TryRemove((repo, number), out _);
 
     /// <summary>Repos whose search fails, as a gh that could not reach GitHub: the whole batch that names one fails.</summary>
     public HashSet<string> SearchFail { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The repos of each search, in order.</summary>
-    public Recorded<string[]> Searches { get; } = [];
+    public ConcurrentQueue<string[]> Searches { get; } = [];
 
     /// <summary>The GraphQL points each search costs, as <c>rateLimit { cost }</c> says.</summary>
     public int SearchCost { get; set; } = 3;
@@ -179,7 +223,7 @@ internal sealed class FakeGitHub : IGitHub
 
     public async Task<PullRequestSearch.Read> OpenPullRequestsInAsync(string[] repos, CancellationToken cancellationToken)
     {
-        Searches.Add(repos);
+        Searches.Enqueue(repos);
         if (_searchHold is { } hold)
         {
             await hold.Task.WaitAsync(cancellationToken);
@@ -192,16 +236,12 @@ internal sealed class FakeGitHub : IGitHub
         {
             throw new FlightException($"gh could not search the PRs of {repos.Length} repos: offline");
         }
-        PullRequestRow[] found;
-        lock (PullRequestsOnGitHub)
-        {
-            found = [.. PullRequestsOnGitHub.Where(p => repos.Contains(p.Repo, StringComparer.OrdinalIgnoreCase))];
-        }
+        PullRequestRow[] found = [.. PullRequestsOnGitHub.Values.Where(p => repos.Contains(p.Repo, StringComparer.OrdinalIgnoreCase)).OrderBy(p => p.Repo, StringComparer.Ordinal).ThenBy(p => p.Number)];
         return new PullRequestSearch.Read(found, SearchCost, SearchRemaining, null);
     }
 
     /// <summary>Every issue created, as (repo path, title, body).</summary>
-    public Recorded<(string Repo, string Title, string? Body)> IssuesCreated { get; } = [];
+    public ConcurrentQueue<(string Repo, string Title, string? Body)> IssuesCreated { get; } = [];
 
     /// <summary>When set, CreateIssueAsync fails with it.</summary>
     public string? CreateIssueFails { get; set; }
@@ -219,14 +259,13 @@ internal sealed class FakeGitHub : IGitHub
         {
             throw new FlightException(why);
         }
-        IssuesCreated.Add((repoPath, title, body));
-        var number = Issues.Count == 0 ? 1 : Issues.Keys.Max() + 1;
-        Issues[number] = title;
+        IssuesCreated.Enqueue((repoPath, title, body));
+        var number = NewIssue(title);
         return new IssueInfo { Number = number, Title = title };
     }
 
     /// <summary>Each issue closed, with its comment, in order.</summary>
-    public Recorded<(int Number, string Comment)> ClosedIssues { get; } = [];
+    public ConcurrentQueue<(int Number, string Comment)> ClosedIssues { get; } = [];
 
     /// <summary>When set, CloseIssueAsync fails with it.</summary>
     public string? CloseIssueFails { get; set; }
@@ -237,7 +276,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        ClosedIssues.Add((number, comment));
+        ClosedIssues.Enqueue((number, comment));
         Closed(number);
         return Task.CompletedTask;
     }
@@ -248,80 +287,88 @@ internal sealed class FakeGitHub : IGitHub
     private static string RepoKey(string repoPath) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(repoPath));
 
     /// <summary>Each repo's open milestones, by its folder path.</summary>
-    public Dictionary<string, List<Milestone>> MilestonesOf { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public ConcurrentDictionary<string, ConcurrentDictionary<int, Milestone>> MilestonesOf { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Each repo's issues that are in a milestone, by its folder path: every milestone's, closed ones included.</summary>
-    public Dictionary<string, List<MilestoneIssue>> MilestoneIssuesOf { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Each repo's issues that are in a milestone, by its folder path: every milestone's, closed ones included; each repo's by issue number.</summary>
+    public ConcurrentDictionary<string, ConcurrentDictionary<int, MilestoneIssue>> MilestoneIssuesOf { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The time the next issue made by CreateIssueInMilestoneAsync carries; a minute on for each.</summary>
-    public DateTimeOffset IdeaClock { get; set; } = new(2026, 10, 28, 9, 0, 0, TimeSpan.Zero);
+    private long _ideaTicks = new DateTimeOffset(2026, 10, 28, 9, 0, 0, TimeSpan.Zero).UtcTicks;
+
+    /// <summary>The time the next issue made by CreateIssueInMilestoneAsync carries (UTC); a minute on for each.</summary>
+    public DateTimeOffset IdeaClock
+    {
+        get => new(Interlocked.Read(ref _ideaTicks), TimeSpan.Zero);
+        set => Interlocked.Exchange(ref _ideaTicks, value.UtcTicks);
+    }
+
+    /// <summary>Takes the clock's time and moves it a minute on in one step, so two calls at once never get the same time or a torn one.</summary>
+    private DateTimeOffset TickIdeaClock() => new(Interlocked.Add(ref _ideaTicks, TimeSpan.TicksPerMinute) - TimeSpan.TicksPerMinute, TimeSpan.Zero);
 
     /// <summary>The milestones made by IdeasMilestoneAsync, as (repo folder path, title).</summary>
-    public Recorded<(string Repo, string Title)> MilestonesMade { get; } = [];
+    public ConcurrentQueue<(string Repo, string Title)> MilestonesMade { get; } = [];
 
     /// <summary>Every issue moved to a milestone, in order.</summary>
-    public Recorded<(int Number, string Milestone)> Moves { get; } = [];
+    public ConcurrentQueue<(int Number, string Milestone)> Moves { get; } = [];
 
     /// <summary>Every issue closed as not planned, with its comment, in order.</summary>
-    public Recorded<(int Number, string Comment)> ClosedNotPlanned { get; } = [];
+    public ConcurrentQueue<(int Number, string Comment)> ClosedNotPlanned { get; } = [];
 
     /// <summary>Adds an open milestone to the repo; its number is the next one there.</summary>
     public Milestone AddMilestone(string repoPath, string title, DateTimeOffset? dueOn = null, string description = "", int openIssues = 0, int closedIssues = 0)
     {
-        var list = MilestonesOf.TryGetValue(RepoKey(repoPath), out var held) ? held : MilestonesOf[RepoKey(repoPath)] = [];
-        var milestone = new Milestone(list.Count + 1, title, dueOn, description, openIssues, closedIssues);
-        list.Add(milestone);
-        return milestone;
+        var list = MilestonesOf.GetOrAdd(RepoKey(repoPath), _ => []);
+        while (true)
+        {
+            var milestone = new Milestone(list.Count + 1, title, dueOn, description, openIssues, closedIssues);
+            if (list.TryAdd(milestone.Number, milestone))
+            {
+                return milestone;
+            }
+        }
     }
 
     /// <summary>Adds an issue (a number the fake has not given) to the repo, in <paramref name="milestone"/> or none.</summary>
     public MilestoneIssue AddIssue(string repoPath, string title, string? milestone, bool open = true, string body = "", string author = "sebgod")
     {
-        var number = Issues.Count == 0 ? 1 : Issues.Keys.Max() + 1;
-        Issues[number] = title;
-        var at = IdeaClock;
-        IdeaClock = at.AddMinutes(1);
+        var number = NewIssue(title);
+        var at = TickIdeaClock();
         var issue = new MilestoneIssue(number, title, body, open, milestone, at, at, author, $"https://github.com/SharpAstro/{Path.GetFileName(RepoKey(repoPath))}/issues/{number}");
-        (MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var held) ? held : MilestoneIssuesOf[RepoKey(repoPath)] = []).Add(issue);
+        MilestoneIssuesOf.GetOrAdd(RepoKey(repoPath), _ => [])[issue.Number] = issue;
         return issue;
     }
 
-    private void Replace(string repoPath, MilestoneIssue issue)
-    {
-        var list = MilestoneIssuesOf[RepoKey(repoPath)];
-        list[list.FindIndex(i => i.Number == issue.Number)] = issue;
-    }
+    private void Replace(string repoPath, MilestoneIssue issue) => MilestoneIssuesOf[RepoKey(repoPath)][issue.Number] = issue;
 
     public Task<Milestone[]> MilestonesAsync(string repoPath, CancellationToken cancellationToken) =>
-        Task.FromResult<Milestone[]>(MilestonesOf.TryGetValue(RepoKey(repoPath), out var list) ? [.. list] : []);
+        Task.FromResult<Milestone[]>(MilestonesOf.TryGetValue(RepoKey(repoPath), out var list) ? [.. list.Values.OrderBy(m => m.Number)] : []);
 
     public Task<Milestone> CreateMilestoneAsync(string repoPath, string title, string description, CancellationToken cancellationToken)
     {
-        MilestonesMade.Add((RepoKey(repoPath), title));
+        MilestonesMade.Enqueue((RepoKey(repoPath), title));
         var made = AddMilestone(repoPath, title);
-        var list = MilestonesOf[RepoKey(repoPath)];
-        list[list.IndexOf(made)] = made = made with { Description = description };
+        made = made with { Description = description };
+        MilestonesOf[RepoKey(repoPath)][made.Number] = made;
         return Task.FromResult(made);
     }
 
     public Task<Milestone> IdeasMilestoneAsync(string repoPath, CancellationToken cancellationToken)
     {
-        if (MilestonesOf.TryGetValue(RepoKey(repoPath), out var list) && list.FirstOrDefault(m => m.Title == IdeaIds.Milestone) is { } found)
+        if (MilestonesOf.TryGetValue(RepoKey(repoPath), out var list) && list.Values.OrderBy(m => m.Number).FirstOrDefault(m => m.Title == IdeaIds.Milestone) is { } found)
         {
             return Task.FromResult(found);
         }
-        MilestonesMade.Add((RepoKey(repoPath), IdeaIds.Milestone));
+        MilestonesMade.Enqueue((RepoKey(repoPath), IdeaIds.Milestone));
         return Task.FromResult(AddMilestone(repoPath, IdeaIds.Milestone));
     }
 
     /// <summary>When set, an issue made by CreateIssueInMilestoneAsync is left out of MilestoneIssuesAsync, as gh's list can lag a fresh issue.</summary>
     public bool HideCreatedFromLists { get; set; }
 
-    private readonly HashSet<int> _hidden = [];
+    private readonly ConcurrentDictionary<int, byte> _hidden = [];
 
     public Task<MilestoneIssue[]> MilestoneIssuesAsync(string repoPath, string milestone, CancellationToken cancellationToken) =>
         Task.FromResult<MilestoneIssue[]>(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list)
-            ? [.. list.Where(i => i.Milestone == milestone && !_hidden.Contains(i.Number)).OrderByDescending(i => i.Number).Select(Labelled)]
+            ? [.. list.Values.Where(i => i.Milestone == milestone && !_hidden.ContainsKey(i.Number)).OrderByDescending(i => i.Number).Select(Labelled)]
             : []);
 
     /// <summary>When set, CreateIssueInMilestoneAsync fails with it, as gh does when it refuses.</summary>
@@ -333,17 +380,17 @@ internal sealed class FakeGitHub : IGitHub
         {
             throw new FlightException(why);
         }
-        IssuesCreated.Add((repoPath, title, body));
+        IssuesCreated.Enqueue((repoPath, title, body));
         var made = AddIssue(repoPath, title, milestone, body: body ?? "");
         if (HideCreatedFromLists)
         {
-            _hidden.Add(made.Number);
+            _hidden[made.Number] = 0;
         }
         return Task.FromResult(made);
     }
 
     public Task<MilestoneIssue?> IssueNowAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) ? list.Where(i => i.Number == number).Select(Labelled).FirstOrDefault() : null);
+        Task.FromResult(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) && list.TryGetValue(number, out var found) ? Labelled(found) : null);
 
     /// <summary>The issue as GitHub reports it: with the labels it carries.</summary>
     private MilestoneIssue Labelled(MilestoneIssue issue)
@@ -352,21 +399,20 @@ internal sealed class FakeGitHub : IGitHub
         {
             issue = issue with { Priority = level };
         }
-        return IssueLabels.TryGetValue(issue.Number, out var labels) ? issue with { Labels = [.. labels] } : issue;
+        return IssueLabels.TryGetValue(issue.Number, out var labels) ? issue with { Labels = [.. InOrder(labels)] } : issue;
     }
 
     /// <summary>Run once, just before the next guarded write compares updated_at: a change landing on GitHub between the node's read and its save.</summary>
     public Action? BeforeNextWrite { get; set; }
 
     /// <summary>Every issue saved by EditIssueAsync, as (number, title, body), in order.</summary>
-    public Recorded<(int Number, string Title, string Body)> Edits { get; } = [];
+    public ConcurrentQueue<(int Number, string Title, string Body)> Edits { get; } = [];
 
     /// <summary>Changes an issue as someone on GitHub would: its updated_at moves on.</summary>
     public MilestoneIssue ChangeElsewhere(string repoPath, int number, Func<MilestoneIssue, MilestoneIssue> change)
     {
-        var at = IdeaClock;
-        IdeaClock = at.AddMinutes(1);
-        var changed = change(MilestoneIssuesOf[RepoKey(repoPath)].Single(i => i.Number == number)) with { UpdatedAt = at };
+        var at = TickIdeaClock();
+        var changed = change(MilestoneIssuesOf[RepoKey(repoPath)][number]) with { UpdatedAt = at };
         Replace(repoPath, changed);
         return changed;
     }
@@ -377,11 +423,11 @@ internal sealed class FakeGitHub : IGitHub
         var before = BeforeNextWrite;
         BeforeNextWrite = null;
         before?.Invoke();
-        return MilestoneIssuesOf[RepoKey(repoPath)].Single(i => i.Number == number).UpdatedAt == ifUpdatedAt;
+        return MilestoneIssuesOf[RepoKey(repoPath)][number].UpdatedAt == ifUpdatedAt;
     }
 
     public Task<MilestoneIssue[]> OpenMilestoneIssuesAsync(string repoPath, CancellationToken cancellationToken) =>
-        Task.FromResult<MilestoneIssue[]>(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) ? [.. list.Where(i => i.Open).OrderByDescending(i => i.Number).Select(Labelled)] : []);
+        Task.FromResult<MilestoneIssue[]>(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) ? [.. list.Values.Where(i => i.Open).OrderByDescending(i => i.Number).Select(Labelled)] : []);
 
     public Task<bool> SetIssueMilestoneAsync(string repoPath, int number, string? milestone, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken)
     {
@@ -393,7 +439,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromResult(false);
         }
-        Moves.Add((number, ""));
+        Moves.Enqueue((number, ""));
         ChangeElsewhere(repoPath, number, i => i with { Milestone = null });
         return Task.FromResult(true);
     }
@@ -404,13 +450,13 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromResult(false);
         }
-        Moves.Add((number, milestone));
+        Moves.Enqueue((number, milestone));
         ChangeElsewhere(repoPath, number, i => i with { Milestone = milestone });
         return Task.FromResult(true);
     }
 
     /// <summary>Every issue transferred, as (number, repo it went to as owner/name, the number it has there), in order.</summary>
-    public Recorded<(int Number, string ToRepo, int NewNumber)> Transfers { get; } = [];
+    public ConcurrentQueue<(int Number, string ToRepo, int NewNumber)> Transfers { get; } = [];
 
     /// <summary>The fake keeps every repo of a test as a sibling folder, so a repo as owner/name is the folder of that name beside this one.</summary>
     public Task<MilestoneIssue?> TransferIssueAsync(string repoPath, int number, string toRepo, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken)
@@ -420,11 +466,11 @@ internal sealed class FakeGitHub : IGitHub
             return Task.FromResult<MilestoneIssue?>(null);
         }
         var from = MilestoneIssuesOf[RepoKey(repoPath)];
-        var issue = from.Single(i => i.Number == number);
-        from.Remove(issue);
+        from.TryRemove(number, out var issue);
+        ArgumentNullException.ThrowIfNull(issue);
         var there = RepoKey(Path.Combine(Path.GetDirectoryName(RepoKey(repoPath))!, toRepo[(toRepo.IndexOf('/') + 1)..]));
         var moved = AddIssue(there, issue.Title, null, issue.Open, issue.Body, issue.Author);
-        Transfers.Add((number, toRepo, moved.Number));
+        Transfers.Enqueue((number, toRepo, moved.Number));
         return Task.FromResult<MilestoneIssue?>(moved);
     }
 
@@ -434,7 +480,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromResult(false);
         }
-        ClosedNotPlanned.Add((number, comment));
+        ClosedNotPlanned.Enqueue((number, comment));
         ChangeElsewhere(repoPath, number, i => i with { Open = false });
         return Task.FromResult(true);
     }
@@ -445,30 +491,30 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromResult(false);
         }
-        Edits.Add((number, title, body));
+        Edits.Enqueue((number, title, body));
         ChangeElsewhere(repoPath, number, i => i with { Title = title, Body = body });
         return Task.FromResult(true);
     }
 
     /// <summary>Every idea image committed by UploadIdeaImageAsync, as (repo folder path, id, ext, bytes), in order.</summary>
-    public Recorded<(string Repo, string Id, string Ext, byte[] Bytes)> ImageUploads { get; } = [];
+    public ConcurrentQueue<(string Repo, string Id, string Ext, byte[] Bytes)> ImageUploads { get; } = [];
 
     /// <summary>Every idea image read back by IdeaImageAsync, as (id, ext), in order.</summary>
-    public Recorded<(string Id, string Ext)> ImageReads { get; } = [];
+    public ConcurrentQueue<(string Id, string Ext)> ImageReads { get; } = [];
 
     public Task<string> UploadIdeaImageAsync(string repoPath, string id, string ext, byte[] bytes, CancellationToken cancellationToken)
     {
-        ImageUploads.Add((RepoKey(repoPath), id, ext, bytes));
+        ImageUploads.Enqueue((RepoKey(repoPath), id, ext, bytes));
         return Task.FromResult($"https://github.com/SharpAstro/{Path.GetFileName(RepoKey(repoPath))}/blob/{IdeaImages.Branch}/ideas/{id}.{ext}?raw=true");
     }
 
     public Task<byte[]?> IdeaImageAsync(string repoPath, string id, string ext, CancellationToken cancellationToken)
     {
-        ImageReads.Add((id, ext));
+        ImageReads.Enqueue((id, ext));
         return Task.FromResult<byte[]?>(ImageUploads.FirstOrDefault(u => u.Id == id && u.Ext == ext).Bytes);
     }
 
-    public Recorded<(int Number, string Head, string Method)> Merged { get; } = [];
+    public ConcurrentQueue<(int Number, string Head, string Method)> Merged { get; } = [];
 
     /// <summary>Issue numbers GitHub says are closed (#753).</summary>
     public HashSet<int> IssuesClosedOnGitHub { get; } = [];
@@ -489,7 +535,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             throw new FlightException(why);
         }
-        return (PrOf.TryGetValue(branch, out var own) ? own : Pr) is { } pr ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. labels] : [] } : null;
+        return (PrOf.TryGetValue(branch, out var own) ? own : Pr) is { } pr ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. InOrder(labels)] : [] } : null;
     }
 
     /// <summary>Whether a merge joins a merge queue rather than merging, as on a base that has one.</summary>
@@ -504,8 +550,8 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, a merge is answered with this GitHub text: "already in the queue" counts as queued, anything else refuses.</summary>
     public string? MergeAnswers { get; set; }
 
-    /// <summary>One GitHub text per merge call, in order (empty: that call merges); a call past the end merges.</summary>
-    public Queue<string> MergeScript { get; } = new();
+    /// <summary>One GitHub text per merge call, in order (empty: that call merges); a call past the end merges. Each text is taken by exactly one call.</summary>
+    public ConcurrentQueue<string> MergeScript { get; } = [];
 
     /// <summary>What AllowedMergeMethodsAsync answers; all three by default.</summary>
     public AllowedMergeMethods? AllowedMethods { get; set; } = new(true, true, true);
@@ -520,13 +566,11 @@ internal sealed class FakeGitHub : IGitHub
             var answer = Pilot.Node.Flights.MergeAnswers.Classify(1, "", MergeAnswers);
             return answer.Kind == MergeAnswerKind.Done ? true : throw new MergeRefusedException(answer.Kind, answer.Message, MergeAnswers);
         }
-        lock (MergeScript)
+        // An empty scripted text is still taken: that call merges.
+        if (MergeScript.TryDequeue(out var scripted) && scripted.Length > 0)
         {
-            if (MergeScript.Count > 0 && MergeScript.Dequeue() is { Length: > 0 } scripted)
-            {
-                var answer = Pilot.Node.Flights.MergeAnswers.Classify(1, "", scripted);
-                return answer.Kind == MergeAnswerKind.Done ? Queues : throw new MergeRefusedException(answer.Kind, answer.Message, scripted);
-            }
+            var answer = Pilot.Node.Flights.MergeAnswers.Classify(1, "", scripted);
+            return answer.Kind == MergeAnswerKind.Done ? Queues : throw new MergeRefusedException(answer.Kind, answer.Message, scripted);
         }
         if (MergeRefuses is not null)
         {
@@ -536,7 +580,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             throw new FlightException("the merge queue takes no PR whose required checks have not passed");
         }
-        Merged.Add((number, head, method));
+        Merged.Enqueue((number, head, method));
         return Queues;
     }
 
@@ -565,10 +609,10 @@ internal sealed class FakeGitHub : IGitHub
     public string? DisarmFails { get; set; }
 
     /// <summary>Every auto-merge armed, as (PR number, head, method).</summary>
-    public Recorded<(int Number, string Head, string Method)> AutoMergeArmed { get; } = [];
+    public ConcurrentQueue<(int Number, string Head, string Method)> AutoMergeArmed { get; } = [];
 
     /// <summary>Every auto-merge disarmed, by PR number.</summary>
-    public Recorded<int> AutoMergeDisarmed { get; } = [];
+    public ConcurrentQueue<int> AutoMergeDisarmed { get; } = [];
 
     public Task<bool> AutoMergeAllowedAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(AutoMergeAllowed);
 
@@ -576,7 +620,7 @@ internal sealed class FakeGitHub : IGitHub
     public HashSet<string> ProtectedBranches { get; } = new(StringComparer.Ordinal);
 
     /// <summary>Every branch whose protection was asked, in order.</summary>
-    public Recorded<string> ProtectionAsked { get; } = [];
+    public ConcurrentQueue<string> ProtectionAsked { get; } = [];
 
     /// <summary>The merge method of the base's merge queue (REBASE, SQUASH, MERGE); null is no merge queue rule.</summary>
     public string? MergeQueueMethod { get; set; }
@@ -585,10 +629,7 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
-        lock (ProtectionAsked)
-        {
-            ProtectionAsked.Add(branch);
-        }
+        ProtectionAsked.Enqueue(branch);
         return Task.FromResult(!ProtectedBranches.Contains(branch));
     }
 
@@ -609,7 +650,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException($"GitHub will not arm auto-merge on #{number}: it is in {MergeStateStatus.ToLowerInvariant()} status, so it has no required check to wait for"));
         }
-        AutoMergeArmed.Add((number, head, method));
+        AutoMergeArmed.Enqueue((number, head, method));
         return Task.CompletedTask;
     }
 
@@ -622,19 +663,28 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        AutoMergeDisarmed.Add(number);
+        AutoMergeDisarmed.Enqueue(number);
         return Task.CompletedTask;
     }
 
     /// <summary>How many times the failed runs were asked to run again, each as the PR's number.</summary>
-    public Recorded<int> Reruns { get; } = [];
+    public ConcurrentQueue<int> Reruns { get; } = [];
 
     public async Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
         await Called(nameof(RerunFailedChecksAsync));
-        Reruns.Add(number);
+        Reruns.Enqueue(number);
         return 1;
     }
+
+    /// <summary>The failed run of a PR's own checks, or of its merge queue entry, by PR number and whether it is the queue's; none listed reads as none.</summary>
+    public Dictionary<(int Number, bool MergeGroup), FailedRun> FailedRuns { get; } = [];
+
+    /// <summary>When set, reading a failed run yields nothing, as a gh that could not read it.</summary>
+    public bool FailedRunFails { get; set; }
+
+    public Task<FailedRun?> FailedRunAsync(string repoPath, int number, bool mergeGroup, CancellationToken cancellationToken) =>
+        Task.FromResult(!FailedRunFails && FailedRuns.TryGetValue((number, mergeGroup), out var run) ? run : null);
 
     /// <summary>The workflow runs each commit has, by commit; a commit with none listed has none.</summary>
     public Dictionary<string, WorkflowRun[]> Runs { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -644,6 +694,21 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task<WorkflowRun[]> WorkflowRunsAsync(string repoPath, string commit, CancellationToken cancellationToken) =>
         RunsFail is { } why ? Task.FromException<WorkflowRun[]>(new FlightException(why)) : Task.FromResult(Runs.TryGetValue(commit, out var runs) ? runs : []);
+
+    /// <summary>The CI runs of each branch with their runner time, by branch name; a branch with none listed has none (PIL795).</summary>
+    public Dictionary<string, CiRun[]> CiRuns { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>How many times the CI runs of a branch were read.</summary>
+    public int CiReads;
+
+    /// <summary>When set, reading the CI runs fails with it, as a gh that could not reach GitHub.</summary>
+    public string? CiRunsFail { get; set; }
+
+    public Task<CiRun[]> CiRunsAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref CiReads);
+        return CiRunsFail is { } why ? Task.FromException<CiRun[]>(new FlightException(why)) : Task.FromResult(CiRuns.TryGetValue(branch, out var runs) ? runs : []);
+    }
 
     /// <summary>What MergeStateAsync answers for any PR; null to derive it from <see cref="Summary"/>/<see cref="Checks"/> and <see cref="Queue"/> as GitHub would say it, none with no checks.</summary>
     public MergeState? Merge { get; set; }
@@ -691,10 +756,13 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     /// <summary>Every dequeue the node asked for, by PR number.</summary>
-    public Recorded<int> Dequeued { get; } = [];
+    public ConcurrentQueue<int> Dequeued { get; } = [];
 
     /// <summary>When set, DequeueAsync fails with it.</summary>
     public string? DequeueFails { get; set; }
+
+    /// <summary>Run as a dequeue is made, before it is recorded: what a test reads of the world at that moment (PIL836: whether the push came first).</summary>
+    public Action? OnDequeued { get; set; }
 
     public Task DequeueAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
@@ -702,7 +770,8 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        Dequeued.Add(number);
+        OnDequeued?.Invoke();
+        Dequeued.Enqueue(number);
         // The queue lets it go: the PR is not queued any more, and GitHub says it was removed by hand.
         if (Queue is { Queued: true } queued)
         {
@@ -712,7 +781,7 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     /// <summary>Every draft (true) or ready (false) the node asked for, by PR number.</summary>
-    public Recorded<(int Number, bool Draft)> DraftCalls { get; } = [];
+    public ConcurrentQueue<(int Number, bool Draft)> DraftCalls { get; } = [];
 
     /// <summary>When set, SetDraftAsync fails with it, as a gh that could not reach GitHub.</summary>
     public string? DraftFails { get; set; }
@@ -724,7 +793,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             throw new FlightException(why);
         }
-        DraftCalls.Add((number, draft));
+        DraftCalls.Enqueue((number, draft));
         if (Pr is { } held && held.Number == number)
         {
             Pr = held with { Draft = draft };
@@ -738,43 +807,39 @@ internal sealed class FakeGitHub : IGitHub
         }
     }
 
-    public List<(string Branch, string Base, string Title, string Body)> Created { get; } = [];
+    public ConcurrentQueue<(string Branch, string Base, string Title, string Body)> Created { get; } = [];
 
     public async Task<PullRequest> CreateAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken)
     {
         await Called(nameof(CreateAsync));
-        Created.Add((branch, baseBranch, title, body));
+        Created.Enqueue((branch, baseBranch, title, body));
         Pr = new PullRequest(70 + Created.Count, "OPEN", "cafe0000cafe0000", $"https://github.com/x/tianwen/pull/{70 + Created.Count}");
         return Pr;
     }
 
     /// <summary>Every draft PR opened (a merge batch's), as (number, branch, base, title); numbered from 901, apart from <see cref="Pr"/>.</summary>
-    public List<(int Number, string Branch, string Base, string Title)> Drafts { get; } = [];
+    public ConcurrentQueue<(int Number, string Branch, string Base, string Title)> Drafts { get; } = [];
 
     public Task<int> OpenDraftAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken)
     {
-        lock (Drafts)
-        {
-            var number = 901 + Drafts.Count;
-            Drafts.Add((number, branch, baseBranch, title));
-            return Task.FromResult(number);
-        }
+        var number = 901 + Interlocked.Increment(ref _drafts) - 1;
+        Drafts.Enqueue((number, branch, baseBranch, title));
+        return Task.FromResult(number);
     }
 
+    private int _drafts;
+
     /// <summary>Every PR closed unmerged, by number.</summary>
-    public List<int> ClosedPrs { get; } = [];
+    public ConcurrentQueue<int> ClosedPrs { get; } = [];
 
     public Task ClosePullRequestAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
     {
-        lock (ClosedPrs)
-        {
-            ClosedPrs.Add(number);
-        }
+        ClosedPrs.Enqueue(number);
         return Task.CompletedTask;
     }
 
     /// <summary>Any repo's PRs, by <c>owner/repo#n</c>, as gh pr view -R reads them.</summary>
-    public Dictionary<string, PullRequest> Prs { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public ConcurrentDictionary<string, PullRequest> Prs { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public Task<PullRequest> PullRequestOfAsync(string repo, int number, CancellationToken cancellationToken) =>
         Prs.TryGetValue($"{repo}#{number}", out var pr) ? Task.FromResult(pr) : Task.FromException<PullRequest>(new FlightException($"gh could not read {repo}#{number}: not found"));
@@ -783,7 +848,7 @@ internal sealed class FakeGitHub : IGitHub
     public Dictionary<string, string> Origins { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Every clone made, by repo and path.</summary>
-    public List<(string Repo, string Path)> Cloned { get; } = [];
+    public ConcurrentQueue<(string Repo, string Path)> Cloned { get; } = [];
 
     public async Task CloneAsync(string repo, string path, CancellationToken cancellationToken)
     {
@@ -792,16 +857,20 @@ internal sealed class FakeGitHub : IGitHub
             throw new FlightException($"gh could not clone {repo}: not found");
         }
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var run = await new GitCli().RunAsync(["clone", "-q", origin, path], Path.GetDirectoryName(path)!, cancellationToken);
+        // An origin a test's model owns (PrFixTestsBase on FakeRepoGit) is cloned by the model, so the clone starts no git process.
+        var folder = Path.GetDirectoryName(path)!;
+        var run = FakeRepoGit.Owning(origin) is { } fake
+            ? fake.Run(["clone", "-q", origin, path], folder)
+            : await new GitCli().RunAsync(["clone", "-q", origin, path], folder, cancellationToken);
         if (!run.Ok)
         {
             throw new FlightException($"gh could not clone {repo}: {run.Why}");
         }
-        Cloned.Add((repo, path));
+        Cloned.Enqueue((repo, path));
     }
 
     /// <summary>Every <c>pilot/review</c> status set, in order: the commit, its state, its description and the page it links to.</summary>
-    public List<(string Sha, string State, string Description, string? Url)> Statuses { get; } = [];
+    public ConcurrentQueue<(string Sha, string State, string Description, string? Url)> Statuses { get; } = [];
 
     /// <summary>When set, a status write fails with it, as GitHub refusing it.</summary>
     public string? StatusFails { get; set; }
@@ -812,15 +881,26 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        Statuses.Add((sha, state, description, targetUrl));
+        Statuses.Enqueue((sha, state, description, targetUrl));
         return Task.CompletedTask;
     }
 
-    /// <summary>The labels each PR carries, by number: a pilot: label replaces any other, as the real call does; others are left.</summary>
-    public Dictionary<int, HashSet<string>> Labels { get; } = [];
+    /// <summary>The labels each PR carries, by number, each set read through its Keys: a pilot: label replaces any other, as the real call does; others are left.</summary>
+    public ConcurrentDictionary<int, ConcurrentDictionary<string, byte>> Labels { get; } = [];
+
+    /// <summary>Seeds the labels a PR carries, replacing any it had.</summary>
+    public void SetLabels(int number, params string[] labels) => Labels[number] = LabelSet(labels);
+
+    /// <summary>Seeds the labels an issue carries, replacing any it had.</summary>
+    public void SetIssueLabels(int number, params string[] labels) => IssueLabels[number] = LabelSet(labels);
+
+    private static ConcurrentDictionary<string, byte> LabelSet(IEnumerable<string> labels) => new(labels.Select(l => KeyValuePair.Create(l, (byte)0)));
+
+    /// <summary>A label set as a call reads it: in ordinal order, since a concurrent set's own order follows string hashes, which change from run to run.</summary>
+    private static IEnumerable<string> InOrder(ConcurrentDictionary<string, byte> labels) => labels.Keys.Order(StringComparer.Ordinal);
 
     /// <summary>Every pilot: label asked for, by PR number, in order.</summary>
-    public List<(int Number, string Label)> LabelCalls { get; } = [];
+    public ConcurrentQueue<(int Number, string Label)> LabelCalls { get; } = [];
 
     /// <summary>When set, a label write fails with it, as GitHub refusing it.</summary>
     public string? LabelFails { get; set; }
@@ -831,37 +911,49 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        LabelCalls.Add((number, label));
-        var labels = Labels.TryGetValue(number, out var existing) ? existing : Labels[number] = [];
-        labels.RemoveWhere(l => l.StartsWith(PilotMarks.LabelPrefix, StringComparison.Ordinal));
-        labels.Add(label);
+        LabelCalls.Enqueue((number, label));
+        var labels = Labels.GetOrAdd(number, _ => []);
+        foreach (var (other, _) in labels)
+        {
+            if (other != label && other.StartsWith(PilotMarks.LabelPrefix, StringComparison.Ordinal))
+            {
+                labels.TryRemove(other, out _);
+            }
+        }
+        labels.TryAdd(label, 0);
         return Task.CompletedTask;
     }
 
     /// <summary>Every label asked to come off, by PR number, in order.</summary>
-    public List<(int Number, string Label)> RemoveCalls { get; } = [];
+    public ConcurrentQueue<(int Number, string Label)> RemoveCalls { get; } = [];
 
     public Task RemoveLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
     {
-        RemoveCalls.Add((number, label));
+        RemoveCalls.Enqueue((number, label));
         if (Labels.TryGetValue(number, out var set))
         {
-            set.Remove(label);
+            set.TryRemove(label, out _);
         }
         return Task.CompletedTask;
     }
 
-    /// <summary>The labels each issue carries, by number.</summary>
-    public Dictionary<int, HashSet<string>> IssueLabels { get; } = [];
+    /// <summary>The labels each issue carries, by number, each set read through its Keys.</summary>
+    public ConcurrentDictionary<int, ConcurrentDictionary<string, byte>> IssueLabels { get; } = [];
 
     /// <summary>The labels made in the repo, in order.</summary>
-    public List<string> LabelsCreated { get; } = [];
+    public ConcurrentDictionary<string, byte> LabelsCreated { get; } = [];
 
     /// <summary>Every comment made on an issue, by number.</summary>
-    public List<(int Number, string Body)> IssueComments { get; } = [];
+    public ConcurrentQueue<(int Number, string Body)> IssueComments { get; } = [];
 
     public Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult(IssueLabels.TryGetValue(number, out var labels) ? labels.ToArray() : []);
+        Task.FromResult(IssueLabelsReadFails is null && IssueLabels.TryGetValue(number, out var labels) ? InOrder(labels).ToArray() : []);
+
+    /// <summary>When set, a label read that must tell failure from absence (<see cref="IGitHub.IssueLabelsOrThrowAsync"/>) fails with it, as gh exiting non-zero; the plain read answers none, as the real one does.</summary>
+    public string? IssueLabelsReadFails { get; set; }
+
+    public Task<string[]> IssueLabelsOrThrowAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        IssueLabelsReadFails is { } why ? Task.FromException<string[]>(new FlightException(why)) : IssueLabelsAsync(repoPath, number, cancellationToken);
 
     /// <summary>When set, adding or removing an issue label fails with it, as GitHub refusing it.</summary>
     public string? IssueLabelFails { get; set; }
@@ -872,31 +964,28 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        if (!LabelsCreated.Contains(label))
-        {
-            LabelsCreated.Add(label);
-        }
-        (IssueLabels.TryGetValue(number, out var labels) ? labels : IssueLabels[number] = []).Add(label);
+        LabelsCreated.TryAdd(label, 0);
+        IssueLabels.GetOrAdd(number, _ => []).TryAdd(label, 0);
         return Task.CompletedTask;
     }
 
     /// <summary>Every label asked to be made in a repo with no item, by repo path, in order.</summary>
-    public List<(string Repo, string Label)> LabelsEnsured { get; } = [];
+    public ConcurrentQueue<(string Repo, string Label)> LabelsEnsured { get; } = [];
 
     /// <summary>When set, making a label in the repo fails with it, as GitHub refusing it.</summary>
     public string? EnsureFails { get; set; }
 
     /// <summary>The labels the repo has, as setup lists them; a label made by <see cref="EnsureLabelAsync"/> joins it.</summary>
-    public HashSet<string> RepoLabels { get; } = [];
+    public ConcurrentDictionary<string, byte> RepoLabels { get; } = [];
 
     public Task EnsureLabelAsync(string repoPath, string label, CancellationToken cancellationToken)
     {
-        LabelsEnsured.Add((repoPath, label));
+        LabelsEnsured.Enqueue((repoPath, label));
         if (EnsureFails is { } why)
         {
             return Task.FromException(new FlightException(why));
         }
-        RepoLabels.Add(label);
+        RepoLabels[label] = 0;
         return Task.CompletedTask;
     }
 
@@ -921,20 +1010,20 @@ internal sealed class FakeGitHub : IGitHub
         return Task.FromResult(true);
     }
 
-    public Task<string[]> RepoLabelsAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(RepoLabels.ToArray());
+    public Task<string[]> RepoLabelsAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(RepoLabels.Keys.ToArray());
 
     /// <summary>Every repo label deleted, in order.</summary>
-    public List<string> LabelsDeleted { get; } = [];
+    public ConcurrentQueue<string> LabelsDeleted { get; } = [];
 
     public Task DeleteRepoLabelAsync(string repoPath, string label, CancellationToken cancellationToken)
     {
-        LabelsDeleted.Add(label);
-        RepoLabels.Remove(label);
+        LabelsDeleted.Enqueue(label);
+        RepoLabels.TryRemove(label, out _);
         return Task.CompletedTask;
     }
 
     public Task<int> OpenIssuesWithLabelAsync(string repoPath, string label, CancellationToken cancellationToken) =>
-        Task.FromResult(IssueLabels.Values.Count(l => l.Contains(label)));
+        Task.FromResult(IssueLabels.Values.Count(l => l.ContainsKey(label)));
 
     public Task RemoveIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
     {
@@ -944,7 +1033,7 @@ internal sealed class FakeGitHub : IGitHub
         }
         if (IssueLabels.TryGetValue(number, out var labels))
         {
-            labels.Remove(label);
+            labels.TryRemove(label, out _);
         }
         return Task.CompletedTask;
     }
@@ -953,10 +1042,10 @@ internal sealed class FakeGitHub : IGitHub
     public bool HasPriorityField { get; set; }
 
     /// <summary>The Priority field's value of each issue, by number; one not listed is unset.</summary>
-    public Dictionary<int, IssuePriority> IssuePriorities { get; } = [];
+    public ConcurrentDictionary<int, IssuePriority> IssuePriorities { get; } = [];
 
     /// <summary>Every write of the Priority field, as (number, level), in order.</summary>
-    public List<(int Number, IssuePriority? Level)> PrioritySets { get; } = [];
+    public ConcurrentQueue<(int Number, IssuePriority? Level)> PrioritySets { get; } = [];
 
     /// <summary>When set, writing the Priority field fails with it, as GitHub refusing it.</summary>
     public string? PrioritySetFails { get; set; }
@@ -970,14 +1059,14 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        PrioritySets.Add((number, level));
+        PrioritySets.Enqueue((number, level));
         if (level is { } set)
         {
             IssuePriorities[number] = set;
         }
         else
         {
-            IssuePriorities.Remove(number);
+            IssuePriorities.TryRemove(number, out _);
         }
         return Task.CompletedTask;
     }
@@ -991,22 +1080,34 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        IssueComments.Add((number, body));
-        PrConversation.Add((number, new PrComment(Login ?? "", body, DateTimeOffset.UtcNow)));
+        IssueComments.Enqueue((number, body));
+        PrConversation.Enqueue((number, new PrComment(Login ?? "", body, DateTimeOffset.UtcNow)));
         return Task.CompletedTask;
     }
 
     /// <summary>The conversation comments of PRs, by number, as PrCommentsAsync lists them; a comment made through CommentIssueAsync lands here too.</summary>
-    public List<(int Number, PrComment Comment)> PrConversation { get; } = [];
+    public ConcurrentQueue<(int Number, PrComment Comment)> PrConversation { get; } = [];
+
+    /// <summary>Run as an issue's comments are read, before they are listed: what another command records while a gh call of the sweep is out.</summary>
+    public Action? OnIssueComments { get; set; }
+
+    public Task<IReadOnlyList<PrComment>> IssueCommentsAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        OnIssueComments?.Invoke();
+        return PrCommentsAsync(repoPath, number, cancellationToken);
+    }
 
     public Task<IReadOnlyList<PrComment>> PrCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<PrComment>>([.. PrConversation.Where(c => c.Number == number).Select(c => c.Comment)]);
 
     /// <summary>Each issue's sub-issues, by the parent's number: what GitHub says the sub_issues list holds.</summary>
-    public Dictionary<int, List<SubTaskItem>> SubIssues { get; } = [];
+    public ConcurrentDictionary<int, ConcurrentDictionary<string, SubTaskItem>> SubIssues { get; } = [];
+
+    /// <summary>Seeds the sub-issues of a parent, each under its id, replacing any it had.</summary>
+    public void SetSubIssues(int parent, params SubTaskItem[] items) => SubIssues[parent] = new(items.Select(i => KeyValuePair.Create(i.Id, i)));
 
     /// <summary>Every sub-issue made, as (parent, title, body), in order.</summary>
-    public List<(int Parent, string Title, string? Body)> SubIssuesCreated { get; } = [];
+    public ConcurrentQueue<(int Parent, string Title, string? Body)> SubIssuesCreated { get; } = [];
 
     /// <summary>When set, the sub-issue calls fail with it, as a GitHub that refused them.</summary>
     public string? SubIssueFails { get; set; }
@@ -1017,11 +1118,10 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException<SubTask>(new FlightException(why));
         }
-        SubIssuesCreated.Add((parent, title, body));
-        var number = Issues.Count == 0 ? 1 : Issues.Keys.Max() + 1;
-        Issues[number] = title;
+        SubIssuesCreated.Enqueue((parent, title, body));
+        var number = NewIssue(title);
         var url = $"https://github.com/owner/repo/issues/{number}";
-        (SubIssues.TryGetValue(parent, out var list) ? list : SubIssues[parent] = []).Add(new SubTaskItem(number.ToString(), title, false, url));
+        SubIssues.GetOrAdd(parent, _ => [])[number.ToString()] = new SubTaskItem(number.ToString(), title, false, url);
         return Task.FromResult(new SubTask { Id = number.ToString(), Url = url });
     }
 
@@ -1029,10 +1129,9 @@ internal sealed class FakeGitHub : IGitHub
     {
         foreach (var list in SubIssues.Values)
         {
-            var at = list.FindIndex(i => i.Id == number.ToString());
-            if (at >= 0)
+            if (list.TryGetValue(number.ToString(), out var item))
             {
-                list[at] = list[at] with { Done = true };
+                list[item.Id] = item with { Done = true };
             }
         }
     }
@@ -1043,13 +1142,15 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        ClosedNotPlanned.Add((number, comment));
+        ClosedNotPlanned.Enqueue((number, comment));
         Closed(number);
         return Task.CompletedTask;
     }
 
     public Task<SubTaskItem[]> SubIssuesAsync(string repoPath, int parent, CancellationToken cancellationToken) =>
-        Task.FromResult(SubIssues.TryGetValue(parent, out var list) ? list.ToArray() : []);
+        Task.FromResult(SubIssues.TryGetValue(parent, out var list)
+            ? list.Values.OrderBy(i => int.TryParse(i.Id, out var n) ? n : int.MaxValue).ThenBy(i => i.Id, StringComparer.Ordinal).ToArray()
+            : Array.Empty<SubTaskItem>());
 
     /// <summary>The login gh says it is signed in as.</summary>
     public string? Login { get; set; } = "controller";
@@ -1057,10 +1158,12 @@ internal sealed class FakeGitHub : IGitHub
     public Task<string?> LoginAsync(CancellationToken cancellationToken) => Task.FromResult(Login);
 
     /// <summary>Every review posted: the repo, the PR, the payload's path, and the payload as it was read when it went.</summary>
-    public List<(string Repo, int Number, string Path, string Payload)> Posted { get; } = [];
+    public ConcurrentQueue<(string Repo, int Number, string Path, string Payload)> Posted { get; } = [];
 
     /// <summary>When set, a post fails with it: a FlightException as GitHub refusing it, anything else as a post that never said back.</summary>
     public Exception? PostFails { get; set; }
+
+    private int _posted;
 
     public Task<PostedReview> PostReviewAsync(string repo, int number, string payload, CancellationToken cancellationToken)
     {
@@ -1069,8 +1172,8 @@ internal sealed class FakeGitHub : IGitHub
             return Task.FromException<PostedReview>(fails);
         }
         var text = File.ReadAllText(payload);
-        Posted.Add((repo, number, payload, text));
-        var id = 9000 + Posted.Count;
+        Posted.Enqueue((repo, number, payload, text));
+        var id = 9000 + Interlocked.Increment(ref _posted);
         using var doc = System.Text.Json.JsonDocument.Parse(text);
         var state = doc.RootElement.GetProperty("event").GetString() switch { "APPROVE" => "APPROVED", "REQUEST_CHANGES" => "CHANGES_REQUESTED", _ => "COMMENTED" };
         return Task.FromResult(new PostedReview(id, state, $"https://github.com/{repo}/pull/{number}#pullrequestreview-{id}"));
@@ -1094,9 +1197,22 @@ public abstract class LegCommanderTestsBase : IDisposable
     private protected readonly FlightCommander _flights;
     private protected readonly LegCommander _legs;
 
-    protected LegCommanderTestsBase()
+    /// <summary>The git every commander of the test runs: <see cref="FakeRepoGit"/> (a repo with no origin), or real git for a class that is about git itself. See <see cref="TestGit"/>.</summary>
+    private protected readonly IGit _git;
+
+    private readonly TestGit _testGit;
+
+    protected LegCommanderTestsBase(bool realGit = false)
     {
         _state = new NodeState(_journal, TimeProvider.System);
+        _git = _testGit = new TestGit(_root, realGit, MakeRealRepo, withOrigin: false);
+        _flights = new FlightCommander(_state, new Planes(_git), TimeProvider.System);
+        var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
+        _legs = new LegCommander(_state, _workers, _checks, _github, _git, new Planes(_git), _flights, options, _clock);
+    }
+
+    private void MakeRealRepo()
+    {
         Directory.CreateDirectory(Repo);
         Git(Repo, "init", "-q", "-b", "main");
         File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
@@ -1104,48 +1220,73 @@ public abstract class LegCommanderTestsBase : IDisposable
         File.WriteAllText(Path.Combine(Repo, "Tianwen.slnx"), "<Solution />\n");
         Git(Repo, "add", ".");
         Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        var git = new GitCli();
-        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System);
-        var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
-        _legs = new LegCommander(_state, _workers, _checks, _github, git, new Planes(git), _flights, options, _clock);
     }
 
     private protected string Repo => Path.Combine(_root, "tianwen");
+
+    /// <summary>Runs this test on git itself, before it has used the repo: for a test of a class that otherwise checks what the node decides.</summary>
+    private protected void RealGit() => _testGit.UseReal();
+
+    /// <summary>The model this test runs on; null when it runs on real git.</summary>
+    private protected FakeRepoGit? RepoModel => _testGit.Fake;
 
     public void Dispose()
     {
         // A leg start that pulled a sibling has RepoWatch reading the repos in the background; let it finish before the folders go.
         _legs.SiblingSync?.WatchRefresh.Wait(TimeSpan.FromSeconds(30));
-        try
+        if (_testGit.IsReal)
         {
-            Git(Repo, "worktree", "prune");
+            try
+            {
+                Git(Repo, "worktree", "prune");
+            }
+            catch (InvalidOperationException)
+            {
+            }
         }
-        catch (InvalidOperationException)
-        {
-        }
+        _testGit.Release();
         foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
         TestDirs.DeleteTree(_root);
+        _testGit.Verify();
     }
 
     private protected static string Git(string cwd, params string[] args)
     {
+        if (TestGit.Answer(cwd, args) is { } answered)
+        {
+            return answered;
+        }
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
         return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
     }
 
-    private protected Task<CommandResult> Leg(string verb, string target, params string[] args) =>
-        _legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct);
+    private protected async Task<CommandResult> Leg(string verb, string target, params string[] args)
+    {
+        var result = await _legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct);
+        // A started leg's worker is launched after the command answers, and a loaded machine does not do that within it: every test
+        // that reads what was started after a start waits here for the launch, not each one on its own. A start the test holds in
+        // the launcher (LockFreeStartTests) is not waited for: it ends only when the test lets it go.
+        if (verb == Verbs.StartLeg && result.Ok && target.Split('/') is [_, var code, ..])
+        {
+            var clock = Stopwatch.StartNew();
+            while (_legs.Starting(code) && !_workers.Holding && clock.Elapsed < TimeSpan.FromSeconds(120)) // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
+            {
+                await Task.Delay(10, Ct);
+            }
+        }
+        return result;
+    }
 
     private protected LegRow L(string name) => _state.Legs("TIA1").Single(l => l.Name == name);
 
@@ -1195,7 +1336,9 @@ public abstract class LegCommanderTestsBase : IDisposable
         var git = new GitCli();
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [_root]);
         var watch = new RepoWatch(_state, new RepoCatalog(_state, options), new Planes(git), _github, TimeProvider.System) { Parallelism = 1 };
-        _legs.SiblingSync = new RepoSync(git, new Planes(git), watch);
+        // The pull's reads share one budget (two minutes by default). Beside a saturated machine and the other classes' git starts this
+        // test took 2 m 40 s and once lost its pull to that budget, so the budget is loosened: what is under test is the outcome, not the clock.
+        _legs.SiblingSync = new RepoSync(git, new Planes(git), watch) { Timeout = TimeSpan.FromMinutes(10) };
         return watch;
     }
 
@@ -1237,13 +1380,11 @@ public abstract class LegCommanderTestsBase : IDisposable
     }
 
     /// <summary>git as on Windows with a process sitting in the worktree: the remove succeeds and the empty folder stays.</summary>
-    private protected sealed class FolderKeepingGit : IGit
+    private protected sealed class FolderKeepingGit(IGit inner) : IGit
     {
-        private readonly GitCli _git = new();
-
         public async Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
         {
-            var run = await _git.RunAsync(args, cwd, cancellationToken);
+            var run = await inner.RunAsync(args, cwd, cancellationToken);
             if (run.Ok && args is ["worktree", "remove", .., var worktree])
             {
                 Directory.CreateDirectory(worktree);
@@ -1262,7 +1403,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     public async Task AFlightMadeWithoutATitleTakesItsIssuesAndItsResultNamesTheCode()
     {
         _github.Issues[7] = "Moons of Jupiter";
-        var flights = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System, github: _github);
+        var flights = new FlightCommander(_state, new Planes(_git), TimeProvider.System, github: _github);
 
         var made = await flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["7"], Who = "tests" }, Ct);
 
@@ -1294,6 +1435,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         card.Detail.ShouldBe("parser first, then render\n1. parser: Parse the ephemeris\n2. render: Draw the planets");
         var start = card.Choices.ShouldHaveSingleItem();
         (start.Label, start.Verb, start.Target).ShouldBe(("Start parser", Verbs.StartLeg, Verbs.LegTarget("TIA1", "parser")));
+        // c3637 of the cards-panel capture is this card, as SE1 raised it for PIL795 with five legs, cards-legs first.
+        CardsPanelFixture.ShouldMatch("c3637", card, names: [("TIA1: 2 legs", "PIL795: 5 legs"), ("parser", "cards-legs"), ("TIA1", "PIL795")]);
     }
 
     [Fact]
@@ -1460,7 +1603,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         using (var journal = new FileJournal(folder))
         {
             var state = new NodeState(journal, TimeProvider.System);
-            var git = new GitCli();
+            var git = _git;
             var flights = new FlightCommander(state, new Planes(git), TimeProvider.System);
             var legs = new LegCommander(state, _workers, _checks, _github, git, new Planes(git), flights, new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1"), TimeProvider.System);
             (await flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
@@ -1482,6 +1625,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ALegStartedWithASiblingBehindItsOriginRaisesOneCardNamingItAndThePullAndStillStarts()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 3);
         await FlightWithTwoLegs();
 
@@ -1490,7 +1635,9 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         _workers.Started.ShouldHaveSingleItem();
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.SiblingBehindKind);
         (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "flight/TIA1/parser"));
-        card.Title.ShouldBe("TIA1/parser compiles against a sibling clone behind origin");
+        card.Title.ShouldBe("TIA1/parser builds on a sibling clone that is behind");
+        card.Summary.ShouldBe("TIA1/parser started on a sibling clone older than origin, which the node could not pull. Pull it by hand and try again, or let the leg run on what it has.");
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Pull the clones again", Verbs.SyncRepos)]);
         card.Detail.ShouldBe($"DIR.Lib is 3 commits behind its origin: git -C {Path.Combine(_root, "DIR.Lib")} pull --ff-only");
 
         _state.Cards().Count(c => c.Kind == LegCommander.SiblingBehindKind).ShouldBe(1);
@@ -1500,6 +1647,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ASiblingPulledByHandSinceItWasCountedBehindGivesNeitherAHandledLineNorACard()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 3);
         WithSiblingSync();
         var flight = await FlightWithTwoLegs();
@@ -1517,6 +1666,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task AfterALegStartPulledASiblingRepoWatchShowsItZeroBehind()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 3);
         var watch = WithSiblingSync();
         var flight = await FlightWithTwoLegs();
@@ -1534,6 +1685,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task AStaleSiblingWhoseOriginWentUnreachableAfterTheCountIsStillPulled()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 3);
         WithSiblingSync();
         var flight = await FlightWithTwoLegs();
@@ -1552,6 +1705,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ALegStartPullsAStaleCleanSiblingItselfAndRingsNobody()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 3);
         WithSiblingSync();
         await FlightWithTwoLegs();
@@ -1569,6 +1724,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ALegStartLeavesADirtySiblingAloneAndItsCardSaysWhy()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 2);
         File.WriteAllText(Path.Combine(_root, "DIR.Lib", "wip.txt"), "mine");
         Git(Path.Combine(_root, "DIR.Lib"), "add", "wip.txt");
@@ -1586,6 +1743,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ALegStartedWithItsSiblingsUpToDateRaisesNoCard()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 0);
         await FlightWithTwoLegs();
 
@@ -1609,7 +1768,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     public async Task ALegStartsWhenTheSiblingWatchCannotAsk()
     {
         await FlightWithTwoLegs();
-        var legs = new LegCommander(_state, _workers, _checks, _github, new GitCli(), new Planes(new GitCli()), _flights,
+        var legs = new LegCommander(_state, _workers, _checks, _github, _git, new Planes(_git), _flights,
             new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1"), TimeProvider.System)
         {
             Siblings = new SiblingWatch(new ThrowingGit(), TimeProvider.System),
@@ -1630,6 +1789,13 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
 
         (await Leg(Verbs.StartLeg, "flight/TIA1/render")).Error.ShouldNotBeNull().ShouldContain("parser comes first");
         (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
+
+        // The worker is launched after the command answers; a loaded machine does not do that within it.
+        var clock = Stopwatch.StartNew();
+        while (_legs.Starting("TIA1") && clock.Elapsed < TimeSpan.FromSeconds(120)) // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
+        {
+            await Task.Delay(10, Ct);
+        }
 
         var start = _workers.Started.ShouldHaveSingleItem();
         start.Name.ShouldBe("du1-tia1-parser");
@@ -2022,7 +2188,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     public async Task AWorkerThatFinishedItsOwnLegIsStoppedAfterAGrace()
     {
         await FlightWithTwoLegs();
-        var legs = new LegCommander(_state, _workers, _checks, _github, new GitCli(), new Planes(new GitCli()), _flights,
+        var legs = new LegCommander(_state, _workers, _checks, _github, _git, new Planes(_git), _flights,
             new NodeOptions("/s", "/d", MachinePrefix: "DU1"), TimeProvider.System) { SelfFinishGrace = TimeSpan.FromMilliseconds(50) };
         Task<CommandResult> Run(string verb, string target, string who, params string[] args) =>
             legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct);
@@ -2031,9 +2197,9 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         (await Run(Verbs.FinishLeg, "flight/TIA1/parser", "du1-tia1-parser", "failed", "no ephemeris here")).Ok.ShouldBeTrue();
         var failed = _state.Cards(openOnly: true).ShouldHaveSingleItem();
         (failed.Bin, failed.Kind, failed.Subject, failed.Detail).ShouldBe((CardBin.Ring, "leg-failed", "flight/TIA1/parser", "no ephemeris here"));
-        failed.Title.ShouldBe("TIA1/parser stopped: no ephemeris here");
+        failed.Title.ShouldBe("TIA1/parser: no ephemeris here");
         failed.Title.ShouldNotContain("gave up");
-        failed.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Send parser round again to no ephemeris here", Verbs.GoAround), ("Accept parser as it stands, the failure kept in its report", Verbs.FinishLeg)]);
+        failed.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([(Verbs.FreshWorker, Verbs.GoAround)]);
         failed.Choices.ShouldNotContain(c => c.Label.Contains("Mark done anyway"));
 
         _workers.Stopped.ShouldBeEmpty();
@@ -2115,7 +2281,9 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "late read");
         _github.Pr = new PullRequest(63, "OPEN", pushed, "https://github.com/x/tianwen/pull/63");
-        (await Leg(Verbs.Merge, "flight/TIA1", pushed[..8])).Error.ShouldBe("TIA1's plane holds 1 commit past #63's head: open the PR again (flight pr) to push it, and review what is new before it lands");
+        var unpushedRefusal = await Leg(Verbs.Merge, "flight/TIA1", pushed[..8]);
+        unpushedRefusal.Error.ShouldBe("TIA1's plane holds 1 commit past #63's head: open the PR again (flight pr) to push it, and review what is new before it lands");
+        unpushedRefusal.Refusal.ShouldBe(MergeRefusals.Unpushed);
         var tip = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
         _github.Pr = new PullRequest(63, "OPEN", tip, "https://github.com/x/tianwen/pull/63");
 
@@ -2212,7 +2380,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     {
         var flight = await FlightWithTwoLegs();
 
-        (await new Planes(new FolderKeepingGit()).RemoveAsync(Repo, flight.Worktree, Ct)).ShouldBeNull();
+        (await new Planes(new FolderKeepingGit(_git)).RemoveAsync(Repo, flight.Worktree, Ct)).ShouldBeNull();
 
         Directory.Exists(flight.Worktree).ShouldBeFalse();
     }
@@ -2221,6 +2389,8 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ACleanPlaneWithASubmoduleIsRemoved()
     {
+        // A submodule, and a plane whose git file went: what git does to a worktree.
+        RealGit();
         // git refuses "working trees containing submodules" without --force, and PDF439 did not land for it (SE1, 2026-10-29).
         var flight = await FlightWithTwoLegs();
         // Beside the repo, under the test's folder, so it goes with it.
@@ -2233,7 +2403,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         Git(flight.Worktree, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "lib/sub");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "The submodule");
 
-        (await new Planes(new GitCli()).RemoveAsync(Repo, flight.Worktree, Ct)).ShouldBeNull();
+        (await new Planes(_git).RemoveAsync(Repo, flight.Worktree, Ct)).ShouldBeNull();
 
         Directory.Exists(flight.Worktree).ShouldBeFalse();
     }
@@ -2244,7 +2414,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     {
         // TIA368 landed with its planner and an earlier reviewer idle in its plane: they held the folder and could still push.
         await FlightWithTwoLegs();
-        var flights = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System, workers: _workers);
+        var flights = new FlightCommander(_state, new Planes(_git), TimeProvider.System, workers: _workers);
         Session("aa000001", "du1-tia1-plan", SessionRole.Planner, "TIA1", SessionState.Idle);
         Session("aa000002", "du1-tia1-review", SessionRole.Reviewer, "TIA1", SessionState.Working);
         Session("aa000003", "du1-tia1-parser", SessionRole.Worker, "TIA1", SessionState.Ended);
@@ -2308,6 +2478,72 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct)).Ok.ShouldBeTrue();
     }
 
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task APlaneSquashMergedIntoMainLandsByContentEvenWhenMainEditedTheSameFileSince()
+    {
+        // PIL891: squash-merged as #929, then main's #935 changed a file the flight had touched; the plane's two commits are in main
+        // by content, though neither the ids nor that file match any more. Real git: the merge is line by line, as on the node.
+        RealGit();
+        BaseFile();
+        var flight = await FlightWithTwoLegs();
+        var origin = Path.Combine(_root, "origin.git");
+        Git(_root, "init", "-q", "--bare", origin);
+        Git(Repo, "remote", "add", "origin", origin);
+        Git(Repo, "push", "-q", "origin", "main");
+        File.WriteAllText(Path.Combine(flight.Worktree, "services.cs"), "a\nb\nswe\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "services 1");
+        File.WriteAllText(Path.Combine(flight.Worktree, "services.cs"), "a\nb\nsweep\n");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-a", "-m", "services 2");
+        Git(flight.Worktree, "push", "-q", "origin", "HEAD:" + flight.Branch);
+        // The squash merge, then another PR's edit at the file's top.
+        File.WriteAllText(Path.Combine(Repo, "services.cs"), "a\nb\nsweep\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "services (#929)");
+        File.WriteAllText(Path.Combine(Repo, "services.cs"), "reboot\na\nb\nsweep\n");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-a", "-m", "reboot (#935)");
+        Git(Repo, "push", "-q", "origin", "main");
+        Git(flight.Worktree, "fetch", "-q", "origin");
+
+        var landed = await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct);
+        landed.Error.ShouldBeNull();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task APlaneWithWorkMainLacksIsStillRefusedThoughMainEditedTheSameFile()
+    {
+        // The other side of the merge-tree rule: a line main does not hold keeps the refusal.
+        RealGit();
+        BaseFile();
+        var flight = await FlightWithTwoLegs();
+        var origin = Path.Combine(_root, "origin.git");
+        Git(_root, "init", "-q", "--bare", origin);
+        Git(Repo, "remote", "add", "origin", origin);
+        Git(Repo, "push", "-q", "origin", "main");
+        File.WriteAllText(Path.Combine(flight.Worktree, "services.cs"), "a\nb\nsweep\nnot merged\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "services");
+        Git(flight.Worktree, "push", "-q", "origin", "HEAD:" + flight.Branch);
+        File.WriteAllText(Path.Combine(Repo, "services.cs"), "reboot\na\nb\nsweep\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "services, part");
+        Git(Repo, "push", "-q", "origin", "main");
+        Git(flight.Worktree, "fetch", "-q", "origin");
+
+        var refused = await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct);
+        refused.Error.ShouldNotBeNull().ShouldContain("no passed review has read");
+    }
+
+    // services.cs as main has it where the flight's plane is cut: "a", "b".
+    private void BaseFile()
+    {
+        File.WriteAllText(Path.Combine(Repo, "services.cs"), "a\nb\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "services");
+    }
+
     private void Session(string id, string name, SessionRole role, string flight, SessionState state) => _state.PutSession(new SessionRow
     {
         Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = "/r/w", Role = role, Flight = flight,
@@ -2318,12 +2554,14 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task APlaneWhoseGitFileWentIsPrunableAndStillLands()
     {
+        // A submodule, and a plane whose git file went: what git does to a worktree.
+        RealGit();
         var flight = await FlightWithTwoLegs();
         // Listed by git, marked prunable: the folder's .git file is gone, as a half torn-down worktree leaves it.
         File.Delete(Path.Combine(flight.Worktree, ".git"));
         Git(Repo, "worktree", "list", "--porcelain").ShouldContain("prunable");
 
-        (await new Planes(new GitCli()).IsRegisteredAsync(Repo, flight.Worktree, Ct)).ShouldBeFalse();
+        (await new Planes(_git).IsRegisteredAsync(Repo, flight.Worktree, Ct)).ShouldBeFalse();
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct)).Ok.ShouldBeTrue();
     }
 
@@ -2391,9 +2629,12 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         _state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.NextStepKind).ShouldBeEmpty();
         await _legs.AdvanceAllAsync(Ct);
         var rung = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.NextStepKind);
-        rung.Title.ShouldStartWith("TIA1 could not open its PR: ");
+        // The golden card (#797): what happened in the title, why in the detail, a short verb on the button.
+        rung.Title.ShouldBe("TIA1 could not open its PR");
+        rung.Detail.ShouldNotBeNull().ShouldStartWith("The node tried to open its PR as the flight's next step and was refused, and it will not try again by itself: ");
+        rung.Summary.ShouldBe("The node tried TIA1's next step and was refused. Do the step now to ask it again.");
         rung.Bin.ShouldBe(CardBin.Ring);
-        rung.Choices.Single().Label.ShouldBe("Open TIA1's PR now, asking the node again");
+        rung.Choices.Single().Label.ShouldBe("Try that step again");
         rung.Choices.Single().Verb.ShouldBe(Verbs.OpenPr);
         await _legs.AdvanceAllAsync(Ct);
         _state.Cards(openOnly: true).Count(c => c.Kind == LegCommander.NextStepKind).ShouldBe(1);

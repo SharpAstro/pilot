@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using Pilot.Contracts;
@@ -156,6 +157,10 @@ public sealed class GitCli(NodeTraffic? traffic = null, TimeSpan? budget = null)
         }
         // Never a prompt for credentials or an editor: the node has no terminal to show one in.
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        // A read the node makes never writes the repo as a side effect: git status would otherwise refresh the index on disk, which
+        // moves the stamp RepoWatch fingerprints to see that nothing changed (so the node's own status read made the next round
+        // read again, pilot #794), and takes index.lock beside a person's own git. A command that must lock still does.
+        start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         // The node never reads LFS content itself, so no checkout it makes (plane, review worktree, merge) smudges it:
         // 59 git-lfs runs in 30 minutes were seen on DE1 (2026-10-29), each a transfer the step did not need. The update of
         // the owner's main checkout (RunSmudgingAsync) is the exception, and leaves whatever the environment says.
@@ -169,7 +174,7 @@ public sealed class GitCli(NodeTraffic? traffic = null, TimeSpan? budget = null)
             start.Environment["GIT_LFS_SKIP_PUSH"] = "1";
         }
 
-        var (process, counted) = _traffic.Start("git", start, UsesNetwork(args));
+        var (process, counted) = await _traffic.StartAsync("git", start, UsesNetwork(args), cancellationToken);
         using var _ = process;
         using var __ = counted;
         // Git never waits on a handle it inherited: its stdin is closed at once.
@@ -390,8 +395,44 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         return entries;
     }
 
-    /// <summary>The remote's default branch as last fetched (<c>origin/main</c>), read without a fetch; null when the repo has no origin to say.</summary>
+    /// <summary>How long an answer of <see cref="DefaultRefAsync"/> is kept at most, whatever the files say: a net under a read that could not see what it missed.</summary>
+    public TimeSpan DefaultRefMaxAge { get; init; } = TimeSpan.FromHours(1);
+
+    private readonly ConcurrentDictionary<string, CachedDefaultRef> _defaultRefs = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
+    private sealed record CachedDefaultRef(string Fingerprint, string? Ref, long Stamp);
+
+    /// <summary>
+    /// The remote's default branch as last fetched (<c>origin/main</c>), read without a fetch; null when the repo has no origin to say.
+    /// Kept per repo while the files that answer it are as they were (<c>refs/remotes/origin/HEAD</c>, <c>packed-refs</c>, and
+    /// whether <c>origin/main</c> and <c>origin/master</c> exist), so a read that finds them the same starts no git: the node
+    /// asked three times in a round per repo, 7,000 git starts an hour in all (pilot #794). A repo whose files cannot be read as a
+    /// fingerprint (no <c>HEAD</c>, an IO error, <c>reftable</c> refs) is asked of git each time, and so is any answer older than
+    /// <see cref="DefaultRefMaxAge"/>. A null answer (no origin yet) is kept the same way.
+    /// </summary>
     public async Task<string?> DefaultRefAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        // Taken before git is asked: a ref that moves during the read leaves a fingerprint the next read will not match.
+        var fingerprint = GitLayout.Of(repoPath)?.DefaultRefFingerprint();
+        var key = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repoPath));
+        if (fingerprint is not null && _defaultRefs.TryGetValue(key, out var kept) && kept.Fingerprint == fingerprint
+            && Stopwatch.GetElapsedTime(kept.Stamp) < DefaultRefMaxAge)
+        {
+            return kept.Ref;
+        }
+        var resolved = await ResolveDefaultRefAsync(repoPath, cancellationToken);
+        if (fingerprint is null)
+        {
+            _defaultRefs.TryRemove(key, out _);
+        }
+        else
+        {
+            _defaultRefs[key] = new CachedDefaultRef(fingerprint, resolved, Stopwatch.GetTimestamp());
+        }
+        return resolved;
+    }
+
+    private async Task<string?> ResolveDefaultRefAsync(string repoPath, CancellationToken cancellationToken)
     {
         var head = await git.RunAsync(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repoPath, cancellationToken);
         if (head.Ok && head.Output.Trim().Length > 0)
@@ -642,9 +683,11 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
     }
 
     /// <summary>
-    /// Whether everything the plane changed since it left <paramref name="mainRef"/> is in it by content: the files it touched are
-    /// the same in both. A PR laid on its base and rebase-merged is in main as one commit under another id, so <c>git cherry</c>
-    /// cannot match the plane's older commits one by one; its content is what says it landed. False when git cannot say.
+    /// Whether everything the plane changed since it left <paramref name="mainRef"/> is in it by content. A PR laid on its base and
+    /// rebase-merged, or squash-merged, is in main as one commit under another id, so <c>git cherry</c> cannot match the plane's older
+    /// commits one by one; its content is what says it landed. First the files it touched are the same in both; else, as main may have
+    /// changed those files again since (PIL891, squash-merged as #929, then main's #935 edited NodeApp.Services.cs), a merge of the
+    /// plane into main changes nothing: <c>git merge-tree</c>'s tree is main's own. False when git cannot say.
     /// </summary>
     private async Task<bool> ContentInMainAsync(string worktree, string mainRef, CancellationToken cancellationToken)
     {
@@ -663,18 +706,60 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         {
             return true;
         }
-        return (await git.RunAsync(["diff", "--quiet", mainRef, "HEAD", "--", .. files], worktree, cancellationToken)).Ok;
+        if ((await git.RunAsync(["diff", "--quiet", mainRef, "HEAD", "--", .. files], worktree, cancellationToken)).Ok)
+        {
+            return true;
+        }
+        var merged = await git.RunAsync(["merge-tree", "--write-tree", "--no-messages", mainRef, "HEAD"], worktree, cancellationToken);
+        var mainTree = await git.RunAsync(["rev-parse", mainRef + "^{tree}"], worktree, cancellationToken);
+        return merged.Ok && mainTree.Ok && merged.Output.Split('\n', StringSplitOptions.TrimEntries)[0] is { Length: > 0 } tree
+            && string.Equals(tree, mainTree.Output.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>The plane's commits past <paramref name="head"/> (subjects, oldest first): what a merge at that head left out.</summary>
-    public async Task<IReadOnlyList<string>> PastAsync(string worktree, string head, CancellationToken cancellationToken)
+    /// <summary>
+    /// The plane's own commits past <paramref name="head"/> (subjects, oldest first): what a merge at that head left out. A merge of
+    /// <paramref name="mainRef"/> into the plane, and main's own commits it brought, are not the plane's work and are left out, as is
+    /// a commit main holds by patch (cherry-picked into a follow-up PR). PIL819's ring counted three "past it" where one was its own:
+    /// PIL804's commit from main, the merge of main, and the review-notes commit that missed the merge.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> PastAsync(string worktree, string head, string mainRef, CancellationToken cancellationToken)
     {
         if (!Directory.Exists(worktree))
         {
             return [];
         }
-        var past = await git.RunAsync(["log", "--reverse", "--format=%h %s", $"{head}..HEAD"], worktree, cancellationToken);
-        return past.Ok ? past.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+        var main = await MainRefAsync(worktree, mainRef, cancellationToken);
+        var past = await git.RunAsync(["rev-list", "--reverse", "--no-merges", "HEAD", $"^{head}", $"^{main}"], worktree, cancellationToken);
+        if (!past.Ok)
+        {
+            return [];
+        }
+        var cherry = await git.RunAsync(["cherry", main, "HEAD"], worktree, cancellationToken);
+        var notInMain = cherry.Ok
+            ? cherry.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(l => l.StartsWith('+')).Select(l => l[1..].Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : null;
+        var own = new List<string>();
+        foreach (var sha in past.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (notInMain is not null && !notInMain.Contains(sha))
+            {
+                continue;
+            }
+            var subject = await git.RunAsync(["log", "-1", "--format=%h %s", sha], worktree, cancellationToken);
+            own.Add(subject.Ok ? subject.Output.Trim() : sha[..Math.Min(9, sha.Length)]);
+        }
+        return own;
+    }
+
+    /// <summary>The remote's copy of <paramref name="mainRef"/> when the plane has it (<c>origin/main</c> for <c>main</c>), else the name as given.</summary>
+    private async Task<string> MainRefAsync(string worktree, string mainRef, CancellationToken cancellationToken)
+    {
+        if (mainRef.Contains('/'))
+        {
+            return mainRef;
+        }
+        var remote = $"origin/{mainRef}";
+        return (await git.RunAsync(["rev-parse", "--verify", "--quiet", remote], worktree, cancellationToken)).Ok ? remote : mainRef;
     }
 
     /// <summary>
@@ -841,7 +926,18 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
 }
 
 /// <summary>A flight command that could not be done, with why: the command's error.</summary>
-public class FlightException(string message) : Exception(message);
+public class FlightException(string message) : Exception(message)
+{
+    /// <summary>The class of a merge refusal, given where it was made (<see cref="MergeRefusals"/>); null for an exception that is no merge refusal or was given none.</summary>
+    public virtual MergeRefusal? Refusal => null;
+}
+
+/// <summary>A landing refused after the merge because the plane holds work of its own the merge left out: the commits, to open a PR with.</summary>
+public sealed class LeftOutCommitsException(string message, IReadOnlyList<string> commits) : FlightException(message)
+{
+    /// <summary>The plane's own commits past the merged head, as <c>&lt;short sha&gt; &lt;subject&gt;</c>, oldest first.</summary>
+    public IReadOnlyList<string> Commits { get; } = commits;
+}
 
 /// <summary>GitHub's rate limit stopped a call: <see cref="ResetAt"/> is when its points come back, null when gh could not say.</summary>
 public sealed class RateLimitedException(string message, DateTimeOffset? resetAt) : FlightException(message)

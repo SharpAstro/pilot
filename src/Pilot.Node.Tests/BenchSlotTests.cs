@@ -9,6 +9,10 @@ namespace Pilot.Node.Tests;
 [Collection(JobsCollection.Name)]
 public sealed class BenchSlotTests : JobTestsBase
 {
+    public BenchSlotTests() : base(fakeLauncher: true)
+    {
+    }
+
     private double? _cpu = 5;
 
     private string HandBench(JobRunner jobs, string command)
@@ -188,7 +192,8 @@ public sealed class BenchSlotTests : JobTestsBase
         Look(jobs);
         (await Until(bench, j => j.State is JobState.Running or JobState.Succeeded)).Kind.ShouldBe(JobKind.Bench);
         Busy().ShouldBeEmpty();
-        said.Count.ShouldBe(1);
+        // The bench's own end is told to its owner too, which on a fast runner can land before this look: only the ring says anything of the wait.
+        said.Count(r => r.Args[0].Contains($"pilot job cancel {bench}", StringComparison.Ordinal)).ShouldBe(1);
     }
 
     [Fact]

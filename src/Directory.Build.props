@@ -37,7 +37,9 @@
   <!--
     One switch for every sibling library, as tianwen's: -p:UseLocalSiblings=false builds (or publishes) on the published
     packages, -p:UseLocalSiblings=true on the sibling clones. Unset, each UseLocal* below still self-enables when its
-    clone exists (the projects' own Exists() conditions), and a single one given on the command line wins over this.
+    clone exists beside a main clone (the projects' own Exists() conditions), and a single one given on the command line
+    wins over this. A plane (.claude\worktrees\<code>) reaches the clones only with UseLocalSiblings=true: its 6-level
+    SharpAstroRoot probe is opt-in, so a flight builds on the packages unless it is an exception (PIL802).
     Set here, before the project files, so their `== ''` conditions see it. Command-line properties reach every project
     in the build alike, so the choice is the same everywhere: no RuntimeIdentifier in it, which a publish's referenced
     libraries do not see, and which made a `publish -r` mix a package with its sibling's source (CS1704).
@@ -51,5 +53,16 @@
     <UseLocalLanLib Condition="'$(UseLocalLanLib)' == ''">$(UseLocalSiblings)</UseLocalLanLib>
     <UseLocalNodeLib Condition="'$(UseLocalNodeLib)' == ''">$(UseLocalSiblings)</UseLocalNodeLib>
   </PropertyGroup>
+
+  <!--
+    Opt-in build cache (Microsoft.MSBuildCache, local file-system store), see docs/build-cache.md. Nothing here exists unless
+    the build is given -p:MSBuildCacheEnabled=true, so a plain build, CI and every restore are as they were. PrivateAssets keeps
+    the packages out of anything this repo packs; SharedCompilation reports the compiler server's file accesses (a detached
+    process MSBuild cannot see), without which a changed source file would not reach the cache's fingerprint.
+  -->
+  <ItemGroup Condition="'$(MSBuildCacheEnabled)' == 'true'">
+    <PackageReference Include="Microsoft.MSBuildCache.Local" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.MSBuildCache.SharedCompilation" PrivateAssets="all" />
+  </ItemGroup>
 
 </Project>

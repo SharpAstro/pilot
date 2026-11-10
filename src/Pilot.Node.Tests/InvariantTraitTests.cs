@@ -16,9 +16,12 @@ public sealed class InvariantTraitTests
     private static readonly Type[] Guards =
     [
         typeof(CardKindTests),
+        typeof(CardLintTests),
         typeof(SplitFileSizeTests),
         typeof(FixtureTests),
         typeof(CommitNotDropTests),
+        typeof(BuildCacheOptInTests),
+        typeof(WaitBudgetTests),
     ];
 
     [Fact]

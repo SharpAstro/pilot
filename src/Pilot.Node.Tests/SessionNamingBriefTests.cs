@@ -43,7 +43,7 @@ public class SessionNamingBriefTests
             Briefs.Plan(Flight, [], "pilot", "DU1"),
             Briefs.Review(Flight, [Leg], Plane, "pilot", machine: "DU1"),
             Briefs.ReviewPr(Review, Plane, null, "pilot", "DU1"),
-            Briefs.Watchtower("du1-watchtower", [], [], [], "pilot", machine: "DU1"),
+            Briefs.WatchtowerRules("du1-watchtower", "pilot", "DU1"),
         ];
 
         foreach (var brief in briefs)
@@ -58,7 +58,7 @@ public class SessionNamingBriefTests
     public void ABriefWithNoMachineSaysNothingOfThePrefix()
     {
         Briefs.For(Flight, Leg, [Leg]).ShouldNotContain("claude --bg");
-        Briefs.Watchtower("wt", [], [], [], "pilot").ShouldNotContain("claude --bg");
+        Briefs.WatchtowerRules("wt", "pilot").ShouldNotContain("claude --bg");
     }
 
     [Fact]

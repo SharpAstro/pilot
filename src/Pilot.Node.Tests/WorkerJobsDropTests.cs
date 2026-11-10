@@ -27,7 +27,7 @@ public sealed class WorkerJobsDropTests : ReviewTestsBase
             },
         };
         jobs.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
-        jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct).GetAwaiter().GetResult();
+        jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct).GetAwaiter().GetResult(); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         _legs.DropJobs = jobs.DropQueuedOf;
         return jobs;
     }
@@ -43,7 +43,7 @@ public sealed class WorkerJobsDropTests : ReviewTestsBase
     private string Queue(JobRunner jobs, string target, string command) =>
         jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = target, Args = [Path.GetTempPath(), "0", command], Who = "test" }).Made.ShouldNotBeNull();
 
-    private async Task<JobRow> Until(string id, Func<JobRow, bool> condition, int seconds = 4)
+    private async Task<JobRow> Until(string id, Func<JobRow, bool> condition, int seconds = 120)
     {
         var clock = Stopwatch.StartNew();
         while (true)

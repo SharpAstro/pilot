@@ -43,7 +43,7 @@ public class IdeaBriefTests
     [Fact]
     public void TheWatchtowerIsTaughtTheIdeaCommandsAndNeverToPlanOneWithoutThePerson()
     {
-        var brief = Briefs.Watchtower("wt", [], [], [], "pilot");
+        var brief = Briefs.WatchtowerRules("wt", "pilot");
 
         brief.ShouldContain("pilot idea I381 plan");
         brief.ShouldContain("I381 becomes PIL381");

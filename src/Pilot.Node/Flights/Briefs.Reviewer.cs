@@ -27,6 +27,8 @@ public static partial class Briefs
         }
         text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a redo of the leg (a go-around) makes any change.");
         text.Append(BranchHistoryRule);
+        text.Append(NoSpinRule);
+        text.Append(CommandShapeRule);
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         text.Append(LfsRule(flight.Worktree));
         text.Append(PilotMdSection(pilotMd));
@@ -115,6 +117,7 @@ public static partial class Briefs
         text.AppendLine("not hold, a bug, a regression, a test that proves nothing, something the issue asked for that is missing). `## Not blocking`:");
         text.AppendLine("nits and suggestions (naming, style, a comment, a small tidy-up, an idea for later). Findings that are all not blocking are a");
         text.AppendLine("pass with notes: the flight holds its merge while the watchtower makes the small ones in the plane; no leg goes round.");
+        text.AppendLine(SelfTriggeringCiRule);
         if (flight.HumanVerification)
         {
             text.AppendLine();

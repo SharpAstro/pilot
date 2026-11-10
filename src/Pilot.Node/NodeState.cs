@@ -93,6 +93,13 @@ public sealed partial class NodeState
             _legs[key] = _legs[key] with { Recheck = _legs[key].Recheck! with { Outcome = outcome } };
         }
 
+        // An answer to a card that was underway died with the node that ran it: no card comes back saying one is, so its buttons are
+        // offered again (the choice never ran, or ran to what the card's own state shows). Turned here, in memory, as the check above is.
+        foreach (var id in _cards.Where(c => c.Value.Answering is not null).Select(c => c.Key).ToList())
+        {
+            _cards[id] = _cards[id] with { Answering = null };
+        }
+
         journal.SnapshotOutcome += OnSnapshotOutcome;
         if (history.Stream is null)
         {
@@ -101,7 +108,8 @@ public sealed partial class NodeState
             try
             {
                 var started = SnapshotLocked();
-                _journal.Append(started, Serialize(started));
+                // No bytes: the journal streams a snapshot to its file itself, never built whole on the LOH (#794).
+                _journal.Append(started, ReadOnlyMemory<byte>.Empty);
             }
             catch (Exception e)
             {
@@ -145,8 +153,11 @@ public sealed partial class NodeState
             }
 
             Error.WriteLine($"store: a snapshot could not be written, the journal is kept whole: {error.GetType().Name}: {error.Message}");
-            RaiseCard(CardBin.ForYou, StoreCardKind, StoreCardSubject, $"The store could not write its snapshot: {error.Message.Split('\n')[0].Trim()}",
-                $"{error.GetType().Name}: {error.Message}. Every change is still journaled and a restart loses nothing; the node tries again later.");
+            var card = RaiseCard(CardBin.ForYou, StoreCardKind, StoreCardSubject, "The store could not write its snapshot",
+                $"{error.GetType().Name}: {error.Message}. Every change is still journaled and a restart loses nothing; the node tries again later.",
+                [new CardChoice { Label = "I will fix it", Verb = Verbs.Dismiss, Target = "" }],
+                summary: $"Fix the store's folder or disk: {error.Message.Split('\n')[0].Trim()}. Nothing is lost meanwhile; the node tries again later.");
+            AimDismiss(card);
         }
         catch (Exception e)
         {

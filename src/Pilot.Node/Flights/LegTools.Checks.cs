@@ -69,6 +69,7 @@ public sealed class ShellCheckRunner : ICheckRunner
         start.UseShellExecute = false;
         start.CreateNoWindow = true;
 
+        ProcessStarts.Observe("check", start);
         using var process = Process.Start(start) ?? throw new FlightException($"the check `{command}` did not start");
         // Held in a job that ends with the node, so a restart or crash mid-check leaves no test host holding the plane.
         using var hold = KillOnCloseJob.Hold(process, Priority);

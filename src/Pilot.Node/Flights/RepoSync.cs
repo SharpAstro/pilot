@@ -14,6 +14,9 @@ public sealed class RepoSync(IGit git, Planes planes, RepoWatch watch)
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
+    /// <summary>Seeds the build cache after a sync that moved a repo's main HEAD (PIL860); null for a node built without.</summary>
+    public BuildSeed? Seed { get; set; }
+
     private readonly SemaphoreSlim _one = new(1, 1);
 
     /// <summary>One lock per clone, by its full path, so no two syncs (a Sync repos, a leg's start) fetch or merge the same clone at once.</summary>
@@ -51,7 +54,7 @@ public sealed class RepoSync(IGit git, Planes planes, RepoWatch watch)
     /// pulled a sibling, so the dashboard stops showing that clone behind. A failed read is logged, never thrown.
     /// </summary>
     internal void RefreshWatchInBackground()
-        => WatchRefresh = Task.Run(async () =>
+        => WatchRefresh = ProcessGate.Run(async () =>
         {
             try
             {
@@ -82,7 +85,12 @@ public sealed class RepoSync(IGit git, Planes planes, RepoWatch watch)
         await clone.WaitAsync(cancellationToken);
         try
         {
-            return await SyncLockedAsync(name, path, fetch, cancellationToken);
+            var outcome = await SyncLockedAsync(name, path, fetch, cancellationToken);
+            if (Seed is { } seed)
+            {
+                await seed.AfterSyncAsync(outcome, path, cancellationToken);
+            }
+            return outcome;
         }
         finally
         {

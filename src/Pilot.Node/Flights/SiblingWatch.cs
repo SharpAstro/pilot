@@ -66,6 +66,136 @@ public sealed partial class SiblingWatch(IGit git, TimeProvider time)
         return names;
     }
 
+    // A SharpAstroRoot property: its value, set when its Condition's Exists() probe resolves (pilot's projects reach the org
+    // root through one, 3 levels up from a main clone, 6 from a plane, the latter only with UseLocalSiblings on).
+    [GeneratedRegex(@"<SharpAstroRoot\b([^>]*)>([^<]*)</SharpAstroRoot>", RegexOptions.CultureInvariant)]
+    private static partial Regex SharpAstroRootElement();
+
+    // A condition that opens only with UseLocalSiblings on: '$(UseLocalSiblings)' == 'true', either side.
+    [GeneratedRegex(@"'\$\(UseLocalSiblings\)'\s*==\s*'true'|'true'\s*==\s*'\$\(UseLocalSiblings\)'", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex OptIn();
+
+    private const string ThisFileDirectory = "$(MSBuildThisFileDirectory)";
+
+    /// <summary>
+    /// The sibling clones a build in <paramref name="checkout"/> really compiles: each <c>UseLocal*</c> property's
+    /// <c>Exists()</c> probe resolved from the file that holds it, as MSBuild would, kept only when it exists, as the full
+    /// path of the clone folder it reaches. A plane's <c>..\..\DIR.Lib</c> resolves inside <c>.claude\worktrees</c>, where no
+    /// clone lives, so a tianwen or DIR.Lib plane, which builds on the published packages, holds nothing: the node held the
+    /// clones beside the main clone for it anyway, and every plane job queued behind any build of them (PIL802, 2026-11-07).
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="useLocalSiblings"/> is the build's <c>UseLocalSiblings</c>: true opens a <c>SharpAstroRoot</c> probe whose
+    /// condition asks for it (pilot's 6-level plane probe, opt-in since PIL802), false reaches nothing (the repo's props then
+    /// turn every <c>UseLocal*</c> off), null leaves each probe to its own <c>Exists()</c>.
+    /// </remarks>
+    public static IReadOnlyList<string> ReachedClones(string checkout, bool? useLocalSiblings = null)
+    {
+        var clones = new List<string>();
+        if (useLocalSiblings == false)
+        {
+            return clones;
+        }
+        foreach (var file in BuildFiles(checkout, depth: 4))
+        {
+            string text;
+            try
+            {
+                text = File.ReadAllText(file);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+            var folder = Path.GetDirectoryName(file)!;
+            string? root = null;
+            foreach (Match element in SharpAstroRootElement().Matches(text))
+            {
+                // A probe that asks for UseLocalSiblings is shut unless the build turns it on (pilot's planes, PIL802).
+                if (OptIn().IsMatch(element.Groups[1].Value) && useLocalSiblings != true)
+                {
+                    continue;
+                }
+                if (root is null && ExistsCall().Matches(element.Groups[1].Value).Any(e => Resolve(e.Groups[1].Value, folder, null) is { } at && (Directory.Exists(at) || File.Exists(at)))
+                    && Resolve(element.Groups[2].Value.Trim(), folder, null) is { } value)
+                {
+                    root = value;
+                }
+            }
+            foreach (Match element in UseLocalElement().Matches(text))
+            {
+                foreach (Match exists in ExistsCall().Matches(element.Value))
+                {
+                    var probe = exists.Groups[1].Value;
+                    if (Resolve(probe, folder, root) is not { } at || !(Directory.Exists(at) || File.Exists(at)) || CloneOf(probe, folder, root) is not { } clone)
+                    {
+                        continue;
+                    }
+                    if (!clones.Contains(clone, StringComparer.OrdinalIgnoreCase))
+                    {
+                        clones.Add(clone);
+                    }
+                }
+            }
+        }
+        return clones;
+    }
+
+    // The probe as a full path, or null when it starts with a property other than these two (or SharpAstroRoot is unset).
+    private static string? Resolve(string probe, string folder, string? root)
+    {
+        string rest;
+        string start;
+        if (probe.StartsWith(ThisFileDirectory, StringComparison.OrdinalIgnoreCase))
+        {
+            (start, rest) = (folder, probe[ThisFileDirectory.Length..]);
+        }
+        else if (probe.StartsWith("$(SharpAstroRoot)", StringComparison.OrdinalIgnoreCase))
+        {
+            if (root is null)
+            {
+                return null;
+            }
+            (start, rest) = (root, probe["$(SharpAstroRoot)".Length..]);
+        }
+        else if (!probe.Contains("$(", StringComparison.Ordinal))
+        {
+            (start, rest) = (folder, probe);
+        }
+        else
+        {
+            return null;
+        }
+        if (rest.Contains("$(", StringComparison.Ordinal))
+        {
+            return null;
+        }
+        try
+        {
+            return Path.GetFullPath(Path.Combine(start, rest.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar)));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+    }
+
+    // The clone folder a probe reaches: its path up to the first folder after the .. steps (or after SharpAstroRoot), or null
+    // for a probe that stays inside the repo.
+    private static string? CloneOf(string probe, string folder, string? root)
+    {
+        if (NameOf(probe) is null)
+        {
+            return null;
+        }
+        var path = probe.Replace('\\', '/');
+        var prefix = path.StartsWith("$(SharpAstroRoot)", StringComparison.OrdinalIgnoreCase) ? "$(SharpAstroRoot)"
+            : path.StartsWith(ThisFileDirectory, StringComparison.OrdinalIgnoreCase) ? ThisFileDirectory : "";
+        var parts = path[prefix.Length..].Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var up = parts.TakeWhile(p => p == "..").Count();
+        return Resolve(prefix + string.Join('/', parts[..(up + 1)]), folder, root) is { } clone ? Path.TrimEndingDirectorySeparator(clone) : null;
+    }
+
     private static IEnumerable<string> BuildFiles(string folder, int depth)
     {
         string[] files, folders;

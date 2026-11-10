@@ -185,7 +185,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     internal override LinkMenu? SelectionLinks => _links;
 
-    internal override RectF32 SelectionViewport => _detailScroll.Viewport;
+    internal override RectF32 PageSelectionViewport => _detailScroll.Viewport;
 
     // The open flight's page only.
     internal override bool SelectionOn => IsDetailOpen && base.SelectionOn;

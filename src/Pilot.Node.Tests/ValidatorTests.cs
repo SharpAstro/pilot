@@ -49,7 +49,7 @@ public sealed class ValidatorTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private static string Git(string cwd, params string[] args)
@@ -59,7 +59,7 @@ public sealed class ValidatorTests : IDisposable
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
@@ -156,13 +156,15 @@ public sealed class ValidatorTests : IDisposable
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.NoGoKind);
         (card.Bin, card.Subject).ShouldBe((CardBin.Ring, Render));
         card.Detail.ShouldBe("Planet.cs is gone: ls src/Planet.cs");
+        // The golden card (#797): what happened, what to do, and short verbs.
+        card.Title.ShouldBe("TIA1/render cannot start: its brief no longer fits the tree");
+        card.Summary.ShouldBe("Take render off the flight or plan TIA1 again: the check against the tree found its brief out of date.");
         card.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe(
         [
-            ("Start render as the tree is", Verbs.StartLeg, Render),
-            ("Drop render from TIA1", Verbs.RemoveLeg, Render),
-            ("Plan TIA1 again", Verbs.PlanFlight, "flight/TIA1"),
+            ("Remove the leg", Verbs.RemoveLeg, Render),
+            ("Plan the flight again", Verbs.PlanFlight, "flight/TIA1"),
         ]);
-        card.Choices[0].Args.ShouldBe(["anyway"]);
+        card.Choices[0].Args.ShouldBe(["failed validation"]);
     }
 
     [Fact]

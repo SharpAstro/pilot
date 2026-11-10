@@ -11,7 +11,7 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public sealed partial class LegCommander
 {
-    /// <summary>The card kind of a leg held at its go-around cap: what each round said, and the person's Go around or Accept.</summary>
+    /// <summary>The card kind of a leg held at its go-around cap: what each round said, and the person's choice of one more fresh worker.</summary>
     public const string GoAroundCapKind = "go-around-cap";
 
     private void RaiseGoAroundCap(FlightRow flight, LegRow leg, int cap, string asked)
@@ -22,30 +22,40 @@ public sealed partial class LegCommander
         {
             rounds.Insert(0, $"({leg.GoArounds - rounds.Count} earlier rounds were not recorded)");
         }
-        var detail = $"{leg.GoArounds} go-arounds, the cap is {cap}. Each round said:\n{string.Join('\n', rounds)}\nAnother round asked for: {asked}";
+        var detail = $"Redone {leg.GoArounds} times, the most is {cap}. Each time said:\n{string.Join('\n', rounds)}\nAnother round asked for: {asked}";
         state.RaiseCard(CardBin.Ring, GoAroundCapKind, target,
-            $"{flight.Code}/{leg.Name} has gone around {leg.GoArounds} times, the cap is {cap}",
-            detail,
+            $"{flight.Code}/{leg.Name} was redone {leg.GoArounds} times, its limit of {cap}",
+            Models.NextWorkerNote(leg) is { } note ? $"{detail}\n{note}" : detail,
             [
-                new CardChoice { Label = Models.RedoLabel(leg, "went round past the cap"), Verb = Verbs.GoAround, Target = target, Args = [asked] },
-                new CardChoice { Label = $"Accept {leg.Name} as it stands", Verb = Verbs.FinishLeg, Target = target, Args = ["accepted", $"accepted at the go-around cap ({leg.GoArounds} rounds)"] },
+                new CardChoice { Label = Verbs.FreshWorker, Verb = Verbs.GoAround, Target = target, Args = [asked] },
             ],
-            summary: $"{flight.Code}/{leg.Name} has gone around {leg.GoArounds} times, the cap. The watchtower and the node send it round no more; Go around sends one more, Accept takes the leg as it stands.");
+            // No override that takes the leg as done: that stays the CLI's, with a reason (#797).
+            summary: $"Decide whether {flight.Code}/{leg.Name} gets one more fresh worker: the node and the watchtower start no more on it by themselves.");
     }
 
-    private async Task GoAroundAsync(CommandRequest command, CancellationToken cancellationToken, bool openConflict = false)
+    private async Task GoAroundAsync(CommandRequest command, CancellationToken cancellationToken, bool conflictRound = false, ConflictRung? rung = null)
     {
         var (flight, leg) = LegOf(command.Target);
+        if (OnHoldRefusal(flight) is { } onHold)
+        {
+            throw new FlightException(onHold);
+        }
         RefuseIfStarting(LegsKey(flight.Code), $"a session on {flight.Code}'s plane");
         var why = string.Join(' ', command.Args ?? []).Trim();
         if (why.Length == 0)
         {
             throw new FlightException("a go-around needs why: the next worker is told it");
         }
-        // A done leg of a flight whose PR open conflicted goes around too (the node's own send, or the pr-conflicts card's Resolve the
-        // conflict): no PR and no review exist yet, and the round is no answer to a review, so it is not counted as one.
-        var forConflict = leg.State == LegState.Done && flight.PullRequest is null
-            && (openConflict || state.Cards(openOnly: true).Any(c => c.Kind == PrConflictsKind && c.Subject == Verbs.FlightTarget(flight.Code)));
+        // A done leg goes around for its flight's conflict with the base (the node's own send, from a PR open, a sweep or a merge, by
+        // ResolveConflictAsync), a PR or none: the round is no answer to a review, so it is not counted as one, the review loop does not
+        // hold it, and a passed review is turned to changes below as for any done leg that goes round under one.
+        if (!conflictRound && _conflictRounds.TryGetValue(flight.Code, out var asked) && asked.Brief == why)
+        {
+            conflictRound = true;
+            rung = asked.Rung;
+            _conflictRounds.TryRemove(KeyValuePair.Create(flight.Code, asked));
+        }
+        var forConflict = leg.State == LegState.Done && conflictRound;
         // A done leg goes around too when the review asked for changes: that is how they are made.
         // Or when its armed merge failed (a PR-ready card turned to say which check): the same card offers it.
         // Or when a PR review's design question on the flight's PR has its answer: the person's word, so the leg goes round with it.
@@ -58,6 +68,12 @@ public sealed partial class LegCommander
         if (flight.State != FlightState.Flying)
         {
             throw new FlightException($"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}");
+        }
+        // A flight held for an investigation (the same failure hit more than one PR) is sent round by nobody until it lands: the failure
+        // is not its work's, and a round would only burn a go-around on a bug with a cause to find. The person's word passes.
+        if (Alerts?.HoldOf(flight.Code) is { } failureHold && !IsPerson(flight, command.Who) && command.PersonsWord is null)
+        {
+            throw new FlightException($"{flight.Code} is {failureHold.Reason}: no go-around is sent until that investigation lands, as the failure is not in its work. Leave it held");
         }
         // A review that keeps asking may be asking for what no worker can do (an edit to the PR itself, a decision): past
         // MaxReviewGoArounds the watchtower sends the leg round no more, and the card is the person's. Only the go-arounds
@@ -73,6 +89,8 @@ public sealed partial class LegCommander
 
         // Every go-around is capped whatever its reason: PIL277 went round six times on failed checks, conflicts and reviews together.
         // Past the cap the watchtower and the node's own sends are refused and the card is the person's; a person's go-around passes.
+        // A conflict round counts here on purpose: only the review cap above exempts it, since a main that keeps moving can send a leg
+        // round for ever (PIL338), and the person is rung by the go-around-cap card when it does.
         var cap = Models.MaxGoArounds;
         if (leg.GoArounds >= cap && !IsPerson(flight, command.Who) && command.PersonsWord is null)
         {
@@ -143,20 +161,23 @@ public sealed partial class LegCommander
         var worker = WorkerName(flight, leg);
         var target = Verbs.LegTarget(flight.Code, leg.Name);
         var legs = state.Legs(flight.Code);
-        var (attemptModel, attemptEffort) = Models.WorkerFor(leg.Model, leg.Effort, next.GoArounds + 1);
+        // A conflict worker runs on its rung's model and effort, whatever the leg's plan or go-around count says (PIL846).
+        var (attemptModel, attemptEffort) = rung is { } onRung ? (onRung.Model, onRung.Effort) : Models.WorkerFor(leg.Model, leg.Effort, next.GoArounds + 1);
+        var rungWords = rung is { } named ? $", {named.Name}" : "";
         // The plane's HEAD as this go-around's worker starts, read off the lock with the plane in place; null when it cannot be read.
         string? startHead = null;
-        Launching(LegsKey(flight.Code), $"{worker}, going around {flight.Code}/{leg.Name}", target,
-            new CardChoice { Label = Models.RedoLabel(leg, "did not start"), Verb = Verbs.GoAround, Target = target, Args = [why] },
+        Launching(LegsKey(flight.Code), $"{worker}, going around {flight.Code}/{leg.Name}{rungWords}", target,
+            new CardChoice { Label = Verbs.FreshWorker, Verb = Verbs.GoAround, Target = target, Args = [why] },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
                 startHead = await PlaneHeadAsync(flight, CancellationToken.None);
                 var commits = await git.RunAsync(["log", "--oneline", $"{flight.Base}..HEAD"], flight.Worktree, CancellationToken.None);
                 var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
-                var brief = Briefs.For(flight, next, legs, why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket, machine: options.Machine, update: UpdateInstruction, pilotMd: await PilotMdOfAsync(flight));
+                var reboot = RebootFileOf(flight);
+                var brief = Briefs.For(flight, next, legs, why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket, machine: options.Machine, update: UpdateInstruction, pilotMd: await PilotMdOfAsync(flight), reboot: BriefedAs(reboot));
                 entering();
-                return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, attemptModel, attemptEffort, Reason: SessionStartReasons.LegLaunch), CancellationToken.None);
+                return ReadOnStart(reboot, await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, attemptModel, attemptEffort, Reason: SessionStartReasons.LegLaunch), CancellationToken.None));
             },
             started =>
             {
@@ -164,15 +185,10 @@ public sealed partial class LegCommander
                 {
                     return $"{flight.Code}/{leg.Name} changed while {worker} was being started";
                 }
-                state.PutLeg(next with { State = LegState.Flying, AttemptModel = attemptModel, AttemptEffort = attemptEffort, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), StartHead = startHead, TickerJob = null, FinishedAt = null, Report = $"go-around: {why}", Wait = null });
+                state.PutLeg(next with { State = LegState.Flying, AttemptModel = attemptModel, AttemptEffort = attemptEffort, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), StartHead = startHead, TickerJob = null, FinishedAt = null, Report = $"go-around: {why}", Wait = null, Recheck = leg.Recheck is { Outcome: not null } ? null : leg.Recheck });
                 // Every card about the leg was about its last worker: failed, stopped, idle, waiting.
                 state.CloseCardsAbout(target, $"went around: {why}");
                 state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around for it", ReviewChanges, ReviewLoopKind, MergeFailed, PrReady);
-                if (forConflict || flight.PullRequest is null)
-                {
-                    // The worker resolves it; the sweep opens the PR once the leg is done, so no card is left for it to wait on.
-                    state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around to resolve it", PrConflictsKind);
-                }
                 return null;
             });
     }

@@ -101,7 +101,7 @@ public static class NodeCommandLine
         hook.SetAction((parseResult, ct) => HookCommands.HookAsync(parseResult.GetValue(socket), stdin, output));
 
         // merge-guard: a PreToolUse hook on Bash and PowerShell, fail-open too; it answers with a deny for a merge made around the node.
-        var mergeGuard = new Command(MergeGuard.Argument, "Read one PreToolUse hook's stdin and refuse a Bash or PowerShell command that merges a PR or pushes to a default branch, pointing at pilot flight merge; always exits 0");
+        var mergeGuard = new Command(MergeGuard.Argument, "Read one PreToolUse hook's stdin and refuse a Bash or PowerShell command that merges a PR or pushes to a default branch, pointing at pilot flight merge, or, in a session the node started, a direct dotnet test pointing at pilot run; always exits 0");
         mergeGuard.SetAction((_, _) => MergeGuard.RunAsync(stdin, output));
 
         var settings = new Option<string?>("--settings") { Description = "The Claude Code settings file; else ~/.claude/settings.json (or under CLAUDE_CONFIG_DIR)" };

@@ -18,7 +18,7 @@ public sealed class DefenderTests : IDisposable
     {
         if (Directory.Exists(_data))
         {
-            Directory.Delete(_data, recursive: true);
+            TestDirs.DeleteTree(_data);
         }
     }
 
@@ -61,6 +61,15 @@ public sealed class DefenderTests : IDisposable
             c => c.Line.ShouldBe($@"not excluded: {Repos}, {Data}: every file a build and its tests write is scanned"),
             c => c.Fix.ShouldNotBeNull(),
             c => c.Optional.ShouldBeTrue());
+    }
+
+    [Fact]
+    public void TheBuildCacheFolderUnderTheDataFolderIsAmongTheWantedOnes()
+    {
+        Directory.CreateDirectory(Pilot.Node.Flights.BuildCache.RootIn(_data));
+        var setup = new NodeSetup(new NodeOptions("/tmp/n.sock", _data), "pilot-node.exe", Path.GetTempPath()) { Run = (_, _, _) => (1, "") };
+
+        setup.WantedFolders().ShouldContain(Path.GetFullPath(Pilot.Node.Flights.BuildCache.RootIn(_data)));
     }
 
     [Fact]

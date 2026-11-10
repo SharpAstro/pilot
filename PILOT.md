@@ -9,9 +9,14 @@ is neither built nor tested by CI.
 - A plane is a git worktree at `<repo>/.claude/worktrees/<code>` on `flight/<code>`. Work and commit only there. Do not
   push, open a PR or merge; the controller lands the flight. Leave nothing uncommitted in the plane, and put scratch
   output outside it.
-- Sibling clones are not yours. `Pilot.Gui` compiles the sibling `DIR.Lib`, `SdlVulkan.Renderer` and `AppShell` source
-  when they sit beside this repo, and restores their packages otherwise (as CI does). Editing a sibling changes this
-  build with no version bump, so a change that spans repos is not a step of this plane; name it and leave it.
+- Sibling clones are not yours. **A plane builds against the published packages, as CI does**: the projects' 6-level
+  `SharpAstroRoot` probe is opt-in (`UseLocalSiblings=true`), so nothing in a plane compiles `DIR.Lib`, `SdlVulkan.Renderer`,
+  `AppShell` or another sibling's source, and its jobs never wait on another repo's build. Only the main clone compiles
+  sibling source. A change that spans repos is not a step of this plane; name it and leave it.
+- Exceptions are named: a flight whose issue carries `pilot: sibling source` builds on the sibling clones (the node runs
+  its jobs with `UseLocalSiblings=true` and holds the clones while they build). A feature that needs an unreleased sibling
+  otherwise takes that sibling's preview (prerelease) package. A consumer connected to a producer flies once the
+  producer's package is on nuget.org, and its leg bumps the pin to that version.
 - The live node is the controller's, one per machine. A plane must not start, stop or restart it, install an update,
   or run `pilot-node setup`: it would touch the real socket, settings and store under `%LOCALAPPDATA%\pilot2\`. Tests
   run a node in memory or on a temporary socket; use those.
@@ -25,6 +30,10 @@ is neither built nor tested by CI.
   `pilot leg wait --for-file <path> [--until <time>]` and end the turn; the node wakes the leg once. Long builds and
   test runs go through `pilot run -- <command>`.
 - The machine is shared with other flights, so a job may wait its turn first. That costs the leg nothing.
+- A worker runs `dotnet test` and the build of a solution or test project only through `pilot run -- <command>` or the
+  leg's check; a hook refuses them run directly and names the way. The node also looks every few minutes for strays in
+  its own process tree (a job's or session's leftovers), raises a card for each with the kill command, and ends only
+  what it launched once its owner has ended. A process of yours that outlives its job or session is flagged.
 
 ## How a flight merges
 
@@ -32,7 +41,7 @@ is neither built nor tested by CI.
   `SQUASH`). So a branch's own history never matters here: merge commits on it, a merge of main that resolved
   conflicts, many small commits, all land as one commit. A rebase that would conflict is no reason to hold a PR.
 - Take main by a merge (`git fetch origin`, then `git merge origin/main`), never by a rebase, and never push with
-  `--force`. Repos whose queue rebases (tianwen) say so in their own PILOT.md.
+  `--force`. A repo whose queue rebases says so in its own PILOT.md; tianwen's squashes too since 2026-11-08.
 
 ## Sessions and the watchtower
 
@@ -47,8 +56,30 @@ is neither built nor tested by CI.
   constant (`pilot session end` stores `<by>: <why>`): a replaced watchtower, a duplicate, a flight that landed or merged,
   or `pilot session end` from a person or the watchtower. A session that finishes or crashes on its own is out of scope;
   the ledger closes it as finished or crashed. A session never stops another with `claude stop`.
+- A reboot made ready (`pilot node reboot request`, #916) puts the node in maintenance mode and tells every live session it
+  started to save itself. A session told so stops where it is, **commits and pushes** what it can (unpushed work is lost
+  work), and writes the file it was named (`<data>/reboot/flight-<code>-reboot-<stamp>.md`, `watchtower-reboot-…`, or its
+  name's) with four parts: what it was doing and where it stopped; what is committed and pushed and what is not; what it
+  was waiting on; the exact next step. Then it ends its turn, and the node ends the session once the file is in. A session
+  silent for 5 minutes gets a file the node writes from what it knows and is ended. `pilot node reboot status` says how far
+  it is, a "Ready to reboot" card says when all are in, and `pilot node reboot done` (after the reboot) or `cancel` leaves
+  maintenance mode. The node never reboots the machine.
+- A watch script has a deadline or an until-condition, never `while true`; check for the old one before re-arming (#870).
 - One live watchtower per node. A change to how the node finds, messages, resumes or stops a session keeps
   `OneWatchtowerTests`, `WatchtowerTests` and `ResumeOptionsTests` passing.
+- The fleet summary is kept by the watchtower: the node has it remade after changes while a client is attached, asks
+  nothing with none, and `pilot summarise` and the panel's Refresh ask at once. The Haiku call runs only when the
+  watchtower is down (`SummaryRow.NotFollowing` says so); only then does the panel name a price.
+
+## Stored records
+
+An update starts on the store the last release wrote, and the JSON reader sets a member missing from it to null whatever its
+initialiser says (beta 1718 stopped every node so, on `AdmissionRow.WaitingOnPerson`).
+
+- A member added to a stored record (snapshot, journal events, settings, job and session rows) is nullable, or defaulted
+  in its setter (`init => field = value ?? []`). A kind or field an older reader would drop also bumps `FileJournal.StoreContract`.
+- `StoreCompatibilityTests` loads each store under `src/Pilot.Node.Tests/Fixtures/Store/<version>/`, written by that release's
+  code, and fails naming `Type.Member` for a null its type forbids. How a fixture is refreshed: `src/README.md`, "Stored records".
 
 ## Build and check
 
@@ -63,6 +94,11 @@ dotnet test Pilot.Gui.Tests -c Release --no-build
 ```
 
 - A `Pilot.Node.Tests` test over 5 s fails on CI (GITHUB_ACTIONS=true or PILOT_TEST_TIME_STRICT=1) unless tagged `[Trait("Category", "Slow")]`; elsewhere a `slow-test:` line on stderr reports it without failing, since a loaded machine inflates wall clock.
+- A git run costs 100 to 400 ms on Windows, so the git-backed `Pilot.Node.Tests` bases (`ReviewTestsBase`, `LegCommanderTestsBase`, `OverlapTestsBase`, `PrMarksTestsBase`, `LegHoldTestsBase`, `PrFixTestsBase`)
+  run on `FakeRepoGit`, an in-memory git (`TestGit`), unless the test is about git itself: a test calls `RealGit()` first, or a class passes
+  `realGit: true`. A command the model cannot answer throws, so the test says it needs real git; `PILOT_TEST_REAL_GIT=1` runs everything on real
+  git, and `FakeRepoGitTests.TheModelAnswersAsGitDoes` holds the model to git's answers.
+- The process-start guard (#933): a `Pilot.Node.Tests` test outside `Category=Slow` or `Integration` that starts a real process (through `TestEnvironment`'s observer: git, gh, claude, a job shell) fails, naming the kind and the command. A unit test runs on fakes (`FakeRepoGit`, `FakeJobLauncher`); a test that needs a real process is tagged Slow with its reason. `PILOT_TEST_PROCESS_GUARD=report` keeps the old report-only mode, and a report that lists a test fails CI's Test job.
 - Repo-wide guard tests carry `[Trait("Category", "Invariant")]` and run in seconds (`--filter Category=Invariant`); a new repo-wide guard gets the trait too.
 - CI builds the whole solution and runs exactly two test projects, `Pilot.Node.Tests` and `Pilot.Gui.Tests`, on
   ubuntu and windows (win-x64). A check that matches CI runs both; a narrower one filters with

@@ -67,7 +67,7 @@ public sealed class DesignSettledTests : PrFixTestsBase
     public async Task AnAnswerCommentOnThePrDowngradesTheCardToANoticeNamingIt()
     {
         await Asked();
-        _github.PrConversation.Add((7, new PrComment("ada", "Keep it a library.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
+        _github.PrConversation.Enqueue((7, new PrComment("ada", "Keep it a library.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
 
         await _reviews.SweepAsync(Ct);
 
@@ -128,10 +128,16 @@ public sealed class DesignSettledTests : PrFixTestsBase
         var card = OpenDesign().ShouldNotBeNull();
         card.Title.Length.ShouldBeLessThan(200);
         card.Title.ShouldNotContain(c => char.IsControl(c));
-        card.Choices.ShouldAllBe(c => c.Label.Length <= 60 && !c.Label.Any(char.IsControl));
+        card.Choices.ShouldAllBe(c => c.Label.Length <= PrReviews.MaxOptionLabel && !c.Label.Any(char.IsControl));
+        // The options are lettered in the body in the order of their buttons, the recommended first; each button is its option's own words when they fit and
+        // carries its option's words as the answer; an option too long for a button is picked by its letter (#797).
         var detail = card.Detail.ShouldNotBeNull();
-        detail.IndexOf("- second", StringComparison.Ordinal).ShouldBeLessThan(detail.IndexOf("- first", StringComparison.Ordinal));
-        card.Choices[0].Label.ShouldBe("second");
+        detail.IndexOf("A. second", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0);
+        detail.IndexOf("A. second", StringComparison.Ordinal).ShouldBeLessThan(detail.IndexOf("B. first", StringComparison.Ordinal));
+        card.Choices[0].Label.ShouldBe("Second (recommended)");
+        card.Choices[0].Args.ShouldHaveSingleItem().ShouldStartWith("second");
+        card.Choices[1].Label.ShouldBe("Pick option B");
+        card.Choices[1].Args.ShouldHaveSingleItem().ShouldStartWith("first");
     }
 
     [Fact]
@@ -167,7 +173,7 @@ public sealed class DesignSettledTests : PrFixTestsBase
     }
 
     private void AnswerComment() =>
-        _github.PrConversation.Add((7, new PrComment("ada", "Keep it a library.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
+        _github.PrConversation.Enqueue((7, new PrComment("ada", "Keep it a library.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
 
     private void HoldFixers()
     {

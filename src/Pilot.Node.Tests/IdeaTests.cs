@@ -60,17 +60,15 @@ public sealed class IdeaTests : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2i-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private readonly SeededRepos _repos;
     private readonly FakeGitHub _github = new();
     private readonly IdeaCommander _commander;
 
     public IdeaTests()
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        var planes = new Planes(new GitCli());
+        _repos = new SeededRepos(_root);
+        _repos.Seed("pilot");
+        var planes = _repos.Planes();
         var flights = new FlightCommander(_state, planes, TimeProvider.System, github: _github);
         var catalog = new RepoCatalog(_state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root]));
         _commander = new IdeaCommander(_state, planes, catalog, _github, new FakeIdeaMerger(), new FakeIdeaTidier(), new FakeIdeaRepoChooser(), flights, TimeProvider.System);
@@ -78,35 +76,7 @@ public sealed class IdeaTests : IDisposable
 
     private string Repo => Path.Combine(_root, "pilot");
 
-    public void Dispose()
-    {
-        try
-        {
-            Git(Repo, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
-    }
-
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    public void Dispose() => _repos.Dispose();
 
     private Task<CommandResult> Note(params string[] text) =>
         _commander.RunAsync(new CommandRequest { Verb = Verbs.NoteIdea, Target = Verbs.RepoTarget(IdeaIds.DefaultRepo), Args = text, Who = "tests" }, Ct);
@@ -124,7 +94,7 @@ public sealed class IdeaTests : IDisposable
         (await Note("Second")).Ok.ShouldBeTrue();
 
         _github.MilestonesMade.ShouldHaveSingleItem().Title.ShouldBe(IdeaIds.Milestone);
-        _github.MilestoneIssuesOf[Path.GetFullPath(Repo)].ShouldAllBe(i => i.Milestone == IdeaIds.Milestone);
+        _github.MilestoneIssuesOf[Path.GetFullPath(Repo)].Values.ShouldAllBe(i => i.Milestone == IdeaIds.Milestone);
         _github.MilestoneIssuesOf[Path.GetFullPath(Repo)].Count.ShouldBe(2);
     }
 
@@ -136,7 +106,7 @@ public sealed class IdeaTests : IDisposable
 
         first.Made.ShouldBe("pilot I1");
         second.Made.ShouldBe("pilot I2");
-        var created = _github.IssuesCreated[0];
+        var created = _github.IssuesCreated.ToArray()[0];
         (created.Title, created.Body).ShouldBe(("Rings round Saturn", "with the shadow on them"));
 
         var ideas = _state.Ideas();
@@ -162,7 +132,6 @@ public sealed class IdeaTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task PlanningMovesTheIdeaToTheNamedMilestoneAndMakesItsFlightRememberingTheIdea()
     {
         _github.AddMilestone(Repo, "v2", dueOn: new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero));
@@ -211,7 +180,6 @@ public sealed class IdeaTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task FoldingAnIdeaIntoAFlightCommentsItsWordsOnTheFlightsIssueAndDropsItAsFolded()
     {
         _github.AddMilestone(Repo, "v1");
@@ -231,7 +199,6 @@ public sealed class IdeaTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task PlanningIntoANamedMilestoneMovesItThereAndRefusesOneThatIsNotOpenBeforeAnyFlightIsMade()
     {
         _github.AddMilestone(Repo, "v1", dueOn: new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero));
@@ -312,7 +279,6 @@ public sealed class IdeaTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task TheRepoWatchReadsTheIdeasMilestoneIntoTheRepoStatusAndTheNodesRows()
     {
         File.WriteAllText(Path.Combine(Repo, ".git", "config"), "[remote \"origin\"]\n\turl = https://github.com/SharpAstro/pilot.git\n");
@@ -322,7 +288,7 @@ public sealed class IdeaTests : IDisposable
         _github.AddIssue(Repo, "Seen on GitHub", IdeaIds.Milestone, author: "someone");
         _github.AddIssue(Repo, "Turned down", IdeaIds.Milestone, open: false);
         var catalog = new RepoCatalog(_state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root]));
-        var watch = new RepoWatch(_state, catalog, new Planes(new GitCli()), _github, TimeProvider.System) { Parallelism = 1 };
+        var watch = new RepoWatch(_state, catalog, _repos.Planes(), _github, TimeProvider.System) { Parallelism = 1 };
 
         var status = (await watch.RefreshAsync(Ct)).Single();
 
@@ -407,7 +373,7 @@ public sealed class IdeaCliTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private static async Task<(int Exit, string Output, string Error)> Pilot(NodeHarness node, string cwd, params string[] args)
@@ -419,12 +385,13 @@ public sealed class IdeaCliTests : IDisposable
     }
 
     [Fact]
+    // Slow: a real node on a socket and a repo made by git itself (the CLI path), not the in-memory model.
     [Trait("Category", "Slow")]
     public async Task IdeaNotesAnIdeaAndPrintsItsIdAndIdeasListsItAndDropClosesIt()
     {
         var repo = Path.Combine(_root, "tianwen");
         Directory.CreateDirectory(repo);
-        using (var git = Process.Start(new ProcessStartInfo("git") { ArgumentList = { "init", "-q", "-b", "main" }, WorkingDirectory = repo, UseShellExecute = false })!)
+        using (var git = TestEnvironment.Start(new ProcessStartInfo("git") { ArgumentList = { "init", "-q", "-b", "main" }, WorkingDirectory = repo, UseShellExecute = false })!)
         {
             await git.WaitForExitAsync(Ct);
         }
@@ -452,17 +419,18 @@ public sealed class IdeaCliTests : IDisposable
     }
 
     [Fact]
+    // Slow: a real node on a socket and a repo made by git itself (the CLI path), not the in-memory model.
     [Trait("Category", "Slow")]
     public async Task IdeaPlanWithoutAMilestoneProposesOneAndPlansNothingAndNewMilestoneMakesIt()
     {
         var repo = Path.Combine(_root, "tianwen");
         Directory.CreateDirectory(repo);
-        using (var git = Process.Start(new ProcessStartInfo("git") { ArgumentList = { "init", "-q", "-b", "main" }, WorkingDirectory = repo, UseShellExecute = false })!)
+        using (var git = TestEnvironment.Start(new ProcessStartInfo("git") { ArgumentList = { "init", "-q", "-b", "main" }, WorkingDirectory = repo, UseShellExecute = false })!)
         {
             await git.WaitForExitAsync(Ct);
         }
         // Planning makes a flight, whose plane needs a commit to branch from.
-        using (var commit = Process.Start(new ProcessStartInfo("git") { ArgumentList = { "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "first" }, WorkingDirectory = repo, UseShellExecute = false })!)
+        using (var commit = TestEnvironment.Start(new ProcessStartInfo("git") { ArgumentList = { "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "first" }, WorkingDirectory = repo, UseShellExecute = false })!)
         {
             await commit.WaitForExitAsync(Ct);
         }
@@ -483,7 +451,7 @@ public sealed class IdeaCliTests : IDisposable
 
         made.Exit.ShouldBe(0, made.Output + made.Error);
         node.GitHub.MilestonesMade.Select(m => m.Title).ShouldContain("Rings");
-        node.GitHub.MilestonesOf[Path.GetFullPath(repo)].Single(m => m.Title == "Rings").Description.ShouldBe("Ring shadows and tilt");
+        node.GitHub.MilestonesOf[Path.GetFullPath(repo)].Values.Single(m => m.Title == "Rings").Description.ShouldBe("Ring shadows and tilt");
         node.GitHub.Moves.ShouldBe([(1, "Rings")]);
     }
 }

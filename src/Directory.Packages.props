@@ -11,6 +11,12 @@
     <PackageVersion Include="Shouldly" Version="4.3.0" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
   </ItemGroup>
+  <!-- An opt-in local build cache (docs/build-cache.md): present only under -p:MSBuildCacheEnabled=true, so a plain build,
+       a restore and CI never see these packages. Both ride one version; the reference itself is in Directory.Build.props. -->
+  <ItemGroup Condition="'$(MSBuildCacheEnabled)' == 'true'">
+    <PackageVersion Include="Microsoft.MSBuildCache.Local" Version="0.1.340-preview" />
+    <PackageVersion Include="Microsoft.MSBuildCache.SharedCompilation" Version="0.1.340-preview" />
+  </ItemGroup>
   <!-- The command lines of pilot, pilot-node and pilot-gui, as tianwen's CLI parses its own (the same version). -->
   <ItemGroup>
     <PackageVersion Include="System.CommandLine" Version="2.0.12" />
@@ -25,16 +31,16 @@
   <!-- Pilot.Gui: the SharpAstro stack. A local build compiles the sibling clones instead (the UseLocal* switches in
        Pilot.Gui.csproj); these are what CI restores. -->
   <ItemGroup>
-    <PackageVersion Include="DIR.Lib" Version="11.45.*" />
-    <PackageVersion Include="DIR.Lib.Debug" Version="11.45.*" />
+    <PackageVersion Include="DIR.Lib" Version="11.56.*" />
+    <PackageVersion Include="DIR.Lib.Debug" Version="11.56.*" />
     <PackageVersion Include="Console.Lib" Version="5.12.*" />
     <PackageVersion Include="Console.Lib.Debug" Version="5.12.*" />
     <PackageVersion Include="LAN.Lib" Version="2.4.*" />
     <!-- The per-user node's socket location, lock, Kestrel hosting, event queue and ring buffer (SharpAstro/Node.Lib), shared with tianwen. -->
     <PackageVersion Include="Node.Lib" Version="1.2.*" />
     <PackageVersion Include="Node.Lib.Hosting" Version="1.2.*" />
-    <PackageVersion Include="SdlVulkan.Renderer" Version="7.81.*" />
-    <PackageVersion Include="SdlVulkan.Renderer.Debug" Version="7.81.*" />
+    <PackageVersion Include="SdlVulkan.Renderer" Version="7.85.*" />
+    <PackageVersion Include="SdlVulkan.Renderer.Debug" Version="7.85.*" />
     <PackageVersion Include="SharpAstro.AppShell" Version="1.2.*" />
     <PackageVersion Include="SharpAstro.Png" Version="3.32.*" />
     <PackageVersion Include="SharpAstro.Jpeg" Version="3.32.*" />

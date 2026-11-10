@@ -29,11 +29,21 @@ public sealed class SelectableContentTests
         ("*", t => t.Contains("open · ", StringComparison.Ordinal) || t.StartsWith("held by ", StringComparison.Ordinal), "a header summary or status line is chrome"),
         ("*", t => t.StartsWith("New flight · ", StringComparison.Ordinal), "the new-flight wizard's step title is chrome"),
         ("settings", t => t.Contains("settings are", StringComparison.Ordinal) || t.StartsWith("another node's", StringComparison.Ordinal), "a settings page's note on whose settings these are is chrome"),
+        ("settings", t => t.StartsWith("saved in ", StringComparison.Ordinal) && t.EndsWith("the command line wins over it", StringComparison.Ordinal), "the header's source line is chrome"),
+        ("settings", t => IsPairCaption(t), "a range row's pair that cannot be pressed now (it would move a handle past the other) is a control label that is not a button"),
         ("fleet", t => t.StartsWith("every node heard", StringComparison.Ordinal), "the fleet page's lede is chrome"),
         ("flight page", t => t is "Goal" or "Done when" or "Report", "a field's label beside its selectable value is a label"),
         ("chat", t => t is "✓" or "✗" or "Bash" or "Push the branch" || t.Contains(':', StringComparison.Ordinal) && t.Length == 8, "a tool call's header row: a press folds the call, so a drag cannot start there"),
         ("transcript", t => t is "✓" or "✗" or "Bash" or "Push the branch" || t.Contains(':', StringComparison.Ordinal) && t.Length == 8, "a tool call's header row: a press folds the call, so a drag cannot start there"),
     ];
+
+    // A range row's pair cell: an effort word, alone or after the model's initial ("S low", "O xhigh", "sonnet-low").
+    private static bool IsPairCaption(string text)
+    {
+        var parts = text.Split(' ');
+        var effort = parts[^1].Split('-')[^1];
+        return effort is "low" or "med" or "medium" or "high" or "xhigh" or "max" && (parts.Length == 1 || parts.Length == 2 && parts[0].Length == 1);
+    }
 
     /// <summary>
     /// Pages that are a table or list of rows the page hit-tests as a whole (a press anywhere in a row selects it, with no pressable

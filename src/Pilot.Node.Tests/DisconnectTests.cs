@@ -244,7 +244,7 @@ public sealed class DisconnectCliTests : IAsyncDisposable
             {
                 File.SetAttributes(file, FileAttributes.Normal);
             }
-            Directory.Delete(_nodeRoot, recursive: true);
+            TestDirs.DeleteTree(_nodeRoot);
         }
     }
 

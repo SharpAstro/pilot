@@ -84,6 +84,10 @@ internal sealed record SpendScreen(string Window, SpendReport? Report, SpendWast
         lines.AddRange(report.Flights.Select(f => $"  {f.Key} | {SpendText.Tokens(f.Tokens)} tokens | {SpendText.Share(f.Share)}"));
         lines.Add($"By role, {timeframe}");
         lines.AddRange(report.Roles.Select(r => $"  {r.Key} | {SpendText.Tokens(r.Tokens)} tokens | {SpendText.Share(r.Share)}"));
+        if (report.Bench is { } bench)
+        {
+            lines.Add($"Bench VMs, {BenchText.Month(bench)}");
+        }
         if (Waste is { } waste)
         {
             lines.Add($"Waste, {SpendText.Timeframe(waste.Window, waste.From, waste.To, waste.FromAccount)}: {SpendText.Tokens(waste.WasteTokens)} tokens, {SpendText.Share(waste.WasteShare)} of the window");
@@ -194,6 +198,12 @@ internal sealed class SpendView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             Heading($"By role, {timeframe}"),
             .. Rows(report.Roles, "no spend in this window"),
         ];
+        if (report.Bench is { } bench)
+        {
+            var month = $"Bench VMs, {BenchText.Month(bench)}";
+            parts.Add(Heading("Bench VMs, this month (not the window above)"));
+            parts.Add(Layout.Builder.Text(month, 13f, Body).Selectable().RowH(RowH).Whole(month));
+        }
         if (screen.Waste is { } waste)
         {
             parts.Add(Heading($"Waste, worst first, {SpendText.Timeframe(waste.Window, waste.From, waste.To, waste.FromAccount)}: {SpendText.Tokens(waste.WasteTokens)} tokens, {SpendText.Share(waste.WasteShare)} of the window"));

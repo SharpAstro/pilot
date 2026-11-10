@@ -13,19 +13,19 @@ namespace Pilot.Node.Tests;
 /// </summary>
 [Collection(JobsCollection.Name)]
 [Trait("Category", "Slow")]
-public sealed class CarriedFinishTests : LegCommanderTestsBase
+public sealed class CarriedFinishTests() : LegCommanderTestsBase(realGit: true)
 {
-    private static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(25);
 
     private const string Report = "parser in";
 
     private string Gate => Path.Combine(_root, "gate");
 
-    // A check that runs until the gate file exists, then exits with the given code: the same line in pwsh and sh as RestartTests uses.
+    // A check that runs until the gate file exists, then exits with the given code, or after 2 minutes so a failed test leaves nothing running: the same line in pwsh and sh as RestartTests uses.
     private string WaitingFor(int exit) =>
         OperatingSystem.IsWindows()
-            ? $"while (-not (Test-Path -LiteralPath '{Gate}')) {{ Start-Sleep -Milliseconds 100 }}; echo 'finished'; exit {exit}"
-            : $"while [ ! -e '{Gate}' ]; do sleep 0.1; done; echo 'finished'; exit {exit}";
+            ? $"$end = (Get-Date).AddMinutes(2); while (-not (Test-Path -LiteralPath '{Gate}') -and (Get-Date) -lt $end) {{ Start-Sleep -Milliseconds 100 }}; echo 'finished'; exit {exit}"
+            : $"i=0; while [ ! -e '{Gate}' ] && [ $i -lt 1200 ]; do sleep 0.1; i=$((i+1)); done; echo 'finished'; exit {exit}";
 
     private static string Echoing(string text, int exit) => $"echo '{text}'; exit {exit}";
 
@@ -153,18 +153,21 @@ public sealed class CarriedFinishTests : LegCommanderTestsBase
         await UntilAsync(() => node.Checks.Any(j => j.State == JobState.Running), "the carried check job runs");
         node.Parser.State.ShouldBe(LegState.Flying);
         File.WriteAllText(Gate, "go");
+        // Done is written first, then the node's word goes on the leg as its recheck's outcome, and only the watch's look tells it and
+        // clears it (this test runs no loop): so wait for Done alone, and check the recheck is cleared only after that look.
         await UntilAsync(() => node.Parser.State == LegState.Done, "the node finishes the leg");
 
-        node.Parser.ShouldSatisfyAllConditions(
-            l => l.Report.ShouldBe(Report),
-            l => l.Recheck.ShouldBeNull());
+        node.Parser.Report.ShouldBe(Report);
+        // The node's word sits on the Done leg's recheck until the watch's next look tells it, so Recheck is only null after that look (no timing on RecordDoneAsync's git gap).
         // The one job is the carried one, which passed; no finish was run by the worker.
         var only = node.Checks.ShouldHaveSingleItem();
         (only.Id, only.State).ShouldBe(("jc1", JobState.Succeeded));
         await UntilToldAsync(node);
+        node.Parser.Recheck.ShouldBeNull();
         var said = node.Said.ShouldHaveSingleItem();
         said.Args[0].ShouldBe(LegRecheck.NodeFinishedOutcome(check));
         said.Args[0].ShouldNotContain("`leg finish done` again");
+        node.Parser.Recheck.ShouldBeNull();
     }
 
     [Fact(Timeout = 120_000)]
@@ -229,9 +232,144 @@ public sealed class CarriedFinishTests : LegCommanderTestsBase
         second.Error.ShouldContain("already");
         node.Checks.ShouldHaveSingleItem().Id.ShouldBe("jc1");
         File.WriteAllText(Gate, "go");
+        // Done alone: the recheck is not cleared until a look tells the node's word, and this test runs none.
         await UntilAsync(() => node.Parser.State == LegState.Done, "the node finishes the leg");
         node.Checks.ShouldHaveSingleItem().State.ShouldBe(JobState.Succeeded);
         node.Parser.Report.ShouldBe(Report);
+    }
+
+    [Fact(Timeout = 120_000)]
+    public async Task AWorkersOwnFinishTakingTheCallBeforeTheNodesFinishDoesLeavesTheNodeSilentForTheRefusalAndTheWorkerToItsOwnAnswer()
+    {
+        // The other order, with no timing assumed: the node's finish is launched by a look but held on Ready (as it is while the job
+        // runner takes up the old jobs), so the worker's own finish takes the flight's call first, and only then is Ready completed.
+        var check = WaitingFor(0);
+        await using var node = await RestartedAsync(check, flight => Queued(check, flight));
+        var ready = new TaskCompletionSource();
+        node.Watch.Ready = ready.Task;
+
+        await node.Watch.LookAsync(Ct);
+        node.Watch.ResumesInFlight.ShouldBe(1);
+        var workers = Task.Run(() => node.Legs.RunAsync(new CommandRequest { Verb = Verbs.FinishLeg, Target = "flight/TIA1/parser", Args = ["done", Report], Who = "tests" }, Ct), Ct);
+        await UntilAsync(() => node.Parser.Recheck is { Resume: false, Outcome: null } && node.Checks.Any(j => j.State == JobState.Running), "the worker's own finish is rerunning the check");
+
+        ready.SetResult();
+        await UntilAsync(() => node.Watch.ResumesInFlight == 0, "the node's held finish ends, refused as the call is taken");
+        await node.Watch.LookAsync(Ct);
+
+        // Nothing of the refusal is told, and the worker's rerun is neither cleared nor given an outcome.
+        node.Said.ShouldBeEmpty();
+        node.Parser.Recheck.ShouldNotBeNull().Outcome.ShouldBeNull();
+        File.WriteAllText(Gate, "go");
+        var answer = await workers.WaitAsync(Ceiling, Ct);
+        if (answer.Later is { } later)
+        {
+            answer = await later;
+        }
+        answer.Ok.ShouldBeTrue(answer.Error);
+        await UntilAsync(() => node.Parser.State == LegState.Done, "the worker's own finish ends the leg");
+        await node.Watch.LookAsync(Ct);
+        node.Said.ShouldBeEmpty();
+        node.Checks.ShouldHaveSingleItem().State.ShouldBe(JobState.Succeeded);
+    }
+
+    [Fact(Timeout = 120_000)]
+    public async Task TheNodesWordIsKeptOnTheLegUntilTheWatchTellsItSoANodeStoppingBeforeThatLookLosesNothing()
+    {
+        var check = Echoing("two tests failed", 1);
+        await using var node = await RestartedAsync(check, flight => Queued(check, flight));
+
+        // Looks without telling: the watch's own loop is not run again once the node's finish has ended, as a node stopping there would not.
+        await node.Watch.LookAsync(Ct);
+        await UntilAsync(() => node.Watch.ResumesInFlight == 0, "the node's finish has ended");
+
+        var kept = node.Parser.Recheck.ShouldNotBeNull();
+        kept.Outcome.ShouldNotBeNull().ShouldContain("`leg finish done` again");
+        node.Said.ShouldBeEmpty();
+
+        // A node that comes up on that state (its journal) tells it at its first look.
+        var next = new NodeState(_journal, TimeProvider.System);
+        next.Legs("TIA1").Single(l => l.Name == "parser").Recheck.ShouldNotBeNull().Outcome.ShouldBe(kept.Outcome);
+        await node.Watch.LookAsync(Ct);
+        node.Said.ShouldHaveSingleItem().Args[0].ShouldBe(kept.Outcome);
+    }
+
+    [Fact(Timeout = 120_000)]
+    public async Task ANodeFinishRefusedBecauseTheFlightHasCallsOutIsNotToldWhateverPhaseTheHoldersFinishIsInAndIsRunAgainOnceItIsFree()
+    {
+        // The refusal a worker's own finish causes before its check rerun (merging the base) or after it (pushing): the leg then still
+        // carries the restart's mark, or none, so the recheck's own state cannot tell it. The refusal's words do.
+        var check = Echoing("ok", 0);
+        await using var node = await RestartedAsync(check, null);
+        var finishes = 0;
+        var busy = true;
+        var told = new ConcurrentQueue<CommandRequest>();
+        var watch = new LegWatch(node.State, (command, token) =>
+        {
+            if (command.Verb == Verbs.Say)
+            {
+                told.Enqueue(command);
+                return Task.FromResult(node.State.Complete(command, null));
+            }
+            Interlocked.Increment(ref finishes);
+            // Free, the refusal is on its merits, and its check output holds the busy refusal's words (" is ", " already: "): only the
+            // result's way says busy, so these words must not.
+            return Task.FromResult(busy
+                ? node.State.Complete(command, LegCommander.BusyRefusal("TIA1", "being brought up to date", "wait for its answer, then ask again"), way: RefusalWays.Busy)
+                : node.State.Complete(command, "TIA1/parser's check failed (1); it stays flying. Last of its output:\nthe restore is done already: nothing to do"));
+        }, TimeProvider.System)
+        {
+            Ready = Task.CompletedTask,
+        };
+
+        await watch.LookAsync(Ct);
+        await UntilAsync(() => watch.ResumesInFlight == 0 && Volatile.Read(ref finishes) == 1, "the node's finish is refused as the flight is busy");
+
+        told.ShouldBeEmpty();
+        node.Parser.Recheck.ShouldNotBeNull().ShouldSatisfyAllConditions(
+            r => r.Resume.ShouldBeTrue(),
+            r => r.Outcome.ShouldBeNull());
+        // Free again: the next look runs the finish, which now refuses on its merits, and that is kept to be told.
+        busy = false;
+        await watch.LookAsync(Ct);
+        await UntilAsync(() => watch.ResumesInFlight == 0 && Volatile.Read(ref finishes) == 2, "the node's finish is run again");
+        node.Parser.Recheck.ShouldNotBeNull().Outcome.ShouldNotBeNull().ShouldContain("check failed (1)");
+    }
+
+    [Fact(Timeout = 120_000)]
+    public async Task ADoneLegsOutcomeThatIsNotTheNodesOwnFinishIsNotSaidToAnyone()
+    {
+        // What an accepted finish leaves when the worker's rerun then ends late: a changed-outcome on a Done leg.
+        var check = Echoing("ok", 0);
+        await using var node = await RestartedAsync(check, null);
+        var changed = new LegRecheck { Check = check, Since = DateTimeOffset.UtcNow, Outcome = LegRecheck.ChangedOutcome(check) };
+        node.State.PutLeg(node.Parser with { State = LegState.Done, Recheck = changed });
+
+        await node.Watch.LookAsync(Ct);
+
+        node.Said.ShouldBeEmpty();
+        node.Parser.Recheck.ShouldBe(changed);
+    }
+
+    [Fact(Timeout = 120_000)]
+    public async Task AGoAroundOfADoneLegDropsAnOutcomePendingOnItSoTheNewRoundsWorkerIsNotToldIt()
+    {
+        var check = Echoing("ok", 0);
+        await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        // A done leg goes around when the review asked for changes.
+        _state.PutFlight(_state.Flights().Single() with { Review = new ReviewRow { State = ReviewState.Changes, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow } });
+        _state.PutLeg(L("parser") with
+        {
+            State = LegState.Done,
+            Recheck = new LegRecheck { Check = check, Since = DateTimeOffset.UtcNow, Outcome = LegRecheck.NodeFinishedOutcome(check) },
+        });
+
+        (await Leg(Verbs.GoAround, "flight/TIA1/parser", "the", "review", "asked")).Error.ShouldBeNull();
+
+        L("parser").ShouldSatisfyAllConditions(
+            l => l.State.ShouldBe(LegState.Flying),
+            l => l.Recheck.ShouldBeNull());
     }
 
     [Fact(Timeout = 120_000)]

@@ -19,12 +19,13 @@ public sealed class GitOfflineTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_dir, recursive: true);
+        TestDirs.DeleteTree(_dir);
     }
 
     private static Task<GitRun> Git(string cwd, params string[] args) => new GitCli(budget: TimeSpan.FromSeconds(30)).RunAsync(args, cwd, TestContext.Current.CancellationToken);
 
     [Fact]
+    [Trait("Category", "Slow")] // About git itself: real git's redirect of github.com to nowhere (TestEnvironment), which no model has.
     public async Task LsRemoteOfGitHubFailsAtOnceInsteadOfReachingTheNetwork()
     {
         var watch = Stopwatch.StartNew();
@@ -37,7 +38,7 @@ public sealed class GitOfflineTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
+    [Trait("Category", "Slow")] // About git itself: a per-repo insteadOf rewrite that real git reads.
     public async Task APerRepoInsteadOfToALocalBareCopyStillFetches()
     {
         const string Url = "https://github.com/SharpAstro/tianwen.git";

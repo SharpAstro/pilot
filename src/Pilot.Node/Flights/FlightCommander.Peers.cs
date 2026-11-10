@@ -13,8 +13,48 @@ public sealed partial class FlightCommander
     /// <summary>A flight a peer node flies, as that node reports it.</summary>
     public sealed record PeerFound(string Node, FlightRow Flight);
 
-    /// <summary>What one peer said: the node's name and its flights, or why it could not be asked.</summary>
-    private sealed record PeerRead(string? Node, FlightRow[]? Flights, string? Why);
+    /// <summary>
+    /// What one peer said: the node's name and its flights, or why it could not be asked. A peer that did not answer still carries the
+    /// name it was last known by (<see cref="_peerNames"/>), when it ever answered; <paramref name="Unanswered"/> tells one that was asked
+    /// and did not answer from one that was never asked (no grant held, or refused).
+    /// </summary>
+    private sealed record PeerRead(string? Node, FlightRow[]? Flights, string? Why, bool Unanswered = false);
+
+    /// <summary>
+    /// The node name each peer endpoint last answered with, remembered in memory from every answered read, so a peer that stops answering
+    /// is still known by name. Empty after a restart: a peer is named again by the first look it answers.
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _peerNames = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The name a peer says it has (its machine prefix, or its endpoint where it has none), remembered under its endpoint.</summary>
+    private string Learn(IFleetPeer peer, NodeInfo info)
+    {
+        var node = info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Name;
+        _peerNames[peer.Name] = node;
+        return node;
+    }
+
+    private string? NameOf(IFleetPeer peer) => _peerNames.TryGetValue(peer.Name, out var node) ? node : null;
+
+    /// <summary>The last copy of each granted peer's flights and legs, fed by every read that answers (#894); null for a node built without one.</summary>
+    public FleetCopy? Copy { get; set; }
+
+    /// <summary>
+    /// Reads every granted peer once under <see cref="PeerBudget"/>, which keeps <see cref="Copy"/> fresh (<see cref="FleetCopyWatch"/>).
+    /// A peer that does not answer changes nothing. Returns how many answered.
+    /// </summary>
+    public async Task<int> CopyPeersAsync(CancellationToken cancellationToken)
+    {
+        var peers = (Fleet?.Peers() ?? []).Where(p => p.HasGrant).ToList();
+        if (Copy is null || peers.Count == 0)
+        {
+            return 0;
+        }
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(PeerBudget);
+        var reads = await Task.WhenAll(peers.Select(p => ReadAllFlightsAsync(p, budget.Token, cancellationToken)));
+        return reads.Count(r => r.Flights is not null);
+    }
 
     /// <summary>
     /// The flights each reachable peer has with <paramref name="code"/> on this repo (matched by its GitHub remote, as paths are each
@@ -43,20 +83,40 @@ public sealed partial class FlightCommander
         return (found, why);
     }
 
-    private static async Task<PeerRead> ReadPeerFlightsAsync(IFleetPeer peer, string? gitHub, CancellationToken budget, CancellationToken caller)
+    /// <summary>
+    /// Whether flight <paramref name="code"/> of the peer <paramref name="node"/> has landed, as <see cref="LookAtPeerConnectionsAsync"/> reads a
+    /// wait: the peer says its row landed (not moved to another node, not folded into a flight), or its PR is merged on GitHub. The peers are
+    /// asked under <see cref="PeerBudget"/>, so a slow one never holds the caller; a peer that does not answer, or lists no such flight, is
+    /// false (not landed as far as is known), never an error. Does not take the lock.
+    /// </summary>
+    public async Task<bool> PeerFlightLandedAsync(FlightRow flight, string code, string node, CancellationToken cancellationToken)
+    {
+        var (found, _) = await FindOnPeersAsync(flight.RepoPath, code, cancellationToken);
+        if (found.FirstOrDefault(p => string.Equals(p.Node, node, StringComparison.OrdinalIgnoreCase)) is not { Flight: var row })
+        {
+            return false;
+        }
+        if (row.State == FlightState.Landed)
+        {
+            return row.MovedTo is null && row.FoldedInto is null;
+        }
+        return row.PullRequest is not null && github is not null && await MergedOnGitHubAsync(flight, row, cancellationToken);
+    }
+
+    private async Task<PeerRead> ReadPeerFlightsAsync(IFleetPeer peer, string? gitHub, CancellationToken budget, CancellationToken caller)
     {
         if (!peer.HasGrant)
         {
-            return new PeerRead(null, null, $"{peer.Endpoint}: no grant is held for it");
+            return new PeerRead(NameOf(peer), null, $"{peer.Name}: no grant is held for it");
         }
         try
         {
             if (await peer.ReposAsync(budget) is not { } repos)
             {
-                return new PeerRead(null, null, $"{peer.Endpoint}: it refuses the grant held for it");
+                return new PeerRead(NameOf(peer), null, NodeClient.RefusedHeldGrant(peer.Name));
             }
             var info = await peer.NodeAsync(budget);
-            var node = info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Endpoint;
+            var node = Learn(peer, info);
             // A peer that does not hold the repo flies nothing of it: the wait is then for the flight to show.
             var checkout = gitHub is null ? null : repos.FirstOrDefault(r => string.Equals(r.GitHub, gitHub, StringComparison.OrdinalIgnoreCase))?.Path;
             if (checkout is null)
@@ -64,11 +124,12 @@ public sealed partial class FlightCommander
                 return new PeerRead(node, [], null);
             }
             var load = await peer.LoadAsync(budget);
+            Copy?.Record(node, load);
             return new PeerRead(node, [.. load.Flights.Where(f => SamePath(f.RepoPath, checkout))], null);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or OperationCanceledException or WebSocketException && !caller.IsCancellationRequested)
         {
-            return new PeerRead(null, null, $"{peer.Endpoint}: it did not answer ({FirstLineOf(ex.Message)})");
+            return new PeerRead(NameOf(peer), null, $"{peer.Name}: it did not answer ({FirstLineOf(ex.Message)})", Unanswered: true);
         }
     }
 
@@ -125,6 +186,16 @@ public sealed partial class FlightCommander
     /// </summary>
     public async Task<int> LookAtPeerConnectionsAsync(CancellationToken cancellationToken)
     {
+        var ended = await LookAtPeersAsync(cancellationToken);
+        // The backstop (#818): a hold that outlived a merged PR or a closed issue, which the look above did not lift, is rung once.
+        await RingMergedHoldsAsync(cancellationToken);
+        return ended;
+    }
+
+    private async Task<int> LookAtPeersAsync(CancellationToken cancellationToken)
+    {
+        // First, a wait for a flight of this node that moved away becomes a wait on the node it moved to, so this look asks that node (#818).
+        await FollowMovedFlightsAsync(cancellationToken);
         var waiting = state.Flights().Where(f => f.State != FlightState.Landed && f.PeerConnections.Length > 0).ToList();
         if (waiting.Count == 0)
         {
@@ -175,48 +246,65 @@ public sealed partial class FlightCommander
     }
 
     /// <summary>All of a peer's flights and its name, or why it could not be asked.</summary>
-    private static async Task<PeerRead> ReadAllFlightsAsync(IFleetPeer peer, CancellationToken cancellationToken)
+    private Task<PeerRead> ReadAllFlightsAsync(IFleetPeer peer, CancellationToken cancellationToken) => ReadAllFlightsAsync(peer, cancellationToken, cancellationToken);
+
+    /// <summary>All of a peer's flights and its name, read under <paramref name="budget"/> (the caller's own token ends the read for good).</summary>
+    private async Task<PeerRead> ReadAllFlightsAsync(IFleetPeer peer, CancellationToken budget, CancellationToken caller)
     {
         if (!peer.HasGrant)
         {
-            return new PeerRead(null, null, $"{peer.Endpoint}: no grant is held for it");
+            return new PeerRead(NameOf(peer), null, $"{peer.Name}: no grant is held for it");
         }
         try
         {
-            var info = await peer.NodeAsync(cancellationToken);
-            var load = await peer.LoadAsync(cancellationToken);
-            return new PeerRead(info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Endpoint, load.Flights, null);
+            var info = await peer.NodeAsync(budget);
+            var node = Learn(peer, info);
+            var load = await peer.LoadAsync(budget);
+            Copy?.Record(node, load);
+            return new PeerRead(node, load.Flights, null);
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or WebSocketException or OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or WebSocketException or OperationCanceledException && !caller.IsCancellationRequested)
         {
-            return new PeerRead(null, null, $"{peer.Endpoint}: it did not answer ({FirstLineOf(ex.Message)})");
+            return new PeerRead(NameOf(peer), null, $"{peer.Name}: it did not answer ({FirstLineOf(ex.Message)})", Unanswered: true);
         }
     }
 
     /// <summary>The wait as the peers' answers leave it (null once it is over), and whether it is over.</summary>
     private async Task<(PeerConnection? Wait, bool Over)> AnswerAsync(FlightRow flight, PeerConnection wait, IReadOnlyList<PeerRead> reads, CancellationToken cancellationToken)
     {
+        // A wait recorded before a fold followed its survivor carries the folded flight's branch, PR and issue: those are not read for
+        // this code, so they are dropped and the branch is the code's own, until a look at the node says them again.
+        if (wait.Branch is not null && !IsOwnBranch(wait.Code, wait.Branch))
+        {
+            wait = wait with { Branch = null, PullRequest = null, Issue = null };
+        }
         var read = reads.FirstOrDefault(r => r.Flights is not null && string.Equals(r.Node, wait.Node, StringComparison.OrdinalIgnoreCase));
         if (read is null)
         {
-            var why = reads.Where(r => r.Why is not null).Select(r => r.Why).ToList();
             // GitHub is the record both nodes share: a merged PR or a closed issue ends the wait whether or not the node answers (#753).
             var (ended, pr) = await GitHubSaysAsync(flight, wait, cancellationToken);
             if (ended)
             {
                 return (null, true);
             }
-            if (why.Count == 0)
+            // Only a peer this node knows by that name, asked and silent, is "not on the LAN". A peer that answered once is known by the
+            // name it gave; one never answered since this node started has none, so the node waited for is not told apart from it by name.
+            var named = reads.FirstOrDefault(r => r.Flights is null && string.Equals(r.Node, wait.Node, StringComparison.OrdinalIgnoreCase));
+            var nameless = reads.Count(r => r is { Flights: null, Node: null, Unanswered: true });
+            if (named is { Unanswered: true })
             {
-                return (wait with { Note = $"{wait.Node} is not a node this one holds a grant for" }, false);
+                return (await UnreachableAsync(flight, wait, named.Why!, pr), false);
             }
-            // The hold says it in words (#753); the technical reason is in the node's log, once, at the first look.
-            var since = wait.UnreachableSince ?? time.GetUtcNow();
-            if (wait.UnreachableSince is null)
+            if (named is null && nameless > 0)
             {
-                await Error.WriteLineAsync($"{flight.Code}: {wait.Node} could not be asked for {wait.Code}: {string.Join("; ", why)}");
+                // Which of the silent peers this is cannot be said. A wait already held as unreachable (from before a restart) stays so; any
+                // other is not called unreachable on a guess: the hold says what is known, that the node was not among those reached.
+                return wait.UnreachableSince is not null
+                    ? (wait with { Note = UnreachableNote(wait.Node, wait.UnreachableSince.Value, pr) }, false)
+                    : (wait with { Note = $"{wait.Node} was not among the nodes reached", UnreachableSince = null }, false);
             }
-            return (wait with { Note = UnreachableNote(wait.Node, since, pr), UnreachableSince = since }, false);
+            // Not a peer this node has a grant for (or one it holds none for, named): said so, and not reported as off the LAN.
+            return (wait with { Note = $"{wait.Node} is not a node this one holds a grant for", UnreachableSince = null }, false);
         }
         // The peer's flights of the one repo: its own checkout's path is its own, so the flight is matched by its code.
         var row = read.Flights!.FirstOrDefault(f => string.Equals(f.Code, wait.Code, StringComparison.OrdinalIgnoreCase));
@@ -238,9 +326,19 @@ public sealed partial class FlightCommander
                 return (wait with { Node = movedTo.To, Note = null }, false);
             }
             // Folded into another flight: its work is that one's now, so the wait is for that one.
-            return row.FoldedInto is { } into
-                ? (wait with { Code = into, Note = null }, false)
-                : (null, true);
+            if (row.FoldedInto is not { } into)
+            {
+                return (null, true);
+            }
+            // The wait now points at the survivor, so what GitHub is asked about is the survivor's branch, PR and issue, never the folded one's.
+            // A survivor the peer does not list falls back to the code's plain branch, which is a guess: a flight made from a tracker story
+            // carries a suffix (flight/pil30-sc-101645) that only the listed row knows.
+            var survivor = read.Flights!.FirstOrDefault(f => string.Equals(f.Code, into, StringComparison.OrdinalIgnoreCase));
+            return (wait with
+            {
+                Code = into, Note = null,
+                Branch = survivor?.Branch ?? Planes.BranchOf(into), PullRequest = survivor?.PullRequest, Issue = survivor?.Issue,
+            }, false);
         }
         if (row.PullRequest is not null && github is not null && await MergedOnGitHubAsync(flight, row, cancellationToken))
         {
@@ -249,10 +347,35 @@ public sealed partial class FlightCommander
         return (wait with { Note = null }, false);
     }
 
+    /// <summary>
+    /// The wait of a known peer that did not answer, held as unreachable. The hold says it in words (#753); the technical reason is in the
+    /// node's log, once, at the first look.
+    /// </summary>
+    private async Task<PeerConnection> UnreachableAsync(FlightRow flight, PeerConnection wait, string why, string pr)
+    {
+        var since = wait.UnreachableSince ?? time.GetUtcNow();
+        if (wait.UnreachableSince is null)
+        {
+            await Error.WriteLineAsync($"{flight.Code}: {wait.Node} could not be asked for {wait.Code}: {why}");
+        }
+        return wait with { Note = UnreachableNote(wait.Node, since, pr), UnreachableSince = since };
+    }
+
     /// <summary>Where this says what it would have said on stderr: the node's log; nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
-    /// <summary>The note of a wait whose node cannot be asked (#753): <c>SE1 is not on the LAN since 21:10; its PR #738 is open</c>.</summary>
+    /// <summary>
+    /// Whether the branch is the code's own, in any of its real forms: the plain <c>flight/pil30</c>, or that followed by a tracker suffix
+    /// (<c>flight/pil30-sc-101645</c>, <see cref="WorkItem.BranchSuffix"/>). The dash keeps <c>flight/pil30</c> from owning <c>flight/pil300</c>.
+    /// </summary>
+    internal static bool IsOwnBranch(string code, string branch)
+    {
+        var own = Planes.BranchOf(code);
+        return string.Equals(branch, own, StringComparison.OrdinalIgnoreCase)
+            || branch.StartsWith(own + "-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The note of a wait whose node cannot be asked (#753):<c>SE1 is not on the LAN since 21:10; its PR #738 is open</c>.</summary>
     internal static string UnreachableNote(string node, DateTimeOffset since, string pr) =>
         $"{node} is not on the LAN since {since.ToLocalTime():HH:mm}; {pr}";
 

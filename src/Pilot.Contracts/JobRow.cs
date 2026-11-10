@@ -44,6 +44,13 @@ public sealed record JobRow
     /// <summary>Whether a queued job waits on a sibling hold, a running job's build of a clone it shares; null elsewhere and from an older node.</summary>
     public bool? WaitsOnSibling { get; init; }
 
+    /// <summary>
+    /// On a queued row, when a sibling or build hold first left a slot of the node idle: the queue's head waits only on that hold while
+    /// the node runs fewer jobs than it has slots, and it has done since this time. Null while no slot stands idle for a hold, on any
+    /// other row and from an older node. Optional, so the wire version stays (PIL802).
+    /// </summary>
+    public DateTimeOffset? HoldIdleSince { get; init; }
+
     /// <summary>Why it failed (its exit code, a timeout); null unless it did.</summary>
     public string? Error { get; init; }
 
@@ -147,6 +154,23 @@ public sealed record JobRow
 
     /// <summary>Whether the node ends the job's whole tree at the first failed test it reads: a check, a run handed over with <c>--fail-fast</c>, a reviewer's or fixer's check run.</summary>
     public bool FailFast { get; init; }
+
+    /// <summary>Why the job runs a <c>dotnet test</c> over a whole project or solution with no <c>--filter</c> (<c>pilot run --whole-suite "&lt;why&gt;"</c>); null for any other job.</summary>
+    public string? WholeSuite { get; init; }
+
+    /// <summary>
+    /// Whether a benchmark was asked to run on the node's own machine (<c>pilot bench --local</c>, <c>pilot run --alone --local</c>), for
+    /// one that needs its hardware: it is never sent to a cloud VM, and waits for a quiet CPU as a bench always did. False for any other
+    /// job and on a row from before this. Optional, so <see cref="NodeWire.Version"/> stays (#823).
+    /// </summary>
+    public bool Local { get; init; }
+
+    /// <summary>
+    /// Where a benchmark ran: the Azure VM's size, image, region, price per hour, minutes, cost and evictions, or why it ran on the node's
+    /// machine instead. Null for a job that is not a bench, for one still waiting, and on a row from before this. Optional, so
+    /// <see cref="NodeWire.Version"/> stays: an older reader skips the field, and an older row reads it as null (#823).
+    /// </summary>
+    public BenchVm? BenchVm { get; init; }
 
     /// <summary>
     /// The failures read so far in a line: <c>1 failed so far (BranchShapeTests.ARebase)</c>, <c>2 errors so far (CS0234 in A.cs)</c>,

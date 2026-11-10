@@ -18,7 +18,7 @@ public sealed class JobLogTests : IDisposable
     {
         try
         {
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
         catch (IOException)
         {

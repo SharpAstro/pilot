@@ -23,7 +23,7 @@ public sealed class ReposRowTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private string Clone(string name)
@@ -33,8 +33,10 @@ public sealed class ReposRowTests : IDisposable
         return Path.Combine(_root, name);
     }
 
-    private RepoWatch Watch(NodeState state) =>
-        new(state, new RepoCatalog(state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root])), new Planes(new GitCli()), new FakeGitHub(), TimeProvider.System)
+    // On real git by default, for the Slow tests that read a real repo; a test outside Slow passes an in-memory git, so the watch's first
+    // read, which can start before StopAsync lands, starts no process (#958's guard caught three git starts here on CI).
+    private RepoWatch Watch(NodeState state, IGit? git = null) =>
+        new(state, new RepoCatalog(state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root])), new Planes(git ?? new GitCli()), new FakeGitHub(), TimeProvider.System)
         {
             Parallelism = 1,
             Interval = TimeSpan.FromHours(1),
@@ -50,7 +52,7 @@ public sealed class ReposRowTests : IDisposable
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         process.StandardError.ReadToEnd();
         process.WaitForExit();
@@ -134,7 +136,8 @@ public sealed class ReposRowTests : IDisposable
         Clone("alpha");
         Clone("beta");
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
-        var watch = Watch(state);
+        var git = FakeRepoGit.Empty(_root);
+        var watch = Watch(state, git);
         var sink = new Collect();
         using var subscription = state.Subscribe(null, null, sink);
 
@@ -152,7 +155,7 @@ public sealed class ReposRowTests : IDisposable
         var held = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var kept = new ReposRow { Repos = [Status("kept")], ReadAt = Noon };
         held.PutRepos(kept);
-        var other = Watch(held);
+        var other = Watch(held, git);
         await ((IHostedService)other).StartAsync(Ct);
         await ((IHostedService)other).StopAsync(CancellationToken.None);
         held.Repos()!.Repos.ShouldNotContain(r => r.Unread);

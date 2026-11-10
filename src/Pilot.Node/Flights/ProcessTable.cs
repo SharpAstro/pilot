@@ -34,14 +34,110 @@ public interface IProcessTable
 
     /// <summary>Stops (<paramref name="stop"/>) or continues every process of the group <paramref name="pgid"/>; only where there are process groups (Linux, where a job is its own session).</summary>
     bool SignalGroup(int pgid, bool stop) => false;
+
+    /// <summary>The CPU time the process <paramref name="pid"/> has used so far (itself only, not its children); null when it is gone or cannot be read.</summary>
+    TimeSpan? CpuTimeOf(int pid) => null;
+
+    /// <summary>How the process <paramref name="pid"/> was started and where it works; null when the table has nothing to read or the process is gone.</summary>
+    ProcessDetail? DetailsOf(int pid) => null;
+
+    /// <summary>
+    /// One process's entry read on its own, not from the whole table: what a walk up from a process that started after the
+    /// last <see cref="Snapshot"/> needs. Null when it is gone, cannot be read, or the table cannot read one process alone.
+    /// </summary>
+    ProcessEntry? EntryOf(int pid) => null;
 }
 
-/// <summary>The real table: toolhelp's snapshot on Windows, <c>/proc</c> elsewhere.</summary>
+/// <summary>A process's command line and working folder; either is null where the OS would not say.</summary>
+public readonly record struct ProcessDetail(string? CommandLine, string? WorkingDirectory);
+
+/// <summary>
+/// The real table: on Windows one <c>NtQuerySystemInformation</c> read of every process (<see cref="SystemProcesses"/>), and a
+/// process's memory through a limited handle on it alone; <c>/proc</c> elsewhere. <see cref="Process.GetProcessById(int)"/>'s
+/// <c>WorkingSet64</c> read the whole system's table for each pid it was asked of (#794).
+/// </summary>
 public sealed class OsProcessTable : IProcessTable
 {
     public static readonly OsProcessTable Instance = new();
 
+    private readonly Lock _gate = new();
+    private readonly SystemProcesses _table = new();
+    private readonly List<SystemProcess> _read = [];
+
     public IReadOnlyList<ProcessEntry> Snapshot() => OperatingSystem.IsWindows() ? WindowsSnapshot() : LinuxSnapshot();
+
+    /// <summary>Every process with its CPU time and start, in one read of the table (no handle on any process); false where it cannot be read.</summary>
+    public bool ReadAll(List<SystemProcess> into)
+    {
+        lock (_gate)
+        {
+            if (!_table.Read(_read))
+            {
+                into.Clear();
+                return false;
+            }
+            into.Clear();
+            into.AddRange(_read);
+            return true;
+        }
+    }
+
+    private List<ProcessEntry> WindowsSnapshot()
+    {
+        lock (_gate)
+        {
+            if (!_table.Read(_read))
+            {
+                return ToolhelpSnapshot();
+            }
+            var result = new List<ProcessEntry>(_read.Count);
+            foreach (var p in _read)
+            {
+                result.Add(new ProcessEntry(p.Pid, p.ParentPid, p.Image));
+            }
+            return result;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MemoryCounters
+    {
+        public uint Size;
+        public uint PageFaultCount;
+        public nuint PeakWorkingSetSize;
+        public nuint WorkingSetSize;
+        public nuint QuotaPeakPagedPoolUsage;
+        public nuint QuotaPagedPoolUsage;
+        public nuint QuotaPeakNonPagedPoolUsage;
+        public nuint QuotaNonPagedPoolUsage;
+        public nuint PagefileUsage;
+        public nuint PeakPagefileUsage;
+    }
+
+    private const uint QueryLimitedInformation = 0x1000;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool K32GetProcessMemoryInfo(nint process, ref MemoryCounters counters, uint size);
+
+    /// <summary>The working set of one process through a handle on it alone; null when it is gone or not ours to read.</summary>
+    private static long? WindowsMemoryOf(int pid)
+    {
+        var handle = OpenProcess(QueryLimitedInformation, false, pid);
+        if (handle == 0)
+        {
+            return null;
+        }
+        try
+        {
+            var counters = new MemoryCounters { Size = (uint)Marshal.SizeOf<MemoryCounters>() };
+            return K32GetProcessMemoryInfo(handle, ref counters, counters.Size) ? (long)counters.WorkingSetSize : null;
+        }
+        finally
+        {
+            CloseHandle(handle);
+        }
+    }
 
     public DateTimeOffset? StartOf(int pid)
     {
@@ -60,6 +156,10 @@ public sealed class OsProcessTable : IProcessTable
     {
         try
         {
+            if (OperatingSystem.IsWindows())
+            {
+                return WindowsMemoryOf(pid);
+            }
             using var process = Process.GetProcessById(pid);
             return process.WorkingSet64;
         }
@@ -68,6 +168,28 @@ public sealed class OsProcessTable : IProcessTable
             return null;
         }
     }
+
+    public TimeSpan? CpuTimeOf(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return process.TotalProcessorTime;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or Win32Exception or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    public ProcessDetail? DetailsOf(int pid)
+    {
+        var (commandLine, workingDirectory) = ProcessDetails.Read(pid);
+        return commandLine is null && workingDirectory is null ? null : new ProcessDetail(commandLine, workingDirectory);
+    }
+
+    public ProcessEntry? EntryOf(int pid) =>
+        ProcessDetails.EntryOf(pid) is var (parent, name) ? new ProcessEntry(pid, parent, name) : null;
 
     public void Kill(int pid)
     {
@@ -201,7 +323,8 @@ public sealed class OsProcessTable : IProcessTable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(nint handle);
 
-    private static List<ProcessEntry> WindowsSnapshot()
+    /// <summary>Toolhelp's snapshot: only where the one-call read cannot be had (a 32-bit node).</summary>
+    private static List<ProcessEntry> ToolhelpSnapshot()
     {
         var result = new List<ProcessEntry>();
         var snapshot = CreateToolhelp32Snapshot(SnapProcess, 0);

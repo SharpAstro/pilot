@@ -78,15 +78,10 @@ public sealed class PersonsWordTests
         return (ask, ring);
     }
 
-    private static CardRow FailedLeg(NodeHarness node)
+    private static CardRow FailedLeg(NodeHarness node, SeededRepos repos)
     {
-        // Finishing a leg looks at its plane, so the plane is a real (empty) repository.
-        var plane = Path.Combine(node.Folder, "plane");
-        Directory.CreateDirectory(plane);
-        using (var init = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("git", ["init", "-q", plane]) { CreateNoWindow = true })!)
-        {
-            init.WaitForExit();
-        }
+        // Finishing a leg looks at its plane, so the plane is a repository, on the in-memory git (#952) the node runs on.
+        var plane = repos.Seed("plane");
         node.State.PutFlight(new FlightRow
         {
             Code = "TIA1", Repo = "tianwen", RepoPath = plane, Issue = 1, Branch = "flight/tia1", Worktree = plane, Base = "main",
@@ -105,25 +100,25 @@ public sealed class PersonsWordTests
         await Tower(node, "busy");
         var (ask, ring) = AskToDismissARing(node);
 
-        var result = await Answer(node, ask, "Allow", Quote);
+        var result = await Answer(node, ask, "Allow it", Quote);
 
         result.Error.ShouldBeNull();
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
         node.State.Cards().Single(c => c.Id == ask.Id).State.ShouldBe(CardState.Closed);
         var handled = node.State.Cards().Single(c => c.Kind == CardKinds.PersonsWord);
         handled.Bin.ShouldBe(CardBin.Handled);
-        handled.Title.ShouldBe($"{Lookout(node)} answered {ask.Id} (Allow) at the person's word in the chat");
+        handled.Title.ShouldBe($"{Lookout(node)} answered {ask.Id} (Allow it) at the person's word in the chat");
         handled.Detail.ShouldBe(Quote);
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFailedLegIsMarkedDoneAnywayAtThePersonsWord()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        using var repos = new SeededRepos(Path.Combine(Path.GetTempPath(), "p2w-" + Guid.NewGuid().ToString("N")[..8]));
+        await using var node = await NodeHarness.StartAsync(Ct, git: repos.Git);
         Transcript(node, Said("Mark it done anyway, the ephemeris is not needed"));
         await Tower(node, "busy");
-        var card = FailedLeg(node);
+        var card = FailedLeg(node, repos);
 
         var result = await Answer(node, card, "Mark done anyway", "mark it done ANYWAY,   the ephemeris is not needed");
 
@@ -150,13 +145,14 @@ public sealed class PersonsWordTests
     [Fact]
     public async Task WithNoPersonsMessageInItsTurnTheWatchtowerStaysFenced()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        using var repos = new SeededRepos(Path.Combine(Path.GetTempPath(), "p2w-" + Guid.NewGuid().ToString("N")[..8]));
+        await using var node = await NodeHarness.StartAsync(Ct, git: repos.Git);
         Transcript(node, Replied("nothing yet"));
         await Tower(node, "busy");
         var (ask, ring) = AskToDismissARing(node);
-        var failed = FailedLeg(node);
+        var failed = FailedLeg(node, repos);
 
-        (await Answer(node, ask, "Allow", Quote)).Error.ShouldNotBeNull();
+        (await Answer(node, ask, "Allow it", Quote)).Error.ShouldNotBeNull();
         (await Answer(node, failed, "Mark done anyway", Quote)).Error.ShouldNotBeNull();
 
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
@@ -173,9 +169,9 @@ public sealed class PersonsWordTests
         await Tower(node, "busy");
         var (ask, ring) = AskToDismissARing(node);
 
-        (await Answer(node, ask, "Allow", "something the person never said")).Error.ShouldNotBeNull();
-        (await Answer(node, ask, "Allow", null)).Error.ShouldNotBeNull();
-        (await Answer(node, ask, "Allow", "go")).Error.ShouldNotBeNull();
+        (await Answer(node, ask, "Allow it", "something the person never said")).Error.ShouldNotBeNull();
+        (await Answer(node, ask, "Allow it", null)).Error.ShouldNotBeNull();
+        (await Answer(node, ask, "Allow it", "go")).Error.ShouldNotBeNull();
 
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
         node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.PersonsWord);
@@ -189,7 +185,7 @@ public sealed class PersonsWordTests
         await Tower(node, "busy");
         var (ask, ring) = AskToDismissARing(node);
 
-        (await Answer(node, ask, "Allow", Quote)).Error.ShouldNotBeNull();
+        (await Answer(node, ask, "Allow it", Quote)).Error.ShouldNotBeNull();
 
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
         node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.PersonsWord);
@@ -203,7 +199,7 @@ public sealed class PersonsWordTests
         await Tower(node, "idle");
         var (ask, ring) = AskToDismissARing(node);
 
-        (await Answer(node, ask, "Allow", Quote)).Error.ShouldNotBeNull();
+        (await Answer(node, ask, "Allow it", Quote)).Error.ShouldNotBeNull();
 
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
     }
@@ -211,10 +207,11 @@ public sealed class PersonsWordTests
     [Fact]
     public async Task OnlyAnswerAndDismissOfACardTakeThePersonsWord()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        using var repos = new SeededRepos(Path.Combine(Path.GetTempPath(), "p2w-" + Guid.NewGuid().ToString("N")[..8]));
+        await using var node = await NodeHarness.StartAsync(Ct, git: repos.Git);
         Transcript(node, Said(Words));
         await Tower(node, "busy");
-        FailedLeg(node);
+        FailedLeg(node, repos);
 
         var finished = await Send(node, new CommandRequest
         {
@@ -235,7 +232,7 @@ public sealed class PersonsWordTests
         await Tower(node, "busy");
         var (ask, ring) = AskToDismissARing(node);
 
-        (await Answer(node, ask, "Allow", "please allow it now")).Error.ShouldNotBeNull();
+        (await Answer(node, ask, "Allow it", "please allow it now")).Error.ShouldNotBeNull();
 
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
         node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.PersonsWord);
@@ -263,7 +260,7 @@ public sealed class PersonsWordTests
         await Tower(node, "busy");
         var (ask, ring) = AskToDismissARing(node);
 
-        (await Answer(node, ask, "Allow", why)).Error.ShouldNotBeNull();
+        (await Answer(node, ask, "Allow it", why)).Error.ShouldNotBeNull();
 
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
         node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.PersonsWord);
@@ -274,7 +271,7 @@ public sealed class PersonsWordTests
         await Tower(node, "busy");
         var (ask, ring) = AskToDismissARing(node);
 
-        (await Answer(node, ask, "Allow", why)).Error.ShouldBeNull();
+        (await Answer(node, ask, "Allow it", why)).Error.ShouldBeNull();
 
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
         node.State.Cards().ShouldContain(c => c.Kind == CardKinds.PersonsWord);
@@ -372,7 +369,7 @@ public sealed class PersonsWordTests
         await Tower(node, "busy");
         var (ask, ring) = AskToDismissARing(node);
 
-        (await Answer(node, ask, "Allow", "please allow it now")).Error.ShouldNotBeNull();
+        (await Answer(node, ask, "Allow it", "please allow it now")).Error.ShouldNotBeNull();
 
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
         node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.PersonsWord);
@@ -386,7 +383,7 @@ public sealed class PersonsWordTests
         await Tower(node, "busy");
         var (ask, ring) = AskToDismissARing(node);
 
-        (await Answer(node, ask, "Allow", "it looks stuck")).Error.ShouldNotBeNull();
+        (await Answer(node, ask, "Allow it", "it looks stuck")).Error.ShouldNotBeNull();
 
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
         node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.PersonsWord);
@@ -400,7 +397,7 @@ public sealed class PersonsWordTests
         await Tower(node, "busy");
         var (ask, ring) = AskToDismissARing(node);
 
-        (await Answer(node, ask, "Allow", "Allow")).Error.ShouldBeNull();
+        (await Answer(node, ask, "Allow it", "Allow")).Error.ShouldBeNull();
 
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
         node.State.Cards().ShouldContain(c => c.Kind == CardKinds.PersonsWord);
@@ -416,7 +413,7 @@ public sealed class PersonsWordTests
         await Tower(node, "busy");
         var (ask, ring) = AskToDismissARing(node);
 
-        (await Answer(node, ask, "Allow", Quote)).Error.ShouldBeNull();
+        (await Answer(node, ask, "Allow it", Quote)).Error.ShouldBeNull();
 
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
     }
@@ -453,7 +450,7 @@ public sealed class PersonsWordTests
         var passed = node.State.RaiseCard(CardBin.ForYou, "note", Verbs.NodeTarget, "An old note", "nothing to do");
         var output = new StringWriter();
 
-        (await Cli(node, output, null, "answer", ask.Id, "Allow", "--why", Quote)).ShouldBe(0, output.ToString());
+        (await Cli(node, output, null, "answer", ask.Id, "Allow it", "--why", Quote)).ShouldBe(0, output.ToString());
         (await Cli(node, output, null, "dismiss", passed.Id, "it", "has", "passed", "--why", Quote)).ShouldBe(0, output.ToString());
 
         node.State.Cards().Single(c => c.Id == ask.Id).Outcome.ShouldNotBeNull().ShouldStartWith(Autopilot.AllowLabel + ";");
@@ -475,13 +472,13 @@ public sealed class PersonsWordTests
         var (ask, ring) = AskToDismissARing(node);
         var output = new StringWriter();
 
-        (await Cli(node, output, AgentRows.SessionA, "answer", ask.Id, "Allow", "--why", Quote)).ShouldBe(0, output.ToString());
+        (await Cli(node, output, AgentRows.SessionA, "answer", ask.Id, "Allow it", "--why", Quote)).ShouldBe(0, output.ToString());
 
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
         node.State.Cards().Single(c => c.Id == ask.Id).Outcome.ShouldNotBeNull().ShouldStartWith(Autopilot.AllowLabel + ";");
         AutopilotTests.BlackBox(node).Single(l => l.Verb == Verbs.Answer).ShouldSatisfyAllConditions(l => l.Who.ShouldBe(Lookout(node)), l => l.Why.ShouldBe(Quote));
         var handled = node.State.Cards().Single(c => c.Kind == CardKinds.PersonsWord);
-        handled.Title.ShouldBe($"{Lookout(node)} answered {ask.Id} (Allow) at the person's word in the chat");
+        handled.Title.ShouldBe($"{Lookout(node)} answered {ask.Id} (Allow it) at the person's word in the chat");
         handled.Detail.ShouldBe(Quote);
     }
 }

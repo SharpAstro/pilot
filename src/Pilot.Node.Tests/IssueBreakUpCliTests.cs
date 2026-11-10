@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Pilot.Commands;
 using Pilot.Contracts;
 using Shouldly;
@@ -12,18 +11,11 @@ public sealed class IssueBreakUpCliTests : IDisposable
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2b-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly SeededRepos _repos;
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_root))
-        {
-            foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(_root, recursive: true);
-        }
-    }
+    public IssueBreakUpCliTests() => _repos = new SeededRepos(_root);
+
+    public void Dispose() => _repos.Dispose();
 
     private static async Task<(int Exit, string Output, string Error)> Pilot(NodeHarness node, string cwd, params string[] args)
     {
@@ -33,29 +25,14 @@ public sealed class IssueBreakUpCliTests : IDisposable
         return (exit, output.ToString(), error.ToString());
     }
 
-    private async Task<string> MakeRepoAsync()
-    {
-        var repo = Path.Combine(_root, "tianwen");
-        Directory.CreateDirectory(repo);
-        foreach (var args in new[] { new[] { "init", "-q", "-b", "main" }, ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "first"] })
-        {
-            var start = new ProcessStartInfo("git") { WorkingDirectory = repo, UseShellExecute = false };
-            foreach (var arg in args)
-            {
-                start.ArgumentList.Add(arg);
-            }
-            using var git = Process.Start(start)!;
-            await git.WaitForExitAsync(Ct);
-        }
-        return repo;
-    }
+    // The repo is laid on the in-memory git (#952), which the node runs on too: no git process starts.
+    private string MakeRepo() => _repos.Seed("tianwen");
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task IssueBreakUpShowsTheProposedPartsAndWritesNothingUntilSave()
     {
-        var repo = await MakeRepoAsync();
-        await using var node = await NodeHarness.StartAsync(Ct);
+        var repo = MakeRepo();
+        await using var node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
         node.GitHub.AddMilestone(repo, "v1");
         node.GitHub.AddIssue(repo, "Rings and shadows", "v1", body: "do both");
 
@@ -80,8 +57,8 @@ public sealed class IssueBreakUpCliTests : IDisposable
     [Fact]
     public async Task DiscardForgetsTheProposalAndSaveWithoutOneIsRefused()
     {
-        var repo = await MakeRepoAsync();
-        await using var node = await NodeHarness.StartAsync(Ct);
+        var repo = MakeRepo();
+        await using var node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
         node.GitHub.AddMilestone(repo, "v1");
         node.GitHub.AddIssue(repo, "Rings and shadows", "v1");
         await Pilot(node, _root, "issue", "break-up", "--repo", repo, "1");

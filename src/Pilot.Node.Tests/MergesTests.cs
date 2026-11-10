@@ -50,7 +50,7 @@ public sealed class MergesTests
     [Fact]
     public async Task AMergeAddsAnEntryNamingItsFlightPrRepoHeadAndWhereItStands()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1");
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
         node.GitHub.Queues = true;
@@ -68,7 +68,7 @@ public sealed class MergesTests
     [Fact]
     public async Task AFlightsMergeWithoutAPassedReviewIsRefusedAndJoinsNoQueue()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1", review: ReviewState.Reviewing);
 
         var result = await Merge(node, "TIA1");
@@ -81,7 +81,7 @@ public sealed class MergesTests
     [Fact]
     public async Task AReposEntriesAreTakenInOrderOneAtATimeWhileAnotherReposGoesThroughAtOnce()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1");
         Flight(node, "TIA2");
         Flight(node, "MOO3", repo: "moons");
@@ -95,12 +95,12 @@ public sealed class MergesTests
             if (call == nameof(IGitHub.MergeAsync) && Interlocked.Increment(ref first) == 1)
             {
                 reached.TrySetResult();
-                await open.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                await open.Task.WaitAsync(TimeSpan.FromSeconds(25));
             }
         };
 
         var one = Merge(node, "TIA1");
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(20), Ct);
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(120), Ct); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         var two = Merge(node, "TIA2");
         await Until(() => node.State.Merges().Any(m => m.Flight == "TIA2"), "TIA2 joined the queue");
 
@@ -126,7 +126,7 @@ public sealed class MergesTests
     [Fact]
     public async Task AMergeWhileChecksRunWaitsInTheQueueForThemAndAsksAgainAtGreenKeepingItsPlace()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1");
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
 
@@ -154,7 +154,7 @@ public sealed class MergesTests
     [InlineData("closed")]
     public async Task AMergingEntryEndsWithItsWhyWhenGitHubsQueueLetsItsPrGoUnmergedAndTheReposLaterEntriesMoveUp(string how)
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1");
         Flight(node, "TIA2", review: ReviewState.Reviewing);
         var at = DateTimeOffset.UtcNow;
@@ -178,7 +178,7 @@ public sealed class MergesTests
     [Fact]
     public async Task AMergingEntryStillInGitHubsQueueStays()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1");
         node.State.PutMerge(new MergeRow { Flight = "TIA1", Repo = "tianwen", Pr = 63, Head = PrHead, Method = "rebase", State = MergeEntryState.Merging, AddedAt = DateTimeOffset.UtcNow });
         node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: true, Position: 2);
@@ -191,7 +191,7 @@ public sealed class MergesTests
     [Fact]
     public async Task AnEntryWaitsForAPassedReviewAtItsHeadAndMergesOnlyOnceItHasOne()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var flight = Flight(node, "TIA1", review: ReviewState.Reviewing);
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
         node.GitHub.Queues = true;
@@ -217,7 +217,7 @@ public sealed class MergesTests
     [Fact]
     public async Task AReviewThatAsksForChangesTakesAnEntryWaitingForItOutWithItsWhy()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var flight = Flight(node, "TIA1", review: ReviewState.Changes);
         node.State.PutMerge(new MergeRow
         {
@@ -236,7 +236,7 @@ public sealed class MergesTests
     [Fact]
     public async Task AFailedCheckTakesTheEntryOutWithItsWhy()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1");
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3);
 
@@ -251,7 +251,7 @@ public sealed class MergesTests
     [Fact]
     public async Task APrThatConflictsLeavesTheQueueWithItsWhyAndLetsTheNextEntryGoOn()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1");
         Flight(node, "TIA2");
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
@@ -272,7 +272,7 @@ public sealed class MergesTests
     [Fact]
     public async Task ATakenBackMergeRemovesItsEntry()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1");
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
         (await Merge(node, "TIA1")).Error.ShouldBeNull();
@@ -322,7 +322,7 @@ public sealed class MergesTests
     [Fact]
     public async Task AtEachLookAnEntryWhoseArmIsGoneEndsWhileAnArmedOneAndOneWaitingForItsReviewStay()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var armed = Flight(node, "TIA1");
         node.State.PutFlight(armed with { MergeWhenGreen = [PrHead, "rebase", LegCommander.ArmedByNode] });
         Flight(node, "TIA2", review: ReviewState.Reviewing);
@@ -343,10 +343,9 @@ public sealed class MergesTests
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AnEntryArmedOnGitHubsAutoMergeEndsMergedWhenGitHubMergesItsPr()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         // The landing asks git in the repo's folder.
         Directory.CreateDirectory(Flight(node, "TIA1").RepoPath);
         node.GitHub.AutoMergeAllowed = true;
@@ -366,7 +365,7 @@ public sealed class MergesTests
     [Fact]
     public async Task AnEntryWaitingForItsReviewWhosePrAPersonMergedEndsMerged()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Directory.CreateDirectory(Flight(node, "TIA1").RepoPath);
         node.State.PutMerge(new MergeRow
         {
@@ -387,7 +386,7 @@ public sealed class MergesTests
     [Fact]
     public async Task AMergeTakenBackTooLateEndsItsEntryMergedAndTheReposNextEntryMovesUp()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1");
         Flight(node, "TIA2", review: ReviewState.Reviewing);
         var at = DateTimeOffset.UtcNow;
@@ -417,7 +416,7 @@ public sealed class MergesTests
     [InlineData(false, true)]
     public async Task AMergeCallThatNeverAnswersEndsItsMergingEntryAndGivesTheTurnBack(bool mergedMeanwhile, bool givenUp)
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1");
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
         // The merge call goes past its time budget (gh's own, an OperationCanceledException) or gh does not start at all; GitHub may

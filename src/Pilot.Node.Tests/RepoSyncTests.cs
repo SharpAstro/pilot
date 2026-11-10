@@ -20,7 +20,7 @@ public sealed class RepoSyncTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private string Clone(string name)
@@ -190,7 +190,7 @@ public sealed class RepoSyncTests : IDisposable
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
@@ -198,7 +198,7 @@ public sealed class RepoSyncTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
+    [Trait("Category", "Slow")] // About git itself: a clone one commit behind a real bare origin, which the sync fast-forwards with git's own merge.
     public async Task ThroughARealNodeSyncFastForwardsARealCloneIsJournaledAndRefusedFromTheWatchtowerAndTheLan()
     {
         // A clone one commit behind its bare origin, on main.
@@ -257,7 +257,7 @@ public sealed class RepoSyncTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
+    [Trait("Category", "Slow")] // About git itself: a clone one commit behind a real bare origin, which the sync fast-forwards with git's own merge.
     public async Task AMergeOnlySyncTakesWhatWasAlreadyFetchedWhereTheFullSyncFailsOnAnUnreachableRemote()
     {
         // A clone one commit behind a bare origin, whose new commit it has fetched; then the origin goes away.
@@ -333,13 +333,81 @@ public sealed class RepoSyncTests : IDisposable
         git.Merges.ShouldBe(1);
     }
 
+    private (RepoSync Sync, ScriptedGit Git, List<(string Cwd, string Command)> Queued) Seeded(string clone, bool on, int behind, string? solution, bool optIn = true)
+    {
+        var git = new ScriptedGit();
+        git.Repo(clone, behind: behind);
+        git.Say(clone, "rev-parse HEAD", "abc123\n");
+        if (solution is not null)
+        {
+            var folder = Path.GetDirectoryName(Path.Combine(clone, solution))!;
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(clone, solution), "");
+            if (optIn)
+            {
+                File.WriteAllText(Path.Combine(folder, "Directory.Packages.props"), "<Project><ItemGroup><PackageVersion Include=\"Microsoft.MSBuildCache.Local\" Version=\"0.1.0\" /></ItemGroup></Project>");
+            }
+        }
+        var queued = new List<(string Cwd, string Command)>();
+        var (sync, _) = Sync(git, new FakeGitHub(), new NodeState(new InMemoryJournal(), TimeProvider.System), _root);
+        sync.Seed = new BuildSeed(git, () => on, (cwd, command) =>
+        {
+            queued.Add((cwd, command));
+            return null;
+        });
+        return (sync, git, queued);
+    }
+
+    [Fact]
+    public async Task ASyncThatMovesHeadQueuesOneSeedBuildOfTheCloneInTheChecksFormOncePerHead()
+    {
+        var clone = Clone("seeded");
+        var (sync, _, queued) = Seeded(clone, on: true, behind: 2, solution: "src/Seeded.slnx");
+
+        (await sync.SyncOneAsync("seeded", clone, Ct)).Status.ShouldBe(RepoSyncStatus.Updated);
+        queued.ShouldBe([(Path.Combine(clone, "src"), "dotnet build Seeded.slnx -c Release")]);
+
+        // The same HEAD again (the scripted clone stays behind and takes the merge once more): nothing more.
+        (await sync.SyncOneAsync("seeded", clone, Ct)).Status.ShouldBe(RepoSyncStatus.Updated);
+        queued.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ASeedIsQueuedOnlyWithTheSettingOnAndHeadMovedAndASolutionToBuild()
+    {
+        var off = Clone("off");
+        var (offSync, _, offQueued) = Seeded(off, on: false, behind: 1, solution: "Off.slnx");
+        await offSync.SyncOneAsync("off", off, Ct);
+        offQueued.ShouldBeEmpty();
+
+        var level = Clone("level");
+        var (levelSync, _, levelQueued) = Seeded(level, on: true, behind: 0, solution: "Level.slnx");
+        (await levelSync.SyncOneAsync("level", level, Ct)).Status.ShouldBe(RepoSyncStatus.Current);
+        levelQueued.ShouldBeEmpty();
+
+        var bare = Clone("bare");
+        var (bareSync, _, bareQueued) = Seeded(bare, on: true, behind: 1, solution: null);
+        (await bareSync.SyncOneAsync("bare", bare, Ct)).Status.ShouldBe(RepoSyncStatus.Updated);
+        bareQueued.ShouldBeEmpty();
+
+        var plain = Clone("plain");
+        var (plainSync, _, plainQueued) = Seeded(plain, on: true, behind: 1, solution: "Plain.slnx", optIn: false);
+        (await plainSync.SyncOneAsync("plain", plain, Ct)).Status.ShouldBe(RepoSyncStatus.Updated);
+        plainQueued.ShouldBeEmpty();
+
+        var root = Clone("rooted");
+        var (rootSync, _, rootQueued) = Seeded(root, on: true, behind: 1, solution: "Rooted.sln");
+        await rootSync.SyncOneAsync("rooted", root, Ct);
+        rootQueued.ShouldBe([(root, "dotnet build Rooted.sln -c Release")]);
+    }
+
     [Fact]
     public async Task CreateIssueAsksGhForTheTitleAndBodyAndReturnsItsNumberAndRefusesWithoutATitle()
     {
-        var repo = Path.Combine(_root, "tianwen");
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
+        var repo = Path.Combine(node.Folder, "tianwen");
         Directory.CreateDirectory(repo);
-        Git(repo, "init", "-q", "-b", "main");
-        await using var node = await NodeHarness.StartAsync(Ct);
+        node.Repos!.Run(repo, "init", "-q", "-b", "main");
 
         var made = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.CreateIssue, Target = Verbs.RepoTarget(repo), Args = ["Planets", "on the GPU", "please"], Who = "gui" }, Ct)).Response!;
 
@@ -356,7 +424,7 @@ public sealed class RepoSyncTests : IDisposable
         var output = new StringWriter();
         (await PilotCommand.RunAsync(["--node-socket", node.SocketPath, "issue", "create", "--repo", repo, "--body", "text", "Rings"], _root, output, new StringWriter(), Ct)).ShouldBe(0);
         output.ToString().ShouldContain("created issue #2");
-        node.GitHub.IssuesCreated[1].Body.ShouldBe("text");
+        node.GitHub.IssuesCreated.ToArray()[1].Body.ShouldBe("text");
     }
 
     private static int Port()

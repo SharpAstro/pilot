@@ -17,7 +17,7 @@ public sealed class MergingCardTests : ReviewTestsBase
 
     private LegCommander Commander()
     {
-        var git = new GitCli();
+        var git = _git;
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
         return new LegCommander(_state, _workers, new FakeChecks(), _github, git, new Planes(git), _flights, options, TimeProvider.System)
         {
@@ -61,13 +61,13 @@ public sealed class MergingCardTests : ReviewTestsBase
                 return Task.CompletedTask;
             }
             reached.TrySetResult();
-            return Task.WhenAny(open.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+            return Task.WhenAny(open.Task, Task.Delay(TimeSpan.FromSeconds(25)));
         };
         return (open, reached);
     }
 
     private static async Task Reaches(TaskCompletionSource reached) =>
-        (await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(20), Ct))).ShouldBe(reached.Task, "the call was not reached");
+        (await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(120), Ct))).ShouldBe(reached.Task, "the call was not reached"); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
 
     private async Task<CardChoice> ShowsMerging(CardRow card)
     {

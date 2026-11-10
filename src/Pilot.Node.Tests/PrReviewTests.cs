@@ -15,12 +15,17 @@ internal static class PrOrigins
 {
     public static string Git(string cwd, params string[] args)
     {
+        // A folder a test's model owns (PrFixTestsBase on FakeRepoGit) is answered by the model, as ReviewTestsBase.Git does.
+        if (TestGit.Answer(cwd, args) is { } answered)
+        {
+            return answered;
+        }
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
@@ -45,6 +50,10 @@ internal static class PrOrigins
     /// <summary>One more commit on the PR, pushed to its head as GitHub keeps it; returns the new head.</summary>
     public static string Push(string work, int number, string what)
     {
+        if (FakeRepoGit.Owning(work) is { } fake)
+        {
+            return FakePrOrigins.Push(fake, work, number, what);
+        }
         File.WriteAllText(Path.Combine(work, $"{Guid.NewGuid():N}.txt"), what + "\n");
         Commit(work, what);
         Git(work, "push", "-q", "-f", "origin", $"HEAD:refs/pull/{number}/head");
@@ -73,7 +82,7 @@ internal static class PrOrigins
 /// <summary>
 /// A review of any PR (#113): pinned at the PR's head in a worktree of the node's own, made in the repo's clone under the
 /// repo roots or in the node's clone cache, its verdict on a card, and its worktree gone once that card closes. GitHub is
-/// a fake gh over bare repos; git is real.
+/// a fake gh over bare repos; git is the in-memory model (#952), or real git for a class or test that asks for it.
 /// </summary>
 public abstract class PrReviewTestsBase : IDisposable
 {
@@ -88,8 +97,8 @@ public abstract class PrReviewTestsBase : IDisposable
     private protected readonly PrReviews _reviews;
 
     /// <summary>acme/widget has a clone under the repo roots; acme/gadget has none.</summary>
-    private protected readonly string _widgetHead;
-    private protected readonly string _gadgetHead;
+    private protected string _widgetHead;
+    private protected string _gadgetHead;
 
     // The two origins and the clone, built once a run and copied into each test's folder: about twenty git processes a test
     // otherwise, most of the class's three minutes.
@@ -108,18 +117,26 @@ public abstract class PrReviewTestsBase : IDisposable
         return (root, widgetHead, gadgetHead);
     }, LazyThreadSafetyMode.ExecutionAndPublication);
 
-    protected PrReviewTestsBase()
+    /// <summary>The git the node under test runs: the model, or <see cref="GitCli"/> on a real-git run.</summary>
+    private protected readonly IGit _git;
+
+    private readonly TestGit _testGit;
+
+    /// <param name="realGit">The class is about git itself, or needs a git behaviour the model lacks: it runs on real git (say which in a comment at the class).</param>
+    protected PrReviewTestsBase(bool realGit = false)
     {
-        SeedRepo.CopyTree(Seed.Value.Root, _root);
+        // The model builds the fixture in memory; on real git the seed is built once a run and copied in.
+        FakePrOrigins.Shape? shape = null;
+        _git = _testGit = new TestGit(_root, realGit, () => SeedRepo.CopyTree(Seed.Value.Root, _root), makeFake: () => (shape = FakePrOrigins.Build(_root)).Git);
         var gadget = Path.Combine(_root, "github", "gadget.git");
-        (_widgetHead, _gadgetHead) = (Seed.Value.WidgetHead, Seed.Value.GadgetHead);
+        (_widgetHead, _gadgetHead) = shape is { } built ? (built.WidgetHead, built.GadgetHead) : (Seed.Value.WidgetHead, Seed.Value.GadgetHead);
         var (widgetHead, gadgetHead) = (_widgetHead, _gadgetHead);
         _github.Origins["acme/gadget"] = gadget;
         _github.Prs["acme/widget#7"] = Pr("acme/widget", 7, widgetHead, author: "ada");
         _github.Prs["acme/gadget#9"] = Pr("acme/gadget", 9, gadgetHead, author: "bob");
 
         _state = new NodeState(_journal, TimeProvider.System);
-        var git = new GitCli();
+        var git = _git;
         _options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [Roots]);
         _reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, _options), _options, TimeProvider.System)
         {
@@ -138,19 +155,37 @@ public abstract class PrReviewTestsBase : IDisposable
     private protected static PullRequest Pr(string repo, int number, string head, string author, string state = "OPEN") =>
         new(number, state, head, $"https://github.com/{repo}/pull/{number}", Title: $"PR {number} of {repo}", Author: author, Base: "main");
 
+    /// <summary>
+    /// Runs this test on git itself, for a test that checks what git does in a class that otherwise checks what the node decides. Called first,
+    /// before the test has used the repos: the model's folders are replaced by the real seed, and the PR heads are the seed's.
+    /// </summary>
+    private protected void RealGit()
+    {
+        _testGit.UseReal();
+        (_widgetHead, _gadgetHead) = (Seed.Value.WidgetHead, Seed.Value.GadgetHead);
+        _github.Prs["acme/widget#7"] = Pr("acme/widget", 7, _widgetHead, author: "ada");
+        _github.Prs["acme/gadget#9"] = Pr("acme/gadget", 9, _gadgetHead, author: "bob");
+    }
+
     public void Dispose()
     {
-        foreach (var clone in new[] { WidgetClone, GadgetCache }.Where(Directory.Exists))
+        if (_testGit.IsReal)
         {
-            try
+            foreach (var clone in new[] { WidgetClone, GadgetCache }.Where(Directory.Exists))
             {
-                PrOrigins.Git(clone, "worktree", "prune");
-            }
-            catch (InvalidOperationException)
-            {
+                try
+                {
+                    PrOrigins.Git(clone, "worktree", "prune");
+                }
+                catch (InvalidOperationException)
+                {
+                }
             }
         }
+        _testGit.Release();
         PrOrigins.Delete(_root);
+        // A command the model could not answer may have been swallowed by the node's own catch: the test still fails.
+        _testGit.Verify();
     }
 
     private protected Task<CommandResult> Run(string verb, string target, string who, params string[] args) =>
@@ -165,7 +200,7 @@ public abstract class PrReviewTestsBase : IDisposable
     /// <summary>Reviews as the node runs them, posting a verdict on an open PR itself; asks the verb of PR 7, as the one asking.</summary>
     private protected Asker SelfPosting(TimeSpan? grace = null)
     {
-        var git = new GitCli();
+        var git = _git;
         var reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, _options), _options, TimeProvider.System)
         {
             SelfFinishGrace = grace ?? TimeSpan.FromMilliseconds(1),
@@ -211,7 +246,7 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
     private (NodeState State, PrReviews Reviews) Restarted()
     {
         var state = new NodeState(_journal, TimeProvider.System);
-        var git = new GitCli();
+        var git = _git;
         var reviews = new PrReviews(state, _workers, _github, git, new Planes(git), new RepoCatalog(state, _options), _options, TimeProvider.System)
         {
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),
@@ -222,7 +257,6 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AStartedReviewPrWritesOneLineNamingTheVerbThePrWhoAskedAndTheReviewerAtTheHead()
     {
         _reviews.Error = _log;
@@ -259,7 +293,6 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewPrCutOffBeforeItsRowWasWrittenLeavesNoPendingStatusRowOrWorktree()
     {
         _reviews.Error = _log;
@@ -274,7 +307,6 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewingRowWhoseSessionIsGoneAfterARestartIsStartedAfreshAtTheFirstSweepOnce()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
@@ -299,7 +331,6 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewingRowWhoseSessionEndedAfterARestartIsStartedAfreshButOneStillWorkingIsLeft()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
@@ -322,11 +353,10 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewLostInARestartThatCannotStartAgainTakesItsStatusAndLabelBackAndRaisesACardWithReviewAgain()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
-        _github.Labels[7] = [PilotMarks.Reviewing];
+        _github.SetLabels(7, PilotMarks.Reviewing);
         var (state, reviews) = Restarted();
         _workers.Fail = new FlightException("claude is not logged in");
 
@@ -337,12 +367,15 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
         var status = _github.Statuses.Last();
         (status.Sha, status.State).ShouldBe((_widgetHead, "error"));
         _github.RemoveCalls.ShouldContain((7, PilotMarks.Reviewing));
-        _github.Labels[7].ShouldNotContain(PilotMarks.Reviewing);
+        _github.Labels[7].Keys.ShouldNotContain(PilotMarks.Reviewing);
         var card = state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.LostKind).ShouldHaveSingleItem();
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Detail.ShouldNotBeNull().ShouldContain("claude is not logged in");
+        // The golden card (#797): what happened in the title, what to do first (with the reason), one short verb.
+        card.Title.ShouldBe("acme/widget#7: the review was lost in a restart and did not start again");
+        card.Summary.ShouldNotBeNull().ShouldStartWith("Start the review of acme/widget#7 afresh: it was running when the node restarted and could not be started again (");
         var choice = card.Choices.ShouldHaveSingleItem();
-        (choice.Label, choice.Verb, choice.Target).ShouldBe(("Start the review of acme/widget#7 afresh", Verbs.ReviewPr, "pr/acme/widget#7"));
+        (choice.Label, choice.Verb, choice.Target).ShouldBe(("Start the review again", Verbs.ReviewPr, "pr/acme/widget#7"));
         Directory.Exists(row.Worktree).ShouldBeFalse();
     }
 }
@@ -351,7 +384,6 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
 public sealed class PrReviewTests1 : PrReviewTestsBase
 {
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APrInARepoWithACloneIsReviewedInThatClonePinnedAtItsHead()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
@@ -381,7 +413,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APrInARepoWithNoCloneIsClonedIntoTheCacheOnceAndAFreshReviewEndsTheLast()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/gadget#9", "controller")).Error.ShouldBeNull();
@@ -405,7 +436,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task PostsItselfOnAnOpenPr()
     {
         // #241's review rang with a Post button all night; on an open PR pilot posts its review itself (SE1, 2026-10-26).
@@ -429,7 +459,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ThePostedReviewsVerdictIsAnsweredBeforeItsWorktreeAndReviewerGoAfterTheGrace()
     {
         var grace = TimeSpan.FromSeconds(2);
@@ -461,7 +490,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APostGitHubRefusedOnAnOpenPrLeavesAForYouCardWithPostThatSaysWhy()
     {
         var ask = SelfPosting();
@@ -489,7 +517,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APostThatWentOutOnAnOpenPrAndNeverSaidBackLeavesAForYouCardWithNoPost()
     {
         var ask = SelfPosting();
@@ -512,7 +539,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task OnlyTheReviewersVerdictRaisesTheCardAndTheWorktreeGoesWhenTheCardCloses()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
@@ -551,7 +577,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AChangesVerdictOnTheControllersOwnPrPostsCommentYetSetsFailureAndPilotChanges()
     {
         _github.Login = "ada";
@@ -573,7 +598,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ACleanCommentOnTheControllersOwnPrSetsSuccessAndPilotPassed()
     {
         _github.Login = "ada";
@@ -586,7 +610,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ACleanCommentOnOnesOwnPrQueuesItAtTheReviewedHeadOnceAndSaysSo()
     {
         await ReviewedWidget("comment");
@@ -603,7 +626,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
 public sealed class PrReviewTests2 : PrReviewTestsBase
 {
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AChangesVerdictQueuesNothing()
     {
         await ReviewedWidget("changes");
@@ -613,7 +635,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ANewHeadAfterTheReviewQueuesNothing()
     {
         await ReviewedWidget("approve", checks: ChoiceStatus.Pending);
@@ -625,7 +646,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task PendingChecksWaitThenQueueOnceGreenEvenAfterTheCardClosed()
     {
         await ReviewedWidget("approve", checks: ChoiceStatus.Pending);
@@ -643,7 +663,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AHeldReviewWorktreeIsSaidOnceAndAgainWhenItGoesNotAtEverySweep()
     {
         // A file held open keeps a folder only on Windows; elsewhere the removal goes through and there is nothing to hold.
@@ -662,7 +681,7 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
                 await _reviews.SweepAsync(Ct);
             }
             Row("acme/widget", 7).State.ShouldBe(PrReviewState.Reviewed);
-            _state.Cards().Where(c => c.Kind == PrReviews.LeftKind).Select(c => c.Title).ShouldBe(["acme/widget#7's review worktree is still held; the node removes it when it is let go"]);
+            _state.Cards().Where(c => c.Kind == PrReviews.LeftKind).Select(c => c.Title).ShouldBe(["acme/widget#7's review worktree is still held"]);
         }
         finally
         {
@@ -675,7 +694,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task FailedChecksQueueNothing()
     {
         await ReviewedWidget("approve", checks: ChoiceStatus.Failing);
@@ -684,7 +702,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ADraftQueuesNothing()
     {
         _github.Login = "ada";
@@ -699,7 +716,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ABaseWithoutAMergeQueueRaisesTheMergeCard()
     {
         await ReviewedWidget("approve", queue: false);
@@ -711,7 +727,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AGreenReviewInANoAutoMergeRepoQueuesNothingAndRaisesTheMergeCard()
     {
         _reviews.Models = new RoleModels(new NodeSettings { NoAutoMergeRepos = ["widget"] });
@@ -727,7 +742,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task PostIsOneReviewWithAnInlineCommentOnEachFindingInTheDiffAndIsNeverPostedTwice()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
@@ -777,7 +791,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewOfAnyPrSetsItsStatusPendingAtTheStartAndFromItsVerdictAndLinksThePostedReview()
     {
         const string page = "https://github.com/acme/widget/pull/7";
@@ -801,7 +814,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
 public sealed class PrReviewTests3 : PrReviewTestsBase
 {
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewOfAFlightsPrSetsItsStatusButLeavesTheFlightsLabel()
     {
         // acme/widget#7 is a flight's PR: its pilot: label (passed, conflicts, queued) is the flight's, which PrMarks would
@@ -820,7 +832,6 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewOfALandedFlightsPrLabelsItAsAnyPrs()
     {
         // Landed, the flight keeps no label on its PR: a later review's label is the PR's.
@@ -836,13 +847,12 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AnApprovalIsSuccessAndAStatusGitHubRefusesIsACardNotAFailedReview()
     {
         _github.StatusFails = "GitHub refused the status: no permission";
         (await Run(Verbs.ReviewPr, "pr/acme/gadget#9", "controller")).Error.ShouldBeNull();
-        var started = _state.Cards(openOnly: true).Single(c => c.Kind == PrMarks.RefusedKind);
-        (started.Bin, started.Title, started.Subject).ShouldBe((CardBin.ForYou, "GitHub refused the pilot/review status on acme/gadget#9: GitHub refused the status: no permission", "pr/acme/gadget#9"));
+        var started = _state.Cards().Single(c => c.Kind == PrMarks.RefusedKind);
+        (started.Bin, started.Title, started.Subject).ShouldBe((CardBin.Handled, "GitHub refused the pilot/review status on acme/gadget#9: GitHub refused the status: no permission", "pr/acme/gadget#9"));
         started.Detail.ShouldNotBeNull().ShouldContain("no permission");
         Row("acme/gadget", 9).State.ShouldBe(PrReviewState.Reviewing);
         _github.Statuses.ShouldBeEmpty();
@@ -851,7 +861,7 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
         (await Run(Verbs.PrVerdict, "pr/acme/gadget#9", Row("acme/gadget", 9).Reviewer, "approve", "fine")).Error.ShouldBeNull();
 
         Row("acme/gadget", 9).State.ShouldBe(PrReviewState.Reviewed);
-        // The status went through, so the refusal it left is over.
+        // The status went through, so the refusal it left is over: a line, born closed, and no open card.
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrMarks.RefusedKind);
         _github.Statuses.ShouldHaveSingleItem().ShouldBe((_gadgetHead, "success", $"approved at {_gadgetHead[..9]}", "https://github.com/acme/gadget/pull/9"));
     }
@@ -866,7 +876,6 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
         PrReviews.Event(verdict, "ada", login).ShouldBe(expected);
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task TheEventIsTheLoginsThatPostsNotTheOneThatGaveTheVerdict()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
@@ -882,7 +891,6 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APostGitHubRefusedMayGoAgainButOneThatNeverSaidBackDoesNot()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
@@ -966,7 +974,6 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewerThatCannotStartLeavesNoWorktree()
     {
         _workers.Fail = new FlightException("claude --bg did not start du1-review-widget-7 (1): folder not trusted");
@@ -1014,13 +1021,17 @@ public sealed class PrReviewCliTests : IAsyncLifetime
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2q-" + Guid.NewGuid().ToString("N")[..8]);
     private NodeHarness _node = null!;
+    private FakeRepoGit _git = null!;
     private string _head = "";
 
     public async ValueTask InitializeAsync()
     {
-        var (origin, head) = PrOrigins.Make(_root, "gadget", 9);
+        // The origin is laid on the in-memory git (#952), which the node clones and fetches from too: no git process starts. The node's own folder
+        // (where its clone cache lives) is under the model's root, so the model answers there.
+        _git = FakeRepoGit.Empty(_root);
+        var (origin, head) = FakePrOrigins.Make(_git, _root, "gadget", 9);
         _head = head;
-        _node = await NodeHarness.StartAsync(Ct);
+        _node = await NodeHarness.StartAsync(Ct, git: _git, folder: Path.Combine(_root, "n"));
         _node.GitHub.Origins["acme/gadget"] = origin;
         _node.GitHub.Prs["acme/gadget#9"] = new PullRequest(9, "OPEN", head, "https://github.com/acme/gadget/pull/9", Title: "Gadgets", Author: "bob", Base: "main");
     }
@@ -1031,8 +1042,13 @@ public sealed class PrReviewCliTests : IAsyncLifetime
         await _node.App.StopAsync(Ct);
         PrOrigins.Delete(Path.Combine(_node.Options.DataFolder, "clones"));
         await _node.DisposeAsync();
+        _git.Release();
         PrOrigins.Delete(_root);
+        // A command the model could not answer may have been swallowed by the node's own catch: the test still fails.
+        _git.Unsupported.ShouldBeEmpty("this test needs real git");
     }
+
+    private string Git(string cwd, params string[] args) => FakePrOrigins.Git(_git, cwd, args);
 
     private async Task<(int Exit, string Output, string Error)> Pilot(string cwd, params string[] args)
     {
@@ -1043,14 +1059,13 @@ public sealed class PrReviewCliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APrIsReviewedFromItsLinkAndItsVerdictIsPostedByTheNodeWhileThePrIsOpen()
     {
         var started = await Pilot(_root, "review", "pr", "https://github.com/acme/gadget/pull/9");
         started.Exit.ShouldBe(0, started.Output + started.Error);
         var review = _node.State.PrReviews().ShouldHaveSingleItem();
         review.ClonePath.ShouldBe(Path.Combine(_node.Options.DataFolder, "clones", "acme", "gadget"));
-        PrOrigins.Git(review.Worktree, "rev-parse", "HEAD").ShouldBe(_head);
+        Git(review.Worktree, "rev-parse", "HEAD").ShouldBe(_head);
         (await Pilot(_root, "status")).Output.ShouldContain($"PR acme/gadget#9  Gadgets  (reviewing, {review.Reviewer}, at {_head[..9]})");
 
         // The reviewer, from its worktree: the folder says which PR, and the verdict goes as the reviewer's.
@@ -1063,7 +1078,7 @@ public sealed class PrReviewCliTests : IAsyncLifetime
         Directory.Exists(review.Worktree).ShouldBeTrue();
 
         // The PR is open, so the node posts it at once: nothing rings, a Handled card says what went out.
-        var (number, payload) = (_node.GitHub.Posted.ShouldHaveSingleItem().Number, _node.GitHub.Posted[0].Payload);
+        var (number, payload) = (_node.GitHub.Posted.ShouldHaveSingleItem().Number, _node.GitHub.Posted.ToArray()[0].Payload);
         number.ShouldBe(9);
         payload.ShouldContain("README.md:1");
         _node.State.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.ReadyKind);
@@ -1072,12 +1087,11 @@ public sealed class PrReviewCliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ThePostChoicePostsOneReviewWithItsInlineCommentsAndNotFromTheWatchtower()
     {
         (await Pilot(_root, "review", "pr", "acme/gadget#9")).Exit.ShouldBe(0);
         var review = _node.State.PrReviews().ShouldHaveSingleItem();
-        var added = PrOrigins.Git(review.Worktree, "show", "--name-only", "--format=", "HEAD");
+        var added = Git(review.Worktree, "show", "--name-only", "--format=", "HEAD");
 
         // A finding that is no path and line is the reviewer's mistake, caught before it reaches the node.
         var wrong = await Pilot(review.Worktree, "review", "changes", "One defect.", "--finding", "the change is wrong");

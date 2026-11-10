@@ -9,6 +9,12 @@ namespace Pilot.Gui.Tests;
 /// </summary>
 internal sealed class PageData
 {
+    /// <summary>
+    /// How many entries the chat holds in the "long" and "many" states (PIL907): a watchtower's transcript of a few days. The page lays out only
+    /// the rows in view, so the sweep and the frame-time test cover a long transcript, not the sixty entries that used to stand for one.
+    /// </summary>
+    internal const int WatchtowerTranscript = 2000;
+
     public static readonly DateTimeOffset Now = new(2026, 10, 28, 3, 0, 0, TimeSpan.Zero);
 
     internal const string LongTitle = "Every page is checked for text drawn over text, in tests and live, at every width and DPI, with a title that runs on and on past any column it is given";
@@ -58,11 +64,56 @@ internal sealed class PageData
     public static PageData For(string state) => state switch
     {
         "sample" => Sample(),
-        "long" => Build(state, sessions: 8, flights: 3, legs: 4, jobs: 6, cards: 5, repos: 4, chat: 10, transcript: 12, wizard: 6, nodes: 3, lengthen: true),
-        "many" => Build(state, sessions: 60, flights: 40, legs: 3, jobs: 50, cards: 14, repos: 40, chat: 60, transcript: 80, wizard: 60, nodes: 12, lengthen: false),
+        "long" => Build(state, sessions: 8, flights: 3, legs: 4, jobs: 6, cards: 5, repos: 4, chat: WatchtowerTranscript, transcript: 12, wizard: 6, nodes: 3, lengthen: true),
+        "many" => Build(state, sessions: 60, flights: 40, legs: 3, jobs: 50, cards: 14, repos: 40, chat: WatchtowerTranscript, transcript: 80, wizard: 60, nodes: 12, lengthen: false),
         "empty" => Empty(),
         _ => throw new ArgumentException($"no state '{state}'", nameof(state)),
     };
+
+    /// <summary>The line of pairs a role range row draws, as a node sends it (<c>RoleRange.Line</c>).</summary>
+    internal static readonly string[] RangeLine = ["sonnet-low", "sonnet-medium", "sonnet-high", "sonnet-xhigh", "opus-low", "opus-medium", "opus-high", "opus-xhigh"];
+
+    /// <summary>
+    /// The Settings page <paramref name="state"/> is drawn from (#770), as the node builds it: a few ordinary settings and the four role ranges (the
+    /// watchtower's one built in, the worker's set on this node, the planner's with a fleet value and a node that differs, the reviewer's set by
+    /// the fleet). <b>long</b> lengthens the details and the folders, <b>many</b> adds ordinary rows enough to scroll, and <b>empty</b> sends no page
+    /// (null): the page as it is before the node answers.
+    /// </summary>
+    public static SettingsPage? SettingsFor(string state)
+    {
+        if (state == "empty")
+        {
+            return null;
+        }
+        var lengthen = state == "long";
+        var path = lengthen ? LongPath : @"C:\work\pilot";
+        string Detail(string what) => lengthen ? $"{what}. {LongReport}" : what;
+        SettingRow Range(string role, string value, string source, string? saved = null, string? fleet = null, params SettingDeviation[] deviations) => new()
+        {
+            Key = $"{role}-range", Label = $"{char.ToUpperInvariant(role[0])}{role[1..]} range", Detail = Detail($"The {role}'s range: the pair it starts on and its max, as sonnet-high..opus-medium over the line sonnet-low to opus-xhigh"),
+            Value = value, Saved = saved, Source = source, Choices = RangeLine, FleetValue = fleet, Deviations = deviations,
+        };
+        var settings = new List<SettingRow>
+        {
+            new() { Key = "lan", Label = "LAN", Detail = Detail("Whether other machines may reach this node"), Value = "off", Source = SettingSources.Default, Choices = ["on", "off"] },
+            new() { Key = "update-channel", Label = "Update channel", Detail = Detail("Which releases the node updates to"), Value = "stable", Saved = "stable", Source = SettingSources.File, Choices = ["stable", "beta"] },
+            new() { Key = "repo-roots", Label = "Repo roots", Detail = Detail("The folders the node looks for repos in, one a line"), Value = path, Saved = path, Source = SettingSources.File, Many = true },
+            // A list of repos, offered the node's repos once LoadRepos is set: its controls row (choose, trackers, Add) is in the sweep (#770).
+            new() { Key = "repo-trackers", Label = "Repo trackers", Detail = Detail("Which tracker each repo's issues are on"), Value = "pilot=github", Saved = "pilot=github", Source = SettingSources.File, Many = true },
+            Range("watchtower", "sonnet..sonnet-high", SettingSources.BuiltIn),
+            Range("worker", "sonnet..opus-xhigh", SettingSources.ThisNode, saved: "sonnet..opus-xhigh"),
+            Range("planner", "sonnet-high..opus-medium", SettingSources.ThisNode, "sonnet-high..opus-medium", "sonnet-medium..opus-xhigh", new SettingDeviation("LE1 · LAPTOP-2", "sonnet-low..opus-low")),
+            Range("reviewer", "opus-medium..opus-xhigh", SettingSources.Fleet, fleet: "opus-medium..opus-xhigh"),
+        };
+        if (state == "many")
+        {
+            settings.AddRange(Enumerable.Range(0, 24).Select(i => new SettingRow
+            {
+                Key = $"option-{i}", Label = $"Option {i}", Detail = $"A setting with a detail of some length, number {i}", Value = i % 2 == 0 ? "on" : "off", Source = SettingSources.Default, Choices = ["on", "off"],
+            }));
+        }
+        return new SettingsPage { File = lengthen ? LongPath + @"\settings.json" : @"C:\Users\ada\AppData\Local\pilot2\settings.json", Settings = [.. settings] };
+    }
 
     /// <summary>
     /// A handful of every row, fixed at <see cref="Now"/>, as the pages show them at <paramref name="at"/>: the same rows a second
@@ -326,6 +377,7 @@ internal sealed class PageData
         {
             Window = window, From = now.AddHours(-3), To = now, Messages = 420, Tokens = 4_200_000_000L, Weighted = 1_000_000_000L,
             Flights = Rows(codes), Roles = Rows(roles),
+            Bench = new SpendBench { Month = "2026-11", Runs = 3, Minutes = 41.5, Cost = 0.3125, Evictions = 1, Cap = 50 },
         };
         var waste = flights.Select((f, i) => new SpendWasteRow
         {

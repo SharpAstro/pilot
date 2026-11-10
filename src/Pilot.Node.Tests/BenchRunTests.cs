@@ -41,7 +41,7 @@ public sealed class BenchRunTests : JobTestsBase
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
@@ -65,7 +65,7 @@ public sealed class BenchRunTests : JobTestsBase
 
     private async Task<CardRow> Card()
     {
-        for (var i = 0; i < 1500; i++)
+        for (var i = 0; i < 1000; i++)
         {
             if (_state.Cards().FirstOrDefault(c => c.Kind == "bench-result") is { } card)
             {

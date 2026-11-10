@@ -93,11 +93,44 @@ public sealed partial class NodeState
     {
         lock (_gate)
         {
+            // The sampler knows no strays: what the stray sweep last said rides on every row, so a sample never wipes it.
+            sampled = sampled with { Strays = _strays ?? _machine?.Strays ?? [] };
             if (_machine is { } held && !Pilot.Node.Flights.MachineSampler.Differs(held, sampled))
             {
                 return;
             }
             Publish(new MachineChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Machine = sampled });
+        }
+    }
+
+    // What the stray sweep last named (pilot #909); null before its first sweep.
+    private MachineStray[]? _strays;
+
+    /// <summary>The strays the sweep last named, as the machine row carries them; none before the first sweep.</summary>
+    public MachineStray[] Strays()
+    {
+        lock (_gate)
+        {
+            return _strays ?? _machine?.Strays ?? [];
+        }
+    }
+
+    /// <summary>
+    /// Puts the strays the sweep named, into the machine row, when they differ from the ones held (compared as written, ages aside: a row
+    /// that grew a minute older is no news). Nothing is published before the first machine sample; the next sample carries them.
+    /// </summary>
+    public void PutStrays(IReadOnlyList<MachineStray> strays)
+    {
+        lock (_gate)
+        {
+            var held = _strays ?? _machine?.Strays ?? [];
+            _strays = [.. strays];
+            if (_machine is not { } machine
+                || held.Select(h => (h.Pid, h.StartedAt, h.Reason)).SequenceEqual(_strays.Select(h => (h.Pid, h.StartedAt, h.Reason))))
+            {
+                return;
+            }
+            Publish(new MachineChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Machine = machine with { Strays = _strays } });
         }
     }
 
