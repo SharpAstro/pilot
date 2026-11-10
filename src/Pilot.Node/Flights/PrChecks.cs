@@ -1028,13 +1028,13 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 state.PutFlight(current with { Ci = counted });
                 state.CloseCardsAbout(subject, "the CI cap was set again", CiBudgets.CapKind);
                 state.RaiseCard(CardBin.ForYou, CiBudgets.CapKind, subject, $"{flight.Code}: CI stopped, {CiBudgets.Numbers(counted)}",
-                    $"{flight.Code}: {why}. The node pushes nothing more for this flight until you answer: continue (one more budget of {budget} runner-hours), land what is green, or split the flight.",
+                    $"{flight.Code}: {why}. Nothing more is pushed for this flight until you answer: let it spend {budget} more runner-hours, or have the controller merge only its passing legs, or break it into smaller flights.",
                     [
-                        new CardChoice { Label = "Continue", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiContinue] },
-                        new CardChoice { Label = "Land what is green", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiLandGreen] },
-                        new CardChoice { Label = "Split", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiSplit] },
+                        new CardChoice { Label = "Allow more CI time", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiContinue] },
+                        new CardChoice { Label = "Land the green legs", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiLandGreen] },
+                        new CardChoice { Label = "Break it up", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiSplit] },
                     ], link: flight.PullRequestUrl,
-                    summary: $"The CI of {flight.Code} (PR {flight.PullRequestUrl}) is past its budget: {why}. The node has stopped pushing for it. Continue raises the cap by one budget, land what is green and split are recorded for the controller.");
+                    summary: $"The CI of {flight.Code} (PR {flight.PullRequestUrl}) is past its budget: {why}. Pushes are stopped for it; you choose between more CI time, landing only the passing legs, or breaking the flight up.");
                 continue;
             }
             if (why is null && counted.CappedWhy is not null)
