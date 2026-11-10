@@ -771,6 +771,11 @@ internal sealed class FakeRepoGit : IGit
     {
         // A branch made at a start point, tracking it when that is a remote-tracking branch (git branch --track <name> origin/<name>).
         a.Remove("--track");
+        // git branch <name>: a branch at HEAD, which stays checked out as it is.
+        if (wt is not null && a is [var atHead] && !atHead.StartsWith('-'))
+        {
+            a = [atHead, "HEAD"];
+        }
         if (wt is not null && a is [var made, var start] && !made.StartsWith('-') && !start.StartsWith('-'))
         {
             if (Refs.ContainsKey("refs/heads/" + made))

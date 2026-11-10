@@ -37,9 +37,11 @@ public sealed class LegFailureTests : IDisposable
     {
         _repos = new SeededRepos(_root);
         Git(_root, "init", "-q", "--bare", "-b", "main", "remote.git");
-        Git(_root, "clone", "-q", Remote, "plane");
+        // Made by init and a remote, not by cloning the empty origin (git can, the model has no default branch of an empty origin to clone).
+        Git(_root, "init", "-q", "-b", "main", "plane");
         Git(Plane, "config", "user.email", "t@example.com");
         Git(Plane, "config", "user.name", "t");
+        Git(Plane, "remote", "add", "origin", Remote);
         Write("src/Pilot.Ui/PilotWidgetBase.cs", "class PilotWidgetBase {}\n");
         Write("src/Pilot.Ui/Other.cs", "class Other {}\n");
         Commit(Plane, "first");

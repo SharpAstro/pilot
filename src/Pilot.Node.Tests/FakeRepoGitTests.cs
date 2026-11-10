@@ -395,6 +395,19 @@ public sealed class FakeRepoGitTests : IDisposable
     }
 
     [Fact]
+    public void ABranchGivenByNameAloneIsMadeAtHeadAndHeadStaysWhereItWas()
+    {
+        var head = RunOn(_git, Repo, "rev-parse", "HEAD");
+
+        RunOn(_git, Repo, "branch", "flight/tia1");
+
+        RunOn(_git, Repo, "rev-parse", "refs/heads/flight/tia1").ShouldBe(head);
+        RunOn(_git, Repo, "symbolic-ref", "--short", "HEAD").ShouldBe("main");
+        _git.Run(["branch", "flight/tia1"], Repo).Error.ShouldContain("already exists");
+        _git.Unsupported.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void AFixerBranchTracksOriginFeatureSevenAndItsPushMovesTheOriginsBranch()
     {
         var shape = PrShape();
