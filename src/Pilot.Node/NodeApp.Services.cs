@@ -214,6 +214,7 @@ public static partial class NodeApp
             {
                 Views = services.GetRequiredService<PageViews>(),
                 Machine = options.Machine,
+                Fleet = services.GetRequiredService<FlightCommander>().Fleet,
                 Idle = () => models.PrWatchIdle,
             };
             watch.Error = logWriter;

@@ -913,7 +913,7 @@ public sealed class PullRequestsTests : IDisposable
 
         // One search of both repos: its cost, and the points GitHub says are left.
         (row.Cost, row.RateRemaining, row.Note).ShouldBe((4, 4321, null));
-        log.ToString().ShouldContain("1 open PRs of 2 repos in 1 searches, 4 GraphQL points, 4321 left");
+        log.ToString().ShouldContain("2 read here in 1 search, 4 GraphQL points, 4321 left");
         // The cost of several searches is summed.
         github.SearchCost = 5;
         foreach (var i in Enumerable.Range(0, 20))

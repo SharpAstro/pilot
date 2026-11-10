@@ -33,6 +33,12 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
     /// <summary>This node's machine name: the <see cref="PullRequestRepoRead.By"/> of each repo it reads.</summary>
     public string Machine { get; init; } = "";
 
+    /// <summary>
+    /// The other nodes of the fleet (#834): before each read the watch asks each reachable peer for its PR read and takes the repos
+    /// <see cref="PrReadShare"/> says it may, searching GitHub only for the rest. Null: this node reads every repo itself.
+    /// </summary>
+    public IFleet? Fleet { get; init; }
+
     /// <summary>The repos (<c>owner/name</c>) a flight in the flying state is in: the ones this node flies in.</summary>
     public static HashSet<string> FlyingRepos(FlightRow[] flights) =>
         new(flights.Where(f => f.State == FlightState.Flying).Select(f => RepoCatalog.GitHubOf(Path.Combine(f.RepoPath, ".git"))).OfType<string>(), StringComparer.OrdinalIgnoreCase);
@@ -234,7 +240,12 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
             var cost = 0;
             int? remaining = null;
             DateTimeOffset? limitedUntil = null;
-            var searches = PullRequestSearch.Batches(tracked);
+            // The fleet shares the read (#834): a repo a peer read freshly is taken from its row, one left to its chosen reader keeps what
+            // was held, and only the rest is searched. Merges, labels and a flight's own reads never come through here.
+            var plans = await PlanAsync(tracked, flights, now);
+            var taken = plans.OfType<PrReadPlan.Taken>().ToArray();
+            var readHere = plans.OfType<PrReadPlan.ReadHere>().Select(p => p.Repo).ToArray();
+            var searches = PullRequestSearch.Batches(readHere);
             foreach (var batch in searches)
             {
                 // The points are spent: the batches left wait for them, rather than being refused one by one.
@@ -267,6 +278,11 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
                 }
             }
             _limitedUntil = limitedUntil;
+            foreach (var share in taken)
+            {
+                prs.AddRange(share.PullRequests);
+                read.Add(share.Repo);
+            }
             var fresh = prs.ToArray();
             // Not read this time (its batch failed, or the limit stopped it): what was read of it before stands, under the error or note.
             prs.AddRange(heldPrs.Where(p => !read.Contains(p.Repo)));
@@ -274,7 +290,9 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
             // Each repo read now is stamped by this node; one kept from before keeps its old stamp.
             var flying = FlyingRepos(flights);
             var stamps = (held?.RepoReads ?? []).Where(s => scope.Contains(s.Repo) && !read.Contains(s.Repo))
-                .Concat(read.Select(r => new PullRequestRepoRead(r, now, Machine, flying.Contains(r))))
+                .Concat(read.Select(r => taken.FirstOrDefault(t => string.Equals(t.Repo, r, StringComparison.OrdinalIgnoreCase)) is { } share
+                    ? new PullRequestRepoRead(r, share.ReadAt, share.By, flying.Contains(r))
+                    : new PullRequestRepoRead(r, now, Machine, flying.Contains(r))))
                 .OrderBy(s => s.Repo, StringComparer.OrdinalIgnoreCase).ToArray();
             var row = new PullRequestsRow
             {
@@ -288,8 +306,9 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
                 ReadAt = now,
                 Viewer = await ViewerAsync(),
             };
-            await Error.WriteLineAsync($"pull request watch: read {row.PullRequests.Length} open PRs of {tracked.Length} repos in {searches.Length} searches, "
-                + $"{cost} GraphQL points{(remaining is { } left ? $", {left} left" : "")} ({why})");
+            await Error.WriteLineAsync($"pull request watch: {(taken.Length > 0 ? $"{taken.Length} repos from peers, " : "")}{readHere.Length} read here in "
+                + $"{searches.Length} {(searches.Length == 1 ? "search" : "searches")}, {cost} GraphQL {(cost == 1 ? "point" : "points")}"
+                + $"{(remaining is { } left ? $", {left} left" : "")} ({why})");
             state.PutPullRequests(row);
             try
             {
@@ -309,6 +328,32 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
                 _running = null;
             }
         }
+    }
+
+    // What each repo's read is to be (#834): the peers asked in parallel, each within the fleet's read budget; one that fails is not counted.
+    private async Task<PrReadPlan[]> PlanAsync(string[] tracked, FlightRow[] flights, DateTimeOffset now)
+    {
+        var peers = Fleet?.Peers() ?? [];
+        if (peers.Count == 0)
+        {
+            return [.. tracked.Select(r => (PrReadPlan)new PrReadPlan.ReadHere(r))];
+        }
+        var asked = await Task.WhenAll(peers.Select(async peer =>
+        {
+            try
+            {
+                using var budget = new CancellationTokenSource(HeldTokenFleet.ReadBudget, time);
+                var row = (await peer.LoadAsync(budget.Token).WaitAsync(budget.Token)).PullRequests;
+                return new PrReadPeer(peer.Name, row, [.. (row?.RepoReads ?? []).Where(s => s.Flying).Select(s => s.Repo)]);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                await Error.WriteLineAsync($"pull request watch: peer {peer.Name} did not answer, not counted: {ex.Message}");
+                return null;
+            }
+        }));
+        var pace = Views.Count(ClientPages.PullRequests) > 0 ? Interval : Idle?.Invoke() ?? Interval;
+        return PrReadShare.Plan(Machine, tracked, FlyingRepos(flights), pace, now, [.. asked.OfType<PrReadPeer>()]);
     }
 
     // The login gh reads as, asked until it answers and kept: it does not change while the node runs.

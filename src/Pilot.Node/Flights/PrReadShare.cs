@@ -9,7 +9,7 @@ public sealed record PrReadPeer(string Name, PullRequestsRow? Row, IReadOnlyColl
 public abstract record PrReadPlan(string Repo)
 {
     /// <summary>Take <paramref name="Peer"/>'s read of the repo, with its PRs: no GitHub search.</summary>
-    public sealed record Taken(string Repo, string Peer, DateTimeOffset ReadAt, PullRequestRow[] PullRequests) : PrReadPlan(Repo);
+    public sealed record Taken(string Repo, string Peer, DateTimeOffset ReadAt, PullRequestRow[] PullRequests, string By = "") : PrReadPlan(Repo);
 
     /// <summary>Search GitHub for it from this node.</summary>
     public sealed record ReadHere(string Repo) : PrReadPlan(Repo);
@@ -49,7 +49,7 @@ public static class PrReadShare
             .FirstOrDefault();
         if (fresh.Peer is { } taken)
         {
-            return new PrReadPlan.Taken(repo, taken.Name, fresh.Stamp!.ReadAt, [.. taken.Row!.PullRequests.Where(p => Same(p.Repo, repo))]);
+            return new PrReadPlan.Taken(repo, taken.Name, fresh.Stamp!.ReadAt, [.. taken.Row!.PullRequests.Where(p => Same(p.Repo, repo))], fresh.Stamp.By);
         }
 
         // Peers that track it: they stamped it, hold PRs of it, or fly in it.
