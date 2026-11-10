@@ -53,6 +53,35 @@ public sealed partial class RoleModels
         _ => "opus by default as review is judgement; a deep review runs on the max, opus at high",
     };
 
+    /// <summary>The model the summary runs on unless the settings say otherwise (<see cref="NodeSettings.SummaryModelKey"/>).</summary>
+    public const string BuiltInSummaryModel = "sonnet";
+
+    /// <summary>Why the summary's built-in model is what it is, for the setting's detail.</summary>
+    public const string SummaryModelWhy = "sonnet by default: the summary is what the person reads first, and Haiku's summaries relayed stale cards and internal words";
+
+    /// <summary>Whether <paramref name="text"/> names a model Claude Code takes: an alias (sonnet, opus, haiku) or a full id (<c>claude-sonnet-5-5</c>, with an optional <c>[1m]</c>).</summary>
+    public static bool IsModelName(string text) =>
+        text is "sonnet" or "opus" or "haiku"
+        || (text.StartsWith("claude-", StringComparison.Ordinal) && text.Length > "claude-".Length
+            && text.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '.' or '[' or ']'));
+
+    /// <summary>The model the summary's call runs on: this node's own setting, else the fleet's, else <see cref="BuiltInSummaryModel"/>. Read at each call, so a set applies with no restart.</summary>
+    public string SummaryModel => SummaryModelWithSource().Model;
+
+    /// <summary>The summary's model and where it comes from (<see cref="SettingSources.ThisNode"/>, <see cref="SettingSources.Fleet"/> or <see cref="SettingSources.BuiltIn"/>).</summary>
+    public (string Model, string Source) SummaryModelWithSource()
+    {
+        if (Raw(NodeSettings.SummaryModelKey) is { } own && IsModelName(own))
+        {
+            return (own, SettingSources.ThisNode);
+        }
+        if (FleetRaw(NodeSettings.SummaryModelKey) is { } fleet && IsModelName(fleet))
+        {
+            return (fleet, SettingSources.Fleet);
+        }
+        return (BuiltInSummaryModel, SettingSources.BuiltIn);
+    }
+
     /// <summary>The role's range: this node's own, else the fleet's, else the built-in.</summary>
     public RoleRange Range(string role) => RangeWithSource(role).Range;
 
@@ -110,6 +139,19 @@ public sealed partial class RoleModels
             lock (_lock)
             {
                 return _settings.PrWatchIdle ?? NodeSettings.DefaultPrWatchIdle;
+            }
+        }
+    }
+
+    /// <summary>How long a peer must be unheard before its flights may be taken over (<see cref="NodeSettings.AdoptAfterKey"/>);
+    /// <see cref="NodeSettings.DefaultAdoptAfter"/> unless the settings say otherwise.</summary>
+    public TimeSpan AdoptAfter
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.AdoptAfter ?? NodeSettings.DefaultAdoptAfter;
             }
         }
     }
@@ -271,22 +313,44 @@ public sealed partial class RoleModels
         return (model, effort);
     }
 
+    /// <summary>The rungs of the conflict ladder (PIL846): sonnet, then opus, then opus at xhigh.</summary>
+    public const int ConflictRungs = 3;
+
     /// <summary>
-    /// The choice that starts a fresh worker on <paramref name="leg"/>, naming why the last one is let go (<paramref name="why"/> completes
-    /// "the last one ...": <c>went idle</c>, <c>never showed up</c>); its next worker is attempt go-arounds + 2, numbered as the redo it
-    /// orders (go-arounds + 1) and naming that attempt's model once it is a second redo or later.
+    /// The model and effort of the worker sent to resolve a PR's conflict on <paramref name="rung"/> (1 to <see cref="ConflictRungs"/>):
+    /// 1 is Sonnet at the worker role's default effort, 2 Opus at that effort, 3 Opus at xhigh, whatever the leg's plan or go-around
+    /// count says. Never past the worker range's max: a rung above it runs on the max and says so in <c>Words</c>. Read from the range
+    /// even for a commander that passes no model to other workers, so the ladder is the same wherever it runs.
     /// </summary>
-    public string RedoLabel(LegRow leg, string why)
+    public (string Model, string? Effort, string Words) ConflictWorkerFor(int rung)
     {
-        var (model, effort) = WorkerFor(leg.Model, leg.Effort, leg.GoArounds + 2);
-        return Verbs.FreshWorker(leg.Name, why, leg.GoArounds + 1, model, effort);
+        var range = Range(Worker);
+        var wanted = rung switch
+        {
+            <= 1 => new ModelPair("sonnet", range.Default.Effort),
+            2 => new ModelPair("opus", range.Default.Effort),
+            _ => new ModelPair("opus", "xhigh"),
+        };
+        var words = Describe(wanted);
+        if (wanted.Order <= range.Max.Order)
+        {
+            return (wanted.Model, wanted.Effort, words);
+        }
+        return (range.Max.Model, range.Max.Effort, $"{Describe(range.Max)}, clamped from {words} by the worker range max {range.Max}");
     }
 
-    /// <summary>A send-back button for <paramref name="leg"/> in <paramref name="words"/>, naming the next worker's round and model as <see cref="RedoLabel"/> does.</summary>
-    public string SendBackLabel(LegRow leg, string words)
+    private static string Describe(ModelPair pair) => pair.Effort is null ? pair.Model : $"{pair.Model} at {pair.Effort}";
+
+    /// <summary>
+    /// What the next worker of <paramref name="leg"/> will be, for a card's detail: its attempt is go-arounds + 2, numbered as the round it
+    /// orders (go-arounds + 1), with the model and effort it runs on, once it is a second round or later (<c>Next worker (round 3, on Opus at xhigh).</c>);
+    /// null before that. The buttons that start it say only what they do (<see cref="Verbs.FreshWorker"/>, #797), never the round or the model.
+    /// </summary>
+    public string? NextWorkerNote(LegRow leg)
     {
         var (model, effort) = WorkerFor(leg.Model, leg.Effort, leg.GoArounds + 2);
-        return Verbs.SendBack(words, leg.GoArounds + 1, model, effort);
+        var note = Verbs.SendBack("Next worker", leg.GoArounds + 1, model, effort);
+        return note == "Next worker" ? null : $"{note}.";
     }
 
     private static string Step(string? effort, int by, string whenUnset) =>
@@ -471,6 +535,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>Runner-hours of CI a flight's PR may spend before the node stops pushing for it (<see cref="NodeSettings.FlightCiBudgetKey"/>); 4 by default.</summary>
+    public int FlightCiBudget
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.FlightCiBudget ?? NodeSettings.DefaultFlightCiBudget;
+            }
+        }
+    }
+
     /// <summary>The share of the 7-day window, in percent, a leg's rounds may spend before the next one rings (<see cref="NodeSettings.SpendAlertKey"/>); 3 by default.</summary>
     public double SpendAlert
     {
@@ -503,6 +579,42 @@ public sealed partial class RoleModels
             lock (_lock)
             {
                 return _settings.WatchtowerChatMessages ?? 40;
+            }
+        }
+    }
+
+    /// <summary>How long an idle watchtower waits before it is compacted when its context is over <see cref="WatchtowerCompactAbove"/> (<see cref="NodeSettings.WatchtowerCompactIdleKey"/>); 50 minutes by default.</summary>
+    public TimeSpan WatchtowerCompactIdle
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return TimeSpan.FromMinutes(_settings.WatchtowerCompactIdle ?? 50);
+            }
+        }
+    }
+
+    /// <summary>The context, in tokens, an idle watchtower must hold to be compacted for being idle (<see cref="NodeSettings.WatchtowerCompactAboveKey"/>); 100k by default.</summary>
+    public long WatchtowerCompactAbove
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return (_settings.WatchtowerCompactAbove ?? 100) * 1000L;
+            }
+        }
+    }
+
+    /// <summary>The most reviews and fixers this node runs at once (<see cref="NodeSettings.ReviewLimitKey"/>); 2 unless the settings say otherwise, 0 for no limit (#912).</summary>
+    public int ReviewLimit
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.ReviewLimit ?? 2;
             }
         }
     }

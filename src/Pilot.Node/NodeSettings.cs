@@ -26,8 +26,13 @@ public sealed record NodeSettings
     public const string MaxJobsKey = "max-jobs";
     public const string JobMemoryKey = "job-memory";
     public const string JobPriorityKey = "job-priority";
-    /// <summary>Whether a job in a plane builds into output under the plane (MSBuild artifacts output), so two planes never share a sibling clone's obj and the sibling lock is skipped for it; off unless set.</summary>
+    /// <summary>Whether a job in a plane builds into output under the plane (MSBuild artifacts output), so two planes never share a sibling clone's obj and the sibling lock is skipped for it; off unless set on.</summary>
     public const string JobPlaneOutputKey = "job-plane-output";
+    /// <summary>
+    /// What <see cref="JobPlaneOutputKey"/> is when the settings file does not say: off (PIL802). A plane builds on the published
+    /// packages, so it compiles no sibling and has nothing to share; only a <c>pilot: sibling source</c> flight holds clones.
+    /// </summary>
+    public const bool JobPlaneOutputDefault = false;
     public const string MergeMethodKey = "merge-method";
     public const string StartLimitKey = "start-limit";
     public const string PriorityStartLimitKey = "priority-start-limit";
@@ -37,6 +42,8 @@ public sealed record NodeSettings
     public const string SpendAlertKey = "spend-alert";
     public const string WatchtowerCompactShareKey = "watchtower-compact-share";
     public const string WatchtowerChatMessagesKey = "watchtower-chat-messages";
+    public const string WatchtowerCompactIdleKey = "watchtower-compact-idle";
+    public const string WatchtowerCompactAboveKey = "watchtower-compact-above";
     public const string MaintenanceKey = "maintenance";
     public const string AcceptFleetFlightsKey = "accept-fleet-flights";
     public const string AutopilotKey = "autopilot";
@@ -54,6 +61,14 @@ public sealed record NodeSettings
     public const int DefaultScratchDays = 2;
     public const string DiskAlertGbKey = "disk-alert-gb";
     public const int DefaultDiskAlertGb = 20;
+    /// <summary>
+    /// Runner-hours of CI a flight's PR may spend before the node stops pushing for it and rings the owner (PIL795). The same flight
+    /// red for more than <see cref="FlightCiRedHours"/> in a row stops it too.
+    /// </summary>
+    public const string FlightCiBudgetKey = "flight-ci-budget";
+    public const int DefaultFlightCiBudget = 4;
+    /// <summary>Hours a flight's PR may stay red before the node stops pushing for it (PIL795).</summary>
+    public const int FlightCiRedHours = 3;
 
     /// <summary>Hours a flight may stay open before the digest and the brief call it stale (#736).</summary>
     public const string StaleFlightHoursKey = "stale-flight-hours";
@@ -113,13 +128,21 @@ public sealed record NodeSettings
 
     /// <summary>How long the pull request watch waits between reads while no client shows the Pull requests page.</summary>
     public static readonly TimeSpan DefaultPrWatchIdle = TimeSpan.FromMinutes(15);
+    /// <summary>How long a peer must have been unheard before a flight it flew may be taken over by this node (#894).</summary>
+    public const string AdoptAfterKey = "adopt-after";
+    public static readonly TimeSpan DefaultAdoptAfter = TimeSpan.FromHours(1);
     public const string OpusCapKey = "opus-cap";
+
+    /// <summary>The most reviews and fixers this node runs at once (#912); a start past it waits for a slot.</summary>
+    public const string ReviewLimitKey = "review-limit";
     public const string OneFlightPerRepoKey = "one-flight-per-repo";
     /// <summary>The repos whose flights keep their legs as sub-tasks of the work item (a GitHub sub-issue, a Shortcut task); off for a repo left out.</summary>
     public const string SubTaskReposKey = "sub-task-repos";
     public const string MergeBatchKey = "merge-batch";
     /// <summary>Whether a leg's fresh worker steps up a model ladder by attempt; on unless set off.</summary>
     public const string WorkerLadderKey = "worker-ladder";
+    /// <summary>The model the summary's one <c>claude -p</c> call runs on (#797); kept in the role layers (this node's, the fleet's) as the role ranges are.</summary>
+    public const string SummaryModelKey = "summary-model";
 
     /// <summary>How a flight's PR is merged when the merge names no method: rebase keeps every commit's subject, which a
     /// repo's docs may cite (tianwen's rule); squash makes one commit of them; merge adds a merge commit.</summary>
@@ -127,16 +150,25 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
-         .. RoleModels.Roles.Select(RoleModels.RangeKey), WorkerLadderKey];
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+         .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
     public static bool IsRoleKey(string key) => RoleModels.Roles.Any(r => key == RoleModels.RangeKey(r));
+
+    /// <summary>Whether <paramref name="key"/> is the summary's model (<see cref="SummaryModelKey"/>): one model, not a range.</summary>
+    public static bool IsModelKey(string key) => key == SummaryModelKey;
+
+    /// <summary>Whether <paramref name="key"/> has a fleet layer beside this node's own value: a role's range or the summary's model.</summary>
+    public static bool IsLayeredKey(string key) => IsRoleKey(key) || IsModelKey(key);
 
     public bool? Lan { get; init; }
 
     /// <summary>How many Opus sessions the fleet runs at once (<see cref="OpusCapKey"/>); 0 for no cap, 3 unless set.</summary>
     public int? OpusCap { get; init; }
+
+    /// <summary>How many reviews and fixers this node runs at once (<see cref="ReviewLimitKey"/>); 0 for no limit, 2 unless set.</summary>
+    public int? ReviewLimit { get; init; }
 
     /// <summary>Whether only one flight per repo is in the air at a time (<see cref="OneFlightPerRepoKey"/>); off unless set.</summary>
     public bool? OneFlightPerRepo { get; init; }
@@ -162,7 +194,7 @@ public sealed record NodeSettings
     /// <summary>Whether a leg's fresh worker steps up the model ladder by attempt (<see cref="WorkerLadderKey"/>); on unless set off.</summary>
     public bool? WorkerLadder { get; init; }
 
-    /// <summary>Whether the node's jobs in a plane build into <c>&lt;plane&gt;/artifacts</c> (<see cref="JobPlaneOutputKey"/>); off unless set.</summary>
+    /// <summary>Whether the node's jobs in a plane build into <c>&lt;plane&gt;/artifacts</c> (<see cref="JobPlaneOutputKey"/>); <see cref="JobPlaneOutputDefault"/> unless set.</summary>
     public bool? JobPlaneOutput { get; init; }
 
     /// <summary>The Shortcut API token (<see cref="ShortcutTokenKey"/>) that reads a story's title; the <c>SHORTCUT_API_TOKEN</c> variable wins over it. Never shown by the settings output beyond set or not.</summary>
@@ -189,6 +221,9 @@ public sealed record NodeSettings
     /// <summary>Free gigabytes on the repos' drive below which the node rings (<see cref="DiskAlertGbKey"/>); <see cref="DefaultDiskAlertGb"/> unless set.</summary>
     public int? DiskAlertGb { get; init; }
 
+    /// <summary>Runner-hours of CI a flight may spend (<see cref="FlightCiBudgetKey"/>); <see cref="DefaultFlightCiBudget"/> unless set.</summary>
+    public int? FlightCiBudget { get; init; }
+
     /// <summary>The staleness bounds (<see cref="StaleKeys"/>); each its default unless set.</summary>
     public int? StaleFlightHours { get; init; }
     public int? StalePrHours { get; init; }
@@ -211,6 +246,8 @@ public sealed record NodeSettings
 
     /// <summary>The wait between the pull request watch's reads while no client shows the Pull requests page (<see cref="PrWatchIdleKey"/>); a minute is read while one does.</summary>
     public TimeSpan? PrWatchIdle { get; init; }
+    /// <summary>How long a silent peer must be unheard before its flights may be taken over (<see cref="AdoptAfterKey"/>); <see cref="DefaultAdoptAfter"/> unless set.</summary>
+    public TimeSpan? AdoptAfter { get; init; }
     /// <summary>The margin, in points, a start tolerates between the 7-day window's used share and its elapsed share; null is off.</summary>
     public double? WeekPace { get; init; }
 
@@ -222,6 +259,12 @@ public sealed record NodeSettings
 
     /// <summary>The person messages in a watchtower chat, since its last compaction, after which it is compacted once idle (<see cref="WatchtowerChatMessagesKey"/>); 40 when unset, 0 is off.</summary>
     public int? WatchtowerChatMessages { get; init; }
+
+    /// <summary>How many minutes an idle watchtower (the brain) sits before it is compacted, when its context is over <see cref="WatchtowerCompactAbove"/> (<see cref="WatchtowerCompactIdleKey"/>); 50 when unset.</summary>
+    public int? WatchtowerCompactIdle { get; init; }
+
+    /// <summary>The context, in thousands of tokens, an idle watchtower must hold for the idle compaction to be worth its turn (<see cref="WatchtowerCompactAboveKey"/>); 100 when unset.</summary>
+    public int? WatchtowerCompactAbove { get; init; }
 
     /// <summary>The repos whose flights have runway: they go on past <see cref="StartLimit"/>, up to <see cref="PriorityStartLimit"/>.</summary>
     public IReadOnlyList<string>? PriorityRepos { get; init; }
@@ -247,9 +290,9 @@ public sealed record NodeSettings
     /// <summary>These settings with the fleet's range for <paramref name="key"/> set to <paramref name="values"/> (none, or <c>default</c>, takes it out), or why not.</summary>
     public static (NodeSettings? Settings, string? Error) WithFleet(NodeSettings settings, string key, IReadOnlyList<string> values)
     {
-        if (!IsRoleKey(key))
+        if (!IsLayeredKey(key))
         {
-            return (null, $"{key} has no fleet value; the fleet holds {string.Join(", ", RoleModels.Roles.Select(RoleModels.RangeKey))}");
+            return (null, $"{key} has no fleet value; the fleet holds {string.Join(", ", RoleModels.Roles.Select(RoleModels.RangeKey).Append(SummaryModelKey))}");
         }
         // Checked as an own value is, then the own layer is put back as it was.
         var (checkedRange, error) = With(new NodeSettings(), key, values);
@@ -299,9 +342,8 @@ public sealed record NodeSettings
         }
         if (root[FleetRangesField] is JsonObject fleetRanges)
         {
-            foreach (var role in RoleModels.Roles)
+            foreach (var key in RoleModels.Roles.Select(RoleModels.RangeKey).Append(SummaryModelKey))
             {
-                var key = RoleModels.RangeKey(role);
                 if (fleetRanges[key] is JsonValue v && v.TryGetValue<string>(out var text) && WithFleet(settings, key, [text]) is { Settings: { } withFleet })
                 {
                     settings = withFleet;
@@ -363,6 +405,7 @@ public sealed record NodeSettings
                     MaintenanceKey => JsonValue.Create(Maintenance),
                     OneFlightPerRepoKey => JsonValue.Create(OneFlightPerRepo),
                     OpusCapKey => JsonValue.Create(OpusCap),
+                    ReviewLimitKey => JsonValue.Create(ReviewLimit),
                     AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
                     AutopilotKey => JsonValue.Create(Autopilot),
                     ReviewDeepFirstKey => JsonValue.Create(ReviewDeepFirst),
@@ -375,6 +418,7 @@ public sealed record NodeSettings
                     MaxGoAroundsKey => JsonValue.Create(MaxGoArounds),
                     ScratchDaysKey => JsonValue.Create(ScratchDays),
                     DiskAlertGbKey => JsonValue.Create(DiskAlertGb),
+                    FlightCiBudgetKey => JsonValue.Create(FlightCiBudget),
                     StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => JsonValue.Create(StaleValue(key)),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
                     JobPriorityKey => JsonValue.Create(Pilot.Node.Flights.JobPriorities.Name(JobPriority!.Value)),
@@ -409,6 +453,7 @@ public sealed record NodeSettings
         MaintenanceKey => Maintenance is { } maintenance ? [maintenance ? "on" : "off"] : null,
         OneFlightPerRepoKey => OneFlightPerRepo is { } one ? [one ? "on" : "off"] : null,
         OpusCapKey => OpusCap is { } cap ? [cap.ToString(CultureInfo.InvariantCulture)] : null,
+        ReviewLimitKey => ReviewLimit is { } reviews ? [reviews.ToString(CultureInfo.InvariantCulture)] : null,
         AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
         AutopilotKey => Autopilot is { } autopilot ? [autopilot ? "on" : "off"] : null,
         ReviewDeepFirstKey => ReviewDeepFirst is { } deepFirst ? [deepFirst ? "on" : "off"] : null,
@@ -426,6 +471,7 @@ public sealed record NodeSettings
         MaxGoAroundsKey => MaxGoArounds is { } rounds ? [rounds.ToString(CultureInfo.InvariantCulture)] : null,
         ScratchDaysKey => ScratchDays is { } days ? [days.ToString(CultureInfo.InvariantCulture)] : null,
         DiskAlertGbKey => DiskAlertGb is { } alertGb ? [alertGb.ToString(CultureInfo.InvariantCulture)] : null,
+        FlightCiBudgetKey => FlightCiBudget is { } ciBudget ? [ciBudget.ToString(CultureInfo.InvariantCulture)] : null,
         StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => StaleValue(key) is { } stale ? [stale.ToString(CultureInfo.InvariantCulture)] : null,
         JobPriorityKey => JobPriority is { } priority ? [Pilot.Node.Flights.JobPriorities.Name(priority)] : null,
         JobMemoryKey => JobMemoryGigabytes is { } memory ? [memory.ToString(CultureInfo.InvariantCulture)] : null,
@@ -434,15 +480,18 @@ public sealed record NodeSettings
         PriorityStartLimitKey => PriorityStartLimit is { } high ? [high.ToString(CultureInfo.InvariantCulture)] : null,
         WeekLimitKey => WeekLimit is { } week ? [week.ToString(CultureInfo.InvariantCulture)] : null,
         PrWatchIdleKey => PrWatchIdle is { } idle ? [DurationText(idle)] : null,
+        AdoptAfterKey => AdoptAfter is { } adoptAfter ? [DurationText(adoptAfter)] : null,
         WeekPaceKey => WeekPace is { } pace ? [pace.ToString(CultureInfo.InvariantCulture)] : null,
         SpendAlertKey => SpendAlert is { } alert ? [alert.ToString(CultureInfo.InvariantCulture)] : null,
         WatchtowerCompactShareKey => WatchtowerCompactShare is { } wcs ? [wcs.ToString(CultureInfo.InvariantCulture)] : null,
         WatchtowerChatMessagesKey => WatchtowerChatMessages is { } wcm ? [wcm.ToString(CultureInfo.InvariantCulture)] : null,
+        WatchtowerCompactIdleKey => WatchtowerCompactIdle is { } wci ? [wci.ToString(CultureInfo.InvariantCulture)] : null,
+        WatchtowerCompactAboveKey => WatchtowerCompactAbove is { } wca ? [wca.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityReposKey => PriorityRepos,
         RepoTrackersKey => RepoTrackers,
         NoAutoMergeReposKey => NoAutoMergeRepos,
         SubTaskReposKey => SubTaskRepos,
-        _ when IsRoleKey(key) && Roles?.GetValueOrDefault(key) is { } role => [role],
+        _ when IsLayeredKey(key) && Roles?.GetValueOrDefault(key) is { } role => [role],
         _ => null,
     };
 
@@ -492,6 +541,14 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var opus) && opus is >= 0 and <= 64
                     ? (settings with { OpusCap = opus }, null)
                     : (null, "opus-cap takes the most Opus sessions the fleet runs at once, 0 to 64 (0 for no cap)");
+            case ReviewLimitKey:
+                if (clear)
+                {
+                    return (settings with { ReviewLimit = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var reviewLimit) && reviewLimit is >= 0 and <= 16
+                    ? (settings with { ReviewLimit = reviewLimit }, null)
+                    : (null, "review-limit takes the most reviews and fixers this node runs at once, 0 to 16 (0 for no limit)");
             case AcceptFleetFlightsKey:
                 if (clear)
                 {
@@ -638,6 +695,14 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var diskAlertGb) && diskAlertGb is >= 1 and <= 10000
                     ? (settings with { DiskAlertGb = diskAlertGb }, null)
                     : (null, "disk-alert-gb takes a number, 1 to 10000");
+            case FlightCiBudgetKey:
+                if (clear)
+                {
+                    return (settings with { FlightCiBudget = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var ciBudget) && ciBudget is >= 1 and <= 1000
+                    ? (settings with { FlightCiBudget = ciBudget }, null)
+                    : (null, "flight-ci-budget takes a number of runner-hours, 1 to 1000");
             case JobPriorityKey:
                 if (clear)
                 {
@@ -678,6 +743,14 @@ public sealed record NodeSettings
                 return ParseDuration(One()) is { } idle && idle >= TimeSpan.FromMinutes(1) && idle <= TimeSpan.FromHours(24)
                     ? (settings with { PrWatchIdle = idle }, null)
                     : (null, "pr-watch-idle takes how long to wait between reads while no one looks at the Pull requests page, 1 minute to 24 hours, as 15m or 1h (a bare number is minutes)");
+            case AdoptAfterKey:
+                if (clear)
+                {
+                    return (settings with { AdoptAfter = null }, null);
+                }
+                return ParseDuration(One()) is { } adopt && adopt >= TimeSpan.FromMinutes(1) && adopt <= TimeSpan.FromDays(7)
+                    ? (settings with { AdoptAfter = adopt }, null)
+                    : (null, "adopt-after takes how long a peer node must be unheard before this node may take over its flights, 1 minute to 7 days, as 30m or 1h (a bare number is minutes)");
             case WeekPaceKey:
             {
                 var raw = clear ? "off" : One();
@@ -717,6 +790,22 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var chatMessages) && chatMessages >= 0
                     ? (settings with { WatchtowerChatMessages = chatMessages }, null)
                     : (null, "watchtower-chat-messages takes a count of person messages, 0 or more (0 is off)");
+            case WatchtowerCompactIdleKey:
+                if (clear)
+                {
+                    return (settings with { WatchtowerCompactIdle = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var compactIdle) && compactIdle > 0
+                    ? (settings with { WatchtowerCompactIdle = compactIdle }, null)
+                    : (null, "watchtower-compact-idle takes the minutes an idle watchtower waits before it is compacted, 1 or more");
+            case WatchtowerCompactAboveKey:
+                if (clear)
+                {
+                    return (settings with { WatchtowerCompactAbove = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var compactAbove) && compactAbove >= 0
+                    ? (settings with { WatchtowerCompactAbove = compactAbove }, null)
+                    : (null, "watchtower-compact-above takes the context in thousands of tokens an idle watchtower must hold to be compacted, 0 or more");
             case PriorityReposKey:
             {
                 if (clear)
@@ -786,6 +875,21 @@ public sealed record NodeSettings
                 return One()?.ToLowerInvariant() is { } merge && MergeMethods.Contains(merge)
                     ? (settings with { MergeMethod = merge }, null)
                     : (null, $"merge-method takes {string.Join(", ", MergeMethods)}");
+            case SummaryModelKey:
+            {
+                var roles = new Dictionary<string, string>(settings.Roles ?? new Dictionary<string, string>(), StringComparer.Ordinal);
+                if (clear)
+                {
+                    roles.Remove(key);
+                    return (settings with { Roles = roles.Count == 0 ? null : roles }, null);
+                }
+                if (One()?.ToLowerInvariant() is not { } model || !RoleModels.IsModelName(model))
+                {
+                    return (null, "summary-model takes a model: sonnet, opus or haiku, or a full model id such as claude-sonnet-5-5");
+                }
+                roles[key] = model;
+                return (settings with { Roles = roles }, null);
+            }
             case var role when IsRoleKey(role):
             {
                 var roles = new Dictionary<string, string>(settings.Roles ?? new Dictionary<string, string>(), StringComparer.Ordinal);

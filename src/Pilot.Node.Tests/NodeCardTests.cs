@@ -47,13 +47,13 @@ public sealed class NodeCardTests : IDisposable
 
         var card = state.Cards(openOnly: true).Single(c => c.Kind == NodeLan.AskedKind);
         (card.Bin, card.Title).ShouldBe((CardBin.Ring, "laptop asks to fly flights on this node"));
-        card.Choices.Select(c => c.Label).ShouldBe(["Allow laptop to run commands here until revoked", "Refuse laptop"]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Allow laptop to run commands", "Refuse laptop"]);
     }
 
     [Fact]
     public void ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage()
     {
-        foreach (var kind in new[] { "pr-checks-failed", "pr-conflicts", "not-landed" })
+        foreach (var kind in new[] { "pr-checks-failed", "not-landed" })
         {
             CardSummaries.For(kind, "flight/TIA1", "title", []).ShouldNotBeNull().ShouldNotContain("from the flight page");
         }

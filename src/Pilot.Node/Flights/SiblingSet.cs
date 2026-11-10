@@ -11,19 +11,43 @@ public static class SiblingSet
     /// The full paths of the clones the build in <paramref name="command"/> compiles when run in <paramref name="cwd"/>: the job's
     /// own repo (its main clone), and each sibling its checkout's <c>UseLocal*</c> properties probe that exists beside that clone,
     /// then the siblings of each of those in turn. Empty when the command's tool is not dotnet build, test, restore, publish, pack
-    /// or run, or msbuild.
+    /// or run, or msbuild. <paramref name="siblingSource"/> is a flight marked to build on sibling source (<c>pilot: sibling
+    /// source</c>), whose jobs the node runs with <c>UseLocalSiblings=true</c>; a <c>-p:UseLocalSiblings=</c> on a segment wins over it.
     /// </summary>
-    public static IReadOnlyList<string> Of(string command, string cwd)
+    public static IReadOnlyList<string> Of(string command, string cwd, bool siblingSource = false)
     {
         var found = new List<string>();
         foreach (var (tool, verb, flags, folder) in JobKey.Steps(command, cwd))
         {
             if (Builds(tool, verb, flags))
             {
-                Add(found, folder);
+                Add(found, folder, UseLocalSiblingsOf(flags) ?? (siblingSource ? true : null));
             }
         }
         return found;
+    }
+
+    /// <summary>The <c>UseLocalSiblings</c> a segment's flags set (<c>-p:</c>, <c>--property:</c>, <c>-property:</c>), or null when none does.</summary>
+    internal static bool? UseLocalSiblingsOf(IEnumerable<string> flags)
+    {
+        bool? value = null;
+        foreach (var flag in flags)
+        {
+            var colon = flag.IndexOf(':');
+            if (colon < 0 || flag[..colon].TrimStart('-', '/').ToLowerInvariant() is not ("p" or "property"))
+            {
+                continue;
+            }
+            foreach (var pair in flag[(colon + 1)..].Split(';', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var eq = pair.IndexOf('=');
+                if (eq > 0 && pair[..eq].Trim().Equals("UseLocalSiblings", StringComparison.OrdinalIgnoreCase))
+                {
+                    value = pair[(eq + 1)..].Trim().Trim('"').Equals("true", StringComparison.OrdinalIgnoreCase);
+                }
+            }
+        }
+        return value;
     }
 
     /// <summary>Whether any segment of <paramref name="command"/> builds (dotnet build, restore, publish, pack, msbuild, or test/run without <c>--no-build</c>).</summary>
@@ -113,7 +137,7 @@ public static class SiblingSet
         _ => false,
     };
 
-    private static void Add(List<string> found, string cwd)
+    private static void Add(List<string> found, string cwd, bool? useLocalSiblings)
     {
         var full = Path.GetFullPath(cwd);
         var repo = MainCloneOf(full);
@@ -135,7 +159,7 @@ public static class SiblingSet
             var checkout = queue.Dequeue();
             // Only the clones the build really reaches from this folder: a plane's relative probes land inside the plane's
             // .claude/worktrees, so a plane building on the packages holds no sibling (PIL802).
-            foreach (var path in SiblingWatch.ReachedClones(checkout))
+            foreach (var path in SiblingWatch.ReachedClones(checkout, useLocalSiblings))
             {
                 if (Directory.Exists(path) && !found.Contains(path, StringComparer.OrdinalIgnoreCase))
                 {
@@ -148,6 +172,18 @@ public static class SiblingSet
 
     /// <summary>The checkout (plane or clone) holding a folder: the nearest ancestor with a .git, or the folder itself when none has.</summary>
     internal static string CheckoutOf(string cwd) => Path.TrimEndingDirectorySeparator(CheckoutRootOf(Path.GetFullPath(cwd)));
+
+    /// <summary>
+    /// The repo a folder belongs to: its main clone, for a folder in any of its worktrees (a plane) or in the clone itself; null for a
+    /// folder in no git checkout at all, which belongs to no repo.
+    /// </summary>
+    internal static string? RepoOf(string cwd)
+    {
+        var full = Path.GetFullPath(cwd);
+        return string.Equals(CheckoutRootOf(full), full, StringComparison.OrdinalIgnoreCase) && !Directory.Exists(Path.Combine(full, ".git")) && !File.Exists(Path.Combine(full, ".git"))
+            ? null
+            : MainCloneOf(full);
+    }
 
     private static string MainCloneOf(string full)
     {

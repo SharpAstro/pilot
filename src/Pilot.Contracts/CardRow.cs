@@ -96,6 +96,15 @@ public sealed record CardRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public CardAnswering? Answering { get; init; }
 
+    /// <summary>
+    /// What the card is about: the node remembers a person's dismissal by kind, subject and this key, so the next watch pass does not raise
+    /// the same cause again (#853). The raiser's key where its title carries a part that changes for the same cause (an age, a count), else
+    /// the title the card was raised with, fixed then, so a later rewording of the title (the brain's, PIL855) cannot move it. A card an
+    /// older node wrote has none, and its title is the key; an older client ignores it.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Cause { get; init; }
+
     /// <summary>How many characters of a sha the node and its clients show: the node's CommitRefs and the pages cut to this.</summary>
     public const int ShortShaLength = 9;
 }
@@ -164,6 +173,12 @@ public sealed record CardChoice
     /// what was typed after the choice (<c>pilot answer &lt;card&gt; &lt;choice&gt; --words ...</c>). Null for an ordinary button.
     /// </summary>
     public string? AsksFor { get; init; }
+
+    /// <summary>
+    /// The whole of what the label may cut (a design option's text and consequence, which the button's two lines cannot hold): a client
+    /// shows it as the button's hover, so a label ending in an ellipsis still carries its whole words. Null where the label is whole.
+    /// </summary>
+    public string? Hint { get; init; }
 }
 
 /// <summary>Kinds of card a client treats specially, matched by word (<see cref="CardRow.Kind"/>).</summary>
@@ -191,6 +206,12 @@ public static class CardKinds
     /// told either way (<see cref="CardRow.AskedBy"/>). Answering it is the person's alone.
     /// </summary>
     public const string AssistantAsk = "assistant-ask";
+
+    /// <summary>
+    /// The card of a permission prompt or a question the stream watchtower waits on (PIL855). Its detail is the whole tool input, drawn
+    /// whole: Allow from the card runs the whole call, so no line of it is cut.
+    /// </summary>
+    public const string WatchtowerAsk = "watchtower-ask";
 
     /// <summary>
     /// An edit of an idea that contradicts what GitHub has got since (<see cref="Verbs.EditIdea"/>): a For-you card naming the idea
@@ -267,6 +288,12 @@ public static class ChoiceStatus
 
     /// <summary>A review on GitHub asks for changes. Not a button.</summary>
     public const string ChangesRequested = "changes-requested";
+
+    /// <summary>
+    /// The node's own wait: a leg of the flight (a review-notes leg making the review's fixes) is still to fly, and the merge is
+    /// refused until it lands; <see cref="CardChoice.Note"/> names the legs. Not a button, and not a failure: it ends by itself (#918).
+    /// </summary>
+    public const string WaitsForLegs = "waits-for-legs";
 
     /// <summary>
     /// The node has taken the merge and is working on it: waiting its turn behind another flight of the repo, bringing the PR up to

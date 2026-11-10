@@ -49,4 +49,24 @@ public sealed class CardHoverTests
         tips.ShouldNotContain("TIA1818 landed");
         tips.ShouldNotContain("merged as #1820");
     }
+
+    [Fact]
+    public void ACutOptionButtonEndsInAnEllipsisAndCarriesItsWholeOptionOnHover()
+    {
+        const string whole = "export the variable only when SiblingWatch.ReachedClones(job.Repo) is true, and say so on the job's line in pilot status (jobs in repos with no clones restore packages)";
+        var card = Card("the review asks a question of design", "detail") with
+        {
+            Kind = "pr-review-design",
+            Choices =
+            [
+                new CardChoice { Label = whole[..41] + "...", Verb = Verbs.FixPr, Target = "pr/SharpAstro/pilot#888", Args = [whole], Hint = whole },
+                new CardChoice { Label = "Keep a library", Verb = Verbs.FixPr, Target = "pr/SharpAstro/pilot#888", Args = ["Keep a library"] },
+            ],
+        };
+
+        var tips = Tooltips(card);
+
+        tips.ShouldContain(whole);
+        tips.ShouldNotContain("Keep a library");
+    }
 }

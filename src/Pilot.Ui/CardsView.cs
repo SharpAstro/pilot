@@ -180,11 +180,38 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
                 nodes[card] = node;
             }
         }
-        return (new CardsScreen(open, Handled, Watchtower) { _nodes = nodes, _summary = Summary, Merged = Merged, Held = Held }, waiting, closed);
+        return (new CardsScreen(open, Handled, Watchtower) { _nodes = nodes, _summary = Summary, Merged = Merged, Held = Held, Hidden = Hidden }, waiting, closed);
     }
 
     // A held panel's summary: the cards as they are, not as held.
     private string? _summary;
+
+    /// <summary>
+    /// The open cards <see cref="Without"/> took off this panel, each by its node and id (two nodes' cards may share an id): they are not
+    /// closed, only hidden, so a read of this screen must not take their absence for a close.
+    /// </summary>
+    internal IReadOnlySet<(string? Node, string Id)> Hidden { get; private init; } = new HashSet<(string?, string)>();
+
+    /// <summary>The key a card is known by on this panel: its node's name (null for this window's alone) and its id, as <see cref="HeldTo"/> keys it.</summary>
+    internal (string? Node, string Id) KeyOf(CardRow card) => (NodeOf(card)?.Name, card.Id);
+
+    /// <summary>
+    /// This panel without the open cards of <paramref name="keys"/> (cards a person dismissed that the node has not yet closed, by node
+    /// and id, <see cref="KeyOf"/>): the rest as they are, in their order, with their nodes. A held panel's summary stays as it was held;
+    /// otherwise it counts what is left.
+    /// </summary>
+    internal CardsScreen Without(IReadOnlySet<(string? Node, string Id)> keys)
+    {
+        if (keys.Count == 0 || !Open.Any(c => keys.Contains(KeyOf(c))))
+        {
+            return this;
+        }
+        return new CardsScreen([.. Open.Where(c => !keys.Contains(KeyOf(c)))], Handled, Watchtower)
+        {
+            _nodes = _nodes, _summary = _summary, Merged = Merged, Held = Held,
+            Hidden = new HashSet<(string?, string)>(Hidden.Concat(Open.Where(c => keys.Contains(KeyOf(c))).Select(KeyOf))),
+        };
+    }
 
     /// <summary>Whether the panel has anything to show: the watchtower, an open card or a handled line. Empty, it takes no room.</summary>
     public bool HasAny => Watchtower is not null || Open.Count > 0 || Handled.Count > 0 || Merged.Count > 0 || Held.Count > 0;
@@ -421,6 +448,14 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The node a card shown was raised on, whom its buttons command; null is this window's.</summary>
     public NodeMark? NodeOf(CardRow card) => _shown.NodeOf(card);
 
+    /// <summary>
+    /// The key a card's press state (working, refused) is kept under: its node and id, as the dismissed set's (#922: by id alone, a
+    /// press on one node's card showed on another node's card of the same id in a merged panel). The one source for that key.
+    /// </summary>
+    internal static string PressKeyOf(string? node, string cardId) => node is null ? cardId : $"{node}/{cardId}";
+
+    private string PressKey(CardRow card) => PressKeyOf(NodeOf(card)?.Name, card.Id);
+
     /// <summary>The least the panel is given: a window that would give it less shows the page alone (the panel is dropped, as an optional column is).</summary>
     public const float MinWidth = 240f;
 
@@ -448,6 +483,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary><paramref name="screen"/>, or, with the pointer <paramref name="over"/> the panel, the panel held as it stood when the pointer came.</summary>
     internal CardsScreen Steady(CardsScreen screen, bool over)
     {
+        // A card dismissed here is off the panel before the hold reads it: it is then a card closed meanwhile, which Tree takes off the held row.
+        screen = Visible(screen);
         if (!over)
         {
             (_held, _waiting, _closed) = (null, [], new HashSet<CardRow>());
@@ -455,12 +492,15 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         _held ??= _shown;
         (var held, _waiting, _closed) = screen.HeldTo(_held);
-        return held;
+        // The held panel may still carry the dismissed card's row (it was shown when the pointer came): the clicked row may go, the others keep their place.
+        return Visible(held);
     }
 
     /// <summary>The panel as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
     internal Layout.Node Tree(CardsScreen screen)
     {
+        // Also after the hold: a held panel keeps the dismissed card's row in its place, which a person who asked for it gone does not want kept.
+        screen = Visible(screen);
         _shown = screen;
         return Build(screen);
     }
@@ -520,19 +560,94 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     ];
 
     // What a button's press is doing, by card id: working with the node, refused in its words. One helper for every button that asks the node.
+    // Known gap (pilot#922): the key is the card id alone, so with two nodes that share an id a refusal or a working press on one shows on
+    // the other. The dismissed set below is keyed by node and id; the press state still is not.
     internal Presses Presses { get; } = new();
 
+    // The cards whose Dismiss was clicked and the node has not yet closed, by node and id (a merged panel's nodes may share an id, so an
+    // id alone hid another node's card the person never dismissed). The row leaves the panel on the click: a snapshot taken before the
+    // node's close still lists the card open, and would bring it back for a moment (PIL853). Swapped whole, as the presses are.
+    // The node of the key is the merged panel's own: null for this window's node while one node is shown, its name once several are
+    // (FleetPages.Mark). A node joining or leaving while a dismiss is pending therefore changes the key, and the card shows again until the
+    // node's close arrives. Known and brief; a stable key would need the window's own node named when it is alone, which the panel does not carry.
+    private System.Collections.Immutable.ImmutableHashSet<(string? Node, string Id)> _dismissed = System.Collections.Immutable.ImmutableHashSet<(string? Node, string Id)>.Empty;
+
+    /// <summary>Whether card <paramref name="cardId"/> of node <paramref name="node"/> (null: this window's) was dismissed here and is hidden until the node closes it or refuses, for a test or a dump.</summary>
+    public bool DismissedPending(string cardId, string? node = null) => Volatile.Read(ref _dismissed).Contains((node, cardId));
+
     /// <summary>
-    /// What the node said when it refused a button on card <paramref name="cardId"/>, shown on the card in red until the
-    /// card changes or closes; null clears it (the next press that went through).
+    /// Hides <paramref name="card"/> from the click of its Dismiss, until the node's close of it is read or <see cref="NoteRefused(string, string?, string?)"/>
+    /// brings it back. The host sends every outcome of the dismiss back through that (<see cref="CardCommands.SendAsync"/>), or the card stays hidden.
     /// </summary>
-    public void NoteRefused(string cardId, string? why) => Presses.NoteRefused(cardId, why);
+    public void NoteDismissed(CardRow card)
+    {
+        var key = _shown.KeyOf(card);
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _dismissed, d => d.Add(key));
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// A Dismiss of <paramref name="card"/> the host did not send (another press on the card was still with the node): its row comes back,
+    /// unless a Dismiss of it is the press still working, whose answer will settle it.
+    /// </summary>
+    public void NoteNotSent(CardRow card)
+    {
+        if (WorkingOn(card) == DismissHit(card))
+        {
+            return;
+        }
+        var key = _shown.KeyOf(card);
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _dismissed, d => d.Remove(key));
+        Changed?.Invoke();
+    }
+
+    /// <summary>The hit id of <paramref name="card"/>'s Dismiss button, as the host names the press working.</summary>
+    public static string DismissHit(CardRow card) => $"card:{card.Id}:dismiss";
+
+    /// <summary>
+    /// <paramref name="screen"/> as the panel and the flight page show it: without the cards dismissed here (<see cref="NoteDismissed"/>).
+    /// A card the screen no longer lists open is closed, so its mark is dropped (the node's close arrived). Cheap and idempotent: the panel and
+    /// the flight page both call it, whatever the other has done.
+    /// </summary>
+    internal CardsScreen Visible(CardsScreen screen)
+    {
+        var marked = Volatile.Read(ref _dismissed);
+        if (marked.IsEmpty)
+        {
+            return screen;
+        }
+        var listed = screen.Open.Select(screen.KeyOf).Concat(screen.Hidden).ToHashSet();
+        if (marked.Any(key => !listed.Contains(key)))
+        {
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _dismissed, d => d.Intersect(listed));
+            marked = Volatile.Read(ref _dismissed);
+        }
+        return screen.Without(marked);
+    }
+
+    /// <summary>
+    /// What node <paramref name="node"/> (null: this window's) said when it refused a button on its card <paramref name="cardId"/>, shown
+    /// on the card in red until the card changes or closes; null clears it (the next press that went through). A refused Dismiss brings
+    /// back this card alone (<see cref="NoteDismissed"/>), not another node's card of the same id, with the reason on it.
+    /// The node is read when the press is sent (<see cref="NodeOf"/>), since the panel drawn by the time the answer comes holds other rows.
+    /// </summary>
+    public void NoteRefused(string cardId, string? node, string? why)
+    {
+        Presses.NoteRefused(PressKeyOf(node, cardId), why);
+        if (why is not null)
+        {
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _dismissed, d => d.Remove((node, cardId)));
+        }
+    }
 
     /// <summary>
     /// Marks the button <paramref name="action"/> (its hit id, <c>card:c9:1</c>) of card <paramref name="cardId"/> as with the
     /// node: it reads "…" and the card's buttons take no press until it is cleared (null), when the node has answered.
     /// </summary>
-    public void NoteWorking(string cardId, string? action) => Presses.NotePending(cardId, action);
+    public void NoteWorking(string cardId, string? action, string? node = null) => Presses.NotePending(PressKeyOf(node, cardId), action);
+
+    /// <summary><see cref="NoteWorking(string, string?, string?)"/> for <paramref name="card"/>, under its node's key.</summary>
+    public void NoteWorking(CardRow card, string? action) => Presses.NotePending(PressKey(card), action);
 
     // Cards whose detail fold is open, by id: swapped whole, as the presses are.
     private System.Collections.Immutable.ImmutableHashSet<string> _detailOpen = System.Collections.Immutable.ImmutableHashSet<string>.Empty;
@@ -544,18 +659,24 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     public bool DetailOpenOn(string cardId) => Volatile.Read(ref _detailOpen).Contains(cardId);
 
     /// <summary>The button of card <paramref name="cardId"/> whose press is with the node now, or null: the flight page reads it too.</summary>
-    public string? WorkingOn(string cardId) => Presses.PendingOf(cardId);
+    public string? WorkingOn(string cardId, string? node = null) => Presses.PendingOf(PressKeyOf(node, cardId));
+
+    /// <summary><see cref="WorkingOn(string, string?)"/> for <paramref name="card"/>, under its node's key.</summary>
+    public string? WorkingOn(CardRow card) => Presses.PendingOf(PressKey(card));
 
     /// <summary>The card's refusal as it stands, for a test or a dump; null when none.</summary>
-    public string? RefusedOn(string cardId) => Presses.RefusedOf(cardId);
+    public string? RefusedOn(string cardId, string? node = null) => Presses.RefusedOf(PressKeyOf(node, cardId));
 
-    // Where each card stood the last time the panel was built: open, with an answer underway, or closed (gone from the open cards, or
+    /// <summary><see cref="RefusedOn(string, string?)"/> for <paramref name="card"/>, under its node's key.</summary>
+    public string? RefusedOn(CardRow card) => Presses.RefusedOf(PressKey(card));
+
+    // Where each card stood the last time the panel was built, by its press key: open, with an answer underway, or closed (gone from the open cards, or
     // held closed under the pointer). A card never seen has no entry. Read and written on the render thread only.
     private enum CardPhase { Open, Answering, Closed }
 
     private Dictionary<string, CardPhase> _phases = new(StringComparer.Ordinal);
 
-    // The refusal text drawn on each card the last time it was, by card id. Render thread only.
+    // The refusal text drawn on each card the last time it was, by its press key (node and card id). Render thread only.
     private readonly Dictionary<string, string> _refusalDrawn = new(StringComparer.Ordinal);
 
     /// <summary>How many cards' last phase <see cref="DropStaleRefusals"/> remembers, closed ones included (so a reopened card is known); past it the closed ones are forgotten.</summary>
@@ -576,11 +697,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var now = new Dictionary<string, CardPhase>(StringComparer.Ordinal);
         foreach (var card in screen.Open)
         {
-            now[card.Id] = _closed.Contains(card) ? CardPhase.Closed : card.Answering is not null ? CardPhase.Answering : CardPhase.Open;
+            now[PressKeyOf(screen.NodeOf(card)?.Name, card.Id)] = _closed.Contains(card) ? CardPhase.Closed : card.Answering is not null ? CardPhase.Answering : CardPhase.Open;
         }
         foreach (var card in screen.Merged)
         {
-            now.TryAdd(card.Id, CardPhase.Closed);
+            now.TryAdd(PressKeyOf(screen.NodeOf(card)?.Name, card.Id), CardPhase.Closed);
         }
         foreach (var id in _phases.Keys)
         {
@@ -765,6 +886,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     private const float AccentBar = 3f;
 
     /// <summary>How many lines a card's title may take: it says what happened and to what (an overlap's names both flights, the shared files and the choice), which one clipped row loses (pilot#677).</summary>
+    // Known gap (pilot#923): a title cut by this cap shows no ellipsis in a capture (the whole text is on hover in the live window only).
     internal const int TitleLines = 3;
 
     /// <summary>The cap on a card's detail: more for a card that offers a merge, and for an overlap's, which says what each of its choices does.</summary>
@@ -899,11 +1021,19 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             {
                 // Wraps within the panel, three lines at most (eight on a merge's); an explicit newline stays a break.
                 var cap = DetailLinesOf(card);
-                // The whole text is on hover wherever it could pass the cap: a narrow panel wraps a detail of a few hundred characters
-                // past eight lines, and a later paragraph gets one line, so the length is judged at the narrowest width (DetailFits per
-                // DetailLines), never scaled up by the cap, and a second paragraph is a cut of its own.
-                lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap, LineChars), detail,
-                    detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
+                if (card.Kind == CardKinds.WatchtowerAsk)
+                {
+                    // An ask's detail is the whole call its Allow runs: drawn whole, uncapped, so the tail of a long command is seen (PIL855).
+                    lines.Add(WrappedProse.Of(detail, 11f, Body));
+                }
+                else
+                {
+                    // The whole text is on hover wherever it could pass the cap: a narrow panel wraps a detail of a few hundred characters
+                    // past eight lines, and a later paragraph gets one line, so the length is judged at the narrowest width (DetailFits per
+                    // DetailLines), never scaled up by the cap, and a second paragraph is a cut of its own.
+                    lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap, LineChars), detail,
+                        detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
+                }
             }
         }
         // The one image the node keeps for the card (an overlap's screenshot): a thumbnail under the detail, a click opens it full size.
@@ -922,16 +1052,17 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             lines.Add(ideaLinks);
         }
         // What the node said to the last button pressed here, when it refused: on the card, never only in a log.
-        var working = Presses.PendingOf(card.Id);
+        var pressKey = PressKey(card);
+        var working = Presses.PendingOf(pressKey);
         // An answer to this card that is underway (#792): said where the buttons are, whoever pressed it, and its buttons are dead.
         var answering = closed || merged ? null : card.Answering;
         // Not drawn while an answer is underway: the line below says what is going on, and a refusal that landed before the stream showed
         // the answer's end is drawn once it does.
-        if (answering is null && Presses.RefusalLine(card.Id, 11f, Ring, DetailLines, LineChars) is { } refusal)
+        if (answering is null && Presses.RefusalLine(pressKey, 11f, Ring, DetailLines, LineChars) is { } refusal)
         {
             lines.Add(refusal);
             // Drawn once: from now on a card that moves on (closed, answered) takes it with it (see DropStaleRefusals).
-            _refusalDrawn[card.Id] = Presses.RefusedOf(card.Id) ?? "";
+            _refusalDrawn[pressKey] = Presses.RefusedOf(pressKey) ?? "";
         }
         if (answering is not null)
         {
@@ -952,7 +1083,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         // A button that asks the node goes through the shared helper, which says it is working and takes no second press.
         // Dead too while an answer to the card is underway: pressing again would only be joined (or refused), and the line above says why.
         Layout.Node NodeButton(string label, string action, Action onClick) =>
-            closed || answering is not null ? Dead(label) : Presses.Button(card.Id, action, () => Pill(label, action, onClick), pressed => Dead(pressed ? $"{label} …" : label));
+            closed || answering is not null ? Dead(label) : Presses.Button(pressKey, action, () => Pill(label, action, onClick), pressed => Dead(pressed ? $"{label} …" : label));
         var watched = node is { Here: false } && CanSteer?.Invoke(node) == false ? node : null;
         if (watched is not null)
         {
@@ -965,7 +1096,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             {
                 if (OnConnect is { } connect)
                 {
-                    _ = Presses.PressAsync(card.Id, connectHit, _ => connect(watched));
+                    _ = Presses.PressAsync(PressKey(card), connectHit, _ => connect(watched));
                 }
             }));
         }
@@ -978,13 +1109,14 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 // A merge that finished: only what it came to, as the chip it was; nothing else on it is pressed.
                 if (IsChip(choice.Status))
                 {
-                    Put(ChoiceControl(choice, card.Detail, $"card:{card.Id}:{number}", () => { }, wrap: true), StatusLabel(choice, card.Detail));
+                    Put(ChoiceControl(choice, card.Detail, $"card:{card.Id}:{number}", () => { }, wrap: true), StatusLabel(choice, card.Detail, WrappedNoteFits));
                 }
                 continue;
             }
             var action = $"card:{card.Id}:{number}";
             // A choice shown as a chip stays one while a press is with the node; a button is dead, and says "…" if it is the one pressed.
-            var label = StatusLabel(choice, card.Detail);
+            // The same words the wrapping control shows, so its row and its dead twin are the size of the live one (review of #939).
+            var label = StatusLabel(choice, card.Detail, WrappedNoteFits);
             // A choice the node would refuse right now (its flight held, its session gone): dead, with the reason beside it, so nobody
             // presses it to be told "refused" (#792). A field the choice asks for is not drawn either: there is nothing to send it to.
             if (choice.Status == ChoiceStatus.Unavailable)
@@ -1000,7 +1132,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                     ? DeadChoice(label, false)
                     : answering is not null
                         ? DeadChoice(label, answering.Choice == choice.Label)
-                    : Presses.Button(card.Id, action, () => ChoicePill(label, false, action, () =>
+                    : Presses.Button(pressKey, action, () => ChoicePill(label, false, action, () =>
                     {
                         var typed = words.Text.Trim();
                         if (typed.Length > 0)
@@ -1016,7 +1148,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                     ? ChoiceControl(choice, card.Detail, action, () => { }, wrap: true)
                     : answering is not null
                         ? DeadChoice(label, answering.Choice == choice.Label)
-                    : Presses.Button(card.Id, action, () => ChoiceControl(choice, card.Detail, action, () => OnAnswer?.Invoke(card, number), wrap: true), pressed => DeadChoice(label, pressed)), label);
+                    : Presses.Button(pressKey, action, () => ChoiceControl(choice, card.Detail, action, () => OnAnswer?.Invoke(card, number), wrap: true), pressed => DeadChoice(label, pressed)), label);
         }
         // A waiting session is answered where its Remote Control has it: the card's link, one click away.
         if (card.Kind == CardKinds.SessionWaiting && card.Link is { } answerUrl)
@@ -1041,7 +1173,19 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         if (watched is null && !merged)
         {
             // Dismiss (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            Put(NodeButton("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
+            Put(NodeButton("Dismiss", DismissHit(card), () =>
+            {
+                // The row leaves on the click, not when the node's close reaches the stream. Not while another press on the card is
+                // with the node: the host sends no second press then (CardCommandAsync), so nothing would bring the row back.
+                if (OnDismiss is { } dismiss)
+                {
+                    if (WorkingOn(card) is null)
+                    {
+                        NoteDismissed(card);
+                    }
+                    dismiss(card);
+                }
+            }));
         }
         lines.Add(Layout.Builder.Spacer().RowH(6f));
         // Wrapping: a waiting session's card has up to four buttons, more than one line of the panel holds.
@@ -1271,7 +1415,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// armed merge says what it does and how far its checks are (<paramref name="detail"/>, the card's, holds the count):
     /// <c>Merging when checks pass · 6 of 7</c>.
     /// </summary>
-    internal static string StatusLabel(CardChoice choice, string? detail = null) => choice.Status switch
+    /// <param name="fits">The longest note the label carries before an ellipsis: <see cref="NoteFits"/> for a one-line chip (the PR row's), <see cref="WrappedNoteFits"/> for a card's button that wraps.</param>
+    internal static string StatusLabel(CardChoice choice, string? detail = null, int fits = NoteFits) => choice.Status switch
     {
         ChoiceStatus.Pending => choice.Note is { Length: > 0 } running ? $"{choice.Label} · checks running · {running}" : $"{choice.Label} · checks running",
         ChoiceStatus.Failing => $"{choice.Label} · checks failed",
@@ -1279,8 +1424,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         ChoiceStatus.Armed => (choice.Note is { Length: > 0 } note ? note : ArmedProgress.Read(detail)) is { } progress ? $"{ArmedLabel} · {progress}" : ArmedLabel,
         ChoiceStatus.Queued => choice.Note is { Length: > 0 } place ? $"{QueuedLabel} · {place}" : QueuedLabel,
         ChoiceStatus.Behind => BehindLabel,
-        ChoiceStatus.Blocked => choice.Note is { Length: > 0 } why ? $"{BlockedLabel} · {Ellipsize(why, NoteFits)}" : BlockedLabel,
+        ChoiceStatus.Blocked => choice.Note is { Length: > 0 } why ? $"{BlockedLabel} · {Ellipsize(why, fits)}" : BlockedLabel,
         ChoiceStatus.ChangesRequested => ChangesRequestedLabel,
+        ChoiceStatus.WaitsForLegs => choice.Note is { Length: > 0 } legs ? $"Waits for {Ellipsize(legs, fits)}" : "Waits for its legs",
         ChoiceStatus.Merged => MergedLabel,
         ChoiceStatus.Merging => choice.Note is { Length: > 0 } doing ? $"{MergingLabel} {doing}" : MergingLabel,
         _ => choice.Label,
@@ -1297,6 +1443,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>How much of a note (a failed check's name) a chip shows before it ends in an ellipsis; its tooltip has the whole of it.</summary>
     internal const int NoteFits = 16;
 
+    /// <summary>
+    /// The note a card's wrapping button carries (#918: "Waits for review-notes-3 (check rerunning)"): its two lines end in an ellipsis
+    /// of their own past that, with the whole of it on hover, so the label says what it waits for wherever there is room.
+    /// </summary>
+    internal const int WrappedNoteFits = 64;
+
     internal static string Ellipsize(string text, int fits) => text.Length <= fits ? text : text[..(fits - 1)].TrimEnd() + "…";
 
     /// <summary>
@@ -1304,7 +1456,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// failed check, requested changes), or done (merged). Drawn as a chip in the button's size and place, with no hover or click.
     /// </summary>
     internal static bool IsChip(string? status) =>
-        status is ChoiceStatus.Armed or ChoiceStatus.Queued or ChoiceStatus.Blocked or ChoiceStatus.ChangesRequested or ChoiceStatus.Merged or ChoiceStatus.Merging;
+        status is ChoiceStatus.Armed or ChoiceStatus.Queued or ChoiceStatus.Blocked or ChoiceStatus.ChangesRequested or ChoiceStatus.WaitsForLegs or ChoiceStatus.Merged or ChoiceStatus.Merging;
 
     // What a chip says when hovered: what is going on, and that there is nothing to press; the whole note, uncut.
     private static string ChipTooltip(CardChoice choice) => choice.Status switch
@@ -1313,6 +1465,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         ChoiceStatus.Queued => $"In the merge queue{(choice.Note is { Length: > 0 } place ? $", {place}" : "")}: the queue merges it once its checks pass. Nothing to press.",
         ChoiceStatus.Blocked => $"GitHub blocks the merge{(choice.Note is { Length: > 0 } why ? $": {why}" : "")}. Merging it now would be refused.",
         ChoiceStatus.ChangesRequested => "A review on GitHub asks for changes. Merging it now would be refused.",
+        ChoiceStatus.WaitsForLegs => $"Merges once {(choice.Note is { Length: > 0 } legs ? legs : "its legs")} {(choice.Note?.Contains(',') == true ? "are" : "is")} done: a leg of the flight makes the review's fixes first. Nothing to press.",
         ChoiceStatus.Merging => "The node is merging this PR now: nothing to press.",
         _ => "Merged: this card goes in a moment.",
     };
@@ -1329,7 +1482,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     internal static (RGBAColor32 Bg, RGBAColor32 Hover)? StatusTint(string? status) => status switch
     {
         ChoiceStatus.Passing or ChoiceStatus.Merged => (Palette.Current.PassTint, Palette.Current.PassTintHover),
-        ChoiceStatus.Pending => (Palette.Current.PendTint, Palette.Current.PendTintHover),
+        // A leg wait is the node's own and ends by itself: amber, as checks that run, never the failure red.
+        ChoiceStatus.Pending or ChoiceStatus.WaitsForLegs => (Palette.Current.PendTint, Palette.Current.PendTintHover),
         ChoiceStatus.Failing or ChoiceStatus.Conflicting or ChoiceStatus.Behind or ChoiceStatus.Blocked or ChoiceStatus.ChangesRequested => (Palette.Current.FailTint, Palette.Current.FailTintHover),
         ChoiceStatus.Armed or ChoiceStatus.Queued or ChoiceStatus.Merging => (ArmedBg, ArmedBg),
         _ => null,
@@ -1342,6 +1496,6 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// </summary>
     internal static Layout.Node ChoiceControl(CardChoice choice, string? detail, string action, Action onClick, bool wrap = false) =>
         IsChip(choice.Status)
-            ? ChoicePill(StatusLabel(choice, detail), false, null, null, null, ArmedText, ChipTooltip(choice), Layout.DockSide.Left, wrap, StatusTint(choice.Status)!.Value.Bg)
-            : ChoicePill(StatusLabel(choice, detail), false, action, onClick, StatusTint(choice.Status), Bright, wrap: wrap);
+            ? ChoicePill(StatusLabel(choice, detail, wrap ? WrappedNoteFits : NoteFits), false, null, null, null, ArmedText, ChipTooltip(choice), Layout.DockSide.Left, wrap, StatusTint(choice.Status)!.Value.Bg)
+            : ChoicePill(StatusLabel(choice, detail, wrap ? WrappedNoteFits : NoteFits), false, action, onClick, StatusTint(choice.Status), Bright, choice.Hint, wrap: wrap);
 }

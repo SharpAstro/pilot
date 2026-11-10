@@ -6,7 +6,7 @@ using Pilot.Contracts;
 namespace Pilot.Ui;
 
 /// <summary>A node the dashboard heard announce itself on the LAN: where to reach it, and its name.</summary>
-internal sealed record LanNode(string Endpoint, string Name);
+internal sealed record LanNode(string Endpoint, string Name, string? Machine = null);
 
 /// <summary>
 /// The dashboard's eye on the LAN, so nothing it waits for is invisible: it listens for the nodes' beacon (LAN.Lib,
@@ -43,7 +43,7 @@ internal sealed class LanWatch : IAsyncDisposable
         var discovery = new LanDiscovery(transport, TimeProvider.System, options, LanIdentity.Create(null));
         await discovery.StartAsync(cancellationToken);
         return new LanWatch(
-            () => [.. discovery.PeersOf(NodeWire.LanService).Select(p => new LanNode(p.EndPoint.ToString(), p.DisplayName))],
+            () => [.. discovery.PeersOf(NodeWire.LanService).Select(p => new LanNode(p.EndPoint.ToString(), p.DisplayName, p.Properties.GetValueOrDefault("machine")))],
             () => discovery.Degradation,
             DateTimeOffset.UtcNow,
             new Owned(discovery, transport));

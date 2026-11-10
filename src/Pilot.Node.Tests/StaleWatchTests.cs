@@ -232,7 +232,7 @@ public sealed class StaleWatchTests
 
         _said.ShouldBeEmpty();
         _tracker.Sets.ShouldBeEmpty();
-        _state.Cards().ShouldContain(c => c.Kind == StaleWatch.ActedKind && c.Title.Contains("told its worker of a job that had ended"));
+        _state.Cards().ShouldContain(c => c.Kind == StaleWatch.ActedKind && c.Title.Contains("told its worker of an ended job"));
     }
 
     [Fact]
@@ -261,7 +261,23 @@ public sealed class StaleWatchTests
 
         _state.Cards().Count(c => c.Kind == "x").ShouldBe(1);
         _state.Cards().Single(c => c.Id == card.Id).RungAgainAt.ShouldBe(_clock.Now);
-        _state.Cards().Count(c => c.Kind == StaleWatch.ActedKind && c.Title.Contains(card.Id)).ShouldBe(1);
+        // The card itself is the only trace: no log line or second card about it, and it says how long it has waited (#797 rule 7).
+        _state.Cards().Count(c => c.Kind == StaleWatch.ActedKind).ShouldBe(0);
+        _state.Cards().Single(c => c.Id == card.Id).Summary.ShouldNotBeNull().ShouldEndWith("Waiting 1 h for you.");
+    }
+
+    [Fact]
+    public async Task ARingAgainCardKeepsOneWaitingMarkAndTheSameTitle()
+    {
+        Fly(TimeSpan.FromHours(1));
+        var card = _state.RaiseCard(CardBin.Ring, "x", Verbs.FlightTarget("DIR178"), "question", summary: "Answer it in the chat.");
+
+        _state.RingAgain(card.Id, "2 h");
+        _state.RingAgain(card.Id, "3 h");
+
+        var rung = _state.Cards().Single(c => c.Id == card.Id);
+        rung.Summary.ShouldBe("Answer it in the chat. Waiting 3 h for you.");
+        rung.Title.ShouldBe("question");
     }
 
     [Fact]
@@ -334,11 +350,13 @@ public sealed class StaleWatchTests
         _tracker.Sets.ShouldBeEmpty();
         Row().StaleSummary.ShouldBeNull();
 
-        // Twenty seconds on a leg finishes: the row follows at the next wake, still with no tick (no raise, no summary).
+        // Twenty seconds on a leg's finish is recorded (it finished seven hours ago, so the flight is still not moving: a flight that
+        // moved within half the bound is never stale): the row follows at the next wake, still with no tick (no raise, no summary).
         _clock.Now += TimeSpan.FromSeconds(20);
-        _state.PutLeg(new LegRow { Flight = "DIR178", Name = "main", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done, FinishedAt = _clock.Now });
+        var finished = Start - TimeSpan.FromHours(7);
+        _state.PutLeg(new LegRow { Flight = "DIR178", Name = "main", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done, FinishedAt = finished });
         await _watch.StepAsync(Ct);
-        Row().LastMovedAt.ShouldBe(_clock.Now);
+        Row().LastMovedAt.ShouldBe(finished);
         Row().LastMove.ShouldBe("leg main done");
         _tracker.Sets.ShouldBeEmpty();
 

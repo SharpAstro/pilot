@@ -142,6 +142,13 @@ public sealed record CommandResult
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Autopilot { get; init; }
 
+    /// <summary>
+    /// The class of a refused <c>merge</c> or <c>rerun-checks</c> (<see cref="MergeRefusal"/>), given where the refusal was made; null for
+    /// any other result. Node-internal: never on the wire.
+    /// </summary>
+    [JsonIgnore]
+    public MergeRefusal? Refusal { get; init; }
+
     /// <summary>The message the sender acted on (<see cref="CommandRequest.Why"/>), when it gave one.</summary>
     public string? Why { get; init; }
 
@@ -187,6 +194,21 @@ public static class Verbs
     /// <see cref="SessionRow.Id"/>. The result's <see cref="CommandResult.Way"/> says how it went.
     /// </summary>
     public const string Say = "say";
+
+    /// <summary>
+    /// <c>chat-now watchtower &lt;send id&gt;</c>: cancels the turn the watchtower is on and has the queued message with that send id
+    /// (<see cref="TranscriptEntry.SendId"/>, <see cref="ChatPage.QueuedIds"/>) answered next. Refused, with the reason, when nothing is
+    /// running or the send id is not queued.
+    /// </summary>
+    public const string ChatNow = "chat-now";
+
+    /// <summary>
+    /// <c>answer-ask watchtower &lt;request id&gt; allow|deny|answer [words]</c>: answers a permission prompt or a question the watchtower waits on
+    /// (<see cref="ChatPage.Asks"/>, PIL855): <c>allow</c> lets the tool run, <c>deny</c> refuses it with the words as the reason, and
+    /// <c>answer</c> takes the JSON object of a question's answers (question text to the chosen label; several labels of a multi-select
+    /// question joined by a comma). Answered once: a second answer to the same request is refused. The person's alone, from the chat's panel or the ask's card.
+    /// </summary>
+    public const string AnswerAsk = "answer-ask";
 
     /// <summary>
     /// <c>compact session/&lt;id&gt; [focus…]</c>: compacts an idle background session's conversation (Claude Code's
@@ -259,6 +281,14 @@ public static class Verbs
     /// leaves the flight here with <see cref="FlightRow.MoveFailure"/> saying why and a card offering to move it again.
     /// </summary>
     public const string MoveFlight = "move-flight";
+
+    /// <summary>
+    /// <c>adopt-flight flight/&lt;code&gt; &lt;node&gt;</c> (#894): take over a flight whose node has been silent longer than <c>adopt-after</c>, from
+    /// this node's last copy of that node's flights and legs. The plane is made from the branch the old node pushed, the flight says it was
+    /// adopted from that node (<see cref="FlightMoved.Adopted"/>), a leg that was flying there is planned again so it restarts here, and
+    /// the issue and the PR say who adopted it from whom. Refused while the node answers or was heard within <c>adopt-after</c>.
+    /// </summary>
+    public const string AdoptFlight = "adopt-flight";
 
     /// <summary>
     /// The arg a <c>create-flight</c> may carry after its item: create it although the item carries another node's
@@ -376,6 +406,9 @@ public static class Verbs
     /// <summary>The leading argument of <c>run</c> (before <see cref="AloneArg"/>) that ends the job at its first failed test.</summary>
     public const string FailFastArg = "--fail-fast";
 
+    /// <summary>The leading argument of <c>run</c> (after <see cref="FailFastArg"/>, before <see cref="AloneArg"/>), followed by its why, that lets a <c>dotnet test</c> with no <c>--filter</c> run.</summary>
+    public const string WholeSuiteArg = "--whole-suite";
+
     /// <summary>
     /// <c>cancel-job job/&lt;id&gt;</c>: stops a running job; its owner is told, as of any job's end. With <see cref="ForceArg"/> it
     /// kills the job's wrapper and every process the node has seen under it at once, with no grace.
@@ -415,10 +448,39 @@ public static class Verbs
     public const string AllowRound = "allow-round";
 
     /// <summary>
+    /// <c>ci-budget flight/&lt;code&gt; continue|land-green|split</c>: the owner's answer to a flight whose CI spend passed
+    /// <c>flight-ci-budget</c> (PIL795). <c>continue</c> raises the cap by one budget and lets pushes through again; the others are kept
+    /// on the flight for the controller, and the stop stays.
+    /// </summary>
+    public const string CiBudget = "ci-budget";
+
+    /// <summary>The answers to <see cref="CiBudget"/>.</summary>
+    public const string CiContinue = "continue";
+    public const string CiLandGreen = "land-green";
+    public const string CiSplit = "split";
+
+    /// <summary>
     /// <c>clear flight/&lt;code&gt; [why…]</c>: the watchtower's word (or the person's) that a flight held in a holding pattern (a
     /// review passed with notes) is cleared to land: autopilot's merge and the PR-ready card's Merge are no longer held.
     /// </summary>
     public const string Clear = "clear";
+
+    /// <summary>
+    /// <c>hold flight/&lt;code&gt; [why…]</c>: the watchtower's word (or the person's) that it is working on a flight held in a holding
+    /// pattern. A hold nobody takes is released by the node after a short grace and the flight merges with its notes; a taken one
+    /// keeps the merge held until <see cref="Clear"/>, a push, or the holding bound rings.
+    /// </summary>
+    public const string Hold = "hold";
+
+    /// <summary>
+    /// <c>ground flight/&lt;code&gt; &lt;why…&gt;</c>: the owner's hold on a flight (#771); not <see cref="Hold"/>, the holding pattern's. While it stands the node starts nothing for the flight
+    /// and takes no outward step (no leg, worker, planner, reviewer, go-around, base merge, push, PR open or merge); an armed merge
+    /// is disarmed and a queued PR taken out of the merge queue. The person's alone: not the watchtower's, not a flight session's.
+    /// </summary>
+    public const string Ground = "ground";
+
+    /// <summary><c>unground flight/&lt;code&gt; [why…]</c>: releases the owner's hold (<see cref="Ground"/>); the flight takes its next due step.</summary>
+    public const string Unground = "unground";
 
     /// <summary>
     /// <c>review flight/&lt;code&gt; pass|changes &lt;report…&gt;</c>: the reviewer's verdict. A pass offers the merge; changes
@@ -471,9 +533,12 @@ public static class Verbs
     public const string Digest = "digest";
 
     /// <summary>
-    /// <c>summarise node</c> or <c>summarise flight/&lt;code&gt;</c>: one Haiku call over what the node holds of the flights in play
-    /// (or of that one flight), kept as the scope's <see cref="SummaryRow"/> with its time, tokens and cost, on the feed for every
-    /// client. Never run by itself: a client asks. The result's <see cref="CommandResult.Made"/> is the summary's markdown.
+    /// <c>summarise node</c> or <c>summarise flight/&lt;code&gt;</c>: the summary of what the node holds of the flights in play
+    /// (or of that one flight), made at once by the watchtower, with the one-off call of the summary model (sonnet unless
+    /// <c>summary-model</c> says otherwise) only as the fallback when the watchtower is down, and kept as the scope's
+    /// <see cref="SummaryRow"/> with its time, tokens and cost, on the feed for every client. The fleet's summary also follows changes
+    /// by itself through the watchtower while a client is attached; this verb is the ask that does not wait.
+    /// The result's <see cref="CommandResult.Made"/> is the summary's markdown.
     /// </summary>
     public const string Summarise = "summarise";
 
@@ -503,6 +568,13 @@ public static class Verbs
     /// or an update; jobs run detached, are not waited for, and the next node follows them again. The answer says how many carry on.
     /// </summary>
     public const string RestartNode = "restart-node";
+
+    /// <summary>
+    /// <c>reboot node &lt;request [why]|status|cancel|done&gt;</c> (#916): a reboot made ready. request puts the node in maintenance mode and
+    /// tells every live session it started to save its state to a file; status says how many are in; cancel drops the request; done
+    /// (after the reboot) leaves maintenance mode. The person's alone; the node never reboots the machine itself.
+    /// </summary>
+    public const string Reboot = "reboot";
 
     /// <summary>
     /// <c>set node &lt;key&gt; [value…]</c>: saves a setting in the node's settings file (no value, or <c>default</c>, takes
@@ -756,6 +828,13 @@ public static class Verbs
     public const string Stop = "stop";
 
     /// <summary>
+    /// <c>end-stray process:&lt;pid&gt;@&lt;start&gt;</c>: ends a process the stray sweep named on a card, on the person's word only (the
+    /// sweep itself ends nothing). Refused unless the card is open and the pid still starts when the sweep saw it, so a reused pid is never
+    /// another process ended; never a process of the shell, the browser or Windows.
+    /// </summary>
+    public const string EndStray = "end-stray";
+
+    /// <summary>
     /// <c>end-session session/&lt;id&gt; &lt;why&gt;</c> (<c>pilot session end &lt;id&gt; &lt;why&gt;</c>): the node ends a running background
     /// session, cancels its queued and running jobs, and records <c>why</c> (required) and who asked in the session ledger. For the
     /// watchtower, whose own <c>claude stop</c> is refused under auto mode. An interactive or ended session is refused.
@@ -812,6 +891,10 @@ public static class Verbs
 
     public static string FlightTarget(string code) => FlightTargetPrefix + code;
 
+    /// <summary>The flight's code of a subject or target (<c>flight/&lt;code&gt;</c>); null for one that names no flight. The one reading of it.</summary>
+    public static string? FlightCodeOf(string subject) =>
+        subject.StartsWith(FlightTargetPrefix, StringComparison.Ordinal) ? subject[FlightTargetPrefix.Length..] : null;
+
     /// <summary>The target naming leg <paramref name="leg"/> of flight <paramref name="code"/>.</summary>
     public static string LegTarget(string code, string leg) => $"{FlightTargetPrefix}{code}/{leg}";
 
@@ -819,11 +902,13 @@ public static class Verbs
     public static string RedoLeg(string leg) => $"Redo leg {leg}";
 
     /// <summary>
-    /// The button that sends leg <paramref name="leg"/> round with a fresh worker, said as what it does in this case: <c>Start a fresh worker on x
-    /// (the last one went idle)</c>, with the round and the model from the second redo on, as <see cref="RedoLeg(string, int, string?, string?)"/> has it.
+    /// The button that sends a leg round with a fresh worker, whatever the last one did: why it is let go, the round and the model the next
+    /// one runs on belong in the card's detail (<c>RoleModels.NextWorkerNote</c>), never in a button (#797).
     /// </summary>
-    public static string FreshWorker(string leg, string why, int redo, string? model, string? effort = null) =>
-        $"Start a fresh worker on {leg} (the last one {why}{(redo >= 2 && model is not null ? $"; redo {redo}, {OnModel(model, effort)}" : "")})";
+    public const string FreshWorker = "Start a fresh worker";
+
+    /// <summary>The button on a card about a stalled worker that lets it go and starts another from the branch.</summary>
+    public const string RestartWorker = "Restart the worker";
 
     /// <summary>The redo choice naming what the next worker runs on, once it is a second redo or later (<paramref name="redo"/> is go-arounds + 1): <c>Redo leg x (redo 3, on Opus)</c>.</summary>
     public static string RedoLeg(string leg, int redo, string? model, string? effort = null) =>
@@ -972,6 +1057,12 @@ public static class SayWays
     /// any interactive session, is reached without stopping it.
     /// </summary>
     public const string Relayed = "relayed";
+
+    /// <summary>
+    /// The text was written to the standard input of the node's own long-lived stream session (the watchtower), at once, and queued
+    /// behind its turn when it was working: no resume and no intercom.
+    /// </summary>
+    public const string Streamed = "streamed";
 }
 
 /// <summary>

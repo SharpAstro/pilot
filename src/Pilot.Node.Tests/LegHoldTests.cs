@@ -32,21 +32,22 @@ public abstract class LegHoldTestsBase : IDisposable
     private protected readonly LegCommander _legs;
     private protected readonly PackageWatch _watch;
 
-    protected LegHoldTestsBase()
+    /// <summary>The git every commander of the test runs: <see cref="FakeRepoGit"/> (a repo with no origin), or real git for a class that is about git itself. See <see cref="TestGit"/> (#813).</summary>
+    private protected readonly IGit _git;
+
+    private readonly TestGit _testGit;
+
+    protected LegHoldTestsBase(bool realGit = false)
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        // A check that builds or tests needs a solution where it runs (leg plan refuses one that does not): a stub, in the plane's root.
-        File.WriteAllText(Path.Combine(Repo, "Tianwen.slnx"), "<Solution />\n");
-        Commit(Repo, "first");
+        _git = _testGit = new TestGit(_root, realGit, MakeRealRepo, withOrigin: false);
         _state = new NodeState(new InMemoryJournal(), _time);
-        var git = new GitCli();
+        var git = _git;
         _flights = new FlightCommander(_state, new Planes(git), _time);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
         _legs = new LegCommander(_state, _workers, _checks, _github, git, new Planes(git), _flights, options, _time)
         {
-            Releases = new PackageReleases(git, _feed, _time),
+            // The producer's clone (Core) is a repo of its own beside the one modelled: git's own.
+            Releases = new PackageReleases(new SiblingRoutedGit(git), _feed, _time),
             // Readying a plane runs real git; on a busy machine it passes the default 15 s, the command answers early and the next
             // command meets "is being started already". These tests wait for the start itself.
             StartReadyWithin = TimeSpan.FromMinutes(5),
@@ -54,34 +55,72 @@ public abstract class LegHoldTestsBase : IDisposable
         _watch = new PackageWatch(_state, _flights, _feed, _github, _time, _legs);
     }
 
+    private void MakeRealRepo()
+    {
+        Directory.CreateDirectory(Repo);
+        Git(Repo, "init", "-q", "-b", "main");
+        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
+        // A check that builds or tests needs a solution where it runs (leg plan refuses one that does not): a stub, in the plane's root.
+        File.WriteAllText(Path.Combine(Repo, "Tianwen.slnx"), "<Solution />\n");
+        Commit(Repo, "first");
+    }
+
+    /// <summary>Whether <paramref name="cwd"/> is in the producer's clone, which no model owns.</summary>
+    private static bool InSibling(string cwd) =>
+        cwd.Replace('\\', '/').Contains("/Drawboard.Core", StringComparison.Ordinal);
+
+    /// <summary>Asks git itself about the producer's clone, and <paramref name="inner"/> about everything else.</summary>
+    private sealed class SiblingRoutedGit(IGit inner) : IGit
+    {
+        private readonly GitCli _real = new();
+
+        public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
+            (InSibling(cwd) ? _real : inner).RunAsync(args, cwd, cancellationToken);
+
+        public Task<GitRun> RunSmudgingAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
+            (InSibling(cwd) ? _real : inner).RunSmudgingAsync(args, cwd, cancellationToken);
+    }
+
     private protected string Repo => Path.Combine(_root, "tianwen");
+
+    /// <summary>Runs this test on git itself, before it has used the repo: for a test of a class that otherwise checks what the node decides.</summary>
+    private protected void RealGit() => _testGit.UseReal();
 
     private protected string Core => Path.Combine(_root, "Drawboard.Core");
 
     public void Dispose()
     {
-        try
+        if (_testGit.IsReal)
         {
-            Git(Repo, "worktree", "prune");
+            try
+            {
+                Git(Repo, "worktree", "prune");
+            }
+            catch (InvalidOperationException)
+            {
+            }
         }
-        catch (InvalidOperationException)
-        {
-        }
+        _testGit.Release();
         foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
+        _testGit.Verify();
     }
 
     private protected static string Git(string cwd, params string[] args)
     {
+        if (!InSibling(cwd) && TestGit.Answer(cwd, args) is { } answered)
+        {
+            return answered;
+        }
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
@@ -380,7 +419,8 @@ public sealed class LegHoldTests2 : LegHoldTestsBase
 
         FlightWaiting.LegState(L("parser")).ShouldBe("holding for Drawboard.Core 1.2.7");
         FlightWaiting.LegState(L("render")).ShouldBe("planned");
-        Briefs.Watchtower("wt", _state.Flights(), _state.Legs(), _state.Cards(), "pilot").ShouldContain("1. parser: holding for Drawboard.Core 1.2.7");
+        // The brief carries counts and the held flights, not each leg: `pilot status` has the leg lines (PIL855).
+        Briefs.Watchtower("wt", _state.Flights(), _state.Legs(), _state.Cards(), "pilot").ShouldContain("1 held");
 
         var snapshot = new SnapshotEvent { Seq = 1, At = DateTimeOffset.UnixEpoch, Stream = "s", Notes = [], Sessions = [], Flights = _state.Flights(), Legs = _state.Legs() };
         var status = StatusMarkdown.Build(snapshot);

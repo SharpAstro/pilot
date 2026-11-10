@@ -510,7 +510,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         {
             throw new McpException(InternalError, unknown);
         }
-        using var client = NodeTargets.Connect(target, socket, here: here);
+        using var client = await NodeTargets.ConnectAsync(target, socket, cancellationToken, here: here);
         SnapshotEvent snapshot;
         try
         {

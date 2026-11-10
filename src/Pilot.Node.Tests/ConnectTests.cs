@@ -84,7 +84,7 @@ public sealed class ConnectTests : OverlapTestsBase
     {
         await TwoFlights();
         var github = new FakeGitHub { Pr = new PullRequest(77, "MERGED", "head", "https://github.com/x/tianwen/pull/77") };
-        var flights = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System, null, github) { Machine = "DU1", Fleet = _fleet };
+        var flights = new FlightCommander(_state, new Planes(_git), TimeProvider.System, null, github) { Machine = "DU1", Fleet = _fleet };
         Peer("DE1", Theirs("PIL294", 294) with { PullRequest = 77 });
         (await flights.RunAsync(new CommandRequest { Verb = Verbs.Connect, Target = "flight/TIA2", Args = ["PIL294"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
         F("TIA2").State.ShouldBe(FlightState.Held);
@@ -99,7 +99,7 @@ public sealed class ConnectTests : OverlapTestsBase
     {
         await TwoFlights();
         var github = new FakeGitHub { Pr = pr };
-        var flights = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System, null, github) { Machine = "DU1", Fleet = _fleet };
+        var flights = new FlightCommander(_state, new Planes(_git), TimeProvider.System, null, github) { Machine = "DU1", Fleet = _fleet };
         var peer = Peer("DE1", theirs);
         (await flights.RunAsync(new CommandRequest { Verb = Verbs.Connect, Target = "flight/TIA2", Args = [theirs.Code], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
         F("TIA2").State.ShouldBe(FlightState.Held);
@@ -296,7 +296,7 @@ public sealed class ConnectTests : OverlapTestsBase
         await _flights.LookAtPeerConnectionsAsync(Ct);
         F("TIA2").PeerConnections.ShouldHaveSingleItem().UnreachableSince.ShouldBe(since);
         var lines = log.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        lines.ShouldHaveSingleItem().ShouldContain("DE1 could not be asked for PIL294: de1.local:47731: it did not answer");
+        lines.ShouldHaveSingleItem().ShouldContain("DE1 could not be asked for PIL294: DE1: it did not answer");
         lines[0].ShouldNotContain("de2.local");
     }
 
@@ -601,7 +601,7 @@ public sealed class ConnectTests : OverlapTestsBase
 
         var card = Cards().ShouldHaveSingleItem();
         card.Title.ShouldBe("Connect TIA2 to PIL294 on DE1 (both change DetachedShell.cs)");
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Connect to PIL294", Verbs.ConnectOverlap), ("Plan TIA2 in parallel with PIL294", Verbs.Separate)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Connect to PIL294", Verbs.ConnectOverlap), ("Plan both in parallel", Verbs.Separate)]);
         card.Detail.ShouldNotBeNull().ShouldContain("which flies on DE1");
         card.Detail.ShouldContain("cannot be folded into it from here");
         var recorded = F("TIA2").Overlaps.ShouldHaveSingleItem();
@@ -758,6 +758,8 @@ public sealed class ConnectTests : OverlapTestsBase
 
     private sealed class FakePeer(string name) : IFleetPeer
     {
+        public string Name => name;
+
         public string Endpoint => $"{name.ToLowerInvariant()}.local:47731";
 
         public bool HasGrant => true;

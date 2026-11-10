@@ -44,8 +44,8 @@ public sealed class StaleCardTests
         Worktree = $"/r/.claude/worktrees/{code}", Base = "origin/main", State = state, CreatedAt = Start - TimeSpan.FromHours(3),
     };
 
-    private CardRow Raise(string kind, string subject = "flight/PIL342", CardBin bin = CardBin.Ring, IReadOnlyList<CardChoice>? choices = null) =>
-        _state.RaiseCard(bin, kind, subject, $"A {kind} card", "Its detail.", choices);
+    private CardRow Raise(string kind, string subject = "flight/PIL342", CardBin bin = CardBin.Ring, IReadOnlyList<CardChoice>? choices = null, string? cause = null) =>
+        _state.RaiseCard(bin, kind, subject, $"A {kind} card", "Its detail.", choices, cause: cause);
 
     private async Task<StaleVerdict> Check(CardRow card, string? about = null) =>
         (await new StaleCards(_state, _github).DismissAsync([card.Id], about, Ct)).ShouldHaveSingleItem();
@@ -237,7 +237,6 @@ public sealed class StaleCardTests
     [InlineData(LegCommander.MergeFailed)]
     [InlineData(PrChecks.QueueDropped)]
     [InlineData(PrChecks.MergeDropped)]
-    [InlineData("pr-conflicts")]
     [InlineData("pr-checks-failed")]
     public async Task APrCardIsDismissedOnceItsPrMerged(string kind)
     {
@@ -322,42 +321,6 @@ public sealed class StaleCardTests
         var card = Raise("pr-checks-failed");
 
         Left(card, await Check(card), "does not say where #344's checks stand");
-    }
-
-    // A conflict card whose branch is clean.
-
-    [Fact]
-    public async Task AConflictCardIsDismissedOnceTheBranchMergesCleanly()
-    {
-        var card = Raise("pr-conflicts");
-
-        var verdict = await Check(card);
-
-        Dismissed(card, verdict, "the branch merges cleanly at 64d4eb3a1");
-        Handled().Title.ShouldBe("PIL342's #344 conflict: the branch merges cleanly at 64d4eb3a1");
-    }
-
-    [Theory]
-    [InlineData("CONFLICTING", "#344 still conflicts with its base")]
-    [InlineData("UNKNOWN", "GitHub has not said whether #344 merges cleanly")]
-    [InlineData("", "GitHub has not said whether #344 merges cleanly")]
-    public async Task AConflictCardWhoseBranchStillConflictsOrIsNotReadIsLeftAlone(string mergeable, string said)
-    {
-        var card = Raise("pr-conflicts");
-        _github.Pr = _github.Pr! with { Mergeable = mergeable };
-
-        Left(card, await Check(card), said);
-    }
-
-    [Theory]
-    [InlineData(MergeKinds.Conflicts)]
-    [InlineData(MergeKinds.Behind)]
-    public async Task AConflictCardWhoseMergeStateGitHubStillShowsAsConflictingOrBehindIsLeftAlone(string kind)
-    {
-        var card = Raise("pr-conflicts");
-        _github.Merge = new MergeState(kind);
-
-        Left(card, await Check(card), $"GitHub still shows #344 as {kind}");
     }
 
     // A stalled-review card whose review gave its verdict.
@@ -533,7 +496,8 @@ public sealed class StaleCardTests
         verdicts.Select(v => (v.Card, v.Dismissed, v.Note)).ShouldBe([("c99", false, "there is no such card"), (closed.Id, false, "it is not open")]);
         _state.Cards().ShouldNotContain(c => c.Kind == StaleCards.HandledKind);
 
-        var open = Raise(LegCommander.PrReady);
+        // A new cause: the card a person dismissed above is not raised again for the same one (#853).
+        var open = Raise(LegCommander.PrReady, cause: "a later head");
         (await Check(open, about: "flight/DIR7")).Note.ShouldBe("it is not about what was summarised");
         Now(open).State.ShouldBe(CardState.Open);
     }

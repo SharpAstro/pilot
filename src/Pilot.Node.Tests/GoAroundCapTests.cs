@@ -49,7 +49,8 @@ public sealed class GoAroundCapTests : LegHoldTestsBase
             card.Detail.ShouldNotBeNull().ShouldContain($"the check failed in round {round}");
         }
         L("parser").GoAroundReasons.Select(r => r.Why).ShouldBe(Enumerable.Range(1, 5).Select(i => $"the check failed in round {i}"));
-        card.Choices.Select(c => c.Verb).ShouldBe([Verbs.GoAround, Verbs.FinishLeg]);
+        // One more fresh worker is the only choice: no override that takes the leg as done (#797), which stays the CLI's.
+        card.Choices.Select(c => c.Verb).ShouldBe([Verbs.GoAround]);
 
         // The node's own send is refused the same way.
         (await As(LegWatch.Who, Verbs.GoAround, "flight/TIA1/parser", "context full")).Error.ShouldNotBeNull().ShouldContain("cap is 5");
@@ -89,15 +90,16 @@ public sealed class GoAroundCapTests : LegHoldTestsBase
     }
 
     [Fact]
-    public async Task TheCardsAcceptTakesAFlyingLegAsItStandsForThePersonOnly()
+    public async Task TheCommandLinesAcceptTakesAFlyingLegAtTheCapForThePersonOnly()
     {
         await FlyingParser();
         await RoundsAsTower(5);
         await As(Tower, Verbs.GoAround, "flight/TIA1/parser", "one more");
-        var accept = Cap().ShouldNotBeNull().Choices[1];
+        Cap().ShouldNotBeNull().Choices.ShouldNotContain(c => c.Verb == Verbs.FinishLeg);
+        string[] accept = ["accepted", "taken at the cap: its check passes by hand"];
 
-        (await As(Tower, accept.Verb, accept.Target, [.. accept.Args])).Error.ShouldNotBeNull();
-        (await As("gui", accept.Verb, accept.Target, [.. accept.Args])).Error.ShouldBeNull();
+        (await As(Tower, Verbs.FinishLeg, "flight/TIA1/parser", accept)).Error.ShouldNotBeNull();
+        (await As("gui", Verbs.FinishLeg, "flight/TIA1/parser", accept)).Error.ShouldBeNull();
 
         L("parser").State.ShouldBe(LegState.Done);
         Cap().ShouldBeNull();

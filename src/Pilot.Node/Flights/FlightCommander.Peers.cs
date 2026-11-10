@@ -29,12 +29,32 @@ public sealed partial class FlightCommander
     /// <summary>The name a peer says it has (its machine prefix, or its endpoint where it has none), remembered under its endpoint.</summary>
     private string Learn(IFleetPeer peer, NodeInfo info)
     {
-        var node = info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Endpoint;
-        _peerNames[peer.Endpoint] = node;
+        var node = info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Name;
+        _peerNames[peer.Name] = node;
         return node;
     }
 
-    private string? NameOf(IFleetPeer peer) => _peerNames.TryGetValue(peer.Endpoint, out var node) ? node : null;
+    private string? NameOf(IFleetPeer peer) => _peerNames.TryGetValue(peer.Name, out var node) ? node : null;
+
+    /// <summary>The last copy of each granted peer's flights and legs, fed by every read that answers (#894); null for a node built without one.</summary>
+    public FleetCopy? Copy { get; set; }
+
+    /// <summary>
+    /// Reads every granted peer once under <see cref="PeerBudget"/>, which keeps <see cref="Copy"/> fresh (<see cref="FleetCopyWatch"/>).
+    /// A peer that does not answer changes nothing. Returns how many answered.
+    /// </summary>
+    public async Task<int> CopyPeersAsync(CancellationToken cancellationToken)
+    {
+        var peers = (Fleet?.Peers() ?? []).Where(p => p.HasGrant).ToList();
+        if (Copy is null || peers.Count == 0)
+        {
+            return 0;
+        }
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(PeerBudget);
+        var reads = await Task.WhenAll(peers.Select(p => ReadAllFlightsAsync(p, budget.Token, cancellationToken)));
+        return reads.Count(r => r.Flights is not null);
+    }
 
     /// <summary>
     /// The flights each reachable peer has with <paramref name="code"/> on this repo (matched by its GitHub remote, as paths are each
@@ -87,13 +107,13 @@ public sealed partial class FlightCommander
     {
         if (!peer.HasGrant)
         {
-            return new PeerRead(NameOf(peer), null, $"{peer.Endpoint}: no grant is held for it");
+            return new PeerRead(NameOf(peer), null, $"{peer.Name}: no grant is held for it");
         }
         try
         {
             if (await peer.ReposAsync(budget) is not { } repos)
             {
-                return new PeerRead(NameOf(peer), null, $"{peer.Endpoint}: it refuses the grant held for it");
+                return new PeerRead(NameOf(peer), null, NodeClient.RefusedHeldGrant(peer.Name));
             }
             var info = await peer.NodeAsync(budget);
             var node = Learn(peer, info);
@@ -104,11 +124,12 @@ public sealed partial class FlightCommander
                 return new PeerRead(node, [], null);
             }
             var load = await peer.LoadAsync(budget);
+            Copy?.Record(node, load);
             return new PeerRead(node, [.. load.Flights.Where(f => SamePath(f.RepoPath, checkout))], null);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or OperationCanceledException or WebSocketException && !caller.IsCancellationRequested)
         {
-            return new PeerRead(NameOf(peer), null, $"{peer.Endpoint}: it did not answer ({FirstLineOf(ex.Message)})", Unanswered: true);
+            return new PeerRead(NameOf(peer), null, $"{peer.Name}: it did not answer ({FirstLineOf(ex.Message)})", Unanswered: true);
         }
     }
 
@@ -215,22 +236,26 @@ public sealed partial class FlightCommander
     }
 
     /// <summary>All of a peer's flights and its name, or why it could not be asked.</summary>
-    private async Task<PeerRead> ReadAllFlightsAsync(IFleetPeer peer, CancellationToken cancellationToken)
+    private Task<PeerRead> ReadAllFlightsAsync(IFleetPeer peer, CancellationToken cancellationToken) => ReadAllFlightsAsync(peer, cancellationToken, cancellationToken);
+
+    /// <summary>All of a peer's flights and its name, read under <paramref name="budget"/> (the caller's own token ends the read for good).</summary>
+    private async Task<PeerRead> ReadAllFlightsAsync(IFleetPeer peer, CancellationToken budget, CancellationToken caller)
     {
         if (!peer.HasGrant)
         {
-            return new PeerRead(NameOf(peer), null, $"{peer.Endpoint}: no grant is held for it");
+            return new PeerRead(NameOf(peer), null, $"{peer.Name}: no grant is held for it");
         }
         try
         {
-            var info = await peer.NodeAsync(cancellationToken);
+            var info = await peer.NodeAsync(budget);
             var node = Learn(peer, info);
-            var load = await peer.LoadAsync(cancellationToken);
+            var load = await peer.LoadAsync(budget);
+            Copy?.Record(node, load);
             return new PeerRead(node, load.Flights, null);
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or WebSocketException or OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or WebSocketException or OperationCanceledException && !caller.IsCancellationRequested)
         {
-            return new PeerRead(NameOf(peer), null, $"{peer.Endpoint}: it did not answer ({FirstLineOf(ex.Message)})", Unanswered: true);
+            return new PeerRead(NameOf(peer), null, $"{peer.Name}: it did not answer ({FirstLineOf(ex.Message)})", Unanswered: true);
         }
     }
 

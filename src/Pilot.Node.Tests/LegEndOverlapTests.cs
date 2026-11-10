@@ -428,6 +428,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
         flight.Connections.ShouldBeEmpty();
         flight.State.ShouldNotBe(FlightState.Held);
         L("parser").State.ShouldBe(LegState.Done);
+        // The sweep called directly does not await the validator's background start: its card comes once the worker is up (the model is too fast to hide it, real git was slow enough to).
+        await Eventually.Holds(() => _state.Cards().Any(c => c.Kind == LegCommander.ValidatingKind), Ct);
         _workers.Started.Select(w => w.Name).ShouldContain("du1-tia1-render-validator");
 
         // A second sweep has nothing left to answer.
@@ -465,6 +467,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.OverlapKind);
         _state.Cards().Single(c => c.Kind == LegCommander.OverlapLandedKind).Title.ShouldBe("PIL9 had landed: TIA1 goes on, no answer needed");
         _state.Flights().Single(f => f.Code == "TIA1").Overlaps.Single().Answer.ShouldBe(OverlapAnswer.Connect);
+        // The direct sweep does not await the validator's background start.
+        await Eventually.Holds(() => _workers.Started.Any(w => w.Name == "du1-tia1-render-validator"), Ct);
         _workers.Started.Select(w => w.Name).ShouldContain("du1-tia1-render-validator");
     }
 
@@ -892,6 +896,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     /// <summary>A peer holding the repo and flying <see cref="Flights"/>; it answers flight-changes from <see cref="Changes"/> (the lines it says per flight code).</summary>
     private sealed class FakePeer(string name) : IFleetPeer
     {
+        public string Name => name;
+
         public string Endpoint => $"{name.ToLowerInvariant()}.local:47731";
 
         public bool HasGrant => true;

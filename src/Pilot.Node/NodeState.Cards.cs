@@ -20,16 +20,70 @@ public sealed partial class NodeState
     /// </summary>
     /// <param name="link">The page the card is about (a flight's PR), opened from the card.</param>
     /// <param name="attachment">The id of the image the node keeps for the card, with <paramref name="attachmentExt"/> its extension.</param>
+    /// <param name="cause">
+    /// What the card is about for a person's dismissal to be remembered (#853): a card of this kind and subject that a person dismissed
+    /// is not raised again for the same cause, which is this key, or the title when none is given. Pass a stable key where the title
+    /// carries a part that changes for one cause (an age, a count), and put in it what makes a new cause (a PR's head, a go-around's count).
+    /// </param>
     /// <param name="askedBy">The assistant's session an ask card is about (<see cref="CardKinds.AssistantAsk"/>), and <paramref name="why"/> the message it acted on.</param>
-    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null, string? summary = null, string? attachment = null, string? attachmentExt = null)
+    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null, string? summary = null, string? attachment = null, string? attachmentExt = null, string? cause = null)
     {
+        // With the brain to ask (PIL855), a card that would ring is first filed in For you, silent, and rings only on the brain's verdict
+        // (RingJudge): the old path, a ring at once, is what runs with no judge, and what the judge itself falls back to.
+        if (bin != CardBin.Ring || RingJudge is not { CanJudge: true } judge || !RingJudge.Wants(kind, choices))
+        {
+            return RaiseCardCore(bin, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, out _);
+        }
+        var card = RaiseCardCore(CardBin.ForYou, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, out var created);
+        // Only a card this call made: an open one of the same kind and subject is returned as it is, and is not judged again.
+        if (created)
+        {
+            judge.Begin(card);
+        }
+        return card;
+    }
+
+    /// <summary>
+    /// How long a person's dismissal keeps the same cause from being raised again (#853): a day. Past it the cause rings again if it is
+    /// still, or once more, there. Not the stale-card hours (2): a dismissed card back every two hours is the nagging #853 set out to end.
+    /// </summary>
+    public TimeSpan DismissalHolds { get; set; } = TimeSpan.FromDays(1);
+
+    /// <summary>The brain's word before a ring (<see cref="Flights.RingJudge"/>); null rings at once, as before.</summary>
+    public RingJudge? RingJudge { get; set; }
+
+    private CardRow RaiseCardCore(CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices, string? link, string? askedBy, string? why, string? summary, string? attachment, string? attachmentExt, string? cause, out bool created)
+    {
+        created = false;
         lock (_gate)
         {
             if (bin != CardBin.Handled && _cards.Values.FirstOrDefault(c => c.State == CardState.Open && c.Kind == kind && c.Subject == subject) is { } open)
             {
                 return open;
             }
+            // The key a dismissal is remembered by, taken before the hold's words decorate the title: a card dismissed before the hold, one
+            // raised during it and one raised after the release all share it, so the hold neither breaks a dismissal nor ends one (#853).
+            var key = cause ?? title;
+            if (bin != CardBin.Handled && OnHoldOf(subject) is { } onHold)
+            {
+                // The owner's hold (#771): the card says so. Its choices are all kept, never stripped: a card raised once (an overlap's Connect
+                // and Plan) is not raised again on the release, so what it offers must still be there; the dispatch gate refuses a button the
+                // hold forbids, with the hold's words, and the release takes this note off (LiftHoldFromCards).
+                var said = FlightWaiting.OnHoldText(onHold)!;
+                title = $"{title} ({said})";
+                detail = $"{HeldLead}{said}.{HeldLeadMiddle}{onHold.Code}{HeldLeadEnd}{(detail is { Length: > 0 } ? " " + detail : "")}";
+            }
             var now = _time.GetUtcNow();
+            // A card a person dismissed for this cause is not raised again by the next look (#853): the caller gets the dismissed card, and
+            // nothing is stored, published, rung or said. Read from the cards themselves, so a journal replay or a snapshot restores it.
+            // It holds for DismissalHolds after the dismissal: a cause that comes back later (a watchtower that keeps ending again a week on)
+            // rings again, and one still there is not nagged about inside the window (PIL855's review).
+            if (bin != CardBin.Handled && _cards.Values.Where(c => IsPersonsDismissal(c) && c.Kind == kind && c.Subject == subject && (c.Cause ?? c.Title) == key
+                    && c.ClosedAt is { } closed && now - closed < DismissalHolds)
+                .OrderByDescending(c => c.ClosedAt).FirstOrDefault() is { } dismissed)
+            {
+                return dismissed;
+            }
             // A landed flight (a folded or moved one lands too) has nothing left to ring about: a leg or worker card for it is a card
             // about a cause already settled (#799 rule 2, row c3651). It is not stored or published; the caller gets the card it would
             // have raised, closed. Said nowhere else: a Handled line per look of the watch would only be noise.
@@ -64,6 +118,9 @@ public sealed partial class NodeState
                 Link = link,
                 AskedBy = askedBy,
                 Why = why,
+                // The key a dismissal is remembered by, fixed when the card is raised: a later rewording of its title (the brain's, PIL855)
+                // cannot move it, so a dismissed card raised again for the same cause stays dismissed (#853).
+                Cause = key,
                 Attachment = attachment,
                 AttachmentExt = attachment is null ? null : attachmentExt,
                 At = now,
@@ -74,9 +131,63 @@ public sealed partial class NodeState
             };
             card = card with { Commits = CommitsOf(card, link) };
             Publish(new CardAddedEvent { Seq = _seq + 1, At = now, Card = card });
+            created = true;
             return card;
         }
     }
+
+    private const string HeldLead = "The flight is ";
+    private const string HeldLeadMiddle = " The node takes no step for it until it is released (pilot flight unground ";
+    private const string HeldLeadEnd = "); a choice below that would is refused with the hold's words.";
+
+    /// <summary>
+    /// The release of the hold on flight <paramref name="code"/> (#771): the open cards about it that were raised while it was held lose the
+    /// note that said so (the on-hold words on their title, the lead of their detail), and keep everything else, choices included. Read
+    /// back from the card's own text, so it holds for a card raised before a node restart too.
+    /// </summary>
+    public void LiftHoldFromCards(string code)
+    {
+        lock (_gate)
+        {
+            var subject = Verbs.FlightTarget(code);
+            foreach (var card in _cards.Values.Where(c => c.State == CardState.Open && (c.Subject == subject || c.Subject.StartsWith(subject + "/", StringComparison.Ordinal))).ToList())
+            {
+                if (card.Detail is not { } detail || !detail.StartsWith(HeldLead + "on hold by ", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                var middle = detail.IndexOf(HeldLeadMiddle, StringComparison.Ordinal);
+                var end = middle < 0 ? -1 : detail.IndexOf(HeldLeadEnd, middle, StringComparison.Ordinal);
+                if (end < 0)
+                {
+                    continue;
+                }
+                var said = detail[HeldLead.Length..(middle - 1)];
+                var rest = detail[(end + HeldLeadEnd.Length)..].TrimStart();
+                var title = card.Title.EndsWith($" ({said})", StringComparison.Ordinal) ? card.Title[..^(said.Length + 3)] : card.Title;
+                UpdateCard(card.Id, title, rest.Length > 0 ? rest : null, card.Choices, card.Link);
+            }
+        }
+    }
+
+    /// <summary>The flight on the owner's hold that a card's subject (<c>flight/&lt;code&gt;</c> or <c>flight/&lt;code&gt;/&lt;leg&gt;</c>) is about; null when it is about none, or the flight is not held.</summary>
+    private FlightRow? OnHoldOf(string subject)
+    {
+        if (!subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+        var code = subject[Verbs.FlightTargetPrefix.Length..].Split('/')[0];
+        return _flights.Values.FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase) && f.OnHold is not null);
+    }
+
+    /// <summary>
+    /// A card a person dismissed (<c>dismissed</c> or <c>dismissed: why</c>, closed by a client or a session): not one the node closed
+    /// itself, whether its stale sweep (<see cref="StaleCards.ClosedBy"/>) or a landing, which say <c>node</c>.
+    /// </summary>
+    private static bool IsPersonsDismissal(CardRow card) =>
+        card.State == CardState.Closed && card.Outcome is { } outcome && outcome.StartsWith("dismissed", StringComparison.Ordinal)
+        && !string.IsNullOrEmpty(card.ClosedBy) && card.ClosedBy != StaleCards.ClosedBy;
 
     /// <summary>The flight code of a subject naming a leg or anything under one (<c>flight/&lt;code&gt;/&lt;leg&gt;</c>); null for a flight's own subject or any other.</summary>
     private static string? LegFlightOf(string subject)
@@ -90,11 +201,12 @@ public sealed partial class NodeState
     }
 
     /// <summary>
-    /// Rings an open card again where it is (#799 rule 5): one <see cref="CardChangedEvent"/> with <see cref="CardRow.RungAgainAt"/> set to
+    /// Rings an open card again where it is (#799 rule 5, #797 rule 7): one <see cref="CardChangedEvent"/> with <see cref="CardRow.RungAgainAt"/> set to
     /// now, so it sorts first again on every client and pushes as a change. Its id, kind, choices and <see cref="CardRow.At"/> stay, so
-    /// no second card says what the first already did. False when it is not open.
+    /// no second card says what the first already did. With <paramref name="waited"/> (how long it has waited, as a person says it) the card's
+    /// summary ends in "Waiting 1 h for you."; a second ring replaces that mark. False when it is not open.
     /// </summary>
-    public bool RingAgain(string id)
+    public bool RingAgain(string id, string? waited = null)
     {
         lock (_gate)
         {
@@ -103,10 +215,19 @@ public sealed partial class NodeState
                 return false;
             }
             var now = _time.GetUtcNow();
-            Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { RungAgainAt = now } });
+            var summary = card.Summary;
+            if (waited is { Length: > 0 })
+            {
+                var plain = WaitingMark().Replace(summary ?? "", "").TrimEnd();
+                summary = plain.Length == 0 ? $"Waiting {waited} for you." : $"{plain} Waiting {waited} for you.";
+            }
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { RungAgainAt = now, Summary = summary } });
             return true;
         }
     }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*Waiting [^.]* for you\.$")]
+    private static partial System.Text.RegularExpressions.Regex WaitingMark();
 
     /// <summary>Closes an open card with what became of it; false when it is not open (closed already, or no such card).</summary>
     public bool CloseCard(string id, string outcome, string closedBy)
@@ -168,6 +289,13 @@ public sealed partial class NodeState
     }
 
     /// <summary>
+    /// Points the Dismiss choice of a card that is only to be read (written with an empty target, as the card's id is not known before it is
+    /// raised) at the card itself: the one button, "Mark it read", that closes it. A card with no such choice is left as it is.
+    /// </summary>
+    public void AimDismiss(CardRow card) =>
+        UpdateChoices(card.Id, [.. card.Choices.Select(c => c.Verb == Verbs.Dismiss && c.Target.Length == 0 ? c with { Target = Verbs.CardTarget(card.Id) } : c)]);
+
+    /// <summary>
     /// Gives an open card new choices (a merge's checks turned green, say); false when it is not open or nothing changed. A choice the node
     /// would refuse now (its flight held, its session gone) reads <see cref="ChoiceStatus.Unavailable"/> whatever the caller gave, so a
     /// refresh of a card's statuses never offers it again (#792); a choice that would not be refused no longer carries that mark.
@@ -189,6 +317,24 @@ public sealed partial class NodeState
             }
             Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { Choices = next } });
             return true;
+        }
+    }
+
+    /// <summary>
+    /// A flight landed: the open 7-day card (<see cref="StartGate.WeekKind"/>) loses its <c>Hold &lt;code&gt;</c> button for that flight, as
+    /// the buttons were fixed when the card was raised and a landed flight has nothing left to hold (the review of #797). The card keeps
+    /// every other choice; when no flight button is left it still offers the node-wide one. One <see cref="CardChangedEvent"/> per card changed.
+    /// </summary>
+    public void DropHoldChoiceOfLanded(string code)
+    {
+        lock (_gate)
+        {
+            var target = Verbs.FlightTarget(code);
+            foreach (var card in _cards.Values.Where(c => c.State == CardState.Open && c.Kind == StartGate.WeekKind
+                && c.Choices.Any(ch => ch.Verb == Verbs.Ground && ch.Target == target)).ToList())
+            {
+                UpdateCard(card.Id, card.Title, card.Detail, [.. card.Choices.Where(ch => !(ch.Verb == Verbs.Ground && ch.Target == target))], card.Link);
+            }
         }
     }
 
@@ -301,6 +447,20 @@ public sealed partial class NodeState
     /// </summary>
     public void CloseCardsAbout(string subject, string outcome, params string[] kinds)
         => CloseCardsAboutBy("node", subject, outcome, kinds);
+
+    /// <summary>Closes every open card about <paramref name="subject"/> (and its legs) except those of the kinds in <paramref name="keep"/>, which stay open.</summary>
+    public void CloseCardsAboutExcept(string subject, string outcome, params string[] keep)
+    {
+        lock (_gate)
+        {
+            var kinds = _cards.Values.Where(c => c.State == CardState.Open && (c.Subject == subject || c.Subject.StartsWith(subject + "/", StringComparison.Ordinal)) && !keep.Contains(c.Kind))
+                .Select(c => c.Kind).Distinct(StringComparer.Ordinal).ToArray();
+            if (kinds.Length > 0)
+            {
+                CloseCardsAboutBy("node", subject, outcome, kinds);
+            }
+        }
+    }
 
     /// <summary>As above, closed by <paramref name="closedBy"/> (an override names its session, not the node).</summary>
     public void CloseCardsAboutBy(string closedBy, string subject, string outcome, params string[] kinds)

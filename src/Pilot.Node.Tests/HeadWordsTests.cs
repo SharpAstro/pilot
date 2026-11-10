@@ -34,7 +34,7 @@ public sealed class HeadWordsTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_dir, recursive: true);
+        TestDirs.DeleteTree(_dir);
     }
 
     private string G(params string[] args)
@@ -44,7 +44,7 @@ public sealed class HeadWordsTests : IDisposable
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();

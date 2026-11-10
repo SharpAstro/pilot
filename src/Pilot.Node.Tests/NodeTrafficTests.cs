@@ -52,7 +52,9 @@ public sealed class NodeTrafficTests
         traffic.HttpOutSinceStart.ShouldBeLessThan(300);
     }
 
+    // Slow: counts the bytes of a real child process (the job object around a real git start), which no fake can stand in for.
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AGitRunAndAGhRunAddToTheCountByTheJobObjectOrAsUnknown()
     {
         // Its own counter, so the git runs of the other test classes (they share NodeTraffic.Shared) cannot move the figure.
@@ -65,7 +67,7 @@ public sealed class NodeTrafficTests
 
         // gh's helper starts through the same method; git stands in for the binary, which may not be installed.
         var start = new ProcessStartInfo("git", ["--version"]) { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
-        var (process, counted) = traffic.Start("gh", start);
+        var (process, counted) = await traffic.StartAsync("gh", start, cancellationToken: Ct);
         using (process)
         using (counted)
         {
@@ -109,7 +111,9 @@ public sealed class NodeTrafficTests
     public void OnlyAGitRunThatCanUseTheNetworkAddsBytes(string command, bool expected) =>
         GitCli.UsesNetwork(command.Split(' ')).ShouldBe(expected);
 
+    // Slow: the update feed's real gh start, counted by the real job object; git stands in for the missing binary.
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARunThroughTheUpdateFeedsGhIsCounted()
     {
         var traffic = new NodeTraffic();
