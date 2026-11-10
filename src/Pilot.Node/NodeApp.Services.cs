@@ -79,10 +79,12 @@ public static partial class NodeApp
                     return state;
                 },
                 time);
-            // With the state up: the line in node.log and node-start.log, and the card, when the start was from a backup.
-            opened.Report(logWriter, line => NodeProgram.AppendStartLog(options, $"pilot-node {FileJournal.RunningVersion} {line}"));
             return opened;
         });
+        // The line in node.log and node-start.log and the card, when the start was from a backup: said when the host starts, with every service
+        // there to resolve (the card goes to the brain before it rings, which needs the watchtower, which needs the state built just above).
+        builder.Services.AddHostedService(services => new StoreRecoveryReport(services.GetRequiredService<StoreRecovery>(), logWriter,
+            line => NodeProgram.AppendStartLog(options, $"pilot-node {FileJournal.RunningVersion} {line}")));
         builder.Services.AddSingleton(services => services.GetRequiredService<StoreRecovery>().State);
         builder.Services.AddSingleton<PageViews>();
         builder.Services.AddSingleton<EventHub>();

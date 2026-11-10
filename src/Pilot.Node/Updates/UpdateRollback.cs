@@ -266,7 +266,7 @@ public sealed class UpdateRollback(string install, string dataFolder, string ver
         var card = state.RaiseCard(
             CardBin.Ring, NodeUpdater.Kind, SubjectPrefix + record.To,
             $"pilot {record.To} did not start twice; back on {record.From}: {LegCommander.OneLine(error)}", detail,
-            [new CardChoice { Label = $"File pilot {record.To}'s failed start as an idea", Verb = Verbs.NoteIdea, Target = Verbs.RepoTarget(Verbs.AnyRepo), Args = [$"pilot {record.To} did not start twice and the node went back on {record.From}: {error}\n\n{detail}"] }]);
+            [new CardChoice { Label = "File it as an idea", Verb = Verbs.NoteIdea, Target = Verbs.RepoTarget(Verbs.AnyRepo), Args = [$"pilot {record.To} did not start twice and the node went back on {record.From}: {error}\n\n{detail}"] }]);
         TryWrite(record with { Told = true });
         return card;
     }

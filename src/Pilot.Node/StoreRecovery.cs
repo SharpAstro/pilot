@@ -353,7 +353,7 @@ public sealed class StoreRecovery : IDisposable
             return State.RaiseCard(
                 CardBin.Ring, NodeState.StoreCardKind, SubjectPrefix + Path.GetFileName(recovered.AsideFolder),
                 $"The store could not be read: started from {recovered.Started}, lost {recovered.Lost}", detail,
-                [new CardChoice { Label = "File the unreadable store as an idea", Verb = Verbs.NoteIdea, Target = Verbs.RepoTarget(Verbs.AnyRepo), Args = [$"The store could not be read at start: {recovered.Error}\n\n{detail}"] }]);
+                [new CardChoice { Label = "File it as an idea", Verb = Verbs.NoteIdea, Target = Verbs.RepoTarget(Verbs.AnyRepo), Args = [$"The store could not be read at start: {recovered.Error}\n\n{detail}"] }]);
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
@@ -362,4 +362,20 @@ public sealed class StoreRecovery : IDisposable
             return null;
         }
     }
+}
+
+/// <summary>
+/// Says what a start from a backup did (<see cref="StoreRecovery.Report"/>) once the host starts, not while the state is being built: a card
+/// that rings goes to the brain first (<see cref="Flights.RingJudge"/>), which asks the watchtower, which needs the very state still under
+/// construction, so a card raised inside its factory fails to resolve it and is never kept.
+/// </summary>
+internal sealed class StoreRecoveryReport(StoreRecovery recovery, TextWriter log, Action<string> startLog) : Microsoft.Extensions.Hosting.IHostedService
+{
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        recovery.Report(log, startLog);
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }

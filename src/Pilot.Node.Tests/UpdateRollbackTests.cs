@@ -294,7 +294,7 @@ public sealed class UpdateRollbackTests : IDisposable
         var running = Rollback("2.0.2");
         using var held = Held();
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(Ct);
-        stop.CancelAfter(TimeSpan.FromSeconds(30));
+        stop.CancelAfter(TimeSpan.FromSeconds(20));
         int? countedBeforeTheHost = null;
 
         var exit = await NodeProgram.RunHostAsync(Options, held, _said.Add, running, (_, _) =>
