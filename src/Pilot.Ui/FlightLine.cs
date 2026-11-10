@@ -69,8 +69,21 @@ internal sealed record FlightLine
 
     /// <summary>What the node says went stale about the flight (#736), the timeline and cause in a line; null while nothing is stale.</summary>
     /// A flight that landed, folded or moved is done, so a summary left on it is not shown (and no Ask the watchtower is offered).
+    /// Its first line only: a summary attached before the leg's table of check runs moved to the brief carries the table after a
+    /// line break, and the page showed it as a wall of text.
     public string? StaleSummary =>
-        Row is { State: not FlightState.Landed, FoldedInto: null, MovedTo: null, StaleSummary: { Length: > 0 } summary } ? summary : null;
+        Row is { State: not FlightState.Landed, FoldedInto: null, MovedTo: null, StaleSummary: { Length: > 0 } summary } ? FirstLine(summary) : null;
+
+    // A first line that ends in a colon introduced what followed it, so that last phrase goes with it ("…(card c1). Its check runs:").
+    private static string FirstLine(string text)
+    {
+        if (text.IndexOfAny(['\r', '\n']) is not (var at and >= 0))
+        {
+            return text;
+        }
+        var first = text[..at].TrimEnd();
+        return first.EndsWith(':') && first.LastIndexOf(". ", StringComparison.Ordinal) is var stop and > 0 ? first[..(stop + 1)] : first;
+    }
 
     /// <summary>The node's last priority raise for a stale bound (<c>raised to high: open 19 h</c>), or why it could not be made; null before the first.</summary>
     public string? StaleRaise => Row.StaleRaises is { Length: > 0 } raises ? raises[^1].Note : null;
