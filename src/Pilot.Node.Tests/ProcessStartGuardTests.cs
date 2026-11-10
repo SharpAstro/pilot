@@ -91,4 +91,32 @@ public sealed class ProcessStartGuardTests
         ProcessStartGuard.Command(new ProcessStartInfo("pwsh", "-NoProfile")).ShouldBe("pwsh -NoProfile");
         ProcessStartGuard.Command(new ProcessStartInfo("gh")).ShouldBe("gh");
     }
+
+    // The wiring: the observer TestEnvironment installs reads the running test's own traits. Observe tells it of a start and starts
+    // nothing, so these run in memory.
+    [Fact]
+    public void TheObserverThrowsInAnUnmarkedTestNamingTheKindAndTheCommand()
+    {
+        var ex = Should.Throw<ProcessStartNotAllowedException>(() => ProcessStarts.Observe("git", new ProcessStartInfo("git", "status")));
+
+        ex.Message.ShouldContain("git status");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")] // the Slow mark is what lets the observer pass this start; nothing is started
+    public void TheObserverLetsAMethodLevelSlowTestsStartThrough()
+    {
+        ProcessStarts.Observe("git", new ProcessStartInfo("git", "status"));
+    }
+}
+
+[Trait("Category", "Invariant")]
+[Trait("Category", "Slow")] // a class-level Slow mark is what lets the observer pass this start; nothing is started
+public sealed class ProcessStartGuardSlowClassTests
+{
+    [Fact]
+    public void TheObserverLetsAClassLevelSlowTestsStartThrough()
+    {
+        ProcessStarts.Observe("git", new ProcessStartInfo("git", "status"));
+    }
 }

@@ -262,6 +262,13 @@ public sealed class RestartTests
         {
             // The recovery has read the exit file and ended the row; its tell waits for the first poll the test holds.
             await Until(node, id, j => j.EndedAt is not null);
+            // A tell the runner made too early would follow the row's end on its next turns, not on a timer: give those turns to the pool
+            // (no wall-clock wait, no spin), so a premature tell shows in the checks below.
+            for (var turn = 0; turn < 50; turn++)
+            {
+                await Task.Yield();
+                await Task.Run(() => { }, Ct);
+            }
             node.State.Sessions().ShouldNotContain(s => s.Id == Owner, "the owner has a row before the first poll");
             node.State.Jobs().Single(j => j.Id == id).Told.ShouldBeFalse($"told before the first poll: {Why(node, id)}");
             Deliveries(node).ShouldBe(0, $"told before the first poll: {Why(node, id)}");

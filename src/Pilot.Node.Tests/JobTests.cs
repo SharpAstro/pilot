@@ -2086,6 +2086,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact(Timeout = 240_000)]
+    [Trait("Category", "Slow")] // starts a real sleeping process (kill-on-close job object / process table)
     public async Task ADisposedKillOnCloseHoldWithoutTheReleaseStillEndsTheProcess()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "kill-on-close is a Windows job object");
@@ -2106,6 +2107,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact(Timeout = 240_000)]
+    [Trait("Category", "Slow")] // starts a real sleeping process (kill-on-close job object / process table)
     public async Task AReleasedKillOnCloseHoldLetsTheProcessOutliveItsDisposal()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "kill-on-close is a Windows job object");
@@ -2125,6 +2127,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact(Timeout = 240_000)]
+    [Trait("Category", "Slow")] // starts a real sleeping process (kill-on-close job object / process table)
     public async Task RecoveryFollowsACheckRowItFindsRunningLikeAJobEndsOneWithNoProcessKeepsAQueuedOneAndFollowsAnOrdinaryJob()
     {
         string[] program = OperatingSystem.IsWindows() ? ["pwsh", "-NoProfile", "-Command", "Start-Sleep 30"] : ["sleep", "30"];
