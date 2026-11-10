@@ -233,6 +233,7 @@ internal static class CardKindCatalog
         new("job-untold", "Ring", ["Flights/JobRunner.cs"], "JobTests.AnOwnerThatCannotBeToldRings", "the job's owner session cannot be told (its row is gone or it refuses messages)", [nameof(Verbs.Say)]),
         new("queued", "Handled", ["Flights/NamedLock.cs"], "LockWaitTests.ALegCommandWaitingPastFiveSecondsIsAnsweredWithWhatHoldsTheLockAndRunsOnceItFrees"),
         new("session-compacted", "Handled", ["Flights/Compactor.cs"], "CompactorTests.AWorkerWaitingOnItsJobIsCompactedWithWhatItWaitsOnAndOneNotWaitingIsNot"),
+        new("watchtower-still-full", "ForYou", ["Flights/Compactor.cs"], "CompactorTests.AWatchtowerStillFullAfterACompactionAndARestartIsSaidOnceAndLeftAlone"),
         new("digest", "ForYou", ["Flights/Digest.cs"], "SignalTests.TheDigestListsWhatLandedWhatWasHandledAndWhatIsParkedAndReplacesTheLastOne"),
         new("stale-acted", "Handled", ["Flights/StaleWatch.cs"], "StaleWatchTests.HalfABoundNudgesAnIdleWorkerOnce"),
         new("idea-conflict", "ForYou", ["Flights/Ideas.cs"], "IdeaEditTests.AContradictionRaisesACardWithBothVersionsAndTheMergeAsDefaultAndWritesNothingUntilItIsAnswered"),
