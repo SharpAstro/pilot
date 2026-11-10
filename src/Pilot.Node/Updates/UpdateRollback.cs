@@ -261,7 +261,7 @@ public sealed class UpdateRollback(string install, string dataFolder, string ver
         var error = record.LastError ?? "no error was recorded, so the node stopped without saying why";
         var detail =
             $"pilot {record.To} was installed over pilot {record.From}, and its node did not start in {record.FailedStarts} tries in a row ({error}). " +
-            $"The node put pilot {record.From}'s files back from {PreviousPath} and runs on them; the files of {record.To} were renamed aside, not deleted. " +
+            $"The node put pilot {record.From}'s files back from {PreviousPath} and runs on them; the files of {record.To} were replaced. " +
             $"Auto-update does not install {record.To} again; a newer release, or pilot update node install, does.";
         var card = state.RaiseCard(
             CardBin.Ring, NodeUpdater.Kind, SubjectPrefix + record.To,

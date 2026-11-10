@@ -115,7 +115,7 @@ public sealed class StoreCompatibilityTests : IDisposable
         FileJournal.StoreContract.ShouldBeLessThanOrEqualTo(
             newest.Contract,
             $"FileJournal.StoreContract is {FileJournal.StoreContract} and the newest store fixture ({newest.Version}) is at {newest.Contract}: " +
-            "a contract bump needs a new fixture, written by a release that carries it (see PILOT.md)");
+            "a contract bump needs a new fixture, written by hand from the bumping PR's own commit (see src/README.md, Stored records)");
     }
 
     private static int ContractOf(string folder)

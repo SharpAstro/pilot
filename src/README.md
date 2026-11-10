@@ -105,6 +105,30 @@ curl --unix-socket <path> http://localhost/api/v1/node
   [--tail N]` prints the last 50 lines (or N, taking the rest from the rolled file when the current one is short) of
   each, under a heading with its path; it reads the files locally and needs no node.
 
+### Stored records
+
+The store outlives the build that wrote it, so a member added to a stored record is nullable or defaulted (PILOT.md has
+the rule). The reader sets every init property from the file, a missing one to null whatever its initialiser says, and
+writing that row back is refused (`RespectNullableAnnotations`); that is how beta 1718 stopped every node it reached.
+
+- **The fixtures** are a folder per release under `src/Pilot.Node.Tests/Fixtures/Store/<version>/`, a store written by
+  that release's own code. `StoreCompatibilityTests` loads each, replays it into `NodeState`, writes a fresh snapshot,
+  starts a second time, and fails naming `Type.Member` for any member null where its type forbids it. Older folders stay
+  while a node may still hold such a store.
+- **Refreshing them:** `release.yml` runs the writer (`StoreFixtureWriterTests`, skipped unless `PILOT_WRITE_STORE_FIXTURE`
+  names a folder) with each release's code and attaches `store-fixture-<version>.zip` to the GitHub release. The PR that
+  adds or changes a stored member downloads the latest release's zip (`gh release download v<version> --pattern
+  "store-fixture-*.zip"`) and unzips it into `Fixtures/Store/`, so the test reads what the old code stored, never what the
+  PR's own branch writes.
+- **By hand** (a release before the zip existed, or a beta): a detached worktree of that release's commit, the writer
+  (`StoreFixtureWriter.cs`) copied in if it predates it, then `PILOT_WRITE_STORE_FIXTURE=<folder>
+  PILOT_STORE_FIXTURE_VERSION=<version>` with `dotnet test src/Pilot.Node.Tests -c Release --filter
+  FullyQualifiedName~StoreFixtureWriterTests`. `2.1.1-beta.1711` was written so.
+- **A contract bump** (`FileJournal.StoreContract` raised) cannot take its fixture from a release, since none carries the
+  new contract yet, and `TheStoreContractIsNoNewerThanTheNewestFixture` fails until one is there. So the bumping PR writes
+  one by hand from its own commit, in a folder named `<next version>-contract<n>`; the older release folders keep checking
+  that the stores already out there are still read, and the next release's zip replaces the hand-written one.
+
 ## Install and update
 
 A release is a tag: pushing `v2.0.<n>` on `main` (its `2.0` must be `VersionMajorMinor` in `Directory.Build.props`)
@@ -173,7 +197,7 @@ from, to and the failed starts so far. A build of one's own has no marker, so no
 The new node counts each start of the `to` version before it builds the host, and deletes the record once the host has
 started with the store read. A start that fails with an exception during that trial starts the node once more; the second
 failed start in a row, or a start that finds two counted (a crash nothing caught), puts `previous/` back with the same
-all-or-nothing swap, starts that node and exits, and the failing release's files go aside, not away. A store a newer node
+all-or-nothing swap, starts that node and exits, and the failing release's files are replaced. A store a newer node
 wrote is not the new version's fault and rolls nothing back. The restored node rings one card, *pilot 2.0.13 did not start
 twice; back on 2.0.12*, with the last error, and auto-update (and `ask`) does not offer that version again; a newer
 release, or `pilot update` by hand, still installs. If `previous/` cannot be written the install is refused, since it

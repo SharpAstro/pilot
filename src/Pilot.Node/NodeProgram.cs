@@ -90,7 +90,7 @@ public static class NodeProgram
                 return NodeExitCodes.StoreTooNew;
             }
             // The host has started and the store is read: the update is good, and its record goes.
-            app.Lifetime.ApplicationStarted.Register(() => trial?.Clear());
+            ClearOnStart(app.Lifetime, trial);
             await app.RunAsync(cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -104,6 +104,15 @@ public static class NodeProgram
             throw;
         }
         return NodeExitCodes.Stopped;
+    }
+
+    /// <summary>Clears the update on trial once the host has started: the store was read before, so the new version is good.</summary>
+    internal static void ClearOnStart(IHostApplicationLifetime lifetime, UpdateTrial? trial)
+    {
+        if (trial is not null)
+        {
+            lifetime.ApplicationStarted.Register(trial.Clear);
+        }
     }
 
     // A start of a version on trial died of error: once more the first time, the previous release the second. Null when neither could be done, and the failure stands.

@@ -285,6 +285,47 @@ public sealed class UpdateRollbackTests : IDisposable
     }
 
     [Fact]
+    public async Task TheRecordGoesOnlyWhenTheHostSaysItHasStartedAndPreviousStays()
+    {
+        Install("2.0.1", Binaries("old"));
+        var before = Tree(_install);
+        await Updater(UpdatePolicy.Off, Feed("2.0.2", Binaries("new"))).RunAsync(Command(UpdateArgs.Install), Ct);
+        var running = Rollback("2.0.2");
+        var trial = running.Begin().ShouldNotBeNull();
+        var lifetime = new FakeLifetime();
+
+        NodeProgram.ClearOnStart(lifetime, trial);
+
+        // Built, not started yet: the start is still counted.
+        running.Read().ShouldNotBeNull().FailedStarts.ShouldBe(1);
+        trial.Cleared.ShouldBeFalse();
+        lifetime.Start();
+        trial.Cleared.ShouldBeTrue();
+        running.Read().ShouldBeNull();
+        Tree(Path.Combine(_install, ReleaseInstall.PreviousName)).ShouldBe(before);
+    }
+
+    [Fact]
+    public async Task TheRestoredNodesUpdaterRaisesTheRollbackCardOnceAtItsStart()
+    {
+        Install("2.0.1", Binaries("old"));
+        Rollback("2.0.1").TryWrite(new UpdateRecord("2.0.1", "2.0.2", 2, "boom", RolledBack: true)).ShouldBeTrue();
+        var updater = Updater(UpdatePolicy.Off, Feed("2.0.2", Binaries("new")), out _, out var state);
+
+        await updater.StartAsync(Ct);
+        await updater.ExecuteTask.ShouldNotBeNull();
+        await updater.StopAsync(Ct);
+
+        var card = state.Cards(openOnly: true).ShouldHaveSingleItem();
+        card.Kind.ShouldBe(NodeUpdater.Kind);
+        card.Subject.ShouldBe(UpdateRollback.SubjectPrefix + "2.0.2");
+        card.Title.ShouldBe("pilot 2.0.2 did not start twice; back on 2.0.1: boom");
+        Rollback("2.0.1").Read().ShouldNotBeNull().Told.ShouldBeTrue();
+    }
+
+    // A real host on a loopback port: the end-to-end form of the test above, so it is Slow.
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task AHostThatHasStartedClearsTheRecordWhileThePreviousReleaseStays()
     {
         Install("2.0.1", Binaries("old"));
@@ -540,12 +581,17 @@ public sealed class UpdateRollbackTests : IDisposable
     {
         public bool Stopped { get; private set; }
 
-        public CancellationToken ApplicationStarted => CancellationToken.None;
+        private readonly CancellationTokenSource _started = new();
+
+        public CancellationToken ApplicationStarted => _started.Token;
 
         public CancellationToken ApplicationStopping => CancellationToken.None;
 
         public CancellationToken ApplicationStopped => CancellationToken.None;
 
         public void StopApplication() => Stopped = true;
+
+        /// <summary>The host says it has started, as <c>ApplicationStarted</c> fires in a real one.</summary>
+        public void Start() => _started.Cancel();
     }
 }

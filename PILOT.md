@@ -72,26 +72,13 @@ is neither built nor tested by CI.
 
 ## Stored records
 
-The node's store (`snapshot.json`, `journal.jsonl`, `decisions.jsonl`, `store.json`) outlives the build that wrote it: an update
-starts on what the last release stored. The JSON reader sets every init property from the file, a missing one to null whatever
-its initialiser says, and writing that row back is refused (`RespectNullableAnnotations`). That stopped every node that
-updated onto beta 1718 (`AdmissionRow.WaitingOnPerson`, added by #808, null in a journal written before it).
+An update starts on the store the last release wrote, and the JSON reader sets a member missing from it to null whatever its
+initialiser says (beta 1718 stopped every node so, on `AdmissionRow.WaitingOnPerson`).
 
-- **A member added to a stored record** (the snapshot, the journal's events, settings, job and session rows, anything under
-  `NodeEvent`) is nullable (`string?`), or has a default the reader honours: `init => field = value ?? []` for an array,
-  `value ?? ""` for a string. A kind or field an older reader would drop also bumps `FileJournal.StoreContract`.
-- **The store fixture** is a folder per release under `src/Pilot.Node.Tests/Fixtures/Store/<version>/`, a store written by that
-  release's own code. `StoreCompatibilityTests` loads each, replays it into `NodeState`, writes a fresh snapshot, starts a
-  second time, and fails naming `Type.Member` for any member null where its type forbids it. It fails too when
-  `FileJournal.StoreContract` is above the newest fixture's, so a contract bump needs a new fixture.
-- **Refreshing it:** `release.yml` runs the writer (`StoreFixtureWriterTests`, skipped unless `PILOT_WRITE_STORE_FIXTURE` names a
-  folder) with each release's code and attaches `store-fixture-<version>.zip` to the GitHub release. The PR that adds or changes a
-  stored member downloads the latest release's zip (`gh release download v<version> --pattern "store-fixture-*.zip"`) and unzips
-  it into `Fixtures/Store/`, so the test reads what the old code stored, never what the PR's own branch writes. Older folders
-  stay while a node may still hold such a store.
-- **By hand** (a release before the zip existed, or a beta): a detached worktree of that release's commit, the writer
-  (`StoreFixtureWriter.cs`) copied in if it predates it, then `PILOT_WRITE_STORE_FIXTURE=<folder> PILOT_STORE_FIXTURE_VERSION=<version>`
-  with `dotnet test src/Pilot.Node.Tests -c Release --filter FullyQualifiedName~StoreFixtureWriterTests`. `2.1.1-beta.1711` was written so.
+- A member added to a stored record (snapshot, journal events, settings, job and session rows) is nullable, or defaulted
+  in its setter (`init => field = value ?? []`). A kind or field an older reader would drop also bumps `FileJournal.StoreContract`.
+- `StoreCompatibilityTests` loads each store under `src/Pilot.Node.Tests/Fixtures/Store/<version>/`, written by that release's
+  code, and fails naming `Type.Member` for a null its type forbids. How a fixture is refreshed: `src/README.md`, "Stored records".
 
 ## Build and check
 
