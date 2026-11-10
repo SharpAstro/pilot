@@ -141,6 +141,18 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>What holds a compaction while the 5-hour window is spent: the node's one gate; null in a test with none.</summary>
     public StartGate? Gate { get; set; }
 
+    /// <summary>Whether sessions are taking turns at all (PIL791): while an outage is open the first-turn ladders neither restart nor ring per session. The node shares its one; a test gets its own.</summary>
+    public TurnOutage Outage { get => _outage ??= new TurnOutage(state); set => _outage = value; }
+    private TurnOutage? _outage;
+
+    // PIL791: what the ending of an outage redoes. The window of the outage that ended last, kept until one whole look has run on it; the
+    // outage it was last seen for; each subject's job the outage held a first-turn restart of (by the ladder's key); and the jobs redone,
+    // so one start is redone once.
+    private (DateTimeOffset Since, DateTimeOffset Until)? _redoWindow;
+    private (DateTimeOffset Since, DateTimeOffset Until)? _seenWindow;
+    private readonly Dictionary<string, string> _outageHeld = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _redone = new(StringComparer.Ordinal);
+
     // By worker job: the response it had when it was compacted for a full context; by leg subject: the worker job the leg was sent round from for one.
     private readonly Dictionary<string, DateTimeOffset?> _compactedFull = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _replacedFull = new(StringComparer.Ordinal);
@@ -187,6 +199,13 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         var now = time.GetUtcNow();
         var sessions = state.Sessions();
         _ladderLooked.Clear();
+        Outage.Look(sessions, now);
+        if (Outage.LastWindow is { } ended && ended != _seenWindow)
+        {
+            // An outage ended since the last look: every start that fell in it is redone once, before any ladder of its own.
+            _seenWindow = ended;
+            _redoWindow = ended;
+        }
         await LookAtReviewsAsync(sessions, now, cancellationToken);
         await LookAtValidatorsAsync(sessions, now, cancellationToken);
         LookAtStrays(sessions, now);
@@ -302,6 +321,13 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         foreach (var key in _firstTurns.Keys.Where(k => !_ladderLooked.Contains(k)).ToArray())
         {
             _firstTurns.Remove(key);
+        }
+        if (_redoWindow is not null)
+        {
+            // A whole look has run on the window: what it held and did not redo was a session that took a turn, or one that is gone.
+            _redoWindow = null;
+            _outageHeld.Clear();
+            _redone.Clear();
         }
     }
 
@@ -1343,6 +1369,14 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     private readonly Dictionary<string, (int Seen, string Job, DateTimeOffset At)> _firstTurns = new(StringComparer.Ordinal);
     private readonly HashSet<string> _ladderLooked = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Whether the start of <paramref name="job"/> under <paramref name="key"/>, which shows no first turn, is one the outage that just ended is
+    /// to redo (and only past <see cref="FirstTurnGrace"/> from its start, as any first-turn restart): it was started inside the outage's window, or its restart was held by the outage. Once per job.
+    /// </summary>
+    private bool RedoNow(string key, string job, DateTimeOffset startedAt, DateTimeOffset now) =>
+        _redoWindow is { } window && !_redone.Contains(job) && now - startedAt > FirstTurnGrace
+        && ((startedAt >= window.Since && startedAt <= window.Until) || (_outageHeld.TryGetValue(key, out var held) && held == job));
+
     /// <summary>A live session that has shown no first turn: no context and no response yet. The one rule for planners, workers, validators and reviewers.</summary>
     private static bool NoTurnYet(SessionRow row) =>
         row is { Gone: false, State: SessionState.Working or SessionState.Idle, ContextTokens: 0, LastResponseAt: null };
@@ -1361,6 +1395,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         var has = _firstTurns.TryGetValue(key, out var acted);
         if (row is not null && (row.ContextTokens > 0 || row.LastResponseAt is not null))
         {
+            Outage.Turned(key);
             _firstTurns.Remove(key);
             return (false, null);
         }
@@ -1370,6 +1405,28 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             _firstTurns.Remove(key);
             has = false;
         }
+        var since = row is null ? knownStart : NoTurnYet(row) ? row.StartedAt : (DateTimeOffset?)null;
+        if (since is { } startedAt && !(has && acted.Seen >= 2) && RedoNow(key, job, startedAt, now))
+        {
+            // The outage this start fell in has ended and it still shows no first turn: stopped and started afresh once, and its
+            // ladder starts from the top, as the start before it never had a fair try. One the ladder gave up on is the person's.
+            _redone.Add(job);
+            _outageHeld.Remove(key);
+            _firstTurns.Remove(key);
+            has = false;
+            try
+            {
+                await restart(cancellationToken);
+                state.CloseCardsAbout(subject, "started again", cardKind);
+                state.RaiseCard(CardBin.Handled, cardKind, subject, $"{name}'s {what} was started again: no session took a turn",
+                    $"its {what} (job {job}) was started at {startedAt.ToLocalTime():HH:mm}, while no session took a turn, and still shows no first turn; stopped it and started a fresh {what}, whose first-turn ladder starts from the top");
+                return (true, null);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await Error.WriteLineAsync($"leg watch: redoing the {what} of {name} after an outage failed, its own ladder goes on: {ex.Message}");
+            }
+        }
         if (has && acted.Seen == 1 && acted.Job == job)
         {
             // Stopped and a fresh one asked for: given the grace to appear, then rung for as one that could not be started.
@@ -1377,13 +1434,25 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             {
                 return (true, null);
             }
+            Outage.Observe(key, now);
+            if (Outage.IsOpen)
+            {
+                _outageHeld[key] = job;
+                return (true, null);
+            }
             _firstTurns[key] = (2, job, now);
             return (row is not null, $"the {what} of {name} took no first turn and was stopped, and a fresh one did not appear in {Ago(now, acted.At)}");
         }
-        var since = row is null ? knownStart : NoTurnYet(row) ? row.StartedAt : (DateTimeOffset?)null;
         if (since is not { } at || now - at <= FirstTurnGrace)
         {
             return (has && acted.Seen >= 2 && row is not null && NoTurnYet(row), null);
+        }
+        Outage.Observe(key, now);
+        if (Outage.IsOpen)
+        {
+            // Nothing is taking turns: stopping and restarting this one would change nothing, so it waits with the rest.
+            _outageHeld[key] = job;
+            return (true, null);
         }
         var took = $"{name}'s {what} (job {job}) took no first turn in {Ago(now, at)}";
         if (!has)
@@ -1458,10 +1527,36 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             DateTimeOffset? neverSince = planner is not null && NoTurnYet(planner)
                 ? planner.StartedAt
                 : planner is null && started is { } known ? known.At : null;
+            var plannerJob = planner?.Id ?? started?.Job ?? "unknown";
+            if (neverSince is { } begun && _noFirstTurn.GetValueOrDefault(subject) < 2 && RedoNow(subject, plannerJob, begun, now))
+            {
+                // Started inside an outage that has ended and still no first turn: started afresh once, its ladder from the top.
+                _redone.Add(plannerJob);
+                _outageHeld.Remove(subject);
+                _noFirstTurn.Remove(subject);
+                state.CloseCardsAbout(subject, "planning again", PlanStalled);
+                try
+                {
+                    await RestartPlanner(flight.Code, cancellationToken);
+                    state.RaiseCard(CardBin.Handled, PlanStalled, subject, $"{flight.Code}'s planner was started again: no session took a turn",
+                        $"its planner (job {plannerJob}) was started at {begun.ToLocalTime():HH:mm}, while no session took a turn, and still shows no first turn; stopped it and started a fresh planner, whose first-turn ladder starts from the top");
+                    continue;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    await Error.WriteLineAsync($"leg watch: redoing {flight.Code}'s planner after an outage failed, its own ladder goes on: {ex.Message}");
+                }
+            }
             if (neverSince is { } since && now - since > FirstTurnGrace)
             {
+                Outage.Observe(subject, now);
+                if (Outage.IsOpen)
+                {
+                    _outageHeld[subject] = plannerJob;
+                    continue;
+                }
                 var seen = _noFirstTurn.GetValueOrDefault(subject);
-                var job = planner?.Id ?? started?.Job ?? "unknown";
+                var job = plannerJob;
                 var took = $"{flight.Code}'s planner (job {job}) took no first turn in {Ago(now, since)}";
                 state.CloseCardsAbout(subject, "planning again", PlanStalled);
                 if (seen == 0)

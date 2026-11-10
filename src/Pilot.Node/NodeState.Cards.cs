@@ -101,7 +101,7 @@ public sealed partial class NodeState
             {
                 foreach (var older in _cards.Values.Where(c => c.State == CardState.Open && IsMergeKind(c.Kind) && c.Subject == subject).ToList())
                 {
-                    Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = older with { State = CardState.Closed, Outcome = $"replaced by c{number}", ClosedBy = "node", ClosedAt = now } });
+                    Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = older with { State = CardState.Closed, Outcome = $"replaced by c{number}", ClosedBy = "node", ClosedAt = now, Answering = null } });
                 }
             }
             var card = new CardRow
@@ -113,7 +113,8 @@ public sealed partial class NodeState
                 Title = title,
                 Detail = detail,
                 Summary = CardSummaries.Resolve(summary, detail, kind, subject, title, choices ?? []),
-                Choices = [.. choices ?? []],
+                // A choice the node would refuse already (its flight is held) is born marked, not offered until the next sweep (#792).
+                Choices = Available(choices ?? []),
                 Link = link,
                 AskedBy = askedBy,
                 Why = why,
@@ -238,7 +239,51 @@ public sealed partial class NodeState
                 return false;
             }
             var now = _time.GetUtcNow();
-            Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { State = CardState.Closed, Outcome = outcome, ClosedBy = closedBy, ClosedAt = now } });
+            // The answer underway ends with the card: what it came to is the outcome now.
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { State = CardState.Closed, Outcome = outcome, ClosedBy = closedBy, ClosedAt = now, Answering = null } });
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Takes the answer to an open card, atomically, so two presses that race cannot both run (#792): the card then says, on every client,
+    /// that this choice is underway, by whom and since when (one <see cref="CardChangedEvent"/>). Taken is null when it was not taken:
+    /// another answer to the card is underway and younger than <paramref name="stuckAfter"/> (Underway names it, and the card is left as it
+    /// is), or the card is not open (both null). An answer underway for longer is stuck, so it no longer shields the card: the new
+    /// one takes its place, and the old one's clearing of the mark then finds it is not its own and leaves it.
+    /// </summary>
+    public (CardAnswering? Taken, CardAnswering? Underway) BeginAnswering(string id, string choice, string by, string? waiting, TimeSpan stuckAfter)
+    {
+        lock (_gate)
+        {
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open)
+            {
+                return (null, null);
+            }
+            var now = _time.GetUtcNow();
+            if (card.Answering is { } underway && now - underway.At < stuckAfter)
+            {
+                return (null, underway);
+            }
+            var taken = new CardAnswering { Choice = choice, By = by, At = now, Waiting = waiting };
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { Answering = taken } });
+            return (taken, null);
+        }
+    }
+
+    /// <summary>
+    /// Ends an answer that did not close the card (it was refused, or cut off): the card says nothing is underway and offers its buttons
+    /// again, one <see cref="CardChangedEvent"/>. Only the answer given is cleared, never a newer one that took the card after it went stale.
+    /// </summary>
+    public bool ClearAnswering(string id, CardAnswering answering)
+    {
+        lock (_gate)
+        {
+            if (!_cards.TryGetValue(id, out var card) || card.Answering is not { } current || current.Choice != answering.Choice || current.By != answering.By || current.At != answering.At)
+            {
+                return false;
+            }
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { Answering = null } });
             return true;
         }
     }
@@ -250,19 +295,27 @@ public sealed partial class NodeState
     public void AimDismiss(CardRow card) =>
         UpdateChoices(card.Id, [.. card.Choices.Select(c => c.Verb == Verbs.Dismiss && c.Target.Length == 0 ? c with { Target = Verbs.CardTarget(card.Id) } : c)]);
 
-    /// <summary>Gives an open card new choices (a merge's checks turned green, say); false when it is not open or nothing changed.</summary>
+    /// <summary>
+    /// Gives an open card new choices (a merge's checks turned green, say); false when it is not open or nothing changed. A choice the node
+    /// would refuse now (its flight held, its session gone) reads <see cref="ChoiceStatus.Unavailable"/> whatever the caller gave, so a
+    /// refresh of a card's statuses never offers it again (#792); a choice that would not be refused no longer carries that mark.
+    /// </summary>
     public bool UpdateChoices(string id, IReadOnlyList<CardChoice> choices, IReadOnlyList<CardChoice>? ifStill = null)
     {
         lock (_gate)
         {
             // With ifStill, a compare-and-set: written only while the card still holds the choices the caller read, so a press
             // that armed the merge between that read and this write is not undone.
-            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open || card.Choices.SequenceEqual(choices)
-                || ifStill is not null && !card.Choices.SequenceEqual(ifStill))
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open)
             {
                 return false;
             }
-            Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { Choices = [.. choices] } });
+            var next = Available(choices);
+            if (card.Choices.SequenceEqual(next) || ifStill is not null && !card.Choices.SequenceEqual(ifStill))
+            {
+                return false;
+            }
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { Choices = next } });
             return true;
         }
     }
@@ -300,7 +353,7 @@ public sealed partial class NodeState
             }
             // An open card may move between Ring and For-you; never to or from Handled, which is born closed.
             var nextBin = bin is { } b && b != CardBin.Handled && card.Bin != CardBin.Handled ? b : card.Bin;
-            var next = card with { Title = title, Detail = detail, Choices = [.. choices], Link = link, Kind = kind ?? card.Kind, Bin = nextBin };
+            var next = card with { Title = title, Detail = detail, Choices = Available(choices), Link = link, Kind = kind ?? card.Kind, Bin = nextBin };
             // A card that says something new says it in new words: the summary follows the title and kind, as the raiser wrote it or the table has it.
             next = next with { Summary = summary is null && next.Title == card.Title && next.Kind == card.Kind ? card.Summary : CardSummaries.Resolve(summary, detail, next.Kind, next.Subject, next.Title, next.Choices) };
             next = next with { Commits = CommitsOf(next, link) };
@@ -341,15 +394,15 @@ public sealed partial class NodeState
 
     /// <summary>
     /// Says what the choice a card closed with came to (a review posted, by its id), and where to see it; nothing when the
-    /// card is not closed.
+    /// card is not closed. A <paramref name="closedBy"/> given replaces who closed it: an answer's presser, when the landing closed the card first.
     /// </summary>
-    public void NoteOutcome(string id, string outcome, string? link = null)
+    public void NoteOutcome(string id, string outcome, string? link = null, string? closedBy = null)
     {
         lock (_gate)
         {
             if (_cards.TryGetValue(id, out var card) && card.State == CardState.Closed)
             {
-                Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { Outcome = outcome, Link = link ?? card.Link } });
+                Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { Outcome = outcome, Link = link ?? card.Link, ClosedBy = closedBy ?? card.ClosedBy } });
             }
         }
     }
@@ -383,7 +436,7 @@ public sealed partial class NodeState
                 {
                     return;
                 }
-                Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { State = CardState.Open, Outcome = null, ClosedBy = null, ClosedAt = null } });
+                Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { State = CardState.Open, Outcome = null, ClosedBy = null, ClosedAt = null, Answering = null } });
             }
         }
     }
@@ -419,7 +472,7 @@ public sealed partial class NodeState
                 && (kinds.Length == 0 || kinds.Contains(c.Kind))).ToList())
             {
                 var now = _time.GetUtcNow();
-                Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { State = CardState.Closed, Outcome = outcome, ClosedBy = closedBy, ClosedAt = now } });
+                Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { State = CardState.Closed, Outcome = outcome, ClosedBy = closedBy, ClosedAt = now, Answering = null } });
             }
         }
     }

@@ -60,17 +60,32 @@ public static partial class NodeApp
     {
         // The store: the node's events as files in its data folder, read back on the next start (FileJournal).
         builder.Services.AddSingleton<INodeJournal>(_ => new FileJournal(Path.Combine(options.DataFolder, "store")));
+        // The state is built on the store here, and a store that cannot be read is set aside and started again from a backup (StoreRecovery).
+        // A store from a newer node still throws StoreTooNewException from here, which NodeProgram turns into its refusal.
         builder.Services.AddSingleton(services =>
         {
-            var state = new NodeState(services.GetRequiredService<INodeJournal>(), services.GetRequiredService<TimeProvider>(), options.RetainedDeltas)
-            {
-                Error = logWriter,
-                TokensByFlight = () => services.GetRequiredService<SpendLedger>().TokensByFlight(),
-            };
-            // A card about to ring goes to the brain first (PIL855); resolved at the first ring, as the brain needs the watchtower, which needs this state.
-            state.RingJudge = new RingJudge(state, () => services.GetRequiredService<IBrain>()) { Log = line => logWriter.WriteLine(line) };
-            return state;
+            var time = services.GetRequiredService<TimeProvider>();
+            var opened = StoreRecovery.Open(
+                services.GetRequiredService<INodeJournal>(),
+                journal =>
+                {
+                    var state = new NodeState(journal, time, options.RetainedDeltas)
+                    {
+                        Error = logWriter,
+                        TokensByFlight = () => services.GetRequiredService<SpendLedger>().TokensByFlight(),
+                    };
+                    // A card about to ring goes to the brain first (PIL855); resolved at the first ring, as the brain needs the watchtower, which needs this state.
+                    state.RingJudge = new RingJudge(state, () => services.GetRequiredService<IBrain>()) { Log = line => logWriter.WriteLine(line) };
+                    return state;
+                },
+                time);
+            return opened;
         });
+        // The line in node.log and node-start.log and the card, when the start was from a backup: said when the host starts, with every service
+        // there to resolve (the card goes to the brain before it rings, which needs the watchtower, which needs the state built just above).
+        builder.Services.AddHostedService(services => new StoreRecoveryReport(services.GetRequiredService<StoreRecovery>(), logWriter,
+            line => NodeProgram.AppendStartLog(options, $"pilot-node {FileJournal.RunningVersion} {line}")));
+        builder.Services.AddSingleton(services => services.GetRequiredService<StoreRecovery>().State);
         builder.Services.AddSingleton<PageViews>();
         builder.Services.AddSingleton<EventHub>();
     }
@@ -254,7 +269,10 @@ public static partial class NodeApp
         builder.Services.AddSingleton<ICheckRunner, JobCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
         builder.Services.AddSingleton(_ => new RoleModels(options.Saved));
-        builder.Services.AddSingleton(services => new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton(services => new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
+        {
+            Outage = services.GetRequiredService<TurnOutage>(),
+        });
     }
 
     /// <summary>The admission gate, counting this node's sessions and the fleet's.</summary>
@@ -380,6 +398,7 @@ public static partial class NodeApp
                 Models = services.GetRequiredService<RoleModels>(),
                 Ledger = services.GetRequiredService<SessionLedger>(),
                 Gate = services.GetRequiredService<StartGate>(),
+                Outage = services.GetRequiredService<TurnOutage>(),
                 Error = logWriter,
                 Ready = services.GetRequiredService<JobRunner>().Recovered,
                 StartedPlanner = legs.StartedPlanner,
@@ -457,7 +476,9 @@ public static partial class NodeApp
             services.GetRequiredService<TimeProvider>())
         {
             AccountFile = ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root),
+            Outage = services.GetRequiredService<TurnOutage>(),
         });
+        builder.Services.AddSingleton(services => new TurnOutage(services.GetRequiredService<NodeState>()));
         builder.Services.AddHostedService(services => services.GetRequiredService<UsageReader>());
     }
 
@@ -544,6 +565,7 @@ public static partial class NodeApp
                 Priority = nodeOptions.JobPriority,
                 PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? NodeSettings.JobPlaneOutputDefault,
                 EndedForGood = id => services.GetRequiredService<SessionTracker>().IsEndedForGood(id),
+                Outage = services.GetRequiredService<TurnOutage>(),
                 EndedAfterTurn = id => services.GetRequiredService<SessionTracker>().EndedAfterFinishedTurn(id),
                 // A job's end is told to its owner only once the tracker has listed the sessions (pilot #810), as the watchtower waits.
                 Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,

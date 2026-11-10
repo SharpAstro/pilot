@@ -39,11 +39,13 @@ public sealed partial class NodeState
             else
             {
                 Publish(new SessionAddedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Session = row });
+                // A session that is back makes the choices that name it runnable again (#792).
+                SyncChoiceAvailability();
             }
         }
     }
 
-    /// <summary>Removes a session row; nothing happens when there is none.</summary>
+    /// <summary>Removes a session row; nothing happens when there is none. The choices of open cards that name it read unavailable from then on (#792).</summary>
     public void RemoveSession(string id)
     {
         lock (_gate)
@@ -51,6 +53,7 @@ public sealed partial class NodeState
             if (_sessions.ContainsKey(id))
             {
                 Publish(new SessionRemovedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Id = id });
+                SyncChoiceAvailability();
             }
         }
     }
