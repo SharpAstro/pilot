@@ -93,6 +93,7 @@ internal sealed class NodeHarness : IAsyncDisposable
         // outlasting the node's stop (MergeFixtureCardTests, 30 s on windows, #559).
         folder ??= Path.Combine(Path.GetTempPath(), "p2t", Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(folder);
+        TestEnvironment.OwnFolder(folder);
         var options = new NodeOptions(Path.Combine(folder, NodeSocket.DefaultFileName), Path.Combine(folder, "data"), retainedDeltas, MachinePrefix: machine, Watchtower: watchtower,
             Lan: lanPort is not null, LanPort: lanPort ?? NodeWire.DefaultLanPort, LanAnnounce: false, LocalOnly: localOnly, LanLoopbackOnly: lanPort is not null, MachineSampling: false);
         if (!NodeSocket.TryValidate(options.SocketPath, out var tooLong))

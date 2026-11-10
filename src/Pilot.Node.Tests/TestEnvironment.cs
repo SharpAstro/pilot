@@ -25,8 +25,10 @@ internal static class TestEnvironment
         var mode = ProcessStartGuard.ModeFor(Environment.GetEnvironmentVariable("PILOT_TEST_PROCESS_GUARD"));
         ProcessStarts.Observer = (kind, start) =>
         {
-            var current = Xunit.TestContext.Current.Test;
-            var test = current?.TestDisplayName;
+            // The node's own request handlers run on threads that carry no test (the host starts them without the test's context), so a
+            // start there is the test whose folder it runs in: see OwnFolder.
+            var current = Xunit.TestContext.Current.Test is { } running ? new Owner(running.TestDisplayName, running.Traits) : OwnerOf(start.WorkingDirectory);
+            var test = current?.Name;
             // Written first, so the report names the start even when the guard throws.
             if (ProcessStartGuard.Verdict(kind, ProcessStartGuard.Command(start), test, current?.Traits) is not null)
             {
@@ -47,6 +49,35 @@ internal static class TestEnvironment
     {
         ProcessStarts.Observe($"{Path.GetFileNameWithoutExtension(start.FileName)} ({kindSuffix ?? "test helper"})", start);
         return System.Diagnostics.Process.Start(start);
+    }
+
+    private sealed record Owner(string Name, IReadOnlyDictionary<string, IReadOnlyCollection<string>> Traits);
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Owner> _folders = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Names the current test as the owner of <paramref name="folder"/> (a node's folder, a seeded repo's root): a git the node runs there on
+    /// a request handler's thread, which carries no test, is then the test's start. Call it from the test's own thread (its constructor,
+    /// <c>InitializeAsync</c> or body); with no test running it records nothing.
+    /// </summary>
+    internal static void OwnFolder(string folder)
+    {
+        if (Xunit.TestContext.Current.Test is { } test)
+        {
+            _folders[Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder))] = new Owner(test.TestDisplayName, test.Traits);
+        }
+    }
+
+    private static Owner? OwnerOf(string? workingDirectory)
+    {
+        for (var at = string.IsNullOrEmpty(workingDirectory) ? null : Path.TrimEndingDirectorySeparator(Path.GetFullPath(workingDirectory)); at is not null; at = Path.GetDirectoryName(at))
+        {
+            if (_folders.TryGetValue(at, out var owner))
+            {
+                return owner;
+            }
+        }
+        return null;
     }
 
     private static string Where() => string.Join(" < ", new System.Diagnostics.StackTrace(1, false).GetFrames()

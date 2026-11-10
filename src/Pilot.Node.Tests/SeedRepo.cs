@@ -20,6 +20,7 @@ internal static class SeedRepo
             throw new ArgumentException("the seed is tianwen", nameof(name));
         }
         CopyTree(Template.Value, root);
+        TestEnvironment.OwnFolder(root);
         return Path.Combine(root, name);
     }
 
