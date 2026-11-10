@@ -49,6 +49,9 @@ public static partial class NodeApp
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton(NodeTraffic.Shared);
+        // Who made each request, per clock hour (#870): kept by the node's traffic count, whose hourly line names the top callers,
+        // and counted by one middleware ahead of every route (UseCommandCallers).
+        builder.Services.AddSingleton(services => services.GetRequiredService<NodeTraffic>().Callers);
         // What GET /node reads the heap with: the live figures, unless a test host registers a fixed reading after this (a live
         // working set moves between any two calls, so two `pilot status` outputs of one node would never be equal).
         builder.Services.AddSingleton<Func<NodeHeapRow>>(_ => () => NodeHeap.Read());
@@ -524,6 +527,9 @@ public static partial class NodeApp
             // One sweep, both the hosted look and the handler of a stray card's End (end-stray), which only ends what it named.
             builder.Services.AddSingleton(services => new StraySweep(services.GetRequiredService<NodeState>(), OsProcessTable.Instance, services.GetRequiredService<TimeProvider>()) { LivePids = () => services.GetRequiredService<SessionTracker>().LivePids().Select(p => (p.Id, p.Pid)).ToList(), KnownOf = services.GetRequiredService<JobRunner>().KnownOf });
             builder.Services.AddHostedService(services => services.GetRequiredService<StraySweep>());
+            // The same table, read for callers that hammer the node (#870); its End is end-poller.
+            builder.Services.AddSingleton(services => new PollerSweep(services.GetRequiredService<NodeState>(), services.GetRequiredService<CommandCallers>(), OsProcessTable.Instance, services.GetRequiredService<TimeProvider>()) { LivePids = () => services.GetRequiredService<SessionTracker>().LivePids().Select(p => p.Pid).ToList(), KnownOf = services.GetRequiredService<JobRunner>().KnownOf });
+            builder.Services.AddHostedService(services => services.GetRequiredService<PollerSweep>());
             // The node's own row rides the same tick of the clock (a settings change has no event to hook).
             builder.Services.AddHostedService(services =>
             {
@@ -722,6 +728,7 @@ public static partial class NodeApp
             Sends = services.GetRequiredService<SendLog>(),
             Timings = services.GetRequiredService<SendTimings>(),
             Removal = services.GetRequiredService<ClaudeJobRemoval>(),
+            Watchers = new SessionWatchers(OsProcessTable.Instance),
             Streams = () => services.GetRequiredService<Watchtower>(),
         });
     }

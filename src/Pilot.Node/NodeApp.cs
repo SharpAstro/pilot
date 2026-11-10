@@ -73,6 +73,8 @@ public static partial class NodeApp
         app.UseWebSockets();
         app.RestrictNodeSocketToItsOwner(held);
         app.UseNodeAccessGate(LanPolicy);
+        // Every request that got past the gate, counted by its caller before any route runs (commands, GETs, hooks, the stream's connect).
+        app.UseCommandCallers();
         MapRoutes(app);
         return app;
     }

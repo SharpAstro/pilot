@@ -217,6 +217,18 @@ public sealed class NodeTraffic
         };
     }
 
+    private CommandCallers? _callers;
+
+    /// <summary>
+    /// Who made the requests the node took, per clock hour (#870): the hourly line names the top <see cref="CommandCallers.TopCount"/>.
+    /// Counted on the node's clock (<see cref="Time"/>) against the OS's process table unless a test hands in its own.
+    /// </summary>
+    public CommandCallers Callers
+    {
+        get => _callers ??= new CommandCallers(OsProcessTable.Instance, Time);
+        init => _callers = value;
+    }
+
     /// <summary>Where the hourly line's GC figures come from (#794): the node's own heap unless a test says otherwise.</summary>
     public Func<NodeHeapRow> Heap { get; set; } = () => NodeHeap.Read();
 
@@ -238,7 +250,7 @@ public sealed class NodeTraffic
         var t = Hour(hour);
         var child = CanMeasureChildren ? $"{t.ChildBytes} bytes (estimate, upper bound)" : "unknown";
         write(string.Create(CultureInfo.InvariantCulture,
-            $"traffic {hour:yyyy-MM-dd HH}:00Z: http in {t.HttpIn} bytes, out {t.HttpOut} bytes; git and gh children {child}; git runs {t.GitRuns}, gh runs {t.GhRuns}; {Heap().Line()}"));
+            $"traffic {hour:yyyy-MM-dd HH}:00Z: http in {t.HttpIn} bytes, out {t.HttpOut} bytes; git and gh children {child}; git runs {t.GitRuns}, gh runs {t.GhRuns}; {Heap().Line()}; {Callers.TopLine(hour)}"));
         return true;
     }
 

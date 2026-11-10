@@ -48,7 +48,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// </summary>
     public static readonly IReadOnlySet<string> YourOnlyVerbs = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.Merge, Verbs.RerunChecks, Verbs.Ground, Verbs.Unground, Verbs.MoveFlight, Verbs.AdoptFlight, Verbs.Land, Verbs.Set, Verbs.Setup, Verbs.AnswerGrant, Verbs.RevokeGrant, Verbs.Update, Verbs.RestartNode, Verbs.Reboot, Verbs.RestartWatchtower, Verbs.ChatNow, Verbs.EndStray,
+        Verbs.Merge, Verbs.RerunChecks, Verbs.Ground, Verbs.Unground, Verbs.MoveFlight, Verbs.AdoptFlight, Verbs.Land, Verbs.Set, Verbs.Setup, Verbs.AnswerGrant, Verbs.RevokeGrant, Verbs.Update, Verbs.RestartNode, Verbs.Reboot, Verbs.RestartWatchtower, Verbs.ChatNow, Verbs.EndStray, Verbs.EndPoller,
     };
 
     /// <summary>

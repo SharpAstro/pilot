@@ -40,6 +40,12 @@ public interface IProcessTable
 
     /// <summary>How the process <paramref name="pid"/> was started and where it works; null when the table has nothing to read or the process is gone.</summary>
     ProcessDetail? DetailsOf(int pid) => null;
+
+    /// <summary>
+    /// One process's entry read on its own, not from the whole table: what a walk up from a process that started after the
+    /// last <see cref="Snapshot"/> needs. Null when it is gone, cannot be read, or the table cannot read one process alone.
+    /// </summary>
+    ProcessEntry? EntryOf(int pid) => null;
 }
 
 /// <summary>A process's command line and working folder; either is null where the OS would not say.</summary>
@@ -181,6 +187,9 @@ public sealed class OsProcessTable : IProcessTable
         var (commandLine, workingDirectory) = ProcessDetails.Read(pid);
         return commandLine is null && workingDirectory is null ? null : new ProcessDetail(commandLine, workingDirectory);
     }
+
+    public ProcessEntry? EntryOf(int pid) =>
+        ProcessDetails.EntryOf(pid) is var (parent, name) ? new ProcessEntry(pid, parent, name) : null;
 
     public void Kill(int pid)
     {

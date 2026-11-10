@@ -126,6 +126,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         }
         // A stop from the watchtower's own session is the watchtower's; any other is a person's.
         reason ??= command.Who.EndsWith("-watchtower", StringComparison.OrdinalIgnoreCase) ? SessionEndReasons.Watchtower : SessionEndReasons.Person;
+        var captured = CaptureWatchers(row);
         try
         {
             if (Streams?.Invoke() is { } streams && streams.Handles(row))
@@ -156,6 +157,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         // The process is gone: the row says ended at once, not when a later listing happens to agree.
         tracker.MarkStopped(row.Id, reason);
         var cancelled = cancelJobs ? CancelJobs?.Invoke(ids, command.Who) ?? 0 : 0;
+        await EndWatchersAsync(row, captured);
         tracker.Kick();
         await log.WriteLineAsync($"stop: who={command.Who} target={command.Target} stopped reason={reason}{(cancelJobs ? $" jobs-cancelled={cancelled}" : "")}");
         if (Removal is not null)
@@ -172,6 +174,26 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
 
     /// <summary>How long a delivered request id is remembered, as long as the node remembers a command's request id.</summary>
     internal static readonly TimeSpan DeliveredRetention = TimeSpan.FromMinutes(15);
+
+    /// <summary>Ends the background shells a stopped session leaves (#870); null leaves them to the stray sweep.</summary>
+    public SessionWatchers? Watchers { get; init; }
+
+    private IReadOnlyList<SessionWatcher> CaptureWatchers(SessionRow row) =>
+        Watchers is { } w && row.Kind == SessionKind.Background && tracker.PidOf(row.Id) is { } pid ? w.Capture(pid) : [];
+
+    private async Task EndWatchersAsync(SessionRow row, IReadOnlyList<SessionWatcher> captured)
+    {
+        if (Watchers is null || captured.Count == 0)
+        {
+            return;
+        }
+        var ended = Watchers.EndSurvivors(captured);
+        if (ended.Count > 0)
+        {
+            await log.WriteLineAsync(SessionWatchers.Line(row.Name, ended));
+            await log.FlushAsync(CancellationToken.None);
+        }
+    }
 
     /// <summary>Removes the stopped session's Claude Code job once a stop is confirmed (#891); null removes none.</summary>
     public ClaudeJobRemoval? Removal { get; init; }
@@ -476,7 +498,9 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             if (row.State == SessionState.Idle)
             {
+                var captured = CaptureWatchers(row);
                 await delivery.StopAsync(row.SessionId, cancellationToken);
+                await EndWatchersAsync(row, captured);
             }
             var listedName = tracker.ListedName(row);
             // The options the node started the session with: by its ids (a compaction's continuation keeps the row's id and

@@ -547,6 +547,12 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
                 ? sweep.EndOnWord(command)
                 : state.Complete(command, "this node does not look for strays (machine sampling is off), so it has none to end");
         }
+        if (command.Verb == Verbs.EndPoller)
+        {
+            return services.GetService<PollerSweep>() is { } poller
+                ? poller.EndOnWord(command)
+                : state.Complete(command, "this node does not look for pollers, so it has none to end");
+        }
         if (command.Verb == Verbs.Say)
         {
             return await Get<SessionMessenger>().SayAsync(command, cancellationToken);
