@@ -21,7 +21,7 @@ public sealed class DesignCardWordsTests
     // 270 characters: past 240 with nothing else added.
     private const string LongQuestion = "SiblingSource(job) exports UseLocalSiblings=true for a plane job of any repo, so a job in a repo with no sibling clones restores against folders that do not exist: should the variable be exported only when SiblingWatch.ReachedClones has the job's repo, or always?";
 
-    private static readonly DesignOption Recommended = new("export it only where clones are", "jobs in repos with no clones restore packages", true);
+    private static readonly DesignOption Recommended = new("export where clones are", "jobs in repos with no clones restore packages", true);
     private static readonly DesignOption Other = new("always export it", "one more card kind", false);
 
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
@@ -54,7 +54,7 @@ public sealed class DesignCardWordsTests
         new(null!, "Should a stalled worker be restarted or reminded first?",
             [new DesignOption("restart it at once", "", false), new DesignOption("remind it first", "restart it only if the reminder does nothing", true)]),
         new(null!, "Is a leg done when its check passes?",
-            [new DesignOption("mark it done when its check passes", "the review comes after", true), new DesignOption("wait for the review as well", "", false)]),
+            [new DesignOption("mark it done when its check passes", "the review comes after", true), new DesignOption("wait for the review too", "", false)]),
     ];
 
     [Fact]
@@ -90,13 +90,13 @@ public sealed class DesignCardWordsTests
         var card = Raise(C3479);
 
         card.Choices.Select(c => c.Label).ShouldBe(
-            ["Remind it first (recommended)", "Restart it at once", "Pick option 2A", "Wait for the review as well", PrReviews.AnswerLabel]);
+            ["Remind it first (recommended)", "Restart it at once", "Pick option 2A", "Wait for the review too", PrReviews.AnswerLabel]);
         card.Summary.ShouldBe("1. Should a stalled worker be restarted or reminded first? 2. Is a leg done when its check passes?"
             + " 2A: mark it done when its check passes (recommended).");
         // Each answer names the question it answers, as the card asks two.
-        card.Choices[0].Args.ShouldBe(["To \"Should a stalled worker be restarted or reminded first?\": remind it first (restart it only if the reminder does nothing)"]);
+        card.Choices[0].Args.ShouldBe(["Should a stalled worker be restarted or reminded first? => remind it first (restart it only if the reminder does nothing)"]);
         CardsPanelFixture.ShouldMatch("c3479", card, title: false);
-        card.Choices[2].Args.ShouldBe(["To \"Is a leg done when its check passes?\": mark it done when its check passes (the review comes after)"]);
+        card.Choices[2].Args.ShouldBe(["Is a leg done when its check passes? => mark it done when its check passes (the review comes after)"]);
     }
 
     [Fact]

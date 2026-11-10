@@ -47,7 +47,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
         L("parser").State.ShouldBe(LegState.Failed);
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == "leg-failed");
         card.Bin.ShouldBe(CardBin.Ring);
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Send it round", Verbs.GoAround), ("Accept as it is", Verbs.FinishLeg)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([(Verbs.FreshWorker, Verbs.GoAround)]);
         _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.SelfFinishedKind);
         if (detailPart is not null)
         {

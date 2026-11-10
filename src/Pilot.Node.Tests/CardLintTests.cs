@@ -172,10 +172,11 @@ public sealed class CardLintTests
     /// <summary>
     /// The overrides that turn failed or unfinished work into a click (the owner in #797: "the mark done anyway is the worst thing"): a leg
     /// marked done although it failed (<c>finish-leg accepted</c>) and a flight passed although its review or checks did not
-    /// (<c>review pass</c>). They stay the CLI's, with a reason; no choice of any card kind offers them.
+    /// (<c>review pass ready anyway</c>). They stay the CLI's, with a reason; no choice of any card kind offers them. A pass with the
+    /// findings noted as not blocking is the reviewer's own judgement of them, not an override.
     /// </summary>
     private static readonly System.Text.RegularExpressions.Regex Override = new(
-        @"Verb\s*=\s*Verbs\.FinishLeg\b[^}]*""accepted""|Verb\s*=\s*Verbs\.Review\b[^}]*""pass""|""ready anyway""",
+        @"Verb\s*=\s*Verbs\.FinishLeg\b[^}]*""accepted""|Verb\s*=\s*Verbs\.Review\b[^}]*""pass""[^}]*anyway|""ready anyway""",
         System.Text.RegularExpressions.RegexOptions.Singleline);
 
     [Fact]

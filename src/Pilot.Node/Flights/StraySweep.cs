@@ -194,7 +194,7 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
             $"Stray {stray.Name} {stray.Pid} of {stray.Owner} is still running",
             $"{stray.Reason}\n{Describe(row, how)}",
             [new CardChoice { Label = $"End process {stray.Pid}", Verb = Verbs.EndStray, Target = key }],
-            summary: $"End process {stray.Pid} if it should not be running: {stray.Reason}",
+            summary: $"Press the button if this process should not be running: {stray.Reason}",
             cause: key);
     }
 

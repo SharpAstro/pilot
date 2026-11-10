@@ -357,11 +357,14 @@ public sealed class DesignOptionsCardTests : PrFixTestsBase
     }
 
     [Fact]
-    public async Task SeveralQuestionsOfferNoOptionsOnlyTheFreeTextChoice()
+    public async Task SeveralQuestionsOfferEachQuestionsOptionsThenTheFreeTextChoice()
     {
         await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions, "README.md:9 design: and the name? Option: Keep => none Option: Rename => churn");
 
-        OpenDesign().Choices.ShouldHaveSingleItem().Label.ShouldBe(PrReviews.AnswerLabel);
+        // c3479: a card with two questions offered only "Answer in your own words"; now each question's options, each naming its question.
+        var choices = OpenDesign().Choices;
+        choices.Select(c => c.Label).ShouldBe(["Keep a library (recommended)", "Make it a service", "Keep", "Rename", PrReviews.AnswerLabel]);
+        choices[2].Args.ShouldBe(["and the name? => Keep (none)"]);
     }
 }
 

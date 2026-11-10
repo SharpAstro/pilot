@@ -447,7 +447,7 @@ public sealed partial class LegCommander
             $"{flight.Code}/{leg.Name} builds on {(left.Count == 1 ? "a sibling clone" : $"{left.Count} sibling clones")} that {(left.Count == 1 ? "is" : "are")} behind",
             string.Join('\n', lines),
             [new CardChoice { Label = "Pull the clones again", Verb = Verbs.SyncRepos, Target = Verbs.NodeTarget }],
-            summary: $"{flight.Code}/{leg.Name} started on {(left.Count == 1 ? "a sibling clone" : "sibling clones")} older than origin, which the node could not pull. Pull {(left.Count == 1 ? "it" : "them")} by hand and try again, or let the leg run as it is.");
+            summary: $"{flight.Code}/{leg.Name} started on {(left.Count == 1 ? "a sibling clone" : "sibling clones")} older than origin, which the node could not pull. Pull {(left.Count == 1 ? "it" : "them")} by hand and try again, or let the leg run on what it has.");
     }
 
     private void Tick(CommandRequest command)

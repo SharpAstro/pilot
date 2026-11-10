@@ -1011,8 +1011,8 @@ public sealed class ReviewTests2 : ReviewTestsBase
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
         card.Title.ShouldBe("TIA71's review did not start");
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start the review again", Verbs.StartReview), ("Land without a review", Verbs.Review)]);
-        card.Summary.ShouldBe("Run the review of TIA71 again, or land the PR without one. The reviewer of TIA71/parser did not start, so nothing was reviewed.");
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start the review again", Verbs.StartReview)]);
+        card.Summary.ShouldBe("Run the review of TIA71 again. The reviewer of TIA71/parser did not start, so nothing was reviewed.");
     }
 
     [Fact]
@@ -1036,8 +1036,9 @@ public sealed class ReviewTests2 : ReviewTestsBase
         var card = Open().ShouldHaveSingleItem();
         card.Kind.ShouldBe(LegCommander.ReviewChanges);
         card.Title.ShouldBe("TIA7's PR fails its checks");
-        card.Summary.ShouldBe("Have a worker on parser put it right on the leg's work as it stands, or land the PR as it is. The PR of TIA7/parser fails its checks.");
-        card.Choices.Select(c => c.Label).ShouldBe(["Fix the failing checks", "Land with checks failing"]);
+        card.Summary.ShouldBe("Have a worker on parser put it right on top of the leg's work. The PR of TIA7/parser fails its checks.");
+        // No override that lands the PR with its checks failing (#797): that is the CLI's review pass, with a reason.
+        card.Choices.Select(c => c.Label).ShouldBe(["Fix the failing checks"]);
         card.Detail.ShouldNotBeNull().ShouldStartWith("the PR's checks failed on ");
         // The ring's go-around is the way round for the done leg, as for a review's changes.
         (await Run(Verbs.GoAround, "flight/TIA7/parser", "controller", "fix the checks")).Error.ShouldBeNull();
@@ -1808,8 +1809,8 @@ public sealed class ReviewTests5 : ReviewTestsBase
         card.Detail.ShouldNotBeNull().ShouldEndWith("Next worker (round 3, on Opus at xhigh).");
         // The golden card: what happened, what to do first, and short verbs.
         card.Title.ShouldBe("TIA2's review found things to fix");
-        card.Summary.ShouldBe("Have a worker on parser put it right on the leg's work as it stands, or land the PR as it is. The review of TIA2/parser found things to fix.");
-        card.Choices.Select(c => c.Label).ShouldBe(["Fix the review's findings", "Land with findings unfixed"]);
+        card.Summary.ShouldBe("Have a worker on parser put it right on top of the leg's work. The review of TIA2/parser found things to fix.");
+        card.Choices.Select(c => c.Label).ShouldBe(["Fix the review's findings"]);
     }
 
     [Fact]
@@ -1824,7 +1825,7 @@ public sealed class ReviewTests5 : ReviewTestsBase
 
         var card = Open().ShouldHaveSingleItem();
         (card.Kind, card.Detail).ShouldBe((LegCommander.ReviewChanges, "the parser drops the last line"));
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Fix the review's findings", Verbs.GoAround), ("Land with findings unfixed", Verbs.Review)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Fix the review's findings", Verbs.GoAround)]);
 
         // The go-around reopens the done leg with the review's words; its finish pushes and starts a fresh review.
         var goAround = card.Choices[0];
@@ -1843,7 +1844,7 @@ public sealed class ReviewTests5 : ReviewTestsBase
         F("TIA2").Review!.State.ShouldBe(ReviewState.Reviewing);
         Git(Repo, "ls-remote", "origin", "flight/tia2").ShouldContain(Git(flight.Worktree, "rev-parse", "HEAD"));
 
-        // Asked for changes again, the controller may pass it anyway.
+        // Asked for changes again, the controller may pass it anyway, from the command line only (#797: no card offers it).
         await Run(Verbs.Review, "flight/TIA2", Reviewer("TIA2"), "changes", "naming");
         (await Run(Verbs.Review, "flight/TIA2", "controller", "pass", "ready anyway")).Ok.ShouldBeTrue();
         F("TIA2").Review!.Report.ShouldBe("ready anyway (passed by controller over: naming)");

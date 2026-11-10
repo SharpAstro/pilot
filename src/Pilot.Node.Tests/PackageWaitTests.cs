@@ -544,7 +544,7 @@ public sealed class PackageWaitTests2 : PackageWaitTestsBase
 
         var card = node.State.Cards().Where(c => c.Kind == PackageWatch.LateKind).ShouldHaveSingleItem();
         var way = card.Choices.ShouldHaveSingleItem();
-        (way.Label, way.Verb, way.Target).ShouldBe(("Fly anyway", Verbs.FlyAnyway, "flight/SDL2"));
+        (way.Label, way.Verb, way.Target).ShouldBe(("Fly without the package", Verbs.FlyAnyway, "flight/SDL2"));
         Flight(node, "SDL2").State.ShouldBe(FlightState.Held);
 
         (await Drive(node, way.Verb, way.Target)).Ok.ShouldBeTrue();

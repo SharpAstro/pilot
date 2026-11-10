@@ -24,7 +24,7 @@ public sealed partial class LegCommander
         }
         var detail = $"Redone {leg.GoArounds} times, the most is {cap}. Each time said:\n{string.Join('\n', rounds)}\nAnother round asked for: {asked}";
         state.RaiseCard(CardBin.Ring, GoAroundCapKind, target,
-            $"{flight.Code}/{leg.Name} was redone {leg.GoArounds} times and gets no more by itself",
+            $"{flight.Code}/{leg.Name} was redone {leg.GoArounds} times, its limit of {cap}",
             Models.NextWorkerNote(leg) is { } note ? $"{detail}\n{note}" : detail,
             [
                 new CardChoice { Label = Verbs.FreshWorker, Verb = Verbs.GoAround, Target = target, Args = [asked] },

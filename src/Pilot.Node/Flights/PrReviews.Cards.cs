@@ -78,7 +78,8 @@ public sealed partial class PrReviews
             var number = n;
             choices.AddRange(question.RecommendedFirst.Select((o, i) =>
             {
-                var answer = questions.Count > 1 ? $"To \"{Clean(question.Question, int.MaxValue)}\": {o.Answer}" : o.Answer;
+                // With several questions the answer names its question as the node's own decided answer does (DesignQuestion.Decide).
+                var answer = questions.Count > 1 ? $"{Clean(question.Question, int.MaxValue)} => {o.Answer}" : o.Answer;
                 return new CardChoice
                 {
                     Label = OwnWordsLabel(o) ?? PickLabel(OptionTag(questions, number, i)), Verb = Verbs.FixPr, Target = subject, Args = [answer], Hint = answer,

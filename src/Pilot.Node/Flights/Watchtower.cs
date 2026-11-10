@@ -1148,7 +1148,7 @@ public sealed partial class Watchtower(
                     : $"{ex.Message}; the node tries again in {RetryAfter.TotalMinutes:0} minutes",
                 [new CardChoice { Label = "Start it now", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = ["tried again from its card"] }],
                 summary: untrusted
-                    ? $"Run `claude` once in {folder} and accept its prompt: Claude Code starts no background session in a folder it was never shown."
+                    ? $"Run `claude` once in {folder} and answer yes to its prompt: Claude Code starts no background session in a folder it was never shown."
                     : $"{LegCommander.OneLine(ex.Message)}. The node tries again in {RetryAfter.TotalMinutes:0} minutes.");
             return false;
         }

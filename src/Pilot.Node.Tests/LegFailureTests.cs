@@ -17,7 +17,7 @@ public sealed class LegFailureTests : IDisposable
     private const string Target = "flight/TIA9/parser";
     private const string Worker = "du1-tia9-parser";
     private const string Report = "All 7 steps done and committed; filtered tests pass (115, run on the plane)";
-    private const string SendRound = "Send it round";
+    private const string SendRound = Verbs.FreshWorker;
 
     /// <summary>The c78 card's summary (PIL834/read-stamps) as the node raises it with the outside and the main notes; LegFailedCardTests draws the same text.</summary>
     internal const string C78Summary = "The worker of PIL834/read-stamps stopped and its check fails building Pilot.Ui. The flight changed none of the failing files or their projects. "
@@ -93,7 +93,8 @@ public sealed class LegFailureTests : IDisposable
         var card = await FailedCard();
 
         card.Title.ShouldBe("TIA9/parser: its check fails building Pilot.Ui, in files this leg did not change");
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([(SendRound, Verbs.GoAround), ("Accept as it is", Verbs.FinishLeg)]);
+        // No override that marks the failed leg done (#797): that is the CLI's, with a reason.
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([(SendRound, Verbs.GoAround)]);
         card.Choices.ShouldNotContain(c => c.Label.Contains("All 7 steps") || c.Label.Contains("filtered tests"));
         card.Choices.Single(c => c.Verb == Verbs.GoAround).Args.ShouldBe([$"the last worker stopped: {Report}"]);
         card.Summary.ShouldNotBeNull().ShouldContain("its check fails building Pilot.Ui");
@@ -140,7 +141,7 @@ public sealed class LegFailureTests : IDisposable
         var card = await FailedCard();
 
         card.Title.ShouldBe("TIA9/parser: its check fails 2 tests in ParserTests");
-        card.Choices.Last().Label.ShouldBe("Accept as it is");
+        card.Choices.ShouldHaveSingleItem().Label.ShouldBe(SendRound);
         card.Summary.ShouldNotBeNull().ShouldNotContain("changed none of the failing files");
     }
 
@@ -153,7 +154,7 @@ public sealed class LegFailureTests : IDisposable
         var card = await FailedCard(long_ + "\nmore");
 
         card.Title.ShouldBe($"TIA9/parser: {long_[..67].TrimEnd()}...");
-        card.Choices.Select(c => c.Label).ShouldBe([SendRound, "Accept as it is"]);
+        card.Choices.Select(c => c.Label).ShouldBe([SendRound]);
         card.Choices.ShouldNotContain(c => c.Label.Contains("grammar"));
     }
 

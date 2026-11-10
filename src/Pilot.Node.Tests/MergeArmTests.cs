@@ -111,7 +111,7 @@ public sealed class MergeArmTests
         card.Title.ShouldContain("build (linux)");
         card.Detail.ShouldNotBeNull().ShouldContain("build (linux) failed");
         card.Link.ShouldBe(CheckLink);
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start a fresh worker", Verbs.GoAround), ("Run the checks again", Verbs.RerunChecks), ("Merge it as it is", Verbs.Merge)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start a fresh worker", Verbs.GoAround), ("Run the checks again", Verbs.RerunChecks), ("Try the merge again", Verbs.Merge)]);
         card.Choices.ShouldAllBe(c => c.Status != ChoiceStatus.Armed);
         // One card, not a second dropped-merge card beside it.
         node.State.Cards().ShouldHaveSingleItem();

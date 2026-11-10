@@ -20,8 +20,8 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
         card.Summary.ShouldNotBeNull().ShouldContain($"{flight.Code}/parser");
-        // The findings are fixed on the leg's work as it stands: nothing is thrown away, so never "redo" (the owner, 2026-10-29).
-        card.Summary.ShouldContain("on the leg's work as it stands");
+        // The findings are fixed on top of the leg's work: nothing is thrown away, so never "redo" (the owner, 2026-10-29).
+        card.Summary.ShouldContain("on top of the leg's work");
         // The buttons say what they do; the first line does not say it again (#797).
         card.Summary.ShouldNotContain("Fix the review's findings");
         card.Summary.ShouldNotContain("Redo");

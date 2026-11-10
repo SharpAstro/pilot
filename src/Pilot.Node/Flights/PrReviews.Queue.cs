@@ -60,7 +60,7 @@ public sealed partial class PrReviews
                     state.RaiseCard(CardBin.ForYou, MergeKind, subject, $"{review.Repo}#{review.Number} was not queued",
                         $"Reviewed {review.Verdict} at {at}, but the fix its design answer called for was never pushed. Merge it at this head if you are content with it as it is.",
                         [new CardChoice { Label = "Merge the PR", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url,
-                        summary: $"Merge it as it stands if you are content: {why}.");
+                        summary: $"Merge it at this head if you are content with it: {why}.");
                 }
                 return;
             }

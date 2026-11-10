@@ -2121,7 +2121,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         (failed.Bin, failed.Kind, failed.Subject, failed.Detail).ShouldBe((CardBin.Ring, "leg-failed", "flight/TIA1/parser", "no ephemeris here"));
         failed.Title.ShouldBe("TIA1/parser: no ephemeris here");
         failed.Title.ShouldNotContain("gave up");
-        failed.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Send it round", Verbs.GoAround), ("Accept as it is", Verbs.FinishLeg)]);
+        failed.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([(Verbs.FreshWorker, Verbs.GoAround)]);
         failed.Choices.ShouldNotContain(c => c.Label.Contains("Mark done anyway"));
 
         _workers.Stopped.ShouldBeEmpty();

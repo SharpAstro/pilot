@@ -224,7 +224,7 @@ internal static class CardKindCatalog
         new("stop-unconfirmed", "Ring", ["Sessions/SessionMessenger.cs"], "SessionEndTests.AStopThatDoesNotTakeRaisesOneRingCardAndIsNotConfirmed", "the session's row still shows it live after the stop was asked", [nameof(Verbs.EndSession)]),
         new("usage-high", "Handled", ["Sessions/UsageReader.cs"], "UsageTests.NearlySpentTheFiveHourWindowRaisesOneCardPerWindow"),
         new("usage-week", "ForYou", ["Flights/StartGate.cs"], "StartGateTests.TheWeekRingsOncePerWindowAndHoldsNothing"),
-        new("removal-held", "Handled", ["Flights/RemovalQueue.cs"], "RemovalQueueTests.AFolderHeldPastThreeStartsRingsOnceNamingTheHolderAndTheCardClosesOnceItIsReleased"),
+        new("removal-held", "Handled", ["Flights/RemovalQueue.cs"], "RemovalQueueTests.AFolderHeldPastThreeStartsIsOneHandledLineNamingTheHolderAndNoMoreOnceItIsReleased"),
         new("job-idle", "ForYou", ["Flights/JobRunner.cs"], "JobTests.ANearIdleJobWithAnotherQueuedBehindItRaisesOneCardNamingJobOwnerAndWaiter"),
         new("bench-result", "ForYou", ["Flights/BenchRun.cs"], "BenchRunTests.ASingleRefRunsOnceInADetachedShortNamedWorktreeAndTheCardHoldsItsTableUnderItsRefAndSha"),
         new("job-told-unanswered", "Ring", ["Flights/JobRunner.cs"], "JobRetellTests.IdleAndSilentIsRetoldOnceThenRings", "the job's owner was told once of its end and its session row shows no turn since", [nameof(Verbs.Say)]),

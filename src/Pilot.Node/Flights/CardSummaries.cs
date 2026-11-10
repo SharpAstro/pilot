@@ -64,10 +64,10 @@ public static partial class CardSummaries
         var what = Name(subject);
         return kind switch
         {
-            LegCommander.ReviewChanges => $"Have a worker fix what the review of {what} found, on the leg's work as it stands, or land the PR without the fixes.",
+            LegCommander.ReviewChanges => $"Have a worker fix what the review of {what} found, on top of the leg's work.",
             LegCommander.PrReady => $"{what} is reviewed and its PR is ready. Merge lands it; dismissing leaves the PR open.",
             LegCommander.MergeFailed => $"The merge of {what} did not go through. Choose: a fresh worker can fix its last leg, the checks can be run again if they failed, or the merge can be tried once more as the PR stands.",
-            "leg-failed" => $"The worker of {what} stopped. Sending it round starts a fresh worker, told the whole report, that fixes it and finishes the leg; accepting it keeps the failure in the leg's report and the flight goes on.",
+            "leg-failed" => $"The worker of {what} stopped. A fresh worker, told the whole report, can fix it and finish the leg.",
             LegCommander.PushBlockedKind => $"{what} is done and its check passes, but its branch was rebased off the pushed one, so a plain push is refused. Overwriting replaces origin's only if it has not moved; merging keeps origin's commits and pushes plain.",
             "pr-checks-failed" => $"The PR of {what} fails its checks and the node could not send the last leg back to fix them. The first choice starts a fresh worker on that leg, told which checks failed and to push a fix; or fix them by hand, then dismiss this.",
             LegWatch.Stopped => $"The worker of {what} was stopped by the API and the node cannot resume it by itself. Tell it to carry on, or start a fresh worker on the leg.",
@@ -77,7 +77,7 @@ public static partial class CardSummaries
             LegWatch.NeverTurned => $"The worker of {what} took no first turn after two starts. Tell it to carry on if it is there, or start a fresh worker on the leg.",
             LegWatch.Failed or LegWatch.Missing => $"The worker of {what} is gone. Tell it to carry on if it is still there, or start a fresh worker on the leg.",
             LegWatch.OverBudget => $"The worker of {what} is past its budget but keeps working. Let it spend more, or start a fresh worker on the leg.",
-            LegWatch.LegStale => $"{what} has gone past two go-arounds or six hours flying. The detail lists its check runs and whether each failure was the flight's. Nothing to do unless the cause is yours to fix.",
+            LegWatch.LegStale => $"{what} has been redone more than twice or has flown six hours. The detail lists its check runs and whether each failure was the flight's. Nothing to do unless the cause is yours to fix.",
             LegWatch.ReviewStalled => $"The reviewer of {what} stalled twice. Start a fresh reviewer, or dismiss this once it moves.",
             LegWatch.ValidationStalled => $"The validator of {what} stalled, so the leg cannot start. Fly it unchecked, or take it off the flight.",
             LegCommander.NoGoKind => $"The validator of {what} reports the tree is not as its brief assumes. Fly it unchanged, drop it, or replan the flight.",
@@ -86,7 +86,7 @@ public static partial class CardSummaries
             LegCommander.StartFailedKind => $"A session of {what} did not start and the node does not retry it by itself. Start it again from the card.",
             LegCommander.OverlapKind => $"{what} overlaps another flight's files. Fold it in, connect it, or fly both side by side.",
             LegCommander.OverlapParallelKind => $"{what} shares files with an open PR no flight owns, with a flight that held a card on it too, or with another flight in a small one-way overlap, so the node planned in parallel by itself. Nothing to do; the second to land resolves the conflicts.",
-            LegCommander.OverlapConnectedKind => $"{what} shares files with a flight in the air that its plan did not foresee, and that flight is moving, so the node connected it to the other itself: its next leg waits until the other lands. Nothing to do; disconnect it with --anyway to fly both in parallel instead.",
+            LegCommander.OverlapConnectedKind => $"{what} shares files with a flight in the air that its plan did not foresee, and that flight is moving, so the node connected it to the other itself: its next leg waits until the other lands. Nothing to do; to fly both side by side instead, disconnect it from the command line.",
             LegCommander.OverlapLandedKind => $"{what} overlapped a flight that has landed since, so there is nothing to wait for. The node closed the overlap card itself and {what} goes on. Nothing to do.",
             StopGate.Kind => $"A session of {what} was told once to commit its files and stopped again with them still there. It can be told once more; the files stay in the plane until they are committed.",
             LegCommander.PlannedKind => choices.Count == 0
@@ -113,7 +113,7 @@ public static partial class CardSummaries
             LegCommander.FlownElsewhereKind => $"{what} is already flown on another node, so this node did not start it. Stop it there first, or leave it where it is.",
             LegCommander.ValidatingKind => $"A validator was started to check {what} against the tree before its worker starts. Nothing to do; the node starts the leg on its answer.",
             LegCommander.TickerStartedKind => $"The worker of {what} ended with its work committed and steps still open, so the node started a finishing pass to close what the commits cover. Nothing to do; it rings only if that pass stops without finishing.",
-            LegCommander.SiblingBehindKind => $"{what} compiles against a sibling clone that is behind origin and the node could not pull it. Pull it by hand, or let the leg run as it is.",
+            LegCommander.SiblingBehindKind => $"{what} compiles against a sibling clone that is behind origin and the node could not pull it. Pull it by hand, or let the leg run on the clone it has.",
             LegCommander.SiblingPulledKind => $"The node pulled a sibling clone that was behind origin before it started {what}. Nothing to do.",
             LegCommander.SelfFinishedKind => $"The node finished {what} itself: its work was pushed and its check passed. Nothing to do.",
             LegCommander.RetiredKind => $"{what} was stopped on the word of the controller or the owner, so it ends retired, not failed. The flight goes on with its next leg; nothing to do.",
@@ -144,7 +144,7 @@ public static partial class CardSummaries
             LegCommander.FollowUpPrKind => $"The commits of {what} missed the merge of its earlier PR, so a new PR carries them. Nothing to do; it is reviewed as any PR and the flight lands when it merges.",
             FlightCommander.MergedUnderLegKind => $"GitHub merged the PR of {what} before the new leg's work could join it. The new leg's work goes to a new PR once the legs are done; nothing to do.",
             FailureInvestigations.CardKind => "A test the PR does not touch failed, which is a bug with a cause to find. It is filed as an issue of priority high and a flight investigates it; later occurrences are added to that issue. Nothing to do unless you want to change its priority.",
-            FailureAlerts.AlertKind => "A failure in a test its PRs do not touch came again, so the tower is on alert: the flight that investigates it looks for the cause, and every flight the failure hit is held, with no go-around, re-queue or rerun, until that flight lands. Nothing to do unless the investigation needs help.",
+            FailureAlerts.AlertKind => "A failure in a test its PRs do not touch came again, so the tower is on alert: the flight that investigates it looks for the cause, and every flight the failure hit is held, with no fresh worker, re-queue or rerun, until that flight lands. Nothing to do unless the investigation needs help.",
             FailureAlerts.RetriedKind => "A failure in a test the PR does not touch was retried once (the PR queued again, or its failed jobs run again) so it is not blocked, while its investigation looks for the cause. Nothing to do; if it fails the same way again the tower goes on alert.",
             FailureAlerts.ReleasedKind => $"The investigation of a failure landed, so {what} is released from its hold and what it was held from is done again: queued, its checks run, or its leg check run. Nothing to do.",
             "checks-rerun" => $"Failed checks of {what}'s PR were run again once before its leg is sent round. Nothing to do unless they fail again.",
