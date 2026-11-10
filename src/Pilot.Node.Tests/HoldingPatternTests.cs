@@ -878,7 +878,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await checks.LookAsync(Ct);
         await checks.LookAsync(Ct);
         var ring = Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind);
-        ring.Title.ShouldContain($"{LegCommander.ReviewNotesLeg} leg was planned and never started");
+        ring.Summary.ShouldNotBeNull().ShouldContain($"{LegCommander.ReviewNotesLeg} leg was planned and never started");
         _github.Merged.ShouldBeEmpty();
     }
 
