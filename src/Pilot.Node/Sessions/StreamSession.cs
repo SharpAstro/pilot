@@ -62,6 +62,12 @@ public enum StreamChangeKind
     /// or called off by claude (its turn ended or was interrupted, or the process ended). <see cref="StreamSessionChange.Outcome"/> says which.
     /// </summary>
     Answered,
+    /// <summary>
+    /// Claude Code refused one of its shell calls (the auto mode classifier, a deny rule, a safety check): <see cref="StreamSessionChange.Command"/>
+    /// is the command and <see cref="StreamSessionChange.Outcome"/> what refused it, in <see cref="TranscriptBook.DenialOf"/>'s words. The call's
+    /// result is its only record, so nobody else hears of it.
+    /// </summary>
+    Refused,
 }
 
 /// <param name="Kind">What changed.</param>
@@ -70,8 +76,9 @@ public enum StreamChangeKind
 /// <param name="Requested">True when the node ended it (<see cref="StreamSession.DisposeAsync"/>), false for an unexpected exit.</param>
 /// <param name="Error">The last of its standard error on an exit.</param>
 /// <param name="Ask">The ask that arrived or left (<see cref="StreamChangeKind.Asked"/> and <see cref="StreamChangeKind.Answered"/>).</param>
-/// <param name="Outcome">How an ask left (<see cref="StreamChangeKind.Answered"/>): <c>allowed</c>, <c>denied</c>, <c>answered</c> or <c>cancelled</c>, with the person's words where there are any.</param>
-public sealed record StreamSessionChange(StreamChangeKind Kind, TurnTiming? Turn = null, int? ExitCode = null, bool Requested = false, string? Error = null, PendingAsk? Ask = null, string? Outcome = null);
+/// <param name="Outcome">How an ask left (<see cref="StreamChangeKind.Answered"/>): <c>allowed</c>, <c>denied</c>, <c>answered</c> or <c>cancelled</c>, with the person's words where there are any; what refused a call (<see cref="StreamChangeKind.Refused"/>).</param>
+/// <param name="Command">The shell command that was refused (<see cref="StreamChangeKind.Refused"/> only).</param>
+public sealed record StreamSessionChange(StreamChangeKind Kind, TurnTiming? Turn = null, int? ExitCode = null, bool Requested = false, string? Error = null, PendingAsk? Ask = null, string? Outcome = null, string? Command = null);
 
 /// <summary>One option of a question claude asks (<c>AskUserQuestion</c>).</summary>
 public sealed record AskOption(string Label, string? Description);
@@ -203,6 +210,9 @@ public sealed class StreamSession : IAsyncDisposable
     private bool _working;
     private string _partialText = "";
     private string? _doing;
+
+    // The shell calls asked for and not yet answered, by tool_use id: a refused one is told by its result, which names only the id.
+    private readonly Dictionary<string, string> _shellCalls = new(StringComparer.Ordinal);
     private int? _exitCode;
     private long _contextTokens;
     private DateTimeOffset _turnStarted;
@@ -581,6 +591,7 @@ public sealed class StreamSession : IAsyncDisposable
             _midTurn.Clear();
             _starting = false;
             CallOffAll(changes);
+            _shellCalls.Clear();
             changes.Add(new StreamSessionChange(StreamChangeKind.Exited, ExitCode: code, Requested: requested, Error: requested ? null : _process.ErrorTail));
         }
         Raise(changes);
@@ -655,6 +666,10 @@ public sealed class StreamSession : IAsyncDisposable
                         {
                             _contextTokens = context;
                         }
+                        foreach (var (callId, command) in ShellCalls(root))
+                        {
+                            _shellCalls[callId] = command;
+                        }
                         if (ToolUse(root) is { } doing && doing != _doing)
                         {
                             _doing = doing;
@@ -673,10 +688,19 @@ public sealed class StreamSession : IAsyncDisposable
                             _midTurn.Clear();
                             changes.Add(new StreamSessionChange(StreamChangeKind.Queued));
                         }
+                        foreach (var (resultId, text) in ToolResults(root))
+                        {
+                            if (_shellCalls.Remove(resultId, out var command) && TranscriptBook.DenialOf(text) is { } refused)
+                            {
+                                changes.Add(new StreamSessionChange(StreamChangeKind.Refused, Outcome: refused, Command: command));
+                            }
+                        }
                         break;
                     case "result":
-                        // Claude waits on nothing once the turn is over: what was asked and not answered is moot.
+                        // Claude waits on nothing once the turn is over: what was asked and not answered is moot, and no result of a later
+                        // turn answers a call of this one.
                         CallOffAll(changes);
+                        _shellCalls.Clear();
                         EndTurn(root, now, changes);
                         break;
                     case "control_request" when arrived is not null:
@@ -841,6 +865,71 @@ public sealed class StreamSession : IAsyncDisposable
         long Count(string name) => usage.TryGetProperty(name, out var n) && n.ValueKind == JsonValueKind.Number && n.TryGetInt64(out var v) ? v : 0;
         var total = Count("input_tokens") + Count("cache_creation_input_tokens") + Count("cache_read_input_tokens");
         return total > 0 ? total : null;
+    }
+
+    /// <summary>
+    /// The shell calls (Bash, PowerShell) of an assistant message of the session itself, by tool_use id, and its calls of pilot's own MCP
+    /// tools as the command line they run (<c>mcp__pilot__answer {"card":"c1","choice":"1"}</c> is <c>pilot answer c1 1</c>): a press refused
+    /// on either road is the same press.
+    /// </summary>
+    private static IEnumerable<(string Id, string Command)> ShellCalls(JsonElement assistant)
+    {
+        if (assistant.TryGetProperty("parent_tool_use_id", out var parent) && parent.ValueKind == JsonValueKind.String
+            || !assistant.TryGetProperty("message", out var message) || !message.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+        {
+            yield break;
+        }
+        foreach (var block in content.EnumerateArray())
+        {
+            if (Str(block, "type") != "tool_use" || Str(block, "id") is not { } id || Str(block, "name") is not { } name || !block.TryGetProperty("input", out var input))
+            {
+                continue;
+            }
+            if (name is "Bash" or "PowerShell" && Str(input, "command") is { Length: > 0 } command)
+            {
+                yield return (id, command);
+            }
+            else if (name.StartsWith(PilotMcpTool, StringComparison.Ordinal) && input.ValueKind == JsonValueKind.Object)
+            {
+                // The tool's name is the command's path joined by '_' (McpServer). Its input is by name, in the model's order, options among the
+                // arguments: a card and its choice are put where pilot answer takes them, and an option (why, words, node) is no word of the line.
+                var path = name[PilotMcpTool.Length..].Split('_');
+                // A value as words, as McpServer.Values reads it: a string is one, an array (pilot answer's choice is Words, a string[] in
+                // the schema) is its items, a number or a boolean as JSON writes it.
+                static IEnumerable<string> Words(JsonElement v) => v.ValueKind switch
+                {
+                    JsonValueKind.String => [v.GetString() ?? ""],
+                    JsonValueKind.Array => v.EnumerateArray().SelectMany(Words).ToArray(),
+                    JsonValueKind.Null or JsonValueKind.Undefined => [],
+                    _ => [v.GetRawText()],
+                };
+                string? Word(string key) => input.TryGetProperty(key, out var v) && string.Join(' ', Words(v)) is { Length: > 0 } words ? words : null;
+                string[] given = Word("card") is { } card ? [card, .. Word("choice") is { } choice ? [choice] : Array.Empty<string>()]
+                    : [.. input.EnumerateObject().Where(p => !McpOptions.Contains(p.Name)).SelectMany(p => Words(p.Value))];
+                yield return (id, string.Join(' ', ["pilot", .. path, .. given]));
+            }
+        }
+    }
+
+    private const string PilotMcpTool = "mcp__pilot__";
+
+    // The options pilot's MCP tools take beside their arguments, which name no target and are left out of the line.
+    private static readonly HashSet<string> McpOptions = new(StringComparer.Ordinal) { "why", "words", "node", "acting-on", "output-format", "detail" };
+
+    /// <summary>The tool results of a user message, by the tool_use id they answer, as text.</summary>
+    private static IEnumerable<(string Id, string Text)> ToolResults(JsonElement user)
+    {
+        if (!user.TryGetProperty("message", out var message) || !message.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+        {
+            yield break;
+        }
+        foreach (var block in content.EnumerateArray())
+        {
+            if (Str(block, "type") == "tool_result" && Str(block, "tool_use_id") is { } id)
+            {
+                yield return (id, TranscriptBook.ResultText(block).Trim());
+            }
+        }
     }
 
     /// <summary>The last tool_use of an assistant message, in plain words; null when it has none.</summary>

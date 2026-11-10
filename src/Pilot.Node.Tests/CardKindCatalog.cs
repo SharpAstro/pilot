@@ -58,6 +58,7 @@ internal static class CardKindCatalog
     private const string Tower = "Flights/Watchtower.cs";
     private const string TowerStream = "Flights/Watchtower.Stream.cs";
     private const string Asks = "Flights/Watchtower.Asks.cs";
+    private const string Refused = "Flights/Watchtower.Refused.cs";
 
     public static readonly CardKindEntry[] All =
     [
@@ -212,6 +213,7 @@ internal static class CardKindCatalog
         new("watchtower-stopped", "Ring|Handled", [Tower], "WatchtowerTests.OneTheUsageLimitStoppedIsResumedAfterTheReset", "the watchtower's session row is stopped by the API with no reset to resume at", [nameof(Verbs.RestartWatchtower)]),
         new("watchtower-waits", "Handled", [Tower, TowerStream], "StartGateTests.TheWatchtowerKeptByTheNodeWaitsForTheWindowAndStartsOnceItHasResetButARestartAskedForGoesAhead"),
         new("watchtower-ask", "ForYou", [Asks], "WatchtowerChatTests.APromptAndAQuestionEachRaiseACardWhoseButtonsAnswerThemAndTheCardClosesOnTheChatsAnswer"),
+        new("watchtower-refused", "Ring", [Refused], "WatchtowerChatTests.Refused.ARefusedPilotCommandRingsACardOfItsOwnAndARefusedOtherCallOrAPressThatRanRingsNothing", "the watchtower's stream shows Claude Code refused its pilot command, which pressed no card's button", [nameof(Verbs.Tell)]),
         new("watchtower-resumed", "Handled", [Tower], SourcePinned),
         new("watchtower-started", "Handled", [Tower], SourcePinned),
         new("watchtower-duplicate", "Handled", [Tower], "OneWatchtowerTests.StartingOneStopsAnotherLiveWatchtowerRowAndSaysSo"),
