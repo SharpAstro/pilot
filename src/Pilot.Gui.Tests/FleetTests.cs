@@ -302,6 +302,10 @@ public sealed class FleetTests
         await using var watch = new FleetWatch(endpoint => new NodeFeed(nodes[endpoint].Open, endpoint, TimeSpan.FromMilliseconds(20)));
         // SE2 is held under its name at a hint that no longer answers; it is heard now at 10.0.0.9. LE1 has no grant by name, only an old address entry.
         watch.Know([("10.0.0.9:47731", "SE2 DESKTOP-7", "SE2"), ("10.0.0.5:47731", "LE1 LAPTOP", "LE1")]);
+        for (var i = 0; i < 500 && nodes.Values.Any(n => n.OpenCount == 0); i++)
+        {
+            await Task.Delay(10, Ct);
+        }
         nodes["10.0.0.9:47731"].Send(Live.Snapshot(1, "s2"));
         nodes["10.0.0.5:47731"].Send(Live.Snapshot(1, "le1"));
         var held = new Pilot.Contracts.HeldGrant[]
