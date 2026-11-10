@@ -85,7 +85,7 @@ public sealed class FleetRangeTests : IAsyncLifetime
 
         set.Ok.ShouldBeTrue(set.Error);
         set.Way.ShouldNotBeNull().ShouldContain("BB1: sent");
-        set.Way.ShouldContain("cc1.local:47731 (did not answer: connection refused)");
+        set.Way.ShouldContain("CC1 (did not answer: connection refused)");
         ModelsOf(_b).Range(RoleModels.Worker).ToString().ShouldBe("sonnet-high..sonnet-high");
         ModelsOf(_c).RangeWithSource(RoleModels.Worker).Source.ShouldBe(SettingSources.BuiltIn);
     }
