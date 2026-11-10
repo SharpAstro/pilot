@@ -62,14 +62,14 @@ public sealed class ProcessStartGuardTests
     }
 
     [Theory]
-    [InlineData(null, ProcessStartGuard.GuardMode.Enforce)]
-    [InlineData("", ProcessStartGuard.GuardMode.Enforce)]
-    [InlineData("enforce", ProcessStartGuard.GuardMode.Enforce)]
-    [InlineData("report", ProcessStartGuard.GuardMode.Report)]
-    [InlineData("REPORT", ProcessStartGuard.GuardMode.Report)]
-    public void TheModeIsEnforceUnlessTheVariableSaysReport(string? value, ProcessStartGuard.GuardMode expected)
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("enforce", false)]
+    [InlineData("report", true)]
+    [InlineData("REPORT", true)]
+    public void TheModeIsEnforceUnlessTheVariableSaysReport(string? value, bool report)
     {
-        ProcessStartGuard.ModeFor(value).ShouldBe(expected);
+        ProcessStartGuard.ModeFor(value).ShouldBe(report ? ProcessStartGuard.GuardMode.Report : ProcessStartGuard.GuardMode.Enforce);
     }
 
     [Fact]
