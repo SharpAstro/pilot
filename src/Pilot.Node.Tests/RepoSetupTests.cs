@@ -109,7 +109,7 @@ public sealed class RepoSetupTests
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = System.Diagnostics.Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         process.StandardOutput.ReadToEnd();
         process.StandardError.ReadToEnd();
         process.WaitForExit();

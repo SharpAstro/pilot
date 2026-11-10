@@ -30,23 +30,37 @@ internal static class TestEnvironment
         AppDomain.CurrentDomain.ProcessExit += (_, _) => WriteProcessStartReport();
     }
 
+    /// <summary>
+    /// How a test's own helper starts a process (its <c>Git(...)</c> that seeds a repo, a probe): through the same hook as the node's starts, so the report
+    /// counts it too. Its kind is the program with <c> (test helper)</c> after it, to tell it from a start the node under test made.
+    /// </summary>
+    internal static System.Diagnostics.Process? Start(System.Diagnostics.ProcessStartInfo start)
+    {
+        ProcessStarts.Observe($"{Path.GetFileNameWithoutExtension(start.FileName)} (test helper)", start);
+        return System.Diagnostics.Process.Start(start);
+    }
+
     /// <summary>The report: one line per test that started a process, with how many of each kind; empty when none did.</summary>
     internal static string ProcessStartReport() =>
         string.Join('\n', _starts.OrderByDescending(t => t.Value.Values.Sum()).Select(t => $"{t.Value.Values.Sum(),5}  {t.Key}  ({string.Join(", ", t.Value.OrderBy(k => k.Key).Select(k => $"{k.Key} {k.Value}"))})"));
 
-    /// <summary>Writes the report next to the test assembly (or to PILOT_TEST_PROCESS_REPORT), once the run ends.</summary>
+    /// <summary>
+    /// Writes the report next to the test assembly (or to PILOT_TEST_PROCESS_REPORT), once the run ends. A run in which nothing started a process
+    /// writes none, and removes the one an earlier run left: a file there means this run started processes (CI says "No test started a real process" without it).
+    /// </summary>
     internal static void WriteProcessStartReport()
     {
-        if (_starts.IsEmpty)
-        {
-            return;
-        }
         var path = Environment.GetEnvironmentVariable("PILOT_TEST_PROCESS_REPORT") is { Length: > 0 } given ? given : Path.Combine(AppContext.BaseDirectory, "process-starts.txt");
         try
         {
+            if (_starts.IsEmpty)
+            {
+                File.Delete(path);
+                return;
+            }
             File.WriteAllText(path, $"{_starts.Count} tests started real processes (#933)\n" + ProcessStartReport() + "\n");
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
         }
     }

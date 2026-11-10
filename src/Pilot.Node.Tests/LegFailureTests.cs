@@ -314,7 +314,7 @@ public sealed class LegFailureTests : IDisposable
         {
             info.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(info)!;
+        using var process = TestEnvironment.Start(info)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();

@@ -23,10 +23,35 @@ public sealed class FakeRepoGitTests : IDisposable
         _git = new FakeRepoGit(_root);
     }
 
+    private readonly List<(string Root, FakeRepoGit Git)> _prModels = [];
+
     public void Dispose()
     {
         _git.Release();
         TestDirs.DeleteTree(_root);
+        foreach (var (root, git) in _prModels)
+        {
+            git.Release();
+            TestDirs.DeleteTree(root);
+        }
+    }
+
+    /// <summary>The PR tests' repos built in a model of their own, in a folder of their own (a second model must not lie under the first one's root).</summary>
+    private FakePrOrigins.Shape PrShape()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "p2f-pr-" + Guid.NewGuid().ToString("N")[..8]);
+        var shape = FakePrOrigins.Build(root);
+        _prModels.Add((root, shape.Git));
+        return shape;
+    }
+
+    private static string WorkOf(FakePrOrigins.Shape shape) => Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(shape.WidgetOrigin))!, "work-widget");
+
+    private static string RunOn(FakeRepoGit git, string cwd, params string[] args)
+    {
+        var run = git.Run(args, cwd);
+        run.Ok.ShouldBeTrue($"git {string.Join(' ', args)}: {run.Error}");
+        return run.Output.Trim();
     }
 
     private string Repo => _git.RepoPath;
@@ -51,6 +76,35 @@ public sealed class FakeRepoGitTests : IDisposable
     {
         Run(Repo, "worktree", "add", "--no-track", "-b", "flight/x", Plane, "origin/main");
         Directory.Exists(Plane).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AWorktreeOfANewBranchAtARemoteBranchTracksItAsGitSetsUp()
+    {
+        // git sets branch.<b>.remote and .merge when the start point is a remote-tracking branch, with --track or by default; --no-track leaves them out.
+        var tracked = Path.Combine(Repo, ".claude", "worktrees", "tracked");
+        var byDefault = Path.Combine(Repo, ".claude", "worktrees", "by-default");
+        Run(Repo, "worktree", "add", "--track", "-b", "flight/tracked", tracked, "origin/main");
+        Run(Repo, "worktree", "add", "-b", "flight/by-default", byDefault, "origin/main");
+        MakePlane();
+
+        Run(Repo, "config", "--get", "branch.flight/tracked.remote").ShouldBe("origin");
+        Run(Repo, "config", "--get", "branch.flight/tracked.merge").ShouldBe("refs/heads/main");
+        Run(Repo, "config", "--get", "branch.flight/by-default.remote").ShouldBe("origin");
+        _git.Run(["config", "--get", "branch.flight/x.remote"], Repo).Ok.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void DeleteFoldersRemovesTheReposAndOriginsAndTheFoldersTheyAreMadeIn()
+    {
+        var shape = PrShape();
+        var root = _prModels[^1].Root;
+        Directory.Exists(Path.Combine(root, "repos")).ShouldBeTrue();
+        Directory.Exists(Path.Combine(root, "github")).ShouldBeTrue();
+
+        shape.Git.DeleteFolders();
+
+        Directory.EnumerateFileSystemEntries(root).ShouldBeEmpty();
     }
 
     [Fact]
@@ -266,6 +320,138 @@ public sealed class FakeRepoGitTests : IDisposable
         Run(Plane, "log", "--oneline", "HEAD..origin/main", "--", "nothing.txt").ShouldBeEmpty();
     }
 
+    [Fact]
+    public void ThePrShapeIsBuiltInTheModelAsSeveralReposUnderOneRootAndGadgetHasNoClone()
+    {
+        var shape = PrShape();
+        var git = shape.Git;
+        var root = Path.GetDirectoryName(Path.GetDirectoryName(shape.WidgetOrigin))!;
+
+        // Every folder of the model finds the one model, whichever repo it belongs to.
+        foreach (var folder in new[] { shape.WidgetOrigin, shape.GadgetOrigin, shape.WidgetClone, Path.Combine(root, "work-widget"), Path.Combine(root, "work-gadget") })
+        {
+            FakeRepoGit.Owning(folder).ShouldBeSameAs(git);
+        }
+        // The origins hold main and the PR's head as GitHub keeps it; feature/seven is widget's alone.
+        RunOn(git, shape.WidgetOrigin, "rev-parse", "refs/pull/7/head").ShouldBe(shape.WidgetHead);
+        RunOn(git, shape.GadgetOrigin, "rev-parse", "refs/pull/9/head").ShouldBe(shape.GadgetHead);
+        RunOn(git, shape.WidgetOrigin, "rev-parse", "refs/heads/feature/seven").ShouldNotBeNullOrEmpty();
+        git.Run(["rev-parse", "--verify", "--quiet", "refs/heads/feature/seven"], shape.GadgetOrigin).Ok.ShouldBeFalse();
+        // The clone's remote is a GitHub URL the catalog reads from the folder, and an insteadOf rewrite sends it to the bare origin.
+        RepoCatalog.GitHubOf(Path.Combine(shape.WidgetClone, ".git")).ShouldBe("acme/widget");
+        RunOn(git, shape.WidgetClone, "remote", "get-url", "origin").ShouldBe(shape.WidgetOrigin.Replace('\\', '/'));
+        File.ReadAllText(Path.Combine(shape.WidgetClone, ".git", "config")).ShouldContain("url = https://github.com/acme/widget.git");
+        RunOn(git, shape.WidgetClone, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").ShouldBe("origin/main");
+        File.ReadAllText(Path.Combine(shape.WidgetClone, "README.md")).ShouldBe("hello\n");
+        // gadget has no clone: nothing under repos is its, and nothing was made there.
+        Directory.Exists(Path.Combine(root, "repos", "gadget")).ShouldBeFalse();
+        git.Run(["rev-parse", "HEAD"], Path.Combine(root, "repos", "gadget")).Ok.ShouldBeFalse();
+        git.Unsupported.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AFetchOfAPullHeadIntoTheCloneSetsFetchHeadAndBringsTheCommit()
+    {
+        var shape = PrShape();
+        var git = shape.Git;
+        var clone = shape.WidgetClone;
+        // The PR gets a commit after the clone was made: it is in the origin only, as a PR's head is not in a clone until fetched.
+        var head = FakePrOrigins.Push(git, WorkOf(shape), 7, "newer");
+        git.Run(["cat-file", "-e", $"{head}^{{commit}}"], clone).Ok.ShouldBeFalse();
+        git.Run(["fetch", "--quiet", "origin", "pull/9/head"], clone).Error.ShouldContain("couldn't find remote ref pull/9/head");
+
+        RunOn(git, clone, "fetch", "--quiet", "origin", "pull/7/head");
+
+        RunOn(git, clone, "cat-file", "-e", $"{head}^{{commit}}");
+        RunOn(git, clone, "rev-parse", "FETCH_HEAD").ShouldBe(head);
+        // A pull head makes no remote-tracking ref; a branch fetched by name moves its own.
+        git.Run(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/pull/7/head"], clone).Ok.ShouldBeFalse();
+        RunOn(git, clone, "fetch", "--quiet", "origin", "main");
+        RunOn(git, clone, "rev-parse", "FETCH_HEAD").ShouldBe(RunOn(git, clone, "rev-parse", "refs/remotes/origin/main"));
+    }
+
+    [Fact]
+    public void AReviewWorktreeIsDetachedAtThePrHeadAndAnswersTheBriefsQuestions()
+    {
+        var shape = PrShape();
+        var git = shape.Git;
+        var clone = shape.WidgetClone;
+        var review = Path.Combine(clone, ".claude", "worktrees", "review-widget-7");
+        var head = FakePrOrigins.Push(git, WorkOf(shape), 7, "newer");
+        RunOn(git, clone, "fetch", "--quiet", "origin", "pull/7/head");
+        RunOn(git, clone, "fetch", "--quiet", "origin", "main");
+
+        RunOn(git, clone, "worktree", "prune");
+        RunOn(git, clone, "worktree", "add", "--detach", review, head);
+
+        RunOn(git, review, "rev-parse", "HEAD").ShouldBe(head);
+        git.Run(["symbolic-ref", "--short", "HEAD"], review).Ok.ShouldBeFalse();
+        RunOn(git, review, "log", "--oneline", "origin/main..HEAD").ReplaceLineEndings("\n").Split('\n').Select(l => l[8..]).ShouldBe(["newer", "the change"]);
+        RunOn(git, review, "diff", "--stat", "origin/main...HEAD").ShouldEndWith("2 files changed, 2 insertions(+)");
+        RunOn(git, review, "worktree", "list", "--porcelain").ShouldContain("detached");
+        // Ended as the node ends it.
+        RunOn(git, clone, "worktree", "remove", "--force", review);
+        Directory.Exists(review).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AFixerBranchTracksOriginFeatureSevenAndItsPushMovesTheOriginsBranch()
+    {
+        var shape = PrShape();
+        var git = shape.Git;
+        var clone = shape.WidgetClone;
+        var fix = Path.Combine(clone, ".claude", "worktrees", "fix-widget-7");
+        var work = WorkOf(shape);
+        RunOn(git, clone, "fetch", "--quiet", "origin", "+refs/heads/feature/seven:refs/remotes/origin/feature/seven");
+        git.Run(["show-ref", "--verify", "--quiet", "refs/heads/feature/seven"], clone).Ok.ShouldBeFalse();
+
+        RunOn(git, clone, "branch", "--track", "feature/seven", "origin/feature/seven");
+        RunOn(git, clone, "show-ref", "--verify", "--quiet", "refs/heads/feature/seven");
+        RunOn(git, clone, "worktree", "add", fix, "feature/seven");
+
+        var tip = RunOn(git, clone, "rev-parse", "refs/remotes/origin/feature/seven");
+        RunOn(git, fix, "symbolic-ref", "--short", "HEAD").ShouldBe("feature/seven");
+        RunOn(git, fix, "rev-parse", "HEAD").ShouldBe(tip);
+        RunOn(git, clone, "config", "--get", "branch.feature/seven.remote").ShouldBe("origin");
+        git.Run(["branch", "--track", "feature/seven", "origin/feature/seven"], clone).Error.ShouldContain("already exists");
+
+        // The fixer commits and pushes plainly: the origin's branch moves to its head, the PR's head on GitHub does not.
+        RunOn(git, clone, "fetch", "--quiet", "origin", "main", "+refs/heads/feature/seven:refs/remotes/origin/feature/seven");
+        RunOn(git, fix, [.. Who, "merge", "--no-edit", "origin/main"]).ShouldBe("Already up to date.");
+        File.WriteAllText(Path.Combine(fix, "fix.txt"), "fixed\n");
+        RunOn(git, fix, "add", ".");
+        RunOn(git, fix, [.. Who, "commit", "-q", "-m", "fix it"]);
+        RunOn(git, fix, "rev-list", "--count", "origin/feature/seven..HEAD").ShouldBe("1");
+        RunOn(git, fix, "push", "origin", "HEAD:refs/heads/feature/seven");
+
+        var pushed = RunOn(git, fix, "rev-parse", "HEAD");
+        RunOn(git, shape.WidgetOrigin, "rev-parse", "refs/heads/feature/seven").ShouldBe(pushed);
+        RunOn(git, shape.WidgetOrigin, "rev-parse", "refs/pull/7/head").ShouldBe(shape.WidgetHead);
+        RunOn(git, clone, "rev-parse", "refs/remotes/origin/feature/seven").ShouldBe(pushed);
+        // A branch that was rewritten is not a fast-forward and is refused, as the node's plain push is.
+        RunOn(git, fix, [.. Who, "commit", "-q", "--amend", "-m", "rewritten"]);
+        git.Run(["push", "origin", "HEAD:refs/heads/feature/seven"], fix).Ok.ShouldBeFalse();
+
+        // The PR's own head moves when the work repo pushes to it, as FixerPushes does.
+        var moved = FakePrOrigins.Push(git, work, 7, "the fixer's commit");
+        moved.ShouldNotBe(shape.WidgetHead);
+        RunOn(git, shape.WidgetOrigin, "rev-parse", "refs/pull/7/head").ShouldBe(moved);
+        // And what the model cannot answer in this shape still throws and is listed.
+        Should.Throw<NotSupportedException>(() => git.Run(["bisect", "start"], clone));
+        git.Unsupported.ShouldBe(["git bisect start"]);
+    }
+
+    [Fact]
+    public void TheDefaultModelIsStillOneTianwenRepoWithItsOrigin()
+    {
+        FakeRepoGit.Owning(Repo).ShouldBeSameAs(_git);
+        FakeRepoGit.Owning(Path.Combine(_root, "origin.git")).ShouldBeSameAs(_git);
+        _git.RepoPath.ShouldBe(Path.Combine(_root, "tianwen"));
+        Run(Repo, "rev-parse", "--abbrev-ref", "HEAD").ShouldBe("main");
+        Run(Path.Combine(_root, "origin.git"), "rev-parse", "HEAD").ShouldBe(Run(Repo, "rev-parse", "HEAD"));
+        _git.Run(["rev-parse", "HEAD"], Path.Combine(_root, "elsewhere")).Ok.ShouldBeFalse();
+    }
+
     private sealed record Step(string Where, string[] Args, bool Compare, string? WriteFile = null, string? Text = null);
 
     private static Step Do(string where, params string[] args) => new(where, args, false);
@@ -375,6 +561,8 @@ public sealed class FakeRepoGitTests : IDisposable
             text = text.Replace(root.Replace('\\', '/'), "<root>", StringComparison.OrdinalIgnoreCase);
         }
         text = Regex.Replace(text, "[0-9a-f]{40}", "<sha>");
+        // The PR commits' files are named by a guid, which differs between the two runs.
+        text = Regex.Replace(text, @"[0-9a-f]{32}\.txt", "<guid>.txt");
         text = Regex.Replace(text, @"(?m)^[0-9a-f]{7} ", "<h> ");
         // The folder of a worktree is the long path on one and may be the 8.3 short one on the other: its last part says which.
         text = Regex.Replace(text, @"(?m)^worktree .*/([^/\n]+)$", "worktree <path>/$1");
@@ -406,6 +594,136 @@ public sealed class FakeRepoGitTests : IDisposable
             }
 
             mismatches.ShouldBeEmpty();
+        }
+        finally
+        {
+            TestDirs.DeleteTree(realRoot);
+        }
+    }
+
+    /// <summary>
+    /// The PR scenario, on the shape PrFixTestsBase builds: a review's fetch of a pull head into the clone and its detached worktree at it, a fixer's
+    /// branch tracking origin's and its push, the PR's own head moved by the work repo, and gadget with no clone. <c>{head}</c> is the PR's head as each side built it.
+    /// </summary>
+    private static readonly Step[] PrScenario =
+    [
+        Ask("clone", "cat-file", "-e", "{head}^{commit}"),
+        Ask("repos", "rev-parse", "HEAD"),
+        Ask("clone", "remote", "get-url", "origin"),
+        Ask("clone", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"),
+        Ask("clone", "fetch", "--quiet", "origin", "pull/9/head"),
+        Do("clone", "fetch", "--quiet", "origin", "pull/7/head"),
+        Ask("clone", "rev-parse", "FETCH_HEAD"),
+        Ask("clone", "cat-file", "-e", "{head}^{commit}"),
+        Ask("clone", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/pull/7/head"),
+        Do("clone", "fetch", "--quiet", "origin", "main"),
+        Ask("clone", "rev-parse", "refs/remotes/origin/main"),
+        Do("clone", "worktree", "prune"),
+        Do("clone", "worktree", "add", "--detach", "{review}", "{head}"),
+        Ask("review", "rev-parse", "HEAD"),
+        Ask("review", "symbolic-ref", "--short", "HEAD"),
+        Ask("review", "log", "--oneline", "origin/main..HEAD"),
+        Ask("review", "diff", "--stat", "origin/main...HEAD"),
+        Ask("review", "diff", "--name-only", "origin/main...HEAD"),
+        Ask("review", "status", "--porcelain"),
+        Ask("clone", "worktree", "list", "--porcelain"),
+        Do("clone", "worktree", "remove", "--force", "{review}"),
+        Ask("clone", "worktree", "list", "--porcelain"),
+        Do("clone", "fetch", "--quiet", "origin", "+refs/heads/feature/seven:refs/remotes/origin/feature/seven"),
+        Ask("clone", "show-ref", "--verify", "--quiet", "refs/heads/feature/seven"),
+        Do("clone", "branch", "--track", "feature/seven", "origin/feature/seven"),
+        Ask("clone", "show-ref", "--verify", "--quiet", "refs/heads/feature/seven"),
+        Ask("clone", "branch", "--track", "feature/seven", "origin/feature/seven"),
+        Do("clone", "worktree", "add", "{fix}", "feature/seven"),
+        Ask("fix", "symbolic-ref", "--short", "HEAD"),
+        Ask("fix", "rev-parse", "HEAD"),
+        Ask("clone", "rev-parse", "refs/remotes/origin/feature/seven"),
+        Do("fix", "fetch", "--quiet", "origin", "main", "+refs/heads/feature/seven:refs/remotes/origin/feature/seven"),
+        Save("fix", "merge", "--no-edit", "origin/main"),
+        Write("fix", "fix.txt", "fixed\n"),
+        Do("fix", "add", "."),
+        Save("fix", "commit", "-q", "-m", "fix it"),
+        Ask("fix", "rev-list", "--count", "origin/feature/seven..HEAD"),
+        Ask("fix", "push", "-q", "origin", "HEAD:refs/heads/feature/seven"),
+        Ask("origin", "rev-list", "--count", "refs/heads/main..refs/heads/feature/seven"),
+        Ask("origin", "rev-parse", "--verify", "--quiet", "refs/pull/7/head"),
+        Ask("fix", "rev-parse", "refs/remotes/origin/feature/seven"),
+        Save("fix", "commit", "-q", "--amend", "-m", "rewritten"),
+        Ask("fix", "push", "-q", "origin", "HEAD:refs/heads/feature/seven"),
+        Write("work", "again.txt", "again\n"),
+        Do("work", "add", "."),
+        Save("work", "commit", "-q", "-m", "the fixer's commit"),
+        Do("work", "push", "-q", "-f", "origin", "HEAD:refs/pull/7/head"),
+        Ask("origin", "log", "--oneline", "-1", "refs/pull/7/head"),
+        Ask("origin", "rev-list", "--count", "refs/heads/main..refs/pull/7/head"),
+        Do("clone", "fetch", "--quiet", "origin", "pull/7/head"),
+        Ask("clone", "rev-list", "--count", "origin/main..FETCH_HEAD"),
+        Ask("clone", "worktree", "remove", "{fix}"),
+        Ask("clone", "worktree", "remove", "--force", "{fix}"),
+        Ask("clone", "worktree", "list", "--porcelain"),
+    ];
+
+    private static async Task<GitRun> RunPrStepAsync(Step step, string root, string head, IGit? real, FakeRepoGit? model)
+    {
+        var clone = Path.Combine(root, "repos", "widget");
+        var review = Path.Combine(clone, ".claude", "worktrees", "review-widget-7");
+        var fix = Path.Combine(clone, ".claude", "worktrees", "fix-widget-7");
+        var cwd = step.Where switch
+        {
+            "clone" => clone,
+            "review" => review,
+            "fix" => fix,
+            "origin" => Path.Combine(root, "github", "widget.git"),
+            "work" => Path.Combine(root, "work-widget"),
+            _ => Path.Combine(root, "repos"),
+        };
+        if (step.WriteFile is { } file)
+        {
+            File.WriteAllText(Path.Combine(cwd, file), step.Text);
+            return new GitRun(0, "", "");
+        }
+        string[] args = [.. step.Args.Select(a => a.Replace("{head}", head, StringComparison.Ordinal).Replace("{review}", review, StringComparison.Ordinal).Replace("{fix}", fix, StringComparison.Ordinal))];
+        return model is not null ? model.Run(args, cwd) : await real!.RunAsync(args, cwd, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ThePrShapeAnswersAsGitDoes()
+    {
+        var realRoot = Path.Combine(Path.GetTempPath(), "p2f-real-pr-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            // The same fixture built with git itself (PrFixTestsBase's seed) and in the model.
+            var (widget, realHead) = PrOrigins.Make(realRoot, "widget", 7);
+            PrOrigins.Make(realRoot, "gadget", 9);
+            PrOrigins.Git(Path.Combine(realRoot, "work-widget"), "push", "-q", "origin", "HEAD:refs/heads/feature/seven");
+            var roots = Path.Combine(realRoot, "repos");
+            Directory.CreateDirectory(roots);
+            PrOrigins.Git(roots, "clone", "-q", widget, "widget");
+            var realClone = Path.Combine(roots, "widget");
+            PrOrigins.Git(realClone, "config", "remote.origin.url", "https://github.com/acme/widget.git");
+            PrOrigins.Git(realClone, "config", $"url.{widget.Replace('\\', '/')}.insteadOf", "https://github.com/acme/widget.git");
+            var shape = PrShape();
+            var modelRoot = Path.GetDirectoryName(Path.GetDirectoryName(shape.WidgetOrigin))!;
+            // The PR moves on after the clone was made, so its head is in the origin only until the review fetches it.
+            realHead = PrOrigins.Push(Path.Combine(realRoot, "work-widget"), 7, "newer");
+            var modelHead = FakePrOrigins.Push(shape.Git, WorkOf(shape), 7, "newer");
+            var real = new GitCli();
+            var mismatches = new List<string>();
+
+            for (var i = 0; i < PrScenario.Length; i++)
+            {
+                var step = PrScenario[i];
+                var onReal = await RunPrStepAsync(step, realRoot, realHead, real, null);
+                var onModel = await RunPrStepAsync(step, modelRoot, modelHead, null, shape.Git);
+                if (Normalise(onReal, step.Compare, realRoot, modelRoot) != Normalise(onModel, step.Compare, realRoot, modelRoot))
+                {
+                    mismatches.Add($"step {i}: git {string.Join(' ', step.Args)} in {step.Where}\n  git:   {Normalise(onReal, step.Compare, realRoot, modelRoot).ReplaceLineEndings(" | ")}\n  model: {Normalise(onModel, step.Compare, realRoot, modelRoot).ReplaceLineEndings(" | ")}");
+                }
+            }
+
+            mismatches.ShouldBeEmpty();
+            shape.Git.Unsupported.ShouldBeEmpty();
         }
         finally
         {

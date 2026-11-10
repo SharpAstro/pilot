@@ -78,6 +78,8 @@ public sealed class PrFixWorktreeTests : PrFixTestsBase
     public async Task ARefusedStartNamesTheWorktreeThatHoldsTheBranchAndWhyItWasNotUsed()
     {
         // The holder lies outside .claude/worktrees, and .claude/worktrees is a file, so the detached add fails as well.
+        // Real git: the test is about the error text git gives for a worktree add into a path under a file.
+        RealGit();
         await Review("acme/widget#7", "comment", Question);
         var elsewhere = Path.Combine(_root, "elsewhere-seven");
         PrOrigins.Git(WidgetClone, "worktree", "add", "-q", "--track", "-b", "feature/seven", elsewhere, "origin/feature/seven");
