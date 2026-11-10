@@ -377,21 +377,37 @@ public sealed class CliTests : IAsyncLifetime
         lines.ShouldNotContain(l => l.StartsWith("OLD0  ", StringComparison.Ordinal));
     }
 
+    // The node's only job once it holds, waited for as the state changes (no timer): the three job tests below run it on an in-memory
+    // launcher (#933), so what starts and ends is the fake's, and a test of the CLI starts no real shell.
+    private async Task<JobRow> TheJobUntil(Func<JobRow, bool> condition, string what)
+    {
+        var (changes, subscription) = StateChanges.Watch(_node.State);
+        using (subscription)
+        {
+            JobRow? found = null;
+            await changes.UntilAsync(() => _node.State.Jobs().SingleOrDefault() is { } job && condition(found = job), TimeSpan.FromSeconds(25), Ct, what);
+            return found!;
+        }
+    }
+
+    private FakeJobLauncher FakeJobs(Pilot.Node.Flights.JobRunner runner)
+    {
+        var launcher = new FakeJobLauncher(TimeProvider.System);
+        runner.Launcher = launcher;
+        return launcher;
+    }
+
     [Fact]
     public async Task PilotRunAloneSendsTheExclusiveFlagAndTheJobIsABenchJob()
     {
         var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        FakeJobs(runner);
         await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         // The machine running the suite is not quiet: the test is about the flag, not the CPU.
         runner.BenchQuietCpu = 100;
         await Ok(_root, "run", "--alone", "--", "echo benched");
-        var job = _node.State.Jobs().Single();
         // Let it end before the folder goes, or its log is still held.
-        for (var i = 0; _node.State.Jobs().Single().EndedAt is null; i++)
-        {
-            i.ShouldBeLessThan(300, "the bench job did not end");
-            await Task.Delay(100, Ct);
-        }
+        var job = await TheJobUntil(j => j.EndedAt is not null, "the bench job did not end");
         job.Kind.ShouldBe(JobKind.Bench);
         global::Pilot.Commands.PilotCommand.JobLine(job).ShouldContain("bench");
     }
@@ -414,26 +430,17 @@ public sealed class CliTests : IAsyncLifetime
     public async Task PilotJobCancelForceSendsCancelJobWithForceAndTheJobEndsForced()
     {
         var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        FakeJobs(runner);
         runner.MinFreeMemory = 0;
         await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         // Not a bare sleep, which the node refuses: the echo makes it a job.
         await Ok(_root, "run", "--", "sleep 30; echo slept");
-        var id = _node.State.Jobs().Single().Id;
-        for (var i = 0; _node.State.Jobs().Single().State != JobState.Running; i++)
-        {
-            i.ShouldBeLessThan(500, "the job did not start");
-            await Task.Delay(20, Ct);
-        }
+        var id = (await TheJobUntil(j => j.State == JobState.Running, "the job did not start")).Id;
 
         var (exit, output, error) = await Pilot(_root, "job", id, "cancel", "--force");
 
         exit.ShouldBe(0, $"{output}{error}");
-        JobRow ended;
-        for (var i = 0; (ended = _node.State.Jobs().Single()).EndedAt is null; i++)
-        {
-            i.ShouldBeLessThan(300, "the job did not end");
-            await Task.Delay(100, Ct);
-        }
+        var ended = await TheJobUntil(j => j.EndedAt is not null, "the job did not end");
         ended.State.ShouldBe(JobState.Cancelled);
         ended.Error.ShouldNotBeNull().ShouldStartWith("cancelled (forced) by ");
     }
@@ -442,23 +449,14 @@ public sealed class CliTests : IAsyncLifetime
     public async Task PilotJobCancelWithoutForceIsAPlainCancel()
     {
         var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        FakeJobs(runner);
         runner.MinFreeMemory = 0;
         await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         await Ok(_root, "run", "--", "sleep 30; echo slept");
-        var id = _node.State.Jobs().Single().Id;
-        for (var i = 0; _node.State.Jobs().Single().State != JobState.Running; i++)
-        {
-            i.ShouldBeLessThan(500, "the job did not start");
-            await Task.Delay(20, Ct);
-        }
+        var id = (await TheJobUntil(j => j.State == JobState.Running, "the job did not start")).Id;
 
         await Ok(_root, "job", id, "cancel");
-        JobRow ended;
-        for (var i = 0; (ended = _node.State.Jobs().Single()).EndedAt is null; i++)
-        {
-            i.ShouldBeLessThan(300, "the job did not end");
-            await Task.Delay(100, Ct);
-        }
+        var ended = await TheJobUntil(j => j.EndedAt is not null, "the job did not end");
 
         ended.Error.ShouldStartWith("cancelled by ");
     }

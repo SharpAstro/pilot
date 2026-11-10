@@ -531,6 +531,8 @@ public static partial class NodeApp
             var nodeOptions = services.GetRequiredService<NodeOptions>();
             return new JobRunner(services.GetRequiredService<NodeState>(), nodeOptions, services.GetRequiredService<TimeProvider>())
             {
+                // The real shell launcher unless a test registered another (an in-memory one, #933).
+                Launcher = services.GetService<IJobLauncher>() ?? RealJobLauncher.Instance,
                 Say = commands.RunAsync,
                 Log = services.GetRequiredService<LogWriter>(),
                 Ledger = services.GetRequiredService<SessionLedger>(),

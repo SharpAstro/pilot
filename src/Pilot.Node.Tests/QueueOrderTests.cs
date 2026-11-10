@@ -9,6 +9,10 @@ namespace Pilot.Node.Tests;
 [Collection(JobsCollection.Name)]
 public sealed class QueueOrderTests : JobTestsBase
 {
+    public QueueOrderTests() : base(fakeLauncher: true)
+    {
+    }
+
     private JobRow Row(string id) => _state.Jobs().Single(j => j.Id == id);
 
     private static string Clone(string name) => Path.Combine(Path.GetTempPath(), "org-fake", name);

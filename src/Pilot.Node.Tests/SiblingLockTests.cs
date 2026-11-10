@@ -9,6 +9,10 @@ namespace Pilot.Node.Tests;
 [Collection(JobsCollection.Name)]
 public sealed class SiblingLockTests : JobTestsBase
 {
+    public SiblingLockTests() : base(fakeLauncher: true)
+    {
+    }
+
     // PIL763: one session's jobs in one plane keep their order, so each job here comes from its own session and these tests keep to the sibling rules.
     private int _handed;
 
@@ -72,7 +76,7 @@ public sealed class SiblingLockTests : JobTestsBase
         var second = Hand(jobs, "echo 'two'; sleep 20");
 
         // Still building: the second stays queued, naming the build.
-        await Task.Delay(300, TestContext.Current.CancellationToken);
+        _clock!.Advance(TimeSpan.FromSeconds(1));
         Row(second).State.ShouldBe(JobState.Queued);
         Row(second).Step.ShouldNotBeNull().ShouldContain($"waiting for job {first}'s build");
 
@@ -263,6 +267,7 @@ public sealed class SiblingLockTests : JobTestsBase
         var clock = new Clock();
         var jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), clock)
         {
+            Launcher = Fake!,
             FreeMemory = () => free,
         };
         jobs.MaxRunning = 3;
