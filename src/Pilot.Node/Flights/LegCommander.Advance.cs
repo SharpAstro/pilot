@@ -211,11 +211,11 @@ public sealed partial class LegCommander
         }
         _rung[current.Code] = $"failed {step.Target}";
         // Needs someone: the node tried the step itself and was refused, and says it once; asking again is the choice.
-        var named = label.Replace("its ", $"{current.Code}'s ", StringComparison.Ordinal);
         var reason = result.Error is { Length: > 0 } refused ? refused : "no reason given";
-        state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not {label}: {Clip(reason.Split('\n')[0])}",
+        // The reason is the detail's, not the title's, where it was cut.
+        state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not {label}",
             $"The node tried to {label} as the flight's next step and was refused, and it will not try again by itself: {reason}",
-            [new CardChoice { Label = $"{char.ToUpperInvariant(named[0])}{named[1..]} now, asking the node again", Verb = step.Verb, Target = step.Target, Args = step.Args }]);
+            [new CardChoice { Label = "Try that step again", Verb = step.Verb, Target = step.Target, Args = step.Args }]);
     }
 
     /// <summary>What the flight is to do next by itself, its <see cref="DueStep.Step"/> null when nothing is left to it; or null when it waits on something else (a leg flying or failed, a validator, an overlap's answer).</summary>
@@ -339,9 +339,9 @@ public sealed partial class LegCommander
         }
         _rung[current.Code] = key;
         var refusedBy = result.Error is { Length: > 0 } why ? why : "no reason given";
-        state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not start its reviewer at its new head: {Clip(refusedBy.Split('\n')[0])}",
+        state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not start its reviewer at its new head",
             $"The node tried to start a reviewer at the head it has not reviewed and was refused, and it will not try again by itself: {refusedBy}",
-            [new CardChoice { Label = $"Start {current.Code}'s reviewer at its new head", Verb = Verbs.StartReview, Target = Verbs.FlightTarget(current.Code), Args = [UnreadHeadArg] }]);
+            [new CardChoice { Label = "Start the reviewer", Verb = Verbs.StartReview, Target = Verbs.FlightTarget(current.Code), Args = [UnreadHeadArg] }]);
         return true;
     }
 

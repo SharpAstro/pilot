@@ -158,9 +158,9 @@ public sealed class CiBudgetTests : ReviewTestsBase
         card.Title.ShouldContain("2 runs, 1 failed");
         card.Choices.Select(c => (c.Label, c.Verb, c.Args.Single())).ShouldBe(
         [
-            ("Continue", Verbs.CiBudget, Verbs.CiContinue),
-            ("Land what is green", Verbs.CiBudget, Verbs.CiLandGreen),
-            ("Split", Verbs.CiBudget, Verbs.CiSplit),
+            ("Allow more CI time", Verbs.CiBudget, Verbs.CiContinue),
+            ("Land the green legs", Verbs.CiBudget, Verbs.CiLandGreen),
+            ("Break it up", Verbs.CiBudget, Verbs.CiSplit),
         ]);
 
         var ex = await Should.ThrowAsync<FlightException>(() => _legs.PushAsync(F(flight.Code), Ct));

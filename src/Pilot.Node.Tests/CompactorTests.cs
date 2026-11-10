@@ -84,7 +84,7 @@ public sealed class CompactorTests : IDisposable
         var compact = _said.ShouldHaveSingleItem();
         (compact.Verb, compact.Target, compact.Who).ShouldBe((Verbs.Compact, "session/t0000001", "node"));
         compact.Args.ShouldBe([Compactor.WatchtowerFocus]);
-        Handled().ShouldBe(["Compacted du1-watchtower: idle 50 min with 180k of context, before its prompt cache went cold"]);
+        Handled().ShouldBe(["Compacted du1-watchtower"]);
 
         // Not again until it has answered something since: the compaction is no response, and its context reads as before.
         _time.Advance(TimeSpan.FromMinutes(60));
@@ -104,7 +104,7 @@ public sealed class CompactorTests : IDisposable
         Row("t0000001", "du1-watchtower", context: 700_000);
         await _compactor.LookAsync(Ct);
         _said.ShouldHaveSingleItem();
-        Handled().ShouldBe(["Compacted du1-watchtower: its context reached 70% of its window"]);
+        Handled().ShouldBe(["Compacted du1-watchtower"]);
 
         // The compaction answered and left it small: nothing more, however long it sits (under the idle floor of 100k).
         Row("t0000001", "du1-watchtower", context: 60_000, lastResponse: _time.GetUtcNow());
@@ -140,7 +140,7 @@ public sealed class CompactorTests : IDisposable
         _persons = 40;
         await _compactor.LookAsync(Ct);
         _said.ShouldHaveSingleItem();
-        Handled().ShouldBe(["Compacted du1-watchtower: the chat has 40 person messages since its last compaction"]);
+        Handled().ShouldBe(["Compacted du1-watchtower"]);
 
         // Answered; thirty-nine more messages is under the count, forty is not.
         _time.Advance(TimeSpan.FromMinutes(1));
@@ -198,7 +198,7 @@ public sealed class CompactorTests : IDisposable
         await _compactor.LookAsync(Ct);
         _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
         _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-watchtower");
-        Handled().ShouldContain(t => t.StartsWith("Replaced du1-watchtower: still at 75% of its window after a compaction", StringComparison.Ordinal));
+        Handled().ShouldContain(t => t.StartsWith("Replaced du1-watchtower", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -212,7 +212,7 @@ public sealed class CompactorTests : IDisposable
         Row("t0000001", "du1-watchtower", context: 750_000, lastResponse: _time.GetUtcNow());
         await _compactor.LookAsync(Ct);
         _said.ShouldHaveSingleItem();
-        Handled().ShouldBe(["Compacted du1-watchtower: its context reached 75% of its window"]);
+        Handled().ShouldBe(["Compacted du1-watchtower"]);
     }
 
     [Fact]
@@ -273,7 +273,7 @@ public sealed class CompactorTests : IDisposable
         await _compactor.LookAsync(Ct);
 
         _said.Count.ShouldBe(1);
-        Handled().ShouldHaveSingleItem().ShouldStartWith("Could not compact du1-watchtower (idle 50 min with 180k of context");
+        Handled().ShouldHaveSingleItem().ShouldStartWith("Could not compact du1-watchtower; trying again in ");
         _refuse = null;
         _time.Advance(TimeSpan.FromMinutes(10));
         await _compactor.LookAsync(Ct);

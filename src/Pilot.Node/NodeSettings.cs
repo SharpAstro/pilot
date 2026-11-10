@@ -141,6 +141,8 @@ public sealed record NodeSettings
     public const string MergeBatchKey = "merge-batch";
     /// <summary>Whether a leg's fresh worker steps up a model ladder by attempt; on unless set off.</summary>
     public const string WorkerLadderKey = "worker-ladder";
+    /// <summary>The model the summary's one <c>claude -p</c> call runs on (#797); kept in the role layers (this node's, the fleet's) as the role ranges are.</summary>
+    public const string SummaryModelKey = "summary-model";
 
     /// <summary>How a flight's PR is merged when the merge names no method: rebase keeps every commit's subject, which a
     /// repo's docs may cite (tianwen's rule); squash makes one commit of them; merge adds a merge commit.</summary>
@@ -149,10 +151,16 @@ public sealed record NodeSettings
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
         [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
-         .. RoleModels.Roles.Select(RoleModels.RangeKey), WorkerLadderKey];
+         .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
     public static bool IsRoleKey(string key) => RoleModels.Roles.Any(r => key == RoleModels.RangeKey(r));
+
+    /// <summary>Whether <paramref name="key"/> is the summary's model (<see cref="SummaryModelKey"/>): one model, not a range.</summary>
+    public static bool IsModelKey(string key) => key == SummaryModelKey;
+
+    /// <summary>Whether <paramref name="key"/> has a fleet layer beside this node's own value: a role's range or the summary's model.</summary>
+    public static bool IsLayeredKey(string key) => IsRoleKey(key) || IsModelKey(key);
 
     public bool? Lan { get; init; }
 
@@ -282,9 +290,9 @@ public sealed record NodeSettings
     /// <summary>These settings with the fleet's range for <paramref name="key"/> set to <paramref name="values"/> (none, or <c>default</c>, takes it out), or why not.</summary>
     public static (NodeSettings? Settings, string? Error) WithFleet(NodeSettings settings, string key, IReadOnlyList<string> values)
     {
-        if (!IsRoleKey(key))
+        if (!IsLayeredKey(key))
         {
-            return (null, $"{key} has no fleet value; the fleet holds {string.Join(", ", RoleModels.Roles.Select(RoleModels.RangeKey))}");
+            return (null, $"{key} has no fleet value; the fleet holds {string.Join(", ", RoleModels.Roles.Select(RoleModels.RangeKey).Append(SummaryModelKey))}");
         }
         // Checked as an own value is, then the own layer is put back as it was.
         var (checkedRange, error) = With(new NodeSettings(), key, values);
@@ -334,9 +342,8 @@ public sealed record NodeSettings
         }
         if (root[FleetRangesField] is JsonObject fleetRanges)
         {
-            foreach (var role in RoleModels.Roles)
+            foreach (var key in RoleModels.Roles.Select(RoleModels.RangeKey).Append(SummaryModelKey))
             {
-                var key = RoleModels.RangeKey(role);
                 if (fleetRanges[key] is JsonValue v && v.TryGetValue<string>(out var text) && WithFleet(settings, key, [text]) is { Settings: { } withFleet })
                 {
                     settings = withFleet;
@@ -484,7 +491,7 @@ public sealed record NodeSettings
         RepoTrackersKey => RepoTrackers,
         NoAutoMergeReposKey => NoAutoMergeRepos,
         SubTaskReposKey => SubTaskRepos,
-        _ when IsRoleKey(key) && Roles?.GetValueOrDefault(key) is { } role => [role],
+        _ when IsLayeredKey(key) && Roles?.GetValueOrDefault(key) is { } role => [role],
         _ => null,
     };
 
@@ -868,6 +875,21 @@ public sealed record NodeSettings
                 return One()?.ToLowerInvariant() is { } merge && MergeMethods.Contains(merge)
                     ? (settings with { MergeMethod = merge }, null)
                     : (null, $"merge-method takes {string.Join(", ", MergeMethods)}");
+            case SummaryModelKey:
+            {
+                var roles = new Dictionary<string, string>(settings.Roles ?? new Dictionary<string, string>(), StringComparer.Ordinal);
+                if (clear)
+                {
+                    roles.Remove(key);
+                    return (settings with { Roles = roles.Count == 0 ? null : roles }, null);
+                }
+                if (One()?.ToLowerInvariant() is not { } model || !RoleModels.IsModelName(model))
+                {
+                    return (null, "summary-model takes a model: sonnet, opus or haiku, or a full model id such as claude-sonnet-5-5");
+                }
+                roles[key] = model;
+                return (settings with { Roles = roles }, null);
+            }
             case var role when IsRoleKey(role):
             {
                 var roles = new Dictionary<string, string>(settings.Roles ?? new Dictionary<string, string>(), StringComparer.Ordinal);

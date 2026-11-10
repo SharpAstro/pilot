@@ -218,7 +218,7 @@ public sealed class WatchtowerTests : IDisposable
         _time.Advance(TimeSpan.FromMinutes(2));
         await _tower.LookAsync(Ct);
         Ended().ShouldBe(["job00007"]);
-        _state.Cards().Single(c => c.Bin == CardBin.Handled).Title.ShouldStartWith("Stopped the watchtower: no flight in the air and no UI connected");
+        _state.Cards().Single(c => c.Bin == CardBin.Handled).Title.ShouldStartWith("Stopped the watchtower: no flight in the air");
         _said.ShouldBeEmpty();
 
         // The next thing to watch starts a fresh one, and says why.
@@ -1142,5 +1142,19 @@ public sealed class WatchtowerRouteTests
         (card.Bin, card.Kind, card.Title, card.Detail).ShouldBe((CardBin.Ring, Watchtower.RaisedKind, "TIA1 forks: SQLite or JSON?", "both work (from du1-watchtower)"));
         bad.Response.ShouldNotBeNull().Error.ShouldStartWith("raise takes ring, for-you or handled");
         tell.Response.ShouldNotBeNull().Error.ShouldBe("this node keeps no watchtower (--no-watchtower)");
+    }
+
+    [Fact]
+    public async Task AWatchtowerForYouCardShowsItsOwnTitleAndNoHelpLineAsItsFirstLine()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+
+        (await node.Client.SendAsync(new CommandRequest
+        {
+            Verb = Verbs.Raise, Target = "node", Args = ["for-you", "SE1 has 3 flights ringing and 2 held", "3 ringing, 2 held by the owner, 1 waiting on a PR."], Who = "se1-watchtower",
+        }, Ct)).Success.ShouldBeTrue();
+
+        // c3651 of the cards-panel capture is this card: its title and detail are the watchtower's own, and the kind's help line is no first line (#797 rule 5).
+        CardsPanelFixture.ShouldMatch("c3651", node.State.Cards().ShouldHaveSingleItem());
     }
 }

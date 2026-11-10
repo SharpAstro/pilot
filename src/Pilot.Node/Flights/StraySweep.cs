@@ -120,6 +120,10 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
             state.CloseCardsAbout(card.Subject, "the process is gone", Kind);
         }
         _tried.RemoveWhere(k => !current.Contains(k) && !reading.Strays.Any(s => KeyOf(s) == k));
+        foreach (var gone in _named.Keys.Where(k => !current.Contains(k)).ToList())
+        {
+            _named.TryRemove(gone, out _);
+        }
         state.PutStrays(named);
         return named;
     }
@@ -184,10 +188,52 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
                 : stray.NodeLaunched
                     ? "Its owner has not ended: end it by hand if it should not be running."
                     : "The node did not start its owner, so it only names it: end it by hand if it should not be running.";
+        _named[key] = stray;
+        // The one action is ending it, on the person's word (EndOnWord); leaving it running is the panel's own Dismiss, not a second button.
         state.RaiseCard(CardBin.ForYou, Kind, key,
-            $"Stray {stray.Name} {stray.Pid} of {stray.Owner}: {stray.Reason}",
-            Describe(row, how),
+            $"Stray {stray.Name} {stray.Pid} of {stray.Owner} is still running",
+            $"{stray.Reason}\n{Describe(row, how)}",
+            [new CardChoice { Label = $"End process {stray.Pid}", Verb = Verbs.EndStray, Target = key }],
+            summary: $"Press the button if this process should not be running: {stray.Reason}",
             cause: key);
+    }
+
+    // The strays the last sweeps named on a card, by key: what end-stray may end, and nothing else.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Stray> _named = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// <c>end-stray process:&lt;pid&gt;@&lt;start&gt;</c>, the person's End on a stray's card: ends the process when its card is open, the sweep
+    /// named it, it is none of the shell's, the browser's or Windows' own, and its pid still starts when the sweep saw it (a reused pid is
+    /// another process, which is never ended). The card closes and a Handled line says who ended it.
+    /// </summary>
+    public CommandResult EndOnWord(CommandRequest command)
+    {
+        var key = command.Target;
+        if (!state.Cards(openOnly: true).Any(c => c.Kind == Kind && c.Subject == key) || !_named.TryGetValue(key, out var stray))
+        {
+            return state.Complete(command, $"no open stray card is about {key}: the process may be gone, or its card was dismissed");
+        }
+        if (NeverEnded(stray.Name))
+        {
+            return state.Complete(command, $"{stray.Name} is the shell's, the browser's or Windows' own, and the node never ends it");
+        }
+        if (stray.Start is null || !JobProcess.SameStart(table.StartOf(stray.Pid), stray.Start))
+        {
+            return state.Complete(command, $"process {stray.Pid} no longer starts when the sweep saw it, so it may be another by now; end it by hand if it is still the stray: {stray.KillCommand}");
+        }
+        try
+        {
+            table.Kill(stray.Pid);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return state.Complete(command, $"could not end {stray.Name} {stray.Pid}: {ex.Message}");
+        }
+        _named.TryRemove(key, out _);
+        state.CloseCardsAbout(key, $"ended on {command.Who}'s word", Kind);
+        state.RaiseCard(CardBin.Handled, KilledKind, key, $"Ended stray {stray.Name} {stray.Pid} of {stray.Owner}",
+            $"Ended on {command.Who}'s word from its card, with the same effect as {stray.KillCommand}.", cause: key);
+        return state.Complete(command, null);
     }
 
     private static string Describe(MachineStray row, string how) =>

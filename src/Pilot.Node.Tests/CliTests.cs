@@ -267,7 +267,7 @@ public sealed class CliTests : IAsyncLifetime
         var ring = _node.State.Cards().Single(c => c.Kind == "pr-ready").Id;
         var (_, cards, _) = await Pilot(_root, "cards");
         cards.ShouldContain($"{ring}  RING  TIA1611's PR #71 is ready to merge");
-        cards.ShouldContain($"1. Merge: pilot answer {ring} 1");
+        cards.ShouldContain($"1. Merge the PR: pilot answer {ring} 1");
         var (_, cardsMarkdown, _) = await Pilot(_root, "cards", "--output-format", "markdown");
         cardsMarkdown.ShouldContain($"## {ring} · RING · TIA1611's PR #71 is ready to merge");
         cardsMarkdown.ShouldContain($"`pilot answer {ring} 1`");
@@ -278,7 +278,7 @@ public sealed class CliTests : IAsyncLifetime
         _node.GitHub.Merged.ShouldBe([(71, "cafe0000cafe0000", "rebase")]);
         _node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
         var after = _node.State.Cards();
-        after.Single(c => c.Id == ring).Outcome.ShouldBe("Merge");
+        after.Single(c => c.Id == ring).Outcome.ShouldBe(LegCommander.MergeLabel);
         after.Single(c => c.Kind == "landed").Bin.ShouldBe(CardBin.Handled);
 
         // Landed, it leaves status, which says how many it left out; --all shows it with its legs.

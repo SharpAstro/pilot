@@ -152,7 +152,11 @@ public sealed class AdoptTests : IDisposable
         var risk = cards.Single(c => c.Kind == FlightCommander.AdoptAtRiskKind);
         risk.Bin.ShouldBe(CardBin.ForYou);
         risk.Subject.ShouldBe(Verbs.FlightTarget(Code));
-        risk.Title.ShouldContain("DE1 had not pushed is at risk");
+        // Golden (#797): what happened in the title, what to do and why first, one short verb; the plane's branch is the detail's.
+        risk.Title.ShouldBe("PIL900 was adopted; what DE1 had not pushed is not here");
+        risk.Summary.ShouldBe("Look at DE1's plane when it is back and push what it holds, or hold PIL900 here until you have: its plane was made from what DE1 last pushed, so its unpushed work is not in it.");
+        risk.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe([(FlightCommander.AdoptHoldLabel, Verbs.Ground, Verbs.FlightTarget(Code))]);
+        risk.Choices[0].Label.ShouldBe("Hold the flight here");
         cards.ShouldNotContain(c => c.Kind == "adopt-comment-refused");
     }
 
@@ -253,7 +257,13 @@ public sealed class AdoptTests : IDisposable
 
         result.Ok.ShouldBeTrue(result.Error);
         _state.Flights().Single().MovedFrom!.Adopted.ShouldBeTrue();
-        _state.Cards().Select(c => c.Kind).ShouldContain("adopt-comment-refused");
+        // The refusals are lines, not rings: the adoption stands and nothing the node can press would post them.
+        var told = _state.Cards().Single(c => c.Kind == "adopt-comment-refused");
+        told.Bin.ShouldBe(CardBin.Handled);
+        told.Title.ShouldStartWith("PIL900 was adopted, but ");
+        told.Title.ShouldEndWith(" was not told");
+        told.Detail.ShouldNotBeNull().ShouldContain("The comment, to post by hand: SE1 adopted flight PIL900 from DE1");
+        _state.Cards().Where(c => c.Kind == "node-label-refused").ShouldAllBe(c => c.Bin == CardBin.Handled);
         _state.Cards().Select(c => c.Kind).ShouldContain("node-label-refused");
         _state.Cards().Select(c => c.Kind).ShouldContain(FlightCommander.AdoptAtRiskKind);
     }

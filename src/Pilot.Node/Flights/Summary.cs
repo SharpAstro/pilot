@@ -7,7 +7,7 @@ using Pilot.Node.Sessions;
 namespace Pilot.Node.Flights;
 
 /// <summary>
-/// What the summary's one Haiku call is shown: the node's flights as plain records, built only from what the node holds (each
+/// What the summary's one model call is shown: the node's flights as plain records, built only from what the node holds (each
 /// flight's legs with state, checklist, go-arounds and report; its PR and review; its open cards; the sessions working on it)
 /// and nothing it would have to look up or guess. Port of v1's <c>worker_records</c>. The call is told to quote hashes, test
 /// names and results only from here, so a hash appears in these records only where the node holds it (a flight's PR head, its
@@ -34,14 +34,19 @@ public static class SummaryRecords
             : "";
 
     /// <summary>
-    /// The records of every flight in play (not landed), the open cards about none of them and the PR reviews not closed; null
+    /// The records of every flight in play (not landed), the open cards about none of them and the PR reviews not closed; nothing of a
+    /// flight that has landed, not even an open card about it (stale: the landing closes its cards, and <see cref="CloseLandedCards"/>
+    /// closes one left over), so the summary has nothing of it to relay (#797); null
     /// when there is nothing of that to say, which a summary does not spend a call on.
     /// </summary>
     public static string? Fleet(NodeState state, DateTimeOffset now, StaleBounds? bounds = null)
     {
         var held = state.Snapshot();
         var inPlay = held.Flights.Where(f => f.State != FlightState.Landed).OrderBy(f => f.CreatedAt).ThenBy(f => f.Code, StringComparer.Ordinal).ToList();
-        var strays = held.Cards.Where(c => c.State == CardState.Open && c.Kind != Digest.Kind && !inPlay.Any(f => About(c, f.Code)))
+        var landed = held.Flights.Where(f => f.State == FlightState.Landed).Select(f => f.Code).ToList();
+        // An open card about a flight that has landed is never a need (its cards are closed at the landing, so one left is stale): it is
+        // left out of the records altogether.
+        var strays = held.Cards.Where(c => c.State == CardState.Open && c.Kind != Digest.Kind && !inPlay.Any(f => About(c, f.Code)) && !landed.Any(code => About(c, code)))
             .OrderBy(c => c.At).ToList();
         var reviews = held.PrReviews.Where(r => r.State != PrReviewState.Closed).OrderBy(r => r.StartedAt).ToList();
         if (inPlay.Count == 0 && strays.Count == 0 && reviews.Count == 0)
@@ -234,6 +239,21 @@ public static class SummaryRecords
         }
     }
 
+    /// <summary>
+    /// Closes every open card about a flight that has landed: the landing closes a flight's cards, so one still open is stale (c3651, about
+    /// TIA2000's worker after TIA2000 had landed and merged). Run before a summary is made, which then has nothing of it to say. Returns how many.
+    /// </summary>
+    public static int CloseLandedCards(NodeState state)
+    {
+        var landed = state.Flights().Where(f => f.State == FlightState.Landed).Select(f => f.Code).ToList();
+        var stale = state.Cards(openOnly: true).Where(c => c.Kind != Digest.Kind && landed.Any(code => About(c, code))).ToList();
+        foreach (var card in stale)
+        {
+            state.CloseCardsAbout(card.Subject, "its flight has landed", card.Kind);
+        }
+        return stale.Count;
+    }
+
     /// <summary>Whether <paramref name="card"/> is about flight <paramref name="code"/> or anything under it (a leg).</summary>
     private static bool About(CardRow card, string code)
     {
@@ -292,16 +312,39 @@ public static class SummaryPrompt
         {{Needs}}
         - One bullet per thing that stays stuck unless the person acts: a question only they can answer, a
           permission prompt, a card in the ring, a PR waiting for their merge, a leg that failed, a worker
-          that stopped or waits. If there is nothing, write the single word: Nothing. When the records open
-          with "Gone stale", list those first, oldest first, each with its age and what moves it.
+          that stopped or waits. Each bullet is one plain sentence that names the flight (or leg) and says
+          what the person should do, such as "Merge PIL784's PR #812" or "Tell PIL797's worker to carry on".
+          If there is nothing, write the single word: Nothing. When the records open with "Gone stale", list
+          those first, oldest first, each with how long it has waited and what to do.
 
         {{Where}}
-        At most {{words.ToString(CultureInfo.InvariantCulture)}} words of plain prose: what has been done, what is happening now, what is left. Quote
-        commit hashes, test names and results only from the records; never invent them.
+        At most {{words.ToString(CultureInfo.InvariantCulture)}} words as a short list, one line per flight, the one that matters most first (what needs the
+        person, then what is flying, then what is held or planned), each line saying in plain words what has
+        been done or what is happening now. Quote commit hashes, test names and results only from the records;
+        never invent them.
+
+        {{Plain}}
 
         {{(resolved ? ResolvedSection : "")}}Records:
 
         {{records}}
+        """;
+
+    /// <summary>The words of the node's own bookkeeping the summary never says: the person reads the summary, not the node's counters.</summary>
+    public static readonly string[] BannedWords =
+    [
+        "ticked", "stale bound", "redo N", "go-around N", "model and effort names (Opus, Sonnet, Haiku, high, medium)", "step counts (\"3 of 7 steps\")", "session names (\"se1-pil797-summary-plain\")",
+    ];
+
+    /// <summary>The rules every line of both sections follows, the same as the cards': plain words, what to do, nothing about what is over.</summary>
+    public static readonly string Plain = $"""
+        Rules for every line of both sections:
+        - Plain words a person who did not watch the node would understand. Never use the node's internal words: {string.Join(", ", BannedWords)}.
+          Say "restarted twice", not "go-around 2"; say "no worker is running", not "0 of 6 steps ticked".
+        - Say what to do, not what the record says. Do not restate a card's title or its detail; one sentence is enough.
+        - Say nothing about a flight that has landed, its legs, its workers or its PR. A landed flight needs no one, even if the
+          records still show an open card about it: that card is stale, never a need.
+        - Do not count flights, steps or cards. Do not repeat a line under both headings.
         """;
 
     private static readonly string ResolvedSection = $"""
@@ -323,7 +366,7 @@ public static class SummaryPrompt
     public static string Flight(string code, string records) => Build($"the flight {code}", FlightWords, records);
 }
 
-/// <summary>What one Haiku call answered, and what it used.</summary>
+/// <summary>What one call of the summary model answered, and what it used.</summary>
 /// <param name="Text">The answer, markdown.</param>
 /// <param name="Tokens">Its input, cache and output tokens added up.</param>
 /// <param name="Cost">US dollars, as Claude Code reported it; null when it did not.</param>
@@ -397,19 +440,23 @@ public interface ISummaryModel
 }
 
 /// <summary>
-/// One <c>claude -p</c> on Haiku, as v1's <c>haiku()</c> ran it: no tools, no MCP servers, no saved session, none of the user's
+/// One <c>claude -p</c> on the summary's model (<see cref="RoleModels.SummaryModel"/>, Sonnet unless the settings say otherwise; read at each
+/// call, so a set applies with no restart), as v1's <c>haiku()</c> ran it: no tools, no MCP servers, no saved session, none of the user's
 /// settings, its prompt on standard input and its answer as JSON; in a folder of its own, so no project's <c>CLAUDE.md</c> is read.
 /// </summary>
-public sealed class ClaudeSummaryModel(string folder) : ISummaryModel
+public sealed class ClaudeSummaryModel(string folder, RoleModels models) : ISummaryModel
 {
     /// <summary>How long the call may take before it is given up.</summary>
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(150);
 
-    /// <summary>The arguments of the call.</summary>
-    public static readonly IReadOnlyList<string> Arguments =
+    /// <summary>The arguments of a call on <paramref name="model"/>.</summary>
+    public static IReadOnlyList<string> ArgumentsFor(string model) =>
     [
-        "-p", "--model", "haiku", "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--restricted", "--output-format", "json",
+        "-p", "--model", model, "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--restricted", "--output-format", "json",
     ];
+
+    /// <summary>The arguments of the call as it runs now: on the model <see cref="RoleModels.SummaryModel"/> gives.</summary>
+    public IReadOnlyList<string> Arguments => ArgumentsFor(models.SummaryModel);
 
     public async Task<SummaryAnswer> AskAsync(string prompt, CancellationToken cancellationToken)
     {
@@ -615,6 +662,8 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
             string? fingerprint = null;
             if (scope == SummaryRow.FleetScope)
             {
+                // A card left open about a landed flight is stale: closed first, so neither the records nor the person sees it.
+                SummaryRecords.CloseLandedCards(state);
                 // Taken before the records, so a change made while the call runs differs from it and is followed by the next ask.
                 var madeFrom = SummaryRecords.Fingerprint(state, Bounds());
                 var records = SummaryRecords.Fleet(state, now, Bounds());

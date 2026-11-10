@@ -534,9 +534,10 @@ public static class Verbs
 
     /// <summary>
     /// <c>summarise node</c> or <c>summarise flight/&lt;code&gt;</c>: the summary of what the node holds of the flights in play
-    /// (or of that one flight), made at once by the watchtower, with the one-off Haiku call only as the fallback when the watchtower is
-    /// down, and kept as the scope's <see cref="SummaryRow"/> with its time, tokens and cost, on the feed for every client. The fleet's
-    /// summary also follows changes by itself through the watchtower while a client is attached; this verb is the ask that does not wait.
+    /// (or of that one flight), made at once by the watchtower, with the one-off call of the summary model (sonnet unless
+    /// <c>summary-model</c> says otherwise) only as the fallback when the watchtower is down, and kept as the scope's
+    /// <see cref="SummaryRow"/> with its time, tokens and cost, on the feed for every client. The fleet's summary also follows changes
+    /// by itself through the watchtower while a client is attached; this verb is the ask that does not wait.
     /// The result's <see cref="CommandResult.Made"/> is the summary's markdown.
     /// </summary>
     public const string Summarise = "summarise";
@@ -827,6 +828,13 @@ public static class Verbs
     public const string Stop = "stop";
 
     /// <summary>
+    /// <c>end-stray process:&lt;pid&gt;@&lt;start&gt;</c>: ends a process the stray sweep named on a card, on the person's word only (the
+    /// sweep itself ends nothing). Refused unless the card is open and the pid still starts when the sweep saw it, so a reused pid is never
+    /// another process ended; never a process of the shell, the browser or Windows.
+    /// </summary>
+    public const string EndStray = "end-stray";
+
+    /// <summary>
     /// <c>end-session session/&lt;id&gt; &lt;why&gt;</c> (<c>pilot session end &lt;id&gt; &lt;why&gt;</c>): the node ends a running background
     /// session, cancels its queued and running jobs, and records <c>why</c> (required) and who asked in the session ledger. For the
     /// watchtower, whose own <c>claude stop</c> is refused under auto mode. An interactive or ended session is refused.
@@ -894,11 +902,13 @@ public static class Verbs
     public static string RedoLeg(string leg) => $"Redo leg {leg}";
 
     /// <summary>
-    /// The button that sends leg <paramref name="leg"/> round with a fresh worker, said as what it does in this case: <c>Start a fresh worker on x
-    /// (the last one went idle)</c>, with the round and the model from the second redo on, as <see cref="RedoLeg(string, int, string?, string?)"/> has it.
+    /// The button that sends a leg round with a fresh worker, whatever the last one did: why it is let go, the round and the model the next
+    /// one runs on belong in the card's detail (<c>RoleModels.NextWorkerNote</c>), never in a button (#797).
     /// </summary>
-    public static string FreshWorker(string leg, string why, int redo, string? model, string? effort = null) =>
-        $"Start a fresh worker on {leg} (the last one {why}{(redo >= 2 && model is not null ? $"; redo {redo}, {OnModel(model, effort)}" : "")})";
+    public const string FreshWorker = "Start a fresh worker";
+
+    /// <summary>The button on a card about a stalled worker that lets it go and starts another from the branch.</summary>
+    public const string RestartWorker = "Restart the worker";
 
     /// <summary>The redo choice naming what the next worker runs on, once it is a second redo or later (<paramref name="redo"/> is go-arounds + 1): <c>Redo leg x (redo 3, on Opus)</c>.</summary>
     public static string RedoLeg(string leg, int redo, string? model, string? effort = null) =>

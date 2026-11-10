@@ -184,7 +184,14 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
     public long SessionMemoryFloor { get; set; } = 1536L * 1024 * 1024;
 
     /// <summary>The machine's free memory now, as the job queue reads it; a test swaps it.</summary>
-    public Func<long?> FreeMemory { get; init; } = MachineMemory.Available;
+    public Func<long?> FreeMemory { get; init; } = () => MachineFreeMemory();
+
+    /// <summary>
+    /// Where a gate given no <see cref="FreeMemory"/> of its own reads the machine's free memory: <see cref="MachineMemory.Available"/>.
+    /// The test assembly sets it to read nothing (null: no memory wait), so a unit test of a start never waits on the memory of the
+    /// machine it runs on; a test of the memory wait gives its gate or its input the free memory it means.
+    /// </summary>
+    internal static Func<long?> MachineFreeMemory { get; set; } = MachineMemory.Available;
 
     /// <summary>
     /// Whether a session of <paramref name="role"/> on <paramref name="model"/> may start now for <paramref name="flight"/> (null for a bare PR's, named by
@@ -408,9 +415,9 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
             case Verbs.AdmissionSync when args.Length >= 1:
                 Fleet.Sync(args[0], args.Skip(1).Select(a => a.Split('|')).Where(p => p.Length >= 2).Select(p => (p[0], p[1], p.Length > 2 && p[2].Length > 0 ? p[2] : null)));
                 break;
-            case Verbs.AdmissionSetting when args.Length >= 2 && (args[0] is NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey || NodeSettings.IsRoleKey(args[0])):
+            case Verbs.AdmissionSetting when args.Length >= 2 && (args[0] is NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey || NodeSettings.IsLayeredKey(args[0])):
                 // A peer may only set the fleet layer of a role range, never this node's own range.
-                error = NodeSettings.IsRoleKey(args[0]) && !args.Skip(1).Contains("--fleet", StringComparer.OrdinalIgnoreCase)
+                error = NodeSettings.IsLayeredKey(args[0]) && !args.Skip(1).Contains("--fleet", StringComparer.OrdinalIgnoreCase)
                     ? $"a peer may only set the fleet layer of {args[0]}; send it with --fleet"
                     : SettingApplier is null ? "this node cannot apply settings" : SettingApplier(args);
                 break;

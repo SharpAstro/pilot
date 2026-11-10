@@ -66,17 +66,16 @@ public sealed partial class PrReviews
                 return;
             }
             var design = DesignDetail(questions);
-            var asked = questions.Count == 1 ? $": {Clean(questions[0].Question, 80)}" : "";
             var choices = DesignChoices(subject, questions);
             var rings = DesignRings(questions);
             if (flight is not null)
             {
-                RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr} ({flight.Code}'s PR): the review asks a question of design{asked}",
+                RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr} ({flight.Code}'s PR): the review asks a question of design",
                     $"{design}{rings}\nNo fixer started: {flight.Code}'s own legs make changes. review fix {pr} <answer> sends its last leg round with the answer, as the card's Answer does.",
                     choices, DesignSummary(questions));
                 return;
             }
-            RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design{asked}", $"{design}{rings}\nNo fixer started: this is the author's to decide. An option or Answer in your own words posts the answer on the PR and starts the fixer.",
+            RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design", $"{design}{rings}\nNo fixer started: this is the author's to decide. An option or Answer in your own words posts the answer on the PR and starts the fixer.",
                 choices, DesignSummary(questions));
             return;
         }
@@ -104,7 +103,7 @@ public sealed partial class PrReviews
         {
             // Retry is the same Fix it: once what stopped it is cleared (a branch checked out elsewhere), it starts the fixer.
             RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start: {LegCommander.OneLine(ex.Message)}", ex.Message,
-                [new CardChoice { Label = $"Start the fixer on {pr} again", Verb = Verbs.FixPr, Target = subject }]);
+                [new CardChoice { Label = "Start the fixer again", Verb = Verbs.FixPr, Target = subject }]);
         }
     }
 
@@ -152,7 +151,7 @@ public sealed partial class PrReviews
             SettleDecided(pr, review, decided, "the start did not go, and the card for that starts it again with the decided answer");
             var what = flight is null ? $"the fixer could not start on {pr}" : $"{flight.Code}'s last leg could not be sent round for {pr}";
             RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, subject, $"{pr}: {what}: {LegCommander.OneLine(ex.Message)}", $"{said}\n{ex.Message}",
-                [new CardChoice { Label = flight is null ? $"Start the fixer on {pr} again" : $"Send {flight.Code}'s last leg round on {pr} again", Verb = Verbs.FixPr, Target = subject }]);
+                [new CardChoice { Label = flight is null ? "Start the fixer again" : "Redo the last leg", Verb = Verbs.FixPr, Target = subject }]);
         }
     }
 
@@ -245,6 +244,12 @@ public sealed partial class PrReviews
         }
         var words = string.Join(' ', command.Args ?? []).Trim();
         string? given = null;
+        if (asksDesign && words.Length > 0)
+        {
+            // Own words that are only the card's tags (1A 2B) are each question's option, as a button's answer reads; tags that leave a
+            // question unanswered are refused here, with the card still open, so no answer drops a question.
+            words = DesignQuestion.ExpandTags([.. review.Findings.Select(DesignQuestion.Parse).OfType<DesignQuestion>()], words);
+        }
         if (asksDesign)
         {
             given = words.Length > 0 ? words : review.DesignAnswer is { Length: > 0 } stored ? stored : await AnswerCommentAsync(pr, review, cancellationToken);
@@ -335,7 +340,7 @@ public sealed partial class PrReviews
             // The answer stays stored (DesignAnswer), and the card's choice starts the fixer with it, without asking again.
             var subject = Verbs.PrTarget(pr.Repo, pr.Number);
             RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start: {LegCommander.OneLine(ex.Message)}", ex.Message,
-                [new CardChoice { Label = $"Start the fixer on {pr} again", Verb = Verbs.FixPr, Target = subject }]);
+                [new CardChoice { Label = "Start the fixer again", Verb = Verbs.FixPr, Target = subject }]);
             throw;
         }
         if (dequeued)
@@ -361,12 +366,15 @@ public sealed partial class PrReviews
     }
 
     // A question of design answered, once: the findings asked, the options the design card offered (its choices that are not the free
-    // Answer), the option picked or the free text, and the words as the reason. On a flight's PR the flight is the subject.
+    // Answer), the option picked or the free text, and the words as the reason. On a flight's PR the flight is the subject. A card of
+    // several questions has one button for all their recommended answers, so its options are the reviewer's, each question's by its choice.
     private Task RecordDesignAsync(PrRef pr, FlightRow? flight, PrReviewRow review, CommandRequest command, string? given, string words, CancellationToken cancellationToken)
     {
         var target = Verbs.PrTarget(pr.Repo, pr.Number);
-        var options = state.Cards().Where(c => c.Kind == DesignKind && c.Subject == target)
-            .SelectMany(c => c.Choices).Where(c => c.AsksFor is null).Select(c => c.Label).Distinct().ToArray();
+        var questions = review.Findings.Select(DesignQuestion.Parse).OfType<DesignQuestion>().ToList();
+        var options = questions.Count > 1 ? DesignQuestion.OptionLabels(questions) : state.Cards().Where(c => c.Kind == DesignKind && c.Subject == target)
+            // The option's words are the answer its button sends: the label is only its letter (Pick option A).
+            .SelectMany(c => c.Choices).Where(c => c.AsksFor is null).Select(c => c.Args.FirstOrDefault() ?? c.Label).Distinct().ToArray();
         var byKind = command.Autopilot ? DecisionByKinds.Autopilot
             : command.PersonsWord is not null || Standing.Of(command, state, "").Kind == StandingKind.Person ? DecisionByKinds.Person
             : DecisionByKinds.Node;
@@ -513,7 +521,7 @@ public sealed partial class PrReviews
         SettleDesign(pr.Repo, pr.Number, AnsweredCause(answered, "the fixer started on it"), review.Url, $"{fixer} is making the changes the answer calls for", answered);
         state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), "a fixer started", FixOfferKind, NoFixerKind, DesignKind, FixCappedKind, FixFailedKind);
         state.RaiseCard(CardBin.Handled, FixStartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
-            $"Started {fixer} on {pr}'s branch {branch}, to make the changes the review asked for", $"in {worktree}", link: review.Url);
+            $"Started {fixer} on {pr}'s branch", $"It makes the changes the review asked for, on branch {branch} in {worktree}.", link: review.Url);
         return $"started {fixer} at {CommitRefs.Short(read.Head)}";
     }
 

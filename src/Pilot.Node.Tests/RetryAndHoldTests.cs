@@ -133,8 +133,8 @@ public sealed class RetryAndHoldTests : IDisposable
         var line = RetriedLine();
         line.Kind.ShouldBe(FailureAlerts.RetriedKind);
         (line.Bin, line.Subject).ShouldBe((CardBin.Handled, "flight/TIA71"));
-        line.Title.ShouldContain("TIA901 investigates");
-        line.Title.ShouldContain("NodePlanetaryTests.ARefusedStartSaysWhyAndHoldsNothing");
+        line.Detail.ShouldNotBeNull().ShouldContain("TIA901 investigates");
+        line.Detail.ShouldNotBeNull().ShouldContain("NodePlanetaryTests.ARefusedStartSaysWhyAndHoldsNothing");
         line.Title.ShouldContain("queued again at " + Head('a')[..7]);
         // The removal is no card for the person: it was dealt with, and it is not a flake or a chance.
         _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.QueueDropped);
@@ -157,7 +157,7 @@ public sealed class RetryAndHoldTests : IDisposable
         _github.IssuesCreated.ShouldHaveSingleItem();
         var line = RetriedLine();
         (line.Bin, line.Subject).ShouldBe((CardBin.Handled, "flight/TIA72"));
-        line.Title.ShouldContain("TIA901 investigates");
+        line.Detail.ShouldNotBeNull().ShouldContain("TIA901 investigates");
         line.Title.ShouldContain("running again");
         _state.Cards().ShouldNotContain(c => c.Kind == "checks-rerun");
         _alerts.HoldOf("TIA72").ShouldBeNull();
@@ -460,7 +460,7 @@ public sealed class RetryAndHoldHandPrTests : PrReviewTestsBase
         _github.IssuesCreated.ShouldHaveSingleItem();
         var line = _state.Cards().Where(c => c.Kind == FailureAlerts.RetriedKind).ShouldHaveSingleItem();
         (line.Bin, line.Subject).ShouldBe((CardBin.Handled, "pr/acme/widget#7"));
-        line.Title.ShouldContain("TIA901 investigates");
+        line.Detail.ShouldNotBeNull().ShouldContain("TIA901 investigates");
         Row("acme/widget", 7).QueueNote.ShouldBeNull();
         await _reviews.SweepAsync(Ct);
         _github.Reruns.Count.ShouldBe(1);

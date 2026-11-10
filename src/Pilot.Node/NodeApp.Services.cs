@@ -498,7 +498,9 @@ public static partial class NodeApp
         if (options.MachineSampling)
         {
             builder.Services.AddHostedService(services => services.GetRequiredService<MachineSampler>());
-            builder.Services.AddHostedService(services => new StraySweep(services.GetRequiredService<NodeState>(), OsProcessTable.Instance, services.GetRequiredService<TimeProvider>()) { LivePids = () => services.GetRequiredService<SessionTracker>().LivePids().Select(p => (p.Id, p.Pid)).ToList(), KnownOf = services.GetRequiredService<JobRunner>().KnownOf });
+            // One sweep, both the hosted look and the handler of a stray card's End (end-stray), which only ends what it named.
+            builder.Services.AddSingleton(services => new StraySweep(services.GetRequiredService<NodeState>(), OsProcessTable.Instance, services.GetRequiredService<TimeProvider>()) { LivePids = () => services.GetRequiredService<SessionTracker>().LivePids().Select(p => (p.Id, p.Pid)).ToList(), KnownOf = services.GetRequiredService<JobRunner>().KnownOf });
+            builder.Services.AddHostedService(services => services.GetRequiredService<StraySweep>());
             // The node's own row rides the same tick of the clock (a settings change has no event to hook).
             builder.Services.AddHostedService(services =>
             {
@@ -590,8 +592,9 @@ public static partial class NodeApp
     /// <summary>The summaries and the digest.</summary>
     private static void AddSummaries(WebApplicationBuilder builder, NodeOptions options, LogWriter logWriter)
     {
-        // The brain answers a summary; the one-off Haiku call is what runs when it is down (PIL855).
-        builder.Services.AddSingleton<ISummaryModel>(services => new BrainSummaryModel(services.GetRequiredService<IBrain>(), new ClaudeSummaryModel(Path.Combine(options.DataFolder, "summary")),
+        // The brain answers a summary; the one-off call of the summary model (sonnet by default) is what runs when it is down (PIL855).
+        builder.Services.AddSingleton<ISummaryModel>(services => new BrainSummaryModel(services.GetRequiredService<IBrain>(),
+            new ClaudeSummaryModel(Path.Combine(options.DataFolder, "summary"), services.GetRequiredService<RoleModels>()),
             line => logWriter.WriteLine(line)));
         builder.Services.AddSingleton(services => new Summaries(services.GetRequiredService<NodeState>(), services.GetRequiredService<ISummaryModel>(), services.GetRequiredService<TimeProvider>())
         {

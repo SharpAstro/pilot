@@ -128,15 +128,18 @@ public sealed class DesignDecideTests : PrFixTestsBase
         var card = OpenDesign().ShouldNotBeNull();
         card.Bin.ShouldBe(CardBin.Ring);
         var detail = card.Detail.ShouldNotBeNull();
-        detail.ShouldContain("- Keep a library: no new process; misses: the sentence of the README that says it runs as a service (recommended)");
-        detail.ShouldContain("- Make it a service: more to run; misses: the AC that no new process is added");
+        detail.ShouldContain("A. Keep a library: no new process; misses: the sentence of the README that says it runs as a service (recommended)");
+        detail.ShouldContain("B. Make it a service: more to run; misses: the AC that no new process is added");
         detail.ShouldContain("It rings because no option reaches the criteria.");
         // The body is the question in the reviewer's own words and why it rings, within what the panel draws, not the kind's fixed words.
         var summary = card.Summary.ShouldNotBeNull();
         summary.ShouldStartWith("should this be a service at all?");
         summary.ShouldEndWith("It rings because no option reaches the criteria.");
         summary.Length.ShouldBeLessThanOrEqualTo(240);
-        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library", "Make it a service", PrReviews.AnswerLabel]);
+        // Each short option is its own button, its words the answer the button sends (#797).
+        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library (recommended)", "Make it a service", PrReviews.AnswerLabel]);
+        card.Choices[0].Args.Single().ShouldStartWith("Keep a library");
+        card.Choices[1].Args.Single().ShouldStartWith("Make it a service");
     }
 
     [Fact]
@@ -165,8 +168,8 @@ public sealed class DesignDecideTests : PrFixTestsBase
         Fixers.ShouldBeEmpty();
         _state.Decisions(kind: DecisionKinds.Design).ShouldBeEmpty();
         var detail = OpenDesign().ShouldNotBeNull().Detail.ShouldNotBeNull();
-        detail.ShouldContain("- Keep a library: no new process; misses: none (recommended)");
-        detail.ShouldContain("- Make it a service: more to run");
+        detail.ShouldContain("A. Keep a library: no new process; misses: none (recommended)");
+        detail.ShouldContain("B. Make it a service: more to run");
         detail.ShouldNotContain("It rings because");
     }
 
@@ -183,7 +186,10 @@ public sealed class DesignDecideTests : PrFixTestsBase
         detail.ShouldContain("Make it a service: more to run");
         detail.ShouldNotContain("misses");
         detail.ShouldNotContain("It rings because");
-        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library", "Make it a service", PrReviews.AnswerLabel]);
+        // Each short option is its own button, its words the answer the button sends (#797).
+        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library (recommended)", "Make it a service", PrReviews.AnswerLabel]);
+        card.Choices[0].Args.Single().ShouldStartWith("Keep a library");
+        card.Choices[1].Args.Single().ShouldStartWith("Make it a service");
     }
 
     [Fact]
@@ -220,8 +226,11 @@ public sealed class DesignDecideTests : PrFixTestsBase
         _state.Decisions(kind: DecisionKinds.Design).ShouldBeEmpty();
         var card = OpenDesign().ShouldNotBeNull();
         card.Detail.ShouldNotBeNull().ShouldContain("It rings because README.md:9 no option reaches the criteria.");
-        // With several questions which option answers which is a guess, so each is answered in words.
-        card.Choices.ShouldHaveSingleItem().Label.ShouldBe(PrReviews.AnswerLabel);
+        // One press takes both questions' recommended answers, each line naming its question, and then the free text (c3479): no button
+        // answers one question of the two and closes the card.
+        card.Choices.Select(c => c.Label).ShouldBe([PrReviews.RecommendedLabel(2), PrReviews.AnswerLabel]);
+        card.Choices[0].Args.Single().Split('\n').ShouldAllBe(line => line.Contains(" => ", StringComparison.Ordinal));
+        card.Choices[0].Args.Single().Split('\n').Length.ShouldBe(2);
     }
 
     [Fact]

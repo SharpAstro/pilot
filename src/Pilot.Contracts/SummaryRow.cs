@@ -5,7 +5,7 @@ namespace Pilot.Contracts;
 /// this node's flights (<see cref="FleetScope"/>), every node's (<see cref="AllNodesScope"/>) or one flight's (its code). The fleet's summary follows changes through the
 /// watchtower while a client is attached to the node's feed (a quiet spell after a change, at most one ask per few minutes, never
 /// with no client, never a paid call on a change); <c>pilot summarise</c> and the GUI's Refresh ask at once, the watchtower first and the
-/// old one-off Haiku call only when it is down. A newer one replaces the older of its scope, whole.
+/// one-off summary call (the summary model, sonnet by default) only when it is down. A newer one replaces the older of its scope, whole.
 /// </summary>
 public sealed record SummaryRow
 {

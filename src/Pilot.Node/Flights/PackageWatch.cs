@@ -131,7 +131,7 @@ public sealed class PackageWatch(NodeState state, FlightCommander flights, INuGe
             foreach (var wait in flight.PackageWaits)
             {
                 if (await LookAtAsync(flight.Code, Verbs.FlightTarget(flight.Code), "waits for", wait,
-                        new CardChoice { Label = "Fly anyway", Verb = Verbs.FlyAnyway, Target = Verbs.FlightTarget(flight.Code) },
+                        new CardChoice { Label = "Fly without the package", Verb = Verbs.FlyAnyway, Target = Verbs.FlightTarget(flight.Code) },
                         () => flights.MarkPackageWaitLateAsync(flight.Code, wait.Id, wait.Producer, cancellationToken)) is { } up)
                 {
                     met.Add((wait.Id, wait.Producer));
@@ -153,7 +153,7 @@ public sealed class PackageWatch(NodeState state, FlightCommander flights, INuGe
             {
                 var subject = $"{leg.Flight}/{leg.Name}";
                 if (await LookAtAsync(subject, Verbs.LegTarget(leg.Flight, leg.Name), "holds for", leg.Hold!,
-                        new CardChoice { Label = "Start anyway", Verb = Verbs.StartLeg, Target = Verbs.LegTarget(leg.Flight, leg.Name), Args = ["anyway"] },
+                        new CardChoice { Label = "Start without the package", Verb = Verbs.StartLeg, Target = Verbs.LegTarget(leg.Flight, leg.Name), Args = ["anyway"] },
                         () => legs.MarkHoldLateAsync(leg.Flight, leg.Name, cancellationToken)) is { } up)
                 {
                     await legs.ResumeHeldAsync(leg.Flight, leg.Name, up, cancellationToken);

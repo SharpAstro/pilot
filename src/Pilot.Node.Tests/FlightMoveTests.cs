@@ -12,7 +12,7 @@ namespace Pilot.Node.Tests;
 /// from the branch the sender pushed, the flight says where it came from, and its next leg starts by the normal advance. A node in
 /// maintenance, one that has the code already, and one with no checkout of the repo refuse it, with the reason. And the sending side
 /// (<c>move-flight</c>): a node in maintenance moves its flight once its leg has finished, the plane made safe first, and on any failure
-/// keeps the flight, says why on the row, and offers a Retry move; the flight is flown on one node only, at every moment.
+/// keeps the flight, says why on the row, and offers to try the move again; the flight is flown on one node only, at every moment.
 /// </summary>
 public abstract class FlightMoveTestsBase : IAsyncDisposable
 {
@@ -218,7 +218,7 @@ public abstract class FlightMoveTestsBase : IAsyncDisposable
         var card = _sender.Cards(openOnly: true).Single(c => c.Kind == LegCommander.MoveFailedKind);
         (card.Bin, card.Subject, card.Title).ShouldBe((CardBin.Ring, "flight/TIA900", failure[..failure.IndexOf(": ", StringComparison.Ordinal)]));
         var retry = card.Choices.ShouldHaveSingleItem();
-        (retry.Label, retry.Verb, retry.Target).ShouldBe(("Retry move", Verbs.MoveFlight, "flight/TIA900"));
+        (retry.Label, retry.Verb, retry.Target).ShouldBe(("Try the move again", Verbs.MoveFlight, "flight/TIA900"));
         return card;
     }
 
@@ -901,7 +901,7 @@ public sealed class FlightMoveTests3 : FlightMoveTestsBase
         (unknown.To, unknown.Endpoint).ShouldBe(("DE1", "de1.local:47731"));
         OnSender.MoveFailure.ShouldNotBeNull().ShouldStartWith("TIA900 may have moved to DE1: its answer did not come");
         var card = _sender.Cards(openOnly: true).Single(c => c.Kind == LegCommander.MoveFailedKind);
-        card.Choices.ShouldHaveSingleItem().Label.ShouldBe("Retry move");
+        card.Choices.ShouldHaveSingleItem().Label.ShouldBe("Try the move again");
         Directory.Exists(SenderPlane).ShouldBeTrue();
         // One node flies it: DE1, which holds it; SE1 starts nothing, by sweep or by hand, and is not moved again until it is known.
         _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("de1-tia900-render-validator");

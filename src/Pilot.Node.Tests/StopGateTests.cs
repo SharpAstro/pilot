@@ -138,7 +138,7 @@ public sealed class StopGateTests : IDisposable
         again.Verb.ShouldBe(Verbs.Say);
         again.Target.ShouldBe(Verbs.SessionTarget(AgentRows.SessionA));
         // The only choice is to tell it to commit: no card button drops files.
-        again.Label.ShouldBe("Tell the session to commit its files in TIA7's plane");
+        again.Label.ShouldBe("Tell it to commit");
         again.Args.ShouldHaveSingleItem().ShouldNotContain("drop", Case.Insensitive);
         // The summary names the file, says it was told once and stopped again, and does not repeat the button.
         var summary = ring.Summary.ShouldNotBeNull();

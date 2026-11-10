@@ -1368,6 +1368,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         card.Detail.ShouldBe("parser first, then render\n1. parser: Parse the ephemeris\n2. render: Draw the planets");
         var start = card.Choices.ShouldHaveSingleItem();
         (start.Label, start.Verb, start.Target).ShouldBe(("Start parser", Verbs.StartLeg, Verbs.LegTarget("TIA1", "parser")));
+        // c3637 of the cards-panel capture is this card, as SE1 raised it for PIL795 with five legs, cards-legs first.
+        CardsPanelFixture.ShouldMatch("c3637", card, names: [("TIA1: 2 legs", "PIL795: 5 legs"), ("parser", "cards-legs"), ("TIA1", "PIL795")]);
     }
 
     [Fact]
@@ -1566,7 +1568,9 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         _workers.Started.ShouldHaveSingleItem();
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.SiblingBehindKind);
         (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "flight/TIA1/parser"));
-        card.Title.ShouldBe("TIA1/parser compiles against a sibling clone behind origin");
+        card.Title.ShouldBe("TIA1/parser builds on a sibling clone that is behind");
+        card.Summary.ShouldBe("TIA1/parser started on a sibling clone older than origin, which the node could not pull. Pull it by hand and try again, or let the leg run on what it has.");
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Pull the clones again", Verbs.SyncRepos)]);
         card.Detail.ShouldBe($"DIR.Lib is 3 commits behind its origin: git -C {Path.Combine(_root, "DIR.Lib")} pull --ff-only");
 
         _state.Cards().Count(c => c.Kind == LegCommander.SiblingBehindKind).ShouldBe(1);
@@ -2121,7 +2125,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         (failed.Bin, failed.Kind, failed.Subject, failed.Detail).ShouldBe((CardBin.Ring, "leg-failed", "flight/TIA1/parser", "no ephemeris here"));
         failed.Title.ShouldBe("TIA1/parser: no ephemeris here");
         failed.Title.ShouldNotContain("gave up");
-        failed.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Send it round: a fresh worker fixes it and finishes", Verbs.GoAround), ("Accept as it is: the flight goes on, the failure kept in its report", Verbs.FinishLeg)]);
+        failed.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([(Verbs.FreshWorker, Verbs.GoAround)]);
         failed.Choices.ShouldNotContain(c => c.Label.Contains("Mark done anyway"));
 
         _workers.Stopped.ShouldBeEmpty();
@@ -2551,9 +2555,12 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         _state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.NextStepKind).ShouldBeEmpty();
         await _legs.AdvanceAllAsync(Ct);
         var rung = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.NextStepKind);
-        rung.Title.ShouldStartWith("TIA1 could not open its PR: ");
+        // The golden card (#797): what happened in the title, why in the detail, a short verb on the button.
+        rung.Title.ShouldBe("TIA1 could not open its PR");
+        rung.Detail.ShouldNotBeNull().ShouldStartWith("The node tried to open its PR as the flight's next step and was refused, and it will not try again by itself: ");
+        rung.Summary.ShouldBe("The node tried TIA1's next step and was refused. Do the step now to ask it again.");
         rung.Bin.ShouldBe(CardBin.Ring);
-        rung.Choices.Single().Label.ShouldBe("Open TIA1's PR now, asking the node again");
+        rung.Choices.Single().Label.ShouldBe("Try that step again");
         rung.Choices.Single().Verb.ShouldBe(Verbs.OpenPr);
         await _legs.AdvanceAllAsync(Ct);
         _state.Cards(openOnly: true).Count(c => c.Kind == LegCommander.NextStepKind).ShouldBe(1);

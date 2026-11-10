@@ -1230,6 +1230,9 @@ public sealed class JobTests2 : JobTestsBase
         var card = IdleCards().ShouldHaveSingleItem();
         (card.Kind, card.Bin, card.Subject).ShouldBe((JobRunner.IdleKind, CardBin.ForYou, Verbs.JobTarget(first)));
         card.Title.ShouldContain(first);
+        // The golden card (#797): the first line says what to do, the one button does it.
+        card.Summary.ShouldNotBeNull().ShouldContain("cancel it if it is only waiting");
+        card.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe([("Cancel the job", Verbs.CancelJob, Verbs.JobTarget(first))]);
         (card.Detail ?? "").ShouldContain("se1-tia1-parser");
         (card.Detail ?? "").ShouldContain(second);
 

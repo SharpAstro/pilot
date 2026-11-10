@@ -119,8 +119,8 @@ internal sealed class SummaryBoard
 /// <summary>
 /// The Summary card: Needs you, then Where it is, as the node kept it (Markdown, drawn by DIR.Lib's document), when it was made
 /// and that it follows changes (the watchtower remakes it while a client is attached), or why it does not, and a Refresh button
-/// that asks at once. A press names a price only when the row says the watchtower is down, as the node then makes the old one-off
-/// Haiku call (the last run's figures). Home shows one for the nodes in view and each flight's page one for the flight; both build
+/// that asks at once. A press names a price only when the row says the watchtower is down, as the node then makes the one-off
+/// summary call (the summary model, sonnet by default; the last run's figures). Home shows one for the nodes in view and each flight's page one for the flight; both build
 /// it here, so there is one card. It holds the Markdown it parsed, so the page builds it every frame without parsing again.
 /// </summary>
 internal sealed class SummaryCard
@@ -153,7 +153,7 @@ internal sealed class SummaryCard
     };
 
     /// <summary>
-    /// What a press costs, said in the button's label, only while the watchtower is down (the press then makes the old Haiku call):
+    /// What a press costs, said in the button's label, only while the watchtower is down (the press then makes the one-off summary call):
     /// the last run's dollars, else its tokens, else a call's worth. Empty while the watchtower makes the summary, which costs no call.
     /// </summary>
     internal static string CostLabel(SummaryRow? row) => row switch
@@ -161,7 +161,7 @@ internal sealed class SummaryCard
         null or { NotFollowing: null } => "",
         { Cost: { } usd } => $" · ~${Money(usd)}",
         { Tokens: > 0 and var tokens } => $" · ~{SessionLine.Tokens(tokens)} tokens",
-        _ => " · one Haiku call",
+        _ => " · one summary call",
     };
 
     private static string Money(double usd) => usd.ToString(usd < 0.01 ? "0.0000" : "0.00", CultureInfo.InvariantCulture);
@@ -278,7 +278,7 @@ internal sealed class SummaryCard
                 ? "A summary is being made; the card shows it when the node has it."
                 : row switch
                 {
-                    { NotFollowing: not null } => $"The watchtower is down, so a press makes one Haiku call over what the node holds. The last one used {Used(row)}. It replaces this summary for everyone.",
+                    { NotFollowing: not null } => $"The watchtower is down, so a press makes one summary call over what the node holds. The last one used {Used(row)}. It replaces this summary for everyone.",
                     { Scope: SummaryRow.FleetScope } => "Asks the watchtower for a new summary now, which replaces this one for everyone. The node also remakes it by itself after changes while a window is attached.",
                     _ => "Asks the watchtower for a new summary now, which replaces this one for everyone. This one is not remade by itself.",
                 };

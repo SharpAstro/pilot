@@ -6,11 +6,12 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// A design card says what it asks (owner, 2026-11-09: "it doesn't even list the question"): its body is the question itself and the
-/// recommended option, never only the kind's fixed words, and never longer than the panel draws (240), so nothing is cut silently: when
-/// it does not fit, Recommended goes and the question ends with an ellipsis. Each test raises the card on the node's state, so
-/// <c>CardSummaries.Usable</c> judges the summary as it does for the node. An option's button ends in an ellipsis past what two lines
-/// hold. In memory only: no process, no disk.
+/// A design card says what it asks and what each button picks (owner, 2026-11-09: "it doesn't even list the question"; #797: a button says
+/// plainly what happens, "Measure the nebula fields first (recommended)", never a bare "Option A" when the words fit). An option's button
+/// is its own words when they fit a button whole; when they do not it is <c>Pick option A</c> and the option's words are in the body by
+/// that letter, never only behind the detail or a hover. A card with several questions takes every question's recommended answer in one
+/// press, so "Answer in your own words" is not its only button (c3479) and no press answers one question of several. Each test raises the
+/// card on the node's state, so <c>CardSummaries.Usable</c> judges the summary as it does for the node. In memory only: no process, no disk.
 /// </summary>
 public sealed class DesignCardWordsTests
 {
@@ -20,16 +21,16 @@ public sealed class DesignCardWordsTests
     // 270 characters: past 240 with nothing else added.
     private const string LongQuestion = "SiblingSource(job) exports UseLocalSiblings=true for a plane job of any repo, so a job in a repo with no sibling clones restores against folders that do not exist: should the variable be exported only when SiblingWatch.ReachedClones has the job's repo, or always?";
 
-    private static readonly DesignOption Recommended = new("export the variable only when SiblingWatch.ReachedClones(job.Repo) is true, and say so on the job's line in pilot status", "jobs in repos with no clones restore packages", true);
-    private static readonly DesignOption Other = new("same, and also ring a card on the flight when the label is on a repo that has no sibling clones on this node at all", "one more card kind", false);
+    private static readonly DesignOption Recommended = new("export where clones are", "jobs in repos with no clones restore packages", true);
+    private static readonly DesignOption Other = new("always export it", "one more card kind", false);
 
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
 
     private static DesignQuestion Asked(string question) => new(null!, question, [Other, Recommended]);
 
-    private string Raise(params DesignQuestion[] questions) =>
+    private CardRow Raise(params DesignQuestion[] questions) =>
         _state.RaiseCard(CardBin.Ring, PrReviews.DesignKind, Subject, Title, "detail", PrReviews.DesignChoices(Subject, questions),
-            summary: PrReviews.DesignSummary(questions)).Summary.ShouldNotBeNull();
+            summary: PrReviews.DesignSummary(questions));
 
     private static void ItIsTheQuestionsOwnWords(string summary, string startsWith)
     {
@@ -40,27 +41,113 @@ public sealed class DesignCardWordsTests
         summary.ShouldNotBe(CardSummaries.For(PrReviews.DesignKind, Subject, Title, PrReviews.DesignChoices(Subject, [Asked("q")])));
     }
 
+    /// <summary>c3483 as the review of tianwen#2051 asked it: two options too long for a button, neither reaching the criteria.</summary>
+    internal static readonly DesignQuestion C3483 = new(null!, "Which share of clear frames counts as a good night?",
+    [
+        new DesignOption("measure the share of clear frames of the archive nebula-fields over the whole session", "", false, "the AC that a night is judged per field"),
+        new DesignOption("measure it per field and keep the worst of the nebula-fields", "", false, "the README's rule of one number per session"),
+    ]);
+
+    /// <summary>c3479 as the review of pilot#888 asked it: two questions, restart or remind, and when a leg is done.</summary>
+    internal static readonly DesignQuestion[] C3479 =
+    [
+        new(null!, "Should a stalled worker be restarted or reminded first?",
+            [new DesignOption("restart it at once", "", false), new DesignOption("remind it first", "restart it only if the reminder does nothing", true)]),
+        new(null!, "Is a leg done when its check passes?",
+            [new DesignOption("mark it done when its check passes", "the review comes after", true), new DesignOption("wait for the review too", "", false)]),
+    ];
+
     [Fact]
-    public void ABodyThatFitsCarriesTheQuestionWholeAndTheRecommendedOption()
+    public void ShortOptionsAreTheirOwnButtonsAndTheBodyIsTheQuestionAlone()
     {
-        var question = "should the variable be exported only when SiblingWatch.ReachedClones has the job's repo?";
+        var question = new DesignQuestion(null!, "should this be a service?", [new DesignOption("Make it a service", "", false), new DesignOption("Keep a library", "", true)]);
 
-        var summary = Raise(Asked(question));
+        var card = Raise(question);
 
-        ItIsTheQuestionsOwnWords(summary, question);
-        summary.ShouldContain("Recommended: export the variable only when SiblingWatch.ReachedClones(job.Repo) is true, and say so");
+        ItIsTheQuestionsOwnWords(card.Summary.ShouldNotBeNull(), "should this be a service?");
+        card.Summary.ShouldBe("should this be a service?");
+        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library (recommended)", "Make it a service", PrReviews.AnswerLabel]);
+        card.Choices[0].Args.ShouldBe(["Keep a library"]);
     }
 
     [Fact]
-    public void AQuestionPastTheBoundDropsRecommendedAndEndsWithAnEllipsisNotACutWithoutOne()
+    public void C3483TheOptionsTooLongForAButtonAreInTheBodyWholeByTheLetterTheirButtonPicks()
+    {
+        var card = Raise(C3483);
+
+        card.Choices.Select(c => c.Label).ShouldBe(["Pick option A", "Pick option B", PrReviews.AnswerLabel]);
+        card.Summary.ShouldBe("Which share of clear frames counts as a good night?"
+            + " A: measure the share of clear frames of the archive nebula-fields over the whole session."
+            + " B: measure it per field and keep the worst of the nebula-fields.");
+        card.Choices[0].Args.ShouldBe(["measure the share of clear frames of the archive nebula-fields over the whole session"]);
+        card.Choices[1].Hint.ShouldBe("measure it per field and keep the worst of the nebula-fields");
+        CardsPanelFixture.ShouldMatch("c3483", card, title: false);
+    }
+
+    /// <summary>
+    /// c3479: a press answers the whole card, so a card of two questions has one button that takes both recommended answers, never a
+    /// button per option that answered one question and closed the card with the other dropped (the review of #797). Every option is in
+    /// the body by its tag, which own words take (1A 2B).
+    /// </summary>
+    [Fact]
+    public void C3479ACardWithTwoQuestionsTakesBothRecommendedAnswersInOnePressAndListsEveryOptionByItsTag()
+    {
+        var card = Raise(C3479);
+
+        card.Choices.Select(c => c.Label).ShouldBe(["Take both recommended answers", PrReviews.AnswerLabel]);
+        card.Summary.ShouldBe("1. Should a stalled worker be restarted or reminded first? 1A: remind it first (recommended). 1B: restart it at once."
+            + " 2. Is a leg done when its check passes? 2A: mark it done when its check passes (recommended). 2B: wait for the review too.");
+        // One answer for both questions, each line naming the question it answers; the hover says the same.
+        card.Choices[0].Args.ShouldBe(["Should a stalled worker be restarted or reminded first? => remind it first (restart it only if the reminder does nothing)\n"
+            + "Is a leg done when its check passes? => mark it done when its check passes (the review comes after)"]);
+        card.Choices[0].Hint.ShouldBe(card.Choices[0].Args[0]);
+        card.Choices[1].AsksFor.ShouldBe("Your answer to each question, such as 1A 2B");
+        CardsPanelFixture.ShouldMatch("c3479", card, title: false);
+    }
+
+    [Fact]
+    public void ThreeQuestionsTakeAllThreeAndAQuestionWithNoRecommendedAnswerLeavesOnlyOwnWords()
+    {
+        PrReviews.DesignChoices(Subject, [C3479[0], C3479[1], Asked("q3?")]).Select(c => c.Label).ShouldBe(["Take all 3 recommended answers", PrReviews.AnswerLabel]);
+
+        var noneRecommended = new DesignQuestion(null!, "and the name?", [new DesignOption("keep it", "", false), new DesignOption("rename it", "", false)]);
+        var card = Raise(C3479[0], noneRecommended);
+
+        card.Choices.Select(c => c.Label).ShouldBe([PrReviews.AnswerLabel]);
+        card.Summary.ShouldNotBeNull().ShouldContain("2A: keep it. 2B: rename it.");
+    }
+
+    [Theory]
+    [InlineData("Keep")]
+    [InlineData("Rename")]
+    [InlineData("restart the worker at once, then nudge it")]
+    public void AnOptionOfOneWordOrOverFiveIsPickedByItsLetterWithItsWordsInTheBody(string words)
+    {
+        var card = Raise(new DesignQuestion(null!, "and the name?", [new DesignOption(words, "", false), new DesignOption("keep the old name", "", false)]));
+
+        card.Choices.Select(c => c.Label).ShouldBe(["Pick option A", "Keep the old name", PrReviews.AnswerLabel]);
+        card.Summary.ShouldNotBeNull().ShouldContain($"A: {words.TrimEnd('.')}.");
+        card.Choices.SelectMany(c => CardLint.Button(c.Label)).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void NoOptionsButtonIsCutAndEachFitsTwoLinesOfAButton()
+    {
+        var choices = PrReviews.DesignChoices(Subject, [C3483, .. C3479, Asked(LongQuestion)]);
+
+        choices.ShouldAllBe(c => c.Label.Length <= PrReviews.MaxOptionLabel && !c.Label.EndsWith("...", StringComparison.Ordinal));
+        choices.SelectMany(c => CardLint.Button(c.Label)).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AQuestionPastTheBoundEndsWithAnEllipsisNotACutWithoutOne()
     {
         LongQuestion.Length.ShouldBeGreaterThan(240);
 
-        var summary = Raise(Asked(LongQuestion));
+        var summary = Raise(Asked(LongQuestion)).Summary.ShouldNotBeNull();
 
         ItIsTheQuestionsOwnWords(summary, "SiblingSource(job) exports UseLocalSiblings=true");
         summary.ShouldEndWith("...");
-        summary.ShouldNotContain("Recommended");
     }
 
     [Fact]
@@ -68,7 +155,7 @@ public sealed class DesignCardWordsTests
     {
         var question = Asked(LongQuestion) with { Options = [Other with { Misses = "the AC" }, Recommended with { Misses = "the README" }] };
 
-        var summary = Raise(question);
+        var summary = Raise(question).Summary.ShouldNotBeNull();
 
         ItIsTheQuestionsOwnWords(summary, "SiblingSource(job) exports");
         summary.ShouldContain("... It rings because no option reaches the criteria.");
@@ -77,12 +164,33 @@ public sealed class DesignCardWordsTests
     [Fact]
     public void ThreeQuestionsAreOneLineWithinTheBoundEachCutWithAnEllipsis()
     {
-        var summary = Raise(Asked(LongQuestion), Asked(LongQuestion.Replace("SiblingSource", "SiblingSink")), Asked("should the third be asked too?"));
+        static DesignQuestion Open(string question) => new(null!, question, []);
 
-        ItIsTheQuestionsOwnWords(summary, "SiblingSource(job)");
-        summary.ShouldContain("SiblingSink(job)");
-        summary.ShouldEndWith("should the third be asked too?");
+        var summary = Raise(Open(LongQuestion), Open(LongQuestion.Replace("SiblingSource", "SiblingSink")), Open("should the third be asked too?")).Summary.ShouldNotBeNull();
+
+        ItIsTheQuestionsOwnWords(summary, "1. SiblingSource(job)");
+        summary.ShouldContain("2. SiblingSink(job)");
+        summary.ShouldEndWith("3. should the third be asked too?");
         summary.ShouldContain("...");
+    }
+
+    /// <summary>
+    /// Three long questions with options: no option has a button of its own, so each is in the line whole by its tag, and the questions
+    /// are cut to the floor with an ellipsis to make room. Past the bound the panel ends the line in an ellipsis with the whole on hover.
+    /// </summary>
+    [Fact]
+    public void ThreeQuestionsWithOptionsKeepEveryOptionWholeByItsTagAndCutTheQuestions()
+    {
+        var summary = Raise(Asked(LongQuestion), Asked(LongQuestion.Replace("SiblingSource", "SiblingSink")), Asked("should the third be asked too?")).Summary.ShouldNotBeNull();
+
+        summary.ShouldStartWith("1. SiblingSource(job)");
+        summary.ShouldNotContain("\n");
+        foreach (var n in new[] { 1, 2, 3 })
+        {
+            summary.ShouldContain($"{n}A: export where clones are (recommended). {n}B: always export it.");
+        }
+        summary.ShouldContain("... 1A:");
+        summary.ShouldContain("... 2A:");
     }
 
     [Theory]
@@ -91,7 +199,7 @@ public sealed class DesignCardWordsTests
     [InlineData("should it ring when the run ends after 12:30:15 or not?", "should it ring when the run ends after or not?")]
     public void AQuestionNamingAPathOrATimeKeepsItsWordsMinusThePathNotTheKindsFixedWords(string question, string expected)
     {
-        var summary = Raise(Asked(question));
+        var summary = Raise(Asked(question)).Summary.ShouldNotBeNull();
 
         ItIsTheQuestionsOwnWords(summary, expected);
         summary.ShouldNotContain("src/Pilot.Node");
@@ -102,25 +210,9 @@ public sealed class DesignCardWordsTests
     [Fact]
     public void ALongQuestionWithAPathIsBothBoundedAndWithoutThePath()
     {
-        var summary = Raise(Asked("src/Pilot.Node/Flights/PrReviews.Cards.cs " + LongQuestion));
+        var summary = Raise(Asked("src/Pilot.Node/Flights/PrReviews.Cards.cs " + LongQuestion)).Summary.ShouldNotBeNull();
 
         ItIsTheQuestionsOwnWords(summary, "PrReviews.Cards.cs SiblingSource(job)");
         summary.ShouldEndWith("...");
-    }
-
-    [Fact]
-    public void AnOptionsButtonEndsInAnEllipsisPastWhatTwoLinesHoldAndTheAnswerStaysWhole()
-    {
-        var choices = PrReviews.DesignChoices(Subject, [Asked("should it?")]);
-
-        choices[0].Label.Length.ShouldBeLessThanOrEqualTo(PrReviews.MaxOptionLabel);
-        choices[0].Label.ShouldEndWith("...");
-        choices[0].Args.ShouldBe([Recommended.Answer]);
-        // The whole option, the answer the button sends, is the hover of a button that was cut; a whole label has none.
-        choices[0].Hint.ShouldBe(Recommended.Answer);
-        choices[^1].Hint.ShouldBeNull();
-        choices[^1].Label.ShouldBe(PrReviews.AnswerLabel);
-        PrReviews.DesignChoices(Subject, [new DesignQuestion(null!, "should it?", [new DesignOption("Keep a library", "", true)])])[0].Label.ShouldBe("Keep a library");
-        PrReviews.DesignChoices(Subject, [new DesignQuestion(null!, "should it?", [new DesignOption("Keep a library", "", true)])])[0].Hint.ShouldBeNull();
     }
 }

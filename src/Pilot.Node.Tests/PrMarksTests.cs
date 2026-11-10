@@ -267,8 +267,9 @@ public sealed class PrMarksTests2 : PrMarksTestsBase
         review.MarksWhy.ShouldContain("rate limited");
         review.MarksWhy.ShouldContain("Resource not accessible");
         (review.StatusState, review.Label, review.ReviewUrl).ShouldBe(("pending", "pilot: reviewing", null));
-        var card = Open().Single(c => c.Kind == PrMarks.RefusedKind);
-        card.Bin.ShouldBe(CardBin.ForYou);
+        // A line to read (Handled, born closed): the node sets the marks itself at its next look, so nothing is asked of the person.
+        var card = _state.Cards().Single(c => c.Kind == PrMarks.RefusedKind);
+        card.Bin.ShouldBe(CardBin.Handled);
         card.Title.ShouldStartWith("GitHub refused a mark on TIA1's PR #71: the review comment: GitHub refused the review: Resource not accessible");
         // The merge is still offered: the review passed.
         Open().ShouldContain(c => c.Kind == LegCommander.PrReady);
@@ -283,12 +284,12 @@ public sealed class PrMarksTests2 : PrMarksTestsBase
         (await Verdict(flight.Code, "pass", "all good")).Error.ShouldBeNull();
         _github.Posted.Count.ShouldBe(1);
         F(flight.Code).Review!.MarksWhy.ShouldNotBeNull();
-        var cards = Open().Count(c => c.Kind == PrMarks.RefusedKind);
+        var cards = _state.Cards().Count(c => c.Kind == PrMarks.RefusedKind);
         cards.ShouldBe(1);
 
         // Still refused: the same why is not carded again.
         await _legs.RetryMarksAsync(Ct);
-        Open().Count(c => c.Kind == PrMarks.RefusedKind).ShouldBe(cards);
+        _state.Cards().Count(c => c.Kind == PrMarks.RefusedKind).ShouldBe(cards);
 
         _github.StatusFails = null;
         await _legs.RetryMarksAsync(Ct);
@@ -297,7 +298,7 @@ public sealed class PrMarksTests2 : PrMarksTestsBase
         (review.StatusState, review.Label, review.MarksWhy).ShouldBe(("success", "pilot: passed", null));
         _github.Statuses.Last().ShouldBe((Reviewed, "success", $"passed at {Reviewed[..9]}", review.ReviewUrl));
         _github.Posted.Count.ShouldBe(1);
-        Open().ShouldNotContain(c => c.Kind == PrMarks.RefusedKind);
+        _state.Cards().Count(c => c.Kind == PrMarks.RefusedKind).ShouldBe(cards);
     }
 
     [Fact]

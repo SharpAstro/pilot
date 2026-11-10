@@ -13,8 +13,8 @@ namespace Pilot.Node;
 /// </summary>
 public sealed class Autopilot(NodeState state, IServiceProvider services)
 {
-    public const string AllowLabel = "Allow";
-    public const string DenyLabel = "Deny";
+    public const string AllowLabel = "Allow it";
+    public const string DenyLabel = "Deny it";
 
     /// <summary>
     /// The card for <paramref name="command"/>, an assistant's your-only command not to be run yet; its result is a refusal
@@ -89,14 +89,14 @@ public sealed class Autopilot(NodeState state, IServiceProvider services)
             .OrderByDescending(s => s.StartedAt).FirstOrDefault();
         if (session is null)
         {
-            state.NoteOutcome(card.Id, $"{(allowed ? "Allow" : "Deny")}; {asker} is no session the node knows, so it was not told");
+            state.NoteOutcome(card.Id, $"{(allowed ? AllowLabel : DenyLabel)}; {asker} is no session the node knows, so it was not told");
             return;
         }
         var said = await services.GetRequiredService<SessionMessenger>().SayAsync(
             new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(session.Id), Args = [text], Who = LegWatch.Who }, cancellationToken);
         if (!said.Ok)
         {
-            state.NoteOutcome(card.Id, $"{(allowed ? "Allow" : "Deny")}; {asker} could not be told: {said.Error}");
+            state.NoteOutcome(card.Id, $"{(allowed ? AllowLabel : DenyLabel)}; {asker} could not be told: {said.Error}");
         }
     }
 

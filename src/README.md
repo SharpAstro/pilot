@@ -714,7 +714,7 @@ pilot say-all <text…> [--all] [--role worker|planner|reviewer|pilot|adHoc|watc
 pilot compact <session> [focus…]               # an idle background session's /compact, as its next turn (see Compaction)
 pilot note <text…>
 pilot summary [<code>] [--fresh] [--fleet]     # the kept summary (Needs you, Where it is) with its age, tokens and cost; made when none or --fresh (see The summary)
-pilot summarise [<code>]                       # asks the watchtower now for a new summary of the flights in play (or one flight), one Haiku call only when it is down; keeps and prints the answer
+pilot summarise [<code>]                       # asks the watchtower now for a new summary of the flights in play (or one flight), one summary call only when it is down; keeps and prints the answer
 pilot review-cost [--since <date>] [--until <date>] [--repo <repo>]   # per landed flight: its reviewer sessions (round, model, head) and their tokens, with totals and an average; pilot-node review-cost reads the data folder with no node
 pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
 pilot node restart [why…]                      # the node restarts in place: its successor starts, jobs carry on and are counted in the answer
@@ -742,12 +742,12 @@ with when it was made, its tokens and its cost, on the feed for every client.
 
 **How it is kept current.** While a client is attached (a window, a TUI, a stream), the node asks the watchtower to
 remake the fleet summary after the fleet changes, and keeps the answer; the watchtower's work is part of its own
-session, so it adds no Haiku call. With no client attached nothing is asked and nothing is spent. A person can ask at
+session, so it adds no summary call. With no client attached nothing is asked and nothing is spent. A person can ask at
 once: the **Refresh** button on the Summary panel and `pilot summarise` both ask the watchtower now and replace the kept
-summary for everyone. Only when the watchtower is down does the node make it itself, with one Haiku call (no tools, no
-MCP, no saved session); the row then says why it is not following (`SummaryRow.NotFollowing`), the panel reads `from
-09:12; the watchtower is down`, and Refresh names the price of the press. The panel otherwise reads `made 3 min ago ·
-follows changes` and shows no cost.
+summary for everyone. Only when the watchtower is down does the node make it itself, with one call of the summary model
+(sonnet unless `set node summary-model` says otherwise; no tools, no MCP, no saved session); the row then says why it is
+not following (`SummaryRow.NotFollowing`), the panel reads `from 09:12; the watchtower is down`, and Refresh names the
+price of the press. The panel otherwise reads `made 3 min ago · follows changes` and shows no cost.
 
 So `pilot summary` costs nothing when a summary is kept: it prints that one and says its age (`made 5 min ago
 (2026-10-28 09:00 UTC) · 1,234 tokens · $0.0021`), and it makes one, as `pilot summarise` does, when there is none yet

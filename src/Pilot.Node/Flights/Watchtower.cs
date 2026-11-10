@@ -882,7 +882,7 @@ public sealed partial class Watchtower(
                     catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
                     {
                         _nextTry = now + RetryAfter;
-                        RaiseDown($"The watchtower could not be restarted on its new model: {LegCommander.OneLine(ex.Message)}", $"{ex.Message}; the node tries again in {RetryAfter.TotalMinutes:0} minutes");
+                        RaiseDown("The watchtower could not restart on its new model",$"{ex.Message}; the node tries again in {RetryAfter.TotalMinutes:0} minutes");
                     }
                 }
                 return;
@@ -1142,11 +1142,14 @@ public sealed partial class Watchtower(
                 return false;
             }
             var untrusted = ex.Message.Contains("not trusted", StringComparison.OrdinalIgnoreCase);
-            state.RaiseCard(CardBin.Ring, Down, Verbs.WatchtowerTarget, untrusted ? $"The watchtower could not be started: {folder} was never trusted by Claude Code" : $"The watchtower could not be started: {LegCommander.OneLine(ex.Message)}",
+            state.RaiseCard(CardBin.Ring, Down, Verbs.WatchtowerTarget, untrusted ? "The watchtower cannot start: its folder is not trusted" : "The watchtower could not be started",
                 untrusted
                     ? $"Claude Code starts no background session in a folder never trusted. Run `claude` in {folder} once and accept the prompt (or start the node with --watchtower-folder <a trusted folder>); the node tries again every {RetryAfter.TotalMinutes:0} minutes."
                     : $"{ex.Message}; the node tries again in {RetryAfter.TotalMinutes:0} minutes",
-                [new CardChoice { Label = "Start the watchtower now instead of waiting for the next try", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = ["tried again from its card"] }]);
+                [new CardChoice { Label = "Start it now", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = ["tried again from its card"] }],
+                summary: untrusted
+                    ? $"Run `claude` once in {folder} and answer yes to its prompt: Claude Code starts no background session in a folder it was never shown."
+                    : $"{LegCommander.OneLine(ex.Message)}. The node tries again in {RetryAfter.TotalMinutes:0} minutes.");
             return false;
         }
 
@@ -1362,7 +1365,8 @@ public sealed partial class Watchtower(
         _job = null;
         _startedAt = null;
         state.RaiseCard(CardBin.Handled, "watchtower-parked", Verbs.WatchtowerTarget,
-            $"Stopped the watchtower: no flight in the air and no UI connected for {QuietFor.TotalMinutes:0} minutes; a flight taking off or a UI connecting resumes it within the hour, else starts a fresh one");
+            "Stopped the watchtower: no flight in the air, no UI",
+            $"No flight in the air and no UI connected for {QuietFor.TotalMinutes:0} minutes; a flight taking off or a UI connecting resumes it within the hour, else starts a fresh one.");
     }
 
     // A stream watchtower's model is not part of it: a changed model restarts the process on --resume at its next idle (RelaunchOnSettingAsync),

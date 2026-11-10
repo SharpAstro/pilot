@@ -423,7 +423,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         await checks.LookAsync(Ct);
         F("TIA20").MergeQueue.ShouldBeNull();
         var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Bin, card.Title).ShouldBe((PrChecks.QueueDropped, CardBin.ForYou, "TIA20's PR #71 left the merge queue unmerged: failed checks"));
+        (card.Kind, card.Bin, card.Title).ShouldBe((PrChecks.QueueDropped, CardBin.ForYou, "TIA20's PR #71 left the merge queue unmerged"));
         card.Detail.ShouldNotBeNull().ShouldContain("failed checks");
         card.Link.ShouldBe("https://github.com/x/tianwen/pull/71");
         var merge = card.Choices.ShouldHaveSingleItem();
@@ -569,7 +569,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.MergeDropped);
         var card = Open().ShouldHaveSingleItem();
         card.Kind.ShouldBe(LegCommander.ReviewChanges);
-        card.Title.ShouldStartWith($"{flight.Code}'s PR fails its checks: the PR's checks failed on ");
+        card.Title.ShouldBe($"{flight.Code}'s PR fails its checks");
         card.Detail.ShouldNotBeNull().ShouldStartWith("the PR's checks failed on ");
         (await Run(Verbs.GoAround, $"flight/{flight.Code}/parser", "controller", "fix the checks")).Error.ShouldBeNull();
     }
@@ -665,14 +665,14 @@ public sealed class ReviewTests1 : ReviewTestsBase
         _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: true, Position: 2);
         _github.LabelFails = "GitHub refused the label: rate limited";
         await checks.LookAsync(Ct);
-        var refused = Open().Single(c => c.Kind == PrMarks.RefusedKind);
+        var refused = _state.Cards().Single(c => c.Kind == PrMarks.RefusedKind);
         refused.Detail.ShouldNotBeNull().ShouldContain("pilot: queued");
         F(flight.Code).Review!.LabelOverride.ShouldBe("pilot: queued");
         PilotLabels(_github.Labels[number]).ShouldBe(["pilot: passed"]);
 
         // Still refused: tried again at the look, not carded twice.
         await checks.LookAsync(Ct);
-        Open().Count(c => c.Kind == PrMarks.RefusedKind).ShouldBe(1);
+        _state.Cards().Count(c => c.Kind == PrMarks.RefusedKind).ShouldBe(1);
 
         _github.LabelFails = null;
         await checks.LookAsync(Ct);
@@ -1010,9 +1010,9 @@ public sealed class ReviewTests2 : ReviewTestsBase
         await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA71"), "controller");
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
-        card.Title.ShouldStartWith("TIA71's review did not start: ");
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start TIA71's review again", Verbs.StartReview), ("Land TIA71 without a review", Verbs.Review)]);
-        card.Summary.ShouldNotBeNull().ShouldStartWith("The reviewer of TIA71/parser did not start, so nothing was reviewed. Start TIA71's review again starts it again");
+        card.Title.ShouldBe("TIA71's review did not start");
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start the review again", Verbs.StartReview)]);
+        card.Summary.ShouldBe("Run the review of TIA71 again. The reviewer of TIA71/parser did not start, so nothing was reviewed.");
     }
 
     [Fact]
@@ -1035,7 +1035,10 @@ public sealed class ReviewTests2 : ReviewTestsBase
         _github.DraftCalls.ShouldContain((_github.Pr!.Number, true));
         var card = Open().ShouldHaveSingleItem();
         card.Kind.ShouldBe(LegCommander.ReviewChanges);
-        card.Title.ShouldStartWith("TIA7's PR fails its checks: ");
+        card.Title.ShouldBe("TIA7's PR fails its checks");
+        card.Summary.ShouldBe("Have a worker on parser put it right on top of the leg's work. The PR of TIA7/parser fails its checks.");
+        // No override that lands the PR with its checks failing (#797): that is the CLI's review pass, with a reason.
+        card.Choices.Select(c => c.Label).ShouldBe(["Fix the failing checks"]);
         card.Detail.ShouldNotBeNull().ShouldStartWith("the PR's checks failed on ");
         // The ring's go-around is the way round for the done leg, as for a review's changes.
         (await Run(Verbs.GoAround, "flight/TIA7/parser", "controller", "fix the checks")).Error.ShouldBeNull();
@@ -1800,9 +1803,14 @@ public sealed class ReviewTests5 : ReviewTestsBase
         var card = Open().ShouldHaveSingleItem();
         card.Kind.ShouldBe(LegCommander.ReviewChanges);
         var fix = card.Choices.Single(c => c.Verb == Verbs.GoAround);
-        // The round and the model, never "redo": the work is kept (the owner, 2026-10-29).
-        fix.Label.ShouldBe("Fix the review's findings (round 3, on Opus at xhigh)");
-        fix.Label.ShouldContain("Opus");
+        // The round and the model, never "redo": the work is kept (the owner, 2026-10-29). They are the detail's, the button says only
+        // what it does (#797).
+        fix.Label.ShouldBe("Fix the review's findings");
+        card.Detail.ShouldNotBeNull().ShouldEndWith("Next worker (round 3, on Opus at xhigh).");
+        // The golden card: what happened, what to do first, and short verbs.
+        card.Title.ShouldBe("TIA2's review found things to fix");
+        card.Summary.ShouldBe("Have a worker on parser put it right on top of the leg's work. The review of TIA2/parser found things to fix.");
+        card.Choices.Select(c => c.Label).ShouldBe(["Fix the review's findings"]);
     }
 
     [Fact]
@@ -1817,7 +1825,7 @@ public sealed class ReviewTests5 : ReviewTestsBase
 
         var card = Open().ShouldHaveSingleItem();
         (card.Kind, card.Detail).ShouldBe((LegCommander.ReviewChanges, "the parser drops the last line"));
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Fix the review's findings", Verbs.GoAround), ("Land TIA2 with the review's findings unfixed", Verbs.Review)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Fix the review's findings", Verbs.GoAround)]);
 
         // The go-around reopens the done leg with the review's words; its finish pushes and starts a fresh review.
         var goAround = card.Choices[0];
@@ -1836,7 +1844,7 @@ public sealed class ReviewTests5 : ReviewTestsBase
         F("TIA2").Review!.State.ShouldBe(ReviewState.Reviewing);
         Git(Repo, "ls-remote", "origin", "flight/tia2").ShouldContain(Git(flight.Worktree, "rev-parse", "HEAD"));
 
-        // Asked for changes again, the controller may pass it anyway.
+        // Asked for changes again, the controller may pass it anyway, from the command line only (#797: no card offers it).
         await Run(Verbs.Review, "flight/TIA2", Reviewer("TIA2"), "changes", "naming");
         (await Run(Verbs.Review, "flight/TIA2", "controller", "pass", "ready anyway")).Ok.ShouldBeTrue();
         F("TIA2").Review!.Report.ShouldBe("ready anyway (passed by controller over: naming)");

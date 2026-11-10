@@ -108,7 +108,7 @@ public sealed partial class LegCommander
         var baseMergeOnly = false;
         string? model = null;
         Launching(ReviewKey(flight.Code), $"{reviewer}, to review {flight.Code}", subject,
-            new CardChoice { Label = $"Start {flight.Code}'s reviewer again", Verb = Verbs.StartReview, Target = subject },
+            new CardChoice { Label = "Start the reviewer again", Verb = Verbs.StartReview, Target = subject },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
@@ -223,7 +223,8 @@ public sealed partial class LegCommander
         state.PutFlight(now with { Review = now.Review with { ReviewedHead = head, StatusState = null, MarksWhy = null }, ReviewRounds = rounds });
         var short8 = (string s) => CommitRefs.Short(s);
         state.RaiseCard(CardBin.Handled, "review-kept", Verbs.FlightTarget(flight.Code),
-            $"{flight.Code}: review kept at {short8(head)}; it passed at {short8(old)} and the PR's own diff is the same (only the base came in), so no reviewer started");
+            $"{flight.Code}'s passed review still stands",
+            $"Review kept at {short8(head)}; it passed at {short8(old)} and the PR's own diff is the same (only the base came in), so no reviewer started");
         // No fresh review follows, so the hold (if the leg made one its own) is the watchtower's again.
         HoldForWatchtower(flight.Code, null);
         await _marks.ApplyAsync(flight.Code, cancellationToken);
@@ -491,9 +492,9 @@ public sealed partial class LegCommander
             holding ? $"{flight.Code}'s PR #{pr.Number} is holding: {holdReason}" : $"{flight.Code}'s PR #{pr.Number} is ready to merge",
             $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {CommitRefs.Short(pr.Head)}. {reviewed}: {review}."
                 + (holding ? HeldDetailTail : ""),
-            [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url,
+            [new CardChoice { Label = MergeLabel, Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url,
             summary: holding
-                ? $"{flight.Code} passed its review with notes and holds for a few minutes. Unless the watchtower takes the hold or commits in the plane, it merges with the notes; Merge is refused until then."
+                ? $"Wait a few minutes: {flight.Code} passed its review with notes and merges with them unless the watchtower takes the hold or commits in the plane. The merge is refused until then."
                 : $"{flight.Code} is reviewed and its PR #{pr.Number} is ready. Merge lands it; dismissing leaves the PR open.",
             // The title names the PR only: a new head is a new card for a person to see, whatever was dismissed for the one before (#853).
             cause: $"{(holding ? "holding" : "ready")}:{pr.Number}:{pr.Head}");
@@ -745,58 +746,5 @@ public sealed partial class LegCommander
                 new CardChoice { Label = "Allow one more round", Verb = Verbs.AllowRound, Target = target, Args = ["the watchtower allowed it"] },
             ], link: flight.PullRequestUrl,
             summary: $"The review of {flight.Code} (PR {flight.PullRequestUrl}) has asked for changes {rounds.Length} times. The node sends no leg round and starts no reviewer: the watchtower passes it with the findings noted, settles the disagreement in the plane ({flight.Worktree}), rings the person for what it cannot settle, or allows one more round.");
-    }
-
-    /// <summary>
-    /// Why a done leg is sent back: what its card is worded for (the review's findings, failed checks, or a reviewer that did not start).
-    /// A conflict is not sent back as one of these: a worker is told it, or the last leg goes round on it (<see cref="ResolveConflictAsync"/>).
-    /// </summary>
-    private enum SendBackReason
-    {
-        Findings,
-        ChecksFailed,
-        ReviewNotStarted,
-    }
-
-    private void RaiseReviewChanges(FlightRow flight, string changes, SendBackReason reason = SendBackReason.Findings)
-    {
-        var last = state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault();
-        var leg = last is null ? flight.Code : $"{flight.Code}/{last.Name}";
-        // Each card says what happened, not a review's findings it did not have (the review of #453): a check that failed and a
-        // reviewer that never started raise this card too.
-        var firstLine = changes.Split('\n', 2)[0].Trim();
-        var because = firstLine.Length > 0 ? $": {Clip(firstLine)}" : ": nothing was written down, see the PR's review";
-        var (title, words, said, anyway) = reason switch
-        {
-            SendBackReason.ChecksFailed => ($"{flight.Code}'s PR fails its checks{because}", "Fix the failing checks", $"The PR of {leg} fails its checks.", $"Land {flight.Code} with its checks failing"),
-            SendBackReason.ReviewNotStarted => ($"{flight.Code}'s review did not start{because}", $"Start {flight.Code}'s review again", $"The reviewer of {leg} did not start, so nothing was reviewed.", $"Land {flight.Code} without a review"),
-            _ => ($"{flight.Code}'s review asks for changes{because}", "Fix the review's findings", $"The review of {leg} found things to fix.", $"Land {flight.Code} with the review's findings unfixed"),
-        };
-        // Said on the card's detail once the watchtower may no longer answer it, so the person sees why it waits on them. Not in
-        // the go-around's args, which become the next worker's brief: that worker is told what the review asked, not who decides.
-        var detail = changes;
-        // Not for a review that did not start: nothing is sent round from that card, so there is no round to decide on.
-        if (last is { ReviewGoArounds: >= MaxReviewGoArounds } && reason != SendBackReason.ReviewNotStarted)
-        {
-            // The findings first: a card shows its first lines, and this note there hid the problem it was about (PIL294's #357, 2026-10-27).
-            detail = $"{changes}\n{last.Name} has been sent back {last.ReviewGoArounds} times: this is yours to decide ({words} once more, mark it ready, or change what is asked).";
-        }
-        var choices = new List<CardChoice>();
-        if (reason == SendBackReason.ReviewNotStarted)
-        {
-            // Nothing was found, so nothing is sent round: the review is started again.
-            choices.Add(new CardChoice { Label = words, Verb = Verbs.StartReview, Target = Verbs.FlightTarget(flight.Code) });
-        }
-        else if (last is not null)
-        {
-            // Not "Redo leg": the worker fixes what was found on the leg's work as it stands; nothing is thrown away (the owner, 2026-10-29).
-            choices.Add(new CardChoice { Label = Models.SendBackLabel(last, words), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [reason == SendBackReason.Findings ? $"the review asked for changes: {changes}" : changes] });
-        }
-        choices.Add(new CardChoice { Label = anyway, Verb = Verbs.Review, Target = Verbs.FlightTarget(flight.Code), Args = ["pass", "ready anyway"] });
-        state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), title, detail, choices, link: flight.PullRequestUrl, summary: reason == SendBackReason.ReviewNotStarted || last is null
-                ? $"{said} {(reason == SendBackReason.ReviewNotStarted ? $"{words} starts it again; " : "")}{anyway} takes it as it is."
-                : $"{said} {words} has a worker do it on the leg's work as it stands, nothing thrown away; {anyway} takes it as it is.",
-            // Each round on a new head, or after a further send-back, is a new cause even when the first line of the findings reads the same (#853).
-            cause: $"{title}|{flight.Review?.ReviewedHead}|{last?.ReviewGoArounds}|{last?.GoArounds}");
     }
 }

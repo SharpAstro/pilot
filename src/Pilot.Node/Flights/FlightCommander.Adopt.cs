@@ -12,7 +12,7 @@ public sealed partial class FlightCommander
     /// <summary>The For-you card that says what the old node had not pushed is not in an adopted flight, so it is at risk.</summary>
     public const string AdoptAtRiskKind = "adopt-at-risk";
 
-    /// <summary>The For-you card that says the adoption is done but the issue or the PR was not told.</summary>
+    /// <summary>The Handled line that says the adoption is done but the issue or the PR was not told.</summary>
     public const string AdoptCommentRefusedKind = "adopt-comment-refused";
 
     // An adoption claims a code as a create and a receive do, so it takes their turn on the one lock; the flight goes on by the
@@ -142,11 +142,17 @@ public sealed partial class FlightCommander
         var way = $"{code} {adopted.Text}";
         state.RaiseCard(CardBin.Handled, AdoptedKind, Verbs.FlightTarget(code), way,
             $"{Machine} adopted {code} from {from}, last heard from at {WhenWords(copy.LastHeard)}, and made its plane at {plane.Worktree} from {plane.Branch} on origin");
+        // The title says what happened, the first line what to do and why; the one button holds the flight here while the person looks.
         state.RaiseCard(CardBin.ForYou, AdoptAtRiskKind, Verbs.FlightTarget(code),
-            $"{code} was adopted from {from}: anything {from} had not pushed is at risk",
-            $"{Machine} made {code}'s plane from {plane.Branch} on origin, as {from} last pushed it. Commits not pushed, files not committed and a leg's work not yet pushed on {from} are not here, and a leg that was flying there starts again here from what is pushed. Look at {from}'s plane when it is back, before it flies {code} again.");
+            $"{code} was adopted; what {from} had not pushed is not here",
+            $"{Machine} made {code}'s plane from {plane.Branch} on origin, as {from} last pushed it. Commits not pushed, files not committed and a leg's work not yet pushed on {from} are not here, and a leg that was flying there starts again here from what is pushed. Look at {from}'s plane when it is back, before it flies {code} again.",
+            [new CardChoice { Label = AdoptHoldLabel, Verb = Verbs.Ground, Target = Verbs.FlightTarget(code), Args = [$"held to bring in what {from} had not pushed before it flies on here"] }],
+            summary: $"Look at {from}'s plane when it is back and push what it holds, or hold {code} here until you have: its plane was made from what {from} last pushed, so its unpushed work is not in it.");
         return (code, way);
     }
+
+    /// <summary>The adopt-at-risk card's button: the owner's hold on the adopted flight, while what the old node had not pushed is brought in.</summary>
+    public const string AdoptHoldLabel = "Hold the flight here";
 
     /// <summary>The leg as a node that has no worker for it holds it: planned again, with nothing of the attempt that was flying elsewhere.</summary>
     private static LegRow Replanned(LegRow leg) => leg with
@@ -203,8 +209,9 @@ public sealed partial class FlightCommander
         }
         catch (FlightException ex)
         {
-            state.RaiseCard(CardBin.ForYou, "node-label-refused", Verbs.FlightTarget(flight.Code),
-                $"{flight.Code} is flying here, but {flight.Item.Noun} still has the label {PilotMarks.NodeLabel(from)}: {LegCommander.OneLine(ex.Message)}", ex.Message);
+            // A line, as every refused node label is (#797): the flight flies on, and the detail says what GitHub answered.
+            state.RaiseCard(CardBin.Handled, "node-label-refused", Verbs.FlightTarget(flight.Code),
+                $"{PilotMarks.NodeLabel(from)} is still on {flight.Item.Noun} {flight.Item.Display}", ex.Message);
         }
     }
 
@@ -237,9 +244,10 @@ public sealed partial class FlightCommander
         }
         if (failures.Count > 0)
         {
-            state.RaiseCard(CardBin.ForYou, AdoptCommentRefusedKind, Verbs.FlightTarget(flight.Code),
-                $"{flight.Code} was adopted from {from}, but {string.Join(" and ", failures.Select(f => f.Split(':')[0]))} was not told: a comment was refused",
-                string.Join("\n", failures));
+            // A line, not a ring: the adoption stands, and the detail holds the words to post by hand if they are wanted there.
+            state.RaiseCard(CardBin.Handled, AdoptCommentRefusedKind, Verbs.FlightTarget(flight.Code),
+                $"{flight.Code} was adopted, but {string.Join(" and ", failures.Select(f => f.Split(':')[0]))} was not told",
+                $"{string.Join("\n", failures)}\nThe comment, to post by hand: {body}");
         }
     }
 

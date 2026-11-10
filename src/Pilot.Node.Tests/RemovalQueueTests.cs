@@ -258,7 +258,7 @@ public sealed class RemovalQueueTests : IDisposable
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AFolderHeldPastThreeStartsRingsOnceNamingTheHolderAndTheCardClosesOnceItIsReleased()
+    public async Task AFolderHeldPastThreeStartsIsOneHandledLineNamingTheHolderAndNoMoreOnceItIsReleased()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
         var time = new Sessions.ManualTime(new DateTimeOffset(2026, 10, 26, 9, 0, 0, TimeSpan.Zero));
@@ -272,12 +272,17 @@ public sealed class RemovalQueueTests : IDisposable
             for (var start = 1; start <= 3; start++)
             {
                 await Start().StartingAsync(Ct);
-                state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == RemovalQueueStart.Kind);
+                state.Cards().ShouldNotContain(c => c.Kind == RemovalQueueStart.Kind);
             }
 
             await Start().StartingAsync(Ct);
-            var card = state.Cards(openOnly: true).Where(c => c.Kind == RemovalQueueStart.Kind).ShouldHaveSingleItem();
-            card.Bin.ShouldBe(CardBin.ForYou);
+            var card = state.Cards().Where(c => c.Kind == RemovalQueueStart.Kind).ShouldHaveSingleItem();
+            // A Handled line (#797): there is nothing to press, and the node removes the folder once it is let go. The holder is named
+            // in the detail, never "unknown".
+            card.Bin.ShouldBe(CardBin.Handled);
+            card.Title.ShouldBe("1 folder Windows still holds open");
+            card.Summary.ShouldBe("Close whatever holds the folder open (the detail names it): the node removes it once it is let go.");
+            card.Choices.ShouldBeEmpty();
             var detail = card.Detail.ShouldNotBeNull();
             detail.ShouldContain(Path.GetFullPath(folder));
             detail.ShouldContain("4 starts tried");
@@ -289,7 +294,7 @@ public sealed class RemovalQueueTests : IDisposable
 
         await Start().StartingAsync(Ct);
         queue.Entries().ShouldBeEmpty();
-        state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == RemovalQueueStart.Kind);
+        state.Cards().Count(c => c.Kind == RemovalQueueStart.Kind).ShouldBe(1);
     }
 
     [Fact]
@@ -305,10 +310,10 @@ public sealed class RemovalQueueTests : IDisposable
         {
             var runner = new RemovalQueueStart(queue, state, time) { Holders = _ => [] };
             await runner.StartingAsync(Ct);
-            state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == RemovalQueueStart.Kind);
+            state.Cards().ShouldNotContain(c => c.Kind == RemovalQueueStart.Kind);
             time.Advance(TimeSpan.FromHours(25));
             await runner.StartingAsync(Ct);
-            state.Cards(openOnly: true).Where(c => c.Kind == RemovalQueueStart.Kind).ShouldHaveSingleItem().Detail.ShouldNotBeNull().ShouldContain("holder unknown");
+            state.Cards().Where(c => c.Kind == RemovalQueueStart.Kind).ShouldHaveSingleItem().Detail.ShouldNotBeNull().ShouldContain("held by a process");
         }
     }
 
@@ -323,7 +328,8 @@ public sealed class RemovalQueueTests : IDisposable
         time.Advance(TimeSpan.FromHours(20));
         var b = QueuedFolder(queue);
         var runner = new RemovalQueueStart(queue, state, time) { Holders = _ => [] };
-        CardRow[] Cards() => [.. state.Cards(openOnly: true).Where(c => c.Kind == RemovalQueueStart.Kind)];
+        // Handled lines (#797), by number (the fake clock gives two the same time): a new one only when the set of folders held open changes.
+        CardRow[] Cards() => [.. state.Cards().Where(c => c.Kind == RemovalQueueStart.Kind).OrderBy(c => int.Parse(c.Id[1..], System.Globalization.CultureInfo.InvariantCulture))];
 
         using var holdA = Hold(a);
         using var holdB = Hold(b);
@@ -333,19 +339,21 @@ public sealed class RemovalQueueTests : IDisposable
         first.Detail.ShouldNotBeNull().ShouldContain(Path.GetFullPath(a));
         first.Detail.ShouldNotContain(Path.GetFullPath(b));
 
-        // The same set leaves the card be; B past a day joins it as a new one.
+        // The same set says nothing again; B past a day joins it in a new line.
         await runner.StartingAsync(Ct);
         Cards().ShouldHaveSingleItem().Id.ShouldBe(first.Id);
         time.Advance(TimeSpan.FromHours(20));
         await runner.StartingAsync(Ct);
-        var second = Cards().ShouldHaveSingleItem();
+        Cards().Length.ShouldBe(2);
+        var second = Cards()[^1];
         second.Id.ShouldNotBe(first.Id);
         second.Detail.ShouldNotBeNull().ShouldContain(Path.GetFullPath(a));
         second.Detail.ShouldContain(Path.GetFullPath(b));
 
         holdA.Dispose();
         await runner.StartingAsync(Ct);
-        var third = Cards().ShouldHaveSingleItem();
+        Cards().Length.ShouldBe(3);
+        var third = Cards()[^1];
         third.Detail.ShouldNotBeNull().ShouldContain(Path.GetFullPath(b));
         third.Detail.ShouldNotContain(Path.GetFullPath(a));
     }
@@ -358,7 +366,8 @@ public sealed class RemovalQueueTests : IDisposable
         var state = new NodeState(new InMemoryJournal(), time);
         var queue = new RemovalQueue(RemovalQueue.FileIn(Path.Combine(_root, "restart-data")), time);
         var a = QueuedFolder(queue);
-        CardRow[] Cards() => [.. state.Cards(openOnly: true).Where(c => c.Kind == RemovalQueueStart.Kind)];
+        // Handled lines (#797), by number (the fake clock gives two the same time): a new one only when the set of folders held open changes.
+        CardRow[] Cards() => [.. state.Cards().Where(c => c.Kind == RemovalQueueStart.Kind).OrderBy(c => int.Parse(c.Id[1..], System.Globalization.CultureInfo.InvariantCulture))];
         Task Start() => new RemovalQueueStart(queue, state, time) { Holders = _ => [] }.StartingAsync(Ct);
 
         using var holdA = Hold(a);
@@ -377,16 +386,18 @@ public sealed class RemovalQueueTests : IDisposable
             Cards().ShouldHaveSingleItem().Id.ShouldBe(first.Id);
         }
         await Start();
-        var second = Cards().ShouldHaveSingleItem();
+        Cards().Length.ShouldBe(2);
+        var second = Cards()[^1];
         second.Id.ShouldNotBe(first.Id);
         second.Detail.ShouldNotBeNull().ShouldContain(Path.GetFullPath(a));
         second.Detail.ShouldContain(Path.GetFullPath(b));
 
-        // Both released: the next start removes them and closes the card.
+        // Both released: the next start removes them and says nothing more.
         holdA.Dispose();
         holdB.Dispose();
         await Start();
-        Cards().ShouldBeEmpty();
+        queue.Entries().ShouldBeEmpty();
+        Cards().Length.ShouldBe(2);
     }
 
     [Fact]
@@ -408,7 +419,7 @@ public sealed class RemovalQueueTests : IDisposable
                 runner.Look().ShouldBeTrue();
             }
             queue.Entries().ShouldHaveSingleItem().StartsTried.ShouldBe(0);
-            state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == RemovalQueueStart.Kind);
+            state.Cards().ShouldNotContain(c => c.Kind == RemovalQueueStart.Kind);
         }
     }
 

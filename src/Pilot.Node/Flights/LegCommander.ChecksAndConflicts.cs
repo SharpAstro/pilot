@@ -34,12 +34,12 @@ public sealed partial class LegCommander
     /// <summary>What the node tried for a PR whose failed checks it could not send back, and what each choice does.</summary>
     public string ChecksFailedSummary(string code, int number, string why, IReadOnlyList<CardChoice> choices) =>
         $"The PR #{number} of {code} fails its checks; the node tried to send the last leg back and could not ({OneLine(why)})." +
-        (choices.Count > 0 ? $" {choices[0].Label} starts a fresh worker told what failed." : " Fix them by hand, then dismiss this.");
+        (choices.Count > 0 ? " A fresh worker, told what failed, can fix them." : " Fix them by hand, then dismiss this.");
 
     /// <summary>The choice that sends the flight's last leg round on a PR's failed checks, as the card's one action.</summary>
     public IReadOnlyList<CardChoice> ChecksFailedChoices(string code, string head, int number) =>
         state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is { } last
-            ? [new CardChoice { Label = Models.RedoLabel(last, "left the PR's checks failing"), Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name),
+            ? [new CardChoice { Label = Verbs.FreshWorker, Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name),
                 Args = [$"the PR's checks failed on {CommitRefs.Short(head)}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push"] }]
             : [];
 
@@ -165,7 +165,7 @@ public sealed partial class LegCommander
     /// <summary>The rung of the conflict ladder a go-around starts its worker on: its model and effort, and the words that name it.</summary>
     private sealed record ConflictRung(int Number, string Model, string? Effort, string Words)
     {
-        public string Label => $"conflict worker {Number} of {RoleModels.ConflictRungs} ({Words})";
+        public string Name => $"conflict worker {Number} of {RoleModels.ConflictRungs} ({Words})";
     }
 
     /// <summary>A conflict round asked for through the command route: its brief, which the go-around finds again, and its rung.</summary>
@@ -259,15 +259,27 @@ public sealed partial class LegCommander
         var detail = $"The last of {RoleModels.ConflictRungs} conflict workers found that the PR and its base change the same behaviour in opposite ways, so both cannot stay.\n" +
             $"Files: {files}\nOn the base: {decision.OnBase}\nOn the branch: {decision.OnBranch}\n" +
             $"Keeping the base's behaviour costs: {decision.KeepBaseCosts}\nKeeping the branch's behaviour costs: {decision.KeepBranchCosts}";
+        // What the next worker runs on is the detail's, never the button's (#797).
+        if (Models.NextWorkerNote(leg) is { } nextWorker)
+        {
+            detail = $"{detail}\n{nextWorker}";
+        }
+        // The title says what happened, the first line what to choose and why; the buttons say only which side stays.
         state.RaiseCard(CardBin.Ring, ConflictDecisionKind, target,
-            $"{flight.Code}'s PR conflicts with its base in {fileWords}: keep the base's behaviour or the branch's?",
+            $"{flight.Code}'s PR and its base change {fileWords} in opposite ways",
             detail,
             [
-                new CardChoice { Label = Models.SendBackLabel(leg, "Keep the base's behaviour"), Verb = Verbs.GoAround, Target = target, Args = [ConflictKeepBrief("base", decision)] },
-                new CardChoice { Label = Models.SendBackLabel(leg, "Keep the branch's behaviour"), Verb = Verbs.GoAround, Target = target, Args = [ConflictKeepBrief("branch", decision)] },
+                new CardChoice { Label = KeepBaseLabel, Verb = Verbs.GoAround, Target = target, Args = [ConflictKeepBrief("base", decision)] },
+                new CardChoice { Label = KeepBranchLabel, Verb = Verbs.GoAround, Target = target, Args = [ConflictKeepBrief("branch", decision)] },
             ],
-            summary: $"The workers sent to merge {flight.Code}'s PR with its base found the two change the same behaviour in opposite ways in {Clip(files)}. Keeping the base's behaviour costs: {Clip(decision.KeepBaseCosts)}. Keeping the branch's: {Clip(decision.KeepBranchCosts)}. Either choice sends the leg round told which side to keep.");
+            summary: $"Choose the side whose behaviour stays in {Clip(files)}: {flight.Code}'s PR and its base change it in opposite ways, and the workers sent to merge them could not keep both. Keeping the base's costs: {Clip(decision.KeepBaseCosts)}. Keeping the branch's: {Clip(decision.KeepBranchCosts)}.");
     }
+
+    /// <summary>The conflict-decision card's button that keeps the base's behaviour where the two sides disagree.</summary>
+    public const string KeepBaseLabel = "Keep the base's behaviour";
+
+    /// <summary>The conflict-decision card's button that keeps the branch's behaviour where the two sides disagree.</summary>
+    public const string KeepBranchLabel = "Keep the branch's behaviour";
 
     /// <summary>What the leg round a decision card's choice sends is told: the conflict, which side wins, and what the other side's work loses.</summary>
     private static string ConflictKeepBrief(string side, ConflictDecision decision)
@@ -293,7 +305,7 @@ public sealed partial class LegCommander
     /// what the last worker reported, and how to report when the two sides cannot both stay (<see cref="ConflictDecision.Shape"/>).
     /// </summary>
     private static string ConflictBrief(string why, string detail, ConflictRung rung, string? lastReport) =>
-        $"[{rung.Label}] {ConflictBrief(why, detail)}" +
+        $"[{rung.Name}] {ConflictBrief(why, detail)}" +
         (lastReport is { Length: > 0 } ? $"\nThe worker before you stopped and reported:\n{lastReport}\n" : "\n") +
         "If you find that the two sides change the same behaviour in opposite ways, so that keeping both sides' work is impossible, do not guess and do not drop either side: " +
         $"abort the merge (git merge --abort) and finish the leg failed with a report in exactly this shape, one field a line:\n{ConflictDecision.Shape}";

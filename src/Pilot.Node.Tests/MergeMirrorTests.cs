@@ -184,7 +184,7 @@ public sealed class MergeMirrorTests
         var card = Card(node, ready);
         Merge(card).Status.ShouldBe(ChoiceStatus.ChangesRequested);
         card.Title.ShouldContain("changes requested");
-        (await Answer(node, ready, "Merge")).Error.ShouldNotBeNull().ShouldContain("changes requested");
+        (await Answer(node, ready, "Merge the PR")).Error.ShouldNotBeNull().ShouldContain("changes requested");
         node.GitHub.Merged.ShouldBeEmpty();
         Card(node, ready).State.ShouldBe(CardState.Open);
     }

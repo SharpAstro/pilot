@@ -398,7 +398,7 @@ public static partial class Briefs
         text.Append(CommandShapeRule);
         text.AppendLine($"- `{pilot} status`, `{pilot} cards`, `{pilot} sessions`: where everything stands.");
         text.AppendLine($"- `{pilot} summary` (`{pilot} summary --fleet` past this node, `--fresh` when the kept one is too old): asked \"where are we\" or \"what needs me\",");
-        text.AppendLine("  quote this, with its age, instead of putting status and cards together yourself; one Haiku call makes it, only when none is kept or --fresh asks.");
+        text.AppendLine("  quote this, with its age, instead of putting status and cards together yourself; one summary call makes it, only when none is kept or --fresh asks.");
         text.AppendLine($"- `{pilot} answer <card> <choice>`, `{pilot} dismiss <card> <why>`.");
         text.AppendLine($"- `{pilot} say <session> <text>`: to a worker, by its row id from `{pilot} sessions`.");
         text.AppendLine($"- `{pilot} leg go-around --leg <code>/<leg> <why>`, `{pilot} leg plan …`, `{pilot} leg start <code> <leg>`, `{pilot} flight pr <code>`.");

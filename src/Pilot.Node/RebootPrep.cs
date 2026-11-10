@@ -304,7 +304,9 @@ public sealed class RebootPrep(NodeState state, TimeProvider time, string folder
             return;
         }
         // In the panel, as the owner asked ("we show a message in the panel that reboot is ready"): nothing to press but the reboot itself.
-        state.RaiseCard(CardBin.ForYou, ReadyKind, Verbs.NodeTarget, "Ready to reboot: every session's state is saved", Status());
+        state.RaiseCard(CardBin.ForYou, ReadyKind, Verbs.NodeTarget, "Ready to reboot: every session's state is saved", Status(),
+            [new CardChoice { Label = "Cancel the reboot", Verb = Verbs.Reboot, Target = Verbs.NodeTarget, Args = ["cancel"] }],
+            summary: "Reboot the machine now; once it is back, run pilot node reboot done and each flight resumes from its file.");
     }
 
     // The background sessions the node started that are live now: workers, validators, planners, reviewers, fixers and the watchtower.

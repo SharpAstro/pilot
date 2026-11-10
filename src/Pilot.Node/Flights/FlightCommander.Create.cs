@@ -230,7 +230,7 @@ public sealed partial class FlightCommander
         }
         catch (FlightException ex)
         {
-            state.RaiseCard(CardBin.ForYou, "node-label-refused", $"flight/{code}", $"{code} is flying, but {item.Noun} has no {PilotMarks.NodeLabel(Machine)} label: {LegCommander.OneLine(ex.Message)}", ex.Message);
+            state.RaiseCard(CardBin.Handled, "node-label-refused", $"flight/{code}", $"{code} is flying, but {item.Noun} has no {PilotMarks.NodeLabel(Machine)} label", ex.Message);
         }
         // The flight's PR (a hand-over has one already) says which node flies it as its item does; OpenPr gives it the label for a new PR.
         if (pullRequest is { } pr && github is not null)
@@ -241,7 +241,7 @@ public sealed partial class FlightCommander
             }
             catch (FlightException ex)
             {
-                state.RaiseCard(CardBin.ForYou, "node-label-refused", $"flight/{code}", $"{code} is flying, but its PR #{pr} has no {PilotMarks.NodeLabel(Machine)} label: {LegCommander.OneLine(ex.Message)}", ex.Message);
+                state.RaiseCard(CardBin.Handled, "node-label-refused", $"flight/{code}", $"{code} is flying, but its PR #{pr} has no {PilotMarks.NodeLabel(Machine)} label: {LegCommander.OneLine(ex.Message)}", ex.Message);
             }
         }
     }

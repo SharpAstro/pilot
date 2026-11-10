@@ -20,9 +20,10 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
         card.Summary.ShouldNotBeNull().ShouldContain($"{flight.Code}/parser");
-        // The findings are fixed on the leg's work as it stands: nothing is thrown away, so never "redo" (the owner, 2026-10-29).
-        card.Summary.ShouldContain("Fix the review's findings");
-        card.Summary.ShouldContain("nothing thrown away");
+        // The findings are fixed on top of the leg's work: nothing is thrown away, so never "redo" (the owner, 2026-10-29).
+        card.Summary.ShouldContain("on top of the leg's work");
+        // The buttons say what they do; the first line does not say it again (#797).
+        card.Summary.ShouldNotContain("Fix the review's findings");
         card.Summary.ShouldNotContain("Redo");
     }
 
@@ -32,9 +33,9 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         var card = _state.RaiseCard(CardBin.Ring, LegCommander.NoGoKind, "flight/TIA1/render", "NO-GO", "gone",
             [new CardChoice { Label = "Go anyway", Verb = Verbs.StartLeg, Target = "flight/TIA1/render" }]);
 
-        card.Summary.ShouldNotBeNull().ShouldContain("Start the leg as the tree is");
+        card.Summary.ShouldNotBeNull().ShouldContain("Fly it unchanged");
         card.Summary.ShouldContain("drop it");
-        card.Summary.ShouldContain("plan the flight again");
+        card.Summary.ShouldContain("replan the flight");
         card.Summary.ShouldNotContain("Redo leg");
     }
 
