@@ -388,10 +388,17 @@ internal sealed partial class PullRequestsView<TSurface>
         Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(NoteIndent), Layout.Builder.Text(text, SecondarySize, color).WithTooltip(whole).WStar().HStar()).RowH(OrgNoteHeight);
 
     // Who read a repo's PRs when another node than this window's did: "read by DE1 2 min ago", cut with an ellipsis, whole on hover; nothing for a read made here.
-    private Layout.Node ReadStampNode(string repo) =>
-        _screen is { Row: { } row } screen && row.ReadStamp(repo, screen.Node, _now) is { } words
-            ? Layout.Builder.Text(words, SecondarySize, BodyText).WithTooltip(words).WStarUpToContent().HStar()
-            : Layout.Builder.Spacer().WFixed(0f);
+    // It shares the count's text, the count first, so a narrow page cuts the stamp and never the count; a read made here is the count alone.
+    private Layout.Node CountNode(string repo, int count)
+    {
+        var prs = $"{count} {(count == 1 ? "PR" : "PRs")}";
+        if (_screen is { Row: { } row } screen && row.ReadStamp(repo, screen.Node, _now) is { } words)
+        {
+            return Layout.Builder.Text($"{prs} · {words}", TextSize, BodyText).WithTooltip(words).WStarUpToContent().HStar();
+        }
+
+        return Layout.Builder.Text(prs, TextSize, BodyText).WAuto().HStar();
+    }
 
     // A repo's header: its fold mark, its name as a link to the repo, and how many PRs it lists. A click anywhere on it folds it.
     private Layout.Node GroupRow(PullRequestGroup group, int index, bool folded)
@@ -414,8 +421,7 @@ internal sealed partial class PullRequestsView<TSurface>
                 Layout.Builder.Icon(folded ? Layout.IconKind.CaretRight : Layout.IconKind.CaretDown, 12f, BodyText).WFixed(16f).HStar(),
                 name.HStar(),
                 Layout.Builder.Spacer().WStar(1000f),
-                ReadStampNode(group.Repo),
-                Layout.Builder.Text($"{count}{(count == 1 ? "PR" : "PRs")}", TextSize, BodyText).WAuto().HStar())
+                CountNode(group.Repo, count))
             .WithGap(8f)
             .Pad(8f, 0f)
             .RowH(GroupHeight)
