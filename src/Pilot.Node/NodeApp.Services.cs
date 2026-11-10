@@ -564,6 +564,7 @@ public static partial class NodeApp
                 MinFreeMemory = (long)(Math.Max(0, nodeOptions.JobMemoryGigabytes) * (1L << 30)),
                 Priority = nodeOptions.JobPriority,
                 PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? NodeSettings.JobPlaneOutputDefault,
+                BuildCache = nodeOptions.Saved?.JobBuildCache ?? NodeSettings.JobBuildCacheDefault,
                 EndedForGood = id => services.GetRequiredService<SessionTracker>().IsEndedForGood(id),
                 Outage = services.GetRequiredService<TurnOutage>(),
                 EndedAfterTurn = id => services.GetRequiredService<SessionTracker>().EndedAfterFinishedTurn(id),
