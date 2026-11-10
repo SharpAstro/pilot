@@ -79,6 +79,35 @@ public sealed class FakeRepoGitTests : IDisposable
     }
 
     [Fact]
+    public void AWorktreeOfANewBranchAtARemoteBranchTracksItAsGitSetsUp()
+    {
+        // git sets branch.<b>.remote and .merge when the start point is a remote-tracking branch, with --track or by default; --no-track leaves them out.
+        var tracked = Path.Combine(Repo, ".claude", "worktrees", "tracked");
+        var byDefault = Path.Combine(Repo, ".claude", "worktrees", "by-default");
+        Run(Repo, "worktree", "add", "--track", "-b", "flight/tracked", tracked, "origin/main");
+        Run(Repo, "worktree", "add", "-b", "flight/by-default", byDefault, "origin/main");
+        MakePlane();
+
+        Run(Repo, "config", "--get", "branch.flight/tracked.remote").ShouldBe("origin");
+        Run(Repo, "config", "--get", "branch.flight/tracked.merge").ShouldBe("refs/heads/main");
+        Run(Repo, "config", "--get", "branch.flight/by-default.remote").ShouldBe("origin");
+        _git.Run(["config", "--get", "branch.flight/x.remote"], Repo).Ok.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void DeleteFoldersRemovesTheReposAndOriginsAndTheFoldersTheyAreMadeIn()
+    {
+        var shape = PrShape();
+        var root = _prModels[^1].Root;
+        Directory.Exists(Path.Combine(root, "repos")).ShouldBeTrue();
+        Directory.Exists(Path.Combine(root, "github")).ShouldBeTrue();
+
+        shape.Git.DeleteFolders();
+
+        Directory.EnumerateFileSystemEntries(root).ShouldBeEmpty();
+    }
+
+    [Fact]
     public void APlanesCommitIsAheadOfItsBaseByItsFileAndLines()
     {
         MakePlane();

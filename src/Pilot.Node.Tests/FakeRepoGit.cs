@@ -253,6 +253,15 @@ internal sealed class FakeRepoGit : IGit
             {
                 Directory.Delete(folder, recursive: true);
             }
+            // The parents a repo is made in (repos, github) are the model's too: drop each that is now empty, up to the root.
+            for (var parent = Path.GetDirectoryName(folder); parent is not null && Norm(parent).Length > _root.Length && Under(Norm(parent), _root); parent = Path.GetDirectoryName(parent))
+            {
+                if (!Directory.Exists(parent) || Directory.EnumerateFileSystemEntries(parent).Any())
+                {
+                    break;
+                }
+                Directory.Delete(parent);
+            }
         }
     }
 
@@ -1033,7 +1042,8 @@ internal sealed class FakeRepoGit : IGit
 
     private GitRun WorktreeAdd(List<string> a)
     {
-        a.Remove("--no-track");
+        // Git sets the new branch's upstream when its start point is a remote-tracking branch (branch.autoSetupMerge), --track or not; --no-track stops it.
+        var noTrack = a.Remove("--no-track");
         string? newBranch = null;
         var reset = false;
         var detach = false;
@@ -1105,6 +1115,12 @@ internal sealed class FakeRepoGit : IGit
         if (branch is not null)
         {
             Refs["refs/heads/" + branch] = commit;
+            if (newBranch is not null && !noTrack && positional.Count == 2 && positional[1].StartsWith("origin/", StringComparison.Ordinal)
+                && Refs.ContainsKey("refs/remotes/" + positional[1]))
+            {
+                Cfg[$"branch.{branch}.remote"] = "origin";
+                Cfg[$"branch.{branch}.merge"] = "refs/heads/" + positional[1]["origin/".Length..];
+            }
         }
         var tree = _commits[commit].Tree;
         var wt = new Worktree(path, branch, branch is null ? commit : null, new Dictionary<string, string>(tree));
