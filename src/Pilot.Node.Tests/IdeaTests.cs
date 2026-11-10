@@ -60,17 +60,15 @@ public sealed class IdeaTests : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2i-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private readonly SeededRepos _repos;
     private readonly FakeGitHub _github = new();
     private readonly IdeaCommander _commander;
 
     public IdeaTests()
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        var planes = new Planes(new GitCli());
+        _repos = new SeededRepos(_root);
+        _repos.Seed("pilot");
+        var planes = _repos.Planes();
         var flights = new FlightCommander(_state, planes, TimeProvider.System, github: _github);
         var catalog = new RepoCatalog(_state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root]));
         _commander = new IdeaCommander(_state, planes, catalog, _github, new FakeIdeaMerger(), new FakeIdeaTidier(), new FakeIdeaRepoChooser(), flights, TimeProvider.System);
@@ -78,35 +76,7 @@ public sealed class IdeaTests : IDisposable
 
     private string Repo => Path.Combine(_root, "pilot");
 
-    public void Dispose()
-    {
-        try
-        {
-            Git(Repo, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        TestDirs.DeleteTree(_root);
-    }
-
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = TestEnvironment.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    public void Dispose() => _repos.Dispose();
 
     private Task<CommandResult> Note(params string[] text) =>
         _commander.RunAsync(new CommandRequest { Verb = Verbs.NoteIdea, Target = Verbs.RepoTarget(IdeaIds.DefaultRepo), Args = text, Who = "tests" }, Ct);
@@ -322,7 +292,7 @@ public sealed class IdeaTests : IDisposable
         _github.AddIssue(Repo, "Seen on GitHub", IdeaIds.Milestone, author: "someone");
         _github.AddIssue(Repo, "Turned down", IdeaIds.Milestone, open: false);
         var catalog = new RepoCatalog(_state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root]));
-        var watch = new RepoWatch(_state, catalog, new Planes(new GitCli()), _github, TimeProvider.System) { Parallelism = 1 };
+        var watch = new RepoWatch(_state, catalog, _repos.Planes(), _github, TimeProvider.System) { Parallelism = 1 };
 
         var status = (await watch.RefreshAsync(Ct)).Single();
 

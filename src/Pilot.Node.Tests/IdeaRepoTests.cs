@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
@@ -28,32 +27,21 @@ public sealed class IdeaRepoTests : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2r-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private readonly SeededRepos _repos;
     private readonly FakeGitHub _github = new();
     private readonly FakeIdeaRepoChooser _chooser = new();
     private readonly IdeaCommander _commander;
 
     public IdeaRepoTests()
     {
+        _repos = new SeededRepos(_root);
         foreach (var name in new[] { "pilot", "tianwen", "DIR.Lib" })
         {
-            var repo = Path.Combine(_root, name);
-            Directory.CreateDirectory(repo);
-            Git(repo, "init", "-q", "-b", "main");
-            File.WriteAllText(Path.Combine(repo, "README.md"), "hello\n");
-            File.WriteAllText(Path.Combine(repo, name + ".slnx"), "<Solution />\n");
-            // A repo pilot works in, so the idea's repo choice offers it (RepoCatalog.Tracked).
-            File.WriteAllText(Path.Combine(repo, RepoCatalog.MarkerFile), "# PILOT.md\n");
-            Git(repo, "remote", "add", "origin", $"https://github.com/SharpAstro/{name}.git");
-            Git(repo, "add", ".");
-            Git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-            // The remote stays GitHub's, but a fetch comes from a local bare copy (#462).
-            var bare = Path.Combine(_root, "origins", name + ".git");
-            Git(_root, "clone", "-q", "--bare", repo, bare);
-            Git(repo, "config", $"url.{bare.Replace('\\', '/')}.insteadOf", $"https://github.com/SharpAstro/{name}.git");
-            Git(repo, "fetch", "-q", "origin");
-            Git(repo, "remote", "set-head", "origin", "main");
+            // A repo pilot works in, so the idea's repo choice offers it (RepoCatalog.Tracked). The remote stays GitHub's, but a fetch comes from a local bare copy (#462).
+            _repos.Seed(name, $"https://github.com/SharpAstro/{name}.git", withOrigin: true,
+                files: new Dictionary<string, string> { [name + ".slnx"] = "<Solution />\n", [RepoCatalog.MarkerFile] = "# PILOT.md\n" });
         }
-        var planes = new Planes(new GitCli());
+        var planes = _repos.Planes();
         var flights = new FlightCommander(_state, planes, TimeProvider.System, github: _github);
         var catalog = new RepoCatalog(_state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root]));
         _commander = new IdeaCommander(_state, planes, catalog, _github, new FakeIdeaMerger(), new FakeIdeaTidier(), _chooser, flights, TimeProvider.System);
@@ -61,28 +49,7 @@ public sealed class IdeaRepoTests : IDisposable
 
     private string Path_(string name) => Path.Combine(_root, name);
 
-    public void Dispose()
-    {
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        TestDirs.DeleteTree(_root);
-    }
-
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = TestEnvironment.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    public void Dispose() => _repos.Dispose();
 
     private Task<CommandResult> Run(string verb, string target, params string[] args) =>
         _commander.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct);
