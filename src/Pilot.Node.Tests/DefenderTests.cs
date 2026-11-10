@@ -64,6 +64,15 @@ public sealed class DefenderTests : IDisposable
     }
 
     [Fact]
+    public void TheBuildCacheFolderUnderTheDataFolderIsAmongTheWantedOnes()
+    {
+        Directory.CreateDirectory(Pilot.Node.Flights.BuildCache.RootIn(_data));
+        var setup = new NodeSetup(new NodeOptions("/tmp/n.sock", _data), "pilot-node.exe", Path.GetTempPath()) { Run = (_, _, _) => (1, "") };
+
+        setup.WantedFolders().ShouldContain(Path.GetFullPath(Pilot.Node.Flights.BuildCache.RootIn(_data)));
+    }
+
+    [Fact]
     public void AFolderUnderAnExcludedOneNeedsNoExclusionOfItsOwn()
     {
         var check = Setup(() => Json(paths: [@"C:\"])).DefenderCheck();

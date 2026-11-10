@@ -111,6 +111,11 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             jobs.Pump();
             return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now; the next job starts with it");
         }
+        if (key == NodeSettings.JobBuildCacheKey)
+        {
+            jobs.BuildCache = updated.JobBuildCache ?? NodeSettings.JobBuildCacheDefault;
+            return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now; the next job starts with it");
+        }
         if (key == NodeSettings.JobPriorityKey)
         {
             jobs.Priority = updated.JobPriority ?? options.JobPriority;
@@ -266,6 +271,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.JobsPerRepoKey => jobs.JobsPerRepo.ToString(CultureInfo.InvariantCulture),
         NodeSettings.JobPriorityKey => Pilot.Node.Flights.JobPriorities.Name(jobs.Priority),
         NodeSettings.JobPlaneOutputKey => jobs.PlaneOutput ? "on" : "off",
+        NodeSettings.JobBuildCacheKey => jobs.BuildCache ? "on" : "off",
         NodeSettings.JobMemoryKey => (jobs.MinFreeMemory / (double)(1L << 30)).ToString(CultureInfo.InvariantCulture),
         NodeSettings.MergeMethodKey => roles.MergeMethod,
         NodeSettings.PrWatchIdleKey => NodeSettings.DurationText(roles.PrWatchIdle),
@@ -299,7 +305,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     /// method, the start limits, the priority repos, the job limits, maintenance and whether fleet flights are accepted.</summary>
     private static bool Live(string key) => NodeSettings.IsLayeredKey(key)
         || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey or NodeSettings.WatchtowerCompactIdleKey or NodeSettings.WatchtowerCompactAboveKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey
-            or NodeSettings.MaxJobsKey or NodeSettings.JobsPerRepoKey or NodeSettings.JobMemoryKey or NodeSettings.JobPriorityKey or NodeSettings.JobPlaneOutputKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.UserSkillsKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.ReviewLimitKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.AdoptAfterKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DiskAlertGbKey or NodeSettings.FlightCiBudgetKey || NodeSettings.StaleKeys.Contains(key);
+            or NodeSettings.MaxJobsKey or NodeSettings.JobsPerRepoKey or NodeSettings.JobMemoryKey or NodeSettings.JobPriorityKey or NodeSettings.JobPlaneOutputKey or NodeSettings.JobBuildCacheKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.UserSkillsKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.ReviewLimitKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.AdoptAfterKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DiskAlertGbKey or NodeSettings.FlightCiBudgetKey || NodeSettings.StaleKeys.Contains(key);
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
     private static string Join(string key, IReadOnlyList<string> values) => string.Join(key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey ? '\n' : ' ', values);
@@ -329,6 +335,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.JobMemoryKey => "0",
         NodeSettings.JobPriorityKey => "below-normal",
         NodeSettings.JobPlaneOutputKey => NodeSettings.JobPlaneOutputDefault ? "on" : "off",
+        NodeSettings.JobBuildCacheKey => NodeSettings.JobBuildCacheDefault ? "on" : "off",
         NodeSettings.MergeMethodKey => "rebase",
         NodeSettings.StartLimitKey => "90",
         NodeSettings.PriorityStartLimitKey => "98",
@@ -378,6 +385,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.JobsPerRepoKey => ("Jobs per repo", "The most jobs of one repo that run at once, so two heavy builds or test runs of the same repo never share the machine; jobs of other repos take the other slots beside them. 0 for no limit", ["1", "2", "3", "0"]),
         NodeSettings.JobMemoryKey => ("Job memory", "The least free memory, in GB, a second job waits for: a floor under the measured need of its kind of command, never a cap; 0 for the measured need alone", ["0", "2", "4", "8"]),
         NodeSettings.JobPriorityKey => ("Job priority", "How much CPU the builds and tests the node starts yield to other work on the machine: below-normal (default) and idle give way, normal is the old behaviour. Claude sessions stay normal", [.. Pilot.Node.Flights.JobPriorities.Names]),
+        NodeSettings.JobBuildCacheKey => ("Job build cache (trial)", "Off by default; a trial (PIL860). While on, a 'dotnet build' a job runs in a plane is run as a restore and Visual Studio's x64 MSBuild with Microsoft.MSBuildCache.Local, which keys each project's outputs on what its build read, so a fresh plane gets the unchanged projects from the cache. The cache root is <data folder>\\build-cache (also holding the cache's logs); it needs Visual Studio, and a machine without it builds as before. docs/build-cache.md has the trial. A job outside a plane, and CI, are untouched", ["on", "off"]),
         NodeSettings.JobPlaneOutputKey => ("Job plane output", "Off by default: a plane builds on the published packages, so it compiles no sibling and needs no sibling lock; only a 'pilot: sibling source' flight holds clones. While on, a job the node runs in a plane builds every project, sibling clones included, into <plane>/artifacts (MSBuild artifacts output: UseArtifactsOutput and ArtifactsPath in the job's environment), so two planes never write the same sibling obj and such a job takes no sibling lock. A worker's own build outside the node lands in the normal obj, so a later 'test --no-build' through the node must follow a node build. A repo whose .gitignore lacks artifacts/ shows the folder as untracked in its planes", ["on", "off"]),
         NodeSettings.PriorityReposKey => ("Priority repos", "Repos whose flights keep going past the start limit, up to the priority limit", []),
         NodeSettings.RepoTrackersKey => ("Repo trackers", "The tracker a bare number means when a flight is made in the repo; a repo not listed means GitHub issues", []),

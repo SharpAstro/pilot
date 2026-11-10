@@ -11,6 +11,12 @@
     <PackageVersion Include="Shouldly" Version="4.3.0" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
   </ItemGroup>
+  <!-- An opt-in local build cache (docs/build-cache.md): present only under -p:MSBuildCacheEnabled=true, so a plain build,
+       a restore and CI never see these packages. Both ride one version; the reference itself is in Directory.Build.props. -->
+  <ItemGroup Condition="'$(MSBuildCacheEnabled)' == 'true'">
+    <PackageVersion Include="Microsoft.MSBuildCache.Local" Version="0.1.340-preview" />
+    <PackageVersion Include="Microsoft.MSBuildCache.SharedCompilation" Version="0.1.340-preview" />
+  </ItemGroup>
   <!-- The command lines of pilot, pilot-node and pilot-gui, as tianwen's CLI parses its own (the same version). -->
   <ItemGroup>
     <PackageVersion Include="System.CommandLine" Version="2.0.12" />

@@ -230,6 +230,8 @@ public static partial class NodeApp
         {
             var sync = ActivatorUtilities.CreateInstance<RepoSync>(services);
             sync.Error = logWriter;
+            var jobs = services.GetRequiredService<JobRunner>();
+            sync.Seed = new BuildSeed(services.GetRequiredService<IGit>(), () => jobs.BuildCache, jobs.QueueSeed) { Error = logWriter };
             return sync;
         });
         builder.Services.AddSingleton<RepoCommander>();
@@ -570,6 +572,7 @@ public static partial class NodeApp
                 MinFreeMemory = (long)(Math.Max(0, nodeOptions.JobMemoryGigabytes) * (1L << 30)),
                 Priority = nodeOptions.JobPriority,
                 PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? NodeSettings.JobPlaneOutputDefault,
+                BuildCache = nodeOptions.Saved?.JobBuildCache ?? NodeSettings.JobBuildCacheDefault,
                 EndedForGood = id => services.GetRequiredService<SessionTracker>().IsEndedForGood(id),
                 Outage = services.GetRequiredService<TurnOutage>(),
                 EndedAfterTurn = id => services.GetRequiredService<SessionTracker>().EndedAfterFinishedTurn(id),
