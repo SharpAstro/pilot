@@ -65,8 +65,15 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     /// </summary>
     public TimeSpan Settle { get; init; } = TimeSpan.FromMinutes(5);
 
-    /// <summary>The card kind that says the watchtower is still past its share after a compaction and a replacement: raised once, not looped.</summary>
+    /// <summary>The card kind that says the watchtower is still past its share after a compaction and an attempt at a fresh one: raised once, not looped.</summary>
     public const string StuckKind = "watchtower-still-full";
+
+    /// <summary>
+    /// How a watchtower still past its share is replaced, and how it went (an error, or the way: <see cref="Watchtower.JoinedWay"/> when the
+    /// restart joined a start already in flight). The watchtower's own restart unless a test gives another: one that joins or fails while
+    /// the old row stays current, as on SE1, which the watchtower's own start path cannot be put in from a test.
+    /// </summary>
+    public Func<string, CancellationToken, Task<(string? Error, string? Way)>>? Restart { get; set; }
 
     /// <summary>What the watchtower's summary keeps.</summary>
     public const string WatchtowerFocus = "Keep what you are watching and waiting on: the flights, legs, jobs and cards you know of, what you did about "
@@ -271,7 +278,7 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
             await Error.WriteLineAsync($"compactor: {row.Name} ({row.Id}) {why} ({came}); left alone until it reads under its share");
             return;
         }
-        var (error, way) = await watchtower.RestartWithWayAsync(why, cancellationToken);
+        var (error, way) = await (Restart ?? watchtower.RestartWithWayAsync)(why, cancellationToken);
         // A restart that joined a start already in flight started nothing: said as it is, never as a replacement (SE1 said "Replaced" four times over one session).
         var joined = error is null && way == Watchtower.JoinedWay;
         var title = error is not null ? $"Could not replace {row.Name}" : joined ? $"Did not replace {row.Name}: a watchtower start was in progress" : $"Replaced {row.Name}";

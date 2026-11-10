@@ -265,9 +265,10 @@ public sealed class CompactorTests : IDisposable
     }
 
     [Fact]
-    public async Task AFailedRestartIsNeverCalledAReplacementAndStaysBounded()
+    public async Task AFailedRestartRetiresTheOldRowAndIsNeverCalledAReplacement()
     {
-        // Review of #957: a restart that fails replaced nothing, so no line or card may say it did.
+        // The watchtower's own failed start marks the old row replaced and forgets its job, so the row is never looked at again: one
+        // compaction, the failure said as it is, and no card (review of #957, round three).
         Row("t0000001", "du1-watchtower", context: 800_000);
         await _compactor.LookAsync(Ct);
         _workers.Fail = new FlightException("the watchtower did not start");
@@ -278,10 +279,36 @@ public sealed class CompactorTests : IDisposable
             Row("t0000001", "du1-watchtower", context: 800_000, lastResponse: _time.GetUtcNow());
             await _compactor.LookAsync(Ct);
         }
-        Handled().ShouldContain(t => t.StartsWith("Could not replace du1-watchtower", StringComparison.Ordinal));
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
+        Handled().Count(t => t.StartsWith("Could not replace du1-watchtower", StringComparison.Ordinal)).ShouldBe(1);
         Handled().ShouldNotContain(t => t.StartsWith("Replaced", StringComparison.Ordinal));
-        _state.Cards().Where(c => c.Kind == Compactor.StuckKind).ShouldAllBe(c => !c.Title.Contains("replacement"));
-        _said.Count(c => c.Verb == Verbs.Compact).ShouldBeLessThanOrEqualTo(2);
+        _state.Cards().ShouldNotContain(c => c.Kind == Compactor.StuckKind);
+    }
+
+    [Theory]
+    [InlineData(null, "joined a start already in progress", "Did not replace du1-watchtower")]
+    [InlineData("the watchtower did not start", "the restart failed: the watchtower did not start", "Could not replace du1-watchtower")]
+    public async Task ARestartThatReplacedNothingWhileTheRowStaysIsSaidOnceAndNeverCalledAReplacement(string? error, string came, string said)
+    {
+        // As on SE1: the restart joins a start already in flight (or fails) and the same session stays the watchtower. After the settle
+        // the row is compacted once more, then the card says what the restart came to and claims no replacement.
+        _compactor.Restart = (_, _) => Task.FromResult<(string?, string?)>((error, error is null ? Watchtower.JoinedWay : null));
+        Row("t0000001", "du1-watchtower", context: 800_000);
+        await _compactor.LookAsync(Ct);
+
+        for (var look = 0; look < 120; look++)
+        {
+            _time.Advance(TimeSpan.FromSeconds(30));
+            Row("t0000001", "du1-watchtower", context: 800_000, lastResponse: _time.GetUtcNow());
+            await _compactor.LookAsync(Ct);
+        }
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(2);
+        Handled().Count(t => t.StartsWith(said, StringComparison.Ordinal)).ShouldBe(1);
+        Handled().ShouldNotContain(t => t.StartsWith("Replaced", StringComparison.Ordinal));
+        var stuck = _state.Cards(openOnly: true).Where(c => c.Kind == Compactor.StuckKind).ShouldHaveSingleItem();
+        stuck.Title.ShouldBe("du1-watchtower is still full after a compaction");
+        stuck.Detail.ShouldNotBeNull().ShouldContain(came);
+        stuck.Choices.ShouldHaveSingleItem().Args.ShouldHaveSingleItem().ShouldNotContain("replacement");
     }
 
     [Fact]
