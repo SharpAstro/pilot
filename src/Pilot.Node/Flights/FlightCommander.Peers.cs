@@ -186,6 +186,14 @@ public sealed partial class FlightCommander
     /// </summary>
     public async Task<int> LookAtPeerConnectionsAsync(CancellationToken cancellationToken)
     {
+        var ended = await LookAtPeersAsync(cancellationToken);
+        // The backstop (#818): a hold that outlived a merged PR or a closed issue, which the look above did not lift, is rung once.
+        await RingMergedHoldsAsync(cancellationToken);
+        return ended;
+    }
+
+    private async Task<int> LookAtPeersAsync(CancellationToken cancellationToken)
+    {
         // First, a wait for a flight of this node that moved away becomes a wait on the node it moved to, so this look asks that node (#818).
         await FollowMovedFlightsAsync(cancellationToken);
         var waiting = state.Flights().Where(f => f.State != FlightState.Landed && f.PeerConnections.Length > 0).ToList();
