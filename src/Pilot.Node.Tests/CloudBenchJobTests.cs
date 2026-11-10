@@ -551,7 +551,7 @@ public sealed partial class CloudBenchJobTests : JobTestsBase, IAsyncDisposable
         await jobs.RecoverAsync(Ct);
 
         Row("j7").Error.ShouldNotBeNull().ShouldContain("could not delete 1 of its Azure resources");
-        Row("j7").Error.ShouldContain("pilot-bench-j7-nsg");
+        Row("j7").Error!.ShouldContain("pilot-bench-j7-nsg");
     }
 
     [Fact]
@@ -580,7 +580,7 @@ public sealed partial class CloudBenchJobTests : JobTestsBase, IAsyncDisposable
 
         _cloud.Cleanups.ShouldBeEmpty();
         Row("j7").Error.ShouldNotBeNull().ShouldContain("pilot-bench-j7-");
-        Row("j7").Error.ShouldContain("cost money");
+        Row("j7").Error!.ShouldContain("cost money");
     }
 
     private string HandCloudBenchStarted(JobRunner jobs)

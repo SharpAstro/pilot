@@ -247,7 +247,7 @@ public sealed partial class AzureBenchTests
         Only(c => c.Is("az", "vm", "delete"), "vm delete").After("--name").ShouldBe("pilot-bench-j7-vm");
         Only(c => c.Is("az", "resource", "list"), "sweep").After("--query").ShouldBe("[?starts_with(name, 'pilot-bench-j7-')].id");
         Commands.ShouldNotContain(c => c.Is("az", "vm", "create"));
-        Commands.ShouldNotContain(c => c.Program is "ssh" or "scp" or "git");
+        Commands.ShouldNotContain(c => c.Program == "ssh" || c.Program == "scp" || c.Program == "git");
     }
 
     [Fact]
