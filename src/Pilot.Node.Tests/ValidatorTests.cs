@@ -161,11 +161,10 @@ public sealed class ValidatorTests : IDisposable
         card.Summary.ShouldBe("Take render off the flight or plan TIA1 again: the check against the tree found its brief out of date.");
         card.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe(
         [
-            ("Start it as it is", Verbs.StartLeg, Render),
             ("Remove the leg", Verbs.RemoveLeg, Render),
             ("Plan the flight again", Verbs.PlanFlight, "flight/TIA1"),
         ]);
-        card.Choices[0].Args.ShouldBe(["anyway"]);
+        card.Choices[0].Args.ShouldBe(["failed validation"]);
     }
 
     [Fact]
