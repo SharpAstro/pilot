@@ -1364,6 +1364,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         card.Detail.ShouldBe("parser first, then render\n1. parser: Parse the ephemeris\n2. render: Draw the planets");
         var start = card.Choices.ShouldHaveSingleItem();
         (start.Label, start.Verb, start.Target).ShouldBe(("Start parser", Verbs.StartLeg, Verbs.LegTarget("TIA1", "parser")));
+        // c3637 of the cards-panel capture is this card, as SE1 raised it for PIL795 with five legs, cards-legs first.
+        CardsPanelFixture.ShouldMatch("c3637", card, names: [("TIA1: 2 legs", "PIL795: 5 legs"), ("parser", "cards-legs"), ("TIA1", "PIL795")]);
     }
 
     [Fact]

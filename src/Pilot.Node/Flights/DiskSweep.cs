@@ -503,7 +503,7 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
             // The one thing the node can do on the person's word: the alert itself. Freeing space is by hand, and the panel's Dismiss
             // already says "I have seen it": no second button says it again (the review of #797).
             [new CardChoice { Label = "Lower the disk alert", Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.DiskAlertGbKey], AsksFor = "The new alert, in GB" }],
-            summary: $"Free some space on {space.Name}, or lower the alert: {list}");
+            summary: $"Free some space on {space.Name}, or lower the alert. {list}");
     }
 
     private static void Remove(string folder, ref int count, ref long bytes)

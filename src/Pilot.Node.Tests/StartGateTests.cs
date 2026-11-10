@@ -107,15 +107,23 @@ public sealed class StartGateTests : IDisposable
     public void TheWeekRingsOncePerWindowAndHoldsNothing()
     {
         Usage(10, week: 99);
+        // A second flight in the air and one landed: each flying flight is offered a hold, the landed one is not.
+        _state.PutFlight(_state.Flights().Single() with { Code = "TIA8", Branch = "flight/tia8" });
+        _state.PutFlight(_state.Flights().First() with { Code = "TIA7", Branch = "flight/tia7", State = FlightState.Landed });
 
         _gate.Hold("k", 90, 90, "kind", "flight/TIA9", "x").ShouldBeFalse();
         _gate.Hold("k", 90, 90, "kind", "flight/TIA9", "x").ShouldBeFalse();
 
         var ring = Cards(StartGate.WeekKind).ShouldHaveSingleItem();
         (ring.Bin, ring.Title).ShouldBe((CardBin.ForYou, $"The 7-day window is 99 % spent; it resets {_time.GetUtcNow().AddDays(3).ToLocalTime():ddd HH:mm}"));
-        // The golden card (#797): what happened, what to do in the first line, and the one button that closes it (it offered none before).
-        ring.Summary.ShouldBe("Nothing stops by itself: pause the flights you can spare if the week should last.");
-        ring.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Keep flying", Verbs.Dismiss)]);
+        // The golden card (#797, c3530): what happened, what to do in the first line, and buttons that do it: hold a flying flight (the
+        // owner's hold) or take no new flights (maintenance). It offered no button before, then only a dismiss.
+        ring.Summary.ShouldBe("Nothing stops by itself: hold the flights you can spare, or take no new ones, if the week should last.");
+        ring.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe(
+            [("Hold TIA8", Verbs.Ground, "flight/TIA8"), ("Hold TIA9", Verbs.Ground, "flight/TIA9"), ("Take no new flights", Verbs.Set, Verbs.NodeTarget)]);
+        ring.Choices[0].Args.ShouldBe(["the 7-day window is 99 % spent"]);
+        ring.Choices[2].Args.ShouldBe([NodeSettings.MaintenanceKey, "on"]);
+        CardsPanelFixture.ShouldMatch("c3530", ring, title: false, ("TIA8", "PIL716"), ("TIA9", "PIL795"));
 
         // Under its limit, it rings nothing.
         _gate.RingWeek(100);

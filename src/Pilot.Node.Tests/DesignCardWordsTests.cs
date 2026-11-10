@@ -81,6 +81,7 @@ public sealed class DesignCardWordsTests
             + " B: measure it per field and keep the worst of the nebula-fields.");
         card.Choices[0].Args.ShouldBe(["measure the share of clear frames of the archive nebula-fields over the whole session"]);
         card.Choices[1].Hint.ShouldBe("measure it per field and keep the worst of the nebula-fields");
+        CardsPanelFixture.ShouldMatch("c3483", card, title: false);
     }
 
     [Fact]
@@ -94,6 +95,7 @@ public sealed class DesignCardWordsTests
             + " 2A: mark it done when its check passes (recommended).");
         // Each answer names the question it answers, as the card asks two.
         card.Choices[0].Args.ShouldBe(["To \"Should a stalled worker be restarted or reminded first?\": remind it first (restart it only if the reminder does nothing)"]);
+        CardsPanelFixture.ShouldMatch("c3479", card, title: false);
         card.Choices[2].Args.ShouldBe(["To \"Is a leg done when its check passes?\": mark it done when its check passes (the review comes after)"]);
     }
 

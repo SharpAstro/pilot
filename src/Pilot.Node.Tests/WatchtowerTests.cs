@@ -1143,4 +1143,18 @@ public sealed class WatchtowerRouteTests
         bad.Response.ShouldNotBeNull().Error.ShouldStartWith("raise takes ring, for-you or handled");
         tell.Response.ShouldNotBeNull().Error.ShouldBe("this node keeps no watchtower (--no-watchtower)");
     }
+
+    [Fact]
+    public async Task AWatchtowerForYouCardShowsItsOwnTitleAndNoHelpLineAsItsFirstLine()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+
+        (await node.Client.SendAsync(new CommandRequest
+        {
+            Verb = Verbs.Raise, Target = "node", Args = ["for-you", "SE1 has 3 flights ringing and 2 held", "3 ringing, 2 held by the owner, 1 waiting on a PR."], Who = "se1-watchtower",
+        }, Ct)).Success.ShouldBeTrue();
+
+        // c3651 of the cards-panel capture is this card: its title and detail are the watchtower's own, and the kind's help line is no first line (#797 rule 5).
+        CardsPanelFixture.ShouldMatch("c3651", node.State.Cards().ShouldHaveSingleItem());
+    }
 }

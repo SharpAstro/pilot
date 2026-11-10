@@ -239,7 +239,6 @@ public static class SummaryRecords
         }
     }
 
-    /// <summary>Whether <paramref name="card"/> is about flight <paramref name="code"/> or anything under it (a leg).</summary>
     /// <summary>
     /// Closes every open card about a flight that has landed: the landing closes a flight's cards, so one still open is stale (c3651, about
     /// TIA2000's worker after TIA2000 had landed and merged). Run before a summary is made, which then has nothing of it to say. Returns how many.
@@ -255,6 +254,7 @@ public static class SummaryRecords
         return stale.Count;
     }
 
+    /// <summary>Whether <paramref name="card"/> is about flight <paramref name="code"/> or anything under it (a leg).</summary>
     private static bool About(CardRow card, string code)
     {
         var subject = Verbs.FlightTarget(code);

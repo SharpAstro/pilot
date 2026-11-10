@@ -384,8 +384,12 @@ public sealed class DiskSweepTests : IDisposable
         card.Title.ShouldContain("D:");
         card.Title.ShouldContain("5.0 GB");
         // The golden card (#797): the title says the drive is low, the first line what to do, one button.
-        card.Summary.ShouldNotBeNull().ShouldStartWith("Free some space on D: or lower the alert (setting disk-alert-gb): ");
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("I will free space", Verbs.Dismiss)]);
+        card.Summary.ShouldNotBeNull().ShouldStartWith("Free some space on D:, or lower the alert. Biggest items to reclaim");
+        // The one button does what the node can: it lowers the alert, asking for the new one (#797: no button that only dismisses).
+        var lower = card.Choices.ShouldHaveSingleItem();
+        (lower.Label, lower.Verb, lower.Target).ShouldBe(("Lower the disk alert", Verbs.Set, Verbs.NodeTarget));
+        lower.Args.ShouldBe([NodeSettings.DiskAlertGbKey]);
+        lower.AsksFor.ShouldNotBeNull();
         card.Detail!.ShouldContain("job scratch bbbbbbbb");
         card.Detail!.IndexOf("bbbbbbbb", StringComparison.Ordinal).ShouldBeLessThan(card.Detail!.IndexOf("cccccccc", StringComparison.Ordinal));
 
@@ -398,13 +402,16 @@ public sealed class DiskSweepTests : IDisposable
     [Fact]
     public async Task FreeSpaceBelowTheThresholdNamesNoItemUnderOneGbAndSaysNothingBigIsToReclaim()
     {
-        var sweep = new DiskSweep(Jobs, Temp, _state, _time) { DiskAlertGb = () => 20, FreeSpace = _ => (5L << 30, 100L << 30, "D:"), Repos = () => [Repo] };
+        // c3472 as SE1 had it: C: with 12.1 GB free of 476 GB, the alert at 20 GB, and a 721-byte job scratch the old card named.
+        var sweep = new DiskSweep(Jobs, Temp, _state, _time) { DiskAlertGb = () => 20, FreeSpace = _ => ((long)(12.1 * (1L << 30)), 476L << 30, "C:"), Repos = () => [Repo] };
         Session("bbbbbbbb", "PIL1", SessionState.Working);
         File.WriteAllBytes(Path.Combine(Job("bbbbbbbb", TimeSpan.FromMinutes(5)), "tmp", "more.bin"), new byte[721]);
 
         await sweep.SweepAsync(TestContext.Current.CancellationToken);
 
-        var detail = _state.Cards().Single(c => c.Kind == DiskSweep.DiskLowKind).Detail!;
+        var card = _state.Cards().Single(c => c.Kind == DiskSweep.DiskLowKind);
+        CardsPanelFixture.ShouldMatch("c3472", card);
+        var detail = card.Detail!;
         detail.ShouldContain("Nothing big to reclaim here: the space is used outside pilot.");
         detail.ShouldNotContain("bbbbbbbb");
     }

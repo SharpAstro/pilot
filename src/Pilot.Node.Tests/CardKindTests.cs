@@ -16,7 +16,7 @@ namespace Pilot.Node.Tests;
 [Trait("Category", InvariantTraitTests.Invariant)]
 public sealed class CardKindTests
 {
-    private static readonly Lazy<string> Src = new(FindSrc);
+    internal static readonly Lazy<string> Src = new(FindSrc);
 
     internal static readonly Lazy<List<(string File, string Source)>> Sources = new(() =>
         [.. Directory.EnumerateFiles(Path.Combine(Src.Value, "Pilot.Node"), "*.cs", SearchOption.AllDirectories)

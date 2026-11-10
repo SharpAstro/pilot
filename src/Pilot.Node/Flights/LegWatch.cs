@@ -1877,8 +1877,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         var then = say is null
             ? "Only a fresh start gets the leg going again."
             : say == NudgeLabel
-                ? "A nudge may get it going again; otherwise a fresh start lets it go."
-                : "Telling it to carry on may get it going again; otherwise a fresh start lets it go.";
+                ? "A nudge may get it going again; if it does not, a fresh worker takes the leg over from the branch."
+                : "Telling it to carry on may get it going again; if it does not, a fresh worker takes the leg over from the branch.";
         return kind switch
         {
             Stopped => $"{lead ?? $"The worker of {what} was stopped by the API and no reset time is known."} {then}",

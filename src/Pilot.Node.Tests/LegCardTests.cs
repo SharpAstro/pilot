@@ -193,7 +193,7 @@ public sealed class LegCardTests
 
         var card = Open().ShouldHaveSingleItem();
         card.Title.ShouldBe("TIA1/parser's worker failed: the API said invalid_request");
-        card.Summary.ShouldBe("The worker of TIA1/parser failed. Telling it to carry on may get it going again; otherwise a fresh start lets it go.");
+        card.Summary.ShouldBe("The worker of TIA1/parser failed. Telling it to carry on may get it going again; if it does not, a fresh worker takes the leg over from the branch.");
         card.Choices.Select(c => c.Label).ShouldBe(["Tell the worker to carry on", Verbs.RestartWorker]);
     }
 

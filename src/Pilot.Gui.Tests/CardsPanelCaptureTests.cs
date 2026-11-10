@@ -12,8 +12,9 @@ namespace Pilot.Gui.Tests;
 /// <summary>
 /// The cards panel at 420 px with SE1's real cards of 2026-11-06 (pilot#797): c3646, c3623, c3530, c3483, c3479, c3472, c3528, c3637 and a
 /// watchtower for-you card. <see cref="RealCards.Before"/> holds them as main wrote them (titles, first lines and buttons as the issue
-/// quotes them, the cut ones cut where the issue shows them cut); <see cref="RealCards.After"/> holds the same eight situations as the
-/// raisers word them now, the strings the node's golden tests of each kind pin (title, first line and buttons, in the tests the catalog names). Both are drawn with no display:
+/// quotes them, the cut ones cut where the issue shows them cut); <see cref="RealCards.After"/> holds the same situations as the raisers
+/// word them now, read from <c>Fixtures/cards-plain-after.jsonl</c>, which each kind's golden test in Pilot.Node.Tests holds to the card it
+/// raises (<c>CardsPanelFixture.ShouldMatch</c>). Both are drawn with no display:
 /// the check is that nothing is drawn over text and no word is cut at 420; the capture (docs/captures, for the PR) is written when
 /// PILOT_CARDS_CAPTURES names a folder.
 /// </summary>
@@ -84,54 +85,13 @@ public sealed class CardsPanelCaptureTests
         ];
 
         // c3623 is not here: its leg was retired on the controller's word, which raises no card at all now (#795), and the "send it round"
-        // button pasted from a sentence is gone with it.
-        public static readonly CardRow[] After =
-        [
-            Card("c3646", CardBin.Ring, "worker-idle", "flight/PIL716/failure-investigation",
-                "PIL716 is stuck: its worker stopped working",
-                "The worker of PIL716/failure-investigation stopped with its leg unfinished. A nudge may get it going again; otherwise a fresh start lets it go.",
-                "1 of 6 steps are done; the node nudged it twice and it answered both times without moving on.",
-                Choice("Nudge the worker", Verbs.Say, "session/a1b2c3d4"),
-                Choice("Restart the worker", Verbs.GoAround, "flight/PIL716/failure-investigation")),
-            Card("c3530", CardBin.ForYou, "usage-week", "node",
-                "The 7-day window is 99 % spent; it resets Tue 09:00",
-                "Nothing stops by itself: pause the flights you can spare if the week should last.",
-                "The limit for the week is 90 %, and it only rings: the node still starts sessions of its own, and the 5-hour limit is what holds a start.",
-                Choice("Keep flying", Verbs.Dismiss, "card/c3530")),
-            Card("c3483", CardBin.Ring, "pr-review-design", "pr/SharpAstro/tianwen#2051",
-                "SharpAstro/tianwen#2051: the review asks a question of design",
-                "Which share of clear frames counts as a good night? No option reaches the criteria, so pick the one to go on with.",
-                "A: measure the share of clear frames of the archive nebula-fields over the whole session.\nB: measure it per field and keep the worst of the nebula-fields.",
-                Choice("Pick option A", Verbs.FixPr, "pr/SharpAstro/tianwen#2051", "measure the share of clear frames of the archive nebula-fields over the whole session"),
-                Choice("Pick option B", Verbs.FixPr, "pr/SharpAstro/tianwen#2051", "measure it per field and keep the worst of the nebula-fields"),
-                Choice("Answer in your own words", Verbs.FixPr, "pr/SharpAstro/tianwen#2051", asksFor: "Your answer")),
-            Card("c3479", CardBin.Ring, "pr-review-design", "pr/SharpAstro/pilot#888",
-                "SharpAstro/pilot#888: the review asks a question of design",
-                "Should a stalled worker be restarted or reminded first, and is a leg done when its check passes? Pick an option or answer in your own words.",
-                "A: restart the worker first.\nB: remind the worker first, restart it only if the reminder does nothing.",
-                Choice("Pick option A", Verbs.FixPr, "pr/SharpAstro/pilot#888", "restart the worker first"),
-                Choice("Pick option B", Verbs.FixPr, "pr/SharpAstro/pilot#888", "remind the worker first, restart it only if the reminder does nothing"),
-                Choice("Answer in your own words", Verbs.FixPr, "pr/SharpAstro/pilot#888", asksFor: "Your answer")),
-            Card("c3472", CardBin.ForYou, "disk-low", "node",
-                "Drive C: has 12.1 GB free, below the 20 GB alert",
-                "Free some space on C: or lower the alert (setting disk-alert-gb): nothing big to reclaim here, the space is used outside pilot.",
-                "C: has 12.1 GB free of 476 GB; the alert is 20 GB (setting disk-alert-gb). Nothing big to reclaim here: the space is used outside pilot.",
-                Choice("I will free space", Verbs.Dismiss, "card/c3472")),
-            Card("c3528", CardBin.ForYou, "removal-held", "node",
-                "1 folder Windows still holds open",
-                "Close whatever holds the folder open (the detail names it): the node removes it once it is let go.",
-                "C:\\Users\\SebastianGodelet\\source\\repos\\sharpastro\\tianwen\\.claude\\worktrees\\tia2001: held by a process (it could not be named)",
-                Choice("I will close it", Verbs.Dismiss, "card/c3528")),
-            Card("c3637", CardBin.ForYou, "planned", "flight/PIL795",
-                "PIL795: 5 legs planned",
-                "PIL795 has a plan of legs. Start it to fly them, or change the plan first.",
-                null,
-                Choice("Start cards-legs", Verbs.StartLeg, "flight/PIL795/cards-legs")),
-            Card("c3651", CardBin.ForYou, "watchtower", "node",
-                "SE1 has 3 flights ringing and 2 held",
-                null,
-                "3 ringing, 2 held by the owner, 1 waiting on a PR.", []),
-        ];
+        // button pasted from a sentence is gone with it. c3528 is not here either: a folder Windows holds open is a Handled line now, as
+        // there is nothing to press for it.
+        // The cards as the raisers make them: Fixtures/cards-plain-after.jsonl, which each kind's golden test in Pilot.Node.Tests holds to
+        // the card it raises (CardsPanelFixture.ShouldMatch), so this capture cannot show a card the node does not raise.
+        public static readonly CardRow[] After = [.. File.ReadAllLines(Path.Combine(AppContext.BaseDirectory, "Fixtures", "cards-plain-after.jsonl"))
+            .Where(l => l.Trim().Length > 0)
+            .Select(l => System.Text.Json.JsonSerializer.Deserialize(l, PilotJsonContext.Default.CardRow)!)];
     }
 
     private static ImmutableArray<Layout.ArrangedNode<float>> Arrange(IEnumerable<CardRow> cards, int height)

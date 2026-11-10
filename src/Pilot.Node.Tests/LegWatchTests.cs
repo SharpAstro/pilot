@@ -126,7 +126,7 @@ public sealed class LegWatchTests
         var card = Open().ShouldHaveSingleItem();
         (card.Bin, card.Kind).ShouldBe((CardBin.Ring, LegWatch.Stopped));
         card.Title.ShouldBe("TIA1/parser's worker was stopped by the API: overloaded");
-        card.Summary.ShouldBe("The worker of TIA1/parser was stopped by the API and no reset time is known. Telling it to carry on may get it going again; otherwise a fresh start lets it go.");
+        card.Summary.ShouldBe("The worker of TIA1/parser was stopped by the API and no reset time is known. Telling it to carry on may get it going again; if it does not, a fresh worker takes the leg over from the branch.");
         card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Tell the worker to carry on", Verbs.Say), (Verbs.RestartWorker, Verbs.GoAround)]);
     }
 
@@ -429,9 +429,11 @@ public sealed class LegWatchTests
         (card.Bin, card.Kind).ShouldBe((CardBin.Ring, LegWatch.Idle));
         // The golden card (#797): what happened, what to do, and two short verbs; the step count and the nudges are the detail's.
         card.Title.ShouldBe("TIA1 is stuck: its worker stopped working");
-        card.Summary.ShouldBe("The worker of TIA1/parser stopped with its leg unfinished. A nudge may get it going again; otherwise a fresh start lets it go.");
+        card.Summary.ShouldBe("The worker of TIA1/parser stopped with its leg unfinished. A nudge may get it going again; if it does not, a fresh worker takes the leg over from the branch.");
         card.Choices.Select(c => c.Label).ShouldBe(["Nudge the worker", Verbs.RestartWorker]);
         card.Detail.ShouldNotBeNull().ShouldContain("1 of 2 steps");
+        // c3646 of the cards-panel capture is this card, as SE1 raised it for PIL716/failure-investigation.
+        CardsPanelFixture.ShouldMatch("c3646", card, names: [("TIA1/parser", "PIL716/failure-investigation"), ("TIA1", "PIL716")]);
     }
 
     private void Flight(FlightState state) => _state.PutFlight(new FlightRow
