@@ -25,9 +25,9 @@ internal static class TestEnvironment
         var mode = ProcessStartGuard.ModeFor(Environment.GetEnvironmentVariable("PILOT_TEST_PROCESS_GUARD"));
         ProcessStarts.Observer = (kind, start) =>
         {
-            // The node's own request handlers run on threads that carry no test (the host starts them without the test's context), so a
-            // start there is the test whose folder it runs in: see OwnFolder.
-            var current = Xunit.TestContext.Current.Test is { } running ? new Owner(running.TestDisplayName, running.Traits) : OwnerOf(start.WorkingDirectory);
+            // The node's own request handlers run on threads that carry no test (Kestrel starts them without the test's context), so a
+            // start there is the test that started the node (CarryOwner, from NodeHarness), or else the test whose folder it runs in: see OwnFolder.
+            var current = CurrentTest() ?? _carried.Value ?? OwnerOf(start.WorkingDirectory);
             var test = current?.Name;
             // Written first, so the report names the start even when the guard throws (a node path that catches the throw would
             // otherwise hide it). A start a guard test provokes on purpose (ProvokingAStart) is checked but not written.
@@ -69,7 +69,20 @@ internal static class TestEnvironment
         return System.Diagnostics.Process.Start(start);
     }
 
-    private sealed record Owner(string Name, IReadOnlyDictionary<string, IReadOnlyCollection<string>> Traits);
+    /// <summary>A test a start is counted against: its display name and its traits (the method's and its class's).</summary>
+    internal sealed record Owner(string Name, IReadOnlyDictionary<string, IReadOnlyCollection<string>> Traits);
+
+    /// <summary>The test running on this flow, or null outside one (a fixture, or a thread that carries no test).</summary>
+    internal static Owner? CurrentTest() => Xunit.TestContext.Current.Test is { } running ? new Owner(running.TestDisplayName, running.Traits) : null;
+
+    private static readonly AsyncLocal<Owner?> _carried = new();
+
+    /// <summary>
+    /// Names <paramref name="owner"/> as the test of every start made from here on in this flow, where no test is running: what a test node's
+    /// request middleware does (NodeHarness), since Kestrel runs a request on a thread that carries no test, though the test that started the
+    /// node made it. A running test still names itself first.
+    /// </summary>
+    internal static void CarryOwner(Owner owner) => _carried.Value = owner;
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Owner> _folders = new(StringComparer.OrdinalIgnoreCase);
 

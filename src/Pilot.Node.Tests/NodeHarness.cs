@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -94,6 +95,8 @@ internal sealed class NodeHarness : IAsyncDisposable
         folder ??= Path.Combine(Path.GetTempPath(), "p2t", Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(folder);
         TestEnvironment.OwnFolder(folder);
+        // The test starting the node, whose every request the node serves on Kestrel's threads, which carry no test: see OwnerFilter.
+        var owner = TestEnvironment.CurrentTest();
         var options = new NodeOptions(Path.Combine(folder, NodeSocket.DefaultFileName), Path.Combine(folder, "data"), retainedDeltas, MachinePrefix: machine, Watchtower: watchtower,
             Lan: lanPort is not null, LanPort: lanPort ?? NodeWire.DefaultLanPort, LanAnnounce: false, LocalOnly: localOnly, LanLoopbackOnly: lanPort is not null, MachineSampling: false);
         if (!NodeSocket.TryValidate(options.SocketPath, out var tooLong))
@@ -154,6 +157,10 @@ internal sealed class NodeHarness : IAsyncDisposable
                 {
                     builder.Services.AddSingleton(jobLauncher);
                 }
+                if (owner is not null)
+                {
+                    builder.Services.AddSingleton<IStartupFilter>(new OwnerFilter(owner));
+                }
                 builder.Services.AddSingleton<Pilot.Node.Flights.IIdeaMilestoner>(milestoner);
                 builder.Services.AddSingleton<Pilot.Node.Flights.IIssueSplitter>(splitter);
                 builder.Services.AddSingleton(new SessionTrackerOptions(
@@ -192,6 +199,25 @@ internal sealed class NodeHarness : IAsyncDisposable
         await StopNodeAsync();
         await DisposeAppAsync();
         _held.Dispose();
+    }
+
+    /// <summary>
+    /// Names the test that started the node as the test of every process its requests start (#952's guard): Kestrel runs a request on
+    /// a thread that carries no test, so a git a Slow test's node ran for it was a start outside any test, and one an unmarked test's
+    /// node ran was not counted against that test. First in the pipeline, so every route's work carries it.
+    /// </summary>
+    private sealed class OwnerFilter(TestEnvironment.Owner owner) : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (context, rest) =>
+            {
+                // Set in this async lambda, so it flows into the rest of the request and goes when the request does.
+                TestEnvironment.CarryOwner(owner);
+                await rest(context);
+            });
+            next(app);
+        };
     }
 
     /// <summary>A phase of the test node's start or stop that took this long or more is written to the test's output.</summary>

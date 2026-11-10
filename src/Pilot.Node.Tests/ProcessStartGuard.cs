@@ -25,7 +25,7 @@ internal static class ProcessStartGuard
 
     /// <summary>
     /// Starts made outside any test (a fixture, a hosted service's loop), each allowed by name with its reason. A start with no test
-    /// that no entry names fails the run's report like a test would. Keyed by the kind of the start.
+    /// that no entry names fails the run's report like a test would (it does not throw: see <see cref="Check"/>). Keyed by the kind of the start.
     /// </summary>
     internal static readonly IReadOnlyDictionary<string, string> NoTestAllowed = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -81,10 +81,15 @@ internal static class ProcessStartGuard
             : $"{test} started a real {kind} process: {command}. A test that is not tagged [Trait(\"Category\", \"Slow\")] or \"Integration\" runs in memory on fakes; move it onto a fake, or tag it with the reason it needs the real process.";
     }
 
-    /// <summary>Throws <see cref="ProcessStartNotAllowedException"/> when <see cref="Verdict"/> names a fault and the mode enforces.</summary>
+    /// <summary>
+    /// Throws <see cref="ProcessStartNotAllowedException"/> when <see cref="Verdict"/> names a fault of a known test and the mode enforces.
+    /// A start no test can be named for (<paramref name="test"/> null: a background loop's timer or file watch, a node no test started)
+    /// is the report's alone: whether it may start a process is its test's traits, which nothing here knows, and a throw on a node's
+    /// own thread breaks a Slow test's node as surely as an unmarked one's. CI fails the default run on any such line in the report.
+    /// </summary>
     internal static void Check(string kind, string command, string? test, IReadOnlyDictionary<string, IReadOnlyCollection<string>>? traits, GuardMode mode)
     {
-        if (mode == GuardMode.Enforce && Verdict(kind, command, test, traits) is { } message)
+        if (mode == GuardMode.Enforce && test is not null && Verdict(kind, command, test, traits) is { } message)
         {
             throw new ProcessStartNotAllowedException(message);
         }

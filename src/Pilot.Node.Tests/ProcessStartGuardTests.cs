@@ -6,7 +6,8 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// The process-start guard (#952 part 5) decides from a test's traits alone, so every case here runs in memory with no real process:
-/// an unmarked test's start throws, a Slow or Integration test's does not, report mode never throws.
+/// an unmarked test's start throws, a Slow or Integration test's does not, report mode never throws, and a start no test can be named
+/// for is reported, not thrown.
 /// </summary>
 [Trait("Category", "Invariant")]
 public sealed class ProcessStartGuardTests
@@ -60,13 +61,16 @@ public sealed class ProcessStartGuardTests
     }
 
     [Fact]
-    public void AStartOutsideAnyTestThrowsUnlessItsKindIsNamedWithAReason()
+    public void AStartOutsideAnyTestIsReportedUnlessItsKindIsNamedWithAReasonButNeverThrows()
     {
         var message = ProcessStartGuard.Verdict("git", "git gc", null, null);
 
         message.ShouldNotBeNull();
         message.ShouldContain("outside any test");
         ProcessStartGuard.NoTestAllowed.Values.ShouldAllBe(reason => !string.IsNullOrWhiteSpace(reason));
+        // Whose start it is, and so whether it may be made, is not known: the report names it (CI fails the default run on it), and a
+        // throw would break a Slow test's node as surely as an unmarked one's.
+        ProcessStartGuard.Check("git", "git gc", null, null, ProcessStartGuard.GuardMode.Enforce);
     }
 
     [Theory]
@@ -109,6 +113,61 @@ public sealed class ProcessStartGuardTests
     public void TheObserverLetsAMethodLevelSlowTestsStartThrough()
     {
         ProcessStarts.Observe("git", new ProcessStartInfo("git", "status"));
+    }
+
+    // A test node's requests run on Kestrel's threads, which carry no test; the node's middleware (NodeHarness) carries the test that
+    // started it instead. These run the observer on a flow with no test, as Kestrel does, and start nothing.
+    [Fact]
+    public async Task OnAThreadWithNoTestAStartIsTheCarriedTestsAndThrowsWhenThatTestIsUnmarked()
+    {
+        var ex = await OnAThreadWithNoTestAsync(() =>
+        {
+            TestEnvironment.CarryOwner(new TestEnvironment.Owner("Some.UnmarkedNodeTest", Unmarked));
+            return Should.Throw<ProcessStartNotAllowedException>(() => ProcessStarts.Observe("git", new ProcessStartInfo("git", "fetch origin")));
+        });
+
+        ex.Message.ShouldContain("Some.UnmarkedNodeTest");
+        ex.Message.ShouldContain("git fetch origin");
+    }
+
+    [Fact]
+    public async Task OnAThreadWithNoTestAStartIsLetThroughWhenTheCarriedTestIsSlow()
+    {
+        await OnAThreadWithNoTestAsync(() =>
+        {
+            TestEnvironment.CarryOwner(new TestEnvironment.Owner("Some.SlowNodeTest", Category("Slow")));
+            ProcessStarts.Observe("git", new ProcessStartInfo("git", "fetch origin"));
+            return 0;
+        });
+    }
+
+    [Fact]
+    public async Task OnAThreadWithNoTestAndNoneCarriedAStartDoesNotThrow()
+    {
+        await OnAThreadWithNoTestAsync(() =>
+        {
+            ProcessStarts.Observe("git", new ProcessStartInfo("git", "worktree list --porcelain"));
+            return 0;
+        });
+    }
+
+    /// <summary>
+    /// Runs <paramref name="body"/> on a pool thread that carries nothing of this test's flow (as Kestrel runs a node's request), after
+    /// proving that no test is running there; what it provokes is checked but left out of the process-start report.
+    /// </summary>
+    private static async Task<T> OnAThreadWithNoTestAsync<T>(Func<T> body)
+    {
+        Task<T> run;
+        using (ExecutionContext.SuppressFlow())
+        {
+            run = Task.Run(() =>
+            {
+                TestContext.Current.Test.ShouldBeNull();
+                using var provoking = TestEnvironment.ProvokingAStart();
+                return body();
+            });
+        }
+        return await run;
     }
 }
 
