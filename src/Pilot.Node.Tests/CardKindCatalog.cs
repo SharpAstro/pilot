@@ -64,6 +64,8 @@ internal static class CardKindCatalog
         // Workers, legs and planners.
         new("worker-stopped", "Ring", [Watch], "LegWatchTests.AStopWithNoResetTimeRingsAtOnce", "the worker's session row is stopped by the API (no reset time to resume at), the leg is flying and its flight has not landed", [nameof(Verbs.Say), nameof(Verbs.GoAround)]),
         new("flight-on-hold", "Handled", ["Flights/LegCommander.OnHold.cs", "Flights/LabelHold.cs", "Flights/RepoWatch.cs"], "FlightHoldTests.HoldNeedsWhyRecordsWhoAndWhenAndARepeatUpdatesTheWhy"),
+        new("wait-followed", "Handled", ["Flights/FlightCommander.Follow.cs"], "ConnectTests.AFlightHeldOnALocalFlightThatMovesToAPeerWaitsForItThereWithNoLocalConnection_818"),
+        new("merged-hold", "Ring", ["Flights/FlightCommander.MergedHold.cs"], "ConnectTests.AHoldOverTwoHoursOnAFlightWhosePrMergedRingsOneCardAcrossTwoSweeps_818", "GitHub says the flight a held flight waits for has its PR merged or its issue closed, the hold is over two hours old, and the sweep left it held", [nameof(Verbs.Disconnect)]),
         new("worker-limit-wait", "Handled", [Watch], "LegCardTests.AUsageLimitStopTheNodeResumesItselfIsAHandledLineAndNoCard"),
         new("worker-idle", "Ring", [Watch], "LegWatchTests.ANudgeTheNodeCannotDeliverRings", "the worker's session row is idle with its leg unfinished, nothing of its own (a job, the node's recheck) is what it waits on, and its flight has not landed", [nameof(Verbs.Say), nameof(Verbs.GoAround)]),
         new("worker-waiting", "Ring", [Watch], "LegWatchTests.AWaitingWorkerRingsWithItsQuestionAndTheCardClosesWhenItWorksAgain", "the worker's last message asks the person, its leg is not rechecking, and its flight has not landed", [nameof(Verbs.GoAround)]),

@@ -139,6 +139,8 @@ public static partial class CardSummaries
             FlightCommander.FoldedKind => $"{what} was folded into another flight, whose planner now plans its points. Nothing to do.",
             FlightCommander.RoutedKind => "A new flight was made on another node because this one is in maintenance. Nothing to do.",
             FlightCommander.ConnectionReleasedKind => "A flight that waited for another flight no longer does, because that flight landed. Nothing to do.",
+            FlightCommander.WaitFollowedKind => "A flight waited for a flight of this node that then moved to another node, so it now waits for it there and flies once that node says it landed. Nothing to do.",
+            FlightCommander.MergedHoldKind => "A flight has been held for over 2 hours on a flight whose PR merged or whose issue closed on GitHub, and the sweep did not lift the hold. The card names both flights and the way out, pilot flight disconnect <held> <waited-for>; it closes by itself once the hold lifts.",
             FlightCommander.DisconnectedKind => "A flight was disconnected from another flight it had been connected to. Nothing to do.",
             FlightCommander.ReceivedKind => $"{what} was handed over to this node, which made its plane. Nothing to do.",
             FlightCommander.AdoptedKind => $"This node adopted {what} from a node that had gone silent, and made its plane from the pushed branch. Nothing to do.",

@@ -502,6 +502,284 @@ public sealed class ConnectTests : OverlapTestsBase
         held.Connections.ShouldBe(["PIL294"]);
     }
 
+    // #818: TIA2 held on TIA1, a flight of this node (DU1) that then moves away. The rows are put as the node holds them, with no plane made.
+    private sealed class MergedHoldClock(DateTimeOffset start) : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = start;
+
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
+    // TIA2 held on TIA1, which this node still shows flying, with TIA1's PR as GitHub says (#818): the release path cannot apply.
+    private async Task<(FlightCommander Flights, MergedHoldClock Clock, List<string> Asked)> HeldOnAMergedFlightAsync(string prState)
+    {
+        _flights.Machine = "DU1";
+        var asked = new List<string>();
+        var github = new FakeGitHub { Pr = new PullRequest(77, prState, "head", "https://github.com/x/tianwen/pull/77"), OnCall = call => { asked.Add(call); return Task.CompletedTask; } };
+        var clock = new MergedHoldClock(new DateTimeOffset(2026, 11, 10, 8, 0, 0, TimeSpan.Zero));
+        var flights = new FlightCommander(_state, new Planes(new GitCli()), clock, null, github) { Machine = "DU1", Fleet = _fleet };
+        _state.PutFlight(Theirs("TIA1", 1) with { RepoPath = Repo, PullRequest = 77 });
+        _state.PutFlight(Theirs("TIA2", 2) with { RepoPath = Repo });
+        (await flights.RunAsync(new CommandRequest { Verb = Verbs.Connect, Target = "flight/TIA2", Args = ["TIA1"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        // The first sweep is when a local connection is first seen: its age counts from here.
+        await flights.LookAtPeerConnectionsAsync(Ct);
+        asked.Clear();
+        return (flights, clock, asked);
+    }
+
+    private CardRow[] MergedHoldCards() => [.. _state.Cards(openOnly: true).Where(c => c.Kind == FlightCommander.MergedHoldKind)];
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AHoldOverTwoHoursOnAFlightWhosePrMergedRingsOneCardAcrossTwoSweeps_818()
+    {
+        var (flights, clock, _) = await HeldOnAMergedFlightAsync("MERGED");
+        clock.Now += TimeSpan.FromHours(2) + TimeSpan.FromMinutes(1);
+
+        await flights.LookAtPeerConnectionsAsync(Ct);
+        await flights.LookAtPeerConnectionsAsync(Ct);
+
+        F("TIA2").State.ShouldBe(FlightState.Held);
+        var card = MergedHoldCards().ShouldHaveSingleItem();
+        (card.Kind, card.Bin, card.Subject).ShouldBe((FlightCommander.MergedHoldKind, CardBin.Ring, "flight/TIA2"));
+        card.Title.ShouldContain("TIA2");
+        card.Title.ShouldContain("TIA1");
+        card.Title.ShouldContain("#77");
+        card.Title.ShouldContain("2 h 01 m");
+        card.Detail.ShouldNotBeNull().ShouldContain("pilot flight disconnect TIA2 TIA1");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AHoldOfOneHourFiftyNineOnAMergedFlightRingsNothingAndAsksGitHubNothing_818()
+    {
+        var (flights, clock, asked) = await HeldOnAMergedFlightAsync("MERGED");
+        clock.Now += TimeSpan.FromHours(1) + TimeSpan.FromMinutes(59);
+
+        await flights.LookAtPeerConnectionsAsync(Ct);
+
+        MergedHoldCards().ShouldBeEmpty();
+        asked.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AHoldOverTwoHoursOnAFlightWhosePrIsStillOpenRingsNothing_818()
+    {
+        var (flights, clock, _) = await HeldOnAMergedFlightAsync("OPEN");
+        clock.Now += TimeSpan.FromHours(3);
+
+        await flights.LookAtPeerConnectionsAsync(Ct);
+
+        MergedHoldCards().ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheMergedHoldCardClosesOnceTheHoldLifts_818()
+    {
+        var (flights, clock, _) = await HeldOnAMergedFlightAsync("MERGED");
+        clock.Now += TimeSpan.FromHours(3);
+        await flights.LookAtPeerConnectionsAsync(Ct);
+        MergedHoldCards().ShouldHaveSingleItem();
+
+        (await flights.RunAsync(new CommandRequest { Verb = Verbs.Disconnect, Target = "flight/TIA2", Args = ["TIA1"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        await flights.LookAtPeerConnectionsAsync(Ct);
+
+        F("TIA2").Connections.ShouldBeEmpty();
+        MergedHoldCards().ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFlightHeldOnTwoMergedFlightsHasOneCardWithALineEachAndALiftKeepsTheOther_818()
+    {
+        var (flights, clock, _) = await HeldOnAMergedFlightAsync("MERGED");
+        _state.PutFlight(Theirs("TIA3", 3) with { RepoPath = Repo, PullRequest = 77 });
+        (await flights.RunAsync(new CommandRequest { Verb = Verbs.Connect, Target = "flight/TIA2", Args = ["TIA3"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        await flights.LookAtPeerConnectionsAsync(Ct);
+        clock.Now += TimeSpan.FromHours(3);
+
+        await flights.LookAtPeerConnectionsAsync(Ct);
+
+        var card = MergedHoldCards().ShouldHaveSingleItem();
+        card.Detail.ShouldNotBeNull().ShouldContain("pilot flight disconnect TIA2 TIA1");
+        card.Detail.ShouldContain("pilot flight disconnect TIA2 TIA3");
+
+        (await flights.RunAsync(new CommandRequest { Verb = Verbs.Disconnect, Target = "flight/TIA2", Args = ["TIA1"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        await flights.LookAtPeerConnectionsAsync(Ct);
+        MergedHoldCards().ShouldHaveSingleItem().Detail.ShouldNotBeNull().ShouldNotContain("TIA2 TIA1");
+    }
+
+    private async Task<FlightCommander> HeldOnLocalAsync(FakeGitHub? github = null, int? pullRequest = null)
+    {
+        _flights.Machine = "DU1";
+        var flights = github is null
+            ? _flights
+            : new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System, null, github) { Machine = "DU1", Fleet = _fleet };
+        _state.PutFlight(Theirs("TIA1", 1) with { RepoPath = Repo, PullRequest = pullRequest });
+        _state.PutFlight(Theirs("TIA2", 2) with { RepoPath = Repo });
+        (await flights.RunAsync(new CommandRequest { Verb = Verbs.Connect, Target = "flight/TIA2", Args = ["TIA1"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        Shows(F("TIA2"), FlightState.Held, ["TIA1"], []);
+        return flights;
+    }
+
+    private static void Shows(FlightRow row, FlightState state, string[] connections, string[] waits)
+    {
+        row.State.ShouldBe(state);
+        row.Connections.ShouldBe(connections);
+        row.PeerConnections.Select(c => c.Code).ShouldBe(waits);
+    }
+
+    // What a move leaves of the flight on the node it left: landed, saying where it went.
+    private void Moves(string code, string to)
+    {
+        var at = DateTimeOffset.UtcNow;
+        _state.PutFlight(F(code) with { State = FlightState.Landed, LandedAt = at, MovedTo = new FlightMovedTo { To = to, At = at } });
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFlightHeldOnALocalFlightThatMovesToAPeerWaitsForItThereWithNoLocalConnection_818()
+    {
+        var flights = await HeldOnLocalAsync(pullRequest: 77);
+        Moves("TIA1", "SE1");
+
+        // Still a local connection, held on the moved row: nothing has looked at it as a wait for another node.
+        F("TIA2").Connections.ShouldBe(["TIA1"]);
+
+        // What a move does once it has recorded the flight as moved.
+        (await flights.FollowMovedFlightsAsync(Ct)).ShouldBe(1);
+
+        var held = F("TIA2");
+        held.State.ShouldBe(FlightState.Held);
+        held.Connections.ShouldBeEmpty();
+        var wait = held.PeerConnections.ShouldHaveSingleItem();
+        // The moved row's branch, PR and issue ride on the wait, so GitHub can answer for a node that cannot.
+        (wait.Code, wait.Node, wait.Branch, wait.PullRequest, wait.Issue, wait.Note).ShouldBe(("TIA1", "SE1", "flight/tia1", 77, 1, null));
+        FlightWaiting.For(held).ShouldBe("TIA1 on SE1");
+        var card = _state.Cards().Single(c => c.Kind == FlightCommander.WaitFollowedKind);
+        (card.Bin, card.Subject, card.Title).ShouldBe((CardBin.Handled, "flight/TIA2", "TIA2 now waits for TIA1 on SE1, where TIA1 moved"));
+
+        // Said again, it does nothing more: no second wait, no second card.
+        (await flights.FollowMovedFlightsAsync(Ct)).ShouldBe(0);
+        F("TIA2").PeerConnections.ShouldHaveSingleItem();
+        _state.Cards().Count(c => c.Kind == FlightCommander.WaitFollowedKind).ShouldBe(1);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AWaitThatFollowedAMovedFlightIsReleasedByOneLookOnceThatNodeSaysItLanded_818()
+    {
+        var flights = await HeldOnLocalAsync();
+        var peer = Peer("SE1", Theirs("TIA1", 1));
+        Moves("TIA1", "SE1");
+        await flights.FollowMovedFlightsAsync(Ct);
+
+        // Still flying on SE1: held, and SE1 is the node that is asked.
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
+        var held = F("TIA2");
+        held.State.ShouldBe(FlightState.Held);
+        held.PeerConnections.ShouldHaveSingleItem().Note.ShouldBeNull();
+
+        // Landed on SE1 (not moved on): the wait is over and the flight flies.
+        peer.Flights = [Theirs("TIA1", 1, FlightState.Landed)];
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(1);
+        Shows(F("TIA2"), FlightState.Flying, [], []);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AMovedFlightsUnreachableNodeWithItsPrMergedOnGitHubReleasesTheFlight_818()
+    {
+        var flights = await HeldOnLocalAsync(new FakeGitHub { Pr = new PullRequest(77, "MERGED", "head", "https://github.com/x/tianwen/pull/77") }, pullRequest: 77);
+        var peer = Peer("SE1", Theirs("TIA1", 1));
+        Moves("TIA1", "SE1");
+        peer.Unreachable = true;
+
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(1);
+
+        Shows(F("TIA2"), FlightState.Flying, [], []);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AMovedFlightsNodeThatListsNoSuchFlightWithItsPrMergedOnGitHubReleasesTheFlight_818()
+    {
+        var flights = await HeldOnLocalAsync(new FakeGitHub { Pr = new PullRequest(77, "MERGED", "head", "https://github.com/x/tianwen/pull/77") }, pullRequest: 77);
+        Peer("SE1");
+        Moves("TIA1", "SE1");
+
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(1);
+
+        Shows(F("TIA2"), FlightState.Flying, [], []);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AMovedFlightsUnreachableNodeWithItsPrStillOpenKeepsTheFlightHeldAndSaysWhy_818()
+    {
+        var flights = await HeldOnLocalAsync(new FakeGitHub { Pr = new PullRequest(77, "OPEN", "head", "https://github.com/x/tianwen/pull/77") }, pullRequest: 77);
+        var peer = Peer("SE1", Theirs("TIA1", 1));
+        Moves("TIA1", "SE1");
+
+        // SE1 answers once (TIA1 still flying there), so this node knows it by name; only a known peer gone silent is "not on the LAN".
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
+        peer.Unreachable = true;
+
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
+
+        var held = F("TIA2");
+        held.State.ShouldBe(FlightState.Held);
+        var wait = held.PeerConnections.ShouldHaveSingleItem();
+        var since = wait.UnreachableSince.ShouldNotBeNull();
+        wait.Note.ShouldBe($"SE1 is not on the LAN since {since.ToLocalTime():HH:mm}; its PR #77 is open");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARowHeldOnAMovedFlightBeforeTheFixIsConvertedAndReleasedByOneSweep_818()
+    {
+        // TIA2023 and TIA2027 on TIA2000: a local connection to a flight whose row says it moved, as the node kept it for hours.
+        var flights = await HeldOnLocalAsync();
+        Peer("SE1", Theirs("TIA1", 1, FlightState.Landed));
+        Moves("TIA1", "SE1");
+        Shows(F("TIA2"), FlightState.Held, ["TIA1"], []);
+
+        // No disconnect and no call but the sweep's own look.
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(1);
+
+        Shows(F("TIA2"), FlightState.Flying, [], []);
+        _state.Cards().Single(c => c.Kind == FlightCommander.WaitFollowedKind).Title.ShouldBe("TIA2 now waits for TIA1 on SE1, where TIA1 moved");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFlightThatMovedAndThenMovedBackHereIsAConnectionToAFlightOfThisNodeAgain_818()
+    {
+        var flights = await HeldOnLocalAsync();
+        var peer = Peer("SE1", Theirs("TIA1", 1));
+        Moves("TIA1", "SE1");
+        await flights.FollowMovedFlightsAsync(Ct);
+        F("TIA2").PeerConnections.ShouldHaveSingleItem().Node.ShouldBe("SE1");
+
+        // SE1 handed it back: its row there says it moved to this node, and this node's row for it is a flight in the air again.
+        peer.Flights = [Theirs("TIA1", 1, FlightState.Landed) with { MovedTo = new FlightMovedTo { To = "DU1", At = DateTimeOffset.UtcNow } }];
+        _state.PutFlight(Theirs("TIA1", 1) with { RepoPath = Repo, MovedFrom = new FlightMoved { From = "SE1", At = DateTimeOffset.UtcNow } });
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
+
+        Shows(F("TIA2"), FlightState.Held, ["TIA1"], []);
+
+        // A flight of this node in the air is not made a wait for another node by the follow.
+        (await flights.FollowMovedFlightsAsync(Ct)).ShouldBe(0);
+        F("TIA2").Connections.ShouldBe(["TIA1"]);
+
+        // And it releases as any local connection does, once it has landed here.
+        _state.PutFlight(F("TIA1") with { State = FlightState.Landed });
+        (await flights.ReleaseLandedConnectionsAsync(Ct)).ShouldBe(1);
+        F("TIA2").State.ShouldBe(FlightState.Flying);
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task ConnectToAFlightNoNodeListsOrAnUnreachableNodeIsRefusedWithTheReason()
