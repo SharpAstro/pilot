@@ -93,21 +93,24 @@ public sealed partial class LegCommander(
 
     public static bool Handles(string verb) =>
         verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.ValidateLeg or Verbs.Check or Verbs.FinishLeg or Verbs.WaitLeg or Verbs.GoAround or Verbs.Merge or Verbs.RerunChecks or Verbs.MoveFlight
-            or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review or Verbs.AllowRound or Verbs.Clear
-            or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Touches or Verbs.Fold or Verbs.Separate or Verbs.ConnectOverlap;
+            or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review or Verbs.AllowRound or Verbs.CiBudget or Verbs.Clear or Verbs.Hold or Verbs.Ground or Verbs.Unground
+            or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Touches or Verbs.FlightChanges or Verbs.Fold or Verbs.Separate or Verbs.ConnectOverlap;
 
     /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
     public Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken) =>
-        command.Verb == Verbs.Touches
+        command.Verb is Verbs.Touches or Verbs.FlightChanges
             ? RunTouchesAsync(command, cancellationToken)
             : LockWait.RunAsync(_one, state, time, command, token => RunQueuedAsync(command, token), cancellationToken);
 
     // A read of git, the peers and GitHub that changes nothing: it takes no lock, so a busy node answers it, and it holds none while it waits.
+    // flight-changes is the same kind of read, of one flight's plane.
     private async Task<CommandResult> RunTouchesAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         try
         {
-            return state.Complete(command, null, made: await TouchesAsync(command, cancellationToken));
+            return state.Complete(command, null, made: command.Verb == Verbs.FlightChanges
+                ? await FlightChangesAsync(command, cancellationToken)
+                : await TouchesAsync(command, cancellationToken));
         }
         catch (FlightException ex)
         {
@@ -143,14 +146,16 @@ public sealed partial class LegCommander(
         var launches = _launched.Value = [];
         // Asked of the peers before the lock is taken: a slow one holds up this command, not the others.
         var peerRefusal = await PeerRefusalAsync(command, cancellationToken);
-        // The flight's issue label for admission, read at the start and without the lock too.
-        if (command.Verb is Verbs.StartLeg or Verbs.ValidateLeg or Verbs.PlanFlight or Verbs.StartReview
+        // The flight's issue label for admission, read at the start and without the lock too. Opening a PR and merging read it as well, the
+        // outward steps that matter most: a hold put on GitHub while this node was down holds them on a wake, before the repo sweep's first read.
+        if (command.Verb is Verbs.StartLeg or Verbs.ValidateLeg or Verbs.PlanFlight or Verbs.StartReview or Verbs.OpenPr or Verbs.Merge
             && state.Flights().FirstOrDefault(f => string.Equals(f.Code, CodeOf(command.Target), StringComparison.OrdinalIgnoreCase)) is { } starting)
         {
             await PrimeAsync(starting, cancellationToken);
         }
         await _one.WaitAsync(cancellationToken);
         string? error = null;
+        MergeRefusal? refusal = null;
         string? made = null;
         string? way = null;
         var merged = false;
@@ -174,8 +179,19 @@ public sealed partial class LegCommander(
             {
                 throw new FlightException(peerRefusal);
             }
+            // The owner's hold (#771): every flight and leg verb but the hold's own, a running session's reports and the reads is refused.
+            if (OnHoldRefusalFor(command) is { } onHold)
+            {
+                throw new FlightException(onHold);
+            }
             switch (command.Verb)
             {
+                case Verbs.Ground:
+                    made = await HoldAsync(command, cancellationToken);
+                    break;
+                case Verbs.Unground:
+                    made = await UnholdAsync(command, cancellationToken);
+                    break;
                 case Verbs.MoveFlight:
                     moving = FlightOf(command.Target);
                     break;
@@ -260,8 +276,14 @@ public sealed partial class LegCommander(
                 case Verbs.AllowRound:
                     AllowRound(command);
                     break;
+                case Verbs.CiBudget:
+                    made = AnswerCiBudget(command);
+                    break;
                 case Verbs.Clear:
                     ClearHolding(command);
+                    break;
+                case Verbs.Hold:
+                    TakeHolding(command);
                     break;
                 case Verbs.Review:
                     await ReviewAsync(command, cancellationToken);
@@ -279,9 +301,23 @@ public sealed partial class LegCommander(
             // A repeat of a step already running is no refusal: ok, saying so.
             made = ex.Message;
         }
+        catch (FlightBusyException ex)
+        {
+            // Refused only because the flight had calls out: said so in the way, for a caller that asks again once it is free.
+            error = ex.Message;
+            way = RefusalWays.Busy;
+        }
+        catch (PushRefusedException ex)
+        {
+            // A push refused in a way the caller acts on (PIL836): said so in the way, never left to the refusal's words.
+            error = ex.Message;
+            way = ex.Way;
+        }
         catch (FlightException ex)
         {
             error = ex.Message;
+            // The class a merge refusal was given where it was made; the merge verb's result carries it for PrChecks.
+            refusal = command.Verb is Verbs.Merge or Verbs.RerunChecks ? MergeRefusals.Of(ex) : null;
         }
         catch (Exception) when (DropLegEndMarkOnThrow())
         {
@@ -289,6 +325,8 @@ public sealed partial class LegCommander(
         }
         finally
         {
+            // A push's turning of the review was this command's own write: once its result is recorded, no later command is waved through by it.
+            _queueTurned.TryRemove(CodeOf(command.Target), out _);
             _one.Release();
         }
 
@@ -346,6 +384,13 @@ public sealed partial class LegCommander(
             ClearLegEndChecking(CodeOf(command.Target));
         }
 
+        // A flight released from its hold goes on to what is due, as a resumed leg does.
+        // (A code this node has no flight for only had its issue's label taken off.)
+        if (error is null && command.Verb == Verbs.Unground && FlightNamed(command.Target) is { } released)
+        {
+            await AdvanceAsync(released, cancellationToken);
+        }
+
         // A leg taken out: the flight goes on past it the same way, as the leg it was waiting on may have been the last
         // one standing in the way of the next leg, or of its PR.
         if (error is null && command.Verb == Verbs.RemoveLeg)
@@ -356,7 +401,7 @@ public sealed partial class LegCommander(
         // A merge refused as not mergeable (conflicting, or behind its base) is never left as a Merge button that refuses again: the
         // entry stays in the queue while the node brings the plane up to date, by plain git (the base merged in, a plain push). A
         // clean merge alone keeps the passed review at the new head, and the merge goes on at it; any other change is reviewed afresh,
-        // and the entry waits for that review to pass. A merge that conflicts leaves the queue, and the watchtower resolves it in the plane
+        // and the entry waits for that review to pass. A merge that conflicts leaves the queue, and a worker resolves it in the plane
         // (SE1, 2026-10-24: a Merge pressed over and over on #195 and #197, each refusal seen nowhere but a log).
         if (error is not null && (command.Verb == Verbs.Merge && Conflicts(error) || command.Verb is Verbs.Merge or Verbs.RerunChecks && Behind(error)))
         {
@@ -377,7 +422,8 @@ public sealed partial class LegCommander(
                 {
                     DropMerge(code, why);
                 }
-                error = $"{error}; {why}{(!IsConflict(why) ? "" : await ConflictsAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : ": the watchtower is told to resolve it in the plane")}";
+                // The command's lock was let go above (as BringUpToDateKeepingAsync, which takes it itself, relies on), so the round goes by the command route.
+                error = $"{error}; {why}{(!IsConflict(why) ? "" : await ResolveConflictAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : $": {WorkerResolves}")}";
             }
             else
             {
@@ -444,10 +490,10 @@ public sealed partial class LegCommander(
         {
             ShowMerge(command.Target, made, way);
         }
-        return state.Complete(command, error, way, made: made);
+        return state.Complete(command, error, way, made: made, refusal: refusal);
     }
 
-    /// <summary>Whether a reason <see cref="BringUpToDateAsync"/> gave is a merge that conflicted: the only one the watchtower is told to resolve.</summary>
+    /// <summary>Whether a reason <see cref="BringUpToDateAsync"/> gave is a merge that conflicted: the only one put to a worker to resolve.</summary>
     private static bool IsConflict(string why) => why.Contains(" conflicts (", StringComparison.Ordinal);
 
     /// <summary>
@@ -473,6 +519,9 @@ public sealed partial class LegCommander(
         }
         finally
         {
+            // A push's turning of the review (EnsureNotQueuedAsync) was this update's own write. RunAsync clears it for a command, but the
+            // sweeps call this on their own, so it is let go here too: no later command is waved through by it.
+            _queueTurned.TryRemove(code, out _);
             await AwaitLaunchesAsync(launches);
         }
     }
@@ -488,6 +537,11 @@ public sealed partial class LegCommander(
             if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying } flight || !Directory.Exists(flight.Worktree))
             {
                 return ($"{code} is not a flying flight with a plane", null);
+            }
+            // The owner's hold (#771): no base merge, no push; the hold is the reason, which is no conflict to hand to anyone.
+            if (OnHoldRefusal(flight) is { } onHold)
+            {
+                return (onHold, null);
             }
             if ((await OffLockAsync(null, () => git.RunAsync(["status", "--porcelain"], flight.Worktree, cancellationToken))).Output.Trim().Length > 0)
             {
@@ -554,6 +608,12 @@ public sealed partial class LegCommander(
                 return (null, null);
             }
             flight = Record(code, f => f with { Base = repaired.Base })!;
+            // kept was decided before the push, on the review as it stood then: a push that took the PR out of the merge queue turned the
+            // passed review back meanwhile, and a review that is no longer passed carries nowhere and offers no PR-ready.
+            if (kept is { Length: > 0 } && flight.Review is not { State: ReviewState.Passed })
+            {
+                kept = null;
+            }
             if (kept is { Length: > 0 })
             {
                 // Its review read this branch before the base was merged in: the merge alone moved it, so the pass goes with it to the

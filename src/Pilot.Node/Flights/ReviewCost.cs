@@ -260,9 +260,14 @@ public static class ReviewCost
             folder = Path.Combine(folder, "store");
         }
         var snapshotPath = Path.Combine(folder, FileJournal.SnapshotFile);
-        if (File.Exists(snapshotPath) && JsonSerializer.Deserialize(File.ReadAllBytes(snapshotPath), PilotJsonContext.Default.NodeEvent) is { } snapshot)
+        if (File.Exists(snapshotPath))
         {
-            mirror.Apply(snapshot);
+            // Streamed from the file: the snapshot is tens of MB, too big to read into one array (#794).
+            using var file = new FileStream(snapshotPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 64 * 1024);
+            if (JsonSerializer.Deserialize(file, PilotJsonContext.Default.NodeEvent) is { } snapshot)
+            {
+                mirror.Apply(snapshot);
+            }
         }
         var journalPath = Path.Combine(folder, FileJournal.JournalFile);
         if (File.Exists(journalPath))

@@ -84,6 +84,8 @@ public sealed class PlanOnCreateTests : LegCommanderTestsBase
 
     private sealed class Peer : IFleetPeer
     {
+        public string Name => "OTHER";
+
         public string Endpoint => "other.local:47731";
 
         public bool HasGrant => true;

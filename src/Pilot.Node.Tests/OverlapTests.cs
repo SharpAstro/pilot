@@ -35,47 +35,68 @@ public abstract class OverlapTestsBase : IDisposable
     private protected readonly FlightCommander _flights;
     private protected readonly LegCommander _legs;
 
-    protected OverlapTestsBase()
+    /// <summary>The git every commander of the test runs: <see cref="FakeRepoGit"/> (a repo with no origin), or real git for a class that is about git itself. See <see cref="TestGit"/>.</summary>
+    private protected readonly IGit _git;
+
+    private readonly TestGit _testGit;
+
+    protected OverlapTestsBase(bool realGit = false)
+    {
+        _git = _testGit = new TestGit(_root, realGit, MakeRealRepo, withOrigin: false, withSolution: false);
+        (_flights, _legs) = Commanders(_state);
+    }
+
+    private void MakeRealRepo()
     {
         Directory.CreateDirectory(Repo);
         Git(Repo, "init", "-q", "-b", "main");
         File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
         Git(Repo, "add", ".");
         Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        (_flights, _legs) = Commanders(_state);
     }
 
     private protected string Repo => Path.Combine(_root, "tianwen");
 
+    /// <summary>Runs this test on git itself, before it has used the repo: for a test of a class that otherwise checks what the node decides.</summary>
+    private protected void RealGit() => _testGit.UseReal();
+
     private protected (FlightCommander, LegCommander) Commanders(NodeState state)
     {
-        var git = new GitCli();
-        var flights = new FlightCommander(state, new Planes(git), TimeProvider.System);
+        var flights = new FlightCommander(state, new Planes(_git), TimeProvider.System);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
-        return (flights, new LegCommander(state, _workers, new FakeChecks(), new FakeGitHub(), git, new Planes(git), flights, options, TimeProvider.System));
+        return (flights, new LegCommander(state, _workers, new FakeChecks(), new FakeGitHub(), _git, new Planes(_git), flights, options, TimeProvider.System));
     }
 
     public void Dispose()
     {
-        try
+        if (_testGit.IsReal)
         {
-            Git(Repo, "worktree", "prune");
+            try
+            {
+                Git(Repo, "worktree", "prune");
+            }
+            catch (InvalidOperationException)
+            {
+            }
         }
-        catch (InvalidOperationException)
-        {
-        }
+        _testGit.Release();
         // A plane's git may still be letting go of a folder while it is walked (seen as DirectoryNotFound mid-delete): tried again.
         TestDirs.DeleteTree(_root);
+        _testGit.Verify();
     }
 
     private protected static string Git(string cwd, params string[] args)
     {
+        if (TestGit.Answer(cwd, args) is { } answered)
+        {
+            return answered;
+        }
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
@@ -124,7 +145,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
         [
             ("Fold into TIA1", Verbs.Fold, "flight/TIA2", "TIA1"),
             ("Connect to TIA1", Verbs.ConnectOverlap, "flight/TIA2", "TIA1"),
-            ("Plan TIA2 in parallel with TIA1", Verbs.Separate, "flight/TIA2", "TIA1"),
+            ("Plan both in parallel", Verbs.Separate, "flight/TIA2", "TIA1"),
         ]);
         card.Choices.ShouldNotContain(c => c.Label.Contains("Leave it"));
         var recorded = _state.Flights().Single(f => f.Code == "TIA2").Overlaps.ShouldHaveSingleItem();
@@ -199,7 +220,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
         var card = Cards().ShouldHaveSingleItem();
         card.Title.ShouldBe("Fold TIA2 into TIA1 (both change DetachedShell.cs, Parser.cs)");
         // Still all three choices: the title says what the planner leans to, the controller answers.
-        card.Choices.Select(c => c.Label).ShouldBe(["Fold into TIA1", "Connect to TIA1", "Plan TIA2 in parallel with TIA1"]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Fold into TIA1", "Connect to TIA1", "Plan both in parallel"]);
         var recorded = F("TIA2").Overlaps.ShouldHaveSingleItem();
         (recorded.Pick, recorded.Why).ShouldBe((Verbs.OverlapPickFold, "same goal"));
         recorded.Files.ShouldBe(["src/DetachedShell.cs", "src/Parser.cs"]);
@@ -287,14 +308,17 @@ public sealed class OverlapTests1 : OverlapTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AnUnknownALandedAndTheSameFlightAreRefused()
+    public async Task AnUnknownAndTheSameFlightAreRefusedAndALandedOneIsAnsweredAtOnceWithNoCard()
     {
         await TwoFlights();
 
         (await Leg(Verbs.Overlap, "flight/TIA2", "TIA9", "why")).Error.ShouldBe("There is no flight TIA9");
         (await Leg(Verbs.Overlap, "flight/TIA2", "TIA2", "why")).Error.ShouldBe("TIA2 cannot overlap itself");
         _state.PutFlight(_state.Flights().Single(f => f.Code == "TIA1") with { State = FlightState.Landed });
-        (await Leg(Verbs.Overlap, "flight/TIA2", "TIA1", "why")).Error.ShouldNotBeNull().ShouldStartWith("TIA1 has landed");
+        // PIL824: its work is in, so there is nothing to wait for; no row, no card.
+        var landed = await Leg(Verbs.Overlap, "flight/TIA2", "TIA1", "why");
+        landed.Ok.ShouldBeTrue();
+        landed.Made.ShouldNotBeNull().ShouldStartWith("TIA1 has landed");
 
         Cards().ShouldBeEmpty();
         _state.Flights().Single(f => f.Code == "TIA2").Overlaps.ShouldBeEmpty();

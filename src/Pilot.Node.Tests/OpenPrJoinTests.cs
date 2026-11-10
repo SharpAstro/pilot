@@ -27,7 +27,7 @@ public sealed class OpenPrJoinTests : ReviewTestsBase
                 return;
             }
             reached.TrySetResult();
-            await Task.WhenAny(open.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+            await Task.WhenAny(open.Task, Task.Delay(TimeSpan.FromSeconds(25)));
             if (fail)
             {
                 throw new FlightException("GitHub refused the PR");

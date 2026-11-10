@@ -47,18 +47,20 @@ public sealed class DetachedShell : IDisposable
     /// <c>pwsh -Command "...; exit $LASTEXITCODE"</c> is otherwise read twice, and the outer pwsh expands the inner's
     /// <c>$LASTEXITCODE</c> to nothing, so the job ends 0 whatever the line did (TIA1827, 2026-10-25).
     /// </summary>
-    public static DetachedShell For(string jobId, string command, string cwd, string logPath, string exitPath, JobPriority priority = JobPriority.BelowNormal, IReadOnlyDictionary<string, string>? extra = null)
+    public static DetachedShell For(string jobId, string command, string cwd, string logPath, string exitPath, JobPriority priority = JobPriority.BelowNormal, IReadOnlyDictionary<string, string>? extra = null, string? notice = null)
     {
         if (!OperatingSystem.IsWindows())
         {
-            return new DetachedShell([], UnixShell(), () => StartUnix(jobId, command, cwd, logPath, exitPath, priority, extra));
+            return new DetachedShell([], UnixShell(), () => StartUnix(jobId, command, cwd, logPath, exitPath, priority, extra, notice));
         }
         var inner = Path.ChangeExtension(logPath, ".ps1");
         var outer = WrapperOf(inner);
         var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
         var (line, shell) = ShellScript.Resolved(command);
         // The shell is the first line of the log, written by the script before the line's own output.
-        File.WriteAllText(inner, Utf8Output + "\n" + $"Write-Output {Quote(ShellScript.LogHeader(shell))}\n" + ShellScript.Body(line), utf8);
+        // A notice (the job's one line to its reader, see PlaneOutput.NoBuildNotice) follows it.
+        var noticeLine = notice is null ? "" : $"Write-Output {Quote(notice)}\n";
+        File.WriteAllText(inner, Utf8Output + "\n" + $"Write-Output {Quote(ShellScript.LogHeader(shell))}\n" + noticeLine + ShellScript.Body(line), utf8);
         File.WriteAllText(outer, WindowsWrapper(inner, outer, exitPath, extra), utf8);
         return new DetachedShell([inner, outer], shell, () => StartWindows(JobName(jobId, logPath), outer, cwd, logPath, priority));
     }
@@ -109,12 +111,13 @@ public sealed class DetachedShell : IDisposable
 
     private static string ShQuote(string text) => "'" + text.Replace("'", @"'\''", StringComparison.Ordinal) + "'";
 
-    private static Process StartUnix(string jobId, string command, string cwd, string logPath, string exitPath, JobPriority priority, IReadOnlyDictionary<string, string>? extra)
+    private static Process StartUnix(string jobId, string command, string cwd, string logPath, string exitPath, JobPriority priority, IReadOnlyDictionary<string, string>? extra, string? notice)
     {
         File.WriteAllBytes(logPath, []);
-        var start = UnixStart(command, cwd, logPath, exitPath, jobId, priority, extra);
+        var start = UnixStart(command, cwd, logPath, exitPath, jobId, priority, extra, notice);
         // systemd-run --scope execs the command in its own process, so the pid Process.Start returns is the job shell's: the
         // pid the row records stays valid for reattach and for Kill(entireProcessTree) after the scope has been made.
+        ProcessStarts.Observe("job", start);
         return Process.Start(start) ?? throw new InvalidOperationException($"`{command}` did not start");
     }
 
@@ -124,7 +127,7 @@ public sealed class DetachedShell : IDisposable
     internal static string UnixShell() => BashPath() ?? "/bin/sh";
 
     /// <summary>What a Linux job starts: the wrapper under <c>setsid /bin/sh -c</c>, in a scope of its own under systemd, in the build environment.</summary>
-    internal static ProcessStartInfo UnixStart(string command, string cwd, string logPath, string exitPath, string jobId = "job", JobPriority priority = JobPriority.Normal, IReadOnlyDictionary<string, string>? extra = null)
+    internal static ProcessStartInfo UnixStart(string command, string cwd, string logPath, string exitPath, string jobId = "job", JobPriority priority = JobPriority.Normal, IReadOnlyDictionary<string, string>? extra = null, string? notice = null)
     {
         // A job keeps only its log and /dev/null: every other fd the node holds without CLOEXEC is closed first. dash
         // takes only single-digit fds in a redirection, so any fd number needs bash; without bash fds 3 to 9 still go.
@@ -133,7 +136,8 @@ public sealed class DetachedShell : IDisposable
             ? "for n in 3 4 5 6 7 8 9; do eval \"exec $n>&-\"; done\n"
             : "for f in /proc/self/fd/* /dev/fd/*; do n=${f##*/}; case $n in ''|*[!0-9]*) continue;; esac; [ \"$n\" -gt 2 ] && eval \"exec $n>&-\"; done 2>/dev/null\n";
         // The shell is the first line of the log: written inside the redirect, before the line's own output.
-        var wrapper = $"{closeFds}exec </dev/null >/dev/null 2>&1\n( printf '%s\\n' {ShQuote(ShellScript.LogHeader(UnixShell()))}\n{command}\n) </dev/null >{ShQuote(logPath)} 2>&1\ncode=$?\n" +
+        var noticeLine = notice is null ? "" : $"printf '%s\\n' {ShQuote(notice)}\n";
+        var wrapper = $"{closeFds}exec </dev/null >/dev/null 2>&1\n( printf '%s\\n' {ShQuote(ShellScript.LogHeader(UnixShell()))}\n{noticeLine}{command}\n) </dev/null >{ShQuote(logPath)} 2>&1\ncode=$?\n" +
             $"echo \"$code\" > {ShQuote(exitPath + ".tmp")} && mv -f {ShQuote(exitPath + ".tmp")} {ShQuote(exitPath)}\nexit $code\n";
         var setsid = new[] { "/usr/bin/setsid", "/bin/setsid" }.FirstOrDefault(File.Exists);
         var scoped = UnderSystemd(out var systemdRun) && ScopeWorks(systemdRun);
@@ -477,6 +481,7 @@ public sealed class DetachedShell : IDisposable
             // not allow breakaway refuses the flag, and the job then starts without it. Suspended until it is in its own
             // named job object, so nothing it starts can be outside it.
             var flags = CreateNoWindow | CreateNewProcessGroup | CreateSuspended | ExtendedStartupInfoPresent | priority.WindowsClass();
+            ProcessStarts.Observe("job", new ProcessStartInfo { FileName = line, WorkingDirectory = cwd });
             var started = CreateProcessW(null, new StringBuilder(line), 0, 0, true, flags | CreateBreakawayFromJob, 0, cwd, ref startup, out var info);
             if (!started && Marshal.GetLastWin32Error() == ErrorAccessDenied)
             {

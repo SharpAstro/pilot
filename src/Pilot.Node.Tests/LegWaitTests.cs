@@ -20,6 +20,7 @@ public sealed class LegWaitTests : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2w-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly ManualTime _time = new(Start);
+    private readonly SeededRepos _repos;
     private readonly NodeState _state;
     private readonly FakeWorkers _workers = new();
     private readonly LegCommander _legs;
@@ -28,16 +29,13 @@ public sealed class LegWaitTests : IDisposable
 
     public LegWaitTests()
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
+        _repos = new SeededRepos(_root);
+        _repos.Seed("tianwen");
         _state = new NodeState(new InMemoryJournal(), _time);
-        var git = new GitCli();
-        var flights = new FlightCommander(_state, new Planes(git), _time);
+        var git = _repos.Git;
+        var flights = new FlightCommander(_state, _repos.Planes(), _time);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
-        _legs = new LegCommander(_state, _workers, new FakeChecks(), new FakeGitHub(), git, new Planes(git), flights, options, _time);
+        _legs = new LegCommander(_state, _workers, new FakeChecks(), new FakeGitHub(), git, _repos.Planes(), flights, options, _time);
         _watch = new LegWatch(_state, Run, _time);
         flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct).GetAwaiter().GetResult().Ok.ShouldBeTrue();
         Leg(Verbs.PlanLeg, "flight/TIA1", "name=parser", "goal=Parse", "done-when=It parses").GetAwaiter().GetResult().Ok.ShouldBeTrue();
@@ -54,35 +52,7 @@ public sealed class LegWaitTests : IDisposable
 
     private string Flag => Path.Combine(_root, "done.flag");
 
-    public void Dispose()
-    {
-        try
-        {
-            Git(Repo, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
-    }
-
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    public void Dispose() => _repos.Dispose();
 
     private Task<CommandResult> Run(CommandRequest command, CancellationToken cancellationToken)
     {
@@ -238,7 +208,6 @@ public sealed class LegWaitTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AGoAroundClearsTheWait()
     {
         (await Leg(Verbs.WaitLeg, "flight/TIA1/parser", $"path={Flag}")).Ok.ShouldBeTrue();

@@ -1,5 +1,6 @@
 using Pilot.Contracts;
 using Pilot.Node.Flights;
+using Pilot.Node.Sessions;
 using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
@@ -44,6 +45,21 @@ public sealed class LegWatchTests
     {
         _said.Add(command);
         return Task.FromResult(_state.Complete(command, _refuse));
+    }
+
+    [Fact]
+    public async Task AWaitingWorkerWhosePendingCallIsKnownRingsWithWhatItWantsAndTheToolInBrackets()
+    {
+        Worker(SessionState.Waiting, waitingFor: "permission to use Bash");
+        _state.PutSession(_state.Sessions().Single() with { Asking = "Bash: git push origin main" });
+
+        await _watch.LookAsync(Ct);
+
+        var card = Open().Single(c => c.Kind == LegWatch.Waiting);
+        card.Title.ShouldBe("TIA1/parser's worker wants to run: git push origin main (Bash)");
+        card.Detail.ShouldNotBeNull().ShouldStartWith("it wants to run: git push origin main (Bash);");
+        card.Summary.ShouldNotBeNull().ShouldStartWith("The worker of TIA1/parser wants to run: git push origin main (Bash).");
+        SummaryMatchesChoices(card);
     }
 
     private void Worker(SessionState state, DateTimeOffset? lastResponse = null, string? apiError = null, DateTimeOffset? resetsAt = null, string? waitingFor = null, long context = 0, string id = "a1b2c3d4") =>
@@ -109,7 +125,9 @@ public sealed class LegWatchTests
         _said.ShouldBeEmpty();
         var card = Open().ShouldHaveSingleItem();
         (card.Bin, card.Kind).ShouldBe((CardBin.Ring, LegWatch.Stopped));
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Tell du1-tia1-parser to carry on with parser", Verbs.Say), ("Start a fresh worker on parser (the last one was stopped by the API)", Verbs.GoAround)]);
+        card.Title.ShouldBe("TIA1/parser's worker was stopped by the API: overloaded");
+        card.Summary.ShouldBe("The worker of TIA1/parser was stopped by the API and no reset time is known. Telling it to carry on may get it going again; if it does not, a fresh worker takes the leg over from the branch.");
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Tell the worker to carry on", Verbs.Say), (Verbs.RestartWorker, Verbs.GoAround)]);
     }
 
     private void Recheck(string? outcome) =>
@@ -200,7 +218,7 @@ public sealed class LegWatchTests
 
         var card = Open().ShouldHaveSingleItem();
         (card.Bin, card.Kind).ShouldBe((CardBin.Ring, LegWatch.Idle));
-        card.Title.ShouldContain("check rerun ended but its worker could not be told");
+        card.Title.ShouldBe("TIA1 is stuck: its worker cannot be told its checks ended");
         _state.Legs("TIA1").Single().Recheck.ShouldBeNull();
     }
 
@@ -223,7 +241,7 @@ public sealed class LegWatchTests
         await _watch.LookAsync(Ct);
 
         var card = Open().ShouldHaveSingleItem();
-        card.Title.ShouldContain("though it answers its nudges");
+        card.Title.ShouldBe("TIA1 is stuck: its worker stopped working");
         card.Detail.ShouldNotBeNull().ShouldContain("it answered each");
         card.Detail.ShouldNotContain("to no avail");
     }
@@ -332,6 +350,32 @@ public sealed class LegWatchTests
     }
 
     [Fact]
+    public async Task AWorkerResumedOnItsToldJobIsGivenItsTurnAndTheGraceBeforeAnyNudge()
+    {
+        Worker(SessionState.Idle);
+        _time.Advance(TimeSpan.FromMinutes(30));
+        // The job ended a while ago and its outcome was told just now (#893): the resumed worker has not had its turn yet.
+        var told = _time.GetUtcNow();
+        _state.PutJob(new JobRow
+        {
+            Id = "j9", Command = "dotnet test", Cwd = "/work/tia1", State = JobState.Succeeded, Owner = "a1b2c3d4", OwnerName = "du1-tia1-parser",
+            LogPath = "/tmp/j9.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start, EndedAt = told - TimeSpan.FromMinutes(20), Told = true, ToldAt = told,
+        });
+        _time.Advance(TimeSpan.FromMinutes(2));
+
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldBeEmpty();
+        Handled().ShouldNotContain(c => c.Kind == "worker-nudged");
+
+        // Still no turn after the grace since the telling: now it is nudged, as any idle worker is.
+        _time.Advance(TimeSpan.FromMinutes(3));
+        await _watch.LookAsync(Ct);
+        _said.ShouldHaveSingleItem();
+        Handled().ShouldContain(c => c.Kind == "worker-nudged");
+    }
+
+    [Fact]
     public async Task AnIdleWorkerWhoseEndedJobCouldNotBeToldFallsThroughToTheNudge()
     {
         Worker(SessionState.Idle);
@@ -383,7 +427,73 @@ public sealed class LegWatchTests
         _said.Count.ShouldBe(2);
         var card = Open().ShouldHaveSingleItem();
         (card.Bin, card.Kind).ShouldBe((CardBin.Ring, LegWatch.Idle));
-        card.Choices.Select(c => c.Label).ShouldBe(["Nudge du1-tia1-parser to finish parser or say why not", "Start a fresh worker on parser (the last one went idle with the leg unfinished)"]);
+        // The golden card (#797): what happened, what to do, and two short verbs; the step count and the nudges are the detail's.
+        card.Title.ShouldBe("TIA1 is stuck: its worker stopped working");
+        card.Summary.ShouldBe("The worker of TIA1/parser stopped with its leg unfinished. A nudge may get it going again; if it does not, a fresh worker takes the leg over from the branch.");
+        card.Choices.Select(c => c.Label).ShouldBe(["Nudge the worker", Verbs.RestartWorker]);
+        card.Detail.ShouldNotBeNull().ShouldContain("1 of 2 steps");
+        // c3646 of the cards-panel capture is this card, as SE1 raised it for PIL716/failure-investigation.
+        CardsPanelFixture.ShouldMatch("c3646", card, names: [("TIA1/parser", "PIL716/failure-investigation"), ("TIA1", "PIL716")]);
+    }
+
+    private void Flight(FlightState state) => _state.PutFlight(new FlightRow
+    {
+        Code = "TIA1", Repo = "tianwen", RepoPath = "/r", Issue = 1, Title = "Parse it", Branch = "flight/tia1", Worktree = "/r/.claude/worktrees/TIA1",
+        Base = "origin/main", State = state, CreatedAt = Start, LandedAt = state == FlightState.Landed ? Start : null,
+    });
+
+    // c3651, 2026-11-06: TIA2000 landed and its cards closed, yet its leg review-notes-2 was still flying with an idle worker, so the watch rang again.
+    [Fact]
+    public async Task AFlyingLegOfALandedFlightRaisesNoCardWhereTheSameLegOfAFlyingFlightRings()
+    {
+        Worker(SessionState.Idle);
+        _time.Advance(TimeSpan.FromMinutes(10));
+
+        Flight(FlightState.Flying);
+        foreach (var _ in Enumerable.Range(0, 4))
+        {
+            await _watch.LookAsync(Ct);
+        }
+        Open().ShouldHaveSingleItem().Kind.ShouldBe(LegWatch.Idle);
+
+        // It lands: its cards close with it, and the leg is still flying with the worker idle.
+        _state.CloseCardsAbout(Verbs.FlightTarget("TIA1"), "TIA1 landed");
+        Flight(FlightState.Landed);
+        var said = _said.Count;
+        var cards = _state.Cards().Count(c => c.Kind != LegWatch.StraySession);
+        foreach (var _ in Enumerable.Range(0, 4))
+        {
+            _time.Advance(TimeSpan.FromMinutes(10));
+            await _watch.LookAsync(Ct);
+        }
+
+        // The worker's session still runs, so the stray watch may offer to stop it: that card is about the session, not the leg.
+        AboutTheFlight().ShouldBeEmpty();
+        _state.Cards().Count(c => c.Kind != LegWatch.StraySession).ShouldBe(cards);
+        _said.Count.ShouldBe(said);
+    }
+
+    private CardRow[] AboutTheFlight() => Open().Where(c => c.Subject.StartsWith(Verbs.FlightTarget("TIA1"), StringComparison.Ordinal)).ToArray();
+
+    [Fact]
+    public async Task ACardAboutALegRaisedBeforeItsFlightLandsIsClosedAtTheLandingAndNotRaisedAgain()
+    {
+        Worker(SessionState.Idle);
+        Flight(FlightState.Flying);
+        _time.Advance(TimeSpan.FromMinutes(10));
+        foreach (var _ in Enumerable.Range(0, 4))
+        {
+            await _watch.LookAsync(Ct);
+        }
+        var card = Open().ShouldHaveSingleItem();
+        card.Subject.ShouldBe("flight/TIA1/parser");
+
+        _state.CloseCardsAbout(Verbs.FlightTarget("TIA1"), "TIA1 landed");
+        Flight(FlightState.Landed);
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+
+        AboutTheFlight().ShouldBeEmpty();
     }
 
     [Fact]
@@ -398,7 +508,7 @@ public sealed class LegWatchTests
 
         var card = Open().ShouldHaveSingleItem();
         (card.Bin, card.Kind).ShouldBe((CardBin.Ring, LegWatch.Idle));
-        card.Detail.ShouldStartWith("idle with room in its context (10% of its window used) and no job of its own running; ");
+        card.Detail.ShouldNotBeNull().ShouldContain("; idle with room in its context (10% of its window used) and no job of its own running; ");
     }
 
     [Fact]
@@ -419,7 +529,7 @@ public sealed class LegWatchTests
         _said.ShouldBeEmpty();
         var line = Handled().ShouldHaveSingleItem();
         line.Kind.ShouldBe("worker-waiting-job");
-        line.Title.ShouldContain("waits on a job of its own");
+        line.Title.ShouldBe("TIA1's worker is waiting for its job to end");
     }
 
     [Fact]
@@ -537,7 +647,7 @@ public sealed class LegWatchTests
         // (The first worker still shows as a stray in this test, as a real one is stopped by the node; only the idle ring is looked at.)
         var card = Open().Where(c => c.Kind != LegWatch.StraySession).ShouldHaveSingleItem();
         (card.Bin, card.Kind).ShouldBe((CardBin.Ring, LegWatch.Idle));
-        card.Title.ShouldContain("filled its context again");
+        card.Title.ShouldBe("TIA1 is stuck: its worker's memory is full again");
         card.Title.ShouldNotContain("nudged");
     }
 
@@ -563,8 +673,10 @@ public sealed class LegWatchTests
         await _watch.LookAsync(Ct);
 
         var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Detail).ShouldBe((LegWatch.Idle, "idle with room in its context (0% of its window used) and no job of its own running; the node tried to nudge it: the folder is gone"));
-        card.Title.ShouldEndWith("could not be nudged: the folder is gone");
+        card.Kind.ShouldBe(LegWatch.Idle);
+        // The reason is the detail's; the title says what happened.
+        card.Detail.ShouldNotBeNull().ShouldEndWith("idle with room in its context (0% of its window used) and no job of its own running; the node tried to nudge it: the folder is gone");
+        card.Title.ShouldBe("TIA1 is stuck: its worker stopped and cannot be nudged");
     }
 
     [Fact]
@@ -579,12 +691,170 @@ public sealed class LegWatchTests
         card.Kind.ShouldBe(LegWatch.Waiting);
         card.Title.ShouldBe("TIA1/parser's worker waits on you for permission to run rm -rf build");
         card.Detail.ShouldNotBeNull().ShouldStartWith("permission to run rm -rf build;");
-        card.Choices.Select(c => c.Label).ShouldBe(["Start a fresh worker on parser (the last one waited on you)"]);
+        card.Summary.ShouldBe("The worker of TIA1/parser waits on you for an answer. Answering in its own session lets this worker go on with the call; a fresh start stops this one and starts another on the leg from the branch.");
+        card.Choices.Select(c => c.Label).ShouldBe([Verbs.RestartWorker]);
 
         Worker(SessionState.Working);
         await _watch.LookAsync(Ct);
         Open().ShouldBeEmpty();
         _state.Cards().Single(c => c.Id == card.Id).Outcome.ShouldBe("working again");
+    }
+
+    /// <summary>The work of its own a Waiting worker may wait on (PIL800): what the leg or the node holds that ends by itself and wakes it.</summary>
+    public enum OwnWork { RecordedWait, UntoldRecheck, CheckJob, OwnJobByRow, OwnJobByName, OtherJobOfTheLeg }
+
+    public static TheoryData<OwnWork, JobState> OwnWorks => new()
+    {
+        { OwnWork.RecordedWait, JobState.Queued },
+        { OwnWork.UntoldRecheck, JobState.Queued },
+        { OwnWork.CheckJob, JobState.Queued },
+        { OwnWork.CheckJob, JobState.Running },
+        { OwnWork.OwnJobByRow, JobState.Queued },
+        { OwnWork.OwnJobByRow, JobState.Running },
+        { OwnWork.OwnJobByName, JobState.Running },
+        { OwnWork.OtherJobOfTheLeg, JobState.Running },
+    };
+
+    private void PutOwnWork(OwnWork work, JobState jobState)
+    {
+        JobRow Job(string id, JobKind kind = JobKind.Run, string? owner = null, string? ownerName = null, string? flight = null, string? leg = null) => new()
+        {
+            Id = id, Command = "dotnet test", Cwd = "/work/tia1", Kind = kind, State = jobState, Owner = owner, OwnerName = ownerName, Flight = flight, Leg = leg,
+            LogPath = $"/tmp/{id}.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        };
+        switch (work)
+        {
+            case OwnWork.RecordedWait:
+                _state.PutLeg(_state.Legs("TIA1").Single() with { Wait = new LegWait { Path = Path.Combine(Path.GetTempPath(), "pil800-never-" + Guid.NewGuid().ToString("N")), Since = Start } });
+                break;
+            case OwnWork.UntoldRecheck:
+                Recheck(null);
+                break;
+            case OwnWork.CheckJob:
+                _state.PutJob(Job("j10", JobKind.Check, flight: "TIA1", leg: "parser"));
+                break;
+            case OwnWork.OwnJobByRow:
+                _state.PutJob(Job("j11", owner: "a1b2c3d4", ownerName: "du1-tia1-parser"));
+                break;
+            case OwnWork.OwnJobByName:
+                _state.PutJob(Job("j12", owner: "c0000000", ownerName: "du1-tia1-parser"));
+                break;
+            default:
+                _state.PutJob(Job("j13", owner: "zzzz", ownerName: "someone-else", flight: "TIA1", leg: "parser"));
+                break;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(OwnWorks))]
+    public async Task AWaitingWorkerThatWaitsOnItsOwnWorkRaisesNoWaitingRing(OwnWork work, JobState jobState)
+    {
+        // The worker reported blocked on work the node ends by itself (a leg's check job, its own build, a wait it recorded, the check
+        // rerun of its finish): that is a normal wait, as an idle worker's, and not "waits on you".
+        Worker(SessionState.Waiting, waitingFor: "waiting for my build to finish");
+        PutOwnWork(work, jobState);
+
+        foreach (var _ in Enumerable.Range(0, 4))
+        {
+            _time.Advance(TimeSpan.FromMinutes(5));
+            await _watch.LookAsync(Ct);
+        }
+
+        Open().ShouldBeEmpty();
+        _said.ShouldBeEmpty();
+        // The once-only Handled line is the idle worker's for a job of its own (by row, name or leg), and no line for the leg's wait, recheck or check job.
+        if (work is OwnWork.OwnJobByRow or OwnWork.OwnJobByName or OwnWork.OtherJobOfTheLeg)
+        {
+            var line = Handled().ShouldHaveSingleItem();
+            line.Kind.ShouldBe("worker-waiting-job");
+            line.Title.ShouldBe("TIA1's worker is waiting for its job to end");
+            line.Detail.ShouldNotBeNull().ShouldContain("waiting on a job of its own");
+        }
+        else
+        {
+            Handled().ShouldBeEmpty();
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(OwnWorks))]
+    public async Task AnOpenWaitingRingClosesOnceTheWorkerWaitsOnItsOwnWork(OwnWork work, JobState jobState)
+    {
+        Worker(SessionState.Waiting, waitingFor: "waiting for my build to finish");
+        await _watch.LookAsync(Ct);
+        var card = Open().ShouldHaveSingleItem();
+        card.Kind.ShouldBe(LegWatch.Waiting);
+
+        PutOwnWork(work, jobState);
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldBeEmpty();
+        var closed = _state.Cards().Single(c => c.Id == card.Id);
+        closed.State.ShouldBe(CardState.Closed);
+        closed.Outcome.ShouldNotBeNull().ShouldContain("it waits on its own work, not on you");
+    }
+
+    [Fact]
+    public async Task AWaitingWorkerWithNoWorkOfItsOwnStillRingsWhateverElseRunsOnTheNode()
+    {
+        Worker(SessionState.Waiting, waitingFor: "permission to run rm -rf build");
+        JobRow Job(string id, JobState state, JobKind kind = JobKind.Run, string? owner = null, string? ownerName = null, string? flight = null, string? leg = null) => new()
+        {
+            Id = id, Command = "dotnet test", Cwd = "/work/tia1", Kind = kind, State = state, Owner = owner, OwnerName = ownerName, Flight = flight, Leg = leg,
+            LogPath = $"/tmp/{id}.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        };
+        // An ended job of its own, a running job of someone else, and the check job of another leg are none of this worker's work.
+        _state.PutJob(Job("j20", JobState.Succeeded, owner: "a1b2c3d4", ownerName: "du1-tia1-parser"));
+        _state.PutJob(Job("j21", JobState.Running, owner: "zzzz", ownerName: "someone-else"));
+        _state.PutJob(Job("j22", JobState.Running, JobKind.Check, flight: "TIA1", leg: "other"));
+
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+
+        var card = Open().ShouldHaveSingleItem();
+        card.Kind.ShouldBe(LegWatch.Waiting);
+        card.Title.ShouldBe("TIA1/parser's worker waits on you for permission to run rm -rf build");
+        Handled().ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("which branch should I use?", null, "TIA1/parser's worker waits on you for which branch should I use?")]
+    [InlineData("permission to use Bash", "Bash: dotnet test", "TIA1/parser's worker wants to run: dotnet test (Bash)")]
+    public async Task AWaitingWorkerThatAsksAPersonStillRingsWhileAJobOfItsOwnRuns(string waitingFor, string? asking, string title)
+    {
+        // No job answers a question or approves a tool call: the ring stays, as it did before a waiting worker could wait on its own work.
+        Worker(SessionState.Waiting, waitingFor: waitingFor);
+        _state.PutSession(_state.Sessions().Single() with { Asking = asking });
+        _state.PutJob(new JobRow
+        {
+            Id = "j30", Command = "dotnet build", Cwd = "/work/tia1", State = JobState.Running, Owner = "a1b2c3d4", OwnerName = "du1-tia1-parser",
+            LogPath = "/tmp/j30.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        });
+
+        await _watch.LookAsync(Ct);
+
+        var card = Open().ShouldHaveSingleItem();
+        card.Kind.ShouldBe(LegWatch.Waiting);
+        // A question keeps its own words; a permission prompt is said by the call it asks leave for.
+        card.Title.ShouldBe(title);
+        Handled().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AWorkerBlockedOnAnApprovalItCannotAskForInTheBackgroundStillRingsWhileAJobOfItsOwnRuns()
+    {
+        // Only a person can answer it (it has no question mark and no pending call), so no job of the worker's holds the ring back.
+        Worker(SessionState.Waiting, waitingFor: SessionStates.BlockedWaitingFor);
+        _state.PutJob(new JobRow
+        {
+            Id = "j31", Command = "dotnet build", Cwd = "/work/tia1", State = JobState.Running, Owner = "a1b2c3d4", OwnerName = "du1-tia1-parser",
+            LogPath = "/tmp/j31.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        });
+
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldHaveSingleItem().Kind.ShouldBe(LegWatch.Waiting);
+        Handled().ShouldBeEmpty();
     }
 
     [Fact]
@@ -640,8 +910,10 @@ public sealed class LegWatchTests
         _time.Advance(TimeSpan.FromMinutes(4));
         await _watch.LookAsync(Ct);
         var card = Open().Where(c => c.Bin == CardBin.Ring).ShouldHaveSingleItem();
-        (card.Kind, card.Subject, card.Title).ShouldBe((LegWatch.ReviewStalled, "flight/TIA1", "TIA1's reviewer stalled: it stopped 12 min ago without its verdict"));
-        card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.StartReview);
+        (card.Kind, card.Subject, card.Title).ShouldBe((LegWatch.ReviewStalled, "flight/TIA1", "The review of TIA1 stopped without a verdict"));
+        card.Summary.ShouldBe("The review of TIA1 stopped twice without a verdict. A fresh start is the way on.");
+        card.Detail.ShouldNotBeNull().ShouldStartWith("it stopped 12 min ago without its verdict;");
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Restart the reviewer", Verbs.StartReview)]);
         _said.Count.ShouldBe(2);
     }
 
@@ -709,6 +981,111 @@ public sealed class LegWatchTests
         (_said.ShouldHaveSingleItem().Verb, _said[0].Target).ShouldBe((Verbs.Say, "session/a1b2c3d4"));
     }
 
+    private void ReviewerEndedAfterItsTurn(bool gone = true) =>
+        _state.PutSession(_state.Sessions().Single(s => s.Id == "a1b2c3d4") with { State = SessionState.Ended, Gone = gone, LastResponseAt = _time.GetUtcNow() });
+
+    private JobRow ReviewerJob(JobState job, DateTimeOffset? ended = null, DateTimeOffset? told = null) => new()
+    {
+        Id = "rj1", Command = "dotnet test", Cwd = "/r/w", State = job, Owner = "a1b2c3d4", OwnerName = "du1-tia1-review",
+        LogPath = "/tmp/rj1.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start, EndedAt = ended, Told = told is not null, ToldAt = told,
+    };
+
+    [Theory]
+    [InlineData(JobState.Running, true)]
+    [InlineData(JobState.Queued, true)]
+    [InlineData(JobState.Running, false)]
+    public async Task AReviewerThatEndedItsTurnWithAJobOfItsOwnOpenIsNeitherToldNorRestartedNorRungAndKeepsItsJob(JobState job, bool gone)
+    {
+        ReviewingFlight(null);
+        ReviewerEndedAfterItsTurn(gone);
+        _state.PutJob(ReviewerJob(job));
+        _time.Advance(TimeSpan.FromMinutes(30));
+
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldBeEmpty();
+        Open().ShouldNotContain(c => c.Kind == LegWatch.ReviewStalled);
+        _state.Jobs().Single(j => j.Id == "rj1").State.ShouldBe(job);
+    }
+
+    [Fact]
+    public async Task AnEndedReviewerWhoseJobEndedAndWasToldIsGivenItsTurnAndTheGraceBeforeAnySayOrRestart()
+    {
+        ReviewingFlight(null);
+        ReviewerEndedAfterItsTurn();
+        _time.Advance(TimeSpan.FromMinutes(30));
+        // The job ended a while ago and its outcome was told just now: the resumed reviewer has not had its turn yet.
+        _state.PutJob(ReviewerJob(JobState.Succeeded, ended: _time.GetUtcNow() - TimeSpan.FromMinutes(20), told: _time.GetUtcNow()));
+        _time.Advance(TimeSpan.FromMinutes(2));
+
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldBeEmpty();
+        Open().ShouldNotContain(c => c.Kind == LegWatch.ReviewStalled);
+
+        // Still no turn after the grace since the telling: now it is told, as any idle reviewer is.
+        _time.Advance(TimeSpan.FromMinutes(3));
+        await _watch.LookAsync(Ct);
+        (_said.ShouldHaveSingleItem().Verb, _said[0].Target).ShouldBe((Verbs.Say, "session/a1b2c3d4"));
+    }
+
+    [Fact]
+    public async Task AReviewerThatEndedItsTurnWithNoJobOfItsOwnIsStillToldToGiveItsVerdict()
+    {
+        ReviewingFlight(null);
+        ReviewerEndedAfterItsTurn();
+        _time.Advance(TimeSpan.FromMinutes(30));
+
+        await _watch.LookAsync(Ct);
+
+        (_said.ShouldHaveSingleItem().Verb, _said[0].Target).ShouldBe((Verbs.Say, "session/a1b2c3d4"));
+    }
+
+    [Fact]
+    public async Task APrReviewerThatEndedItsTurnWithAJobOfItsOwnRunningIsLeftAlone()
+    {
+        _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });
+        _state.PutPrReview(new PrReviewRow
+        {
+            Repo = "acme/widget", Number = 7, Url = "https://github.com/acme/widget/pull/7", Base = "main", Head = "4f2c9a01d6e8",
+            ClonePath = "/r", Worktree = "/r/.claude/worktrees/review-widget-7", Reviewer = "du1-review-widget-7", ReviewerJob = "a1b2c3d4",
+            State = PrReviewState.Reviewing, StartedAt = Start,
+        });
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow());
+        ReviewerEndedAfterItsTurn();
+        _state.PutJob(ReviewerJob(JobState.Running));
+        _time.Advance(TimeSpan.FromMinutes(30));
+
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldBeEmpty();
+        Open().ShouldNotContain(c => c.Kind == LegWatch.ReviewStalled);
+        _state.Jobs().Single(j => j.Id == "rj1").State.ShouldBe(JobState.Running);
+    }
+
+    [Fact]
+    public async Task AValidatorThatEndedItsTurnWithAJobOfItsOwnRunningRingsNothing()
+    {
+        _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });
+        _state.PutLeg(new LegRow
+        {
+            Flight = "TIA1", Name = "render", Order = 2, Goal = "Render it", DoneWhen = "It renders", State = LegState.Planned,
+            Validation = LegValidation.Pending, Validator = "du1-tia1-render-validator", ValidatorJob = "a1b2c3d4",
+        });
+        _state.RaiseCard(CardBin.Handled, LegCommander.ValidatingKind, "flight/TIA1/render", "Validating TIA1/render");
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow());
+        ReviewerEndedAfterItsTurn();
+        _state.PutJob(ReviewerJob(JobState.Running) with { OwnerName = "du1-tia1-parser" });
+        _time.Advance(TimeSpan.FromMinutes(30));
+
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldNotContain(c => c.Kind == LegWatch.ValidationStalled);
+        _state.Jobs().Single(j => j.Id == "rj1").State.ShouldBe(JobState.Running);
+    }
+
     [Fact]
     public async Task ALaterReviewRoundOfTheSameFlightIsToldAgainBeforeItIsRestartedOrRung()
     {
@@ -761,8 +1138,10 @@ public sealed class LegWatchTests
         await _watch.LookAsync(Ct);
 
         var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Subject, card.Title).ShouldBe((LegWatch.ValidationStalled, "flight/TIA1/render", "TIA1/render's validator stalled: it stopped 4 min ago without its GO or NO-GO"));
-        card.Choices.Select(c => (c.Verb, c.Args.FirstOrDefault())).ShouldBe([(Verbs.StartLeg, "anyway"), (Verbs.RemoveLeg, "its validation stalled")]);
+        (card.Kind, card.Subject, card.Title).ShouldBe((LegWatch.ValidationStalled, "flight/TIA1/render", "TIA1 cannot start: its validator stopped without an answer"));
+        card.Summary.ShouldBe("The check of TIA1/render against the tree never answered, so the leg cannot start. Fly it unchecked, or take the leg off the flight.");
+        card.Detail.ShouldNotBeNull().ShouldStartWith("it stopped 4 min ago without its GO or NO-GO;");
+        card.Choices.Select(c => (c.Label, c.Verb, c.Args.FirstOrDefault())).ShouldBe([("Start without validation", Verbs.StartLeg, "anyway"), ("Remove the leg", Verbs.RemoveLeg, "its validation stalled")]);
     }
 
     [Fact]
@@ -791,7 +1170,7 @@ public sealed class LegWatchTests
         _time.Advance(TimeSpan.FromMinutes(4));
         await _watch.LookAsync(Ct);
         var card = Open().Where(c => c.Bin == CardBin.Ring).ShouldHaveSingleItem();
-        (card.Kind, card.Subject, card.Title).ShouldBe((LegWatch.ReviewStalled, "pr/acme/widget#7", "acme/widget#7's reviewer stalled: it stopped 12 min ago without its verdict"));
+        (card.Kind, card.Subject, card.Title).ShouldBe((LegWatch.ReviewStalled, "pr/acme/widget#7", "The review of acme/widget#7 stopped without a verdict"));
         var again = card.Choices.ShouldHaveSingleItem();
         (again.Verb, again.Target).ShouldBe((Verbs.ReviewPr, "pr/acme/widget#7"));
     }
@@ -1019,25 +1398,22 @@ public sealed class LegWatchTests
         Open().ShouldHaveSingleItem().Kind.ShouldBe("overlap");
     }
 
-    /// <summary>A stall ring's summary names the redo as the card words it, and Resume or Nudge only when the card offers one.</summary>
+    /// <summary>
+    /// A stall ring's summary names the leg in plain words (CardLint) and never says again what a button says (#797): the buttons
+    /// do that. It speaks of telling the worker to go on only when the card offers that.
+    /// </summary>
     private static void SummaryMatchesChoices(CardRow card)
     {
         var summary = card.Summary.ShouldNotBeNull();
         summary.ShouldContain("TIA1/parser");
-        summary.ShouldContain(card.Choices.Single(c => c.Verb == Verbs.GoAround).Label);
-        var say = card.Choices.FirstOrDefault(c => c.Verb == Verbs.Say)?.Label;
-        if (say is null)
+        CardLint.FirstLine(summary).ShouldBeEmpty();
+        CardLint.ChoiceProse(summary, card.Choices.Select(c => c.Label)).ShouldBeEmpty();
+        card.Choices.ShouldContain(c => c.Verb == Verbs.GoAround);
+        if (!card.Choices.Any(c => c.Verb == Verbs.Say))
         {
             summary.ShouldNotContain("Resume");
             summary.ShouldNotContain("Nudge");
-        }
-        else
-        {
-            summary.ShouldContain(say);
-            foreach (var other in new[] { "Nudge" }.Where(l => l != say && !say.StartsWith(l, StringComparison.Ordinal)))
-            {
-                summary.ShouldNotContain(other);
-            }
+            summary.ShouldNotContain("carry on");
         }
     }
 
@@ -1088,6 +1464,8 @@ public sealed class LegWatchTests
         waiting.Choices.ShouldHaveSingleItem();
         SummaryMatchesChoices(waiting);
         waiting.Summary!.ShouldContain("waits on you");
+        waiting.Summary!.ShouldContain("lets this worker go on with the call");
+        waiting.Summary!.ShouldContain("stops this one and starts another on the leg from the branch");
 
         Worker(SessionState.Failed);
         await _watch.LookAsync(Ct);
@@ -1101,7 +1479,7 @@ public sealed class LegWatchTests
             await _watch.LookAsync(Ct);
         }
         var idle = Open().Single(c => c.Kind == LegWatch.Idle);
-        idle.Choices.Select(c => c.Label).ShouldBe(["Nudge du1-tia1-parser to finish parser or say why not", "Start a fresh worker on parser (the last one went idle with the leg unfinished)"]);
+        idle.Choices.Select(c => c.Label).ShouldBe(["Nudge the worker", Verbs.RestartWorker]);
         SummaryMatchesChoices(idle);
     }
 

@@ -18,7 +18,7 @@ public sealed class SettingsTests : IDisposable
     {
         if (Directory.Exists(_root))
         {
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
     }
 
@@ -111,7 +111,7 @@ public sealed class SettingsTests : IDisposable
     [InlineData("machine", "DESKTOP", "machine takes two letters and a number, as in DE1")]
     [InlineData("update-channel", "nightly", "update-channel takes stable or beta")]
     [InlineData("max-jobs", "0", "max-jobs takes a number, 1 to 64")]
-    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, job-priority, job-plane-output, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, max-go-arounds, scratch-days, disk-alert-gb, stale-flight-hours, stale-pr-hours, stale-recheck-hours, stale-card-hours, stale-holds, stale-unreachable-hours, watchtower-range, worker-range, planner-range, reviewer-range, worker-ladder")]
+    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, jobs-per-repo, job-memory, job-priority, job-plane-output, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, watchtower-compact-idle, watchtower-compact-above, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, user-skills, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, review-limit, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, adopt-after, max-go-arounds, scratch-days, disk-alert-gb, flight-ci-budget, stale-flight-hours, stale-pr-hours, stale-recheck-hours, stale-card-hours, stale-holds, stale-unreachable-hours, watchtower-range, worker-range, planner-range, reviewer-range, summary-model, worker-ladder")]
     // Invariant: the "colour" case spells out every key, so a filtered check that adds a setting runs it too.
     [Trait("Category", InvariantTraitTests.Invariant)]
     public void ASettingRefusesWhatItDoesNotTake(string key, string value, string error)
@@ -164,6 +164,36 @@ public sealed class SettingsTests : IDisposable
             o => o.UpdatePolicy.ShouldBe(UpdatePolicy.Auto),
             o => o.Saved.ShouldBe(saved),
             o => o.CommandLineKeys.ShouldNotBeNull().ShouldContain(NodeSettings.MachineKey));
+    }
+
+    /// <summary>PIL802: a node with nothing saved has job-plane-output off (planes build on the packages) and the page says off (default); a saved on or off is in force at once.</summary>
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task JobPlaneOutputIsOffByDefaultAndASetIsInForceAtOnce()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var runner = node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+
+        // Off by default since planes build on the packages (PIL802).
+        runner.PlaneOutput.ShouldBeFalse();
+        (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == NodeSettings.JobPlaneOutputKey).ShouldSatisfyAllConditions(
+            s => s.Value.ShouldBe("off"), s => s.Saved.ShouldBeNull(), s => s.Source.ShouldBe(SettingSources.Default), s => s.Pending.ShouldBeFalse(),
+            s => s.Choices.ShouldBe(["on", "off"]), s => s.Detail.ShouldContain("Off by default"));
+
+        var first = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["job-plane-output", "on"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        first.Way.ShouldNotBeNull().ShouldStartWith("job-plane-output saved as on, and in force now");
+        runner.PlaneOutput.ShouldBeTrue();
+
+        var off = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["job-plane-output", "off"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        off.Way.ShouldNotBeNull().ShouldStartWith("job-plane-output saved as off, and in force now");
+        runner.PlaneOutput.ShouldBeFalse();
+        NodeSettings.Read(node.Options.SettingsFile).JobPlaneOutput.ShouldBe(false);
+        (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == NodeSettings.JobPlaneOutputKey).ShouldSatisfyAllConditions(
+            s => s.Value.ShouldBe("off"), s => s.Saved.ShouldBe("off"), s => s.Source.ShouldBe(SettingSources.File), s => s.Pending.ShouldBeFalse());
+
+        var on = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["job-plane-output", "on"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        on.Way.ShouldNotBeNull().ShouldStartWith("job-plane-output saved as on, and in force now");
+        runner.PlaneOutput.ShouldBeTrue();
     }
 
     [Fact]
@@ -239,6 +269,41 @@ public sealed class SettingsTests : IDisposable
         var commands = new NodeSettingsCommands(node.Options, node.State, services.GetRequiredService<NodeRestarter>(), setup, time,
             services.GetRequiredService<Pilot.Node.Flights.JobRunner>(), services.GetRequiredService<RoleModels>());
         return (commands, () => Volatile.Read(ref runs), time);
+    }
+
+    /// <summary>
+    /// user-skills is applied live, so the setup check follows the file, never the node's start-time snapshot (options.Saved):
+    /// the review of #849 found the checklist offering "Install skills" right after set node user-skills off had taken them out.
+    /// </summary>
+    [Fact]
+    public async Task UserSkillsSetLiveIsWhatTheSetupCheckReads()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var skills = Path.Combine(_root, "skills");
+        var setup = new NodeSetup(node.Options, Path.Combine(_root, "pilot-node.exe"), _root)
+        {
+            Run = (_, _, _) => (1, ""),
+            SkillsFolder = skills,
+            CarriedSkills = () => [new UserSkills.Skill("demo", new Dictionary<string, byte[]> { ["SKILL.md"] = "v1"u8.ToArray() })],
+        };
+        var services = node.App.Services;
+        var commands = new NodeSettingsCommands(node.Options, node.State, services.GetRequiredService<NodeRestarter>(), setup, TimeProvider.System,
+            services.GetRequiredService<Pilot.Node.Flights.JobRunner>(), services.GetRequiredService<RoleModels>());
+        SetupCheck Check() => setup.Checks().Single(c => c.Key == NodeSetup.UserSkillsKey);
+        CommandResult Set(string value) => commands.Set(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.UserSkillsKey, value], Who = "tests" });
+
+        Set("on").Error.ShouldBeNull();
+        Directory.Exists(Path.Combine(skills, "demo")).ShouldBeTrue();
+        (Check().Ok, Check().Fix).ShouldBe((true, null));
+
+        Set("off").Error.ShouldBeNull();
+        Directory.Exists(Path.Combine(skills, "demo")).ShouldBeFalse();
+        var off = Check();
+        (off.Ok, off.Optional, off.Fix).ShouldBe((false, true, null));
+        off.Line.ShouldContain("off");
+
+        Set("on").Error.ShouldBeNull();
+        (Check().Ok, Check().Fix).ShouldBe((true, null));
     }
 
     [Fact]

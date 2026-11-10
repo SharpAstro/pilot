@@ -36,6 +36,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     public const string BuildRspKey = "build-rsp";
     public const string ClaudePermissionsKey = "claude-permissions";
     public const string ShortcutKey = "shortcut";
+    public const string UserSkillsKey = "user-skills";
 
     /// <summary>The response file that turns MSBuild node reuse off, as runaway-agent's <c>machine/</c> folder and install.sh name it.</summary>
     public const string BuildRsp = "Directory.Build.rsp";
@@ -53,6 +54,12 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
 
     /// <summary>The Claude Code settings file the hook checks read and the fixes write; a test points it elsewhere.</summary>
     public string SettingsFile { get; init; } = HookCommands.DefaultSettings();
+
+    /// <summary>The Claude Code skills folder the user skills go in (<see cref="UserSkills"/>); a test points it elsewhere.</summary>
+    public string SkillsFolder { get; init; } = UserSkills.RootIn(profileRoot);
+
+    /// <summary>The skills the node carries; a test gives its own.</summary>
+    public Func<IReadOnlyList<UserSkills.Skill>> CarriedSkills { get; init; } = UserSkills.Carried;
 
     /// <summary>A runaway-agent clone to take the guard scripts from, or null when there is none; a test replaces it.</summary>
     public Func<string?> FindRunawayAgent { get; init; } = RunawayAgentClone;
@@ -119,6 +126,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         checks.Add(ClaudePermissionsCheck());
         checks.Add(GuardHooksCheck());
         checks.Add(BuildRspCheck());
+        checks.Add(UserSkillsCheck());
 
         var lanWanted = options.Saved?.Lan ?? options.Lan;
         checks.Add(options.Lan
@@ -220,6 +228,8 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                 return InstallGuardHooks();
             case BuildRspKey:
                 return InstallBuildRsp();
+            case UserSkillsKey:
+                return ApplyUserSkills(on: true).Problem;
             case FirewallKey:
             {
                 if (!OperatingSystem.IsWindows())
@@ -256,7 +266,55 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                     ? null
                     : $"no window opened: run claude in {options.WatchtowerFolder} and accept its trust prompt";
             default:
-                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, HooksKey, MergeGuardKey, ClaudePermissionsKey, GuardHooksKey, BuildRspKey, LanKey, FirewallKey, DefenderKey, TrustKey })}, not {key}";
+                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, HooksKey, MergeGuardKey, ClaudePermissionsKey, GuardHooksKey, BuildRspKey, UserSkillsKey, LanKey, FirewallKey, DefenderKey, TrustKey })}, not {key}";
+        }
+    }
+
+    /// <summary>
+    /// The user skills put in line with the <c>user-skills</c> setting: installed (each missing or outdated one written, a hand
+    /// edit or a folder pilot did not write kept) when <paramref name="on"/>, else the ones pilot wrote and nobody changed taken
+    /// out. The lines say what changed or was kept; the problem is why it could not be done.
+    /// </summary>
+    public (IReadOnlyList<string> Lines, string? Problem) ApplyUserSkills(bool on)
+    {
+        try
+        {
+            return (on ? UserSkills.Install(SkillsFolder, CarriedSkills()) : UserSkills.Remove(SkillsFolder, CarriedSkills()), null);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return ([], $"{SkillsFolder}: {ex.Message}");
+        }
+    }
+
+    // Optional: a machine may do without them, and the setting can turn them off.
+    private SetupCheck UserSkillsCheck()
+    {
+        const string Title = "User skills";
+        // The file, not options.Saved: set node user-skills is applied live, and Saved is the file as the node started with it.
+        if (!(NodeSettings.Read(options.SettingsFile).UserSkills ?? true))
+        {
+            return new SetupCheck { Key = UserSkillsKey, Title = Title, Ok = false, Optional = true, Line = "user-skills is off: the node installs none" };
+        }
+        try
+        {
+            var states = CarriedSkills().Select(s => (s.Name, State: UserSkills.StateOf(SkillsFolder, s))).ToList();
+            var due = states.Where(s => s.State is UserSkills.State.Missing or UserSkills.State.Outdated).Select(s => s.Name).ToList();
+            var kept = states.Where(s => s.State is UserSkills.State.Edited or UserSkills.State.NotOurs).Select(s => $"{s.Name} (kept: {(s.State == UserSkills.State.Edited ? "changed by hand" : "not pilot's")})").ToList();
+            var line = due.Count > 0 ? $"not current in {SkillsFolder}: {string.Join(", ", due)}" : $"in {SkillsFolder}: {string.Join(", ", states.Select(s => s.Name))}";
+            return new SetupCheck
+            {
+                Key = UserSkillsKey,
+                Title = Title,
+                Ok = due.Count == 0,
+                Optional = true,
+                Line = kept.Count > 0 ? $"{line}; {string.Join(", ", kept)}" : line,
+                Fix = due.Count > 0 ? "Install skills" : null,
+            };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return new SetupCheck { Key = UserSkillsKey, Title = Title, Ok = false, Optional = true, Line = $"{SkillsFolder}: {ex.Message}" };
         }
     }
 
@@ -289,7 +347,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         {
             var text = File.Exists(SettingsFile) ? File.ReadAllText(SettingsFile) : "";
             return MergeGuard.Installed(text, nodePath)
-                ? new SetupCheck { Key = MergeGuardKey, Title = Title, Ok = true, Line = $"in {SettingsFile}: gh pr merge, a merge by gh api and a push to a default branch are refused, pointing at pilot flight merge" }
+                ? new SetupCheck { Key = MergeGuardKey, Title = Title, Ok = true, Line = $"in {SettingsFile}: gh pr merge, a merge by gh api and a push to a default branch are refused, pointing at pilot flight merge; a node session's direct dotnet test is refused, pointing at pilot run" }
                 : new SetupCheck { Key = MergeGuardKey, Title = Title, Ok = false, Line = $"not in {SettingsFile} for {nodePath}: a session can merge a PR, or push to main, around the node", Fix = "Install merge guard" };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)

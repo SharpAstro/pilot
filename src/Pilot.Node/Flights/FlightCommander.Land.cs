@@ -78,13 +78,24 @@ public sealed partial class FlightCommander
     /// </summary>
     public FlightRow MarkMergedUnderLeg(FlightRow flight, string mergedHead, string why)
     {
-        var number = flight.PullRequest;
-        var marked = flight with
+        // A flight without a PR has none that merged: no caller passes one, but without this its null would match a row holding no PR
+        // too (null equals null below) and write MergedPullRequest = null.
+        if (flight.PullRequest is not { } number)
+        {
+            return flight;
+        }
+        // Written on the row as it is at this moment, and only while it still holds the PR that merged: a caller's row may have been
+        // read with the lock let go (a push's retry after GH006), and a whole-row write of it would undo what moved meanwhile.
+        var marked = state.UpdateFlight(flight.Code, f => f.PullRequest != number ? null : f with
         {
             MergedHead = mergedHead, MergedPullRequest = number, PullRequest = null, PullRequestUrl = null, Review = null,
             MergeWhenGreen = null, MergeQueue = null, GitHubHead = null,
-        };
-        state.PutFlight(marked);
+        });
+        if (marked is null)
+        {
+            // The flight moved on from that PR (or is gone): nothing of it is marked, nor carded.
+            return flight;
+        }
         // Its merge entry ends merged too: with the PR let go, no look of the queues sees the flight again to end it.
         state.EndMergeAsMerged(flight.Code, $"#{number} merged without the new leg, whose work goes to a new PR");
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"#{number} merged on GitHub without the new leg", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, "not-landed");
@@ -262,7 +273,7 @@ public sealed partial class FlightCommander
         }
         else if (leftover is not null)
         {
-            state.RaiseCard(CardBin.ForYou, "plane-left", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed, but its plane folder is still there",
+            state.RaiseCard(CardBin.Handled, "plane-left", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed, but its plane folder is still there",
                 $"{leftover}; nothing of git's is in it, so delete it by hand once whatever holds it lets go");
         }
         if (Attachments is not null)
@@ -285,7 +296,14 @@ public sealed partial class FlightCommander
             Review = f.Review is { State: ReviewState.Reviewing } ? null : f.Review,
             FoldedInto = foldedInto ?? f.FoldedInto,
             Overlaps = foldedInto is null ? f.Overlaps : flight.Overlaps,
+            // A move that failed is no longer anything to do once the flight landed (PIL909 merged with a maintenance hand-off's
+            // failure still on it, and Home drew its red band with nothing to press): the failure and its card go with the landing.
+            MoveFailure = null,
+            MoveUnknown = null,
         }) ?? flight;
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code} landed", LegCommander.MoveFailedKind);
+        // The 7-day card's Hold button for this flight was fixed when the card was raised: a landed flight has nothing to hold.
+        state.DropHoldChoiceOfLanded(flight.Code);
         // After a merge the entry ends merged whatever it stood at: a look that saw the arm cleared, or a merge refused as the PR was
         // merged already, may have dropped it just before (pilot #395). A landing by hand ends only an entry still open.
         if (mergedHead is not null)
@@ -315,7 +333,8 @@ public sealed partial class FlightCommander
         }
 
         // Its cards leave with it, and a quiet one says it is in; a folded one says where its work went.
-        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), foldedInto is null ? $"{flight.Code} landed" : $"{flight.Code} folded into {foldedInto}");
+        // A review's notes card stays open: a flight released from its hold merges with the notes, which are the person's to do or dismiss.
+        state.CloseCardsAboutExcept(Verbs.FlightTarget(flight.Code), foldedInto is null ? $"{flight.Code} landed" : $"{flight.Code} folded into {foldedInto}", LegCommander.ReviewNotesKind);
         if (foldedInto is null)
         {
             // Landed needs no one: a Handled line.

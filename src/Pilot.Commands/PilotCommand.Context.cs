@@ -81,7 +81,7 @@ public static partial class PilotCommand
                     return 2;
                 }
                 hereSocket = parseResult.GetValue(socket);
-                using var client = NodeTargets.Connect(target, hereSocket, here: here);
+                using var client = await NodeTargets.ConnectAsync(target, hereSocket, ct, here: here);
                 try
                 {
                     return await run(parseResult, client, ct);

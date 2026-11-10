@@ -128,22 +128,36 @@ public abstract class FlightDesignTestsBase : ReviewTestsBase
         Git(Repo, "config", "remote.origin.url", "https://github.com/x/tianwen.git");
         Git(Repo, "config", $"url.{origin}.insteadOf", "https://github.com/x/tianwen.git");
         _github.Login = "ada";
-        var git = new GitCli();
+        var git = _git;
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [_root]);
         _reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, options), options, TimeProvider.System)
         {
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),
             PostsItself = false,
             TakeFlightVerdict = _legs.TakePrVerdictAsync,
-            SendFlightRound = _legs.AnsweredDesignAsync,
+            SendFlightRound = WentRoundAsync,
         };
+    }
+
+    /// <summary>
+    /// The flight's last leg sent round, and its worker recorded before this returns: a go-around answers "started" once its plane
+    /// takes longer than StartReadyWithin or its launch longer than StartAnswerWithin (500 ms), which a busy machine's git and thread
+    /// pool do, and the leg is then still the done one it was. Waiting on the start, not a clock, is what every assertion of the round needs.
+    /// </summary>
+    private async Task<string?> WentRoundAsync(string code, string why, string? who, string? personsWord, CancellationToken cancellationToken)
+    {
+        var error = await _legs.AnsweredDesignAsync(code, why, who, personsWord, cancellationToken);
+        await Started(_legs, code);
+        return error;
     }
 
     private protected Task<CommandResult> RunPr(string verb, string who, params string[] args) =>
         _reviews.RunAsync(new CommandRequest { Verb = verb, Target = PrTarget, Args = args, Who = who }, Ct);
 
     /// <summary>A flight whose last leg is done, its PR open (number 71), and a PR review of it that asked a question of design.</summary>
-    private protected async Task<FlightRow> AskedDesign(string? question = null)
+    /// <param name="question">The finding of the question; the plain one by default.</param>
+    /// <param name="beforeVerdict">Runs once the flight and its PR review exist, before the review's verdict is taken and posted: where a test sets the flight up for the post.</param>
+    private protected async Task<FlightRow> AskedDesign(string? question = null, Action<FlightRow>? beforeVerdict = null)
     {
         var flight = await NewFlight("1", "parser");
         await Fly(flight, "parser");
@@ -166,6 +180,7 @@ public abstract class FlightDesignTestsBase : ReviewTestsBase
             State = PrReviewState.Reviewing,
             StartedAt = DateTimeOffset.UtcNow,
         });
+        beforeVerdict?.Invoke(flight);
         (await RunPr(Verbs.PrVerdict, "du1-review-tianwen-71", "comment", "A question.", question ?? Question)).Error.ShouldBeNull();
         // The node does not post it here, so the controller does: the post is when the design card is raised.
         (await RunPr(Verbs.PostReview, "controller")).Error.ShouldBeNull();
@@ -267,7 +282,7 @@ public sealed class FlightDesignAnswerTests : FlightDesignTestsBase
         var flight = await AskedDesign(DesignAnswerQuestions.WithOptions);
 
         var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.DesignKind).ShouldHaveSingleItem();
-        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library", "Make it a service", PrReviews.AnswerLabel]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library (recommended)", "Make it a service", PrReviews.AnswerLabel]);
         var option = card.Choices[0];
 
         (await RunPr(option.Verb, "controller", option.Args)).Error.ShouldBeNull();
@@ -307,10 +322,11 @@ public sealed class DesignOptionsCardTests : PrFixTestsBase
         await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions);
 
         var card = OpenDesign();
-        card.Title.ShouldContain("should this be a service at all?");
+        card.Title.ShouldBe("acme/widget#7: the review asks a question of design");
+        card.Summary.ShouldNotBeNull().ShouldContain("should this be a service at all?");
         card.Detail.ShouldNotBeNull().ShouldContain("README.md:1 should this be a service at all?");
         card.Detail.ShouldContain("Make it a service: more to run");
-        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library", "Make it a service", PrReviews.AnswerLabel]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library (recommended)", "Make it a service", PrReviews.AnswerLabel]);
         card.Choices.Take(2).ShouldAllBe(c => c.Verb == Verbs.FixPr && c.Target == "pr/acme/widget#7" && c.AsksFor == null);
         card.Choices[2].AsksFor.ShouldNotBeNull();
     }
@@ -341,23 +357,91 @@ public sealed class DesignOptionsCardTests : PrFixTestsBase
     }
 
     [Fact]
-    public async Task SeveralQuestionsOfferNoOptionsOnlyTheFreeTextChoice()
+    public async Task SeveralQuestionsOfferOneButtonForEveryRecommendedAnswerThenTheFreeTextChoice()
     {
-        await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions, "README.md:9 design: and the name? Option: Keep => none Option: Rename => churn");
+        await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions, DesignAnswerQuestions.TheName);
 
-        OpenDesign().Choices.ShouldHaveSingleItem().Label.ShouldBe(PrReviews.AnswerLabel);
+        // c3479: a card with two questions offered only "Answer in your own words", then a button per option that answered one question
+        // and closed the card; now one press takes both questions' recommended answers, each naming its question.
+        var choices = OpenDesign().Choices;
+        choices.Select(c => c.Label).ShouldBe(["Take both recommended answers", PrReviews.AnswerLabel]);
+        choices[0].Args.ShouldBe(["should this be a service at all? => Keep a library (no new process)\nand the name? => Keep it (none)"]);
+    }
+
+    /// <summary>
+    /// The review of #797: one press on a card of two questions answered one, and the card closed with the other dropped. Through the real
+    /// raiser and the card's answer: the one button acts on both questions' answers at once, and own words of tags that answer only one
+    /// question are refused with the card left open and nothing acted on.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task OnACardOfTwoQuestionsOnePressAnswersBothAndTagsForOneAreRefusedWithTheCardOpen()
+    {
+        await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions, DesignAnswerQuestions.TheName);
+        var card = OpenDesign();
+
+        var partial = await _commands.RunAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["2", "1B"], Who = "controller" }, Ct);
+
+        partial.Error.ShouldNotBeNull().ShouldContain("question 2 has no answer");
+        _state.Cards(openOnly: true).ShouldContain(c => c.Id == card.Id);
+        Row.DesignAnswer.ShouldBeNull();
+        Fixers.ShouldBeEmpty();
+        _github.IssueComments.ShouldBeEmpty();
+
+        var both = await _commands.RunAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["1"], Who = "controller" }, Ct);
+
+        both.Error.ShouldBeNull();
+        Row.DesignAnswer.ShouldBe("should this be a service at all? => Keep a library (no new process)\nand the name? => Keep it (none)");
+        var brief = Fixers.ShouldHaveSingleItem().Brief;
+        brief.ShouldContain("should this be a service at all? => Keep a library (no new process)");
+        brief.ShouldContain("and the name? => Keep it (none)");
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Id == card.Id);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task OwnWordsOfATagForEachQuestionAreEachQuestionsOption()
+    {
+        await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions, DesignAnswerQuestions.TheName);
+        var card = OpenDesign();
+
+        var result = await _commands.RunAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["2", "1B, 2b"], Who = "controller" }, Ct);
+
+        result.Error.ShouldBeNull();
+        Row.DesignAnswer.ShouldBe("should this be a service at all? => Make it a service (more to run)\nand the name? => Rename it (churn)");
     }
 }
 
 internal static class DesignAnswerQuestions
 {
     public const string WithOptions = "README.md:1 design: should this be a service at all? Option: Make it a service => more to run Option*: Keep a library => no new process";
+
+    // A second question, its recommended option first in the reviewer's order this time.
+    public const string TheName = "README.md:9 design: and the name? Option*: Keep it => none Option: Rename it => churn";
 }
 
 /// <summary>The design finding read apart: question, options with consequences, the recommended mark, and the fallback.</summary>
 public sealed class DesignQuestionTests
 {
     private static PrFinding F(string body) => new() { Path = "a.cs", Line = 3, Body = body };
+
+    /// <summary>
+    /// The review of #797: on a card of several questions where one has no options, <c>1A</c> alone passed (<c>unanswered</c> skipped the
+    /// question without options) and the open question got no answer. Tags are refused then; own words and a card of one question are not.
+    /// </summary>
+    [Fact]
+    public void TagsAreRefusedWhenAnyQuestionHasNoOptionsAndOwnWordsAreNot()
+    {
+        var withOptions = DesignQuestion.Parse(F("design: Keep it? Option: Yes => cheap Option*: No => costly"))!;
+        var open = DesignQuestion.Parse(F("design: and the name?"))!;
+
+        Should.Throw<FlightException>(() => DesignQuestion.ExpandTags([withOptions, open], "1A")).Message.ShouldContain("question 2 has no options");
+        Should.Throw<FlightException>(() => DesignQuestion.ExpandTags([withOptions, open], "1A 2A")).Message.ShouldContain("question 2 has no options");
+
+        DesignQuestion.ExpandTags([withOptions, open], "keep it, and call it Foo").ShouldBe("keep it, and call it Foo");
+        DesignQuestion.ExpandTags([open], "A").ShouldBe("A");
+        DesignQuestion.ExpandTags([withOptions], "A").ShouldBe("No (costly)");
+    }
 
     [Fact]
     public void ParsesTheQuestionAndEachOptionWithItsConsequenceAndTheRecommendedMark()
@@ -382,6 +466,113 @@ public sealed class DesignQuestionTests
 
     [Fact]
     public void AFindingThatIsNotADesignQuestionIsNull() => DesignQuestion.Parse(F("a bug here")).ShouldBeNull();
+
+    private const string Ladder = "design: Which ladder does the fallback follow? "
+        + "Option*: follow the documented ladder => the code changes, the doc stays; misses: none "
+        + "Option: reword the doc to match the code => the ladder changes; misses: the AC that the code follows the documented ladder";
+
+    [Fact]
+    public void ParsesWhatEachOptionMissesApartFromItsChoiceAndConsequence()
+    {
+        var q = DesignQuestion.Parse(F(Ladder))!;
+
+        q.Question.ShouldBe("Which ladder does the fallback follow?");
+        q.Options.Select(o => (o.Text, o.Consequence, o.Recommended, o.Misses)).ShouldBe(
+        [
+            ("follow the documented ladder", "the code changes, the doc stays", true, "none"),
+            ("reword the doc to match the code", "the ladder changes", false, "the AC that the code follows the documented ladder"),
+        ]);
+        q.Options[0].Answer.ShouldBe("follow the documented ladder (the code changes, the doc stays)");
+    }
+
+    [Fact]
+    public void TheOptionsThatReachTheCriteriaAreTheOnesThatMissNone()
+    {
+        var q = DesignQuestion.Parse(F(Ladder))!;
+
+        q.Reaching.Select(o => o.Text).ShouldBe(["follow the documented ladder"]);
+        q.OnlyReaching.ShouldNotBeNull().Text.ShouldBe("follow the documented ladder");
+        q.WhyRings.ShouldBeNull();
+        q.SaysMisses.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("none", true)]
+    [InlineData("None.", true)]
+    [InlineData("NONE", true)]
+    [InlineData("nothing", true)]
+    [InlineData("(none)", true)]
+    [InlineData("none of the ACs are met", false)]
+    [InlineData("the AC that the code follows the ladder", false)]
+    public void OnlyTheWordNoneSaysAnOptionMissesNothing(string misses, bool reaches) =>
+        DesignQuestion.Parse(F($"design: Q? Option: A => b; misses: {misses}"))!.Options.ShouldHaveSingleItem().Reaches.ShouldBe(reaches);
+
+    [Fact]
+    public void AnOptionWithNoArrowStillEndsWhereItsMissesBegin()
+    {
+        var q = DesignQuestion.Parse(F("design: Keep it? Option: yes; misses: none Option: no, misses: the README"))!;
+
+        q.Options.Select(o => (o.Text, o.Consequence, o.Misses)).ShouldBe([("yes", "", "none"), ("no", "", "the README")]);
+    }
+
+    [Fact]
+    public void AFindingWrittenTheOldWayHasNoMissesAndIsNeverDecided()
+    {
+        var q = DesignQuestion.Parse(F("design: Keep it? Option: Yes => cheap Option*: No => costly"))!;
+
+        q.Options.Select(o => (o.Text, o.Consequence, o.Recommended, o.Misses)).ShouldBe([("Yes", "cheap", false, (string?)null), ("No", "costly", true, null)]);
+        q.Options.ShouldAllBe(o => !o.Reaches);
+        q.SaysMisses.ShouldBeFalse();
+        q.OnlyReaching.ShouldBeNull();
+        q.WhyRings.ShouldBeNull();
+        DesignQuestion.Decide([q]).ShouldBeNull();
+    }
+
+    [Fact]
+    public void AMissesWordWithNothingAfterItIsNotSaid()
+    {
+        var q = DesignQuestion.Parse(F("design: Keep it? Option: Yes => cheap; misses: Option: No => costly; misses: none"))!;
+
+        q.Options.Select(o => o.Misses).ShouldBe([null, "none"]);
+        q.OnlyReaching.ShouldBeNull();
+    }
+
+    [Fact]
+    public void NoReachingOptionOrSeveralRingAndSayWhy()
+    {
+        var none = DesignQuestion.Parse(F("design: Q? Option: A => a; misses: the AC Option: B => b; misses: the doc"))!;
+        var two = DesignQuestion.Parse(F("design: Q? Option: A => a; misses: none Option: B => b; misses: none"))!;
+
+        none.OnlyReaching.ShouldBeNull();
+        none.WhyRings.ShouldBe("no option reaches the criteria");
+        two.OnlyReaching.ShouldBeNull();
+        two.WhyRings.ShouldBe("2 options reach the criteria and differ in what you get");
+        DesignQuestion.Decide([none]).ShouldBeNull();
+        DesignQuestion.Decide([two]).ShouldBeNull();
+    }
+
+    [Fact]
+    public void DecideTakesTheOneReachingOptionAndNamesWhatEachOtherMisses()
+    {
+        var decided = DesignQuestion.Decide([DesignQuestion.Parse(F(Ladder))!]).ShouldNotBeNull();
+
+        decided.Answer.ShouldBe("follow the documented ladder (the code changes, the doc stays)");
+        decided.Reason.ShouldStartWith("follow the documented ladder is the only option that reaches the criteria");
+        decided.Reason.ShouldContain("the others miss: reword the doc to match the code: the AC that the code follows the documented ladder");
+    }
+
+    [Fact]
+    public void DecideNeedsEveryQuestionToHaveItsOwnReachingOption()
+    {
+        var one = DesignQuestion.Parse(F(Ladder))!;
+        var none = DesignQuestion.Parse(F("design: Q? Option: A => a; misses: the AC"))!;
+
+        DesignQuestion.Decide([]).ShouldBeNull();
+        DesignQuestion.Decide([one, none]).ShouldBeNull();
+        DesignQuestion.Decide([one, one]).ShouldNotBeNull().Answer.ShouldBe(
+            "Which ladder does the fallback follow? => follow the documented ladder (the code changes, the doc stays)\n"
+            + "Which ladder does the fallback follow? => follow the documented ladder (the code changes, the doc stays)");
+    }
 }
 
 /// <summary>

@@ -55,8 +55,11 @@ public sealed partial class FlightCommander
     /// <summary>
     /// Drops <paramref name="met"/> (package id and producer code) from the waits of <paramref name="code"/>, as the node found
     /// each package on nuget.org, and lets the flight go once nothing else holds it. One at a time with the flight verbs.
+    /// <paramref name="versions"/> is the version that met each wait: it is kept as a <see cref="PackagePin"/>, so the consumer's
+    /// next leg bumps its pin to it (PIL802).
     /// </summary>
-    public async Task DropPackageWaitsAsync(string code, IReadOnlyCollection<(string Id, string Producer)> met, CancellationToken cancellationToken)
+    public async Task DropPackageWaitsAsync(string code, IReadOnlyCollection<(string Id, string Producer)> met, CancellationToken cancellationToken,
+        IReadOnlyDictionary<(string Id, string Producer), string>? versions = null)
     {
         await _one.WaitAsync(cancellationToken);
         try
@@ -70,7 +73,16 @@ public sealed partial class FlightCommander
             {
                 return;
             }
-            state.PutFlight(Settle(flight with { PackageWaits = rest }));
+            var pins = flight.PackagePins.ToList();
+            foreach (var wait in flight.PackageWaits.Where(w => met.Contains((w.Id, w.Producer))))
+            {
+                if (versions?.TryGetValue((wait.Id, wait.Producer), out var version) == true)
+                {
+                    pins.RemoveAll(p => string.Equals(p.Id, wait.Id, StringComparison.OrdinalIgnoreCase));
+                    pins.Add(new PackagePin { Id = wait.Id, Version = version, Producer = wait.Producer });
+                }
+            }
+            state.PutFlight(Settle(flight with { PackageWaits = rest, PackagePins = [.. pins] }));
             if (rest.Length == 0)
             {
                 state.CloseCardsAbout(Verbs.FlightTarget(code), "its package is on nuget.org", PackageWatch.LateKind);

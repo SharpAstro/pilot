@@ -19,15 +19,21 @@ internal sealed record FlightsScreen(IReadOnlyList<FlightLine> Lines, string Sou
     /// <summary>The flight a jump opened that In play would have left out, named; null while there is none.</summary>
     public string? Outside { get; init; }
 
-    /// <summary>The count without what is hidden: <c>10 flights · 6 flying · 4 held</c>.</summary>
+    /// <summary>
+    /// The count without what is hidden: <c>10 flights · 6 flying · 3 held · 1 on hold</c>. A flight on the owner's hold counts as on
+    /// hold and not as flying (<see cref="FlightCounts"/>), so the header agrees with the rows that say <c>on hold</c>.
+    /// </summary>
     public string Counts
     {
         get
         {
-            var flying = Lines.Count(l => l.Row.State == FlightState.Flying);
-            var held = Lines.Count(l => l.Row.State == FlightState.Held);
+            var (flying, held, onHold) = FlightCounts.Of(Lines.Select(l => l.Row));
             var summary = $"{Lines.Count} {(Lines.Count == 1 ? "flight" : "flights")} · {flying} flying";
-            return held > 0 ? $"{summary} · {held} held" : summary;
+            if (held > 0)
+            {
+                summary += $" · {held} held";
+            }
+            return onHold > 0 ? $"{summary} · {onHold} on hold" : summary;
         }
     }
 

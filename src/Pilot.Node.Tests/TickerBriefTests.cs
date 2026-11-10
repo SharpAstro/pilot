@@ -56,6 +56,17 @@ public class TickerBriefTests
     }
 
     [Fact]
+    public void TheBriefSaysNotToEndTheTurnBeforeLegFinishHasAnswered()
+    {
+        var brief = Briefs.Tick(Flight, Leg, [Leg], "pilot");
+
+        brief.ShouldContain("End your turn only after `leg finish` has answered");
+        brief.ShouldContain("never before you have run it");
+        brief.ShouldContain("its check is rerunning");
+        brief.ShouldContain("the node finishes the leg when the rerun ends");
+    }
+
+    [Fact]
     public void TheBriefQuotesTheCommitsWhenTheNodeHasThem()
     {
         var brief = Briefs.Tick(Flight, Leg, [Leg], "pilot", commits: "9f8e7d6c Add StartHead\n");

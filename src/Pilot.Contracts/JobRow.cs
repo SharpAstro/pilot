@@ -44,6 +44,13 @@ public sealed record JobRow
     /// <summary>Whether a queued job waits on a sibling hold, a running job's build of a clone it shares; null elsewhere and from an older node.</summary>
     public bool? WaitsOnSibling { get; init; }
 
+    /// <summary>
+    /// On a queued row, when a sibling or build hold first left a slot of the node idle: the queue's head waits only on that hold while
+    /// the node runs fewer jobs than it has slots, and it has done since this time. Null while no slot stands idle for a hold, on any
+    /// other row and from an older node. Optional, so the wire version stays (PIL802).
+    /// </summary>
+    public DateTimeOffset? HoldIdleSince { get; init; }
+
     /// <summary>Why it failed (its exit code, a timeout); null unless it did.</summary>
     public string? Error { get; init; }
 
@@ -147,6 +154,9 @@ public sealed record JobRow
 
     /// <summary>Whether the node ends the job's whole tree at the first failed test it reads: a check, a run handed over with <c>--fail-fast</c>, a reviewer's or fixer's check run.</summary>
     public bool FailFast { get; init; }
+
+    /// <summary>Why the job runs a <c>dotnet test</c> over a whole project or solution with no <c>--filter</c> (<c>pilot run --whole-suite "&lt;why&gt;"</c>); null for any other job.</summary>
+    public string? WholeSuite { get; init; }
 
     /// <summary>
     /// The failures read so far in a line: <c>1 failed so far (BranchShapeTests.ARebase)</c>, <c>2 errors so far (CS0234 in A.cs)</c>,

@@ -45,6 +45,11 @@ public sealed class MutualOverlapTests : OverlapTestsBase
         F("TIA2").Overlaps.Single().Answer.ShouldBe(OverlapAnswer.Separate);
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.OverlapKind);
         _state.Cards().Count(c => c.Kind == LegCommander.OverlapParallelKind).ShouldBe(1);
+        // Going on starts both planners in the background and each raises its planner-started card when it is up; the sweep called directly
+        // awaits neither. On real git that took tens of ms and both cards landed after the test; on the model one lands before the count
+        // and one after it. So the count is taken once both are there.
+        await Eventually.Holds(() => _state.Cards().Count(c => c.Kind == "planner-started") == 2,
+            () => $"cards: {string.Join(", ", _state.Cards().Select(c => c.Kind))}", Ct);
         var cards = _state.Cards().Length;
 
         await _legs.AnswerMutualPendingAsync(Ct);

@@ -82,6 +82,217 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
         L("parser").Report.ShouldBe("parsed\nnot this flight's: BarTests.Breaks (#4)");
     }
 
+    /// <summary>The leg's failure investigations (PIL716), as the node wires them: flights made for them are counted, not flown.</summary>
+    private (FailureInvestigations Investigations, List<CommandRequest> Made) Investigating()
+    {
+        var made = new List<CommandRequest>();
+        var investigations = new FailureInvestigations(_state, _github, new FailureLedger(), TimeProvider.System)
+        {
+            CreateFlight = (command, _) =>
+            {
+                made.Add(command);
+                return Task.FromResult(new CommandResult { Seq = 0, Verb = command.Verb, Target = command.Target, Who = command.Who, Ok = true, Made = $"TIA{900 + made.Count}" });
+            },
+        };
+        _legs.Investigations = investigations;
+        return (investigations, made);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnUntouchedFailureOnTheFinishIsFiledAsTheInvestigationThatALaterCiFailureJoins()
+    {
+        var flight = await Flying();
+        var (investigations, made) = Investigating();
+        _github.Issues[3] = "Something else entirely";
+        _checks.Script.Enqueue(new CheckRun(1, Failing("Pilot.Tests.BarTests.Breaks")));
+        _checks.Script.Enqueue(new CheckRun(0, "all green"));
+        _checks.Script.Enqueue(new CheckRun(1, Failing("Pilot.Tests.BarTests.Breaks")));
+
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed")).Ok.ShouldBeTrue();
+
+        // The finish files the investigation, not #752's plain issue: priority high, its flight made and a For-you card.
+        var filed = _github.IssuesCreated.ShouldHaveSingleItem();
+        filed.Title.ShouldContain("BarTests.Breaks");
+        filed.Title.ShouldContain("cause unknown");
+        filed.Title.ShouldNotContain(UnrelatedFailures.TitleMark);
+        _github.IssuePriorities[4].ShouldBe(IssuePriority.High);
+        made.ShouldHaveSingleItem().Args[0].ShouldBe("4");
+        _state.Cards().ShouldContain(c => c.Kind == FailureInvestigations.CardKind && c.Bin == CardBin.ForYou);
+        investigations.Ledger.All().ShouldHaveSingleItem().Where.ShouldBe(FailureWhere.PassedLegCheck);
+        L("parser").State.ShouldBe(LegState.Done);
+        L("parser").Report.ShouldBe("parsed\nnot this flight's: BarTests.Breaks (#4)");
+
+        // The same failure later in another PR's CI joins that investigation: a comment, no second issue or flight.
+        _github.FailedRuns[(77, false)] = new FailedRun(555, "https://github.com/x/tianwen/actions/runs/555", ["build"], Failing("Pilot.Tests.BarTests.Breaks"));
+        var look = await investigations.LookAtRunAsync(new FailureSite(flight.Repo, flight.RepoPath, 77, "TIA77", new string('c', 40), FailureWhere.Ci), mergeGroup: false, Ct);
+
+        look.Untouched.ShouldHaveSingleItem().Issue.ShouldBe(4);
+        _github.IssuesCreated.Count.ShouldBe(1);
+        made.Count.ShouldBe(1);
+        _github.IssueComments.ShouldContain(c => c.Number == 4 && c.Body.Contains("run 555"));
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnIssueTheFinishFiledEarlierBecomesTheInvestigationOfALaterCiFailure()
+    {
+        var flight = await Flying();
+        var (investigations, made) = Investigating();
+        _github.Issues[6] = UnrelatedFailures.IssueTitle("Pilot.Tests.BarTests.Breaks", "TIA0");
+        _github.FailedRuns[(77, false)] = new FailedRun(555, "https://github.com/x/tianwen/actions/runs/555", ["build"], Failing("Pilot.Tests.BarTests.Breaks"));
+
+        var look = await investigations.LookAtRunAsync(new FailureSite(flight.Repo, flight.RepoPath, 77, "TIA77", new string('c', 40), FailureWhere.Ci), mergeGroup: false, Ct);
+
+        look.Untouched.ShouldHaveSingleItem().Issue.ShouldBe(6);
+        _github.IssuesCreated.ShouldBeEmpty();
+        _github.IssuePriorities[6].ShouldBe(IssuePriority.High);
+        made.ShouldHaveSingleItem().Args[0].ShouldBe("6");
+        _github.IssueComments.ShouldContain(c => c.Number == 6 && c.Body.Contains("now the investigation"));
+    }
+
+    private void OtherFlight(string code, FlightRow like) =>
+        _state.PutFlight(like with { Code = code, Issue = 2, Branch = $"flight/{code.ToLowerInvariant()}", PullRequest = 2, PullRequestUrl = "https://github.com/x/tianwen/pull/2" });
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARepeatOfAnotherFlightsFailureOnTheFinishPutsTheTowerOnAlertHoldingTheOtherFlightAndNotThisOne()
+    {
+        var flight = await Flying();
+        var (investigations, made) = Investigating();
+        var alerts = new FailureAlerts(_state, _github, investigations, TimeProvider.System);
+        _legs.Alerts = alerts;
+        OtherFlight("TIA2", flight);
+        // Another flight's PR hit the same failure first: it is the investigation's first occurrence.
+        var output = Failing("Pilot.Tests.BarTests.Breaks");
+        (await investigations.InvestigateTestAsync(new FailureSite(flight.Repo, flight.RepoPath, 2, "TIA2", new string('b', 40), FailureWhere.Ci), "Pilot.Tests.BarTests.Breaks", output, null, Ct))
+            .ShouldNotBeNull().Others.ShouldBeFalse();
+        _checks.Script.Enqueue(new CheckRun(1, output));
+        _checks.Script.Enqueue(new CheckRun(0, "all green"));
+
+        // The leg passes through #752, and the repeat still reaches the tower: one Ring card, TIA2 held, this flight not.
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed")).Ok.ShouldBeTrue();
+
+        L("parser").State.ShouldBe(LegState.Done);
+        var alert = alerts.Open().ShouldHaveSingleItem();
+        alert.Holds.ShouldHaveSingleItem().Flight.ShouldBe("TIA2");
+        alerts.HoldOf("TIA1").ShouldBeNull();
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == FailureAlerts.AlertKind && c.Bin == CardBin.Ring);
+        made.ShouldHaveSingleItem();
+        _github.IssuesCreated.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ALaterAlertDoesNotHoldAFlightWhoseLegCheckFailureTheFinishPassed()
+    {
+        var flight = await Flying();
+        var (investigations, _) = Investigating();
+        var alerts = new FailureAlerts(_state, _github, investigations, TimeProvider.System);
+        _legs.Alerts = alerts;
+        _github.Issues[3] = "Something else entirely";
+        _checks.Script.Enqueue(new CheckRun(1, Failing("Pilot.Tests.BarTests.Breaks")));
+        _checks.Script.Enqueue(new CheckRun(0, "all green"));
+        _checks.Script.Enqueue(new CheckRun(1, Failing("Pilot.Tests.BarTests.Breaks")));
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed")).Ok.ShouldBeTrue();
+        alerts.Open().ShouldBeEmpty();
+        OtherFlight("TIA2", flight);
+        OtherFlight("TIA3", flight);
+
+        // Two other flights' PRs then hit the same failure in CI: the alert opens, and holds them, not TIA1 whose leg passed.
+        foreach (var (pr, code) in new[] { (2, "TIA2"), (3, "TIA3") })
+        {
+            _github.FailedRuns[(pr, false)] = new FailedRun(600 + pr, $"https://github.com/x/tianwen/actions/runs/{600 + pr}", ["build"], Failing("Pilot.Tests.BarTests.Breaks"));
+            await alerts.LookAtRunAsync(new FailureSite(flight.Repo, flight.RepoPath, pr, code, new string((char)('a' + pr), 40), FailureWhere.Ci), mergeGroup: false, Ct);
+        }
+
+        alerts.HoldOf("TIA1").ShouldBeNull();
+        alerts.Open().ShouldHaveSingleItem().Holds.Select(h => h.Flight).ShouldNotContain("TIA1");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFirstAlertDoesNotOpenWhenTheOnlyEarlierHitsAreOtherFlightsPassedLegChecks()
+    {
+        var flight = await Flying();
+        var (investigations, _) = Investigating();
+        var alerts = new FailureAlerts(_state, _github, investigations, TimeProvider.System);
+        OtherFlight("TIA2", flight);
+        var output = Failing("Pilot.Tests.BarTests.Breaks");
+        const string test = "Pilot.Tests.BarTests.Breaks";
+
+        // TIA2's leg check failed in this test and its finish passed it: the first occurrence, on record, no flight of it hit.
+        var first = await investigations.InvestigateTestAsync(new FailureSite(flight.Repo, flight.RepoPath, 2, "TIA2", new string('b', 40), FailureWhere.PassedLegCheck), test, output, null, Ct);
+        first.ShouldNotBeNull().Others.ShouldBeFalse();
+
+        // TIA1's passed leg check is the second: an earlier hit exists, but a passed leg check holds nothing, so no alert opens for it.
+        var site = new FailureSite(flight.Repo, flight.RepoPath, 1, "TIA1", new string('a', 40), FailureWhere.PassedLegCheck);
+        var second = await investigations.InvestigateTestAsync(site, test, output, null, Ct);
+        second.ShouldNotBeNull().Others.ShouldBeTrue();
+        alerts.AlertOnPassedCheck(site, second).Answer.ShouldBe(FailureAnswer.Unknown);
+
+        alerts.Open().ShouldBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Kind == FailureAlerts.AlertKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFirstUntouchedFailureOnTheFinishRaisesNoAlert()
+    {
+        await Flying();
+        var (investigations, _) = Investigating();
+        var alerts = new FailureAlerts(_state, _github, investigations, TimeProvider.System);
+        _legs.Alerts = alerts;
+        _github.Issues[3] = "Something else entirely";
+        _checks.Script.Enqueue(new CheckRun(1, Failing("Pilot.Tests.BarTests.Breaks")));
+        _checks.Script.Enqueue(new CheckRun(0, "all green"));
+        _checks.Script.Enqueue(new CheckRun(1, Failing("Pilot.Tests.BarTests.Breaks")));
+
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed")).Ok.ShouldBeTrue();
+
+        alerts.Open().ShouldBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Kind == FailureAlerts.AlertKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnIssueAdoptedAsTheInvestigationThatAFlightFliesAlreadyGetsNoSecondFlight()
+    {
+        var flight = await Flying();
+        var (investigations, made) = Investigating();
+        _github.Issues[6] = UnrelatedFailures.IssueTitle("Pilot.Tests.BarTests.Breaks", "TIA0");
+        // A flight flies #6 already: it is the investigation, and create-flight (which would make a second beside it) is not asked.
+        _state.PutFlight(flight with { Code = "TIA6", Issue = 6, Branch = "flight/tia6", PullRequest = null, PullRequestUrl = null });
+        _github.FailedRuns[(77, false)] = new FailedRun(555, "https://github.com/x/tianwen/actions/runs/555", ["build"], Failing("Pilot.Tests.BarTests.Breaks"));
+
+        var look = await investigations.LookAtRunAsync(new FailureSite(flight.Repo, flight.RepoPath, 77, "TIA77", new string('c', 40), FailureWhere.Ci), mergeGroup: false, Ct);
+
+        var finding = look.Untouched.ShouldHaveSingleItem();
+        (finding.Issue, finding.Investigation).ShouldBe((6, "TIA6"));
+        made.ShouldBeEmpty();
+        _state.Cards().ShouldContain(c => c.Kind == FailureInvestigations.CardKind && c.Title.Contains("TIA6 investigates"));
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnIssueThatNamesOnlyTheClassIsNoInvestigationOnTheFinishSoANewOneIsFiled()
+    {
+        await Flying();
+        var (_, made) = Investigating();
+        // Without investigations #752 listed this issue for the class; with them the first occurrence is filed as its own investigation.
+        _github.Issues[5] = "BarTests is slow on a loaded machine";
+        _checks.Script.Enqueue(new CheckRun(1, Failing("Pilot.Tests.BarTests.Breaks")));
+        _checks.Script.Enqueue(new CheckRun(0, "all green"));
+
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed")).Ok.ShouldBeTrue();
+
+        var filed = _github.IssuesCreated.ShouldHaveSingleItem();
+        filed.Title.ShouldContain("cause unknown");
+        // Its own investigation (#6), not the class-only issue #5 that #752 alone would have listed.
+        L("parser").Report.ShouldBe("parsed\nnot this flight's: BarTests.Breaks (#6)");
+        made.ShouldHaveSingleItem();
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task AnUntouchedClassWithNoIssueThatPassesOnTheBaseFailsTheLeg()

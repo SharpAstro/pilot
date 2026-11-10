@@ -57,7 +57,7 @@ public sealed class LockWaitTests : LegCommanderTestsBase, IDisposable
             {
                 File.SetAttributes(file, FileAttributes.Normal);
             }
-            Directory.Delete(_nodeRoot, recursive: true);
+            TestDirs.DeleteTree(_nodeRoot);
         }
         base.Dispose();
     }

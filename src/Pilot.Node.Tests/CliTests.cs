@@ -1,5 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using System.Diagnostics;
 using Pilot.Commands;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
@@ -15,6 +14,7 @@ public sealed class CliTests : IAsyncLifetime
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2c-" + Guid.NewGuid().ToString("N")[..8]);
     private NodeHarness _node = null!;
+    private SeededRepos _repos = null!;
 
     private string Repo => Path.Combine(_root, "tianwen");
 
@@ -39,37 +39,19 @@ public sealed class CliTests : IAsyncLifetime
 
     public async ValueTask InitializeAsync()
     {
-        // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
-        SeedRepo.Make(_root);
-        _node = await NodeHarness.StartAsync(Ct);
+        // A repo with a bare origin, so a flight's push has somewhere to go: the same seed, laid on the in-memory git (#952), which the node runs on too.
+        _repos = new SeededRepos(_root);
+        SeedRepo.MakeOn(_repos, _root);
+        _node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
     }
 
     public async ValueTask DisposeAsync()
     {
         await _node.DisposeAsync();
-        try
-        {
-            Git(Repo, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        PrOrigins.Delete(_root);
+        _repos.Dispose();
     }
 
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    private string Git(string cwd, params string[] args) => _repos.Run(cwd, args);
 
     private async Task<(int Exit, string Output, string Error)> Pilot(string cwd, params string[] args)
     {
@@ -201,7 +183,6 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ADirectFlightIsFlownFromTheCliAloneUpToItsLanding()
     {
         // The controller, in the repo: a flight and its one leg.
@@ -267,7 +248,7 @@ public sealed class CliTests : IAsyncLifetime
         var ring = _node.State.Cards().Single(c => c.Kind == "pr-ready").Id;
         var (_, cards, _) = await Pilot(_root, "cards");
         cards.ShouldContain($"{ring}  RING  TIA1611's PR #71 is ready to merge");
-        cards.ShouldContain($"1. Merge: pilot answer {ring} 1");
+        cards.ShouldContain($"1. Merge the PR: pilot answer {ring} 1");
         var (_, cardsMarkdown, _) = await Pilot(_root, "cards", "--output-format", "markdown");
         cardsMarkdown.ShouldContain($"## {ring} · RING · TIA1611's PR #71 is ready to merge");
         cardsMarkdown.ShouldContain($"`pilot answer {ring} 1`");
@@ -278,7 +259,7 @@ public sealed class CliTests : IAsyncLifetime
         _node.GitHub.Merged.ShouldBe([(71, "cafe0000cafe0000", "rebase")]);
         _node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
         var after = _node.State.Cards();
-        after.Single(c => c.Id == ring).Outcome.ShouldBe("Merge");
+        after.Single(c => c.Id == ring).Outcome.ShouldBe(LegCommander.MergeLabel);
         after.Single(c => c.Kind == "landed").Bin.ShouldBe(CardBin.Handled);
 
         // Landed, it leaves status, which says how many it left out; --all shows it with its legs.
@@ -298,7 +279,6 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task OutsideAPlaneALegMustBeNamedAndAPlaneWithoutAFlyingLegSaysSo()
     {
         await Ok(Repo, "flight", "create", "7");
@@ -377,22 +357,37 @@ public sealed class CliTests : IAsyncLifetime
         lines.ShouldNotContain(l => l.StartsWith("OLD0  ", StringComparison.Ordinal));
     }
 
+    // The node's only job once it holds, waited for as the state changes (no timer): the three job tests below run it on an in-memory
+    // launcher (#933), so what starts and ends is the fake's, and a test of the CLI starts no real shell.
+    private async Task<JobRow> TheJobUntil(Func<JobRow, bool> condition, string what)
+    {
+        var (changes, subscription) = StateChanges.Watch(_node.State);
+        using (subscription)
+        {
+            JobRow? found = null;
+            await changes.UntilAsync(() => _node.State.Jobs().SingleOrDefault() is { } job && condition(found = job), TimeSpan.FromSeconds(25), Ct, what);
+            return found!;
+        }
+    }
+
+    private FakeJobLauncher FakeJobs(Pilot.Node.Flights.JobRunner runner)
+    {
+        var launcher = new FakeJobLauncher(TimeProvider.System);
+        runner.Launcher = launcher;
+        return launcher;
+    }
+
     [Fact]
     public async Task PilotRunAloneSendsTheExclusiveFlagAndTheJobIsABenchJob()
     {
         var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
-        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct);
+        FakeJobs(runner);
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         // The machine running the suite is not quiet: the test is about the flag, not the CPU.
         runner.BenchQuietCpu = 100;
         await Ok(_root, "run", "--alone", "--", "echo benched");
-        var job = _node.State.Jobs().Single();
         // Let it end before the folder goes, or its log is still held.
-        // Two minutes, like the rest of the suite: a loaded machine holds a bench job longer than 30 s.
-        for (var clock = System.Diagnostics.Stopwatch.StartNew(); _node.State.Jobs().Single().EndedAt is null;)
-        {
-            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromMinutes(2), "the bench job did not end");
-            await Task.Delay(100, Ct);
-        }
+        var job = await TheJobUntil(j => j.EndedAt is not null, "the bench job did not end");
         job.Kind.ShouldBe(JobKind.Bench);
         global::Pilot.Commands.PilotCommand.JobLine(job).ShouldContain("bench");
     }
@@ -415,26 +410,17 @@ public sealed class CliTests : IAsyncLifetime
     public async Task PilotJobCancelForceSendsCancelJobWithForceAndTheJobEndsForced()
     {
         var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        FakeJobs(runner);
         runner.MinFreeMemory = 0;
         await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct);
         // Not a bare sleep, which the node refuses: the echo makes it a job.
         await Ok(_root, "run", "--", "sleep 30; echo slept");
-        var id = _node.State.Jobs().Single().Id;
-        for (var i = 0; _node.State.Jobs().Single().State != JobState.Running; i++)
-        {
-            i.ShouldBeLessThan(500, "the job did not start");
-            await Task.Delay(20, Ct);
-        }
+        var id = (await TheJobUntil(j => j.State == JobState.Running, "the job did not start")).Id;
 
         var (exit, output, error) = await Pilot(_root, "job", id, "cancel", "--force");
 
         exit.ShouldBe(0, $"{output}{error}");
-        JobRow ended;
-        for (var i = 0; (ended = _node.State.Jobs().Single()).EndedAt is null; i++)
-        {
-            i.ShouldBeLessThan(300, "the job did not end");
-            await Task.Delay(100, Ct);
-        }
+        var ended = await TheJobUntil(j => j.EndedAt is not null, "the job did not end");
         ended.State.ShouldBe(JobState.Cancelled);
         ended.Error.ShouldNotBeNull().ShouldStartWith("cancelled (forced) by ");
     }
@@ -443,23 +429,14 @@ public sealed class CliTests : IAsyncLifetime
     public async Task PilotJobCancelWithoutForceIsAPlainCancel()
     {
         var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        FakeJobs(runner);
         runner.MinFreeMemory = 0;
         await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct);
         await Ok(_root, "run", "--", "sleep 30; echo slept");
-        var id = _node.State.Jobs().Single().Id;
-        for (var i = 0; _node.State.Jobs().Single().State != JobState.Running; i++)
-        {
-            i.ShouldBeLessThan(500, "the job did not start");
-            await Task.Delay(20, Ct);
-        }
+        var id = (await TheJobUntil(j => j.State == JobState.Running, "the job did not start")).Id;
 
         await Ok(_root, "job", id, "cancel");
-        JobRow ended;
-        for (var i = 0; (ended = _node.State.Jobs().Single()).EndedAt is null; i++)
-        {
-            i.ShouldBeLessThan(300, "the job did not end");
-            await Task.Delay(100, Ct);
-        }
+        var ended = await TheJobUntil(j => j.EndedAt is not null, "the job did not end");
 
         ended.Error.ShouldStartWith("cancelled by ");
     }
@@ -482,7 +459,6 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task Leg_finish_accepts_verified_and_the_node_refuses_it_on_a_leg_that_is_not_failed()
     {
         var plane = await FlightWithAValidatorFlying("1612");
@@ -513,7 +489,6 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AValidatorAnsweringGoFromThePlaneStartsTheLegsWorker()
     {
         var plane = await FlightWithAValidatorFlying("8");
@@ -528,7 +503,6 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AValidatorAnsweringNoGoFromThePlaneRingsAndTheLegStaysPlanned()
     {
         var plane = await FlightWithAValidatorFlying("9");
@@ -590,6 +564,19 @@ public sealed class CliTests : IAsyncLifetime
         error.ToString().ShouldContain("no node answers");
     }
 
+    /// <summary><c>flight adopt &lt;code&gt; --from &lt;node&gt;</c> reaches the node as <see cref="Verbs.AdoptFlight"/> on the flight, naming the node: the test node has no copy of DE1's flights, so it refuses and says so; without --from it is a usage error.</summary>
+    [Fact]
+    public async Task FlightAdoptIsSentToTheNodeAsAdoptFlightNamingTheOldNode()
+    {
+        var (exit, output, error) = await Pilot(_root, "flight", "adopt", "TIA9", "--from", "DE1");
+
+        exit.ShouldBe(1);
+        (output + error).ShouldContain("refused: adopt-flight flight/TIA9: ");
+        (output + error).ShouldContain("no copy of DE1's flights");
+        (await Pilot(_root, "flight", "adopt", "TIA9")).Exit.ShouldNotBe(0);
+        (await Pilot(_root, "flight", "adopt", "--help")).Output.ShouldContain("--from");
+    }
+
     [Fact]
     public async Task TheWatchtowersCommandsAreSpelledAndItsCardsRaised()
     {
@@ -601,6 +588,17 @@ public sealed class CliTests : IAsyncLifetime
             [(CardBin.Handled, "Went around TIA1/parser"), (CardBin.ForYou, "A quiet note"), (CardBin.Ring, "TIA1 forks")]);
         var tell = await Pilot(_root, "tell", "hello");
         (tell.Exit, tell.Output.Trim()).ShouldBe((1, "refused: tell watchtower: this node keeps no watchtower (--no-watchtower)"));
+    }
+
+    [Fact]
+    public async Task ChatNowReachesTheNodeAsChatNowAndItsRefusalSaysWhyNothingWasCancelled()
+    {
+        var now = await Pilot(_root, "chat", "now", "s1");
+        (now.Exit, now.Output.Trim()).ShouldBe((1, "refused: chat-now watchtower: nothing is running: the watchtower is idle, so there is no turn to cancel and a message sent to it is answered at once"));
+
+        var none = await Pilot(_root, "chat", "now");
+        none.Exit.ShouldNotBe(0);
+        _node.State.Cards().ShouldBeEmpty();
     }
 
     [Fact]
@@ -724,9 +722,11 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task StatusWritesMarkdownForOutputFormatMarkdownAndPlainTextWhenNoHostCanRenderAuto()
     {
+        // A leg start that outlasts the node's 90 s reply deadline on a loaded machine is answered queued, and the leg is not flying yet for the
+        // check below: this test waits for the real answer.
+        _node.App.Services.GetRequiredService<NodeCommands>().ReplyDeadline = TimeSpan.FromMinutes(10);
         await Ok(Repo, "flight", "create", "1611", "Planets", "on", "the", "GPU");
         var flight = _node.State.Flights().Single();
         await Ok(_root, "leg", "plan", "TIA1611", "gpu", "--goal", "Draw the planets", "--done-when", "The capture shows them", "--item", "Write the shader", "--item", "Capture it");
@@ -768,9 +768,11 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task StatusHandsAutoAndRichToTheHostsRendererAndWritesPlainTextWhenItSettlesOnPlain()
     {
+        // The same flight create as the sibling test: on a loaded machine it can outlast the node's 90 s reply deadline and be answered queued,
+        // before the flight exists for the status below, so this test waits for the real answer too.
+        _node.App.Services.GetRequiredService<NodeCommands>().ReplyDeadline = TimeSpan.FromMinutes(10);
         await Ok(Repo, "flight", "create", "1611", "Planets", "on", "the", "GPU");
         var asked = new List<string>();
         async Task<string> Run(bool renders, params string[] args)

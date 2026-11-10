@@ -126,5 +126,5 @@ internal sealed partial class PullRequestsView<TSurface>
     /// </summary>
     internal string? Refusal() =>
         ReviewRefused ?? FixRefused ?? _cards.Where(c => c.Choices.Any(ch => ch.Verb is Verbs.Merge or Verbs.GoAround))
-            .Select(c => RefusedOf?.Invoke(c.Id) is { } why ? $"{c.Title}: {why}" : null).FirstOrDefault(r => r is not null);
+            .Select(c => RefusedOf?.Invoke(c) is { } why ? $"{c.Title}: {why}" : null).FirstOrDefault(r => r is not null);
 }

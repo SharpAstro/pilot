@@ -18,7 +18,7 @@ public sealed class BuildRspTests : IDisposable
     {
         if (Directory.Exists(_root))
         {
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
     }
 

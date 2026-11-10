@@ -105,11 +105,22 @@ public sealed partial class LegCommander
                 {
                     throw new FlightException($"{flight.Code}/{leg.Name} has steps not ticked: {string.Join("; ", open)}");
                 }
+                // A conflict worker that says it is done while a test merge of the base still conflicts has not resolved it: that counts as
+                // failed and the next rung starts (PIL846), where the bring-up below would only refuse it and leave the same worker flying.
+                if (await ConflictStillAsync(flight, leg, cancellationToken)
+                    && await ConflictRoundEndedAsync(flight, leg, report.Length > 0 ? $"finished done, but merging the base still conflicts: {report}" : "finished done, but merging the base still conflicts", cancellationToken))
+                {
+                    break;
+                }
                 // The go-around's push comes next when it is the last leg. The plane is brought up to date with its base first, so the
                 // check below runs on what is pushed; a conflict is undone and refused, the leg left flying for its worker to resolve.
                 // A review that passed at an earlier head asks the same once the leg's commits moved the plane past it (a review-notes leg).
+                // On the owner's hold (#771) a finish is let through so a running worker can report, but it brings nothing up to date and
+                // changes nothing on GitHub: no base merge into the plane, no auto-merge disarmed. The leg is recorded done and the release's
+                // next sweep (ReviewUnreadHeadAsync) merges the base, pushes and starts the review.
                 var pushes = await ReviewBehindPlaneAsync(flight, cancellationToken)
-                    && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name);
+                    && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name)
+                    && !IsOnHold(flight.Code);
                 if (pushes)
                 {
                     using (Calling(flight.Code, "being brought up to date"))
@@ -170,6 +181,7 @@ public sealed partial class LegCommander
                     }
                 }
                 var said = report.Length > 0 ? report : leg.Report;
+                _conflictLadder.TryRemove(flight.Code, out _);
                 await RecordDoneAsync(flight, leg, notOurs is null ? said : string.IsNullOrWhiteSpace(said) ? notOurs : $"{said}\n{notOurs}", push: true, cancellationToken);
                 break;
             case "failed":
@@ -183,6 +195,12 @@ public sealed partial class LegCommander
                 if (SiblingRestoreFailure.In(report, flight.Worktree) is { } stale && _siblingRefused.TryAdd($"{flight.Code}/{leg.Name}", 0))
                 {
                     throw new FlightException($"{stale.Text}\nThen finish again; if it still fails, report it again and the node will take it as a failure.");
+                }
+                // A conflict worker that failed is followed at once by the next rung of the ladder (PIL846), with no card between; past the
+                // last rung only a report in the decision shape rings, and any other failure is the leg-failed card's below.
+                if (await ConflictRoundEndedAsync(flight, leg, report, cancellationToken))
+                {
+                    break;
                 }
                 // A worker that fails a leg whose work is done and pushed has only lost its way at the end: the node finishes it. This is
                 // decided on the plane as the worker left it: the early push below would put every plane at origin/<branch> first.
@@ -204,27 +222,84 @@ public sealed partial class LegCommander
                 {
                     break;
                 }
+                // What failed is read from the check failure the last refused finish recorded on the leg (its report, until the worker's
+                // overwrites it just below): the worker's own report is often only "all steps done" (pilot #844, c78).
+                var failure = LegFailure.Read(leg.Report, report, flight.Worktree);
+                var (outside, mainCommits) = await FailureContextAsync(flight, failure, cancellationToken);
+                leg = state.Legs(flight.Code).FirstOrDefault(l => l.Name == leg.Name) ?? leg;
                 state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "failed", Wait = null, Recheck = null });
-                var reason = report.Split('\n', 2)[0].Trim() is { Length: > 0 } first ? Clip(first) : "no reason given";
+                var reason = failure.Cause;
+                var name = $"{flight.Code}/{leg.Name}";
+                var outsideWords = outside ? " The flight changed none of the failing files or their projects." : "";
+                var mainWords = mainCommits.Count > 0
+                    ? $" main has changed those files since the flight took it ({mainCommits.Count} commit{(mainCommits.Count == 1 ? "" : "s")}), so taking main may fix it."
+                    : "";
+                var mainDetail = mainCommits.Count > 0
+                    ? $"main has changed the failing files since the flight took it; taking main may fix it:\n{string.Join('\n', mainCommits.Take(5))}{(mainCommits.Count > 5 ? $"\n...and {mainCommits.Count - 5} more" : "")}"
+                    : null;
+                // The Detail holds the worker's report and the notes about main, not the tail of the recorded check output: the summary and
+                // the title name the cause, and the leg's report keeps the rest (pilot #844 review, round 3 note 3: left as it is).
+                var detail = string.Join("\n\n", new[] { report, notWhy, mainDetail, Models.NextWorkerNote(leg) }.Where(s => !string.IsNullOrEmpty(s)));
                 state.RaiseCard(CardBin.Ring, "leg-failed", Verbs.LegTarget(flight.Code, leg.Name),
-                    $"{flight.Code}/{leg.Name} stopped: {reason}", report.Length > 0 || notWhy is not null ? string.Join("\n\n", new[] { report, notWhy }.Where(s => !string.IsNullOrEmpty(s))) : null,
+                    // "files this leg did not change": what was compared is the failing files and their src/<Project>/ folders, not the leg's code as a whole.
+                    $"{name}: {reason}{(outside ? ", in files this leg did not change" : "")}", detail.Length > 0 ? detail : null,
                     [
-                        new CardChoice { Label = Models.SendBackLabel(leg, report.Length > 0 ? $"Send {leg.Name} round again to {reason}" : $"Send {leg.Name} round again"), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker stopped: {(report.Length > 0 ? report : "no reason given")}"] },
-                        new CardChoice { Label = $"Accept {leg.Name} as it stands, the failure kept in its report", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
+                        // The go-around still carries the whole report to the fresh worker; the buttons carry none of its words.
+                        // No override that marks the failed leg done: that stays the CLI's, with a reason (#797, the owner: "the mark done
+                        // anyway is the worst thing").
+                        new CardChoice { Label = Verbs.FreshWorker, Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker stopped: {(report.Length > 0 ? report : "no reason given")}"] },
                     ],
-                    summary: $"The worker of {flight.Code}/{leg.Name} stopped. Send {leg.Name} round again starts a fresh worker told why; Accept {leg.Name} as it stands keeps the failure in its report and the flight goes on.");
-                // The worker the node sent round on the PR open's conflict gave up: the owner is rung about the conflict itself, once.
-                if (_conflictSent.ContainsKey(flight.Code) && flight.PullRequest is null
-                    && state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault()?.Name == leg.Name)
-                {
-                    await ConflictsAsync(flight.Code, $"the worker the node sent round on the conflict stopped: {reason}", cancellationToken);
-                }
+                    // The panel draws a summary up to CardsView.SummaryChars (240) only, so it says what stopped, whether the flight changed
+                    // the failing files and whether main has; the buttons already say what each leads to (#844 review).
+                    // The cause is what gives way when a long name or many projects would pass 240 (the notes after it are the facts to keep).
+                    summary: FailedSummary(name, reason, failure.CheckFailed, outsideWords + mainWords));
+                // A conflict worker is followed by the next rung above (ConflictRoundEndedAsync); the leg-failed card is only for one that stopped
+                // outside the ladder (not kept over a node restart) or past its last rung without a decision report. The conflict is no card of
+                // its own, and the same base head is not put to a worker twice (ResolveConflictAsync).
                 break;
             default:
                 throw new FlightException("finish-leg takes done or failed, then a report");
         }
 
         await StopWorkerAfterFinishAsync(flight, leg, command, cancellationToken);
+    }
+
+    /// <summary>
+    /// The leg-failed card's summary, never longer than the panel draws (<c>CardsView.SummaryChars</c>, 240): when the sentence is
+    /// too long its cause is cut with an ellipsis, then the end of the leg's name (the card's title keeps the whole name), so the
+    /// notes about the flight's files and main stay whole.
+    /// </summary>
+    internal static string FailedSummary(string name, string reason, bool checkFailed, string notes)
+    {
+        const int PanelChars = 240;
+        // Past these a cause or a name is only an ellipsis: what is left of the sentence is cut instead.
+        const int CauseFloor = 24, NameFloor = 16;
+        string Build(string shownName, string cause) => $"The worker of {shownName} stopped{(checkFailed ? $" and {cause}" : $": {cause}")}.{notes}";
+        static string Elide(string text, int length) => text[..(length - 3)].TrimEnd() + "...";
+        var text = Build(name, reason);
+        if (text.Length <= PanelChars)
+        {
+            return text;
+        }
+        var cause = reason;
+        var shownName = name;
+        var over = text.Length - PanelChars;
+        var causeLength = Math.Max(Math.Min(reason.Length, CauseFloor), reason.Length - over);
+        if (causeLength < reason.Length)
+        {
+            cause = Elide(reason, causeLength);
+            over -= reason.Length - cause.Length;
+        }
+        if (over > 0)
+        {
+            var nameLength = Math.Max(Math.Min(name.Length, NameFloor), name.Length - over);
+            if (nameLength < name.Length)
+            {
+                shownName = Elide(name, nameLength);
+            }
+        }
+        text = Build(shownName, cause);
+        return text.Length <= PanelChars ? text : text[..(PanelChars - 3)] + "...";
     }
 
     /// <summary>The outcome of finish-leg for a leg stopped on the controller's or the owner's word: done in the row, its report starting with this.</summary>
@@ -276,6 +351,11 @@ public sealed partial class LegCommander
     /// </summary>
     private async Task<string> PushEarlyAsync(FlightRow flight, CancellationToken cancellationToken)
     {
+        // A finish is let through on the owner's hold (#771), so a running worker can report; its push is an outward step, and is not taken.
+        if (IsOnHold(flight.Code))
+        {
+            return $"\nThe branch was not pushed early: {flight.Code} is on hold.";
+        }
         try
         {
             var ahead = await OffLockAsync(null, () => git.RunAsync(["rev-list", "--count", $"{flight.Base}..HEAD"], flight.Worktree, cancellationToken));
@@ -304,7 +384,33 @@ public sealed partial class LegCommander
     /// <summary>The card a failed finish raises when the leg's work is done and its check passes but its branch needs a force push or a merge.</summary>
     public const string PushBlockedKind = "push-blocked";
 
-    private static string Clip(string text) => text.Length <= 70 ? text : text[..67].TrimEnd() + "...";
+    private static string Clip(string text) => LegFailure.Clip(text);
+
+    /// <summary>
+    /// Two facts about the files a failed check names (<paramref name="failure"/>), for the leg-failed card: whether the flight changed
+    /// none of them or their projects (<c>git diff --name-only base...HEAD</c>), and the commits main has that the plane lacks for those
+    /// files (<c>git log HEAD..origin/main</c>; <see cref="FlightRow.Base"/> is origin/main itself, so a range from it would never hold
+    /// any). Nothing is fetched here; a git that fails says nothing.
+    /// </summary>
+    private async Task<(bool Outside, IReadOnlyList<string> MainCommits)> FailureContextAsync(FlightRow flight, LegFailure.Reading failure, CancellationToken cancellationToken)
+    {
+        if (failure.Files.Count == 0)
+        {
+            return (false, []);
+        }
+        try
+        {
+            var diff = await OffLockAsync(null, () => git.RunAsync(["diff", "--name-only", $"{flight.Base}...HEAD"], flight.Worktree, cancellationToken));
+            var outside = diff.Ok && LegFailure.IsOutside(failure, diff.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+            var log = await OffLockAsync(null, () => git.RunAsync(["log", "--format=%h %s", "HEAD..origin/main", "--", .. failure.Files], flight.Worktree, cancellationToken));
+            var commits = log.Ok ? log.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+            return (outside, commits);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return (false, []);
+        }
+    }
 
     /// <summary>
     /// A leg finished failed whose plane is clean, steps ticked and check passing at its head, while origin/&lt;branch&gt; exists and is not an
@@ -344,13 +450,13 @@ public sealed partial class LegCommander
         var target = Verbs.LegTarget(flight.Code, leg.Name);
         state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "branch needs a force push", Wait = null });
         state.RaiseCard(CardBin.Ring, PushBlockedKind, target,
-            $"{flight.Code}/{leg.Name} is done, but its rebased branch needs a force push with lease or a merge",
-            $"Check passed at {CommitRefs.Short(blocked.Head)}, origin/{flight.Branch} at {CommitRefs.Short(blocked.Origin)} is not an ancestor of it, so a plain push is refused. Nothing was pushed or overwritten.{(report.Length > 0 ? $"\nThe worker said: {report}" : "")}",
+            $"{flight.Code}/{leg.Name} is done, but its branch was rebased and is not pushed",
+            $"Check passed at {CommitRefs.Short(blocked.Head)}, origin/{flight.Branch} at {CommitRefs.Short(blocked.Origin)} is not an ancestor of it, so a plain push is refused. Nothing was pushed or overwritten.\nOverwriting is a push with lease; the other way merges origin/{flight.Branch} into the plane and pushes plain.{(report.Length > 0 ? $"\nThe worker said: {report}" : "")}",
             [
-                new CardChoice { Label = "Push the rebased branch with lease", Verb = Verbs.FinishLeg, Target = target, Args = [PushedWithLease, blocked.Origin] },
-                new CardChoice { Label = $"Merge origin/{flight.Branch} into the plane and push", Verb = Verbs.FinishLeg, Target = target, Args = [MergedWithOrigin] },
+                new CardChoice { Label = "Overwrite origin's branch", Verb = Verbs.FinishLeg, Target = target, Args = [PushedWithLease, blocked.Origin] },
+                new CardChoice { Label = "Merge origin's branch in", Verb = Verbs.FinishLeg, Target = target, Args = [MergedWithOrigin] },
             ],
-            summary: $"{flight.Code}/{leg.Name} is done and its check passes, but its branch was rebased off origin/{flight.Branch}. Push the rebased branch with lease overwrites origin's only if it is still at {CommitRefs.Short(blocked.Origin)}; Merge origin/{flight.Branch} keeps its commits and pushes plain.");
+            summary: $"{flight.Code}/{leg.Name} is done and its check passes, but its branch was rebased off origin's, so a plain push is refused. Overwriting replaces origin's only if it is still at {CommitRefs.Short(blocked.Origin)}; merging keeps origin's commits and pushes plain.");
         return true;
     }
 
@@ -518,7 +624,8 @@ public sealed partial class LegCommander
         {
             HoldForWatchtower(flight.Code, leg.Name);
         }
-        if (behind && state.Legs(flight.Code).All(l => l.State == LegState.Done))
+        // On the owner's hold (#771) the fixed branch is neither pushed nor reviewed: the leg is recorded done and nothing follows.
+        if (behind && state.Legs(flight.Code).All(l => l.State == LegState.Done) && OnHoldRefusal(flight) is null)
         {
             if (push)
             {
@@ -658,10 +765,13 @@ public sealed partial class LegCommander
         leg = leg with { Recheck = null };
         if (run is { Passed: false })
         {
+            await OffLockAsync(null, () => InvestigateCheckAsync(flight, run.Tail, cancellationToken));
             return (false, $"The node did not finish it itself, though its plane matched origin/{flight.Branch} at {CommitRefs.Short(head)}: its check `{leg.Check}` failed ({run.ExitCode}). Last of its output:\n{run.Tail}", true);
         }
+        // On the owner's hold (#771) a finish the node makes itself changes nothing on GitHub either, as a worker's finish (above).
         var pushes = await ReviewBehindPlaneAsync(flight, cancellationToken)
-            && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name);
+            && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name)
+            && !IsOnHold(flight.Code);
         if (pushes)
         {
             await OffLockAsync(flight, () => EnsureNotArmedAsync(flight, cancellationToken));

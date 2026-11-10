@@ -84,7 +84,7 @@ public sealed class AutopilotTests
         var card = Ask(node);
         (card.Bin, card.Title, card.Subject, card.AskedBy, card.Why).ShouldBe((CardBin.ForYou, "pilot-33 asks to merge #63 (TIA1)", "flight/TIA1", Assistant, Why));
         card.Detail.ShouldNotBeNull().ShouldContain(Why);
-        card.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe([("Allow", Verbs.Merge, "flight/TIA1"), ("Deny", Verbs.Dismiss, Verbs.CardTarget(card.Id))]);
+        card.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe([("Allow it", Verbs.Merge, "flight/TIA1"), ("Deny it", Verbs.Dismiss, Verbs.CardTarget(card.Id))]);
         card.Choices[0].Args.ShouldBe([Head]);
         // The same ask again is the same card, not a second.
         (await Send(node, Command(Verbs.Merge, "flight/TIA1", Assistant, agent: true, Why, Head))).Error.ShouldNotBeNull().ShouldContain($"card {card.Id}");
@@ -100,13 +100,13 @@ public sealed class AutopilotTests
         await Send(node, Command(Verbs.Merge, "flight/TIA1", Assistant, agent: true, Why, Head));
         var card = Ask(node);
 
-        var allowed = await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Allow"));
+        var allowed = await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Allow it"));
 
         allowed.Error.ShouldBeNull();
         node.GitHub.Merged.Single().Number.ShouldBe(63);
         node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
         var closed = node.State.Cards().Single(c => c.Id == card.Id);
-        (closed.State, closed.Outcome, closed.ClosedBy).ShouldBe((CardState.Closed, "Allow", "gui"));
+        (closed.State, closed.Outcome, closed.ClosedBy).ShouldBe((CardState.Closed, "Allow it", "gui"));
         var told = node.Delivery.Relays.ShouldHaveSingleItem();
         told.Name.ShouldBe(Assistant);
         told.Text.ShouldContain("gui allowed your request to merge #63 (TIA1)");
@@ -124,12 +124,12 @@ public sealed class AutopilotTests
         await Send(node, Command(Verbs.Merge, "flight/TIA1", Assistant, agent: true, Why, Head));
         var card = Ask(node);
 
-        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Deny"))).Error.ShouldBeNull();
+        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Deny it"))).Error.ShouldBeNull();
 
         node.GitHub.Merged.ShouldBeEmpty();
         node.State.Flights().Single().State.ShouldBe(FlightState.Flying);
         var closed = node.State.Cards().Single(c => c.Id == card.Id);
-        (closed.State, closed.Outcome, closed.ClosedBy).ShouldBe((CardState.Closed, "Deny", "gui"));
+        (closed.State, closed.Outcome, closed.ClosedBy).ShouldBe((CardState.Closed, "Deny it", "gui"));
         node.Delivery.Relays.ShouldHaveSingleItem().Text.ShouldContain("gui denied your request to merge #63 (TIA1)");
         // Asked again, it is a fresh card.
         await Send(node, Command(Verbs.Merge, "flight/TIA1", Assistant, agent: true, Why, Head));
@@ -159,7 +159,7 @@ public sealed class AutopilotTests
         open.AskedBy.ShouldBe(Assistant);
         open.AlsoAskedBy.ShouldBe([Other]);
 
-        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Deny"))).Error.ShouldBeNull();
+        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Deny it"))).Error.ShouldBeNull();
 
         node.Delivery.Relays.Select(r => r.Name).ShouldBe([Assistant, Other], ignoreOrder: true);
         node.Delivery.Relays.ShouldAllBe(r => r.Text.Contains("gui denied your request to merge #63 (TIA1)"));
@@ -191,9 +191,9 @@ public sealed class AutopilotTests
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
         var denied = AskAmong(node);
         // Allow is the dismissal of the ring card, Deny the dismissal of the ask itself: the verb is the same, the target is not.
-        denied.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe([("Allow", Verbs.Dismiss, Verbs.CardTarget(ring.Id)), ("Deny", Verbs.Dismiss, Verbs.CardTarget(denied.Id))]);
+        denied.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe([("Allow it", Verbs.Dismiss, Verbs.CardTarget(ring.Id)), ("Deny it", Verbs.Dismiss, Verbs.CardTarget(denied.Id))]);
 
-        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(denied.Id), "gui", args: "Deny"))).Error.ShouldBeNull();
+        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(denied.Id), "gui", args: "Deny it"))).Error.ShouldBeNull();
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
         node.Delivery.Relays.ShouldHaveSingleItem().Text.ShouldContain("gui denied your request to dismiss");
 
@@ -201,10 +201,10 @@ public sealed class AutopilotTests
         await Send(node, Command(Verbs.Dismiss, Verbs.CardTarget(ring.Id), Assistant, agent: true, Why));
         var allowed = AskAmong(node);
         allowed.Id.ShouldNotBe(denied.Id);
-        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(allowed.Id), "gui", args: "Allow"))).Error.ShouldBeNull();
+        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(allowed.Id), "gui", args: "Allow it"))).Error.ShouldBeNull();
 
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
-        node.State.Cards().Single(c => c.Id == allowed.Id).Outcome.ShouldBe("Allow");
+        node.State.Cards().Single(c => c.Id == allowed.Id).Outcome.ShouldBe("Allow it");
         var told = node.Delivery.Relays.Last();
         told.Text.ShouldContain("gui allowed your request to dismiss");
         told.Text.ShouldContain("done");
@@ -224,7 +224,7 @@ public sealed class AutopilotTests
         var ask = AskAmong(node);
         ask.Title.ShouldContain("asks to answer");
 
-        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(ask.Id), "gui", args: "Allow"))).Error.ShouldBeNull();
+        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(ask.Id), "gui", args: "Allow it"))).Error.ShouldBeNull();
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
         node.State.Cards(openOnly: true).ShouldContain(c => c.Title == "retried");
         node.Delivery.Relays.ShouldHaveSingleItem().Text.ShouldContain("allowed your request to answer");
@@ -242,7 +242,7 @@ public sealed class AutopilotTests
         foreach (var (who, agent) in new[] { (Assistant, true), ("mcp", true), (lookout, false), (lookout, true) })
         {
             var refusal = who == lookout ? "not the watchtower's" : "the person's";
-            foreach (var choice in new[] { "Allow", "Deny" })
+            foreach (var choice in new[] { "Allow it", "Deny it" })
             {
                 (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), who, agent, args: choice))).Error.ShouldNotBeNull().ShouldContain(refusal);
             }
@@ -251,7 +251,7 @@ public sealed class AutopilotTests
 
         // Autopilot on does not lift it either: an ask raised before it was switched on is still the person's to answer.
         (await Send(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", args: ["autopilot", "on"]))).Error.ShouldBeNull();
-        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), Assistant, agent: true, args: "Allow"))).Error.ShouldNotBeNull().ShouldContain("the person's");
+        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), Assistant, agent: true, args: "Allow it"))).Error.ShouldNotBeNull().ShouldContain("the person's");
         node.GitHub.Merged.ShouldBeEmpty();
         node.State.Cards(openOnly: true).ShouldHaveSingleItem().Id.ShouldBe(card.Id);
     }
@@ -296,7 +296,7 @@ public sealed class AutopilotTests
         node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.AutopilotRan);
 
         // The person's own merge, by Allow on the card or by hand, is not held.
-        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Allow"))).Error.ShouldBeNull();
+        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Allow it"))).Error.ShouldBeNull();
         node.GitHub.Merged.Single().Number.ShouldBe(63);
 
         // Another repo's flight still goes through on autopilot.
@@ -385,7 +385,7 @@ public sealed class AutopilotTests
         await Send(node, Command(Verbs.Merge, "flight/TIA1", "mcp", agent: true, args: Head));
         var card = Ask(node);
 
-        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Allow"))).Error.ShouldBeNull();
+        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Allow it"))).Error.ShouldBeNull();
 
         node.GitHub.Merged.Single().Number.ShouldBe(63);
         node.Delivery.Calls.ShouldBeEmpty();
@@ -402,7 +402,7 @@ public sealed class AutopilotTests
         var card = Ask(node);
 
         // The PR's head is not the one the assistant reviewed: the merge says so, and the ask stays for another try.
-        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Allow"))).Error.ShouldNotBeNull().ShouldContain("reviewed def56789");
+        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Allow it"))).Error.ShouldNotBeNull().ShouldContain("reviewed def56789");
 
         node.GitHub.Merged.ShouldBeEmpty();
         Ask(node).Id.ShouldBe(card.Id);

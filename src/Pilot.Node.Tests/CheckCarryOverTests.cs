@@ -103,7 +103,7 @@ public sealed class CheckCarryOverTests : JobTestsBase
 
             // The slot frees: the carried check runs, and the finish that attached gets its result.
             KillBusy(busy);
-            var result = await run.WaitAsync(TimeSpan.FromSeconds(40), Ct);
+            var result = await run.WaitAsync(TimeSpan.FromSeconds(25), Ct);
 
             result.ExitCode.ShouldBe(0);
             result.Tail.ShouldContain("carried");

@@ -7,13 +7,14 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// The <c>pilot: recheck</c> label (#286): the node sees it on any open PR of a tracked repo, decides whether the PR is its
-/// own to look at, and runs one recheck of it at a time. GitHub is a fake gh over bare repos; git is real.
+/// own to look at, and runs one recheck of it at a time. GitHub is a fake gh over bare repos; git is the in-memory model, or real git under PILOT_TEST_REAL_GIT=1.
 /// </summary>
 public abstract class PrRecheckTestsBase : IDisposable
 {
     private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2r-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly SeededRepos _repos;
     private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private protected readonly FakeWorkers _workers = new();
     private protected readonly FakeGitHub _github = new();
@@ -24,6 +25,8 @@ public abstract class PrRecheckTestsBase : IDisposable
 
     protected PrRecheckTestsBase()
     {
+        // The model owns _root, so PrOrigins.Git and PrOrigins.Push are answered by it; real git only when the run asks (PILOT_TEST_REAL_GIT=1).
+        _repos = new SeededRepos(_root);
         var (widget, head) = PrOrigins.Make(_root, "widget", 7);
         _head = head;
         Directory.CreateDirectory(Roots);
@@ -34,10 +37,10 @@ public abstract class PrRecheckTestsBase : IDisposable
         _github.OpenPrs[WidgetClone] = [new PullRequestStatus { Number = 7, Title = "PR 7", Head = "feature/seven" }];
         _github.Labels[7] = [PilotMarks.Recheck];
 
-        var git = new GitCli();
+        var git = _repos.Git;
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [Roots]);
         var catalog = new RepoCatalog(_state, options);
-        _reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), catalog, options, TimeProvider.System)
+        _reviews = new PrReviews(_state, _workers, _github, git, _repos.Planes(), catalog, options, TimeProvider.System)
         {
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),
             PostsItself = false,
@@ -45,8 +48,8 @@ public abstract class PrRecheckTestsBase : IDisposable
         // The node's own rebases make commits, and a CI runner has no identity of its own to make them with.
         PrOrigins.Git(WidgetClone, "config", "user.email", "t@example.com");
         PrOrigins.Git(WidgetClone, "config", "user.name", "t");
-        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers);
-        _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, git, new Planes(git), _flights, options, TimeProvider.System)
+        _flights = new FlightCommander(_state, _repos.Planes(), TimeProvider.System, _workers);
+        _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, git, _repos.Planes(), _flights, options, TimeProvider.System)
         {
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),
         };
@@ -63,20 +66,7 @@ public abstract class PrRecheckTestsBase : IDisposable
     private protected PullRequest Pr(string state) =>
         new(7, state, _head, "https://github.com/acme/widget/pull/7", Title: "PR 7", Author: "ada", Base: "main");
 
-    public void Dispose()
-    {
-        if (Directory.Exists(WidgetClone))
-        {
-            try
-            {
-                PrOrigins.Git(WidgetClone, "worktree", "prune");
-            }
-            catch (InvalidOperationException)
-            {
-            }
-        }
-        PrOrigins.Delete(_root);
-    }
+    public void Dispose() => _repos.Dispose();
 
     /// <summary>What the watch's search reads of acme/widget: PR 7, with the labels the fake gives it.</summary>
     private protected PullRequestRow[] WatchRead() =>
@@ -188,7 +178,10 @@ public abstract class PrRecheckTestsBase : IDisposable
         _github.Pr = Pr("OPEN") with { Head = head };
         _state.PutFlight(_state.Flights().Single() with { PullRequest = 7, PullRequestUrl = "https://github.com/acme/widget/pull/7" });
         _github.Prs["acme/widget#7"] = _github.Pr;
-        await Run(Verbs.Review, "flight/" + flight.Code, _state.Flights().Single().Review!.Reviewer, "pass", "fine");
+        // A reviewer that was held or queued at the open (a loaded machine, a limit) leaves no review: say why, not a null.
+        var opened = _state.Flights().Single();
+        opened.Review.ShouldNotBeNull($"no review after the PR opened; queued: {opened.Queued}; cards: {string.Join("; ", _state.Cards(openOnly: true).Select(c => $"{c.Kind}: {c.Title}"))}");
+        await Run(Verbs.Review, "flight/" + flight.Code, opened.Review.Reviewer, "pass", "fine");
         _github.Labels[7] = [PilotMarks.Recheck];
         return _state.Flights().Single();
     }
@@ -252,6 +245,8 @@ public abstract class PrRecheckTestsBase : IDisposable
 
     private protected sealed class Peer(string endpoint) : IFleetPeer
     {
+        public string Name => endpoint;
+
         public string Endpoint => endpoint;
 
         public bool HasGrant => true;
@@ -278,7 +273,6 @@ public abstract class PrRecheckTestsBase : IDisposable
 public sealed class PrRecheckTests1 : PrRecheckTestsBase
 {
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AnUntouchedLabelledPrStartsAReviewAndItsLabelBecomesReviewing()
     {
         await LookAsync();
@@ -333,7 +327,6 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ARecheckThatCannotReadTheJobKeepsTheLabelAndRaisesAForYouCardOnceUntilTheLabelIsPutBack()
     {
         // No grant: gh cannot read the PR.
@@ -365,7 +358,6 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewThatCannotStartKeepsTheLabelAndRaisesAForYouCard()
     {
         _workers.Fail = new FlightException("claude would not start");
@@ -404,7 +396,6 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APeerThatHoldsNothingOfItOrDoesNotAnswerLeavesThePrToThisNode()
     {
         _fleet.Peers.Add(new Peer("a.local:1") { Flights = [Flight("AA1", own: false, number: 8)] });
@@ -417,7 +408,6 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewedPrWhoseHeadMovedSinceTheReviewIsReviewedAfresh()
     {
         var review = await ReviewedAsync();
@@ -432,14 +422,38 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
         Handled().ShouldBe([$"recheck of widget#7: head {Short(moved)} was not the one reviewed ({Short(_head)}), review restarted"]);
         _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
     }
+
+    [Fact]
+    public async Task ARecheckOfAMovedHeadLeavesTheOpenDesignRingForTheReviewItStartsInsteadOfClosingItAsMoved()
+    {
+        // A review whose design question has no option that reaches the criteria: its ring is open.
+        (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = "pr/acme/widget#7", Who = "controller" }, Ct)).Error.ShouldBeNull();
+        (await _reviews.RunAsync(new CommandRequest
+        {
+            Verb = Verbs.PrVerdict, Target = "pr/acme/widget#7", Who = Review()!.Reviewer, Args = ["comment", "A question.", DecidableDesign.NoneReaches],
+        }, Ct)).Error.ShouldBeNull();
+        // The node does not post it here, so the controller does: the post is when the design card is raised.
+        (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.PostReview, Target = "pr/acme/widget#7", Who = "controller" }, Ct)).Error.ShouldBeNull();
+        var ring = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.DesignKind).ShouldHaveSingleItem();
+        _github.Labels[7] = [PilotMarks.Recheck];
+        var moved = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, "a later push");
+        _github.Prs["acme/widget#7"] = Pr("OPEN") with { Head = moved };
+
+        await LookAsync();
+
+        // The recheck started a review of the new head, which settles the question: the ring is not closed for the head here
+        // (PrRecheck passes newerReviewFollows: true), where a plain sweep would close it as "the head moved".
+        Review().ShouldNotBeNull().Head.ShouldBe(moved);
+        var now = _state.Cards().Single(c => c.Id == ring.Id);
+        now.State.ShouldBe(CardState.Open);
+        now.Outcome.ShouldBeNull();
+    }
 }
 
 /// <summary>Part 2 of PrRecheckTests: the class is split so its tests run side by side, not one after another.</summary>
-[Trait("Category", "Slow")]
 public sealed class PrRecheckTests2 :PrRecheckTestsBase
 {
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewedPrWhoseHeadIsTheOneReviewedAndPassedAndGreenIsQueued()
     {
         await ReviewedAsync();
@@ -456,7 +470,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewedPrThatConflictsGetsAForYouCardAndTheConflictsLabel()
     {
         await ReviewedAsync();
@@ -473,7 +486,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewedPrOnTheControllersOwnBranchThatConflictsGetsItsBaseMergedInAndIsReviewedAfresh()
     {
         var (head, main) = OwnBranch(touchesReadme: false, mainEditsReadme: false);
@@ -495,7 +507,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewedPrOnTheControllersOwnBranchWhoseBaseMergeConflictsGetsTheCardAndTheConflictsLabel()
     {
         var (head, _) = OwnBranch(touchesReadme: true, mainEditsReadme: true);
@@ -513,7 +524,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewedPrWhoseChangesNobodyIsFixingStartsItsFixerAndKeepsTheChangesLabel()
     {
         // tianwen #1857: its fixer could not start, and once that was cleared the recheck took the label off with nothing started.
@@ -534,19 +544,16 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ARecheckStartsNoFixerOnAReviewThatAsksAQuestionOfDesign() =>
         await NoFixerAsync(r => r with { Findings = [new PrFinding { Path = "README.md", Line = 1, Body = "design: is this wanted?", Inline = false }] },
             "its review asks a question of design, which is the author's to decide");
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ARecheckStartsNoFixerOnceTheRoundsAreCapped() =>
         await NoFixerAsync(r => r with { FixRound = PrReviews.MaxFixRounds },
             $"{PrReviews.MaxFixRounds} rounds of fixes have pushed and it still asks for changes, so no more start");
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ARecheckStartsNoFixerOnSomeoneElsesPrUntilFixItIsChosen() =>
         await NoFixerAsync(r => r, "it is ada's PR, and Fix it has not been chosen", login: "grace");
 
@@ -587,7 +594,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task TheNoFixerRingClosesNamingTheHeadThatMovedPastIt()
     {
         await NoFixerAsync(AsksDesign, "its review asks a question of design, which is the author's to decide");
@@ -606,7 +612,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task TheFixersPushWhoseReviewCouldNotStartStaysAnOpenCardAfterTheSweep()
     {
         _github.Login = "ada";
@@ -627,7 +632,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task TheFixerGuardSaysNoForARepoTheNodeDoesNotTrack()
     {
         // A recheck only looks at tracked repos, so this is the guard itself: a repo that left the roots between look and fix gets none.
@@ -639,7 +643,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewedPrWithNothingToDoSaysWhereItStands()
     {
         await ReviewedAsync();
@@ -653,7 +656,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightsPrBehindItsBaseHasItMergedInAndItsPassedReviewCarriedToTheNewHead()
     {
         var flight = await PassedFlightAsync();
@@ -680,8 +682,7 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
 public sealed class PrRecheckTests3 : PrRecheckTestsBase
 {
     [Fact]
-    [Trait("Category", "Slow")]
-    public async Task AFlightsPrWhoseBaseMergeConflictsIsHandedToTheWatchtowerAndTheHandledLineSaysSo()
+    public async Task AFlightsPrWhoseBaseMergeConflictsSendsTheLastLegRoundAndTheHandledLineSaysSo()
     {
         await PassedFlightAsync(readme: "theirs\n");
         MainMoves("README.md", "ours\n");
@@ -689,18 +690,16 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
 
         await LookAsync();
 
-        // No go-around: the review stays passed and the watchtower is told by a ring card.
-        _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        // The last leg went round once with the conflict (a review round it is not), and nothing rings: the Handled line says a worker has it.
         var said = Handled().ShouldHaveSingleItem();
         said.ShouldStartWith("recheck of widget#7: merging ");
         said.ShouldContain("conflicts");
-        said.ShouldContain("the watchtower is told");
-        _state.Legs(_state.Flights().Single().Code).ShouldAllBe(l => l.GoArounds == 0);
-        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.PrConflictsKind && c.Bin == CardBin.Ring);
+        said.ShouldContain(LegCommander.WorkerResolves);
+        _state.Legs(_state.Flights().Single().Code).ShouldAllBe(l => l.GoArounds == 1 && l.ReviewGoArounds == 0 && l.State == LegState.Flying);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Bin == CardBin.Ring);
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightsPrWithAFailingCheckIsSentBackAsChangesEvenWhenTheTimedLookTriedThatHeadAlready()
     {
         await PassedFlightAsync();
@@ -727,7 +726,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightsPrWhoseHeadTheReviewNeverReadIsReviewedAfresh()
     {
         await PassedFlightAsync();
@@ -745,7 +743,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightsPassedGreenCleanPrGoesToTheMergeQueue()
     {
         await PassedFlightAsync();
@@ -761,7 +758,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ARecheckWhileTheFlightsMergeRunsSaysSoTakesTheLabelOffAndDoesNotSayMerged()
     {
         await PassedFlightAsync();
@@ -776,7 +772,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
                 return Task.CompletedTask;
             }
             reached.TrySetResult();
-            return Task.WhenAny(open.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+            return Task.WhenAny(open.Task, Task.Delay(TimeSpan.FromSeconds(25)));
         };
         var first = _legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = Verbs.FlightTarget(_state.Flights().Single().Code), Args = [head], Who = "controller" }, Ct);
         (await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(120), Ct))).ShouldBe(reached.Task, "the first merge did not reach GitHub");
@@ -792,7 +788,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightsPrWithNothingToDoSaysSoAndLeavesTheLabelForWhereItStands()
     {
         await PassedFlightAsync();
@@ -809,7 +804,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ALabelPutBackWhileARecheckRunsRunsItOnceMoreAfterNeverTwiceAtOnce()
     {
         var gate = new TaskCompletionSource();
@@ -843,7 +837,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ALabelSeenAgainAfterARecheckEndedRunsItOnceMore()
     {
         _github.Queue = new MergeQueueState("OPEN", _head, Queued: true, Position: 1);
@@ -861,7 +854,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ARepoTheWatchDidNotReadKeepsWhatTheRecheckKnewOfItsLabels()
     {
         // Read and labelled: PR 7's recheck keeps the label (a peer holds it), and is not tried at each look.
@@ -885,7 +877,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightsOwnPrReadWithTheLabelStartsTheRecheckAtOnceAndWithoutTheWatch()
     {
         await PassedFlightAsync();
@@ -900,7 +891,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AnIdleHourOfTheWatchWithTheRecheckListeningMakesFourSearchesAndNoLabelListing()
     {
         var time = new ManualClock(DateTimeOffset.Parse("2026-10-31T12:00:00Z"));

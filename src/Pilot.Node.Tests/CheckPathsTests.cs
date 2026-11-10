@@ -36,7 +36,7 @@ public sealed class CheckPathsTests : IDisposable
 
     private string Plane => Path.Combine(_root, "plane");
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose() => TestDirs.DeleteTree(_root);
 
     private void Write(string relative)
     {

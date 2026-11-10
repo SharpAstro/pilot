@@ -34,7 +34,7 @@ public sealed class MergeTakeBackTests : IDisposable
             {
                 File.SetAttributes(file, FileAttributes.Normal);
             }
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -49,7 +49,7 @@ public sealed class MergeTakeBackTests : IDisposable
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
@@ -144,7 +144,7 @@ public sealed class MergeTakeBackTests : IDisposable
                 return Task.CompletedTask;
             }
             reached.TrySetResult();
-            return Task.WhenAny(open.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+            return Task.WhenAny(open.Task, Task.Delay(TimeSpan.FromSeconds(25)));
         };
         var first = Answer(node, ready, "Merge");
         (await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(120), Ct))).ShouldBe(reached.Task, "the merge was not reached");
