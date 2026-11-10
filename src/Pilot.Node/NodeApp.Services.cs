@@ -527,6 +527,9 @@ public static partial class NodeApp
             // One sweep, both the hosted look and the handler of a stray card's End (end-stray), which only ends what it named.
             builder.Services.AddSingleton(services => new StraySweep(services.GetRequiredService<NodeState>(), OsProcessTable.Instance, services.GetRequiredService<TimeProvider>()) { LivePids = () => services.GetRequiredService<SessionTracker>().LivePids().Select(p => (p.Id, p.Pid)).ToList(), KnownOf = services.GetRequiredService<JobRunner>().KnownOf });
             builder.Services.AddHostedService(services => services.GetRequiredService<StraySweep>());
+            // The same table, read for callers that hammer the node (#870); its End is end-poller.
+            builder.Services.AddSingleton(services => new PollerSweep(services.GetRequiredService<NodeState>(), services.GetRequiredService<CommandCallers>(), OsProcessTable.Instance, services.GetRequiredService<TimeProvider>()) { LivePids = () => services.GetRequiredService<SessionTracker>().LivePids().Select(p => p.Pid).ToList(), KnownOf = services.GetRequiredService<JobRunner>().KnownOf });
+            builder.Services.AddHostedService(services => services.GetRequiredService<PollerSweep>());
             // The node's own row rides the same tick of the clock (a settings change has no event to hook).
             builder.Services.AddHostedService(services =>
             {
