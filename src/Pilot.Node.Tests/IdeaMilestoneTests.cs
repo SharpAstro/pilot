@@ -114,7 +114,6 @@ public sealed class IdeaMilestoneTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task PlanningIntoANewMilestoneMakesItAfterTheChecksAndPlansIntoIt()
     {
         var planned = await Run(Verbs.PlanIdea, Verbs.NewMilestoneArg, "v3", "Rings", "and", "tilt");
@@ -127,7 +126,6 @@ public sealed class IdeaMilestoneTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task PlanningIntoAnExistingMilestoneMakesNoneEvenWhenAskedAsNew()
     {
         (await Run(Verbs.PlanIdea, Verbs.NewMilestoneArg, "V2")).Ok.ShouldBeTrue();

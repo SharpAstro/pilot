@@ -102,7 +102,6 @@ public sealed class IssueMilestoneTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ReadingAgainWithNothingChangedIsNoDelta()
     {
         await ReadRepoAsync();
@@ -157,7 +156,6 @@ public sealed class IssueMilestoneTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AnIssueMovedWithTheUpdatedAtItWasSeenAtIsMoved()
     {
         await ReadRepoAsync();
@@ -170,7 +168,6 @@ public sealed class IssueMilestoneTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AStaleUpdatedAtIsRefusedAndNothingIsWritten()
     {
         await ReadRepoAsync();
@@ -199,7 +196,6 @@ public sealed class IssueMilestoneTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AnIssueThatChangesBetweenTheReadAndTheWriteIsRefusedWhenTheCallerSawAnOlderOne()
     {
         await ReadRepoAsync();
