@@ -27,7 +27,7 @@ public sealed class RecheckStopTests : LegCommanderTestsBase
         public void Dispose() => _stopping.Dispose();
     }
 
-    private static readonly TimeSpan Ceiling = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(25);
 
     // Not a bare sleep, which the node refuses: the echo is what makes it a job. The same line in pwsh and sh.
     private const string LongCheck = "sleep 90; echo slept";

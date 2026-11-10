@@ -217,6 +217,11 @@ public sealed partial class LegCommander
     /// <param name="brought">The plane was fetched and has its base merged in already (a leg's finish did it before its check ran): not done again.</param>
     internal async Task PushAsync(FlightRow flight, CancellationToken cancellationToken, bool brought = false, bool early = false)
     {
+        // PIL795: a flight past its CI budget (or red too long) is not pushed for, whatever the push is; the For-you card lifts it.
+        if (CiStop(flight) is { } stopped)
+        {
+            throw new FlightException(stopped);
+        }
         await EnsureNotArmedAsync(flight, cancellationToken);
         // A push after the leg is recorded done sends what the check ran on: a second update here could fail with the leg already done.
         if (!brought)

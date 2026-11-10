@@ -406,6 +406,9 @@ public static class Verbs
     /// <summary>The leading argument of <c>run</c> (before <see cref="AloneArg"/>) that ends the job at its first failed test.</summary>
     public const string FailFastArg = "--fail-fast";
 
+    /// <summary>The leading argument of <c>run</c> (after <see cref="FailFastArg"/>, before <see cref="AloneArg"/>), followed by its why, that lets a <c>dotnet test</c> with no <c>--filter</c> run.</summary>
+    public const string WholeSuiteArg = "--whole-suite";
+
     /// <summary>
     /// <c>cancel-job job/&lt;id&gt;</c>: stops a running job; its owner is told, as of any job's end. With <see cref="ForceArg"/> it
     /// kills the job's wrapper and every process the node has seen under it at once, with no grace.
@@ -443,6 +446,18 @@ public static class Verbs
     /// third round with changes, may have exactly one more round: a go-around or a reviewer start.
     /// </summary>
     public const string AllowRound = "allow-round";
+
+    /// <summary>
+    /// <c>ci-budget flight/&lt;code&gt; continue|land-green|split</c>: the owner's answer to a flight whose CI spend passed
+    /// <c>flight-ci-budget</c> (PIL795). <c>continue</c> raises the cap by one budget and lets pushes through again; the others are kept
+    /// on the flight for the controller, and the stop stays.
+    /// </summary>
+    public const string CiBudget = "ci-budget";
+
+    /// <summary>The answers to <see cref="CiBudget"/>.</summary>
+    public const string CiContinue = "continue";
+    public const string CiLandGreen = "land-green";
+    public const string CiSplit = "split";
 
     /// <summary>
     /// <c>clear flight/&lt;code&gt; [why…]</c>: the watchtower's word (or the person's) that a flight held in a holding pattern (a

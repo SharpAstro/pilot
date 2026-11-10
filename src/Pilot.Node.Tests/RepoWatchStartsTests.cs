@@ -12,6 +12,12 @@ namespace Pilot.Node.Tests;
 /// queued on Process.Start's lock). Read against a real temp repo with an origin and two planes, through a counting <see cref="IGit"/>:
 /// what each kind of change re-reads, and nothing more.
 /// </summary>
+/// <remarks>
+/// Slow (#933): every test here is about git itself, the starts a round makes and the .git files (packed-refs, origin's HEAD, a
+/// worktree's .git file) the watch fingerprints on disk, which no in-memory git can stand in for. They made 123 of the default
+/// run's 698 git starts (CI run 42694011544's process-start report); the Slow shards run them on every PR.
+/// </remarks>
+[Trait("Category", "Slow")]
 public sealed class RepoWatchStartsTests : IDisposable
 {
     private const string Status = "status --porcelain";

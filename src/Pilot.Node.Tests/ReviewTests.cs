@@ -113,7 +113,7 @@ public abstract class ReviewTestsBase : IDisposable
         while (legs.Starting(code))
         {
             // Git and the plane's setup run inside the start; below-normal jobs on a saturated machine took over 20 s for it.
-            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(90), $"{code}'s session was not recorded");
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(90), $"{code}'s session was not recorded"); // budget: git and the plane's setup on a saturated machine took over 20 s (#856)
             await Task.Delay(10, Ct);
         }
     }
@@ -739,23 +739,22 @@ public sealed class ReviewTests1 : ReviewTestsBase
         _github.Pr = _github.Pr! with { Head = "beef1111beef1111" };
         await checks.LookAsync(Ct);
 
+        // The label is set back at the look (PIL795); the head is the author's to move, so it is only recorded.
         var drifted = F(flight.Code);
-        (drifted.GitHubHead, drifted.GitHubLabel).ShouldBe(("beef1111beef1111", null));
-        drifted.GitHubDisagrees.ShouldBe($"pilot: passed was removed on GitHub; the head moved to beef1111b since the review read {reviewed[..9]}");
-        // Recorded, not put right: the node's own marks stand as it set them.
+        (drifted.GitHubHead, drifted.GitHubLabel).ShouldBe(("beef1111beef1111", "pilot: passed"));
+        drifted.GitHubDisagrees.ShouldBe($"the head moved to beef1111b since the review read {reviewed[..9]}");
         (drifted.Review!.Label, drifted.Review.StatusState).ShouldBe(("pilot: passed", "success"));
-        _github.LabelCalls.Count(c => c.Number == number).ShouldBe(2);
+        PilotLabels(_github.Labels[number]).ShouldBe(["pilot: passed"]);
+        _github.LabelCalls.Count(c => c.Number == number).ShouldBe(3);
 
-        // Changed by hand to another pilot: label, then put back and the branch back: they agree again.
+        // Changed by hand to another pilot: label, and the branch back: the label is set back and they agree again.
         _github.Labels[number].Add("pilot: changes");
-        await checks.LookAsync(Ct);
-        F(flight.Code).GitHubDisagrees.ShouldNotBeNull().ShouldContain("pilot: passed is pilot: changes on GitHub");
-        _github.Labels[number].Clear();
-        _github.Labels[number].Add("pilot: passed");
         _github.Pr = _github.Pr! with { Head = reviewed };
         await checks.LookAsync(Ct);
         var again = F(flight.Code);
         (again.GitHubHead, again.GitHubLabel, again.GitHubDisagrees).ShouldBe((reviewed, "pilot: passed", null));
+        PilotLabels(_github.Labels[number]).ShouldBe(["pilot: passed"]);
+        _github.LabelCalls.Count(c => c.Number == number).ShouldBe(4);
     }
 
     [Fact]

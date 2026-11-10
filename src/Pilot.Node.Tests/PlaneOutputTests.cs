@@ -352,7 +352,7 @@ public sealed class PlaneOutputTests : JobTestsBase
         var jobs = Runner(planeOutput: true);
         var plane = PlaneIn("pil6");
 
-        var first = Hand(jobs, "dotnet test --no-build", plane);
+        var first = Hand(jobs, "dotnet test --no-build --filter FullyQualifiedName~ParserTests", plane);
         await Until(first, j => j.EndedAt is not null);
         // A child the job left behind (an MSBuild worker node) may still hold the log open for writing, so it is read shared.
         var lines = ReadLog(Row(first).LogPath).ReplaceLineEndings("\n").Split('\n');
@@ -360,7 +360,7 @@ public sealed class PlaneOutputTests : JobTestsBase
         lines[1].ShouldBe(PlaneOutput.NoBuildNotice(true, "dotnet test --no-build", plane));
 
         Directory.CreateDirectory(Path.Combine(plane, "artifacts", "bin"));
-        var second = Hand(jobs, "dotnet test --no-build", plane);
+        var second = Hand(jobs, "dotnet test --no-build --filter FullyQualifiedName~ParserTests", plane);
         await Until(second, j => j.EndedAt is not null);
         ReadLog(Row(second).LogPath).ShouldNotContain("no node build yet");
     }

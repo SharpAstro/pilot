@@ -493,5 +493,17 @@ public sealed partial class LegCommander
                 state.RaiseCard(CardBin.Handled, "node-label-refused", Verbs.FlightTarget(flight.Code), $"{PilotMarks.NodeLabel(options.Machine)} is still on {flight.Item.Noun} {flight.Item.Display}", ex.Message);
             }
         }
+        // OpenPr put the node label on the PR as well: it goes from there too, so the PR says which node flies it as its item does.
+        if (flight.PullRequest is { } pr)
+        {
+            try
+            {
+                await github.RemoveIssueLabelAsync(flight.RepoPath, pr, PilotMarks.NodeLabel(options.Machine), CancellationToken.None);
+            }
+            catch (FlightException ex)
+            {
+                state.RaiseCard(CardBin.ForYou, "node-label-refused", Verbs.FlightTarget(flight.Code), $"{PilotMarks.NodeLabel(options.Machine)} is still on {flight.Code}'s PR #{pr}", ex.Message);
+            }
+        }
     }
 }

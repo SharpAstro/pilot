@@ -51,6 +51,82 @@ public sealed partial class GhCli
             .OrderByDescending(r => r.Id)];
     }
 
+    // A completed run's runner minutes by run id and the time it was last updated (a rerun updates it): read once, not at every look.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(long Id, DateTimeOffset Updated), double> _runMinutes = new();
+
+    public async Task<CiRun[]> CiRunsAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(
+            ["api", $"repos/{{owner}}/{{repo}}/actions/runs?branch={Uri.EscapeDataString(branch)}&per_page=100"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not list the workflow runs of {branch}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        var now = DateTimeOffset.UtcNow;
+        var runs = new List<CiRun>();
+        using var doc = JsonDocument.Parse(output);
+        if (!doc.RootElement.TryGetProperty("workflow_runs", out var listed) || listed.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+        foreach (var r in listed.EnumerateArray())
+        {
+            if (!r.TryGetProperty("id", out var idElement) || !idElement.TryGetInt64(out var id))
+            {
+                continue;
+            }
+            var status = TextOf(r, "status") ?? "";
+            var started = StampOf(r, "run_started_at") ?? StampOf(r, "created_at") ?? now;
+            var updated = StampOf(r, "updated_at") ?? started;
+            var completed = status == "completed";
+            if (!_runMinutes.TryGetValue((id, updated), out var minutes) || !completed)
+            {
+                minutes = await RunnerMinutesAsync(repoPath, id, now, cancellationToken);
+                if (completed)
+                {
+                    _runMinutes[(id, updated)] = minutes;
+                }
+            }
+            runs.Add(new CiRun(id, TextOf(r, "name") ?? "", status, TextOf(r, "conclusion") is { Length: > 0 } conclusion ? conclusion : null, TextOf(r, "event") ?? "", started, completed ? updated : null, minutes));
+        }
+        return [.. runs.OrderByDescending(r => r.Id)];
+    }
+
+    // The runner time of a run: its jobs' durations over every attempt (filter=all), a job still running counted to now.
+    private async Task<double> RunnerMinutesAsync(string repoPath, long run, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var (exit, output, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/actions/runs/{run}/jobs?filter=all&per_page=100"], repoPath, cancellationToken);
+        return exit == 0 ? JobMinutes(output, now) : 0;
+    }
+
+    /// <summary>The runner minutes of <c>actions/runs/{id}/jobs</c>'s answer: each job's start to its completion (to <paramref name="now"/> while it runs); skipped jobs and unreadable output count none.</summary>
+    internal static double JobMinutes(string json, DateTimeOffset now)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("jobs", out var jobs) || jobs.ValueKind != JsonValueKind.Array)
+            {
+                return 0;
+            }
+            var minutes = 0.0;
+            foreach (var job in jobs.EnumerateArray())
+            {
+                if (TextOf(job, "conclusion") == "skipped" || StampOf(job, "started_at") is not { } started)
+                {
+                    continue;
+                }
+                var end = StampOf(job, "completed_at") ?? now;
+                minutes += Math.Max(0, (end - started).TotalMinutes);
+            }
+            return minutes;
+        }
+        catch (JsonException)
+        {
+            return 0;
+        }
+    }
+
     public async Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken) =>
         (await ChecksSummaryAsync(repoPath, number, cancellationToken))?.Status;
 

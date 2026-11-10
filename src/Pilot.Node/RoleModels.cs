@@ -535,6 +535,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>Runner-hours of CI a flight's PR may spend before the node stops pushing for it (<see cref="NodeSettings.FlightCiBudgetKey"/>); 4 by default.</summary>
+    public int FlightCiBudget
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.FlightCiBudget ?? NodeSettings.DefaultFlightCiBudget;
+            }
+        }
+    }
+
     /// <summary>The share of the 7-day window, in percent, a leg's rounds may spend before the next one rings (<see cref="NodeSettings.SpendAlertKey"/>); 3 by default.</summary>
     public double SpendAlert
     {
