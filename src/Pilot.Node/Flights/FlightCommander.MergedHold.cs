@@ -102,7 +102,7 @@ public sealed partial class FlightCommander
         var ons = lines.Select(l => l.Split(" on ", 2)[1].Split(',')[0]).ToList();
         var title = lines.Count == 1
             ? lines[0][..lines[0].IndexOf(". ", StringComparison.Ordinal)]
-            : $"{held} has been held over 2 h on {lines.Count} flights GitHub says are done: {string.Join(", ", ons)}";
+            : $"{held} is held on {lines.Count} flights that are done";
         state.RaiseCard(CardBin.Ring, MergedHoldKind, Verbs.FlightTarget(held), title, string.Join('\n', lines),
             [.. ons.Select(on => new CardChoice { Label = $"Disconnect {held} from {on}", Verb = Verbs.Disconnect, Target = Verbs.FlightTarget(held), Args = [on] })],
             cause: $"{held}>{string.Join(',', ons)}");
