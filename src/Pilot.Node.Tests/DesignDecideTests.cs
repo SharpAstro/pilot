@@ -136,8 +136,8 @@ public sealed class DesignDecideTests : PrFixTestsBase
         summary.ShouldStartWith("should this be a service at all?");
         summary.ShouldEndWith("It rings because no option reaches the criteria.");
         summary.Length.ShouldBeLessThanOrEqualTo(240);
-        // Each option is picked by its letter, its words the answer the button sends (#797 rule 4).
-        card.Choices.Select(c => c.Label).ShouldBe(["Pick option A", "Pick option B", PrReviews.AnswerLabel]);
+        // Each short option is its own button, its words the answer the button sends (#797).
+        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library (recommended)", "Make it a service", PrReviews.AnswerLabel]);
         card.Choices[0].Args.Single().ShouldStartWith("Keep a library");
         card.Choices[1].Args.Single().ShouldStartWith("Make it a service");
     }
@@ -186,8 +186,8 @@ public sealed class DesignDecideTests : PrFixTestsBase
         detail.ShouldContain("Make it a service: more to run");
         detail.ShouldNotContain("misses");
         detail.ShouldNotContain("It rings because");
-        // Each option is picked by its letter, its words the answer the button sends (#797 rule 4).
-        card.Choices.Select(c => c.Label).ShouldBe(["Pick option A", "Pick option B", PrReviews.AnswerLabel]);
+        // Each short option is its own button, its words the answer the button sends (#797).
+        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library (recommended)", "Make it a service", PrReviews.AnswerLabel]);
         card.Choices[0].Args.Single().ShouldStartWith("Keep a library");
         card.Choices[1].Args.Single().ShouldStartWith("Make it a service");
     }

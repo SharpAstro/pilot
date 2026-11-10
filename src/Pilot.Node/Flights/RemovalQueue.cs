@@ -295,16 +295,15 @@ public sealed class RemovalQueueStart(RemovalQueue queue, NodeState? state = nul
             return;
         }
         // The card names the folders due when it was raised: a different set closes it and raises it again, the same set leaves it be.
-        // Read from the open card itself, so a node restarted since it rang compares the same way.
-        var open = state.Cards(openOnly: true).Where(c => c.Kind == Kind).ToList();
-        if (open.Count > 0)
+        // Read from the last line itself, so a node restarted since it said so compares the same way. An older node's open For-you card
+        // of the kind is closed: it is a Handled line now.
+        state.CloseCardsAbout(Verbs.NodeTarget, "the folders held open are a Handled line now", Kind);
+        if (state.Cards().Where(c => c.Kind == Kind).MaxBy(c => c.At) is { } last)
         {
-            var named = open.SelectMany(c => (c.Detail ?? "").Split('\n')).Where(l => l.Length > 0).ToList();
-            var same = named.Count == due.Count
-                && due.All(e => named.Any(l => l.StartsWith(e.Path + ": ", StringComparison.OrdinalIgnoreCase)));
-            if (!same)
+            var named = (last.Detail ?? "").Split('\n').Where(l => l.Length > 0).ToList();
+            if (named.Count == due.Count && due.All(e => named.Any(l => l.StartsWith(e.Path + ": ", StringComparison.OrdinalIgnoreCase))))
             {
-                state.CloseCardsAbout(Verbs.NodeTarget, "the folders held open changed", Kind);
+                return;
             }
         }
         var lines = due.Select(e =>
@@ -313,12 +312,11 @@ public sealed class RemovalQueueStart(RemovalQueue queue, NodeState? state = nul
             return $"{e.Path}: {e.OwnerKind} {e.Owner}, queued {e.AddedAt:u}, {e.StartsTried} starts tried, held by "
                 + (holders.Count > 0 ? string.Join(", ", holders) : "a process (it could not be named)") + $" ({e.Why})";
         });
-        var card = state.RaiseCard(CardBin.ForYou, Kind, Verbs.NodeTarget,
+        // A Handled line, not For you: there is nothing to press (the review of #797), and the node removes the folders once let go.
+        state.RaiseCard(CardBin.Handled, Kind, Verbs.NodeTarget,
             $"{due.Count} folder{(due.Count == 1 ? "" : "s")} Windows still holds open",
             string.Join('\n', lines),
-            [new CardChoice { Label = "I will close it", Verb = Verbs.Dismiss, Target = "" }],
             summary: $"Close whatever holds {(due.Count == 1 ? "the folder" : "the folders")} open (the detail names it): the node removes {(due.Count == 1 ? "it" : "them")} once {(due.Count == 1 ? "it is" : "they are")} let go.");
-        state.AimDismiss(card);
     }
 
     public Task StartedAsync(CancellationToken cancellationToken) => Task.CompletedTask;

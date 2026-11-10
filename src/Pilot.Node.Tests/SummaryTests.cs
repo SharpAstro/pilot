@@ -326,16 +326,10 @@ public sealed class SummaryTests
         var records = SummaryRecords.Fleet(_state, Start).ShouldNotBeNull();
         var prompt = SummaryPrompt.Fleet(2, records);
 
-        // The open card of the landed flight is there only under the heading that makes it a stale card; nothing else of TIA2000 is.
-        var landedAt = records.IndexOf(SummaryRecords.LandedCards, StringComparison.Ordinal);
-        landedAt.ShouldBeGreaterThan(-1);
-        var tail = records[landedAt..];
-        var landedSection = tail.Contains("\n\n", StringComparison.Ordinal) ? tail[..tail.IndexOf("\n\n", StringComparison.Ordinal)] : tail;
-        landedSection.ShouldContain($"{stale.Id} (ring, leg-idle)");
-        var needsEligible = records.Remove(landedAt, landedSection.Length);
-        needsEligible.ShouldNotContain("TIA2000");
-        needsEligible.ShouldNotContain("review-notes-2");
-        needsEligible.ShouldNotContain(stale.Id + " ");
+        // Nothing of the landed flight is in the records, not even its stale open card (#797, summary-plain's Done-when).
+        records.ShouldNotContain("TIA2000");
+        records.ShouldNotContain("review-notes-2");
+        records.ShouldNotContain(stale.Id + " ");
         // Only the flights in play are records; the landed flight's leg and worker are not.
         records.ShouldContain("Flight PIL784:");
         records.ShouldContain("Flight PIL797:");
@@ -383,18 +377,19 @@ public sealed class SummaryTests
     }
 
     [Fact]
-    public void ARecordsWithOnlyAStaleCardOfALandedFlightIsStillMadeSoItCanBeProposedResolved()
+    public async Task AStaleCardOfALandedFlightIsNoRecordAndMakingTheSummaryClosesIt()
     {
         // Raised while the flight flew, then left open by its landing: the node refuses such a card once the flight has landed (#799).
         _state.PutFlight(Flight("TIA2000", issue: 2000));
         var stale = _state.RaiseCard(CardBin.Ring, "leg-idle", "flight/TIA2000/review-notes-2", "A leg is idle");
         _state.PutFlight(Flight("TIA2000", FlightState.Landed, issue: 2000));
 
-        var records = SummaryRecords.Fleet(_state, Start).ShouldNotBeNull();
+        SummaryRecords.Fleet(_state, Start).ShouldBeNull();
 
-        records.ShouldContain(SummaryRecords.LandedCards);
-        records.ShouldContain($"{stale.Id} (ring, leg-idle)");
-        records.ShouldNotContain("Open cards about no flight in play");
+        await _summaries.MakeAsync(SummaryRow.FleetScope, Ct);
+
+        _state.Cards().Single(c => c.Id == stale.Id).State.ShouldBe(CardState.Closed);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Subject.StartsWith("flight/TIA2000", StringComparison.Ordinal));
     }
 
     [Fact]

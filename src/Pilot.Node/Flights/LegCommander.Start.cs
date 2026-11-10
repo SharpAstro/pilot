@@ -356,11 +356,10 @@ public sealed partial class LegCommander
             // Needs someone: whether the plan still holds against the tree is the controller's.
             state.RaiseCard(CardBin.Ring, NoGoKind, target, $"{flight.Code}/{leg.Name} cannot start: its brief no longer fits the tree", report,
                 [
-                    new CardChoice { Label = "Start it as it is", Verb = Verbs.StartLeg, Target = target, Args = ["anyway"] },
                     new CardChoice { Label = "Remove the leg", Verb = Verbs.RemoveLeg, Target = target, Args = ["failed validation"] },
                     new CardChoice { Label = "Plan the flight again", Verb = Verbs.PlanFlight, Target = Verbs.FlightTarget(flight.Code) },
                 ],
-                summary: $"The check of {flight.Code}/{leg.Name} against the tree found its brief out of date. Fly it unchanged, drop it, or replan the flight.");
+                summary: $"Take {leg.Name} off the flight or plan {flight.Code} again: the check against the tree found its brief out of date.");
         }
 
         // The validator has answered: it is stopped after a grace to end its turn, as a worker that finished its own leg.

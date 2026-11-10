@@ -154,10 +154,43 @@ public sealed class CardLintTests
     }
 
     [Fact]
-    public void ADesignQuestionCardAndALegsStopCardKeepTheRulesAtRuntime()
+    public void TheDesignCardsOfC3483AndC3479KeepTheRulesAsTheNodeRaisesThem()
     {
-        var choices = new[] { "Pick option A", "Pick option B", PrReviews.AnswerLabel };
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        foreach (var questions in new[] { new[] { DesignCardWordsTests.C3483 }, DesignCardWordsTests.C3479 })
+        {
+            var card = state.RaiseCard(Pilot.Contracts.CardBin.Ring, PrReviews.DesignKind, "pr/SharpAstro/pilot#888", "SharpAstro/pilot#888: the review asks a question of design",
+                "detail", PrReviews.DesignChoices("pr/SharpAstro/pilot#888", questions), summary: PrReviews.DesignSummary(questions));
 
-        choices.SelectMany(CardLint.Button).ShouldBeEmpty();
+            card.Choices.SelectMany(c => CardLint.Button(c.Label)).ShouldBeEmpty();
+            CardLint.Title(card.Title).ShouldBeEmpty();
+            CardLint.FirstLine(card.Summary.ShouldNotBeNull()).ShouldBeEmpty();
+            CardLint.ChoiceProse(card.Summary, card.Choices.Select(c => c.Label)).ShouldBeEmpty();
+        }
+    }
+
+    /// <summary>
+    /// The overrides that turn failed or unfinished work into a click (the owner in #797: "the mark done anyway is the worst thing"): a leg
+    /// marked done although it failed (<c>finish-leg accepted</c>) and a flight passed although its review or checks did not
+    /// (<c>review pass</c>). They stay the CLI's, with a reason; no choice of any card kind offers them.
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex Override = new(
+        @"Verb\s*=\s*Verbs\.FinishLeg\b[^}]*""accepted""|Verb\s*=\s*Verbs\.Review\b[^}]*""pass""|""ready anyway""",
+        System.Text.RegularExpressions.RegexOptions.Singleline);
+
+    [Fact]
+    public void NoCardKindOffersAnOverrideThatAcceptsFailedOrUnfinishedWork()
+    {
+        var files = CardKindCatalog.All.SelectMany(e => e.Files.Concat(e.ChoiceFiles ?? [])).ToHashSet(StringComparer.Ordinal);
+        var found = CardKindTests.Sources.Value.Where(s => files.Contains(s.File))
+            .SelectMany(s => System.Text.RegularExpressions.Regex.Matches(s.Source, @"new(?: CardChoice)?\s*(?:\(\))?\s*\{[^{}]*\}")
+                .Where(m => m.Value.Contains("Verb", StringComparison.Ordinal) && Override.IsMatch(m.Value))
+                .Select(m => $"{s.File}: {System.Text.RegularExpressions.Regex.Replace(m.Value, @"\s+", " ")}"))
+            .ToList();
+
+        found.ShouldBeEmpty(string.Join('\n', found));
+        // The pattern finds what it is for.
+        Override.IsMatch("""new CardChoice { Label = "Accept the leg", Verb = Verbs.FinishLeg, Target = target, Args = ["accepted"] }""").ShouldBeTrue();
+        Override.IsMatch("""new CardChoice { Label = anyway, Verb = Verbs.Review, Target = t, Args = ["pass", "ready anyway"] }""").ShouldBeTrue();
     }
 }

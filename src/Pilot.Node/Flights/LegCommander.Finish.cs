@@ -245,8 +245,9 @@ public sealed partial class LegCommander
                     $"{name}: {reason}{(outside ? ", in files this leg did not change" : "")}", detail.Length > 0 ? detail : null,
                     [
                         // The go-around still carries the whole report to the fresh worker; the buttons carry none of its words.
-                        new CardChoice { Label = "Send it round", Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker stopped: {(report.Length > 0 ? report : "no reason given")}"] },
-                        new CardChoice { Label = "Accept as it is", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
+                        // No override that marks the failed leg done: that stays the CLI's, with a reason (#797, the owner: "the mark done
+                        // anyway is the worst thing").
+                        new CardChoice { Label = Verbs.FreshWorker, Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker stopped: {(report.Length > 0 ? report : "no reason given")}"] },
                     ],
                     // The panel draws a summary up to CardsView.SummaryChars (240) only, so it says what stopped, whether the flight changed
                     // the failing files and whether main has; the buttons already say what each leads to (#844 review).

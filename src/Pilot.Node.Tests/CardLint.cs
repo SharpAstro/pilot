@@ -33,7 +33,17 @@ internal static class CardLint
         (new Regex(@"\b(?:un)?ticked\b", RegexOptions.IgnoreCase), "ticked"),
         (new Regex(@"\bstale bound\b", RegexOptions.IgnoreCase), "stale bound"),
         (new Regex(@"\bredo\s+(?:\d+|§)", RegexOptions.IgnoreCase), "redo N"),
-        (new Regex(@"\bgo-around\s+(?:\d+|§)", RegexOptions.IgnoreCase), "go-around N"),
+        // The owner's later rulings in #797 (2026-11-06): no "go around" or "holding pattern" where the person reads it ("hold" and
+        // "redo" say it), and none of the words whose result the person has to guess.
+        (new Regex(@"\bgo[- ]?arounds?\b", RegexOptions.IgnoreCase), "go-around"),
+        (new Regex(@"\b(?:gone|going|goes|went) around\b", RegexOptions.IgnoreCase), "go-around"),
+        (new Regex(@"\bholding pattern\b", RegexOptions.IgnoreCase), "holding pattern"),
+        (new Regex(@"\baccept(?:s|ed|ing)?\b", RegexOptions.IgnoreCase), "accept"),
+        (new Regex(@"\bas it (?:stands|is)\b", RegexOptions.IgnoreCase), "as it stands"),
+        (new Regex(@"\banyway\b", RegexOptions.IgnoreCase), "anyway"),
+        (new Regex(@"\bcarries it on\b", RegexOptions.IgnoreCase), "carries it on"),
+        (new Regex(@"\blets it go\b", RegexOptions.IgnoreCase), "lets it go"),
+        (new Regex(@"\bsen[dt] (?:it|§|\S+) round\b", RegexOptions.IgnoreCase), "send it round"),
         (new Regex(@"\bon (?:Opus|Sonnet|Haiku)\b(?: at \S+)?", RegexOptions.IgnoreCase), "on Opus/Sonnet at <effort>"),
         (new Regex(@"\bat (?:low|medium|high|xhigh|max)\b", RegexOptions.IgnoreCase), "at <effort>"),
         (new Regex(@"\bhalf a stale bound\b", RegexOptions.IgnoreCase), "half a stale bound"),

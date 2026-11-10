@@ -933,7 +933,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 summary: $"{flight.Code} has been on hold for {(int)HoldingBound.TotalMinutes} minutes because {why}: merge it now with its notes, or hold off and be asked again.");
             state.UpdateChoices(card.Id,
             [
-                new CardChoice { Label = "Merge as it is", Verb = Verbs.Merge, Target = subject, Args = [head, legs?.Models.MergeMethod ?? "squash", LegCommander.MergeAsIs] },
+                new CardChoice { Label = "Clear the hold and merge", Verb = Verbs.Merge, Target = subject, Args = [head, legs?.Models.MergeMethod ?? "squash", LegCommander.MergeAsIs] },
                 new CardChoice { Label = "Keep waiting", Verb = Verbs.Dismiss, Target = Verbs.CardTarget(card.Id), Args = ["waiting for the watchtower"] },
             ]);
         }

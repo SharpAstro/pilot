@@ -397,12 +397,17 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
         if (dirty)
         {
             reclaimable.Add(($"worktree {name} (holds changes)", entry.Path));
-            var dirtyCard = state.RaiseCard(CardBin.ForYou, WorktreeDirtyKind, entry.Path,
-                $"Worktree {name} has changes not committed and its PR #{pr.Number} is {pr.State.ToLowerInvariant()}",
-                $"{entry.Path} on branch {branch}: PR #{pr.Number} is {pr.State.ToLowerInvariant()}, so the disk sweep would remove it, but it holds changes not committed ({Size(size)} by unique bytes). Commit or discard them by hand and the next sweep removes it.",
-                [new CardChoice { Label = "I will deal with it", Verb = Verbs.Dismiss, Target = "" }],
-                summary: $"Commit or discard the changes in worktree {name}, and the next sweep removes it: its PR #{pr.Number} is {pr.State.ToLowerInvariant()}.");
-            state.AimDismiss(dirtyCard);
+            // A Handled line, not For you: there is nothing to press (the review of #797), and the folder is kept, which is safe. The
+            // disk-low card lists it among the items to reclaim when space runs short. Said once per folder, not on every sweep; an
+            // older node's open For-you card about it is closed.
+            state.CloseCardsAbout(entry.Path, "kept worktrees are a Handled line now", WorktreeDirtyKind);
+            if (state.Cards().Any(c => c.Kind == WorktreeDirtyKind && c.Subject == entry.Path && c.Bin == CardBin.Handled))
+            {
+                return;
+            }
+            state.RaiseCard(CardBin.Handled, WorktreeDirtyKind, entry.Path,
+                $"Kept worktree {name}: it has changes not committed",
+                $"{entry.Path} on branch {branch}: PR #{pr.Number} is {pr.State.ToLowerInvariant()}, so the disk sweep would remove it, but it holds changes not committed ({Size(size)} by unique bytes). Commit or discard them by hand and the next sweep removes it.");
             return;
         }
         var held = await Planes.RemoveAsync(repo, entry.Path, cancellationToken);
@@ -495,9 +500,10 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
         var low = state.RaiseCard(CardBin.ForYou, DiskLowKind, space.Name,
             $"Drive {space.Name} has {Size(space.Free)} free, below the {Size(threshold)} alert",
             $"{space.Name} has {Size(space.Free)} free of {Size(space.Total)}; the alert is {Size(threshold)} (setting disk-alert-gb). {list}",
-            [new CardChoice { Label = "I will free space", Verb = Verbs.Dismiss, Target = "" }],
-            summary: $"Free some space on {space.Name} or lower the alert (setting disk-alert-gb): {list}");
-        state.AimDismiss(low);
+            // The one thing the node can do on the person's word: the alert itself. Freeing space is by hand, and the panel's Dismiss
+            // already says "I have seen it": no second button says it again (the review of #797).
+            [new CardChoice { Label = "Lower the disk alert", Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.DiskAlertGbKey], AsksFor = "The new alert, in GB" }],
+            summary: $"Free some space on {space.Name}, or lower the alert: {list}");
     }
 
     private static void Remove(string folder, ref int count, ref long bytes)

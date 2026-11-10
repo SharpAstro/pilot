@@ -690,7 +690,7 @@ public sealed partial class LegCommander
         // A PR GitHub cannot merge as it is (conflicting, behind) is offered the go-around that merges its base in, and no Merge to refuse.
         if (mergeAgain)
         {
-            choices.Add(new CardChoice { Label = "Merge it as it is", Verb = Verbs.Merge, Target = target, Args = [head, method] });
+            choices.Add(new CardChoice { Label = "Try the merge again", Verb = Verbs.Merge, Target = target, Args = [head, method] });
         }
         // What each choice is for, in other words: the buttons show their whole labels, so the sentence must not repeat them.
         var offers = new List<string>();

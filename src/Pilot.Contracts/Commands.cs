@@ -828,6 +828,13 @@ public static class Verbs
     public const string Stop = "stop";
 
     /// <summary>
+    /// <c>end-stray process:&lt;pid&gt;@&lt;start&gt;</c>: ends a process the stray sweep named on a card, on the person's word only (the
+    /// sweep itself ends nothing). Refused unless the card is open and the pid still starts when the sweep saw it, so a reused pid is never
+    /// another process ended; never a process of the shell, the browser or Windows.
+    /// </summary>
+    public const string EndStray = "end-stray";
+
+    /// <summary>
     /// <c>end-session session/&lt;id&gt; &lt;why&gt;</c> (<c>pilot session end &lt;id&gt; &lt;why&gt;</c>): the node ends a running background
     /// session, cancels its queued and running jobs, and records <c>why</c> (required) and who asked in the session ledger. For the
     /// watchtower, whose own <c>claude stop</c> is refused under auto mode. An interactive or ended session is refused.

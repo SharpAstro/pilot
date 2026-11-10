@@ -24,9 +24,6 @@ public static class SummaryRecords
     /// <summary>The longest of what a finished leg says, in the fleet's records: a done leg is a line there, not a section.</summary>
     public const int MaxDoneReport = 240;
 
-    /// <summary>The heading over the open cards of flights that have landed: they are never a need, only a candidate for the Resolved section.</summary>
-    public const string LandedCards = "Open cards about flights that have already landed (stale, never a need; at most list their ids under Resolved):";
-
     /// <summary>
     /// A cheap fingerprint of what the fleet summary reads: the hash of <see cref="Fleet"/>'s records taken as of a fixed time, so the
     /// clock alone never changes it (nor do ages, which only the passing of time turns stale). Empty when there is nothing to say.
@@ -37,8 +34,9 @@ public static class SummaryRecords
             : "";
 
     /// <summary>
-    /// The records of every flight in play (not landed), the open cards about none of them (those about a landed flight apart, under
-    /// <see cref="LandedCards"/>) and the PR reviews not closed; null
+    /// The records of every flight in play (not landed), the open cards about none of them and the PR reviews not closed; nothing of a
+    /// flight that has landed, not even an open card about it (stale: the landing closes its cards, and <see cref="CloseLandedCards"/>
+    /// closes one left over), so the summary has nothing of it to relay (#797); null
     /// when there is nothing of that to say, which a summary does not spend a call on.
     /// </summary>
     public static string? Fleet(NodeState state, DateTimeOffset now, StaleBounds? bounds = null)
@@ -47,13 +45,11 @@ public static class SummaryRecords
         var inPlay = held.Flights.Where(f => f.State != FlightState.Landed).OrderBy(f => f.CreatedAt).ThenBy(f => f.Code, StringComparer.Ordinal).ToList();
         var landed = held.Flights.Where(f => f.State == FlightState.Landed).Select(f => f.Code).ToList();
         // An open card about a flight that has landed is never a need (its cards are closed at the landing, so one left is stale): it is
-        // told apart from the strays, and the prompt only lets it be proposed as resolved.
-        var ofLanded = held.Cards.Where(c => c.State == CardState.Open && c.Kind != Digest.Kind && landed.Any(code => About(c, code)))
-            .OrderBy(c => c.At).ToList();
-        var strays = held.Cards.Where(c => c.State == CardState.Open && c.Kind != Digest.Kind && !inPlay.Any(f => About(c, f.Code)) && !ofLanded.Contains(c))
+        // left out of the records altogether.
+        var strays = held.Cards.Where(c => c.State == CardState.Open && c.Kind != Digest.Kind && !inPlay.Any(f => About(c, f.Code)) && !landed.Any(code => About(c, code)))
             .OrderBy(c => c.At).ToList();
         var reviews = held.PrReviews.Where(r => r.State != PrReviewState.Closed).OrderBy(r => r.StartedAt).ToList();
-        if (inPlay.Count == 0 && strays.Count == 0 && reviews.Count == 0 && ofLanded.Count == 0)
+        if (inPlay.Count == 0 && strays.Count == 0 && reviews.Count == 0)
         {
             return null;
         }
@@ -79,15 +75,6 @@ public static class SummaryRecords
             text.AppendLine();
             text.AppendLine("Open cards about no flight in play:");
             foreach (var card in strays)
-            {
-                Card(text, card, "  ");
-            }
-        }
-        if (ofLanded.Count > 0)
-        {
-            text.AppendLine();
-            text.AppendLine(LandedCards);
-            foreach (var card in ofLanded)
             {
                 Card(text, card, "  ");
             }
@@ -253,6 +240,21 @@ public static class SummaryRecords
     }
 
     /// <summary>Whether <paramref name="card"/> is about flight <paramref name="code"/> or anything under it (a leg).</summary>
+    /// <summary>
+    /// Closes every open card about a flight that has landed: the landing closes a flight's cards, so one still open is stale (c3651, about
+    /// TIA2000's worker after TIA2000 had landed and merged). Run before a summary is made, which then has nothing of it to say. Returns how many.
+    /// </summary>
+    public static int CloseLandedCards(NodeState state)
+    {
+        var landed = state.Flights().Where(f => f.State == FlightState.Landed).Select(f => f.Code).ToList();
+        var stale = state.Cards(openOnly: true).Where(c => c.Kind != Digest.Kind && landed.Any(code => About(c, code))).ToList();
+        foreach (var card in stale)
+        {
+            state.CloseCardsAbout(card.Subject, "its flight has landed", card.Kind);
+        }
+        return stale.Count;
+    }
+
     private static bool About(CardRow card, string code)
     {
         var subject = Verbs.FlightTarget(code);
@@ -660,6 +662,8 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
             string? fingerprint = null;
             if (scope == SummaryRow.FleetScope)
             {
+                // A card left open about a landed flight is stale: closed first, so neither the records nor the person sees it.
+                SummaryRecords.CloseLandedCards(state);
                 // Taken before the records, so a change made while the call runs differs from it and is followed by the next ask.
                 var madeFrom = SummaryRecords.Fingerprint(state, Bounds());
                 var records = SummaryRecords.Fleet(state, now, Bounds());

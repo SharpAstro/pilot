@@ -11,7 +11,7 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public sealed partial class LegCommander
 {
-    /// <summary>The card kind of a leg held at its go-around cap: what each round said, and the person's Go around or Accept.</summary>
+    /// <summary>The card kind of a leg held at its go-around cap: what each round said, and the person's choice of one more fresh worker.</summary>
     public const string GoAroundCapKind = "go-around-cap";
 
     private void RaiseGoAroundCap(FlightRow flight, LegRow leg, int cap, string asked)
@@ -22,15 +22,15 @@ public sealed partial class LegCommander
         {
             rounds.Insert(0, $"({leg.GoArounds - rounds.Count} earlier rounds were not recorded)");
         }
-        var detail = $"{leg.GoArounds} go-arounds, the cap is {cap}. Each round said:\n{string.Join('\n', rounds)}\nAnother round asked for: {asked}";
+        var detail = $"Redone {leg.GoArounds} times, the most is {cap}. Each time said:\n{string.Join('\n', rounds)}\nAnother round asked for: {asked}";
         state.RaiseCard(CardBin.Ring, GoAroundCapKind, target,
-            $"{flight.Code}/{leg.Name} has gone around {leg.GoArounds} times, the cap is {cap}",
+            $"{flight.Code}/{leg.Name} was redone {leg.GoArounds} times and gets no more by itself",
             Models.NextWorkerNote(leg) is { } note ? $"{detail}\n{note}" : detail,
             [
                 new CardChoice { Label = Verbs.FreshWorker, Verb = Verbs.GoAround, Target = target, Args = [asked] },
-                new CardChoice { Label = "Accept the leg", Verb = Verbs.FinishLeg, Target = target, Args = ["accepted", $"accepted at the go-around cap ({leg.GoArounds} rounds)"] },
             ],
-            summary: $"{flight.Code}/{leg.Name} has gone around {leg.GoArounds} times, the cap. The watchtower and the node send it round no more; one more round, or taking the leg as it stands, is for you to choose.");
+            // No override that takes the leg as done: that stays the CLI's, with a reason (#797).
+            summary: $"Decide whether {flight.Code}/{leg.Name} gets one more fresh worker: the node and the watchtower start no more on it by themselves.");
     }
 
     private async Task GoAroundAsync(CommandRequest command, CancellationToken cancellationToken, bool conflictRound = false, ConflictRung? rung = null)

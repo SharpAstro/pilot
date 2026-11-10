@@ -498,7 +498,9 @@ public static partial class NodeApp
         if (options.MachineSampling)
         {
             builder.Services.AddHostedService(services => services.GetRequiredService<MachineSampler>());
-            builder.Services.AddHostedService(services => new StraySweep(services.GetRequiredService<NodeState>(), OsProcessTable.Instance, services.GetRequiredService<TimeProvider>()) { LivePids = () => services.GetRequiredService<SessionTracker>().LivePids().Select(p => (p.Id, p.Pid)).ToList(), KnownOf = services.GetRequiredService<JobRunner>().KnownOf });
+            // One sweep, both the hosted look and the handler of a stray card's End (end-stray), which only ends what it named.
+            builder.Services.AddSingleton(services => new StraySweep(services.GetRequiredService<NodeState>(), OsProcessTable.Instance, services.GetRequiredService<TimeProvider>()) { LivePids = () => services.GetRequiredService<SessionTracker>().LivePids().Select(p => (p.Id, p.Pid)).ToList(), KnownOf = services.GetRequiredService<JobRunner>().KnownOf });
+            builder.Services.AddHostedService(services => services.GetRequiredService<StraySweep>());
             // The node's own row rides the same tick of the clock (a settings change has no event to hook).
             builder.Services.AddHostedService(services =>
             {

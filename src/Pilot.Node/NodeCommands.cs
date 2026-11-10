@@ -541,6 +541,12 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return await Get<RebootPrep>().RunAsync(command, cancellationToken);
         }
+        if (command.Verb == Verbs.EndStray)
+        {
+            return services.GetService<StraySweep>() is { } sweep
+                ? sweep.EndOnWord(command)
+                : state.Complete(command, "this node does not look for strays (machine sampling is off), so it has none to end");
+        }
         if (command.Verb == Verbs.Say)
         {
             return await Get<SessionMessenger>().SayAsync(command, cancellationToken);
