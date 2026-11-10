@@ -81,11 +81,23 @@ public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Fun
             {
                 foreach (var kept in _peers.Values)
                 {
-                    kept.Stop?.Cancel();
+                    StopQuietly(kept.Stop);
                 }
                 runs = [.. _runs];
             }
             await Task.WhenAll(runs).ConfigureAwait(false);
+        }
+    }
+
+    // A run that has ended disposes its token source; stopping one that is already gone is no error.
+    private static void StopQuietly(CancellationTokenSource? stop)
+    {
+        try
+        {
+            stop?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
         }
     }
 
@@ -97,7 +109,7 @@ public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Fun
         {
             foreach (var gone in _peers.Where(kv => !peers.Any(p => string.Equals(p.Name, kv.Key, StringComparison.OrdinalIgnoreCase))).ToList())
             {
-                gone.Value.Stop?.Cancel();
+                StopQuietly(gone.Value.Stop);
                 _peers.Remove(gone.Key);
             }
             foreach (var peer in peers)
