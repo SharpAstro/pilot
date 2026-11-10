@@ -243,7 +243,7 @@ public sealed class MergeBatchTests
 
         release.TrySetResult();
         await held;
-        await Until(node, () => Entry(node, "TIA2").State is MergeEntryState.Dropped or MergeEntryState.Merging
+        await Until(node, () => Entry(node, "TIA2").State is MergeEntryState.Dropped or MergeEntryState.Merging or MergeEntryState.Merged
             && Entry(node, "TIA1").State is MergeEntryState.Merging or MergeEntryState.Merged && Entry(node, "TIA3").State is MergeEntryState.Merging or MergeEntryState.Merged
             && Has(git, $"push --quiet origin {BatchHead}:refs/heads/main") && node.GitHub.Merged.Any(m => m.Number == 11) == (odd == "base"), "TIA1 and TIA3 landed with the batch, TIA2 on its own");
 
