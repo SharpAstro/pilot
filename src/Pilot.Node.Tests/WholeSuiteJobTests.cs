@@ -72,9 +72,25 @@ public sealed class WholeSuiteJobTests : IDisposable
         _state.Jobs().ShouldBeEmpty();
     }
 
+    /// <summary>A flight's session can't approve its own whole suite: j4444 (PIL801's worker, 23 min on every test, 2026-11-10).</summary>
+    [Fact]
+    public void AWorkersOwnWholeSuiteWhyIsRefusedWhenItsLegWasNotPlannedForIt()
+    {
+        _state.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying });
+
+        var error = Run(Unfiltered, "step 4: the whole suite after my fix").Error.ShouldNotBeNull();
+
+        error.ShouldContain("can't approve its own whole suite");
+        error.ShouldContain($"{CheckScope.WholeSuiteKey}=<why>");
+        _state.Jobs().ShouldBeEmpty();
+    }
+
     [Fact]
     public void TheSameRunWithAWholeSuiteWhyIsAcceptedAndTheWhyStaysOnTheJobRow()
     {
+        // The worker's leg was planned with whole-suite=<why>, so its own run may take the whole suite.
+        _state.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = $"d\n{CheckScope.WholeSuiteMark}the change renames a type every test uses", State = LegState.Flying });
+
         var result = Run(Unfiltered, "the change renames a type every test uses");
 
         result.Ok.ShouldBeTrue();

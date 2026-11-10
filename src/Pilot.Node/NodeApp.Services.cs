@@ -539,6 +539,7 @@ public static partial class NodeApp
                 Log = services.GetRequiredService<LogWriter>(),
                 Ledger = services.GetRequiredService<SessionLedger>(),
                 MaxRunning = Math.Max(1, nodeOptions.MaxJobs),
+                JobsPerRepo = nodeOptions.Saved?.JobsPerRepo ?? NodeSettings.JobsPerRepoDefault,
                 MinFreeMemory = (long)(Math.Max(0, nodeOptions.JobMemoryGigabytes) * (1L << 30)),
                 Priority = nodeOptions.JobPriority,
                 PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? NodeSettings.JobPlaneOutputDefault,

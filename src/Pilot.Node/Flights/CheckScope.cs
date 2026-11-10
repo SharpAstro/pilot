@@ -11,6 +11,9 @@ public static class CheckScope
     /// <summary>The key of the plan-leg argument that says why a leg's check runs the whole suite.</summary>
     public const string WholeSuiteKey = "whole-suite";
 
+    /// <summary>What a leg planned with <see cref="WholeSuiteKey"/> says in its done-when; a run by its sessions may then take the whole suite.</summary>
+    public const string WholeSuiteMark = "The check runs the whole suite on purpose: ";
+
     private static readonly HashSet<string> Skipped = new(StringComparer.OrdinalIgnoreCase) { ".git", "bin", "obj", "node_modules" };
 
     /// <summary>
