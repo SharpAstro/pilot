@@ -22,10 +22,18 @@ internal static class TestEnvironment
     [ModuleInitializer]
     internal static void WatchProcessStarts()
     {
-        ProcessStarts.Observer = (kind, _) =>
+        var mode = ProcessStartGuard.ModeFor(Environment.GetEnvironmentVariable("PILOT_TEST_PROCESS_GUARD"));
+        ProcessStarts.Observer = (kind, start) =>
         {
-            var test = Xunit.TestContext.Current.Test?.TestDisplayName ?? "(no test: a fixture or a background loop)";
-            _starts.GetOrAdd(test, _ => new()).AddOrUpdate(kind, 1, (_, n) => n + 1);
+            var current = Xunit.TestContext.Current.Test;
+            var test = current?.TestDisplayName;
+            // Written first, so the report names the start even when the guard throws.
+            var allowedWithNoTest = test is null && ProcessStartGuard.NoTestAllowed.ContainsKey(kind);
+            if (!allowedWithNoTest && (test is null || !ProcessStartGuard.MayStartProcesses(current!.Traits)))
+            {
+                _starts.GetOrAdd(test ?? "(no test: a fixture or a background loop)", _ => new()).AddOrUpdate(kind, 1, (_, n) => n + 1);
+            }
+            ProcessStartGuard.Check(kind, ProcessStartGuard.Command(start), test, current?.Traits, mode);
         };
         AppDomain.CurrentDomain.ProcessExit += (_, _) => WriteProcessStartReport();
     }
