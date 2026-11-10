@@ -328,8 +328,8 @@ public sealed class RemovalQueueTests : IDisposable
         time.Advance(TimeSpan.FromHours(20));
         var b = QueuedFolder(queue);
         var runner = new RemovalQueueStart(queue, state, time) { Holders = _ => [] };
-        // Handled lines (#797), oldest first: a new one only when the set of folders held open changes.
-        CardRow[] Cards() => [.. state.Cards().Where(c => c.Kind == RemovalQueueStart.Kind).OrderBy(c => c.At)];
+        // Handled lines (#797), by number (the fake clock gives two the same time): a new one only when the set of folders held open changes.
+        CardRow[] Cards() => [.. state.Cards().Where(c => c.Kind == RemovalQueueStart.Kind).OrderBy(c => int.Parse(c.Id[1..], System.Globalization.CultureInfo.InvariantCulture))];
 
         using var holdA = Hold(a);
         using var holdB = Hold(b);
@@ -366,8 +366,8 @@ public sealed class RemovalQueueTests : IDisposable
         var state = new NodeState(new InMemoryJournal(), time);
         var queue = new RemovalQueue(RemovalQueue.FileIn(Path.Combine(_root, "restart-data")), time);
         var a = QueuedFolder(queue);
-        // Handled lines (#797), oldest first: a new one only when the set of folders held open changes.
-        CardRow[] Cards() => [.. state.Cards().Where(c => c.Kind == RemovalQueueStart.Kind).OrderBy(c => c.At)];
+        // Handled lines (#797), by number (the fake clock gives two the same time): a new one only when the set of folders held open changes.
+        CardRow[] Cards() => [.. state.Cards().Where(c => c.Kind == RemovalQueueStart.Kind).OrderBy(c => int.Parse(c.Id[1..], System.Globalization.CultureInfo.InvariantCulture))];
         Task Start() => new RemovalQueueStart(queue, state, time) { Holders = _ => [] }.StartingAsync(Ct);
 
         using var holdA = Hold(a);
