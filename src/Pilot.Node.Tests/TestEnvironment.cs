@@ -31,7 +31,8 @@ internal static class TestEnvironment
             if (ProcessStartGuard.Verdict(kind, ProcessStartGuard.Command(start), test, current?.Traits) is not null)
             {
                 // A start with no test is named by its command and working folder, so its source (a fixture, a background loop) can be traced.
-                _starts.GetOrAdd(test ?? $"(no test: a fixture or a background loop) {ProcessStartGuard.Command(start)} in {start.WorkingDirectory}", _ => new()).AddOrUpdate(kind, 1, (_, n) => n + 1);
+                // The Pilot frames of the stack follow it (the test's own frames are absent where the work runs on the node's threads).
+                _starts.GetOrAdd(test ?? $"(no test: a fixture or a background loop) {ProcessStartGuard.Command(start)} in {start.WorkingDirectory} via {Where()}", _ => new()).AddOrUpdate(kind, 1, (_, n) => n + 1);
             }
             ProcessStartGuard.Check(kind, ProcessStartGuard.Command(start), test, current?.Traits, mode);
         };
@@ -47,6 +48,10 @@ internal static class TestEnvironment
         ProcessStarts.Observe($"{Path.GetFileNameWithoutExtension(start.FileName)} ({kindSuffix ?? "test helper"})", start);
         return System.Diagnostics.Process.Start(start);
     }
+
+    private static string Where() => string.Join(" < ", new System.Diagnostics.StackTrace(1, false).GetFrames()
+        .Select(f => f.GetMethod()).Where(m => m?.DeclaringType?.FullName?.StartsWith("Pilot.", StringComparison.Ordinal) == true)
+        .Select(m => $"{m!.DeclaringType!.Name}.{m.Name}").Take(8));
 
     /// <summary>The report: one line per test that started a process, with how many of each kind; empty when none did.</summary>
     internal static string ProcessStartReport() =>
