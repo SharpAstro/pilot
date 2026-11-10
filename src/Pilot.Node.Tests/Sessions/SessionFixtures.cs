@@ -199,7 +199,7 @@ internal sealed class TempProfile : IDisposable
     {
         try
         {
-            Directory.Delete(Folder, recursive: true);
+            TestDirs.DeleteTree(Folder);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

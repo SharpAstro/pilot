@@ -183,7 +183,7 @@ public sealed class FixFollowUpTests : PrFixTestsBase
         var tip = FixerCommits();
         CreatingMakesPr71(tip);
         Merge();
-        var git = new RemoveRefusingGit(new GitCli());
+        var git = new RemoveRefusingGit(_git);
         var reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, _options), _options, TimeProvider.System)
         {
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),

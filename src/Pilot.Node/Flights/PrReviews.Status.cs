@@ -20,7 +20,7 @@ public sealed partial class PrReviews
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, Verbs.PrTarget(review.Repo, review.Number),
+            state.RaiseCard(CardBin.Handled, PrMarks.RefusedKind, Verbs.PrTarget(review.Repo, review.Number),
                 $"GitHub refused to mark {review.Repo}#{review.Number} {(draft ? "a draft" : "ready")}: {LegCommander.OneLine(ex.Message)}", $"{ex.Message}. The review itself stands.", link: review.Url);
         }
     }
@@ -41,7 +41,7 @@ public sealed partial class PrReviews
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             state.CloseCardsAbout(subject, "refused again", PrMarks.RefusedKind);
-            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused the {PilotMarks.StatusContext} status on {review.Repo}#{review.Number}: {LegCommander.OneLine(ex.Message)}",
+            state.RaiseCard(CardBin.Handled, PrMarks.RefusedKind, subject, $"GitHub refused the {PilotMarks.StatusContext} status on {review.Repo}#{review.Number}: {LegCommander.OneLine(ex.Message)}",
                 $"{ex.Message}. The review itself stands.", link: review.Url);
         }
     }
@@ -66,7 +66,7 @@ public sealed partial class PrReviews
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused the {label} label on {review.Repo}#{review.Number}: {LegCommander.OneLine(ex.Message)}",
+            state.RaiseCard(CardBin.Handled, PrMarks.RefusedKind, subject, $"GitHub refused the {label} label on {review.Repo}#{review.Number}: {LegCommander.OneLine(ex.Message)}",
                 $"{ex.Message}. The review itself stands.", link: review.Url);
         }
     }

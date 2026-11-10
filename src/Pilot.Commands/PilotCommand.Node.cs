@@ -36,7 +36,19 @@ public static partial class PilotCommand
             var nodeRestart = Action(new Command("restart", "Restart the node in place: its flights, sessions and jobs carry on (jobs are not waited for; the answer says how many)")
                 { Arguments = { nodeRestartWhy }, Options = { actingOn } },
                 (p, client, ct) => Send(client, Verbs.RestartNode, Verbs.NodeTarget, p.GetValue(nodeRestartWhy) ?? [], who, ct, p.GetValue(actingOn)));
-            var nodeCommand = new Command("node", "This machine's pilot node") { Subcommands = { nodeRestart } };
+            // node reboot: the machine made ready to reboot (#916), never rebooted by the node itself.
+            var rebootWhy = Words("why", "Why, for its Handled line", required: false);
+            var rebootRequest = Action(new Command("request", "Make the machine ready to reboot: maintenance mode, and every live session told to commit, push and write its state to a file; the node collects them and says when it can reboot")
+                { Arguments = { rebootWhy }, Options = { actingOn } },
+                (p, client, ct) => Send(client, Verbs.Reboot, Verbs.NodeTarget, ["request", .. p.GetValue(rebootWhy) ?? []], who, ct, p.GetValue(actingOn)));
+            var rebootStatus = Action(new Command("status", "How many sessions have saved their state, and whether the machine can reboot"),
+                (p, client, ct) => Send(client, Verbs.Reboot, Verbs.NodeTarget, ["status"], who, ct));
+            var rebootCancel = Action(new Command("cancel", "Drop the reboot request before the reboot and leave maintenance mode") { Options = { actingOn } },
+                (p, client, ct) => Send(client, Verbs.Reboot, Verbs.NodeTarget, ["cancel"], who, ct, p.GetValue(actingOn)));
+            var rebootDone = Action(new Command("done", "After the reboot: leave maintenance mode, each flight resuming from its saved state") { Options = { actingOn } },
+                (p, client, ct) => Send(client, Verbs.Reboot, Verbs.NodeTarget, ["done"], who, ct, p.GetValue(actingOn)));
+            var reboot = new Command("reboot", "Make the machine ready to reboot, and resume after it") { Subcommands = { rebootRequest, rebootStatus, rebootCancel, rebootDone } };
+            var nodeCommand = new Command("node", "This machine's pilot node") { Subcommands = { nodeRestart, reboot } };
 
             // the LAN: find nodes, ask one for control, and see or take back what this node has granted
             var nodes = new Command("nodes", "The pilot nodes announcing themselves on the LAN");
@@ -70,6 +82,14 @@ public static partial class PilotCommand
                         throw new UsageException($"connect takes a node as host:port, not {p.GetValue(endpoint)}");
                     }
                     using var remote = NodeClient.Remote(target);
+                    // The node's machine name first: the token is kept under it, over any entry of that name whatever address it was at.
+                    var held = new HeldGrants(NodeTargets.TokenFile);
+                    var name = await HeldGrants.NameAtAsync(target, ct);
+                    if (name is null)
+                    {
+                        await output.WriteLineAsync($"no node answers at {target}, so its name is not known; start it, or check the address");
+                        return 1;
+                    }
                     var label = p.GetValue(askAs) ?? $"{Environment.UserName}@{Environment.MachineName}".ToLowerInvariant();
                     var result = await LanAsk.RunAsync(
                         target,
@@ -91,14 +111,14 @@ public static partial class PilotCommand
                             };
                             return new LanAskReading(outcome, read.Response?.Token);
                         },
-                        new LanHeldTokenFile(NodeTargets.TokenFile),
+                        held.Named(name),
                         TimeProvider.System,
                         asked: () => output.WriteLine($"asked {target} as {label}: a card rings there for its person to Allow or Deny"),
                         cancellationToken: ct);
                     switch (result.Outcome)
                     {
                         case LanAskOutcome.Accepted:
-                            await output.WriteLineAsync($"allowed: commands go to {target} with --node {target} (or PILOT_NODE={target})");
+                            await output.WriteLineAsync($"allowed: commands go to {name} ({target}) with --node {name} (or PILOT_NODE={name}); the grant is kept under that name, wherever it is reached");
                             return 0;
                         case LanAskOutcome.Declined:
                             await output.WriteLineAsync($"denied by {target}'s person");

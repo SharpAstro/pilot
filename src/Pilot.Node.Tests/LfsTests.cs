@@ -22,7 +22,7 @@ public sealed class LfsTests : IDisposable
         try
         {
             ClearReadOnly(_root);
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
         catch (IOException)
         {
@@ -39,7 +39,7 @@ public sealed class LfsTests : IDisposable
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         try
         {
-            using var p = Process.Start(start)!;
+            using var p = TestEnvironment.Start(start)!;
             var o = p.StandardOutput.ReadToEndAsync();
             var e = p.StandardError.ReadToEndAsync();
             p.WaitForExit();

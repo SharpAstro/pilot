@@ -211,7 +211,7 @@ public sealed partial class FlightCommander
     /// Says on the item that this node flies it, and with <paramref name="overridden"/> (a create given --anyway over another
     /// node's label) takes that label off and comments why. The flight is made by now, so a refusal is a For-you card, not a lost flight.
     /// </summary>
-    private async Task LabelAsync(string repoPath, WorkItem item, string code, string? overridden, CancellationToken cancellationToken)
+    private async Task LabelAsync(string repoPath, WorkItem item, string code, string? overridden, CancellationToken cancellationToken, int? pullRequest = null)
     {
         if (Trackers?.Of(item.Tracker) is not { } tracker)
         {
@@ -230,7 +230,19 @@ public sealed partial class FlightCommander
         }
         catch (FlightException ex)
         {
-            state.RaiseCard(CardBin.ForYou, "node-label-refused", $"flight/{code}", $"{code} is flying, but {item.Noun} has no {PilotMarks.NodeLabel(Machine)} label: {LegCommander.OneLine(ex.Message)}", ex.Message);
+            state.RaiseCard(CardBin.Handled, "node-label-refused", $"flight/{code}", $"{code} is flying, but {item.Noun} has no {PilotMarks.NodeLabel(Machine)} label", ex.Message);
+        }
+        // The flight's PR (a hand-over has one already) says which node flies it as its item does; OpenPr gives it the label for a new PR.
+        if (pullRequest is { } pr && github is not null)
+        {
+            try
+            {
+                await github.AddIssueLabelAsync(repoPath, pr, PilotMarks.NodeLabel(Machine), cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                state.RaiseCard(CardBin.Handled, "node-label-refused", $"flight/{code}", $"{code} is flying, but its PR #{pr} has no {PilotMarks.NodeLabel(Machine)} label: {LegCommander.OneLine(ex.Message)}", ex.Message);
+            }
         }
     }
 

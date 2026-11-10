@@ -38,6 +38,9 @@ internal sealed record NodeSummary
 
     public int Held { get; init; }
 
+    /// <summary>Flights on the owner's hold, counted in no other column (<see cref="FlightCounts"/>).</summary>
+    public int OnHold { get; init; }
+
     public int JobsRunning { get; init; }
 
     public int JobsQueued { get; init; }
@@ -88,6 +91,12 @@ internal sealed record FleetLine
 
     /// <summary>Whether a grant for it is held (client-grants.json): a node other than this window's that this user may command.</summary>
     public bool Held { get; init; }
+
+    /// <summary>The node's machine name (<c>SE1</c>) as far as it is known: what a held token is found by; null before it has said.</summary>
+    public string? HeldName { get; init; }
+
+    /// <summary>For a node with no grant under its name while an old address-keyed one is held that no longer answers: <c>Connect again (held for 10.0.0.5:47731)</c>.</summary>
+    public string? ConnectAgain { get; init; }
 
     /// <summary>Whether the row offers Forget: a node held in the grants and never reached, which may be let go.</summary>
     public bool CanForget => NeverReached && Held;
@@ -170,7 +179,7 @@ internal sealed record FleetLine
     public string[] StateLines => LastKnown && State.IndexOf(" (", StringComparison.Ordinal) is > 0 and var cut ? [State[..cut], State[(cut + 1)..]] : [State];
 
     public string ToDumpLine() => string.Join(" | ", Machine, Where + (Here ? " (this window)" : ""), State, Account, Usage.Length == 0 ? "-" : Usage, Sessions, Flights, Jobs,
-        Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : "watch only") + (AutopilotWord is { } autopilot ? " | " + autopilot : "") + (Maintenance ? " | " + MaintenanceMark + (AsOf is { } asOf ? " " + asOf : "") : "")
+        Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : ConnectAgain ?? "watch only") + (AutopilotWord is { } autopilot ? " | " + autopilot : "") + (Maintenance ? " | " + MaintenanceMark + (AsOf is { } asOf ? " " + asOf : "") : "")
         + (JobHolder is { } holder ? " | " + holder : "")
         + (JobFailing is { } failing ? " | " + failing : "")
         + (Watchtower is { } watchtower ? " | " + watchtower : "") + (WatchtowerMark is { } mark ? " | " + mark : "")
@@ -189,8 +198,8 @@ internal sealed record FleetLine
     {
         var lastKnown = !summary.Connected && summary.Node is not null;
         var health = summary.Connected ? summary.Node?.Watchtower : null;
-        string Counted(int a, string aWord, int b, string bWord, string none) =>
-            a == 0 && b == 0 ? none : b == 0 ? $"{a} {aWord}" : a == 0 ? $"{b} {bWord}" : $"{a} {aWord} · {b} {bWord}";
+        string Counted(string none, params (int N, string Word)[] counts) =>
+            counts.Where(c => c.N > 0).Select(c => $"{c.N} {c.Word}").ToArray() is { Length: > 0 } parts ? string.Join(" · ", parts) : none;
         return new FleetLine
         {
             Where = where,
@@ -218,8 +227,8 @@ internal sealed record FleetLine
             // A node heard and quiet keeps its last words (dimmed, dated); one never heard has none, and its dashes say so.
             Sessions = !summary.Connected && !lastKnown ? "—" : summary.WaitingOnYou > 0 ? $"{summary.LiveSessions} live · {summary.WaitingOnYou} waiting on you" : $"{summary.LiveSessions} live",
             WaitingOnYou = summary.Connected ? summary.WaitingOnYou : 0,
-            Flights = !summary.Connected && !lastKnown ? "—" : Counted(summary.Flying, "flying", summary.Held, "held", "none in the air") + (summary.LegWait is { } wait ? $" · {wait}" : ""),
-            Jobs = !summary.Connected && !lastKnown ? "—" : Counted(summary.JobsRunning, "running", summary.JobsQueued, "queued", "none"),
+            Flights = !summary.Connected && !lastKnown ? "—" : Counted("none in the air", (summary.Flying, "flying"), (summary.Held, "held"), (summary.OnHold, "on hold")) + (summary.LegWait is { } wait ? $" · {wait}" : ""),
+            Jobs = !summary.Connected && !lastKnown ? "—" : Counted("none", (summary.JobsRunning, "running"), (summary.JobsQueued, "queued")),
             JobHolder = summary.Connected || lastKnown ? summary.JobHolder : null,
             JobFailing = summary.Connected || lastKnown ? summary.JobFailing : null,
             Rings = summary.Connected || lastKnown ? summary.Rings : 0,
@@ -296,7 +305,7 @@ internal sealed record FleetScreen(IReadOnlyList<FleetLine> Lines, DateTimeOffse
 /// </summary>
 internal sealed class FleetWatch : IAsyncDisposable
 {
-    private readonly ConcurrentDictionary<string, (NodeFeed Feed, string? Name)> _feeds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, (NodeFeed Feed, string? Name, string? Machine)> _feeds = new(StringComparer.OrdinalIgnoreCase);
     private readonly Func<string, NodeFeed> _feedFor;
 
     /// <param name="feedFor">The feed for a node at <c>host:port</c>: its own client's, by default.</param>
@@ -315,14 +324,14 @@ internal sealed class FleetWatch : IAsyncDisposable
         {
             streams.Add(own);
         }
-        foreach (var (endpoint, (feed, name)) in _feeds.OrderBy(f => f.Key, StringComparer.OrdinalIgnoreCase))
+        foreach (var (endpoint, (feed, name, machine)) in _feeds.OrderBy(f => f.Key, StringComparer.OrdinalIgnoreCase))
         {
             var summary = feed.Summary(now);
             if (summary.Stream is { } stream && !streams.Add(stream))
             {
                 continue;
             }
-            feeds.Add((NodeMark.For(endpoint, here: false, summary, name), feed));
+            feeds.Add((NodeMark.For(endpoint, here: false, summary, name) with { HeldName = HeldView.NameOf(summary, machine) }, feed));
         }
         return feeds;
     }
@@ -337,7 +346,7 @@ internal sealed class FleetWatch : IAsyncDisposable
     public void SayPage(string? page)
     {
         Volatile.Write(ref _page, page);
-        foreach (var (feed, _) in _feeds.Values)
+        foreach (var (feed, _, _) in _feeds.Values)
         {
             feed.SayPage(page);
         }
@@ -348,7 +357,7 @@ internal sealed class FleetWatch : IAsyncDisposable
 
     /// <summary>
     /// Stops watching the node at <paramref name="endpoint"/>: its feed is removed and disposed, so the next screen has no
-    /// row for it. A node still heard on the LAN is known again by the next <see cref="Know"/>, which is right.
+    /// row for it. A node still heard on the LAN is known again by the next next Know, which is right.
     /// </summary>
     public void Forget(string endpoint)
     {
@@ -360,20 +369,23 @@ internal sealed class FleetWatch : IAsyncDisposable
     }
 
     /// <summary>Knows these nodes from now on: <c>host:port</c>, with the name a node announced when it did.</summary>
-    public void Know(IEnumerable<(string Endpoint, string? Name)> nodes)
+    public void Know(IEnumerable<(string Endpoint, string? Name)> nodes) => Know(nodes.Select(n => (n.Endpoint, n.Name, (string?)null)));
+
+    /// <summary>Knows these nodes from now on, each with the name it announced and its machine name (its beacon's <c>machine</c>), which is how a held token is found.</summary>
+    public void Know(IEnumerable<(string Endpoint, string? Name, string? Machine)> nodes)
     {
-        foreach (var (endpoint, name) in nodes)
+        foreach (var (endpoint, name, machine) in nodes)
         {
             var known = _feeds.GetOrAdd(endpoint, e =>
             {
                 var feed = _feedFor(e);
                 feed.SayPage(Volatile.Read(ref _page));
                 feed.Start();
-                return (feed, name);
+                return (feed, name, machine);
             });
-            if (name is not null && known.Name != name)
+            if ((name is not null && known.Name != name) || (machine is not null && known.Machine != machine))
             {
-                _feeds[endpoint] = known with { Name = name };
+                _feeds[endpoint] = known with { Name = name ?? known.Name, Machine = machine ?? known.Machine };
             }
         }
     }
@@ -382,7 +394,14 @@ internal sealed class FleetWatch : IAsyncDisposable
     /// The Fleet page: <paramref name="here"/> (this window's node) first, then every other node by where it is, a node
     /// heard again under another address left out by its stream.
     /// </summary>
-    public FleetScreen Screen(string hereWhere, NodeSummary here, Func<string, bool> canCommand, DateTimeOffset now)
+    public FleetScreen Screen(string hereWhere, NodeSummary here, Func<string, bool> canCommand, DateTimeOffset now) =>
+        Screen(hereWhere, here, (endpoint, _) => canCommand(endpoint), [], now);
+
+    /// <summary>
+    /// The Fleet page with each node's grant found by its machine name (<paramref name="canCommand"/> is given the address and the name), and a node
+    /// announced under a name with no grant, while an old address-keyed entry of <paramref name="held"/> no longer answers, told to Connect again.
+    /// </summary>
+    public FleetScreen Screen(string hereWhere, NodeSummary here, Func<string, string?, bool> canCommand, IReadOnlyList<Pilot.Contracts.HeldGrant> held, DateTimeOffset now)
     {
         var lines = new List<FleetLine> { FleetLine.From(hereWhere, here: true, canCommand: true, null, here, now) };
         var streams = new HashSet<string>(StringComparer.Ordinal);
@@ -390,21 +409,34 @@ internal sealed class FleetWatch : IAsyncDisposable
         {
             streams.Add(own);
         }
-        foreach (var (endpoint, (feed, name)) in _feeds.OrderBy(f => f.Key, StringComparer.OrdinalIgnoreCase))
+        foreach (var (endpoint, (feed, name, machine)) in _feeds.OrderBy(f => f.Key, StringComparer.OrdinalIgnoreCase))
         {
             var summary = feed.Summary(now);
             if (summary.Stream is { } stream && !streams.Add(stream))
             {
                 continue;
             }
-            lines.Add(FleetLine.From(endpoint, here: string.Equals(endpoint, hereWhere, StringComparison.OrdinalIgnoreCase), canCommand(endpoint), name, summary, now));
+            var isHere = string.Equals(endpoint, hereWhere, StringComparison.OrdinalIgnoreCase);
+            var machineName = HeldView.NameOf(summary, machine);
+            lines.Add(FleetLine.From(endpoint, here: isHere, canCommand(endpoint, machineName), name, summary, now) with { HeldName = machineName });
+        }
+        // An old entry (no name) whose address no row is reached at may be a node that moved: a row of a name with no grant is told of it.
+        var reached = lines.Where(l => l.Connected).Select(l => l.Where).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var spoken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < lines.Count; i++)
+        {
+            if (!lines[i].Here && !lines[i].CanCommand && lines[i].HeldName is { } named && HeldView.OldAddress(held, lines[i].Where, named, reached, spoken) is { } old)
+            {
+                spoken.Add(old);
+                lines[i] = lines[i] with { ConnectAgain = $"Connect again (held for {old})" };
+            }
         }
         return new FleetScreen(lines, now);
     }
 
     public async ValueTask DisposeAsync()
     {
-        foreach (var (feed, _) in _feeds.Values)
+        foreach (var (feed, _, _) in _feeds.Values)
         {
             await feed.DisposeAsync();
         }
@@ -770,7 +802,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             buttons.Add(NodeButton(line, leaving ? "Take out of maintenance" : "Put into maintenance", "maintenance", leaving ? "taking out…" : "putting into maintenance…",
                 () => Press(line, "maintenance", l => maintenance(l, !leaving))));
         }
-        var where = line.Here ? $"{line.Where} · this window" : line.CanCommand ? line.Where : $"{line.Where} · watch only";
+        var where = line.Here ? $"{line.Where} · this window" : line.CanCommand ? line.Where : line.ConnectAgain is { } again ? $"{line.Where} · {again}" : $"{line.Where} · watch only";
         var rings = line.Rings == 0 ? "—" : $"{line.Rings} ringing";
         var cells = new List<Layout.Node>
         {

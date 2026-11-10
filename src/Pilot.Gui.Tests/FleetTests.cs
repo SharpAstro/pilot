@@ -290,6 +290,60 @@ public sealed class FleetTests
         Screen().Lines.Select(l => l.Where).ShouldBe(["node.sock", "10.0.0.5:47731"]);
     }
 
+    /// <summary>A node held by its machine name and heard at a new address keeps its Held mark; a node of a name with no grant, while an old address entry no longer answers, says to Connect again.</summary>
+    [Fact]
+    public async Task ANodeHeldByNameHeardAtANewAddressStaysHeldAndAnUnheldNameIsToldToConnectAgain()
+    {
+        var nodes = new Dictionary<string, FakeNode>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["10.0.0.9:47731"] = new(),
+            ["10.0.0.5:47731"] = new(),
+        };
+        await using var watch = new FleetWatch(endpoint => new NodeFeed(nodes[endpoint].Open, endpoint, TimeSpan.FromMilliseconds(20)));
+        // SE2 is held under its name at a hint that no longer answers; it is heard now at 10.0.0.9. LE1 has no grant by name, only an old address entry.
+        watch.Know([("10.0.0.9:47731", "SE2 DESKTOP-7", "SE2"), ("10.0.0.5:47731", "LE1 LAPTOP", "LE1")]);
+        for (var i = 0; i < 500 && nodes.Values.Any(n => n.OpenCount == 0); i++)
+        {
+            await Task.Delay(10, Ct);
+        }
+        nodes["10.0.0.9:47731"].Send(Live.Snapshot(1, "s2"));
+        nodes["10.0.0.5:47731"].Send(Live.Snapshot(1, "le1"));
+        var held = new Pilot.Contracts.HeldGrant[]
+        {
+            new("SE2", "10.0.0.1:47731", "tok-se2"),
+            new(null, "10.0.0.3:47731", "tok-old"),
+        };
+        var view = new HeldView(held);
+        FleetScreen Screen() => watch.Screen("node.sock", Summary("laptop", "ada@example.org"), view.Holds, held, Live.At);
+        for (var i = 0; i < 500 && Screen().Lines.Count(l => l.Connected) < 2; i++)
+        {
+            await Task.Delay(10, Ct);
+        }
+
+        var lines = Screen().Lines;
+        var se2 = lines.Single(l => l.Where == "10.0.0.9:47731");
+        se2.Held.ShouldBeTrue();
+        se2.CanCommand.ShouldBeTrue();
+        se2.ConnectAgain.ShouldBeNull();
+        var le1 = lines.Single(l => l.Where == "10.0.0.5:47731");
+        le1.CanCommand.ShouldBeFalse();
+        le1.ConnectAgain.ShouldBe("Connect again (held for 10.0.0.3:47731)");
+        le1.ToDumpLine().ShouldContain("Connect again (held for 10.0.0.3:47731)");
+    }
+
+    /// <summary>The held view finds a token by the node's name first and its address after, and the LAN's moved node is not watched at its old hint.</summary>
+    [Fact]
+    public void TheHeldViewFindsTokensByNameAndSkipsAHintTheLanMovedFrom()
+    {
+        var view = new HeldView([new("SE2", "10.0.0.1:47731", "tok-se2"), new(null, "10.0.0.3:47731", "tok-old")]);
+
+        view.TokenFor("10.0.0.9:47731", "se2").ShouldBe("tok-se2");
+        view.TokenFor("10.0.0.3:47731", null).ShouldBe("tok-old");
+        view.Holds("10.0.0.9:47731", "LE1").ShouldBeFalse();
+        HeldView.Known(view.Entries, [new LanNode("10.0.0.9:47731", "SE2 DESKTOP-7", "SE2")])
+            .Select(k => k.Endpoint).ShouldBe(["10.0.0.3:47731", "10.0.0.9:47731"]);
+    }
+
     private static NodeSummary InMaintenance(string stream, bool connected = true) =>
         Summary(stream, "bo@example.org", connected) with { Node = Summary(stream).Node! with { Maintenance = true } };
 

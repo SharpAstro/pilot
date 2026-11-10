@@ -44,10 +44,11 @@ await using var feed = NodeFeed.For(client);
 // merged into every page.
 await using var fleetWatch = new FleetWatch();
 var fleetKnownAt = DateTimeOffset.MinValue;
-IReadOnlySet<string> granted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-bool CanCommand(string where) => string.Equals(where, remote, StringComparison.OrdinalIgnoreCase) || granted.Contains(where);
+// The grants held, found by a node's machine name (its address only for an old entry), so a node on a new network keeps its grant.
+var held = HeldView.None;
+bool CanCommand(string where, string? name) => string.Equals(where, remote, StringComparison.OrdinalIgnoreCase) || held.Holds(where, name);
 // A row's command goes to the node it came from: this terminal's client for its own, the grant's for another's.
-using var clients = new FleetClients(client, CanCommand);
+using var clients = new FleetClients(client, where => CanCommand(where, null), grantedByName: CanCommand);
 var nodeWhere = remote ?? client.SocketPath;
 
 // The views are the GUI's, generic over the surface; their renderer is never painted with here (the trees are arranged
@@ -159,16 +160,13 @@ sessions.OnSay = SayTo;
 sessions.OnSayAll = SayTo;
 async Task CardAsync(string verb, CardRow card, string[] cardArgs)
 {
-    // A card raised on another node is answered there.
-    if (clients.For(cards.NodeOf(card)) is not { } to)
-    {
-        flights.Say($"{verb} {card.Id}: {FleetClients.WatchOnly(cards.NodeOf(card))}");
-        Redraw();
-        return;
-    }
-    var envelope = await to.SendAsync(DashboardCommands.CardRequest(verb, card, cardArgs, Who), stop.Token);
-    clients.NoteRefusal(cards.NodeOf(card), envelope);
-    flights.Say(envelope.Success ? $"{verb} {card.Id}: done" : $"{verb} {card.Id}: {envelope.Response?.Error ?? envelope.Error}");
+    // A card raised on another node is answered there. Every outcome is said on the card too, as the GUI does: a Dismiss hides its
+    // card from the click, and only a refusal said on it brings a refused one back (PIL853).
+    var node = cards.NodeOf(card);
+    var to = clients.For(node);
+    var refused = await CardCommands.SendAsync(cards, verb, card, cardArgs, Who, to is null ? null : to.SendAsync, FleetClients.WatchOnly(node),
+        stop.Token, envelope => clients.NoteRefusal(node, envelope));
+    flights.Say($"{verb} {card.Id}: {refused ?? "done"}");
     Redraw();
 }
 cards.OnAnswer = (card, number) => _ = CardAsync(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
@@ -227,6 +225,36 @@ chrome.Ideas.OnChatAbout = text =>
     chat.SwitchTo(null);
     chat.Prefill(text);
 };
+chat.OnAnswerNow = async sendId =>
+{
+    var refused = await ChatCommands.AnswerNowAsync(client, sendId, Who, stop.Token);
+    Redraw();
+    return refused;
+};
+chat.OnAnswerNowOn = async (node, sendId) =>
+{
+    var refused = clients.For(node) is { } to
+        ? await ChatCommands.AnswerNowAsync(to, sendId, Who, stop.Token)
+        : FleetClients.WatchOnly(node);
+    Redraw();
+    return refused;
+};
+chat.OnAnswerAsk = async (requestId, decision, words) =>
+{
+    var refused = await ChatCommands.AnswerAskAsync(client, requestId, decision, words, Who, stop.Token);
+    Redraw();
+    return refused;
+};
+chat.OnAnswerAskOn = async (node, requestId, decision, words) =>
+{
+    var refused = clients.For(node) is { } to
+        ? await ChatCommands.AnswerAskAsync(to, requestId, decision, words, Who, stop.Token)
+        : FleetClients.WatchOnly(node);
+    Redraw();
+    return refused;
+};
+// The node says the chat changed as the watchtower's words stream: read the feed now, not at the page's next look.
+feed.ChatChanged = chat.Refresh;
 chat.OnRestart = async () =>
 {
     var refused = await ChatCommands.RestartWatchtowerAsync(client, Who, stop.Token);
@@ -285,18 +313,20 @@ cards.OnConnect = node => Connect(node.Where, node.Name);
 // Forget, from the Settings page's held grant or an unreached Fleet row alike: the token is dropped and the fleet stops
 // watching that endpoint (a node still heard on the LAN is known again at the next look). Its rows turn watch-only on
 // the next draw: the steerable set is read again at once, not at the 5 s look.
-void Forget(string endpoint)
+void Forget(string key, string? endpoint = null)
 {
-    NodeTargets.Forget(endpoint);
+    // The entry goes by its machine name (an old one by its address).
+    endpoint ??= held.Entries.FirstOrDefault(e => string.Equals(e.Name, key, StringComparison.OrdinalIgnoreCase))?.Address ?? key;
+    NodeTargets.Forget(key);
     fleetWatch.Forget(endpoint);
     fleetKnownAt = DateTimeOffset.MinValue;
-    fleet.Said = $"forgot {endpoint}";
+    fleet.Said = $"forgot {key}";
     sessions.SayStatus = fleet.Said;
     Redraw();
 }
 fleet.OnForget = line =>
 {
-    Forget(line.Where);
+    Forget(line.HeldName ?? line.Where, line.Where);
     return Task.FromResult<string?>(null);
 };
 // Maintenance on / off on a row's node: this window's, or a granted one, through the client its grant gives.
@@ -333,8 +363,8 @@ if (remote is null)
     settings.LoadGrants = async ct => (await client.GrantsAsync(ct)) is { Success: true, Response: { } given }
         ? given
         : throw new InvalidOperationException("the node did not send its grants");
-    settings.LoadHeld = () => NodeTargets.Granted();
-    settings.Forget = Forget;
+    settings.LoadHeld = () => NodeTargets.Held().Entries;
+    settings.Forget = key => Forget(key);
     settings.Changed = Redraw;
 }
 feed.Start();
@@ -393,8 +423,8 @@ while (!stop.IsCancellationRequested)
         {
             fleetKnownAt = now;
             clients.Refresh();
-            granted = new HashSet<string>(NodeTargets.Granted(), StringComparer.OrdinalIgnoreCase);
-            fleetWatch.Know(granted.Select(e => (e, (string?)null)).Concat((flights.Lan?.Nodes ?? []).Select(n => (n.Endpoint, (string?)n.Name))));
+            held = new HeldView(NodeTargets.Held().Entries);
+            fleetWatch.Know(HeldView.Known(held.Entries, flights.Lan?.Nodes ?? []));
         }
         drawnAt = now;
         var (columns, rows) = terminal.Size;
@@ -412,8 +442,8 @@ while (!stop.IsCancellationRequested)
             PilotPage.Repos => repos.Tree(pages.Repos ?? new ReposScreen([], pages.Sessions.Source, now)),
             PilotPage.PullRequests => pullRequests.Tree(pages.PullRequests ?? new PullRequestsScreen(null, pages.Sessions.Source, now), width),
             PilotPage.Jobs => jobs.Tree(pages.Jobs),
-            PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, now)),
-            PilotPage.Settings => settings.Tree(now),
+            PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, held.Entries, now)),
+            PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };
         var cardsScreen = pages.Cards;

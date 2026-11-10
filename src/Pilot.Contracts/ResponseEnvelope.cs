@@ -48,6 +48,9 @@ public sealed record NodeInfo
     /// <summary>Whether the node is in maintenance (<c>pilot settings set maintenance on</c>): it takes no new flight, and says so to a create-flight; what is already flying carries on.</summary>
     public bool Maintenance { get; init; }
 
+    /// <summary>A reboot being made ready (<c>pilot node reboot request</c>, #916), in a line ("Preparing to reboot: 2 of 5 saved"); null with none.</summary>
+    public string? Reboot { get; init; }
+
     /// <summary>
     /// Whether the node's autopilot is on (<c>pilot settings set autopilot on</c>): an assistant's your-only requests (merge,
     /// land, settings…) run directly when the person asked, instead of raising a confirm card. Off unless the person saved it on.

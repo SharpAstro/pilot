@@ -34,7 +34,7 @@ internal sealed class FakeSummaryModel : ISummaryModel
 }
 
 /// <summary>
-/// The summary (#221): records built only from what the node holds, under a fixed prompt, one Haiku call that only runs when asked,
+/// The summary (#221): records built only from what the node holds, under a fixed prompt, one summary call that only runs when asked,
 /// and the answer kept per scope with its time, tokens and cost where every client sees it.
 /// </summary>
 public sealed class SummaryTests
@@ -125,8 +125,11 @@ public sealed class SummaryTests
         records.ShouldStartWith("Gone stale:");
         records.ShouldContain("- OLD1, open 1 d 6 h: no progress for 1 d 6 h, waiting on ");
         records.IndexOf("Records of the node", StringComparison.Ordinal).ShouldBeGreaterThan(records.IndexOf("- OLD1", StringComparison.Ordinal));
-        SummaryPrompt.Fleet(3, records).ShouldContain("\"Gone stale\", list those first");
+        Flat(SummaryPrompt.Fleet(3, records)).ShouldContain("\"Gone stale\", list those first");
     }
+
+    // The prompt wraps its lines for reading; what it says is the words, not where they break.
+    private static string Flat(string text) => string.Join(' ', text.Split([' ', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
 
     [Fact]
     public void TheFleetRecordsHaveNoGoneStaleSectionWhenEverythingIsFresh()
@@ -267,9 +270,9 @@ public sealed class SummaryTests
         {
             prompt.IndexOf("## Needs you", StringComparison.Ordinal).ShouldBeGreaterThan(-1);
             prompt.IndexOf("## Where it is", StringComparison.Ordinal).ShouldBeGreaterThan(prompt.IndexOf("## Needs you", StringComparison.Ordinal));
-            prompt.ShouldContain("write the single word: Nothing.");
-            prompt.ShouldContain("commit hashes, test names and results only from the records; never invent them.");
-            prompt.ShouldContain("Answer in exactly this format and nothing else");
+            Flat(prompt).ShouldContain("write the single word: Nothing.");
+            Flat(prompt).ShouldContain("commit hashes, test names and results only from the records; never invent them.");
+            Flat(prompt).ShouldContain("Answer in exactly this format and nothing else");
             prompt.IndexOf("Records:", StringComparison.Ordinal).ShouldBeGreaterThan(prompt.IndexOf("## Where it is", StringComparison.Ordinal));
         }
         fleet.ShouldContain("At most 160 words");
@@ -280,6 +283,113 @@ public sealed class SummaryTests
         one.ShouldEndWith(SummaryRecords.Flight(_state, "TIA1611", Start)!);
         SummaryPrompt.FleetWords.ShouldBe(160);
         SummaryPrompt.FlightWords.ShouldBe(120);
+    }
+
+    /// <summary>
+    /// SE1's snapshot of 2026-11-06 (pilot#797): PIL784 and PIL797 flying, a card about a worker nudged and a card with step counts and
+    /// model names in its words, and TIA2000, which landed with its PR merged, but whose leg review-notes-2 still had a worker and a ringing card, c3651.
+    /// </summary>
+    private CardRow FillSe1OfTheSixthOfNovember()
+    {
+        _state.PutFlight(Flight("PIL784", issue: 784) with { Repo = "pilot", Title = "The remaining JobTests wait on conditions", PullRequest = 793 });
+        _state.PutLeg(Leg("PIL784", "job-tests", 1, LegState.Flying, goal: "Wait on conditions") with
+        {
+            Checklist = [.. Enumerable.Range(1, 7).Select(n => new CheckItem { Text = $"Step {n}", Done = n <= 6 })], Worker = "se1-pil784-job-tests",
+            GoArounds = 2, StartedAt = Start - TimeSpan.FromMinutes(50),
+        });
+        _state.PutSession(Session("d1d1d1d1", "se1-pil784-job-tests", "PIL784", SessionState.Idle, leg: "job-tests"));
+        _state.RaiseCard(CardBin.Ring, "leg-idle", "flight/PIL784/job-tests", "PIL784's job-tests worker is idle at 6 of 7 steps ticked (Opus, high), nudging se1-pilot-node-test-failures",
+            "stale bound 45m passed; redo 1, go-around 2");
+
+        _state.PutFlight(Flight("PIL797", issue: 797) with { Repo = "pilot", Title = "Cards and the summary say what happened" });
+        _state.PutLeg(Leg("PIL797", "summary-plain", 1, LegState.Flying, goal: "Plain summary") with { Worker = "se1-pil797-summary-plain", StartedAt = Start - TimeSpan.FromMinutes(5) });
+
+        // The card is raised while TIA2000 still flies, since the node now refuses a leg card of a landed flight (#799): the stale c3651
+        // is one raised before that rule, left open after the landing.
+        _state.PutFlight(Flight("TIA2000", issue: 2000) with { PullRequest = 512 });
+        _state.PutLeg(Leg("TIA2000", "review-notes-2", 4, LegState.Flying, goal: "Act on the review notes") with
+        {
+            Checklist = [.. Enumerable.Range(1, 6).Select(n => new CheckItem { Text = $"Step {n}" })], Worker = "se1-tia2000-review-notes-2", StartedAt = Start - TimeSpan.FromHours(2),
+        });
+        _state.PutSession(Session("e2e2e2e2", "se1-tia2000-review-notes-2", "TIA2000", SessionState.Idle, leg: "review-notes-2"));
+        var stale = _state.RaiseCard(CardBin.Ring, "leg-idle", "flight/TIA2000/review-notes-2", "TIA2000's review-notes-2 worker is idle at 0 of 6 steps",
+            "Start a fresh worker on review-notes-2");
+        _state.PutFlight(Flight("TIA2000", FlightState.Landed, issue: 2000) with { PullRequest = 512, LandedAt = Start - TimeSpan.FromHours(1) });
+        return stale;
+    }
+
+    [Fact]
+    public void AGoldenOfTheSe1SnapshotWithAStaleCardGivesTheModelNothingToAskOfTheLandedFlightAndTheFixedPlainWordsRules()
+    {
+        var stale = FillSe1OfTheSixthOfNovember();
+
+        var records = SummaryRecords.Fleet(_state, Start).ShouldNotBeNull();
+        var prompt = SummaryPrompt.Fleet(2, records);
+
+        // Nothing of the landed flight is in the records, not even its stale open card (#797, summary-plain's Done-when).
+        records.ShouldNotContain("TIA2000");
+        records.ShouldNotContain("review-notes-2");
+        records.ShouldNotContain(stale.Id + " ");
+        // Only the flights in play are records; the landed flight's leg and worker are not.
+        records.ShouldContain("Flight PIL784:");
+        records.ShouldContain("Flight PIL797:");
+        records.ShouldNotContain("Flight TIA2000:");
+        records.ShouldNotContain("se1-tia2000-review-notes-2");
+        // The model is told, in words, that such a card is never a need.
+        prompt.ShouldContain("Say nothing about a flight that has landed");
+        prompt.ShouldContain("never a need");
+
+        // The prompt's own words, pinned: one plain sentence per item saying what to do, the internal words banned, Where it is a short list.
+        prompt[..prompt.IndexOf("Records:", StringComparison.Ordinal)].ShouldBe(
+            """
+            You summarise flights of background coding workers for the person who runs them. Below are records
+            about 2 flights in play and what else waits on the person, exactly as the node holds them. Answer in exactly this format and nothing else:
+
+            ## Needs you
+            - One bullet per thing that stays stuck unless the person acts: a question only they can answer, a
+              permission prompt, a card in the ring, a PR waiting for their merge, a leg that failed, a worker
+              that stopped or waits. Each bullet is one plain sentence that names the flight (or leg) and says
+              what the person should do, such as "Merge PIL784's PR #812" or "Tell PIL797's worker to carry on".
+              If there is nothing, write the single word: Nothing. When the records open with "Gone stale", list
+              those first, oldest first, each with how long it has waited and what to do.
+
+            ## Where it is
+            At most 160 words as a short list, one line per flight, the one that matters most first (what needs the
+            person, then what is flying, then what is held or planned), each line saying in plain words what has
+            been done or what is happening now. Quote commit hashes, test names and results only from the records;
+            never invent them.
+
+            Rules for every line of both sections:
+            - Plain words a person who did not watch the node would understand. Never use the node's internal words: ticked, stale bound, redo N, go-around N, model and effort names (Opus, Sonnet, Haiku, high, medium), step counts ("3 of 7 steps"), session names ("se1-pil797-summary-plain").
+              Say "restarted twice", not "go-around 2"; say "no worker is running", not "0 of 6 steps ticked".
+            - Say what to do, not what the record says. Do not restate a card's title or its detail; one sentence is enough.
+            - Say nothing about a flight that has landed, its legs, its workers or its PR. A landed flight needs no one, even if the
+              records still show an open card about it: that card is stale, never a need.
+            - Do not count flights, steps or cards. Do not repeat a line under both headings.
+
+            ## Resolved
+            - One line per open card in the records whose cause is gone (its PR merged or closed, its checks green
+              again, its conflict gone, its review given, its flight landed), written as its id alone, such as c12,
+              never a card that waits for the person's decision. The node checks each against what it holds before it
+              closes anything. If there is none, write the single word: None
+
+            """);
+    }
+
+    [Fact]
+    public async Task AStaleCardOfALandedFlightIsNoRecordAndMakingTheSummaryClosesIt()
+    {
+        // Raised while the flight flew, then left open by its landing: the node refuses such a card once the flight has landed (#799).
+        _state.PutFlight(Flight("TIA2000", issue: 2000));
+        var stale = _state.RaiseCard(CardBin.Ring, "leg-idle", "flight/TIA2000/review-notes-2", "A leg is idle");
+        _state.PutFlight(Flight("TIA2000", FlightState.Landed, issue: 2000));
+
+        SummaryRecords.Fleet(_state, Start).ShouldBeNull();
+
+        await _summaries.MakeAsync(SummaryRow.FleetScope, Ct);
+
+        _state.Cards().Single(c => c.Id == stale.Id).State.ShouldBe(CardState.Closed);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Subject.StartsWith("flight/TIA2000", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -475,12 +585,12 @@ public sealed class SummaryTests
         Should.Throw<InvalidOperationException>(() => SummaryAnswer.Parse(output)).Message.ShouldBe(why);
 
     [Fact]
-    public void TheCallIsOneHaikuPromptWithNoToolsNoMcpAndNoSavedSession()
+    public void TheCallIsOneSummaryPromptWithNoToolsNoMcpAndNoSavedSession()
     {
-        var args = ClaudeSummaryModel.Arguments;
+        var args = new ClaudeSummaryModel(Path.GetTempPath(), new RoleModels(null)).Arguments;
 
         args.ShouldContain("-p");
-        args[(args.ToList().IndexOf("--model") + 1)].ShouldBe("haiku");
+        args[(args.ToList().IndexOf("--model") + 1)].ShouldBe("sonnet");
         args[(args.ToList().IndexOf("--tools") + 1)].ShouldBe("");
         args.ShouldContain("--strict-mcp-config");
         args.ShouldNotContain("--mcp-config");

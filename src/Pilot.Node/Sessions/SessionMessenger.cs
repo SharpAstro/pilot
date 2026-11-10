@@ -128,7 +128,17 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         reason ??= command.Who.EndsWith("-watchtower", StringComparison.OrdinalIgnoreCase) ? SessionEndReasons.Watchtower : SessionEndReasons.Person;
         try
         {
-            await delivery.StopAsync(row.SessionId, cancellationToken);
+            if (Streams?.Invoke() is { } streams && streams.Handles(row))
+            {
+                // The node's own process: ended directly, not by claude stop, which knows no such job. The ledger first, as below: the row the
+                // exit publishes observes an end, and must find the node's reason there, not "finished".
+                ledger?.Stopped([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], reason, command.Who);
+                await streams.StopAsync(row, reason, cancellationToken);
+            }
+            else
+            {
+                await delivery.StopAsync(row.SessionId, cancellationToken);
+            }
         }
         catch (Exception ex) when (ex is SessionDeliveryException or TimeoutException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
@@ -148,6 +158,10 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         var cancelled = cancelJobs ? CancelJobs?.Invoke(ids, command.Who) ?? 0 : 0;
         tracker.Kick();
         await log.WriteLineAsync($"stop: who={command.Who} target={command.Target} stopped reason={reason}{(cancelJobs ? $" jobs-cancelled={cancelled}" : "")}");
+        if (Removal is not null)
+        {
+            await Removal.RemoveAsync([row.Id, row.SessionId], reason, cancellationToken);
+        }
         return state.Complete(command, null);
     }
 
@@ -158,6 +172,15 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
 
     /// <summary>How long a delivered request id is remembered, as long as the node remembers a command's request id.</summary>
     internal static readonly TimeSpan DeliveredRetention = TimeSpan.FromMinutes(15);
+
+    /// <summary>Removes the stopped session's Claude Code job once a stop is confirmed (#891); null removes none.</summary>
+    public ClaudeJobRemoval? Removal { get; init; }
+
+    /// <summary>
+    /// The node's own stream sessions (the watchtower, PIL855), resolved when needed: a say to one is written to its standard input and a
+    /// stop ends its process, ahead of every other way. Null (a test's messenger) has none.
+    /// </summary>
+    public Func<IStreamRoute?>? Streams { get; init; }
 
     /// <summary>The sends delivered, kept for the chat to give each one's transcript entry and queued line its id (PIL595). Null keeps none.</summary>
     public SendLog? Sends { get; init; }
@@ -278,6 +301,19 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                 // bring back a conversation nobody is meant to be having. One still mid-turn is relayed to, not woken: the node
                 // tells it that it is replaced before ending it (PIL556).
                 throw new SessionDeliveryException($"{row.Name} ({row.Id}) was replaced by {newer.Id}, the current session of its role; the node does not wake a replaced session");
+            }
+            if (Streams?.Invoke() is { } streams && streams.Handles(row))
+            {
+                // The node's own stream session (PIL855): the text is written to its standard input at once, read at its next step when
+                // it is working, with no stop, no resume and no intercom. A compaction is /compact on that stdin, which only an idle
+                // session takes: said into a turn it would be words.
+                if (compact && row.State != SessionState.Idle)
+                {
+                    throw new SessionDeliveryException($"{row.Name} is {row.State.ToString().ToLowerInvariant()}, not idle: a compaction is only ever its next turn, never words said into one");
+                }
+                await streams.SendAsync(row, text, compact, cancellationToken);
+                Remember(deliveredKey, SayWays.Streamed, null, null, command, text, began);
+                return (SayWays.Streamed, null, null, false);
             }
             if (compact && row is not { Kind: SessionKind.Background, State: SessionState.Idle })
             {

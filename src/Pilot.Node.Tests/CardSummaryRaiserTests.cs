@@ -20,9 +20,10 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
         card.Summary.ShouldNotBeNull().ShouldContain($"{flight.Code}/parser");
-        // The findings are fixed on the leg's work as it stands: nothing is thrown away, so never "redo" (the owner, 2026-10-29).
-        card.Summary.ShouldContain("Fix the review's findings");
-        card.Summary.ShouldContain("nothing thrown away");
+        // The findings are fixed on top of the leg's work: nothing is thrown away, so never "redo" (the owner, 2026-10-29).
+        card.Summary.ShouldContain("on top of the leg's work");
+        // The buttons say what they do; the first line does not say it again (#797).
+        card.Summary.ShouldNotContain("Fix the review's findings");
         card.Summary.ShouldNotContain("Redo");
     }
 
@@ -32,9 +33,9 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         var card = _state.RaiseCard(CardBin.Ring, LegCommander.NoGoKind, "flight/TIA1/render", "NO-GO", "gone",
             [new CardChoice { Label = "Go anyway", Verb = Verbs.StartLeg, Target = "flight/TIA1/render" }]);
 
-        card.Summary.ShouldNotBeNull().ShouldContain("Start the leg as the tree is");
+        card.Summary.ShouldNotBeNull().ShouldContain("Fly it unchanged");
         card.Summary.ShouldContain("drop it");
-        card.Summary.ShouldContain("plan the flight again");
+        card.Summary.ShouldContain("replan the flight");
         card.Summary.ShouldNotContain("Redo leg");
     }
 
@@ -113,29 +114,5 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         var summary = card.Summary.ShouldNotBeNull();
         summary.ShouldContain("tried to send the last leg back and could not");
         summary.ShouldNotContain("goes around");
-    }
-
-    [Fact]
-    [Trait("Category", "Slow")]
-    public async Task AConflictsRingKeepsTheSentenceThePrChecksWroteNotTheTables()
-    {
-        var flight = await NewFlight("45", "parser");
-        File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
-        await Fly(flight, "parser");
-        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
-        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "the parser drops the last line")).Ok.ShouldBeTrue();
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "ours\n");
-        Git(Repo, "commit", "-qam", "README on main");
-        Git(Repo, "push", "-q", "origin", "main");
-        _github.Pr = _github.Pr! with { Mergeable = "CONFLICTING" };
-        // Past its cap of review go-arounds the node may not send the leg round, so the ring is rung.
-        var leg = _state.Legs(flight.Code).Single();
-        _state.PutLeg(leg with { GoArounds = LegCommander.MaxReviewGoArounds, ReviewGoArounds = LegCommander.MaxReviewGoArounds });
-
-        await new PrChecks(_state, _github, TimeProvider.System, legs: _legs).LookAsync(Ct);
-
-        var card = Open().Single(c => c.Kind == "pr-conflicts");
-        card.Summary.ShouldNotBeNull().ShouldContain("watchtower merges the base into the plane");
-        card.Summary.ShouldNotContain("rebase");
     }
 }

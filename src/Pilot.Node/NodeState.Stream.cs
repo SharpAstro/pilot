@@ -21,6 +21,18 @@ public sealed partial class NodeState
         }
     }
 
+    /// <summary>How many clients are attached to the feed now (<see cref="Subscribe"/> not yet disposed, and not dropped for lagging).</summary>
+    public int ClientsAttached
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _sinks.Count;
+            }
+        }
+    }
+
     /// <summary>Everything a client shows, as of now.</summary>
     public SnapshotEvent Snapshot()
     {
@@ -98,7 +110,13 @@ public sealed partial class NodeState
         ApplyToState(delta);
         _seq = delta.Seq;
         Hold(delta.Seq, json);
+        WriteToSinks(json);
+        ReportSnapshotOutcome();
+    }
 
+    /// <summary>Writes one serialized event to every live client; one that cannot keep up is dropped and told. Under the lock.</summary>
+    private void WriteToSinks(byte[] json)
+    {
         for (var i = _sinks.Count - 1; i >= 0; i--)
         {
             var sink = _sinks[i];
@@ -108,8 +126,6 @@ public sealed partial class NodeState
                 sink.Overflowed();
             }
         }
-
-        ReportSnapshotOutcome();
     }
 
     private void Hold(long seq, byte[] json)
@@ -222,8 +238,12 @@ public sealed partial class NodeState
         }
     }
 
+    // The same rule as a raise (CardSummaries.Resolve), so the snapshot a client loads says what the event it streamed said: a kind's
+    // help line never comes back as a card's first line here (#797 rule 5), and a card with none stays with none.
     private static CardRow WithSummary(CardRow card) =>
-        CardSummaries.Usable(card.Summary) ? card : card with { Summary = CardSummaries.For(card.Kind, card.Subject, card.Title, card.Choices) };
+        CardSummaries.Resolve(card.Summary, card.Detail, card.Kind, card.Subject, card.Title, card.Choices) is var summary && summary == card.Summary
+            ? card
+            : card with { Summary = summary };
 
     private void Restore(SnapshotEvent snapshot)
     {
@@ -242,7 +262,7 @@ public sealed partial class NodeState
         }
         foreach (var card in snapshot.Cards ?? [])
         {
-            // A card an older node wrote has no summary: it gets one from the same table.
+            // A card an older node wrote has no summary: it gets one from the same table, unless that table only describes its kind.
             _cards[card.Id] = WithSummary(card);
         }
         _usage = snapshot.Usage;

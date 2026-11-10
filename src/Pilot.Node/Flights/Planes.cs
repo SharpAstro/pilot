@@ -683,9 +683,11 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
     }
 
     /// <summary>
-    /// Whether everything the plane changed since it left <paramref name="mainRef"/> is in it by content: the files it touched are
-    /// the same in both. A PR laid on its base and rebase-merged is in main as one commit under another id, so <c>git cherry</c>
-    /// cannot match the plane's older commits one by one; its content is what says it landed. False when git cannot say.
+    /// Whether everything the plane changed since it left <paramref name="mainRef"/> is in it by content. A PR laid on its base and
+    /// rebase-merged, or squash-merged, is in main as one commit under another id, so <c>git cherry</c> cannot match the plane's older
+    /// commits one by one; its content is what says it landed. First the files it touched are the same in both; else, as main may have
+    /// changed those files again since (PIL891, squash-merged as #929, then main's #935 edited NodeApp.Services.cs), a merge of the
+    /// plane into main changes nothing: <c>git merge-tree</c>'s tree is main's own. False when git cannot say.
     /// </summary>
     private async Task<bool> ContentInMainAsync(string worktree, string mainRef, CancellationToken cancellationToken)
     {
@@ -704,7 +706,14 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         {
             return true;
         }
-        return (await git.RunAsync(["diff", "--quiet", mainRef, "HEAD", "--", .. files], worktree, cancellationToken)).Ok;
+        if ((await git.RunAsync(["diff", "--quiet", mainRef, "HEAD", "--", .. files], worktree, cancellationToken)).Ok)
+        {
+            return true;
+        }
+        var merged = await git.RunAsync(["merge-tree", "--write-tree", "--no-messages", mainRef, "HEAD"], worktree, cancellationToken);
+        var mainTree = await git.RunAsync(["rev-parse", mainRef + "^{tree}"], worktree, cancellationToken);
+        return merged.Ok && mainTree.Ok && merged.Output.Split('\n', StringSplitOptions.TrimEntries)[0] is { Length: > 0 } tree
+            && string.Equals(tree, mainTree.Output.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -917,7 +926,11 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
 }
 
 /// <summary>A flight command that could not be done, with why: the command's error.</summary>
-public class FlightException(string message) : Exception(message);
+public class FlightException(string message) : Exception(message)
+{
+    /// <summary>The class of a merge refusal, given where it was made (<see cref="MergeRefusals"/>); null for an exception that is no merge refusal or was given none.</summary>
+    public virtual MergeRefusal? Refusal => null;
+}
 
 /// <summary>A landing refused after the merge because the plane holds work of its own the merge left out: the commits, to open a PR with.</summary>
 public sealed class LeftOutCommitsException(string message, IReadOnlyList<string> commits) : FlightException(message)

@@ -52,6 +52,12 @@ public static class LandingAnswers
     public static bool UpdatesTheBranch(string answer) =>
         answer.Contains("Base branch was modified", StringComparison.Ordinal) || answer.Contains("merge conflict", StringComparison.Ordinal);
 
+    /// <summary>
+    /// A head that moved past the one named: the node's own wait (PIL864), so a path the node runs itself starts a review of the new head
+    /// and shows no card for it.
+    /// </summary>
+    public static bool HeadMoved(string answer) => answer.Contains("Head branch was modified", StringComparison.Ordinal);
+
     /// <summary>The open cards that ask for something (not Handled lines) and show GitHub's text.</summary>
     public static CardRow[] Asking(NodeState state) =>
         [.. state.Cards(openOnly: true).Where(c => c.Bin != CardBin.Handled && $"{c.Title}\n{c.Detail}".Contains(Marker, StringComparison.Ordinal))];

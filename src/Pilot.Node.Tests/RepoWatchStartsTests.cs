@@ -12,6 +12,12 @@ namespace Pilot.Node.Tests;
 /// queued on Process.Start's lock). Read against a real temp repo with an origin and two planes, through a counting <see cref="IGit"/>:
 /// what each kind of change re-reads, and nothing more.
 /// </summary>
+/// <remarks>
+/// Slow (#933): every test here is about git itself, the starts a round makes and the .git files (packed-refs, origin's HEAD, a
+/// worktree's .git file) the watch fingerprints on disk, which no in-memory git can stand in for. They made 123 of the default
+/// run's 698 git starts (CI run 42694011544's process-start report); the Slow shards run them on every PR.
+/// </remarks>
+[Trait("Category", "Slow")]
 public sealed class RepoWatchStartsTests : IDisposable
 {
     private const string Status = "status --porcelain";
@@ -43,7 +49,7 @@ public sealed class RepoWatchStartsTests : IDisposable
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         var error = process.StandardError.ReadToEndAsync();
         var output = process.StandardOutput.ReadToEnd();
         process.WaitForExit();
@@ -303,6 +309,35 @@ public sealed class RepoWatchStartsTests : IDisposable
         runs.ShouldContain(("a", "diff --numstat origin/main...HEAD"));
         runs.ShouldContain(("b", "diff --numstat origin/main...HEAD"));
         hourly.Worktrees.Single(w => Path.GetFileName(w.Path) == "b").Dirty.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AnExplicitRefreshReReadsAStatusOlderThanFiveSecondsAndAPlainReadKeepsTheMemory()
+    {
+        // #914, the owner: "pilot repos --refresh" re-reads git "unless that was within like 5s ago"; the 15-minute memory stays for
+        // every other read. (This rig drives real git; #933 moves it onto a fake.)
+        MakeRepoWithTwoPlanes(out _, out var b);
+        var rig = NewRig();
+        await rig.RoundAsync();
+        rig.Git.Clear();
+        File.AppendAllText(Path.Combine(b, "README.md"), "edited, not added" + Environment.NewLine);
+
+        // 2 s later: an explicit refresh takes the status it has.
+        rig.Time.Advance(TimeSpan.FromSeconds(2));
+        await rig.Watch.RefreshAsync(Ct, strict: true);
+        rig.Git.Runs.ShouldBeEmpty();
+
+        // 6 s after the read: an explicit refresh reads every checkout's status again, and sees the edit.
+        rig.Time.Advance(TimeSpan.FromSeconds(4));
+        var strict = (await rig.Watch.RefreshAsync(Ct, strict: true)).Single(r => r.Name == "tianwen");
+        rig.Git.Runs.ShouldBe([.. Runs("tianwen", MainStatus), .. Runs("a", Status), .. Runs("b", Status)], ignoreOrder: true);
+        strict.Worktrees.Single(w => Path.GetFileName(w.Path) == "b").Dirty.ShouldBeTrue();
+        rig.Git.Clear();
+
+        // A plain round a minute on keeps the memory: no status read.
+        rig.Time.Advance(TimeSpan.FromMinutes(1));
+        await rig.RoundAsync();
+        rig.Git.Runs.ShouldBeEmpty();
     }
 
     [Fact]

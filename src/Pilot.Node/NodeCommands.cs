@@ -415,6 +415,23 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             var said = await Get<SessionMessenger>().SayAsync(command with { Verb = Verbs.Say, Target = target }, cancellationToken);
             return state.Complete(command, said.Error, said.Way, said.SessionId);
         }
+        if (command.Verb == Verbs.ChatNow)
+        {
+            var sendId = (command.Args ?? []).FirstOrDefault()?.Trim() ?? "";
+            if (command.Target != Verbs.WatchtowerTarget || sendId.Length == 0)
+            {
+                return state.Complete(command, $"{Verbs.ChatNow} takes the watchtower and the send id of the queued message to answer now (the chat page's queued ids, or pilot chat now <send id>)");
+            }
+            return state.Complete(command, await Get<WatchtowerChat>().AnswerNowAsync(sendId, cancellationToken));
+        }
+        if (command.Verb == Verbs.AnswerAsk)
+        {
+            if (command.Target != Verbs.WatchtowerTarget)
+            {
+                return state.Complete(command, $"{Verbs.AnswerAsk} takes the watchtower as its target, not {command.Target}");
+            }
+            return state.Complete(command, await Get<Watchtower>().AnswerAskAsync(command.Args ?? [], cancellationToken));
+        }
         if (command.Verb == Verbs.RestartWatchtower)
         {
             var why = string.Join(' ', command.Args ?? []).Trim();
@@ -519,6 +536,16 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (command.Verb == Verbs.RestartNode)
         {
             return Get<NodeSettingsCommands>().RestartNode(command);
+        }
+        if (command.Verb == Verbs.Reboot)
+        {
+            return await Get<RebootPrep>().RunAsync(command, cancellationToken);
+        }
+        if (command.Verb == Verbs.EndStray)
+        {
+            return services.GetService<StraySweep>() is { } sweep
+                ? sweep.EndOnWord(command)
+                : state.Complete(command, "this node does not look for strays (machine sampling is off), so it has none to end");
         }
         if (command.Verb == Verbs.Say)
         {
@@ -690,9 +717,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         // go-around closes the flight's cards itself once it has started the worker.
         // A move again from the move-failed card stays open as it runs too, so a failure rewrites that card rather than doubling it.
         var inProgress = choice.Verb is Verbs.Merge or Verbs.RerunChecks or Verbs.GoAround && card.Kind is LegCommander.PrReady or LegCommander.MergeFailed
-            || choice.Verb == Verbs.MoveFlight
-            // The conflict card's Resolve the conflict: the go-around reads the open card to know it is for a conflict, then closes it.
-            || choice.Verb == Verbs.GoAround && card.Kind == LegCommander.PrConflictsKind;
+            || choice.Verb == Verbs.MoveFlight;
         // Any other choice closes the card by the answer before it runs: it lands its flight, and landing closes the flight's
         // cards, this one included, as landed rather than as the answer it was. Refused, it opens again.
         if (!inProgress)
@@ -721,8 +746,9 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             state.ReopenCard(card.Id);
             return state.Complete(command, $"{choice.Label} was refused: {result.Error}");
         }
-        // One decision per answer: a design answer is recorded by the review fix it runs, which knows the question and the options.
-        if (choice.Verb != Verbs.FixPr || card.Kind != PrReviews.DesignKind)
+        // One decision per answer: a design answer is recorded by the review fix it runs, which knows the question and the options. A
+        // fix offer that carries the answer the node decided on (its Fix it has args) is that answer's too.
+        if (choice.Verb != Verbs.FixPr || card.Kind != PrReviews.DesignKind && !(card.Kind == PrReviews.FixOfferKind && choice.Args is { Length: > 0 }))
         {
             // A Fix it off the design card (a fix offer, a fixer to start again) answers no question of design: it is the card's own choice.
             var kind = choice.Verb == Verbs.FixPr ? DecisionKinds.Card : DecisionSources.KindOf(choice.Verb, choice.Args) ?? DecisionKinds.Card;
