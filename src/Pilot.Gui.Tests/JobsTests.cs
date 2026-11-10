@@ -228,6 +228,32 @@ public sealed class JobsTests
     private static JobLog LogWith(string? stuck = null, JobProcessInfo[]? tree = null) =>
         new() { Lines = ["j14: Restore complete"], Length = 64, Pid = 4812, Tree = tree ?? Tree, Stuck = stuck };
 
+    /// <summary>
+    /// A running job with everything its facts can say (shell, pid, a tree past its four rows, failures so far) and its buttons
+    /// lays out with no text over another: the facts scroll inside the panel's height instead of running under the button bar
+    /// (owner's screenshot of j4448, 2026-11-10: "failures" drawn under Pause and Cancel...).
+    /// </summary>
+    [Theory]
+    [InlineData(1280u)]
+    [InlineData(700u)]
+    public async Task ARunningJobWithATallTreeAndFailuresKeepsItsFactsClearOfItsButtons(uint width)
+    {
+        using var renderer = new RgbaImageRenderer(width, 800);
+        var running = Job("j14", JobState.Running, Live.At.AddMinutes(-11), step: "Passed Parser.NestedGroups")
+            with { Pid = 4812, Shell = "pwsh", TestsFailed = 4, FirstTestFailed = "CS0108 in PilotWidgetBase.cs" };
+        var screen = new JobsScreen(JobLine.Build([running], Live.At), "live", Live.At);
+        JobProcessInfo[] tall = [new("conhost", 4800, 0), new("pwsh", 4812, 1), new("dotnet", 5120, 2), new("dotnet", 5130, 3),
+            new("VBCSCompiler", 5140, 3), new("MSBuild", 5150, 3), new("MSBuild", 5160, 3), new("testhost", 6044, 3), new("conhost", 6100, 4)];
+        var jobs = await Following(renderer, LogWith(tree: tall), screen);
+        jobs.OnCancel = _ => Task.FromResult<string?>(null);
+        jobs.OnPause = _ => Task.FromResult<string?>(null);
+        jobs.OnForceCancel = _ => Task.FromResult<string?>(null);
+
+        var arranged = Layout.Engine.Arrange(jobs.Tree(screen), new Rect<float>(0, 0, width, 800), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+
+        TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task ARunningJobsFactsListItsPidAndTheTreeUnderItByDepthAndNothingElseDoes()
     {
