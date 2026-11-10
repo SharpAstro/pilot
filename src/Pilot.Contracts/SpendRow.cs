@@ -20,6 +20,31 @@ public sealed record SpendRow
 }
 
 /// <summary>
+/// What this calendar month's cloud benches (#823) have cost, from the job rows: the VM minutes and dollars against the monthly cap. It is
+/// the month, not the report's window, and is optional on <see cref="SpendReport"/> so <see cref="NodeWire.Version"/> stays.
+/// </summary>
+public sealed record SpendBench
+{
+    /// <summary>The month the figures are of, UTC as Azure bills: <c>2026-11</c>.</summary>
+    public required string Month { get; init; }
+
+    /// <summary>How many benches ran on a VM this month.</summary>
+    public int Runs { get; init; }
+
+    /// <summary>VM minutes this month, evicted attempts included.</summary>
+    public double Minutes { get; init; }
+
+    /// <summary>What the VMs cost this month, in USD (a bench still running counts the hours it has run).</summary>
+    public double Cost { get; init; }
+
+    /// <summary>Spot evictions this month.</summary>
+    public int Evictions { get; init; }
+
+    /// <summary>The monthly cap in USD; null while cloud benches are not set up.</summary>
+    public double? Cap { get; init; }
+}
+
+/// <summary>
 /// What the node's token ledger says was spent over one window: <c>pilot spend</c>. Every figure was spent between
 /// <see cref="From"/> and <see cref="To"/>, and says so.
 /// </summary>
@@ -46,6 +71,9 @@ public sealed record SpendReport
 
     /// <summary>By role (planner, worker, reviewer, fixer, watchtower, adhoc), the largest first.</summary>
     public required SpendRow[] Roles { get; init; }
+
+    /// <summary>This month's cloud bench VMs and the cap; null when cloud benches are not set and none has run.</summary>
+    public SpendBench? Bench { get; init; }
 }
 
 /// <summary>One line of <c>pilot spend --waste</c>: spend of one kind and reason that bought nothing kept.</summary>

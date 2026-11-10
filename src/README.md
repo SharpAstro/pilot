@@ -941,6 +941,24 @@ one that needs its hardware (a camera, a GPU kernel test): it is never sent to a
 also has an optional `BenchVm` (size, image, region, price per hour, minutes, cost, evictions, and why the bench ran local when it
 did); both fields are optional, so `NodeWire.Version` stays.
 
+**Setting cloud benches up once.** The owner does this on the node's machine, one time:
+
+1. Install the Azure CLI and sign in with `az login` (the default `bench-auth az-login`), or make a service principal and set
+   `bench-auth service-principal` with `bench-sp-app-id`, `bench-sp-tenant` and `bench-sp-secret` (the secret is kept only in the
+   node's `settings.json`).
+2. Make a resource group for the bench VMs (`az group create`), and set `bench-subscription` and `bench-resource-group`. These two
+   switch cloud benches on; the node deletes each VM and its resources when the bench ends, so the group stays empty.
+3. Leave `bench-region`, `bench-vm-size` and `bench-image` at their defaults unless a bench needs more cores, and set
+   `bench-spot-price` (the most to pay per VM hour) and `bench-monthly-cap` (the most the month's cloud benches may cost).
+4. A bench that needs the machine's own hardware takes `--local`. A bench that would pass the monthly cap runs on the node's
+   machine instead and says why. A spot eviction re-queues the bench once on a new VM, and a second eviction ends it.
+
+**Seeing what it cost.** `pilot jobs` and `pilot job` add the VM to a bench's line (size, region, minutes, cost and evictions; or
+why it ran local), and nothing to any other job. `pilot spend` ends with a line for this calendar month's bench VMs (runs, minutes,
+cost against the cap), and the Spend page shows the same under the token figures. That line is of the month, not of the window
+picked, and it is left out while cloud benches are off and none has run. The figures come from the job rows, and are the
+`SpendReport.Bench` member, optional so `NodeWire.Version` stays.
+
 ### The MCP server
 
 **Sessions the node starts are lean.** Every session it starts or resumes (watchtower, planner, worker, reviewer, validator,

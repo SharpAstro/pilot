@@ -268,9 +268,9 @@ public static partial class NodeApp
             Results.Json(ResponseEnvelope<ChatPage>.Ok(chat.Page(after ?? -1)), PilotJsonContext.Default.ResponseEnvelopeChatPage));
 
         // What the token ledger says was spent over a window (5h, today, week): pilot spend. This machine only.
-        app.MapGet(NodeWire.SpendRoute, (string? window, SpendLedger ledger, NodeState state, TimeProvider time) =>
+        app.MapGet(NodeWire.SpendRoute, (string? window, SpendLedger ledger, NodeState state, TimeProvider time, NodeOptions options) =>
             ledger.Report(window ?? "today", time.GetUtcNow(), time.LocalTimeZone, state.Usage()) is { } report
-                ? Results.Json(ResponseEnvelope<SpendReport>.Ok(report), PilotJsonContext.Default.ResponseEnvelopeSpendReport)
+                ? Results.Json(ResponseEnvelope<SpendReport>.Ok(report with { Bench = Flights.BenchSpend.For(state.Jobs(), NodeSettings.Read(options.SettingsFile), time.GetUtcNow()) }), PilotJsonContext.Default.ResponseEnvelopeSpendReport)
                 : Results.Json(ResponseEnvelope<SpendReport>.Fail($"There is no window {window}; use {string.Join(", ", SpendWindows.Names)}", 400), PilotJsonContext.Default.ResponseEnvelopeSpendReport, statusCode: 400));
 
         // The black box's decisions, oldest first: pilot decisions. This machine only, as spend is.

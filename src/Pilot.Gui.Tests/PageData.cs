@@ -377,6 +377,7 @@ internal sealed class PageData
         {
             Window = window, From = now.AddHours(-3), To = now, Messages = 420, Tokens = 4_200_000_000L, Weighted = 1_000_000_000L,
             Flights = Rows(codes), Roles = Rows(roles),
+            Bench = new SpendBench { Month = "2026-11", Runs = 3, Minutes = 41.5, Cost = 0.3125, Evictions = 1, Cap = 50 },
         };
         var waste = flights.Select((f, i) => new SpendWasteRow
         {

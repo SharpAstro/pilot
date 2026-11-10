@@ -113,6 +113,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(ResponseEnvelope<TranscriptPage>))]
 [JsonSerializable(typeof(ResponseEnvelope<ChatPage>))]
 [JsonSerializable(typeof(ResponseEnvelope<JobLog>))]
+[JsonSerializable(typeof(SpendBench))]
 [JsonSerializable(typeof(SpendReport))]
 [JsonSerializable(typeof(ResponseEnvelope<SpendReport>))]
 [JsonSerializable(typeof(SpendWasteReport))]

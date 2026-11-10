@@ -313,4 +313,44 @@ public sealed class SpendTests : IDisposable
         }
         done().ShouldBeTrue();
     }
+
+    private static JobRow BenchJob(string id, DateTimeOffset started, DateTimeOffset? ended, BenchVm? vm) => new()
+    {
+        Id = id, Command = "dotnet run", Cwd = "x", State = ended is null ? JobState.Running : JobState.Succeeded, Kind = JobKind.Bench,
+        LogPath = "x.log", Timeout = TimeSpan.FromHours(1), StartedAt = started, EndedAt = ended, BenchVm = vm,
+    };
+
+    [Fact]
+    public void TheMonthsBenchVmsAddUpFromTheJobRowsAndLeaveOutOtherMonthsAndLocalBenches()
+    {
+        var vm = new BenchVm { Size = "Standard_F8s_v2", Region = "westeurope", Minutes = 30, Cost = 0.25, PricePerHour = 0.5, Evictions = 1 };
+        var jobs = new[]
+        {
+            BenchJob("j1", Start.AddHours(-3), Start.AddHours(-2), vm),
+            BenchJob("j2", Start.AddDays(-40), Start.AddDays(-40).AddHours(1), vm),
+            BenchJob("j3", Start.AddHours(-1), Start.AddMinutes(-30), new BenchVm { LocalBecause = "asked for with --local" }),
+            BenchJob("j4", Start.AddMinutes(-60), null, new BenchVm { Size = "Standard_F8s_v2", PricePerHour = 1 }),
+        };
+
+        var month = Pilot.Node.Flights.BenchSpend.Month(jobs, Start, 0.3, 50);
+
+        month.Month.ShouldBe("2026-10");
+        month.Runs.ShouldBe(2);
+        month.Minutes.ShouldBe(90, 0.01);
+        month.Cost.ShouldBe(1.25, 0.001);
+        month.Evictions.ShouldBe(1);
+        Pilot.Contracts.BenchText.Month(month).ShouldBe("2026-10: 2 benches on VMs, 90 min, $1.25 of the $50.00 cap, 1 eviction");
+    }
+
+    [Fact]
+    public void AJobLineNamesTheVmOfACloudBenchAndWhyALocalOneRanLocalAndNothingForOtherJobs()
+    {
+        var vm = new BenchVm { Size = "Standard_F8s_v2", Region = "westeurope", Minutes = 12.5, Cost = 0.0412 };
+        var cloud = BenchJob("j1", Start, Start.AddMinutes(13), vm);
+
+        PilotCommand.JobLine(cloud).ShouldContain("Standard_F8s_v2 in westeurope, 12.5 min, $0.0412");
+        PilotCommand.JobLine(BenchJob("j2", Start, Start.AddMinutes(1), new BenchVm { LocalBecause = "asked for with --local" })).ShouldContain("ran local: asked for with --local");
+        PilotCommand.JobLine(BenchJob("j3", Start, Start.AddMinutes(1), null)).ShouldNotContain("·");
+        PilotCommand.JobLine(cloud with { Kind = JobKind.Run }).ShouldNotContain("Standard_F8s_v2");
+    }
 }

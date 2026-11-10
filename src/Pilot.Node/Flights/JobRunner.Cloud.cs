@@ -123,24 +123,8 @@ public sealed partial class JobRunner
     /// running the hours it has run so far at its price (the settings' most when the price is not known yet), so benches started together cannot
     /// all pass under a cap that one of them would spend.
     /// </summary>
-    private double MonthSpend(BenchCloud cloud, DateTimeOffset now)
-    {
-        var spent = 0.0;
-        foreach (var job in state.Jobs())
-        {
-            if (job is not { Kind: JobKind.Bench, BenchVm: { Size: not null } vm })
-            {
-                continue;
-            }
-            var when = (job.EndedAt ?? job.StartedAt).ToUniversalTime();
-            if (when.Year != now.Year || when.Month != now.Month)
-            {
-                continue;
-            }
-            spent += vm.Cost ?? (job.EndedAt is null ? (vm.PricePerHour ?? cloud.SpotPricePerHour) * Math.Max(0, (now - job.StartedAt).TotalHours) : 0);
-        }
-        return spent;
-    }
+    private double MonthSpend(BenchCloud cloud, DateTimeOffset now) =>
+        BenchSpend.Month(state.Jobs(), now, cloud.SpotPricePerHour, cloud.MonthlyCap).Cost;
 
     /// <summary>A queued bench's step, with why it stays on this machine after it when that is news (the cap, no plan for a VM).</summary>
     private string WithLocalNote(JobRow job, string step) =>

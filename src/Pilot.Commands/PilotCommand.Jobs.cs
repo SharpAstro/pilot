@@ -22,7 +22,8 @@ public static partial class PilotCommand
         var end = job.Error is { } error ? $": {error}" : job.State == JobState.Running && job.FailuresSoFar() is { } failing ? $" · {failing}" : "";
         var took = (job.EndedAt ?? DateTimeOffset.UtcNow) - job.StartedAt;
         var told = job.EndedAt is not null && job.Owner is not null && !job.Told ? ", owner not told" : "";
-        return $"{job.Id}  {state}{end}  {job.Command}  ({job.OwnerName ?? "terminal"}, {(int)took.TotalMinutes}m{told}){(job.Shell is { Length: > 0 } shell ? $"  [{shell}]" : "")}{(job.Step is { } step ? $"  · {step}" : "")}";
+        var vm = job.Kind == JobKind.Bench && BenchText.Vm(job.BenchVm) is { } where ? $"  · {where}" : "";
+        return $"{job.Id}  {state}{end}  {job.Command}  ({job.OwnerName ?? "terminal"}, {(int)took.TotalMinutes}m{told}){(job.Shell is { Length: > 0 } shell ? $"  [{shell}]" : "")}{(job.Step is { } step ? $"  · {step}" : "")}{vm}";
     }
 
     /// <summary>A merge queue entry in a line: <c>TIA61  #63  tianwen  1  abc1234  checks  · merging when checks pass</c>: flight, PR, repo, place, head, state, then why.</summary>
@@ -262,6 +263,11 @@ public static partial class PilotCommand
                     {
                         await output.WriteLineAsync($"  {row.Key.PadRight(width)}  {row.Tokens.ToString("N0", inv),14} tokens  {row.Weighted.ToString("N0", inv),14} weighted  {row.Share.ToString("0.0", inv),5} %");
                     }
+                }
+                if (report.Bench is { } bench)
+                {
+                    await output.WriteLineAsync();
+                    await output.WriteLineAsync($"bench VMs, {BenchText.Month(bench)}");
                 }
                 return 0;
             });
