@@ -19,7 +19,7 @@ public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Fun
 
     public TextWriter Error { get; set; } = TextWriter.Null;
 
-    /// <summary>How often the grants are looked at for a peer to follow or drop.</summary>
+    /// <summary>How often the grants are looked at for a peer to follow or let go.</summary>
     public TimeSpan Rescan { get; init; } = TimeSpan.FromSeconds(30);
 
     /// <summary>The first wait before a dropped stream is opened again; it doubles up to <see cref="MaxBackoff"/> and starts over once a row arrives.</summary>
