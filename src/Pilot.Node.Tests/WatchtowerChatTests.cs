@@ -686,7 +686,7 @@ public sealed partial class WatchtowerChatTests : IDisposable
         cards.ShouldAllBe(c => c.Bin == CardBin.ForYou);
         var promptCard = cards.Single(c => c.Subject == Watchtower.AskSubject("p1"));
         promptCard.Title.ShouldBe("The watchtower asks leave to run: git push origin main (Bash)");
-        promptCard.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe([("Allow", Verbs.AnswerAsk, "watchtower"), ("Deny", Verbs.AnswerAsk, "watchtower")]);
+        promptCard.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe([("Allow it", Verbs.AnswerAsk, "watchtower"), ("Deny it", Verbs.AnswerAsk, "watchtower")]);
         promptCard.Choices.Select(c => c.Args).ShouldBe([["p1", "allow"], ["p1", "deny"]]);
         var questionCard = cards.Single(c => c.Subject == Watchtower.AskSubject("q1"));
         questionCard.Title.ShouldBe("The watchtower asks you: Which repo?");

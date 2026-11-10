@@ -111,7 +111,7 @@ public sealed class MergeArmTests
         card.Title.ShouldContain("build (linux)");
         card.Detail.ShouldNotBeNull().ShouldContain("build (linux) failed");
         card.Link.ShouldBe(CheckLink);
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start a fresh worker on parser (the last one left the PR's checks failing)", Verbs.GoAround), ("Re-run the checks of TIA1's PR", Verbs.RerunChecks), ("Merge TIA1's PR again as it is", Verbs.Merge)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start a fresh worker", Verbs.GoAround), ("Run the checks again", Verbs.RerunChecks), ("Merge it as it is", Verbs.Merge)]);
         card.Choices.ShouldAllBe(c => c.Status != ChoiceStatus.Armed);
         // One card, not a second dropped-merge card beside it.
         node.State.Cards().ShouldHaveSingleItem();
@@ -128,7 +128,7 @@ public sealed class MergeArmTests
         await Look(node);
 
         node.GitHub.Summary = Pending(0);
-        (await Answer(node, Card(node, ready), "Re-run the checks of TIA1's PR")).Error.ShouldBeNull();
+        (await Answer(node, Card(node, ready), "Run the checks again")).Error.ShouldBeNull();
 
         node.GitHub.Reruns.ShouldBe([63]);
         var card = Card(node, ready);
@@ -687,7 +687,7 @@ public sealed class MergeArmTests
         card.Title.ShouldContain("ready to merge");
         card.Detail.ShouldNotBeNull().ShouldNotContain("failed");
         var merge = card.Choices.ShouldHaveSingleItem();
-        (merge.Verb, merge.Label, merge.Status).ShouldBe((Verbs.Merge, "Merge", ChoiceStatus.Passing));
+        (merge.Verb, merge.Label, merge.Status).ShouldBe((Verbs.Merge, "Merge the PR", ChoiceStatus.Passing));
         merge.Args[0].ShouldBe(PrHead);
         node.State.Cards().ShouldHaveSingleItem();
         node.GitHub.Merged.ShouldBeEmpty();

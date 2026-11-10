@@ -423,7 +423,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         await checks.LookAsync(Ct);
         F("TIA20").MergeQueue.ShouldBeNull();
         var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Bin, card.Title).ShouldBe((PrChecks.QueueDropped, CardBin.ForYou, "TIA20's PR #71 left the merge queue unmerged: failed checks"));
+        (card.Kind, card.Bin, card.Title).ShouldBe((PrChecks.QueueDropped, CardBin.ForYou, "TIA20's PR #71 left the merge queue unmerged"));
         card.Detail.ShouldNotBeNull().ShouldContain("failed checks");
         card.Link.ShouldBe("https://github.com/x/tianwen/pull/71");
         var merge = card.Choices.ShouldHaveSingleItem();
@@ -665,14 +665,14 @@ public sealed class ReviewTests1 : ReviewTestsBase
         _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: true, Position: 2);
         _github.LabelFails = "GitHub refused the label: rate limited";
         await checks.LookAsync(Ct);
-        var refused = Open().Single(c => c.Kind == PrMarks.RefusedKind);
+        var refused = _state.Cards().Single(c => c.Kind == PrMarks.RefusedKind);
         refused.Detail.ShouldNotBeNull().ShouldContain("pilot: queued");
         F(flight.Code).Review!.LabelOverride.ShouldBe("pilot: queued");
         PilotLabels(_github.Labels[number]).ShouldBe(["pilot: passed"]);
 
         // Still refused: tried again at the look, not carded twice.
         await checks.LookAsync(Ct);
-        Open().Count(c => c.Kind == PrMarks.RefusedKind).ShouldBe(1);
+        _state.Cards().Count(c => c.Kind == PrMarks.RefusedKind).ShouldBe(1);
 
         _github.LabelFails = null;
         await checks.LookAsync(Ct);

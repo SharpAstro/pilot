@@ -211,7 +211,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         card.Detail.ShouldContain("What the node tried: asked GitHub to merge once");
         card.Detail.ShouldContain("Approve the PR on GitHub");
         var choice = card.Choices.ShouldHaveSingleItem();
-        choice.Label.ShouldBe("Approve on GitHub");
+        choice.Label.ShouldBe("I approved it");
         choice.Verb.ShouldNotBe(Verbs.Merge);
     }
 
@@ -238,9 +238,9 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         var card = _state.Cards().Where(c => c.Kind == PrChecks.AutopilotMergeRefused).ShouldHaveSingleItem();
         card.Bin.ShouldBe(CardBin.Ring);
         card.Detail.ShouldNotBeNull().ShouldContain("checks fail");
-        card.Detail.ShouldContain("Re-run the failed check");
+        card.Detail.ShouldContain("Run the failed check again");
         var choice = card.Choices.ShouldHaveSingleItem();
-        choice.Label.ShouldBe("Re-run the failed check");
+        choice.Label.ShouldBe("Run the check again");
         choice.Verb.ShouldBe(Verbs.RerunChecks);
         choice.Target.ShouldBe(Verbs.FlightTarget(flight.Code));
     }
@@ -294,7 +294,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ChangesRequestedRingsWithReadTheRequestedChanges()
     {
-        var card = await RingsFor("53", _ => _github.Merge = new MergeState(MergeKinds.ChangesRequested), "Read the requested changes");
+        var card = await RingsFor("53", _ => _github.Merge = new MergeState(MergeKinds.ChangesRequested), "I read the changes");
 
         card.Detail.ShouldNotBeNull().ShouldContain("Read the changes a review on GitHub asks for");
     }
@@ -303,7 +303,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ADraftPrRingsWithMarkReadyOnGitHubNotApprove()
     {
-        var card = await RingsFor("54", _ => _github.Merge = new MergeState(MergeKinds.Blocked, Reason: "it is a draft", Draft: true), "Mark ready on GitHub");
+        var card = await RingsFor("54", _ => _github.Merge = new MergeState(MergeKinds.Blocked, Reason: "it is a draft", Draft: true), "I marked it ready");
 
         card.Detail.ShouldNotBeNull().ShouldContain("mark it ready for review on GitHub");
         card.Detail.ShouldNotContain("Approve the PR");
@@ -317,7 +317,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         {
             var own = PrRef.Parse(flight.PullRequestUrl).ShouldNotBeNull();
             _state.RaiseCard(CardBin.ForYou, PrReviews.DesignKind, Verbs.PrTarget(own.Repo, own.Number), "Which way?");
-        }, "Answer the design question");
+        }, "I answered it");
 
         // The detail is where the person finds the card to answer: the refusal's own words name it.
         card.Detail.ShouldNotBeNull().ShouldContain("has an open design question (card ");

@@ -151,7 +151,7 @@ public sealed class DiskSweepTests : IDisposable
         (scratch, probes, bytes).ShouldBe((2, 1, 2500));
         var card = _state.Cards().Single(c => c.Kind == "disk-swept");
         card.Bin.ShouldBe(CardBin.Handled);
-        card.Title.ShouldContain("2 job scratch folders");
+        card.Detail.ShouldNotBeNull().ShouldContain("2 job scratch folders");
         card.Title.ShouldContain("1 probe folder");
         card.Title.ShouldContain("2.4 KB");
 
@@ -508,7 +508,7 @@ public sealed class DiskSweepTests : IDisposable
         Directory.Exists(Path.Combine(plane, "src/A/bin")).ShouldBeTrue();
         Directory.Exists(Path.Combine(plane, ".git/obj")).ShouldBeTrue();
         Directory.Exists(Path.Combine(plane, "models/obj")).ShouldBeTrue();
-        _state.Cards().Single(c => c.Kind == "disk-swept").Title.ShouldContain("2 obj folders");
+        _state.Cards().Single(c => c.Kind == "disk-swept").Detail.ShouldNotBeNull().ShouldContain("2 obj folders");
     }
 
     [Fact]
@@ -591,8 +591,8 @@ public sealed class DiskSweepTests : IDisposable
         // 2 obj folders (200 B) + artifacts/obj (2 files) + the bin of 2 sibling projects (1 file each) = 600 B.
         bytes.ShouldBe(600);
         var card = _state.Cards().Single(c => c.Kind == "disk-swept");
-        card.Title.ShouldContain("2 obj folders");
-        card.Title.ShouldContain("3 artifacts folders");
+        card.Detail.ShouldNotBeNull().ShouldContain("2 obj folders");
+        card.Detail.ShouldNotBeNull().ShouldContain("3 artifacts folders");
         card.Title.ShouldContain("600 B");
         card.Detail!.ShouldContain("artifacts/obj");
         card.Detail!.ShouldContain("artifacts/bin");
@@ -641,7 +641,7 @@ public sealed class DiskSweepTests : IDisposable
         Directory.Exists(Path.Combine(plane, "artifacts/bin/Sib.Lib")).ShouldBeFalse();
         Directory.Exists(Path.Combine(plane, "artifacts/bin/A/release")).ShouldBeTrue();
         var card = _state.Cards().Single(c => c.Kind == "disk-swept");
-        card.Title.ShouldContain("1 artifacts folder of finished legs");
+        card.Detail.ShouldNotBeNull().ShouldContain("1 artifacts folders");
         card.Title.ShouldContain("100 B");
         card.Title.ShouldNotContain("obj folder");
     }

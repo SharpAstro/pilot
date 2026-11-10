@@ -199,7 +199,7 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
         }
         catch (Exception ex)
         {
-            state.RaiseCard(CardBin.ForYou, CardKind, Verbs.RepoTarget(repo.Path), $"benchmark of {repo.Name} ({jobId}) ended but its result could not be posted: {ex.Message.Split('\n')[0].Trim()}", ex.ToString());
+            state.RaiseCard(CardBin.ForYou, CardKind, Verbs.RepoTarget(repo.Path), $"The {repo.Name} benchmark ended; its result was not posted", $"Job {jobId}: {ex.Message.Split('\n')[0].Trim()}\n\n{ex}");
         }
         finally
         {

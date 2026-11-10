@@ -129,7 +129,7 @@ public sealed class WatchtowerLiveTests : IDisposable
 
         var end = _ends.ShouldHaveSingleItem();
         end.Args!.Single().ShouldStartWith("quiet:");
-        _state.Cards().Single(c => c.Bin == CardBin.Handled).Title.ShouldContain("no UI connected");
+        _state.Cards().Single(c => c.Bin == CardBin.Handled).Title.ShouldContain("no UI");
     }
 
     [Fact]

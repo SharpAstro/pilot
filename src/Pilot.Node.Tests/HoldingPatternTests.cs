@@ -148,7 +148,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await checks.LookAsync(Ct);
         var card = Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind);
         card.Bin.ShouldBe(CardBin.Ring);
-        card.Choices.Select(c => c.Label).ShouldBe(["Merge as it is", "Wait"]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Merge as it is", "Keep waiting"]);
         _github.Merged.ShouldBeEmpty();
 
         var merge = card.Choices[0];
@@ -172,7 +172,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await checks.LookAsync(Ct);
         var card = Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind);
 
-        var wait = card.Choices.Single(c => c.Label == "Wait");
+        var wait = card.Choices.Single(c => c.Label == "Keep waiting");
         // Dismiss is the node's own verb (NodeCommands), not the leg commander's: close the card as it does.
         wait.Verb.ShouldBe(Verbs.Dismiss);
         wait.Target.ShouldBe(Verbs.CardTarget(card.Id));

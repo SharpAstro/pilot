@@ -1321,10 +1321,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             MergeAction.RerunFailedCheck => ("Run the check again", Verbs.RerunChecks, merge.Args, false),
             MergeAction.OpenPrAgain => ("Open the PR again", Verbs.OpenPr, Array.Empty<string>(), false),
             MergeAction.MarkReadyOnGitHub => ("I marked it ready", Verbs.Dismiss, new[] { "marked ready on GitHub; the node asks again" }, true),
-            MergeAction.ResolveConflict => ((string?)null, "", Array.Empty<string>(), false),
-            MergeAction.PrClosed => ((string?)null, "", Array.Empty<string>(), false),
+            MergeAction.ResolveConflict => ((string?)null, string.Empty, Array.Empty<string>(), false),
+            MergeAction.PrClosed => ((string?)null, string.Empty, Array.Empty<string>(), false),
             _ when passing => ($"Merge PR #{number} again", Verbs.Merge, merge.Args, false),
-            _ => ((string?)null, "", Array.Empty<string>(), false),
+            _ => ((string?)null, string.Empty, Array.Empty<string>(), false),
         };
         var detail = $"{error}\n\nWhat the node tried: {tried}.\nWhat to do: {todo}";
         var title = passing ? $"{flight.Code}'s merge {how} was refused {asked.Count} times" : $"{flight.Code}'s merge {how} was refused";

@@ -475,7 +475,7 @@ public sealed class PersonsWordTests
         var (ask, ring) = AskToDismissARing(node);
         var output = new StringWriter();
 
-        (await Cli(node, output, AgentRows.SessionA, "answer", ask.Id, "Allow", "--why", Quote)).ShouldBe(0, output.ToString());
+        (await Cli(node, output, AgentRows.SessionA, "answer", ask.Id, "Allow it", "--why", Quote)).ShouldBe(0, output.ToString());
 
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
         node.State.Cards().Single(c => c.Id == ask.Id).Outcome.ShouldNotBeNull().ShouldStartWith(Autopilot.AllowLabel + ";");

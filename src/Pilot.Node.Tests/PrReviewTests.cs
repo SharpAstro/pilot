@@ -342,7 +342,7 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Detail.ShouldNotBeNull().ShouldContain("claude is not logged in");
         var choice = card.Choices.ShouldHaveSingleItem();
-        (choice.Label, choice.Verb, choice.Target).ShouldBe(("Start the review of acme/widget#7 afresh", Verbs.ReviewPr, "pr/acme/widget#7"));
+        (choice.Label, choice.Verb, choice.Target).ShouldBe(("Start the review again", Verbs.ReviewPr, "pr/acme/widget#7"));
         Directory.Exists(row.Worktree).ShouldBeFalse();
     }
 }
@@ -662,7 +662,7 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
                 await _reviews.SweepAsync(Ct);
             }
             Row("acme/widget", 7).State.ShouldBe(PrReviewState.Reviewed);
-            _state.Cards().Where(c => c.Kind == PrReviews.LeftKind).Select(c => c.Title).ShouldBe(["acme/widget#7's review worktree is still held; the node removes it when it is let go"]);
+            _state.Cards().Where(c => c.Kind == PrReviews.LeftKind).Select(c => c.Title).ShouldBe(["acme/widget#7's review worktree is still held"]);
         }
         finally
         {
@@ -841,8 +841,8 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
     {
         _github.StatusFails = "GitHub refused the status: no permission";
         (await Run(Verbs.ReviewPr, "pr/acme/gadget#9", "controller")).Error.ShouldBeNull();
-        var started = _state.Cards(openOnly: true).Single(c => c.Kind == PrMarks.RefusedKind);
-        (started.Bin, started.Title, started.Subject).ShouldBe((CardBin.ForYou, "GitHub refused the pilot/review status on acme/gadget#9: GitHub refused the status: no permission", "pr/acme/gadget#9"));
+        var started = _state.Cards().Single(c => c.Kind == PrMarks.RefusedKind);
+        (started.Bin, started.Title, started.Subject).ShouldBe((CardBin.Handled, "GitHub refused the pilot/review status on acme/gadget#9: GitHub refused the status: no permission", "pr/acme/gadget#9"));
         started.Detail.ShouldNotBeNull().ShouldContain("no permission");
         Row("acme/gadget", 9).State.ShouldBe(PrReviewState.Reviewing);
         _github.Statuses.ShouldBeEmpty();
@@ -851,7 +851,7 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
         (await Run(Verbs.PrVerdict, "pr/acme/gadget#9", Row("acme/gadget", 9).Reviewer, "approve", "fine")).Error.ShouldBeNull();
 
         Row("acme/gadget", 9).State.ShouldBe(PrReviewState.Reviewed);
-        // The status went through, so the refusal it left is over.
+        // The status went through, so the refusal it left is over: a line, born closed, and no open card.
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrMarks.RefusedKind);
         _github.Statuses.ShouldHaveSingleItem().ShouldBe((_gadgetHead, "success", $"approved at {_gadgetHead[..9]}", "https://github.com/acme/gadget/pull/9"));
     }
