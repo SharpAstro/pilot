@@ -20,29 +20,50 @@ internal static class SeedRepo
             throw new ArgumentException("the seed is tianwen", nameof(name));
         }
         CopyTree(Template.Value, root);
+        TestEnvironment.OwnFolder(root);
         return Path.Combine(root, name);
+    }
+
+    /// <summary>
+    /// The same seed, made in <paramref name="root"/> by <paramref name="git"/>'s commands, for a test on the in-memory model (#952):
+    /// <c>root/origin.git</c> and <c>root/tianwen</c>, as <see cref="Make"/> copies them.
+    /// </summary>
+    public static string MakeOn(SeededRepos git, string root)
+    {
+        Directory.CreateDirectory(root);
+        Lay(git.Run, root);
+        return Path.Combine(root, "tianwen");
     }
 
     private static string Build()
     {
         var root = NewTemplateRoot();
+        Lay((cwd, args) =>
+        {
+            Git(cwd, args);
+            return null;
+        }, root);
+        return root;
+    }
+
+    private static void Lay(Func<string, string[], object?> git, string root)
+    {
         var origin = Path.Combine(root, "origin.git");
         var repo = Path.Combine(root, "tianwen");
         Directory.CreateDirectory(repo);
-        Git(root, "init", "-q", "--bare", "-b", "main", origin);
-        Git(repo, "init", "-q", "-b", "main");
+        git(root, ["init", "-q", "--bare", "-b", "main", origin]);
+        git(repo, ["init", "-q", "-b", "main"]);
         // The node's own rebases make commits, and a CI runner has no identity of its own to make them with.
-        Git(repo, "config", "user.email", "t@example.com");
-        Git(repo, "config", "user.name", "t");
+        git(repo, ["config", "user.email", "t@example.com"]);
+        git(repo, ["config", "user.name", "t"]);
         File.WriteAllText(Path.Combine(repo, "README.md"), "hello\n");
         // A check that builds or tests needs a solution where it runs (leg plan refuses one that does not): a stub, in the plane's root.
         File.WriteAllText(Path.Combine(repo, "Tianwen.slnx"), "<Solution />\n");
-        Git(repo, "add", ".");
-        Git(repo, "commit", "-q", "-m", "first");
-        Git(repo, "remote", "add", "origin", origin);
-        Git(repo, "push", "-q", "-u", "origin", "main");
-        Git(repo, "remote", "set-head", "origin", "main");
-        return root;
+        git(repo, ["add", "."]);
+        git(repo, ["commit", "-q", "-m", "first"]);
+        git(repo, ["remote", "add", "origin", origin]);
+        git(repo, ["push", "-q", "-u", "origin", "main"]);
+        git(repo, ["remote", "set-head", "origin", "main"]);
     }
 
     private const string Prefix = "pilot-seed-";
@@ -136,7 +157,8 @@ internal static class SeedRepo
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = TestEnvironment.Start(start)!;
+        // Named to the guard as the seed template's own kind (ProcessStartGuard.KindsAllowed): built once per run, whichever test first needs it.
+        using var process = TestEnvironment.Start(start, ProcessStartGuard.SeedTemplateKind)!;
         process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();

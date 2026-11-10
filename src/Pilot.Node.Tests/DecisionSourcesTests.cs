@@ -82,53 +82,19 @@ public sealed class DecisionGoAroundTests : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2k-" + Guid.NewGuid().ToString("N")[..8]);
 
+    // The repo is on the in-memory git model (#952), which the node runs on too; real git only under PILOT_TEST_REAL_GIT=1.
+    private readonly SeededRepos _repos;
+
+    public DecisionGoAroundTests() => _repos = new SeededRepos(_root);
+
     private string Repo => Path.Combine(_root, "tianwen");
 
-    public void Dispose()
-    {
-        try
-        {
-            if (!Directory.Exists(Repo))
-            {
-                return;
-            }
-            Git(Repo, "worktree", "prune");
-            foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            TestDirs.DeleteTree(_root);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
-        {
-            // A temp folder a scanner still holds is the OS's to clear.
-        }
-    }
-
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = TestEnvironment.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    public void Dispose() => _repos.Dispose();
 
     private CardRow Ready(NodeHarness node, params CardChoice[] choices)
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        Git(Repo, "config", "user.email", "t@example.com");
-        Git(Repo, "config", "user.name", "t");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "commit", "-q", "-m", "first");
-        Git(Repo, "branch", "flight/tia1");
+        _repos.Seed("tianwen");
+        _repos.Run(Repo, "branch", "flight/tia1");
         node.State.PutFlight(new FlightRow
         {
             Code = "TIA1", Repo = "tianwen", RepoPath = Repo, Issue = 1, Branch = "flight/tia1", Worktree = Path.Combine(_root, "plane-TIA1"),
@@ -143,7 +109,7 @@ public sealed class DecisionGoAroundTests : IDisposable
     [Fact]
     public async Task DecisionRecordedOnceForAPersonsGoAroundAnsweredFromTheCard()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
         var ready = Ready(node,
             new CardChoice { Label = "Redo leg parser", Verb = Verbs.GoAround, Target = Verbs.LegTarget("TIA1", "parser"), Args = ["the PR conflicts with its base: rebase it"] },
             new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Subject, Args = [PrHead] });
@@ -163,7 +129,7 @@ public sealed class DecisionGoAroundTests : IDisposable
     [Fact]
     public async Task DecisionLabelledNodeForTheNodesOwnMergeWithAutopilotOff()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
         node.State.PutFlight(new FlightRow
         {
             Code = "TIA1", Repo = "tianwen", RepoPath = node.Folder, Issue = 1, Branch = "flight/tia1", Worktree = Path.Combine(node.Folder, "plane-TIA1"),

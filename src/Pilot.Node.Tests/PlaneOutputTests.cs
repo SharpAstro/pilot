@@ -10,6 +10,10 @@ namespace Pilot.Node.Tests;
 [Collection(JobsCollection.Name)]
 public sealed class PlaneOutputTests : JobTestsBase
 {
+    public PlaneOutputTests() : base(fakeLauncher: true)
+    {
+    }
+
     private string PlaneIn(string code)
     {
         var plane = Path.Combine(_root, "org", "pilot", ".claude", "worktrees", code);
@@ -349,6 +353,7 @@ public sealed class PlaneOutputTests : JobTestsBase
     [Trait("Category", "Slow")]
     public async Task ANoBuildJobInAPlaneWithNoNodeBuildOpensItsLogWithTheNoticeAndStillEnds()
     {
+        RealLauncher();
         var jobs = Runner(planeOutput: true);
         var plane = PlaneIn("pil6");
 
@@ -422,6 +427,7 @@ public sealed class PlaneOutputTests : JobTestsBase
     [Trait("Category", "Slow")]
     public async Task ABuildWithThePlaneVariablesPutsEveryProjectUnderThePlaneAndARunNoBuildFindsIt()
     {
+        RealLauncher();
         var (org, lib, planes) = LibAndPlanes("slow-one", "p1");
         var plane = planes[0];
         var artifacts = Path.Combine(plane, "artifacts");
@@ -462,6 +468,7 @@ public sealed class PlaneOutputTests : JobTestsBase
     [Trait("Category", "Slow")]
     public async Task TwoPlanesBuildingASiblingAtOnceWriteLibsOutputUnderEachPlaneAndNotTheClone()
     {
+        RealLauncher();
         var (org, lib, planes) = LibAndPlanes("slow-two", "p1", "p2");
 
         var results = await Task.WhenAll(planes.Select(plane => Dotnet(plane, planeOutput: true, "build", "-c", "Release", "-nologo")));

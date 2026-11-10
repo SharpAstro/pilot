@@ -116,10 +116,11 @@ jobs:
       # (the windows hang of flight/pil461 named no test). A diagnostic, not a raised test timeout.
       run: dotnet test Pilot.Node.Tests -c $BUILD_CONF --no-build --filter 'Category!=Slow' --logger "console;verbosity=detailed" --blame-hang-timeout 5m --blame-hang-dump-type mini
       env:
-        # The tests that start real processes (#933): written at the run's end, read by the next two steps.
+        # The tests that start real processes (#933): written at the run's end, read by the next steps. The tests' own guard (#952) fails
+        # a test outside Category=Slow that starts one; the report catches a start whose exception the node swallowed, or one with no test.
         PILOT_TEST_PROCESS_REPORT: ${{ github.workspace }}/process-starts.txt
     - name: Name the tests that start real processes
-      # The top of the report in the job's summary, the whole of it as an artifact: the list #933 moves onto fakes, test by test.
+      # The top of the report in the job's summary, the whole of it as an artifact: the list of tests to move onto fakes, test by test.
       if: always()
       run: |
         report="$GITHUB_WORKSPACE/process-starts.txt"
@@ -135,6 +136,17 @@ jobs:
         name: process-starts-${{ matrix.os }}
         path: process-starts.txt
         if-no-files-found: ignore
+    - name: Fail when a test started a real process
+      # The report is written only when a test outside Category=Slow (or Integration) started a process, or one started with no test but
+      # a named fixture (#952), so its existence fails the job. It runs after the summary and the upload, so both still show it.
+      if: always()
+      run: |
+        report="$GITHUB_WORKSPACE/process-starts.txt"
+        if [ -f "$report" ]; then
+          echo "::error::A test outside Category=Slow started a real process; the list is in the job summary and the process-starts artifact."
+          head -n 41 "$report"
+          exit 1
+        fi
     - name: Upload the hang dump
       if: failure()
       uses: actions/upload-artifact@v7

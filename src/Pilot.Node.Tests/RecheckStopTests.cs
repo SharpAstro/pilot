@@ -40,22 +40,11 @@ public sealed class RecheckStopTests : LegCommanderTestsBase
         await Leg(Verbs.Check, "flight/TIA1/parser", "2");
     }
 
-    private static void Kill(JobRow job)
-    {
-        if (job.Pid is not { } pid)
-        {
-            return;
-        }
-        try
-        {
-            using var process = System.Diagnostics.Process.GetProcessById(pid);
-            process.Kill(entireProcessTree: true);
-        }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
-        {
-            // Already gone.
-        }
-    }
+    // The check's job runs on an in-memory launcher (#933): its process is in this table, not on the machine.
+    private readonly FakeJobLauncher _launcher = new(TimeProvider.System);
+
+    // Ends the job the stopped node left, so nothing outlives the test.
+    private void Kill(JobRow job) => _launcher.JobOrNull(job.Id)?.Die();
 
     // A real node's runner and a commander on it; the finish is cancelled by the node stopping, as the command route cancels it.
     // Returns the check job as the stopped node left it.
@@ -66,22 +55,25 @@ public sealed class RecheckStopTests : LegCommanderTestsBase
         using var lifetime = new Lifetime();
         var jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data")), TimeProvider.System)
         {
+            Launcher = _launcher,
             FreeMemory = () => null,
             Lifetime = lifetime,
             Say = (command, _) => Task.FromResult(_state.Complete(command, null)),
         };
         await jobs.StartAsync(CancellationToken.None);
         await jobs.Recovered.WaitAsync(Ceiling, Ct);
-        var legs = new LegCommander(_state, _workers, new JobCheckRunner(jobs), _github, new GitCli(), new Planes(new GitCli()), _flights,
+        var legs = new LegCommander(_state, _workers, new JobCheckRunner(jobs), _github, _git, new Planes(_git), _flights,
             new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1"), TimeProvider.System);
 
         var finishing = legs.RunAsync(new CommandRequest { Verb = Verbs.FinishLeg, Target = "flight/TIA1/parser", Args = ["done", "parser in"], Who = "tests" }, lifetime.ApplicationStopping);
         JobRow? running = null;
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        while (running is null && clock.Elapsed < Ceiling)
+        // The check's row comes Running with its pid: waited for as the state changes, not looked at again after a pause.
+        var (changes, subscription) = StateChanges.Watch(_state);
+        using (subscription)
         {
-            running = _state.Jobs().FirstOrDefault(j => j is { Kind: JobKind.Check, State: JobState.Running, Pid: not null, ProcessStartedAt: not null });
-            await Task.Delay(50, Ct);
+            await changes.UntilAsync(
+                () => (running = _state.Jobs().FirstOrDefault(j => j is { Kind: JobKind.Check, State: JobState.Running, Pid: not null, ProcessStartedAt: not null })) is not null,
+                Ceiling, Ct, "the check's job running");
         }
         running.ShouldNotBeNull();
         try

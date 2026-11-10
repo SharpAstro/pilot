@@ -395,6 +395,80 @@ public sealed class FakeRepoGitTests : IDisposable
     }
 
     [Fact]
+    public void CheckoutLsTreeTheShowOfNamesAWorktreeListAQuietSymbolicRefAndRemoteRemoveAnswerAsTheNodeAndTheTestsAskThem()
+    {
+        RunOn(_git, Repo, "checkout", "-q", "-b", "flight/x", "main");
+        RunOn(_git, Repo, "symbolic-ref", "--short", "HEAD").ShouldBe("flight/x");
+        Directory.CreateDirectory(Path.Combine(Repo, ".github", "workflows"));
+        File.WriteAllText(Path.Combine(Repo, ".github", "workflows", "dotnet.yml"), "on: push\n");
+        File.WriteAllText(Path.Combine(Repo, "other.txt"), "x\n");
+        RunOn(_git, Repo, "add", ".");
+        RunOn(_git, Repo, [.. Who, "commit", "-q", "-m", "ci"]);
+
+        RunOn(_git, Repo, "show", "--name-only", "--format=", "HEAD").ShouldBe(".github/workflows/dotnet.yml\nother.txt");
+        RunOn(_git, Repo, "ls-tree", "--name-only", "HEAD", ".github/workflows/").ShouldBe(".github/workflows/dotnet.yml");
+        RunOn(_git, Repo, "ls-tree", "--name-only", "HEAD", ".github/").ShouldBe(".github/workflows");
+        RunOn(_git, Repo, "ls-tree", "-r", "--name-only", "HEAD").ShouldBe(".github/workflows/dotnet.yml\nREADME.md\nTianwen.slnx\nother.txt");
+        RunOn(_git, Repo, "grep", "-l", "-i", "-F", "-e", "\"nope\"", "-e", "ON: PUSH", "HEAD", "--", "*.yml", "*.props").ShouldBe("HEAD:.github/workflows/dotnet.yml");
+        _git.Run(["grep", "-l", "-F", "-e", "ON: PUSH", "HEAD", "--", "*.yml"], Repo).Ok.ShouldBeFalse();
+        RunOn(_git, Repo, "checkout", "-q", "main");
+        RunOn(_git, Repo, "symbolic-ref", "--short", "HEAD").ShouldBe("main");
+        _git.Run(["checkout", "-q", "-b", "flight/x"], Repo).Error.ShouldContain("already exists");
+        RunOn(_git, Repo, "merge", "--ff-only", "-q", "flight/x");
+        RunOn(_git, Repo, "rev-parse", "main").ShouldBe(RunOn(_git, Repo, "rev-parse", "flight/x"));
+
+        var detached = Path.Combine(Repo, ".claude", "worktrees", "d");
+        RunOn(_git, Repo, "worktree", "add", "--detach", detached, "HEAD");
+        var list = RunOn(_git, Repo, "worktree", "list");
+        list.ShouldContain("[main]");
+        list.ShouldContain("(detached HEAD)");
+        var quiet = _git.Run(["symbolic-ref", "-q", "HEAD"], detached);
+        (quiet.Ok, quiet.Output, quiet.Error).ShouldBe((false, "", ""));
+
+        RunOn(_git, Repo, "remote", "remove", "origin");
+        _git.Run(["show-ref", "--verify", "--quiet", "refs/remotes/origin/main"], Repo).Ok.ShouldBeFalse();
+        _git.Run(["remote", "get-url", "origin"], Repo).Ok.ShouldBeFalse();
+        _git.Unsupported.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void APushOfTwoRefspecsMovesBothAndSwitchMakesALocalBranchOfARemoteTrackingOne()
+    {
+        RunOn(_git, Repo, "checkout", "-q", "-b", "feature/two", "main");
+        File.WriteAllText(Path.Combine(Repo, "two.txt"), "two\n");
+        RunOn(_git, Repo, "add", ".");
+        RunOn(_git, Repo, [.. Who, "commit", "-q", "-m", "two"]);
+        var head = RunOn(_git, Repo, "rev-parse", "HEAD");
+
+        RunOn(_git, Repo, "push", "-q", "-f", "origin", "HEAD:refs/heads/feature/two", "HEAD:refs/pull/2/head");
+
+        RunOn(_git, Repo, "rev-parse", "refs/remotes/origin/feature/two").ShouldBe(head);
+        var origin = Path.Combine(Path.GetDirectoryName(Repo)!, "origin.git");
+        RunOn(_git, origin, "rev-parse", "refs/pull/2/head").ShouldBe(head);
+        // A branch only origin has (pushed from HEAD to a name no local branch has): switch makes it local, tracking origin's.
+        RunOn(_git, Repo, "push", "-q", "origin", "HEAD:refs/heads/only-origin");
+        RunOn(_git, Repo, "checkout", "-q", "main");
+        RunOn(_git, Repo, "switch", "-q", "only-origin");
+        RunOn(_git, Repo, "symbolic-ref", "--short", "HEAD").ShouldBe("only-origin");
+        RunOn(_git, Repo, "rev-parse", "HEAD").ShouldBe(head);
+        RunOn(_git, Repo, "config", "--get", "branch.only-origin.remote").ShouldBe("origin");
+        _git.Unsupported.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ABranchGivenByNameAloneIsMadeAtHeadAndHeadStaysWhereItWas()
+    {
+        var head = RunOn(_git, Repo, "rev-parse", "HEAD");
+
+        RunOn(_git, Repo, "branch", "flight/tia1");
+
+        RunOn(_git, Repo, "rev-parse", "refs/heads/flight/tia1").ShouldBe(head);
+        RunOn(_git, Repo, "symbolic-ref", "--short", "HEAD").ShouldBe("main");
+        _git.Run(["branch", "flight/tia1"], Repo).Error.ShouldContain("already exists");
+        _git.Unsupported.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void AFixerBranchTracksOriginFeatureSevenAndItsPushMovesTheOriginsBranch()
     {
         var shape = PrShape();

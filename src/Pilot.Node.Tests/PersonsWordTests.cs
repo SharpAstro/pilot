@@ -78,15 +78,10 @@ public sealed class PersonsWordTests
         return (ask, ring);
     }
 
-    private static CardRow FailedLeg(NodeHarness node)
+    private static CardRow FailedLeg(NodeHarness node, SeededRepos repos)
     {
-        // Finishing a leg looks at its plane, so the plane is a real (empty) repository.
-        var plane = Path.Combine(node.Folder, "plane");
-        Directory.CreateDirectory(plane);
-        using (var init = TestEnvironment.Start(new System.Diagnostics.ProcessStartInfo("git", ["init", "-q", plane]) { CreateNoWindow = true })!)
-        {
-            init.WaitForExit();
-        }
+        // Finishing a leg looks at its plane, so the plane is a repository, on the in-memory git (#952) the node runs on.
+        var plane = repos.Seed("plane");
         node.State.PutFlight(new FlightRow
         {
             Code = "TIA1", Repo = "tianwen", RepoPath = plane, Issue = 1, Branch = "flight/tia1", Worktree = plane, Base = "main",
@@ -117,13 +112,13 @@ public sealed class PersonsWordTests
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFailedLegIsMarkedDoneAnywayAtThePersonsWord()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        using var repos = new SeededRepos(Path.Combine(Path.GetTempPath(), "p2w-" + Guid.NewGuid().ToString("N")[..8]));
+        await using var node = await NodeHarness.StartAsync(Ct, git: repos.Git);
         Transcript(node, Said("Mark it done anyway, the ephemeris is not needed"));
         await Tower(node, "busy");
-        var card = FailedLeg(node);
+        var card = FailedLeg(node, repos);
 
         var result = await Answer(node, card, "Mark done anyway", "mark it done ANYWAY,   the ephemeris is not needed");
 
@@ -150,11 +145,12 @@ public sealed class PersonsWordTests
     [Fact]
     public async Task WithNoPersonsMessageInItsTurnTheWatchtowerStaysFenced()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        using var repos = new SeededRepos(Path.Combine(Path.GetTempPath(), "p2w-" + Guid.NewGuid().ToString("N")[..8]));
+        await using var node = await NodeHarness.StartAsync(Ct, git: repos.Git);
         Transcript(node, Replied("nothing yet"));
         await Tower(node, "busy");
         var (ask, ring) = AskToDismissARing(node);
-        var failed = FailedLeg(node);
+        var failed = FailedLeg(node, repos);
 
         (await Answer(node, ask, "Allow it", Quote)).Error.ShouldNotBeNull();
         (await Answer(node, failed, "Mark done anyway", Quote)).Error.ShouldNotBeNull();
@@ -211,10 +207,11 @@ public sealed class PersonsWordTests
     [Fact]
     public async Task OnlyAnswerAndDismissOfACardTakeThePersonsWord()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        using var repos = new SeededRepos(Path.Combine(Path.GetTempPath(), "p2w-" + Guid.NewGuid().ToString("N")[..8]));
+        await using var node = await NodeHarness.StartAsync(Ct, git: repos.Git);
         Transcript(node, Said(Words));
         await Tower(node, "busy");
-        FailedLeg(node);
+        FailedLeg(node, repos);
 
         var finished = await Send(node, new CommandRequest
         {

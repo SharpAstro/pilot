@@ -24,6 +24,8 @@ internal sealed class TestGit : IGit
     /// <param name="makeFake">Builds the model when it is not the default tianwen repo (PrFixTestsBase builds its PR shape with <see cref="FakePrOrigins"/>); null for the default.</param>
     public TestGit(string root, bool realGit, Action makeReal, bool withOrigin = true, bool withSolution = true, Func<FakeRepoGit>? makeFake = null)
     {
+        // A git the node runs in this folder on its own threads (no test in their context) is this test's start: see TestEnvironment.OwnFolder.
+        TestEnvironment.OwnFolder(root);
         _makeReal = makeReal;
         if (realGit || Environment.GetEnvironmentVariable("PILOT_TEST_REAL_GIT") == "1")
         {

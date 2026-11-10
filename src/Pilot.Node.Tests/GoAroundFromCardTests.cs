@@ -23,38 +23,14 @@ public sealed class GoAroundFromCardTests : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2g-" + Guid.NewGuid().ToString("N")[..8]);
 
+    // The repo is on the in-memory git model (#952), which the node runs on too; real git only under PILOT_TEST_REAL_GIT=1.
+    private readonly SeededRepos _repos;
+
+    public GoAroundFromCardTests() => _repos = new SeededRepos(_root);
+
     private string Repo => Path.Combine(_root, "tianwen");
 
-    public void Dispose()
-    {
-        try
-        {
-            Git(Repo, "worktree", "prune");
-            foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            TestDirs.DeleteTree(_root);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
-        {
-            // A temp folder a scanner still holds is the OS's to clear.
-        }
-    }
-
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = TestEnvironment.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    public void Dispose() => _repos.Dispose();
 
     /// <summary>
     /// TIA1 with its one leg done, its review passed and PR #63 open at <see cref="PrHead"/>, in a real repo whose branch has a
@@ -62,14 +38,8 @@ public sealed class GoAroundFromCardTests : IDisposable
     /// </summary>
     private CardRow Ready(NodeHarness node, string kind, params CardChoice[] choices)
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        Git(Repo, "config", "user.email", "t@example.com");
-        Git(Repo, "config", "user.name", "t");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "commit", "-q", "-m", "first");
-        Git(Repo, "branch", "flight/tia1");
+        _repos.Seed("tianwen");
+        _repos.Run(Repo, "branch", "flight/tia1");
         node.State.PutFlight(new FlightRow
         {
             Code = "TIA1", Repo = "tianwen", RepoPath = Repo, Issue = 1, Branch = "flight/tia1", Worktree = Path.Combine(_root, "plane-TIA1"),
@@ -96,10 +66,9 @@ public sealed class GoAroundFromCardTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AGoAroundAnsweredFromTheMergeFailedCardRunsAndTheLegFliesAgainUnderAChangesReview()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
         var ready = Ready(node, LegCommander.PrReady, new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Subject, Args = [PrHead] });
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
         (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
@@ -117,10 +86,9 @@ public sealed class GoAroundFromCardTests : IDisposable
     [Theory]
     [InlineData("conflicts with its base")]
     [InlineData("is behind its base")]
-    [Trait("Category", "Slow")]
     public async Task AGoAroundAnsweredFromAConflictsOrBehindCardRunsAndTheLegFliesAgainUnderAChangesReview(string what)
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
         // The card as PrChecks leaves it when the node's own rebase of a passed review did not send it back: the go-around is all it offers.
         var why = $"the PR {what}: rebase the plane onto its base, resolving every conflict so both sides' work stays, rerun the check, and push";
         var card = Ready(node, LegCommander.PrReady, new CardChoice { Label = "Redo leg parser", Verb = Verbs.GoAround, Target = Verbs.LegTarget("TIA1", "parser"), Args = [why] });
@@ -134,7 +102,7 @@ public sealed class GoAroundFromCardTests : IDisposable
     [Fact]
     public async Task AGoAroundRefusedLeavesItsCardOpen()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
         var ready = Ready(node, LegCommander.PrReady, new CardChoice { Label = "Redo leg parser", Verb = Verbs.GoAround, Target = Verbs.LegTarget("TIA1", "parser"), Args = [" "] });
 
         // A go-around needs a why: the card stays for the person to try again, and nothing was sent back.

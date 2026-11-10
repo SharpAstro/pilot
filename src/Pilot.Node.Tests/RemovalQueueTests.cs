@@ -12,6 +12,7 @@ public sealed class RemovalQueueTests : IDisposable
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2q-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly SeededRepos _repos;
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private readonly FakeWorkers _workers = new();
     private readonly FakeGitHub _github = new();
@@ -23,6 +24,8 @@ public sealed class RemovalQueueTests : IDisposable
 
     public RemovalQueueTests()
     {
+        // The model owns _root, so PrOrigins.Git and the PrOrigins.Push below are answered by it; real git only when the run asks (PILOT_TEST_REAL_GIT=1).
+        _repos = new SeededRepos(_root);
         var (widget, head) = PrOrigins.Make(_root, "widget", 7);
         _widgetHead = head;
         Directory.CreateDirectory(Roots);
@@ -31,7 +34,7 @@ public sealed class RemovalQueueTests : IDisposable
         PrOrigins.Git(WidgetClone, "config", $"url.{widget.Replace('\\', '/')}.insteadOf", "https://github.com/acme/widget.git");
         _github.Prs["acme/widget#7"] = new PullRequest(7, "OPEN", head, "https://github.com/acme/widget/pull/7", Title: "PR 7", Author: "ada", Base: "main");
 
-        var git = new GitCli();
+        var git = _repos.Git;
         _options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [Roots]);
         _queue = new RemovalQueue(RemovalQueue.FileIn(_options.DataFolder), TimeProvider.System);
         _planes = new Planes(git, _queue);
@@ -46,17 +49,7 @@ public sealed class RemovalQueueTests : IDisposable
 
     private string WidgetClone => Path.Combine(Roots, "widget");
 
-    public void Dispose()
-    {
-        try
-        {
-            PrOrigins.Git(WidgetClone, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        PrOrigins.Delete(_root);
-    }
+    public void Dispose() => _repos.Dispose();
 
     private Task<CommandResult> Run(string verb, string target, string who, params string[] args) =>
         _reviews.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct);
@@ -98,7 +91,6 @@ public sealed class RemovalQueueTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewWhoseWorktreeIsHeldClosesAtOnceWithOneHandledLineAndAQueueEntry()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
@@ -150,7 +142,6 @@ public sealed class RemovalQueueTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ANewPinAtAQueuedHeldPathIsMadeBesideItAndAReleasedOneIsClearedFirst()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
@@ -177,17 +168,13 @@ public sealed class RemovalQueueTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
+    [Trait("Category", "Slow")] // About git itself: a file git ignores (.git/info/exclude) keeps status clean while a process holds it; real git, in a folder of its own.
     public async Task ALandedFlightWhosePlaneFolderIsHeldSaysSoOnAHandledLineAndQueuesIt()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
-        var repo = Path.Combine(_root, "tianwen");
-        Directory.CreateDirectory(repo);
-        PrOrigins.Git(repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(repo, "README.md"), "hello\n");
-        PrOrigins.Git(repo, "add", ".");
-        PrOrigins.Git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        var flights = new FlightCommander(_state, _planes, TimeProvider.System);
+        using var real = new SeededRepos(Path.Combine(Path.GetTempPath(), "p2q-real-" + Guid.NewGuid().ToString("N")[..8]), realGit: true);
+        var repo = real.Seed("tianwen");
+        var flights = new FlightCommander(_state, new Planes(real.Git, _queue), TimeProvider.System);
         (await flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(repo), Args = ["1"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
         var flight = _state.Flights().Single();
 
@@ -257,7 +244,6 @@ public sealed class RemovalQueueTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFolderHeldPastThreeStartsIsOneHandledLineNamingTheHolderAndNoMoreOnceItIsReleased()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
@@ -424,7 +410,6 @@ public sealed class RemovalQueueTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AQueuedCachePathReusedAfterReleaseIsNoLongerInTheQueue()
     {
         var (gizmo, head) = PrOrigins.Make(_root, "gizmo", 3);

@@ -21,6 +21,7 @@ public abstract class PackageWaitTestsBase : IDisposable
     private protected const string MergeCommit = "feedbeef00000000feedbeef00000000feedbeef";
 
     private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2w-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly SeededRepos _repos;
     private protected readonly ManualTime _time = new(Start);
     private protected readonly FakeGitHub _github = new();
     private protected readonly FakeNuGetFeed _feed = new();
@@ -28,18 +29,14 @@ public abstract class PackageWaitTestsBase : IDisposable
 
     protected PackageWaitTestsBase()
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
+        _repos = new SeededRepos(_root);
+        _repos.Seed("tianwen");
 
-        Directory.CreateDirectory(Path.Combine(Consumer, "src", "App"));
-        Git(Consumer, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Consumer, "src", "App", "App.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><PackageReference Include=\"Drawboard.Core\" Version=\"1.*\" /></ItemGroup></Project>\n");
-        Git(Consumer, "add", ".");
-        Git(Consumer, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
+        _repos.Seed("sdlapp", files: new Dictionary<string, string>
+        {
+            [Path.Combine("src", "App", "App.csproj")] =
+                "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><PackageReference Include=\"Drawboard.Core\" Version=\"1.*\" /></ItemGroup></Project>\n",
+        });
     }
 
     private protected string Repo => Path.Combine(_root, "tianwen");
@@ -80,35 +77,12 @@ public abstract class PackageWaitTestsBase : IDisposable
         {
             journal.Dispose();
         }
-        try
-        {
-            Git(Repo, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        TestDirs.DeleteTree(_root);
+        _repos.Dispose();
     }
 
-    private protected static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = TestEnvironment.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    private protected string Git(string cwd, params string[] args) => _repos.Run(cwd, args);
 
-    private protected static void Commit(string repo, string message)
+    private protected void Commit(string repo, string message)
     {
         Git(repo, "add", ".");
         Git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", message);
@@ -133,9 +107,8 @@ public abstract class PackageWaitTestsBase : IDisposable
     private protected Rig NewRig(NodeState? state = null)
     {
         state ??= new NodeState(new InMemoryJournal(), _time);
-        var git = new GitCli();
-        var releases = new PackageReleases(git, _feed, _time);
-        var flights = new FlightCommander(state, new Planes(git), _time, github: _github, packages: releases);
+        var releases = new PackageReleases(_repos.Git, _feed, _time);
+        var flights = new FlightCommander(state, _repos.Planes(), _time, github: _github, packages: releases);
         // The tests look when they say; the delays are the defaults, and the clock is theirs.
         return new Rig(state, flights, new PackageWatch(state, flights, _feed, _github, _time));
     }
@@ -177,7 +150,6 @@ public abstract class PackageWaitTestsBase : IDisposable
 public sealed class PackageWaitTests1 : PackageWaitTestsBase
 {
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightConnectedToAReleasingFlightStaysHeldAfterTheLandAndFliesWhenTheVersionAndItsNupkgAreOnNuGet()
     {
         MakeRepoAReleaser();
@@ -226,7 +198,6 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ABumpedLineWaitsForAnyVersionOfItAndAnOlderLineDoesNotCount()
     {
         MakeRepoAReleaser();
@@ -252,7 +223,6 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightConnectedToAFlightThatReleasesNothingFliesOnTheLandAsBefore()
     {
         // No version line and no package in this repo.
@@ -268,7 +238,6 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APackageNotUpThirtyMinutesAfterThePublishRunSucceededRaisesOneCardNamingTheRunAndTheVersions()
     {
         MakeRepoAReleaser();
@@ -312,7 +281,6 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APublishRunThatFailedRaisesTheCardAtOnce()
     {
         MakeRepoAReleaser();
@@ -336,7 +304,6 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APublishRunThatNeverRanRaisesTheCardOnceTheStartGraceIsOver()
     {
         MakeRepoAReleaser();
@@ -364,7 +331,6 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AWaitSurvivesARestartOfTheNodeAndSoDoesTheCardAlreadyRaised()
     {
         MakeRepoAReleaser();
@@ -400,7 +366,6 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ALandThatCannotReadNuGetIsRefusedAndLeavesTheFlightFlyingWithItsPlane()
     {
         MakeRepoAReleaser();
@@ -419,7 +384,6 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ANugetOutageDuringAWaitIsNoNewsAndTheNextLookAsksAgain()
     {
         MakeRepoAReleaser();
@@ -440,7 +404,6 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightOfTheProducersOwnRepoFliesOnTheLandBecauseItBuildsFromSource()
     {
         MakeRepoAReleaser();
@@ -457,7 +420,6 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightOfAnotherRepoThatNamesNoPackageOfTheReleaseFliesOnTheLand()
     {
         MakeRepoAReleaser();
@@ -479,7 +441,6 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
 public sealed class PackageWaitTests2 : PackageWaitTestsBase
 {
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ACentralPackageVersionFileNamingThePackageIsAReferenceToo()
     {
         MakeRepoAReleaser();
@@ -497,7 +458,6 @@ public sealed class PackageWaitTests2 : PackageWaitTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APackableRepoWhoseCiPushesNoPackageOnAPushToMainReleasesNothingAndNobodyWaits()
     {
         MakeRepoAReleaser();
@@ -515,7 +475,6 @@ public sealed class PackageWaitTests2 : PackageWaitTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ARepoThatPublishesOnAVersionTagReleasesNothingOnTheLand()
     {
         MakeRepoAReleaser();
@@ -530,7 +489,6 @@ public sealed class PackageWaitTests2 : PackageWaitTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APersonLetsAWaitingFlightFlyAnywayFromTheLateCardAndTheWaitIsDropped()
     {
         MakeRepoAReleaser();
@@ -563,7 +521,6 @@ public sealed class PackageWaitTests2 : PackageWaitTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightHeldOnlyByAnotherLandStaysHeldWhenToldToFlyAnyway()
     {
         MakeRepoAReleaser();
@@ -577,7 +534,6 @@ public sealed class PackageWaitTests2 : PackageWaitTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ALandReadAfterThePublishFinishedWaitsForNothingNewerThanTheFlightsOwnRelease()
     {
         MakeRepoAReleaser();
@@ -599,7 +555,6 @@ public sealed class PackageWaitTests2 : PackageWaitTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ALandReadBeforeThePublishStillWaitsForTheVersionAfterTheLatestThereWasAtTheMerge()
     {
         MakeRepoAReleaser();
@@ -616,7 +571,6 @@ public sealed class PackageWaitTests2 : PackageWaitTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task TheLateCardReadsTheRunOfTheWorkflowThatPushesPackagesAndNotAnUnrelatedFastOne()
     {
         MakeRepoAReleaser();

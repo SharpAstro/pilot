@@ -26,6 +26,7 @@ public sealed class LegFailureTests : IDisposable
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2legfail-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly SeededRepos _repos;
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     // The plane is clean and at origin/<branch>, so a passing check would let the node finish a failed leg itself and raise no card:
     // the check fails here, as it does in the flights this pins.
@@ -34,11 +35,13 @@ public sealed class LegFailureTests : IDisposable
 
     public LegFailureTests()
     {
-        Directory.CreateDirectory(_root);
+        _repos = new SeededRepos(_root);
         Git(_root, "init", "-q", "--bare", "-b", "main", "remote.git");
-        Git(_root, "clone", "-q", Remote, "plane");
+        // Made by init and a remote, not by cloning the empty origin (git can, the model has no default branch of an empty origin to clone).
+        Git(_root, "init", "-q", "-b", "main", "plane");
         Git(Plane, "config", "user.email", "t@example.com");
         Git(Plane, "config", "user.name", "t");
+        Git(Plane, "remote", "add", "origin", Remote);
         Write("src/Pilot.Ui/PilotWidgetBase.cs", "class PilotWidgetBase {}\n");
         Write("src/Pilot.Ui/Other.cs", "class Other {}\n");
         Commit(Plane, "first");
@@ -48,10 +51,10 @@ public sealed class LegFailureTests : IDisposable
         Commit(Plane, "mine");
         Git(Plane, "push", "-q", "-u", "origin", Branch);
 
-        var git = new GitCli();
-        var flights = new FlightCommander(_state, new Planes(git), TimeProvider.System);
+        var git = _repos.Git;
+        var flights = new FlightCommander(_state, _repos.Planes(), TimeProvider.System);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
-        _legs = new LegCommander(_state, new FakeWorkers(), _checks, new FakeGitHub(), git, new Planes(git), flights, options, TimeProvider.System);
+        _legs = new LegCommander(_state, new FakeWorkers(), _checks, new FakeGitHub(), git, _repos.Planes(), flights, options, TimeProvider.System);
         _state.PutFlight(new FlightRow
         {
             Code = "TIA9", Repo = "tianwen", RepoPath = Plane, Issue = 9, Branch = Branch, Worktree = Plane, Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow,
@@ -82,7 +85,6 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task TheC78CardNamesTheBuildThatFailedAndSaysItIsOutsideTheLegsCode()
     {
         // The real path: the done finish is refused and records the check failure, then the worker says it failed.
@@ -104,7 +106,6 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task TheRoundAndModelOfTheNextWorkerAreInTheDetailNotOnTheButton()
     {
         _legs.Models = new RoleModels(null);
@@ -119,7 +120,6 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightThatChangedTheFailingProjectIsNotCalledOutsideItsCode()
     {
         Write("src/Pilot.Ui/Other.cs", "class Other { int X; }\n");
@@ -133,7 +133,6 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFailingTestCheckNamesTheTestsAndTheClass()
     {
         RecordCheckFailure("  Failed Pilot.Node.Tests.ParserTests.Reads [11 ms]\n  Failed Pilot.Node.Tests.ParserTests.Writes [2 ms]\nFailed!  - Failed: 2, Passed: 5");
@@ -146,7 +145,6 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReportWithNoCheckFailureFallsBackToItsClippedFirstLine()
     {
         var long_ = "the grammar cannot be parsed because the third production loops forever and the tokenizer never ends it";
@@ -159,7 +157,6 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task WhenMainAlreadyChangedTheFailingFilesTheCardSaysTakingMainMayFixIt()
     {
         // Main fixes the file after the flight branched; the plane has fetched it but not merged it.
@@ -183,7 +180,6 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task WithoutAChangeOnMainTheCardSaysNothingOfMain()
     {
         RecordCheckFailure(BuildTail);
@@ -301,23 +297,11 @@ public sealed class LegFailureTests : IDisposable
         File.WriteAllText(path, text);
     }
 
-    private static void Commit(string cwd, string message)
+    private void Commit(string cwd, string message)
     {
         Git(cwd, "add", ".");
         Git(cwd, "commit", "-q", "-m", message);
     }
 
-    private static string Git(string cwd, params string[] args)
-    {
-        var info = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in args)
-        {
-            info.ArgumentList.Add(arg);
-        }
-        using var process = TestEnvironment.Start(info)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {error}");
-    }
+    private string Git(string cwd, params string[] args) => _repos.Run(cwd, args);
 }
