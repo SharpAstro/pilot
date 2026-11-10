@@ -170,7 +170,7 @@ public sealed class SessionWatchersTests : IDisposable
         parentInfo.CreateNoWindow = true;
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(Ct);
-        deadline.CancelAfter(TimeSpan.FromSeconds(60));
+        deadline.CancelAfter(TimeSpan.FromSeconds(25));
         using var parent = Process.Start(parentInfo).ShouldNotBeNull();
         var childPid = int.Parse((await parent.StandardOutput.ReadLineAsync(deadline.Token)).ShouldNotBeNull().Trim());
         using var child = Process.GetProcessById(childPid);
