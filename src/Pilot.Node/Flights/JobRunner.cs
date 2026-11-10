@@ -301,14 +301,18 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         _stopping = stopping;
+        Task? lost = null;
         try
         {
-            await RecoverAsync(stopping);
+            lost = await RecoverCoreAsync(stopping);
         }
         finally
         {
             _recovered.TrySetResult();
         }
+        // The Azure deletes of lost cloud benches run beside the dispatcher and the leg watch, which wait on Recovered: a slow or
+        // failing delete holds neither (the rows end and their owners are told when it is done).
+        _lostCloud = lost;
         _ = TickAsync(stopping);
         try
         {
@@ -563,10 +567,19 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     /// </summary>
     public async Task RecoverAsync(CancellationToken cancellationToken)
     {
+        await (await RecoverCoreAsync(cancellationToken));
+    }
+
+    private Task? _lostCloud;
+
+    /// <summary>Recovery with the lost cloud benches' Azure deletes started, not awaited: the returned task ends them and tells their owners.</summary>
+    private async Task<Task> RecoverCoreAsync(CancellationToken cancellationToken)
+    {
         var left = state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && !_mine.ContainsKey(j.Id)).ToList();
         // The jobs that ended while no node ran, told once every other job is back in its place: a tell waits for the tracker's
         // first poll (see TellAsync), and no live job's follow or queued job's turn waits behind it.
         var toTell = new List<(JobRow Ended, string[] Last)>();
+        var lostCloud = new List<JobRow>();
         // A running check is followed like a running job: the stop let go of its kill-on-close hold, so it outlived the node, and the
         // finish that comes back waits on it by id (RunCheckAsync). One with no pid or start time cannot be found again, so it is ended.
         // A queued one has not started, so it stays queued, in its place with the other carried jobs (below) (pilot #737).
@@ -585,7 +598,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             if (job is { Kind: JobKind.Bench, Pid: null, BenchVm.Size: not null })
             {
                 // A bench that ran on a VM has no process to find; what it left in Azure is deleted from here.
-                toTell.Add((await EndLostCloudBenchAsync(job, cancellationToken), []));
+                lostCloud.Add(job);
                 continue;
             }
             if (RecoverRunning(job) is { } gone)
@@ -603,6 +616,14 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         {
             await TellAsync(ended, cancellationToken, last);
         }
+        return Task.Run(async () =>
+        {
+            foreach (var job in lostCloud)
+            {
+                var ended = await EndLostCloudBenchAsync(job, cancellationToken);
+                await TellAsync(ended, cancellationToken, []);
+            }
+        }, CancellationToken.None);
     }
 
     private const string OrphanedCheckError = "the node restarted and nothing waits for this check any more, so it was ended";

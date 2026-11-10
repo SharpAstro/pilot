@@ -114,7 +114,7 @@ public sealed record CloudBenchResult
     /// <summary>Azure resources that could not be deleted, by name or id. Each one costs money until a person deletes it, so a caller says so loudly.</summary>
     public IReadOnlyList<string> Leaked { get; init; } = [];
 
-    /// <summary>Whether the script on the VM was started: false means a bench that never began, which a caller may run on the node's machine instead.</summary>
+    /// <summary>Whether the script on the VM was started: false means a bench that never began. The node does not run it on its own machine then: the job ends failed, naming the stage it stopped at.</summary>
     public bool Started => Stage >= CloudBenchStage.Run;
 }
 

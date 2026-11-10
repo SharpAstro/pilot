@@ -37,7 +37,7 @@ public sealed record BenchVm
 
     /// <summary>
     /// Why the bench ran on the node's machine when it did: asked for with <c>--local</c>, cloud benches off (no subscription or resource
-    /// group saved), the month's cap spent, or the cloud unreachable. Null for a bench that ran on a VM.
+    /// group saved), or the month's cap spent. A cloud that cannot be reached does not send the bench here: it ends failed. Null for a bench that ran on a VM.
     /// </summary>
     public string? LocalBecause { get; init; }
 }

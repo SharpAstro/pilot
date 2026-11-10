@@ -94,11 +94,14 @@ public sealed partial class JobRunner
         {
             return new Route(null, AskedLocalBecause, SayWhy: false);
         }
-        var (cloud, _) = BenchSettings().BenchCloudOrWhy();
+        var benchSettings = BenchSettings();
+        var (cloud, whyNot) = benchSettings.BenchCloudOrWhy();
         if (cloud is null)
         {
-            // Cloud benches are not set up: a bench is as it was before them, with nothing new on its row or card.
-            return new Route(null, null, SayWhy: false);
+            // Cloud benches are not set up at all: a bench is as it was before them, with nothing new on its row or card. A cloud set up
+            // by half (one of the subscription and resource group, or a service principal short of a part) says why it is off.
+            var halfSet = benchSettings.BenchSubscription is { Length: > 0 } || benchSettings.BenchResourceGroup is { Length: > 0 };
+            return halfSet ? new Route(null, whyNot, SayWhy: true) : new Route(null, null, SayWhy: false);
         }
         if (CloudBench is null)
         {
@@ -242,7 +245,7 @@ public sealed partial class JobRunner
             crashed = $"the cloud bench could not run: {ex.Message.Split('\n')[0].Trim()}";
         }
         string[] last = [.. tail.Snapshot];
-        EndCloud(job, run, result, crashed, last, log);
+        EndCloud(job, cloud, run, result, crashed, last, log);
         log?.Dispose();
         await TellAsync(state.Jobs().FirstOrDefault(j => j.Id == job.Id) ?? job, _stopping, last);
     }
@@ -259,7 +262,7 @@ public sealed partial class JobRunner
     }
 
     // The row of a cloud bench that ended: how, with the VM it ran on. Told to its owner by the caller, once it is on the stream.
-    private void EndCloud(JobRow job, CloudRun run, CloudBenchResult? result, string? crashed, string[] last, CloudLogWriter? log)
+    private void EndCloud(JobRow job, BenchCloud cloud, CloudRun run, CloudBenchResult? result, string? crashed, string[] last, CloudLogWriter? log)
     {
         var now = time.GetUtcNow();
         var outcome = JobState.Failed;
@@ -323,12 +326,25 @@ public sealed partial class JobRunner
                 Error = error,
                 Step = StepOf(last, job),
                 EndedAt = now,
-                BenchVm = result?.Vm ?? latest.BenchVm,
+                BenchVm = result?.Vm ?? Billed(latest.BenchVm, job.StartedAt, cloud, now),
             };
             state.PutJob(ended);
             Finish(ended, last);
         }
         Pump();
+    }
+
+    // A run that ended with no result from the runner (it threw, or was cut off) still cost what its VM ran: the minutes since its start at its
+    // price (the most the settings allow when none is known yet), as an upper bound, so the row and the month's spend are not short of it.
+    private static BenchVm? Billed(BenchVm? vm, DateTimeOffset? started, BenchCloud? cloud, DateTimeOffset now)
+    {
+        if (vm is not { Size: not null, Cost: null } || started is not { } from)
+        {
+            return vm;
+        }
+        var minutes = Math.Max(0, (now - from).TotalMinutes);
+        var price = vm.PricePerHour ?? cloud?.SpotPricePerHour ?? NodeSettings.DefaultBenchSpotPrice;
+        return vm with { Minutes = minutes, Cost = minutes / 60 * price, PricePerHour = price, PriceIsUpperBound = true };
     }
 
     // A bench that cannot go to a VM (its folder is no clean checkout) is handed over again as one for this machine, which waits and holds as ever.
