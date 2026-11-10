@@ -140,6 +140,14 @@ public sealed class BuildCacheTests : JobTestsBase
         seed.Owner.ShouldBeNull();
         launch.Environment!.ShouldContainKey("MSBuildCacheEnabled");
         launch.Command.ShouldContain("-reportfileaccesses");
+    }
+
+    [Fact]
+    public async Task AnOrdinaryNodeJobInAMainCloneKeepsNoCacheVariablesEvenWithTheSettingOn()
+    {
+        var main = Directory.CreateDirectory(Path.Combine(_root, "org", "pilot")).FullName;
+        _jobs.BuildCache = true;
+        _jobs.MsBuild = () => MsBuild;
 
         var other = _jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = Verbs.NodeTarget, Args = [main, "0", "dotnet build Other.slnx"], Who = "node" }).Made!;
         await Until(other, _ => Fake!.JobOrNull(other) is not null);
