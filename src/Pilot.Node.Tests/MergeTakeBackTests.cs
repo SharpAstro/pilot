@@ -147,7 +147,7 @@ public sealed class MergeTakeBackTests : IDisposable
             return Task.WhenAny(open.Task, Task.Delay(TimeSpan.FromSeconds(25)));
         };
         var first = Answer(node, ready, "Merge");
-        (await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(20), Ct))).ShouldBe(reached.Task, "the merge was not reached");
+        (await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(120), Ct))).ShouldBe(reached.Task, "the merge was not reached"); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
 
         var again = await Answer(node, ready, "Merge");
 

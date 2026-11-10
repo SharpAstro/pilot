@@ -130,7 +130,7 @@ public sealed class IssuePriorityTests : LegCommanderTestsBase
         Settings(cap: 1);
         _github.HasPriorityField = true;
         _github.IssuePriorities[1] = IssuePriority.Low;
-        _github.IssueLabels[1] = [PilotMarks.Priority];
+        _github.SetIssueLabels(1, PilotMarks.Priority);
         await Flight(1, "one");
         OtherOpus("du1-other-worker");
 
@@ -139,7 +139,7 @@ public sealed class IssuePriorityTests : LegCommanderTestsBase
         _workers.Started.ShouldBeEmpty();
         Leg1("TIA1", "one").Queued.ShouldNotBeNull().ShouldStartWith("waiting for an Opus slot");
         _github.IssuePriorities[1].ShouldBe(IssuePriority.Low);
-        _github.IssueLabels[1].ShouldNotContain(PilotMarks.Priority);
+        _github.IssueLabels[1].Keys.ShouldNotContain(PilotMarks.Priority);
     }
 
     [Fact]
@@ -147,7 +147,7 @@ public sealed class IssuePriorityTests : LegCommanderTestsBase
     {
         Settings(cap: 1);
         _github.HasPriorityField = false;
-        _github.IssueLabels[1] = [PilotMarks.Priority];
+        _github.SetIssueLabels(1, PilotMarks.Priority);
         await Flight(1, "one");
         await Flight(2, "two");
         OtherOpus("du1-other-worker");
@@ -158,7 +158,7 @@ public sealed class IssuePriorityTests : LegCommanderTestsBase
         _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-tia1-one");
         Leg1("TIA2", "two").Queued.ShouldNotBeNull();
         _github.PrioritySets.ShouldBeEmpty();
-        _github.IssueLabels[1].ShouldContain(PilotMarks.Priority);
+        _github.IssueLabels[1].Keys.ShouldContain(PilotMarks.Priority);
         Row("TIA1").HasPriorityField.ShouldBeFalse();
         _state.Cards(openOnly: true).Where(c => c.Bin == CardBin.Ring).ShouldBeEmpty();
     }
@@ -168,14 +168,14 @@ public sealed class IssuePriorityTests : LegCommanderTestsBase
     {
         Settings(cap: 0);
         _github.HasPriorityField = true;
-        _github.IssueLabels[1] = [PilotMarks.Priority];
+        _github.SetIssueLabels(1, PilotMarks.Priority);
         await Flight(1, "one");
 
         await Start(1, "one");
 
         _github.PrioritySets.ShouldHaveSingleItem().ShouldBe((1, (IssuePriority?)IssuePriority.High));
         _github.IssuePriorities[1].ShouldBe(IssuePriority.High);
-        _github.IssueLabels[1].ShouldNotContain(PilotMarks.Priority);
+        _github.IssueLabels[1].Keys.ShouldNotContain(PilotMarks.Priority);
         Row("TIA1").IssuePriority.ShouldBe(IssuePriority.High);
 
         // Asked again: the label is gone, so nothing is written a second time.
@@ -191,14 +191,14 @@ public sealed class IssuePriorityTests : LegCommanderTestsBase
         Settings(cap: 0);
         _github.HasPriorityField = true;
         _github.IssuePriorities[1] = IssuePriority.Medium;
-        _github.IssueLabels[1] = [PilotMarks.Priority];
+        _github.SetIssueLabels(1, PilotMarks.Priority);
         await Flight(1, "one");
 
         await Start(1, "one");
 
         _github.PrioritySets.ShouldBeEmpty();
         _github.IssuePriorities[1].ShouldBe(IssuePriority.Medium);
-        _github.IssueLabels[1].ShouldNotContain(PilotMarks.Priority);
+        _github.IssueLabels[1].Keys.ShouldNotContain(PilotMarks.Priority);
         Row("TIA1").IssuePriority.ShouldBe(IssuePriority.Medium);
     }
 
@@ -207,7 +207,7 @@ public sealed class IssuePriorityTests : LegCommanderTestsBase
     {
         Settings(cap: 0);
         _github.HasPriorityField = true;
-        _github.IssueLabels[1] = [PilotMarks.Priority];
+        _github.SetIssueLabels(1, PilotMarks.Priority);
         _github.PrioritySetFails = "forbidden";
         await Flight(1, "one");
 
@@ -215,6 +215,6 @@ public sealed class IssuePriorityTests : LegCommanderTestsBase
 
         _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-tia1-one");
         Row("TIA1").IssuePriority.ShouldBeNull();
-        _github.IssueLabels[1].ShouldContain(PilotMarks.Priority);
+        _github.IssueLabels[1].Keys.ShouldContain(PilotMarks.Priority);
     }
 }

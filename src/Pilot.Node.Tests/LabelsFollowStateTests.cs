@@ -64,7 +64,7 @@ public sealed class LabelsFollowStateTests : PrMarksTestsBase
         Pilot(_github.Labels[71]).ShouldBe(["pilot: passed"]);
         F(flight.Code).Review!.Label.ShouldBe("pilot: passed");
         // The node label is another kind and stays.
-        _github.IssueLabels[71].ShouldBe(["pilot node: DU1"]);
+        _github.IssueLabels[71].Keys.ShouldBe(["pilot node: DU1"]);
 
         // Looked at again, nothing disagrees and nothing is written.
         var writes = _github.LabelCalls.Count;
@@ -83,7 +83,7 @@ public sealed class LabelsFollowStateTests : PrMarksTestsBase
         (await Verdict(flight.Code, "pass", Notes)).Error.ShouldBeNull();
         // Something else wrote pilot: changes after the pass.
         _github.Labels[71].Clear();
-        _github.Labels[71].Add("pilot: changes");
+        _github.Labels[71].TryAdd("pilot: changes", 0);
         var writes = _github.LabelCalls.Count;
 
         await LookAsync();
@@ -142,8 +142,8 @@ public sealed class LabelsFollowStateMoveTests : FlightMoveTestsBase
     {
         Fly(LegState.Done);
         _sender.PutFlight(OnSender with { PullRequest = 41, PullRequestUrl = $"https://github.com/{GitHub}/pull/41" });
-        _senderGitHub.IssueLabels[900] = [Old];
-        _senderGitHub.IssueLabels[41] = [Old];
+        _senderGitHub.SetIssueLabels(900, Old);
+        _senderGitHub.SetIssueLabels(41, Old);
 
         var moved = await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.MoveFlight, Target = "flight/TIA900", Who = "tests" }, Ct);
         await _flights.WhenAdvancedAsync();
@@ -151,10 +151,10 @@ public sealed class LabelsFollowStateMoveTests : FlightMoveTestsBase
         moved.Ok.ShouldBeTrue(moved.Error);
         MovedAway();
         // The sending node took its label off the issue and the PR; the receiving node put its own on both.
-        _senderGitHub.IssueLabels[900].ShouldNotContain(Old);
-        _senderGitHub.IssueLabels[41].ShouldNotContain(Old);
-        _github.IssueLabels[900].ShouldBe([New]);
-        _github.IssueLabels[41].ShouldBe([New]);
+        _senderGitHub.IssueLabels[900].Keys.ShouldNotContain(Old);
+        _senderGitHub.IssueLabels[41].Keys.ShouldNotContain(Old);
+        _github.IssueLabels[900].Keys.ShouldBe([New]);
+        _github.IssueLabels[41].Keys.ShouldBe([New]);
         _sender.Cards(openOnly: false).ShouldNotContain(c => c.Kind == "node-label-refused");
         // The receiving node may note a refused label of its own repo set-up (a line, Handled); none of them is about the old node's label.
         _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == "node-label-refused" && c.Title.Contains(Old, StringComparison.Ordinal));
@@ -166,7 +166,7 @@ public sealed class LabelsFollowStateMoveTests : FlightMoveTestsBase
     {
         Fly(LegState.Done);
         _sender.PutFlight(OnSender with { PullRequest = 41, PullRequestUrl = $"https://github.com/{GitHub}/pull/41" });
-        _senderGitHub.IssueLabels[41] = [Old];
+        _senderGitHub.SetIssueLabels(41, Old);
         _senderGitHub.IssueLabelFails = "label refused";
 
         var moved = await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.MoveFlight, Target = "flight/TIA900", Who = "tests" }, Ct);

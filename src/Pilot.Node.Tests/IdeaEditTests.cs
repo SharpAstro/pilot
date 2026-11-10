@@ -65,7 +65,7 @@ public sealed class IdeaEditTests : IDisposable
             Who = "tests",
         }, Ct);
 
-    private MilestoneIssue OnGitHub(int number) => _github.MilestoneIssuesOf[Path.GetFullPath(Repo)].Single(i => i.Number == number);
+    private MilestoneIssue OnGitHub(int number) => _github.MilestoneIssuesOf[Path.GetFullPath(Repo)].Values.Single(i => i.Number == number);
 
     [Fact]
     public async Task AnEditOverAnIdeaGitHubHasNotChangedIsSavedVerbatimAndNeverMerged()

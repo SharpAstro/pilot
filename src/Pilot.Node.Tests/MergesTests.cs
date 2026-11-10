@@ -100,7 +100,7 @@ public sealed class MergesTests
         };
 
         var one = Merge(node, "TIA1");
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(20), Ct);
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(120), Ct); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         var two = Merge(node, "TIA2");
         await Until(() => node.State.Merges().Any(m => m.Flight == "TIA2"), "TIA2 joined the queue");
 
