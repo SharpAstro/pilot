@@ -42,5 +42,21 @@ public sealed class AzureBench(ICloudProcess process, IRetailPrices prices, Time
         return await new CloudBenchAttempt(process, prices, time ?? TimeProvider.System, delay ?? DefaultDelay, request).RunAsync(cancellationToken);
     }
 
+    public async Task<CloudCleanupResult> CleanUpAsync(CloudCleanupRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var run = new CloudBenchRequest
+        {
+            JobId = request.JobId,
+            Cloud = request.Cloud,
+            RepoPath = "",
+            Refs = [],
+            Command = [],
+            TmpFolder = request.TmpFolder,
+            Log = request.Log,
+        };
+        return await new CloudBenchAttempt(process, prices, time ?? TimeProvider.System, delay ?? DefaultDelay, run).CleanUpAsync(cancellationToken);
+    }
+
     private static Task DefaultDelay(TimeSpan span, CancellationToken cancellationToken) => Task.Delay(span, cancellationToken);
 }

@@ -13,6 +13,7 @@ public sealed partial class AzureBenchTests
     private static string[] Sleeper() => OperatingSystem.IsWindows() ? ["ping", "-n", "10", "127.0.0.1"] : ["sleep", "10"];
 
     [Fact]
+    [Trait("Category", "Slow")] // starts a real program through SystemCloudProcess
     public async Task ARealProgramRunsAndItsLinesStreamToTheCallerAsTheyAreWritten()
     {
         var lines = new ConcurrentQueue<string>();
@@ -25,6 +26,7 @@ public sealed partial class AzureBenchTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")] // starts a real program through SystemCloudProcess
     public async Task AProgramThatIsNotThereIsAFailedRunWithItsReasonNotAnException()
     {
         var run = await new SystemCloudProcess().RunAsync(new CloudCommand("pilot-no-such-program-x1", ["--version"]), TestContext.Current.CancellationToken);
@@ -34,6 +36,7 @@ public sealed partial class AzureBenchTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")] // starts a real program through SystemCloudProcess
     public async Task ARunOverItsBudgetIsKilledAndSaidSo()
     {
         var sleeper = Sleeper();
@@ -47,6 +50,7 @@ public sealed partial class AzureBenchTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")] // starts a real program through SystemCloudProcess
     public async Task ACancelKillsTheProgramAndThrows()
     {
         var sleeper = Sleeper();
@@ -74,6 +78,7 @@ public sealed partial class AzureBenchTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")] // starts a real program through SystemCloudProcess
     public async Task ThroughARealCmdFileNothingTheArgumentsHoldIsRunAsACommand()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "az is a .cmd file on Windows only");
@@ -88,6 +93,7 @@ public sealed partial class AzureBenchTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")] // starts a real program through SystemCloudProcess
     public async Task ARefusedArgumentIsAFailedRunThatNeverStartedTheProgram()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "az is a .cmd file on Windows only");

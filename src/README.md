@@ -950,8 +950,13 @@ did); both fields are optional, so `NodeWire.Version` stays.
    switch cloud benches on; the node deletes each VM and its resources when the bench ends, so the group stays empty.
 3. Leave `bench-region`, `bench-vm-size` and `bench-image` at their defaults unless a bench needs more cores, and set
    `bench-spot-price` (the most to pay per VM hour) and `bench-monthly-cap` (the most the month's cloud benches may cost).
-4. A bench that needs the machine's own hardware takes `--local`. A bench that would pass the monthly cap runs on the node's
-   machine instead and says why. A spot eviction re-queues the bench once on a new VM, and a second eviction ends it.
+4. A bench that needs the machine's own hardware takes `--local`. Once the month's cost has reached the monthly cap, the next
+   bench runs on the node's machine instead and says why (a bench that starts just under the cap can run past it).
+   `pilot run --alone` with cloud settings goes to a VM too: its command runs under `bash` on Linux at the checkout's root, from
+   a clean checkout only, so a command that needs pwsh or Windows takes `--local`.
+5. If the node stops or crashes while a bench runs on its VM, the node that takes the row up (on its next start) deletes the VM and
+   its resources by name and by a sweep of the resource group, and ends the row saying what was deleted or could not be.
+6. A spot eviction re-queues the bench once on a new VM, and a second eviction ends it.
 
 **Seeing what it cost.** `pilot jobs` and `pilot job` add the VM to a bench's line (size, region, minutes, cost and evictions; or
 why it ran local), and nothing to any other job. `pilot spend` ends with a line for this calendar month's bench VMs (runs, minutes,

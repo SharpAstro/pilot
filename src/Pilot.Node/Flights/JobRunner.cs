@@ -582,6 +582,12 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         foreach (var job in left.Where(j => j.State == JobState.Running))
         {
             _mine[job.Id] = 0;
+            if (job is { Kind: JobKind.Bench, Pid: null, BenchVm.Size: not null })
+            {
+                // A bench that ran on a VM has no process to find; what it left in Azure is deleted from here.
+                toTell.Add((await EndLostCloudBenchAsync(job, cancellationToken), []));
+                continue;
+            }
             if (RecoverRunning(job) is { } gone)
             {
                 toTell.Add(gone);
@@ -667,12 +673,6 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         {
             EndOrphanedCheck(job, "ended while the node was down with no exit recorded (a crash of the node ended it), so the next finish runs it afresh");
             return null;
-        }
-
-        // A bench that ran on a VM has no process to find: the node that ran it is gone, and with it the way to delete the VM from here.
-        if (job is { Kind: JobKind.Bench, Pid: null, BenchVm.Size: not null })
-        {
-            return (EndLostCloudBench(job), []);
         }
 
         // Gone: how it ended is what its wrapper wrote.

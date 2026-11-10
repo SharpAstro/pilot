@@ -8,8 +8,8 @@ public static class BenchSpend
 {
     /// <summary>
     /// The month's bench VMs (UTC, as Azure bills): each ended bench's minutes and cost, and for one still running the hours it has run so far
-    /// at its price (<paramref name="fallbackPrice"/> when the price is not known yet), so benches started together cannot all pass under a cap
-    /// that one of them would spend.
+    /// at its price (<paramref name="fallbackPrice"/> when the price is not known yet). The cap stops a bench only once the month has reached it:
+    /// a bench that starts just under it can run past it, and benches handed over together each see about the same spend.
     /// </summary>
     public static SpendBench Month(IEnumerable<JobRow> jobs, DateTimeOffset now, double fallbackPrice, double? cap)
     {
@@ -47,7 +47,7 @@ public static class BenchSpend
     public static SpendBench? For(IEnumerable<JobRow> jobs, NodeSettings settings, DateTimeOffset now)
     {
         var (cloud, _) = settings.BenchCloudOrWhy();
-        var month = Month(jobs, now, cloud?.SpotPricePerHour ?? settings.BenchSpotPrice ?? NodeSettings.DefaultBenchSpotPrice,cloud?.MonthlyCap);
+        var month = Month(jobs, now, cloud?.SpotPricePerHour ?? settings.BenchSpotPrice ?? NodeSettings.DefaultBenchSpotPrice, cloud?.MonthlyCap);
         return cloud is null && month.Runs == 0 ? null : month;
     }
 }

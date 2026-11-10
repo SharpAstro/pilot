@@ -38,6 +38,21 @@ internal sealed class ScriptedCloudBench : ICloudBench
         return Behavior(request, cancellationToken, call);
     }
 
+    /// <summary>What the cleanup of a lost bench answers, and the requests it was given.</summary>
+    public Func<CloudCleanupRequest, CloudCleanupResult> Cleanup { get; set; } = _ => new CloudCleanupResult();
+
+    public List<CloudCleanupRequest> Cleanups { get; } = [];
+
+    public Task<CloudCleanupResult> CleanUpAsync(CloudCleanupRequest request, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            Cleanups.Add(request);
+        }
+        request.Log("$ az vm delete --name pilot-bench-j7-vm --yes");
+        return Task.FromResult(Cleanup(request));
+    }
+
     public static CloudBenchResult Result(CloudBenchOutcome outcome = CloudBenchOutcome.Succeeded, double minutes = 42.5, double? cost = 0.0496, int evictions = 0, int? exit = 0,
         string? error = null, CloudBenchStage stage = CloudBenchStage.Done, IReadOnlyList<string>? leaked = null) => new()
     {
@@ -294,8 +309,10 @@ public sealed partial class CloudBenchJobTests : JobTestsBase, IAsyncDisposable
     [Fact]
     public async Task ABenchThatRunsPastItsTimeoutEndsFailedAfterTheRunnerHasDeletedTheVm()
     {
+        var running = new TaskCompletionSource();
         _cloud.Behavior = async (_, token, _) =>
         {
+            running.TrySetResult();
             try
             {
                 await Task.Delay(Timeout.Infinite, token);
@@ -305,9 +322,13 @@ public sealed partial class CloudBenchJobTests : JobTestsBase, IAsyncDisposable
             }
             return ScriptedCloudBench.Result(CloudBenchOutcome.Cancelled, minutes: 1, cost: 0.001, exit: null, stage: CloudBenchStage.Run);
         };
-        var (jobs, _, _) = Runner(Settings());
+        var (jobs, clock, _) = Runner(Settings());
+        clock.VirtualTimers = true;
 
-        var bench = HandCloudBench(jobs, timeout: TimeSpan.FromMilliseconds(300));
+        var bench = HandCloudBench(jobs, timeout: TimeSpan.FromMinutes(5));
+        await running.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        // The timeout is on the node's clock, so the test moves it past the limit: nothing waits on the wall clock.
+        clock.Advance(TimeSpan.FromMinutes(6));
         var ended = await Until(bench, j => j.EndedAt is not null);
 
         ended.State.ShouldBe(JobState.Failed);
@@ -417,7 +438,8 @@ public sealed partial class CloudBenchJobTests : JobTestsBase, IAsyncDisposable
         _cloud.Requests.ShouldBeEmpty();
         Row(bench).State.ShouldBe(JobState.Queued);
         Row(bench).Local.ShouldBeFalse();
-        Row(bench).BenchVm.ShouldNotBeNull().LocalBecause.ShouldNotBeNull().ShouldStartWith("cloud benches are off: bench-subscription and bench-resource-group are not set");
+        // With no cloud settings nothing new shows on the row: a bench is as it was before cloud benches.
+        Row(bench).BenchVm.ShouldBeNull();
         // The step is as it was before cloud benches: the reason is on the row, not in every queued bench's step.
         Row(bench).Step.ShouldBe("next in line: a benchmark runs alone: another job is running");
         var later = Hand(jobs, Echo("later"));
@@ -487,24 +509,78 @@ public sealed partial class CloudBenchJobTests : JobTestsBase, IAsyncDisposable
         ended.Error.ShouldNotBeNull().ShouldContain("the node stopped while the bench ran on its VM, so the VM was deleted");
     }
 
-    [Fact]
-    public async Task ACloudBenchRowALostNodeLeftRunningIsEndedNamingTheResourcesToDelete()
-    {
-        var jobs = await StartedRunner(Settings());
+    private void SeedLostBench() =>
         _state.PutJob(new JobRow
         {
             Id = "j7", Command = "bench", Cwd = _root, Kind = JobKind.Bench, State = JobState.Running, LogPath = Path.Combine(_root, "j7.log"), Timeout = TimeSpan.FromHours(1),
             StartedAt = DateTimeOffset.UtcNow.AddMinutes(-20), BenchVm = new BenchVm { Size = "Standard_F8s_v2", Image = Image, Region = "westeurope" },
         });
 
+    [Fact]
+    public async Task ACloudBenchRowALostNodeLeftRunningHasItsAzureResourcesDeletedByTheNodeThatTakesItUp()
+    {
+        var jobs = await StartedRunner(Settings());
+        SeedLostBench();
+        _cloud.Cleanup = _ => new CloudCleanupResult { Swept = ["/subscriptions/s/resourceGroups/rg-bench/providers/x/pilot-bench-j7-disk"] };
+
         await jobs.RecoverAsync(Ct);
 
+        var cleanup = _cloud.Cleanups.ShouldHaveSingleItem();
+        (cleanup.JobId, cleanup.Cloud.ResourceGroup).ShouldBe(("j7", "rg-bench"));
         var ended = Row("j7");
         ended.State.ShouldBe(JobState.Failed);
-        ended.Error.ShouldNotBeNull().ShouldContain("pilot-bench-j7-");
-        ended.Error.ShouldContain("rg-bench");
-        ended.Error.ShouldContain("cost money");
+        ended.Error.ShouldNotBeNull().ShouldContain("deleted the Azure resources named pilot-bench-j7-");
+        ended.Error.ShouldContain("1 found by the sweep");
+        ended.Error.ShouldNotContain("cost money");
+        // The VM ran until the node came back: its minutes and cost are an upper bound at the settings' price.
+        var vm = ended.BenchVm.ShouldNotBeNull();
+        vm.PriceIsUpperBound.ShouldBeTrue();
+        vm.Minutes.ShouldNotBeNull().ShouldBeGreaterThan(19);
+        vm.Cost.ShouldNotBeNull().ShouldBeGreaterThan(0);
+        File.ReadAllText(Path.Combine(_root, "j7.log")).ShouldContain("az vm delete");
         _cloud.Requests.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ALostCloudBenchWhoseResourcesCannotAllBeDeletedNamesWhatIsLeft()
+    {
+        var jobs = await StartedRunner(Settings());
+        SeedLostBench();
+        _cloud.Cleanup = _ => new CloudCleanupResult { Leaked = ["pilot-bench-j7-nsg"] };
+
+        await jobs.RecoverAsync(Ct);
+
+        Row("j7").Error.ShouldNotBeNull().ShouldContain("could not delete 1 of its Azure resources");
+        Row("j7").Error.ShouldContain("pilot-bench-j7-nsg");
+    }
+
+    [Fact]
+    public async Task ALostCloudBenchWhoseCleanupCouldNotSignInSaysTheResourcesMayStillRun()
+    {
+        var jobs = await StartedRunner(Settings());
+        SeedLostBench();
+        _cloud.Cleanup = _ => new CloudCleanupResult { Error = "az is not signed in" };
+
+        await jobs.RecoverAsync(Ct);
+
+        var error = Row("j7").Error.ShouldNotBeNull();
+        error.ShouldContain("az is not signed in");
+        error.ShouldContain("pilot-bench-j7-");
+        error.ShouldContain("rg-bench");
+        error.ShouldContain("cost money");
+    }
+
+    [Fact]
+    public async Task ALostCloudBenchOnANodeWithoutCloudSettingsIsEndedNamingTheResourcesToDeleteByHand()
+    {
+        var jobs = await StartedRunner(new NodeSettings());
+        SeedLostBench();
+
+        await jobs.RecoverAsync(Ct);
+
+        _cloud.Cleanups.ShouldBeEmpty();
+        Row("j7").Error.ShouldNotBeNull().ShouldContain("pilot-bench-j7-");
+        Row("j7").Error.ShouldContain("cost money");
     }
 
     private string HandCloudBenchStarted(JobRunner jobs)

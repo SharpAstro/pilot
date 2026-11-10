@@ -126,6 +126,42 @@ public interface ICloudBench
     /// <see cref="CloudBenchOutcome.Cancelled"/> after the cleanup, not with an exception, so the money spent is still told.
     /// </summary>
     Task<CloudBenchResult> RunAsync(CloudBenchRequest request, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Deletes what a bench left in Azure when the node that ran it is gone (a crash, or a stop that did not wait for the delete): the VM and each
+    /// resource by the names its job id gives, then everything in the resource group that starts with them. Never cancelled by the caller's stop
+    /// halfway: it ends with what it deleted and what it could not.
+    /// </summary>
+    Task<CloudCleanupResult> CleanUpAsync(CloudCleanupRequest request, CancellationToken cancellationToken) =>
+        Task.FromResult(new CloudCleanupResult { Error = "this runner cannot delete what an earlier node left" });
+}
+
+/// <summary>What a node that takes up a lost cloud bench needs to delete its Azure resources: the job, where they are and a folder to work in.</summary>
+public sealed record CloudCleanupRequest
+{
+    public required string JobId { get; init; }
+
+    public required BenchCloud Cloud { get; init; }
+
+    /// <summary>The job's tmp folder, where the service principal's az config folder is made (and removed again).</summary>
+    public required string TmpFolder { get; init; }
+
+    public required Action<string> Log { get; init; }
+}
+
+/// <summary>What a cleanup of a lost cloud bench did.</summary>
+public sealed record CloudCleanupResult
+{
+    /// <summary>Why nothing could be deleted (az not signed in, the group not listable); null when the deletes ran.</summary>
+    public string? Error { get; init; }
+
+    /// <summary>What the sweep found by prefix after the named deletes (deleted by id); empty when the names had taken it all.</summary>
+    public IReadOnlyList<string> Swept { get; init; } = [];
+
+    /// <summary>Resources that could not be deleted, by name or id; each costs money until a person deletes it.</summary>
+    public IReadOnlyList<string> Leaked { get; init; } = [];
+
+    public bool Clean => Error is null && Leaked.Count == 0;
 }
 
 public static class CloudBenches

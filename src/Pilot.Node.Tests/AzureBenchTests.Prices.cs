@@ -97,7 +97,8 @@ public sealed partial class AzureBenchTests
         calls.ShouldBe(2);
 
         // The caller's own cancel is the caller's: it is not turned into "no price".
-        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        using var cancel = new CancellationTokenSource();
+        cancel.Cancel();
         var caught = await Record.ExceptionAsync(() => new AzureRetailPrices(slow).SpotPerHourAsync("westeurope", "Standard_F8s_v2", cancel.Token));
         caught.ShouldBeAssignableTo<OperationCanceledException>();
     }

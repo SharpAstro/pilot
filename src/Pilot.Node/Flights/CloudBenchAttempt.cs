@@ -26,6 +26,7 @@ internal sealed partial class CloudBenchAttempt(ICloudProcess process, IRetailPr
     private readonly CloudBenchNames _names = CloudBenchNames.For(request.JobId);
     private readonly string _tmp = Path.GetFullPath(request.TmpFolder);
     private readonly List<string> _leaked = [];
+    private readonly List<string> _swept = [];
 
     private CloudBenchStage _stage = CloudBenchStage.Login;
     private bool _created;

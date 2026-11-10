@@ -218,7 +218,71 @@ public abstract class JobTestsBase : IDisposable
         public void Advance(TimeSpan span)
         {
             _now += span;
+            List<VirtualTimer> due;
+            lock (_timers)
+            {
+                due = [.. _timers.Where(t => t.Due is { } at && at <= _now)];
+            }
+            foreach (var timer in due)
+            {
+                timer.Fire();
+            }
             Advanced?.Invoke();
+        }
+
+        /// <summary>
+        /// When set, the timers made through this clock (a <c>CancellationTokenSource(span, clock)</c>) fire when the test advances it, with no
+        /// wall-clock wait; one-shot only. Off by default, where they are the system's.
+        /// </summary>
+        public bool VirtualTimers { get; set; }
+
+        private readonly List<VirtualTimer> _timers = [];
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            if (!VirtualTimers)
+            {
+                return base.CreateTimer(callback, state, dueTime, period);
+            }
+            var timer = new VirtualTimer(this, callback, state);
+            timer.Change(dueTime, period);
+            lock (_timers)
+            {
+                _timers.Add(timer);
+            }
+            return timer;
+        }
+
+        private sealed class VirtualTimer(Clock clock, TimerCallback callback, object? state) : ITimer
+        {
+            public DateTimeOffset? Due { get; private set; }
+
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                Due = dueTime == Timeout.InfiniteTimeSpan ? null : clock._now + dueTime;
+                return true;
+            }
+
+            public void Fire()
+            {
+                Due = null;
+                callback(state);
+            }
+
+            public void Dispose()
+            {
+                Due = null;
+                lock (clock._timers)
+                {
+                    clock._timers.Remove(this);
+                }
+            }
+
+            public ValueTask DisposeAsync()
+            {
+                Dispose();
+                return ValueTask.CompletedTask;
+            }
         }
     }
 

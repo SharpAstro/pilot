@@ -23,6 +23,29 @@ internal sealed partial class CloudBenchAttempt
         }
     }
 
+    /// <summary>The delete of a bench whose node is gone: sign in, then the same delete by name and sweep by prefix, with no VM of this attempt's own.</summary>
+    public async Task<CloudCleanupResult> CleanUpAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            Directory.CreateDirectory(_tmp);
+            if (await LoginAsync(cancellationToken) is { } loginError)
+            {
+                return new CloudCleanupResult { Error = Redact(loginError) };
+            }
+            await DeleteAzureAsync();
+            return new CloudCleanupResult { Swept = [.. _swept], Leaked = [.. _leaked] };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new CloudCleanupResult { Error = "the cleanup was cancelled before it ended" };
+        }
+        finally
+        {
+            DeleteLocalFiles();
+        }
+    }
+
     // Never cancelled: a bench that was cancelled still deletes its VM. The VM goes first and the clock of its minutes stops with it, since the
     // rest of what was made costs next to nothing; then each resource by name, then the sweep for whatever the names missed.
     private async Task DeleteAzureAsync()
@@ -51,6 +74,7 @@ internal sealed partial class CloudBenchAttempt
         {
             return;
         }
+        _swept.AddRange(left);
         var sweep = await ExecAsync(Az(["resource", "delete", "--ids", .. left, "--only-show-errors"], DeleteBudget), CancellationToken.None);
         if (!sweep.Ok)
         {

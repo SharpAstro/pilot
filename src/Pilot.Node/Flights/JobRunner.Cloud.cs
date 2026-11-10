@@ -94,10 +94,11 @@ public sealed partial class JobRunner
         {
             return new Route(null, AskedLocalBecause, SayWhy: false);
         }
-        var (cloud, why) = BenchSettings().BenchCloudOrWhy();
+        var (cloud, _) = BenchSettings().BenchCloudOrWhy();
         if (cloud is null)
         {
-            return new Route(null, why, SayWhy: false);
+            // Cloud benches are not set up: a bench is as it was before them, with nothing new on its row or card.
+            return new Route(null, null, SayWhy: false);
         }
         if (CloudBench is null)
         {
@@ -144,7 +145,7 @@ public sealed partial class JobRunner
             _localWhy[job.Id] = route.Why;
         }
         // A benchmark goes ahead of the other jobs, so the drain it waits for is not endless; benchmarks keep their own order.
-        _queue.Insert(_queue.FindLastIndex(j => j.Kind == JobKind.Bench) + 1, job with { BenchVm = new BenchVm { LocalBecause = route.Why } });
+        _queue.Insert(_queue.FindLastIndex(j => j.Kind == JobKind.Bench) + 1, route.Why is null ? job : job with { BenchVm = new BenchVm { LocalBecause = route.Why } });
     }
 
     private void StartCloud(JobRow queued, BenchCloud cloud)
@@ -179,11 +180,11 @@ public sealed partial class JobRunner
         CloudBenchResult? result = null;
         string? crashed = null;
         var tail = new CircularBuffer<string>(TailLines);
-        using var limit = CancellationTokenSource.CreateLinkedTokenSource(run.Token);
+        using var timeout = new CancellationTokenSource(job.Timeout, time);
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(run.Token, timeout.Token);
         CloudLogWriter? log = null;
         try
         {
-            limit.CancelAfter(job.Timeout);
             var (plan, why) = await PlanOfAsync(job, limit.Token);
             if (plan is null)
             {
@@ -376,20 +377,76 @@ public sealed partial class JobRunner
             : (null, $"git could not read the commit {job.Cwd} is at, so the bench runs on this machine");
     }
 
-    // A bench row a node that crashed left Running on a VM: its watch is gone with the node, and so is any way to delete the VM from here.
-    private JobRow EndLostCloudBench(JobRow job)
+    // A bench row a node that stopped or crashed left Running on a VM: its watch is gone with that node, but the names of what it made follow from the
+    // job id and the subscription and resource group are in the settings, so this node deletes them (the same delete by name and sweep by prefix) and says what happened.
+    private async Task<JobRow> EndLostCloudBenchAsync(JobRow job, CancellationToken cancellationToken)
     {
-        var group = BenchSettings().BenchResourceGroup;
+        var settings = BenchSettings();
+        var prefix = CloudBenchNames.For(job.Id).Prefix;
+        var (cloud, whyNot) = settings.BenchCloudOrWhy();
+        var where = settings.BenchResourceGroup is { } group ? $" in the resource group {group}" : "";
+        var vm = job.BenchVm;
+        string error;
+        if (cloud is null || CloudBench is null)
+        {
+            error = $"the node stopped while the bench ran on its VM, without deleting it, and the cloud settings that would let this node delete it are not there ({whyNot ?? "this node has no cloud runner"}): Azure resources named {prefix}*{where} may still be running and cost money until a person deletes them";
+        }
+        else
+        {
+            var lines = new List<string>();
+            CloudCleanupResult cleanup;
+            try
+            {
+                cleanup = await CloudBench.CleanUpAsync(new CloudCleanupRequest
+                {
+                    JobId = job.Id,
+                    Cloud = cloud,
+                    TmpFolder = CloudTmpOf(options.DataFolder, job.Id),
+                    Log = line => { lock (lines) { lines.Add(line); } },
+                }, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                cleanup = new CloudCleanupResult { Error = ex.Message.Split('\n')[0].Trim() };
+            }
+            AppendLog(job.LogPath, [$"=== the node that ran this bench stopped; the node that took the row up deletes its Azure resources named {prefix}* ===", .. lines]);
+            // The VM may have run until now: its minutes and cost, from its start at its price (the settings' most when it is not known), as an upper bound.
+            if (job.StartedAt is { } started && vm is not null)
+            {
+                var minutes = Math.Max(0, (time.GetUtcNow() - started).TotalMinutes);
+                var price = vm.PricePerHour ?? cloud.SpotPricePerHour;
+                vm = vm with { Minutes = minutes, Cost = minutes / 60 * price, PricePerHour = price, PriceIsUpperBound = true };
+            }
+            error = cleanup switch
+            {
+                { Clean: true } => $"the node stopped while the bench ran on its VM; the node that took the row up deleted the Azure resources named {prefix}*{where}{(cleanup.Swept.Count > 0 ? $" ({cleanup.Swept.Count} found by the sweep)" : "")}, so the bench has to be run again",
+                { Error: { } why } => $"the node stopped while the bench ran on its VM, and this node could not delete what it made ({why}): Azure resources named {prefix}*{where} may still be running and cost money until a person deletes them",
+                _ => $"the node stopped while the bench ran on its VM; this node could not delete {cleanup.Leaked.Count} of its Azure resources and they cost money until a person deletes them: {string.Join(", ", cleanup.Leaked)}",
+            };
+        }
         var ended = job with
         {
             State = JobState.Failed,
-            Error = $"the node stopped while the bench ran on its VM, without deleting it: Azure resources named {CloudBenchNames.For(job.Id).Prefix}* may still be running{(group is null ? "" : $" in the resource group {group}")} and cost money until a person deletes them",
+            Error = error,
             EndedAt = time.GetUtcNow(),
+            BenchVm = vm,
         };
         _tried[job.Id] = 0;
         state.PutJob(ended);
         Finish(ended, null);
         return ended;
+    }
+
+    private static void AppendLog(string path, IEnumerable<string> lines)
+    {
+        try
+        {
+            File.AppendAllLines(path, lines);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The row says it all; a log that cannot be written is not the cleanup's failure.
+        }
     }
 
     /// <summary>The job's log, written line by line from several threads while it is read by others.</summary>

@@ -225,6 +225,56 @@ public sealed partial class AzureBenchTests
         unverified.Leaked.ShouldBe(["pilot-bench-j7-nsg"]);
     }
 
+    private CloudCleanupRequest CleanupRequest(BenchCloud? cloud = null) => new()
+    {
+        JobId = "j7",
+        Cloud = cloud ?? Cloud(),
+        TmpFolder = Path.Combine(_root, "lost.tmp"),
+        Log = Say,
+    };
+
+    [Fact]
+    public async Task ACleanupOfALostBenchSignsInThenDeletesByNameAndSweepsByPrefixWithoutMakingAnything()
+    {
+        const string stray = "/subscriptions/s/resourceGroups/rg-bench/providers/Microsoft.Compute/disks/pilot-bench-j7-disk_1";
+        _cloud.On(c => c.Is("az", "resource", "list"), _ => FakeCloud.Ok(stray + "\n"));
+
+        var result = await Bench().CleanUpAsync(CleanupRequest(), CancellationToken.None);
+
+        result.Clean.ShouldBeTrue();
+        result.Swept.ShouldBe([stray]);
+        Commands.ShouldContain(c => c.Is("az", "account", "show"));
+        Only(c => c.Is("az", "vm", "delete"), "vm delete").After("--name").ShouldBe("pilot-bench-j7-vm");
+        Only(c => c.Is("az", "resource", "list"), "sweep").After("--query").ShouldBe("[?starts_with(name, 'pilot-bench-j7-')].id");
+        Commands.ShouldNotContain(c => c.Is("az", "vm", "create"));
+        Commands.ShouldNotContain(c => c.Program is "ssh" or "scp" or "git");
+    }
+
+    [Fact]
+    public async Task ACleanupThatCannotSignInDeletesNothingAndSaysWhy()
+    {
+        _cloud.On(c => c.Is("az", "account", "show"), _ => FakeCloud.Fail(1, "ERROR: Please run 'az login'"));
+
+        var result = await Bench().CleanUpAsync(CleanupRequest(), CancellationToken.None);
+
+        result.Clean.ShouldBeFalse();
+        result.Error.ShouldNotBeNull().ShouldContain("az is not signed in");
+        Commands.ShouldNotContain(c => c.Is("az", "vm", "delete"));
+    }
+
+    [Fact]
+    public async Task ACleanupNamesTheResourcesThatCouldNotBeDeleted()
+    {
+        const string leftover = "/subscriptions/s/resourceGroups/rg-bench/providers/Microsoft.Network/publicIPAddresses/pilot-bench-j7-ip";
+        _cloud.On(c => c.Is("az", "resource", "list"), _ => FakeCloud.Ok(leftover + "\n"));
+        _cloud.On(c => c.Is("az", "resource", "delete"), _ => FakeCloud.Fail(1, "ERROR: still attached"));
+
+        var result = await Bench().CleanUpAsync(CleanupRequest(), CancellationToken.None);
+
+        result.Clean.ShouldBeFalse();
+        result.Leaked.ShouldBe([leftover]);
+    }
+
     [Fact]
     public async Task AnEvictedVmIsRunAgainOnceAndTheAttemptsAddUp()
     {
