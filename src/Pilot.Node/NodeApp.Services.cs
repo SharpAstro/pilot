@@ -210,11 +210,18 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services =>
         {
             var models = services.GetRequiredService<RoleModels>();
+            return new PeerPullRequests(() => services.GetRequiredService<FlightCommander>().Fleet, services.GetRequiredService<TimeProvider>(), () => models.PrWatchIdle) { Error = logWriter };
+        });
+        builder.Services.AddHostedService(services => services.GetRequiredService<PeerPullRequests>());
+        builder.Services.AddSingleton(services =>
+        {
+            var models = services.GetRequiredService<RoleModels>();
             var watch = new PullRequestWatch(services.GetRequiredService<NodeState>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>())
             {
                 Views = services.GetRequiredService<PageViews>(),
                 Machine = options.Machine,
                 Fleet = services.GetRequiredService<FlightCommander>().Fleet,
+                Held = services.GetRequiredService<PeerPullRequests>(),
                 Idle = () => models.PrWatchIdle,
             };
             watch.Error = logWriter;

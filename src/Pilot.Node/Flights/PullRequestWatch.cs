@@ -39,6 +39,9 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
     /// </summary>
     public IFleet? Fleet { get; init; }
 
+    /// <summary>The peers' latest PR reads kept from their event streams (#834): taken first, so only a peer it holds nothing of is asked at read time. Null: every peer is asked.</summary>
+    public PeerPullRequests? Held { get; init; }
+
     /// <summary>The repos (<c>owner/name</c>) a flight in the flying state is in: the ones this node flies in.</summary>
     public static HashSet<string> FlyingRepos(FlightRow[] flights) =>
         new(flights.Where(f => f.State == FlightState.Flying).Select(f => RepoCatalog.GitHubOf(Path.Combine(f.RepoPath, ".git"))).OfType<string>(), StringComparer.OrdinalIgnoreCase);
@@ -342,6 +345,10 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
         {
             try
             {
+                if (Held?.RowOf(peer.Name) is { } kept)
+                {
+                    return new PrReadPeer(peer.Name, kept, [.. kept.RepoReads.Where(s => s.Flying).Select(s => s.Repo)]);
+                }
                 using var budget = new CancellationTokenSource(HeldTokenFleet.ReadBudget, time);
                 var row = (await peer.LoadAsync(budget.Token).WaitAsync(budget.Token)).PullRequests;
                 return new PrReadPeer(peer.Name, row, [.. (row?.RepoReads ?? []).Where(s => s.Flying).Select(s => s.Repo)]);

@@ -33,6 +33,18 @@ public interface IFleetPeer
 
     /// <summary>Sends <paramref name="command"/> to the peer, under the held grant: its result, or why it was refused.</summary>
     Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The peer's PR read as it changes (#834): the one it holds now, then each new one, until the stream ends or throws. By default the one
+    /// read <see cref="LoadAsync"/> gives and then the end, which is all a peer with no event stream can say.
+    /// </summary>
+    async IAsyncEnumerable<PullRequestsRow> PullRequestsAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        if ((await LoadAsync(cancellationToken).ConfigureAwait(false)).PullRequests is { } row)
+        {
+            yield return row;
+        }
+    }
 }
 
 /// <summary>What a node does to hand a flight to a peer (<see cref="Verbs.ReceiveFlight"/>, #376): the record it sends, and the send.</summary>
@@ -195,6 +207,26 @@ public sealed class HeldTokenFleet(string tokenFile, Func<IReadOnlyList<LanPeer>
                 ?? throw new IOException($"{Name}'s stream did not start with a snapshot");
             return new FleetLoad(snapshot.Usage, snapshot.Flights, snapshot.PrReviews, snapshot.Sessions, snapshot.Legs, snapshot.PullRequests);
         }, cancellationToken);
+
+        public async IAsyncEnumerable<PullRequestsRow> PullRequestsAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            using var client = NodeClient.Remote(Endpoint, grant.Token, grant.Name);
+            await using var events = await client.OpenEventsAsync(since: null, stream: null, cancellationToken).ConfigureAwait(false);
+            KeepHint();
+            while (await events.ReadAsync(cancellationToken).ConfigureAwait(false) is { } next)
+            {
+                var row = next switch
+                {
+                    SnapshotEvent snapshot => snapshot.PullRequests,
+                    PullRequestsChangedEvent changed => changed.Row,
+                    _ => null,
+                };
+                if (row is not null)
+                {
+                    yield return row;
+                }
+            }
+        }
 
         public async Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken)
         {
