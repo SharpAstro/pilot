@@ -74,8 +74,8 @@ public sealed class HeldGrantsTests : IDisposable
         HeldGrants.ForgetNames();
 
         var reached = await NoteAtAsync($"127.0.0.1:{portB}");
-        reached.ShouldNotBeNull().Success.ShouldBeTrue();
-        second.State.Snapshot().Notes.Count.ShouldBe(1);
+        reached.ShouldNotBeNull().Ok.ShouldBeTrue();
+        second.State.Snapshot().Notes.ShouldHaveSingleItem();
 
         var held = NodeTargets.Held(_tokens).Entries.ShouldHaveSingleItem();
         (held.Name, held.Address, held.Token).ShouldBe(("SE7", $"127.0.0.1:{portB}", token));
@@ -91,12 +91,12 @@ public sealed class HeldGrantsTests : IDisposable
         File.WriteAllText(_tokens, $$"""{ "127.0.0.1:{{port}}": "{{token}}" }""");
         NodeTargets.TokenFor($"127.0.0.1:{port}", _tokens).ShouldBe(token);
 
-        (await NoteAtAsync($"127.0.0.1:{port}")).ShouldNotBeNull().Success.ShouldBeTrue();
+        (await NoteAtAsync($"127.0.0.1:{port}")).ShouldNotBeNull().Ok.ShouldBeTrue();
 
         var held = NodeTargets.Held(_tokens).Entries.ShouldHaveSingleItem();
         (held.Name, held.Address, held.Token).ShouldBe(("SE7", $"127.0.0.1:{port}", token));
         File.ReadAllText(_tokens).ShouldContain("\"SE7\"");
-        (await NoteAtAsync($"127.0.0.1:{port}")).ShouldNotBeNull().Success.ShouldBeTrue();
+        (await NoteAtAsync($"127.0.0.1:{port}")).ShouldNotBeNull().Ok.ShouldBeTrue();
     }
 
     [Fact]
@@ -130,7 +130,7 @@ public sealed class HeldGrantsTests : IDisposable
         var after = NodeTargets.Held(_tokens).Entries.ShouldHaveSingleItem();
         (after.Name, after.Address).ShouldBe(("SE7", $"127.0.0.1:{port}"));
         after.Token.ShouldNotBe("stale-token");
-        (await NoteAtAsync($"127.0.0.1:{port}")).ShouldNotBeNull().Success.ShouldBeTrue();
+        (await NoteAtAsync($"127.0.0.1:{port}")).ShouldNotBeNull().Ok.ShouldBeTrue();
     }
 
     [Fact]
