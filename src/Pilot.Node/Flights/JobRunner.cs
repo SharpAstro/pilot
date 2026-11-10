@@ -2539,8 +2539,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         _watches.TryRemove(job.Id, out _);
         _nudges.TryRemove(job.Id, out _);
         Tree.Forget(job.Id);
-        // Its slot is free: the next in line may start.
-        Pump();
+        // Its slot is free, but the next in line starts only once the row says this one ended (the Pump after PutJob below): started here,
+        // the next one's row said running while this one's still did, and five rows read running at max-jobs four (JobTests2, main CI
+        // after #985).
         string[] last = [.. tail.Snapshot];
         // Ended while frozen (a cancel or timeout thaws it to kill it): the span counts, and it is no longer paused.
         var latest = Unpaused(state.Jobs().FirstOrDefault(j => j.Id == job.Id) ?? job, time.GetUtcNow());
@@ -2589,12 +2590,15 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 AfterEndedRow?.Invoke(ended);
                 Finish(ended, last);
             }
-            // Looked at again now this run is in the history: the look its slot gave may have been before it, with the older estimate.
-            Pump();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // The job's owner is told all the same.
+        }
+        finally
+        {
+            // The slot's look, now this run is in the history (with its estimate): whatever happened above, the next in line may start.
+            Pump();
         }
         await TellAsync(ended, CancellationToken.None, last);
         process.Child?.Dispose();
