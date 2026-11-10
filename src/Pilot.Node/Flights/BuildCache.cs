@@ -52,7 +52,10 @@ public static class BuildCache
             {
                 continue;
             }
-            var rewritten = Rewrite(segment, cacheRoot, msBuild);
+            var body = segment.Trim();
+            var lead = segment[..(segment.Length - segment.TrimStart().Length)];
+            var trail = segment[segment.TrimEnd().Length..];
+            var rewritten = body.Length == 0 ? segment : lead + Rewrite(body, cacheRoot, msBuild) + trail;
             result = string.Concat(result.AsSpan(0, at), rewritten, result.AsSpan(at + segment.Length));
             cursor = at + rewritten.Length;
         }

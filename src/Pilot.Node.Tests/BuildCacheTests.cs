@@ -24,7 +24,8 @@ public sealed class BuildCacheTests : JobTestsBase
 
     private string Root => BuildCache.RootIn(Path.Combine(_root, "data"));
 
-    private JobLaunch Launched(bool? setting, string command, string cwd)
+    // The runner's own dispatcher starts the job a moment after Run; wait for the fake launcher to have it.
+    private async Task<JobLaunch> Launched(bool? setting, string command, string cwd)
     {
         if (setting is { } on)
         {
@@ -32,9 +33,9 @@ public sealed class BuildCacheTests : JobTestsBase
         }
         _jobs.MsBuild = () => MsBuild;
         var id = _jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = "session/a1b2c3d4", Args = [cwd, "0", command], Who = "se1-tia1-parser" }).Made!;
-        _jobs.Dispatch(new JobRunner.HandedOver(_state.Jobs().Single(j => j.Id == id)));
+        await Until(id, _ => Fake!.JobOrNull(id) is not null);
         Row(id).Command.ShouldBe(command);
-        return Fake!.Starts.Single(s => s.JobId == id);
+        return Fake!.JobOrNull(id)!.Launch;
     }
 
     private JobRow Row(string id) => _state.Jobs().Single(j => j.Id == id);
@@ -114,18 +115,18 @@ public sealed class BuildCacheTests : JobTestsBase
     }
 
     [Fact]
-    public void ByDefaultAPlaneJobRunsAsGivenWithNoCacheVariables()
+    public async Task ByDefaultAPlaneJobRunsAsGivenWithNoCacheVariables()
     {
-        var launch = Launched(null, "dotnet build Pilot.slnx -c Release", PlaneIn("pil1"));
+        var launch = await Launched(null, "dotnet build Pilot.slnx -c Release", PlaneIn("pil1"));
 
         launch.Command.ShouldBe("dotnet build Pilot.slnx -c Release");
         launch.Environment!.ShouldNotContainKey("MSBuildCacheEnabled");
     }
 
     [Fact]
-    public void WithTheSettingOnAPlaneJobGetsTheVariablesAndTheRewrittenCommandWhileItsRowKeepsTheGivenOne()
+    public async Task WithTheSettingOnAPlaneJobGetsTheVariablesAndTheRewrittenCommandWhileItsRowKeepsTheGivenOne()
     {
-        var launch = Launched(true, "dotnet build Pilot.slnx -c Release", PlaneIn("pil1"));
+        var launch = await Launched(true, "dotnet build Pilot.slnx -c Release", PlaneIn("pil1"));
 
         launch.Command.ShouldContain(MsBuild);
         launch.Environment!["MSBuildCacheEnabled"].ShouldBe("true");
@@ -133,18 +134,18 @@ public sealed class BuildCacheTests : JobTestsBase
     }
 
     [Fact]
-    public void WithTheSettingOnAJobInTheMainCloneIsUntouched()
+    public async Task WithTheSettingOnAJobInTheMainCloneIsUntouched()
     {
-        var launch = Launched(true, "dotnet build Pilot.slnx -c Release", _root);
+        var launch = await Launched(true, "dotnet build Pilot.slnx -c Release", _root);
 
         launch.Command.ShouldBe("dotnet build Pilot.slnx -c Release");
         launch.Environment!.ShouldNotContainKey("MSBuildCacheEnabled");
     }
 
     [Fact]
-    public void ATestNoBuildJobWithTheSettingOnIsLeftAlone()
+    public async Task ATestNoBuildJobWithTheSettingOnIsLeftAlone()
     {
-        var launch = Launched(true, "dotnet test Pilot.Node.Tests -c Release --no-build", PlaneIn("pil1"));
+        var launch = await Launched(true, "dotnet test Pilot.Node.Tests -c Release --no-build", PlaneIn("pil1"));
 
         launch.Command.ShouldBe("dotnet test Pilot.Node.Tests -c Release --no-build");
     }
