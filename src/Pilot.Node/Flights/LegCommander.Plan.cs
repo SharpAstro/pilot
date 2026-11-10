@@ -117,7 +117,7 @@ public sealed partial class LegCommander
                 }
                 throw new FlightException(CheckScope.Refusal(whole, suggestion));
             }
-            doneWhen = $"{doneWhen}\nThe check runs the whole suite on purpose: {wholeSuite}";
+            doneWhen = $"{doneWhen}\n{CheckScope.WholeSuiteMark}{wholeSuite}";
         }
 
         // The repo's invariant tests ride along any filtered dotnet test, so the stored check is the one that runs everywhere.
