@@ -350,6 +350,7 @@ internal sealed class FakeRepoGit : IGit
             "config" => Config(a),
             "ls-remote" => LsRemote(a),
             "switch" => Switch(a, wt),
+            "update-ref" => UpdateRef(a, wt),
             _ => throw new NotSupportedException("verb"),
         };
     }
@@ -737,6 +738,22 @@ internal sealed class FakeRepoGit : IGit
         repo.Worktrees[0].Index = new Dictionary<string, string>(tree);
         Materialize(repo.Worktrees[0], tree, new Dictionary<string, string>());
         WriteConfigFile(repo);
+        return Ok("");
+    }
+
+    /// <summary><c>git update-ref &lt;ref&gt; &lt;commit&gt;</c>: sets a ref of the repo the folder is in (of the origin when it is a bare one's folder), as a fake gh does for refs/pull/&lt;n&gt;/head.</summary>
+    private GitRun UpdateRef(List<string> a, Worktree? wt)
+    {
+        if (a is not [var name, var target] || name.StartsWith('-') || target.StartsWith('-'))
+        {
+            throw new NotSupportedException("update-ref form");
+        }
+        var refs = wt is null ? _bare?.Refs : Refs;
+        if (refs is null || Resolve(target, wt) is not { } id)
+        {
+            return Fail($"fatal: {target}: not a valid SHA1", 128);
+        }
+        refs[name] = id;
         return Ok("");
     }
 
