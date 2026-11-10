@@ -14,7 +14,9 @@ namespace Pilot.Gui.Tests;
 /// watchtower for-you card. <see cref="RealCards.Before"/> holds them as main wrote them (titles, first lines and buttons as the issue
 /// quotes them, the cut ones cut where the issue shows them cut); <see cref="RealCards.After"/> holds the same situations as the raisers
 /// word them now, read from <c>Fixtures/cards-plain-after.jsonl</c>, which each kind's golden test in Pilot.Node.Tests holds to the card it
-/// raises (<c>CardsPanelFixture.ShouldMatch</c>). Both are drawn with no display:
+/// raises (<c>CardsPanelFixture.ShouldMatch</c>). c3623 and c3528 are in Before only, as nothing in the panel stands for them now: a leg
+/// retired on the controller's word raises no card (#795), and a folder Windows holds open is a Handled line with nothing to press.
+/// Both are drawn with no display:
 /// the check is that nothing is drawn over text and no word is cut at 420; the capture (docs/captures, for the PR) is written when
 /// PILOT_CARDS_CAPTURES names a folder.
 /// </summary>
