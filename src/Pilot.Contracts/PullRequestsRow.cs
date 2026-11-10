@@ -224,6 +224,59 @@ public sealed record PullRequestsRow
             : $"{(int)span.TotalDays}d ago";
     }
 
+    /// <summary>
+    /// The words for who read <paramref name="repo"/>: <c>read by DE1 2 min ago</c> when another node than <paramref name="thisNode"/> read it,
+    /// null when this node did, when it is not known, or when this node's name is not (nothing is claimed of a read it cannot place).
+    /// </summary>
+    public string? ReadStamp(string repo, string? thisNode, DateTimeOffset now) =>
+        thisNode is { Length: > 0 } me && RepoReads.FirstOrDefault(r => string.Equals(r.Repo, repo, StringComparison.OrdinalIgnoreCase)) is { } read
+            && !string.Equals(read.By, me, StringComparison.OrdinalIgnoreCase)
+            ? $"read by {read.By} {AgeWords(read.ReadAt, now)}"
+            : null;
+
+    /// <summary>The count of repos of <see cref="RepoReads"/> another node read than <paramref name="thisNode"/>, and those nodes' names.</summary>
+    public (int Repos, string[] Nodes) FromPeers(string? thisNode) =>
+        thisNode is { Length: > 0 } me && RepoReads.Where(r => !string.Equals(r.By, me, StringComparison.OrdinalIgnoreCase)).ToArray() is { Length: > 0 } peer
+            ? (peer.Length, [.. peer.Select(r => r.By).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase)])
+            : (0, []);
+
+    /// <summary>The header's words for <see cref="FromPeers"/>: <c>3 repos read by DE1</c>; empty when none came from a peer.</summary>
+    public string PeerCount(string? thisNode) =>
+        FromPeers(thisNode) is (> 0 and var n, var nodes) ? $"{n} {(n == 1 ? "repo" : "repos")} read by {string.Join(", ", nodes)}" : "";
+
+    /// <summary>
+    /// The one line on who read the repos: <c>PR read: 3 repos read here, 2 repos read by DE1 (2 min ago)</c>; null when no repo's read is stamped.
+    /// </summary>
+    public string? ReadLine(string? thisNode, DateTimeOffset now)
+    {
+        if (RepoReads.Length == 0)
+        {
+            return null;
+        }
+        string Repos(int n) => $"{n} {(n == 1 ? "repo" : "repos")}";
+        var parts = new List<string>();
+        var own = RepoReads.Where(r => thisNode is { Length: > 0 } me && string.Equals(r.By, me, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (own.Length > 0)
+        {
+            parts.Add($"{Repos(own.Length)} read here");
+        }
+        foreach (var by in RepoReads.Except(own).GroupBy(r => r.By, StringComparer.OrdinalIgnoreCase).OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            parts.Add($"{Repos(by.Count())} read by {by.Key} ({AgeWords(by.Min(r => r.ReadAt), now)})");
+        }
+        return "PR read: " + string.Join(", ", parts);
+    }
+
+    /// <summary>How long ago in words: <c>just now</c>, <c>2 min ago</c>, <c>3 h ago</c>, <c>2 d ago</c>.</summary>
+    public static string AgeWords(DateTimeOffset then, DateTimeOffset now)
+    {
+        var span = now - then;
+        return span.TotalMinutes < 1 ? "just now"
+            : span.TotalHours < 1 ? $"{(int)span.TotalMinutes} min ago"
+            : span.TotalDays < 1 ? $"{(int)span.TotalHours} h ago"
+            : $"{(int)span.TotalDays} d ago";
+    }
+
     /// <summary>Whether <paramref name="pr"/> is the person's own: authored by <see cref="Viewer"/>, or, when the node could not say who that is, not a flight's.</summary>
     public bool IsMine(PullRequestRow pr) => Viewer is { Length: > 0 } viewer ? string.Equals(pr.Author, viewer, StringComparison.OrdinalIgnoreCase) : pr.Flight is null;
 

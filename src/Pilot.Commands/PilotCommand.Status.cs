@@ -35,7 +35,7 @@ public static partial class PilotCommand
     /// The flights and their legs, a line each, and the live sessions. Landed flights are left out unless <paramref name="all"/>,
     /// with a line saying how many; a flight asked for by <paramref name="code"/>, or the newest, shows whatever its state.
     /// </summary>
-    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null)
+    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null, string? thisNode = null)
     {
         var text = new System.Text.StringBuilder();
         if (!newestOnly && code is null && maintenance)
@@ -59,6 +59,10 @@ public static partial class PilotCommand
         if (!newestOnly && code is null && commandTimings is not null)
         {
             text.AppendLine($"commands  {CommandTimingRow.Summary(commandTimings)}");
+        }
+        if (!newestOnly && code is null && snapshot.PullRequests?.ReadLine(thisNode, DateTimeOffset.UtcNow) is { } prRead)
+        {
+            text.AppendLine(prRead.Replace("PR read: ", "pr read  "));
         }
         if (!newestOnly && code is null && heap is not null)
         {
@@ -194,6 +198,7 @@ public static partial class PilotCommand
                 string? reboot = null;
                 bool? autopilot = null;
                 string? dataFolder = null;
+                string? thisNode = null;
                 SendTimingRow[]? timings = null;
                 CommandTimingRow[]? commandTimings = null;
                 NodeHeapRow? heap = null;
@@ -207,6 +212,7 @@ public static partial class PilotCommand
                     reboot = info.Reboot;
                     autopilot = info.Autopilot;
                     dataFolder = info.DataFolder;
+                    thisNode = info.MachinePrefix.Length > 0 ? info.MachinePrefix : info.MachineName;
                 }
                 catch (HttpRequestException)
                 {
@@ -215,8 +221,8 @@ public static partial class PilotCommand
                 var everyFlight = parseResult.GetValue(allFlights);
                 var format = parseResult.GetValue(outputFormat);
                 var copies = format is "plain" or "text" ? new Dictionary<string, string>() : await AttachmentCopies.ResolveAsync(AttachmentCopies.Of(snapshot), client, dataFolder, ct);
-                await WriteAsync(format, () => Status(snapshot, maintenance: maintenance, autopilot: autopilot, all: everyFlight, sendTimings: timings, commandTimings: commandTimings, heap: heap, reboot: reboot),
-                    () => StatusMarkdown.Build(snapshot, maintenance, autopilot, everyFlight, copies, timings, commandTimings, heap, reboot));
+                await WriteAsync(format, () => Status(snapshot, maintenance: maintenance, autopilot: autopilot, all: everyFlight, sendTimings: timings, commandTimings: commandTimings, heap: heap, reboot: reboot, thisNode: thisNode),
+                    () => StatusMarkdown.Build(snapshot, maintenance, autopilot, everyFlight, copies, timings, commandTimings, heap, reboot, thisNode));
                 return 0;
             });
             var attachmentsOwner = new Argument<string?>("flight-or-session") { Description = "A flight's code or a session's name; none lists every one", Arity = ArgumentArity.ZeroOrOne };
@@ -225,6 +231,7 @@ public static partial class PilotCommand
                 var snapshot = await SnapshotAsync(client, ct);
                 var owner = p.GetValue(attachmentsOwner);
                 string? dataFolder = null;
+                string? thisNode = null;
                 try
                 {
                     dataFolder = (await client.GetNodeAsync(ct)).DataFolder;

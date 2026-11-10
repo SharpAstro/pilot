@@ -178,6 +178,31 @@ public sealed class PullRequestsPageTests
         Button(arranged, "prs:filter:needs-me").X.ShouldBeLessThan(search.X);
     }
 
+    [Fact]
+    public void ARepoAPeerReadSaysWhoReadItAndHowLongAgoAndOneReadHereSaysNothing()
+    {
+        var row = Row() with
+        {
+            RepoReads =
+            [
+                new PullRequestRepoRead("SharpAstro/pilot", Now - TimeSpan.FromMinutes(2), "DE1"),
+                new PullRequestRepoRead("SharpAstro/tianwen", Now - TimeSpan.FromSeconds(30), "SE1"),
+            ],
+        };
+        var screen = Screen(row) with { Node = "SE1" };
+        row.ReadStamp("SharpAstro/pilot", "SE1", Now).ShouldBe("read by DE1 2 min ago");
+        row.ReadStamp("SharpAstro/tianwen", "SE1", Now).ShouldBeNull();
+        row.ReadStamp("SharpAstro/pilot", null, Now).ShouldBeNull();
+        screen.Counts.ShouldEndWith(" · 1 repo read by DE1");
+
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (_, page) = Chrome(renderer);
+        var text = Dump(Arrange(renderer, page, screen));
+        text.ShouldContain("read by DE1 2 min ago");
+        text.ShouldNotContain("read by SE1");
+        Dump(Arrange(renderer, page, Screen(Row()) with { Node = "SE1" })).ShouldNotContain("read by");
+    }
+
     [Theory]
     [InlineData(800f)]
     [InlineData(1000f)]

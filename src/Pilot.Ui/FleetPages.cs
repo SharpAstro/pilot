@@ -323,7 +323,7 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
                 .ToDictionary(x => x.Key, x => x.Row)),
             machines,
             // Every shown node reads the same GitHub: a PR two of them read is one row, and the page is as old as the oldest read.
-            new PullRequestsScreen(PullRequestsRow.Merge(shown.Select(f => f.Feed.PullRequests())), several ? source : hereSessions.Source, now),
+            new PullRequestsScreen(PullRequestsRow.Merge(shown.Select(f => f.Feed.PullRequests())), several ? source : hereSessions.Source, now) { Node = here.Node is { } info ? (info.MachinePrefix.Length > 0 ? info.MachinePrefix : info.MachineName) : null },
             // Ideas are GitHub's, the same whichever node reads them: this window's node's.
             here.Ideas(now));
     }

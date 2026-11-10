@@ -953,6 +953,50 @@ public sealed class CliTests : IAsyncLifetime
         PilotCommand.Repos(rows, all: false).ShouldNotContain("draft  labels");
     }
 
+    private static PullRequestsRow PeerReadRow(DateTimeOffset now) => new()
+    {
+        Orgs = ["SharpAstro"], ReadAt = now.AddMinutes(-2),
+        PullRequests =
+        [
+            new PullRequestRow { Repo = "SharpAstro/pilot", Number = 7, Title = "Mine", Url = "https://github.com/SharpAstro/pilot/pull/7", Kind = PullRequestKind.Ready, Label = "Ready" },
+            new PullRequestRow { Repo = "SharpAstro/tianwen", Number = 3, Title = "Theirs", Url = "https://github.com/SharpAstro/tianwen/pull/3", Kind = PullRequestKind.Ready, Label = "Ready" },
+        ],
+        RepoReads =
+        [
+            new PullRequestRepoRead("SharpAstro/pilot", now.AddSeconds(-20), "SE1"),
+            new PullRequestRepoRead("SharpAstro/tianwen", now.AddMinutes(-2), "DE1"),
+        ],
+    };
+
+    [Fact]
+    public void PullRequestsSayWhichReposAPeerReadAndHowLongAgoInPlainAndMarkdownAndCountThemAtTheTop()
+    {
+        var now = new DateTimeOffset(2026, 11, 11, 12, 0, 0, TimeSpan.Zero);
+        var row = PeerReadRow(now);
+
+        var plain = PullRequestsMarkdown.Plain(row, needsMe: false, now, "SE1").ReplaceLineEndings("\n");
+        plain.ShouldContain("· read 2m ago · 1 repo read by DE1\n");
+        plain.ShouldContain("  SharpAstro/tianwen  1  read by DE1 2 min ago\n");
+        plain.ShouldContain("  SharpAstro/pilot  1\n");
+
+        var markdown = PullRequestsMarkdown.Build(row, needsMe: false, now, "SE1").ReplaceLineEndings("\n");
+        markdown.ShouldContain("1 repo read by DE1");
+        markdown.ShouldContain("### [SharpAstro/tianwen](https://github.com/SharpAstro/tianwen) (1) · read by DE1 2 min ago\n");
+        markdown.ShouldContain("(https://github.com/SharpAstro/pilot) (1)\n");
+
+        // Without the node's name nothing is claimed.
+        PullRequestsMarkdown.Plain(row, needsMe: false, now).ShouldNotContain("read by");
+    }
+
+    [Fact]
+    public void StatusSaysWhichReposThisNodeReadAndWhichAPeerDid()
+    {
+        var snapshot = SnapshotWith(null) with { PullRequests = PeerReadRow(DateTimeOffset.UtcNow) };
+        PilotCommand.Status(snapshot, thisNode: "SE1").ShouldContain("pr read  1 repo read here, 1 repo read by DE1 (2 min ago)");
+        StatusMarkdown.Build(snapshot, thisNode: "SE1").ShouldContain("- **pr read** 1 repo read here, 1 repo read by DE1 (2 min ago)");
+        PilotCommand.Status(SnapshotWith(null)).ShouldNotContain("pr read");
+    }
+
     [Fact]
     public void PullRequestsPrintGroupedByRepoWithTheirLabelsAsPlainTextAndAsMarkdownTables()
     {

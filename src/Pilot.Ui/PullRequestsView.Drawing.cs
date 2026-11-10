@@ -387,6 +387,12 @@ internal sealed partial class PullRequestsView<TSurface>
     private Layout.Node OrgNote(string text, RGBAColor32 color, string whole) =>
         Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(NoteIndent), Layout.Builder.Text(text, SecondarySize, color).WithTooltip(whole).WStar().HStar()).RowH(OrgNoteHeight);
 
+    // Who read a repo's PRs when another node than this window's did: "read by DE1 2 min ago", cut with an ellipsis, whole on hover; nothing for a read made here.
+    private Layout.Node ReadStampNode(string repo) =>
+        _screen is { Row: { } row } screen && row.ReadStamp(repo, screen.Node, _now) is { } words
+            ? Layout.Builder.Text(words, SecondarySize, BodyText).WithTooltip(words).WAuto().HStar()
+            : Layout.Builder.Spacer().WFixed(0f);
+
     // A repo's header: its fold mark, its name as a link to the repo, and how many PRs it lists. A click anywhere on it folds it.
     private Layout.Node GroupRow(PullRequestGroup group, int index, bool folded)
     {
@@ -408,7 +414,8 @@ internal sealed partial class PullRequestsView<TSurface>
                 Layout.Builder.Icon(folded ? Layout.IconKind.CaretRight : Layout.IconKind.CaretDown, 12f, BodyText).WFixed(16f).HStar(),
                 name.HStar(),
                 Layout.Builder.Spacer().WStar(1000f),
-                Layout.Builder.Text($"{count} {(count == 1 ? "PR" : "PRs")}", TextSize, BodyText).WAuto().HStar())
+                ReadStampNode(group.Repo),
+                Layout.Builder.Text($"{count}{(count == 1 ? "PR" : "PRs")}", TextSize, BodyText).WAuto().HStar())
             .WithGap(8f)
             .Pad(8f, 0f)
             .RowH(GroupHeight)
@@ -543,6 +550,7 @@ internal sealed partial class PullRequestsView<TSurface>
 
     // The screen's moment, which a row's age counts from: a capture of a file reads the same each time.
     private DateTimeOffset _now = DateTimeOffset.UtcNow;
+    private PullRequestsScreen? _screen;
 
     /// <summary>
     /// A PR's state chip: the Contracts label on the kind's colours, one look wherever it is drawn (this page, a flight's card and its

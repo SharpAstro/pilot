@@ -36,6 +36,11 @@ internal static class PullRequestsMarkdown
         : pr.Flight is { } code ? $"review asks for changes: answer {code}'s review-changes card with Fix the review's findings (pilot cards lists it)"
         : $"review asks for changes: pilot review fix {pr.Repo}#{pr.Number}";
 
+    private static string Peers(PullRequestsRow row, string? thisNode) => row.PeerCount(thisNode) is { Length: > 0 } peers ? $" · {peers}" : "";
+
+    private static string Stamp(PullRequestsRow row, string repo, string? thisNode, DateTimeOffset now, string lead) =>
+        row.ReadStamp(repo, thisNode, now) is { } words ? lead + words : "";
+
     private static string Review(PullRequestRow pr) => pr.Review is { } review ? $"review {review}" : "";
 
     // The row's note (the read is rate-limited), then a line for each org that could not be read.
@@ -54,7 +59,7 @@ internal static class PullRequestsMarkdown
     /// The plain list: a line an org (its name and counts, its read error under it), a line a repo of it (its name and count)
     /// indented, and each repo's PRs indented under that with the label, flight, author, review and age.
     /// </summary>
-    internal static string Plain(PullRequestsRow? row, bool needsMe, DateTimeOffset now)
+    internal static string Plain(PullRequestsRow? row, bool needsMe, DateTimeOffset now, string? thisNode = null)
     {
         var orgs = row?.OrgGroups(needsMe) ?? [];
         if (row is null || orgs.All(o => o.Repos.Length == 0))
@@ -62,7 +67,7 @@ internal static class PullRequestsMarkdown
             return Empty(row, needsMe) + (row is null ? "" : Errors(row, s => s));
         }
         var text = new StringBuilder();
-        text.AppendLine($"{Summary(row)} · read {Age(row.ReadAt, now)}");
+        text.AppendLine($"{Summary(row)} · read {Age(row.ReadAt, now)}{Peers(row, thisNode)}");
         foreach (var org in orgs)
         {
             text.AppendLine($"{org.Org}  {org.Counts}");
@@ -72,7 +77,7 @@ internal static class PullRequestsMarkdown
             }
             foreach (var group in org.Repos)
             {
-                text.AppendLine($"  {group.Repo}  {group.PullRequests.Length}");
+                text.AppendLine($"  {group.Repo}  {group.PullRequests.Length}{Stamp(row, group.Repo, thisNode, now, "  ")}");
                 foreach (var pr in group.PullRequests)
                 {
                     var more = new[] { pr.Flight, pr.Author, Review(pr), $"updated {Age(pr.UpdatedAt, now)}" }.Where(s => !string.IsNullOrEmpty(s));
@@ -89,7 +94,7 @@ internal static class PullRequestsMarkdown
     }
 
     /// <summary>The Markdown list: a heading an org with its counts (its error under it), a sub-heading a repo, linked, and a table of its PRs, the PR's title the link.</summary>
-    internal static string Build(PullRequestsRow? row, bool needsMe, DateTimeOffset now)
+    internal static string Build(PullRequestsRow? row, bool needsMe, DateTimeOffset now, string? thisNode = null)
     {
         var orgs = row?.OrgGroups(needsMe) ?? [];
         if (row is null || orgs.All(o => o.Repos.Length == 0))
@@ -98,7 +103,7 @@ internal static class PullRequestsMarkdown
         }
         var text = new StringBuilder();
         text.AppendLine("# pilot prs").AppendLine();
-        text.AppendLine($"{Summary(row)} · read {Age(row.ReadAt, now)}").AppendLine();
+        text.AppendLine($"{Summary(row)} · read {Age(row.ReadAt, now)}{Peers(row, thisNode)}").AppendLine();
         foreach (var org in orgs)
         {
             text.AppendLine($"## [{Markdown.Text(org.Org)}](https://github.com/{org.Org}) · {org.Counts}").AppendLine();
@@ -108,7 +113,7 @@ internal static class PullRequestsMarkdown
             }
             foreach (var group in org.Repos)
             {
-                text.AppendLine($"### [{Markdown.Text(group.Repo)}](https://github.com/{group.Repo}) ({group.PullRequests.Length})").AppendLine();
+                text.AppendLine($"### [{Markdown.Text(group.Repo)}](https://github.com/{group.Repo}) ({group.PullRequests.Length}){Markdown.Text(Stamp(row, group.Repo, thisNode, now, " · "))}").AppendLine();
                 text.AppendLine("| State | PR | Flight | Author | Review | Updated |");
                 text.AppendLine("| --- | --- | --- | --- | --- | --- |");
                 foreach (var pr in group.PullRequests)
