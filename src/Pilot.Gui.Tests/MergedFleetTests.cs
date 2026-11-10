@@ -333,6 +333,20 @@ public sealed class MergedFleetTests : IAsyncDisposable
     }
 
     [Fact]
+    public void ANodeHeldByNameIsSteeredAtANewAddressAndARefusalFollowsTheName()
+    {
+        using var here = NodeClient.Remote("127.0.0.1:1");
+        var view = new HeldView([new("NA1", "10.0.0.1:47731", "tok-na1")]);
+        using var clients = new FleetClients(here, _ => false, where => NodeClient.Remote(where), grantedByName: view.Holds);
+        var moved = new NodeMark("10.0.0.7:47731", "10.0.0.7:47731", "NA1", Here: false) { HeldName = "NA1" };
+
+        clients.CanSteer(moved).ShouldBeTrue();
+        clients.CanSteer(moved with { HeldName = "XX9" }).ShouldBeFalse();
+        clients.NoteRefusal(moved, ResponseEnvelope<int>.Fail("unauthorized", 401)).ShouldBeTrue();
+        clients.CanSteer(moved with { Where = "10.0.0.8:47731", Key = "10.0.0.8:47731" }).ShouldBeFalse();
+    }
+
+    [Fact]
     public void TheWindowsOwnNodesPillSaysThisSoThisNodeOnThePageHasAPillToMatch()
     {
         NodeFilter.Label(new NodeMark("s", "node.sock", "SE1", Here: true)).ShouldBe("SE1 (this)");

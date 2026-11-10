@@ -13,7 +13,10 @@ public interface IFleet
 /// <summary>One peer node: what is read of it to judge it, and the create-flight sent to it.</summary>
 public interface IFleetPeer
 {
-    /// <summary>Its <c>host:port</c>, which names it where its own prefix is not known (it was not reached).</summary>
+    /// <summary>The node's name as held: its machine name (<c>SE1</c>), or its address for a grant held from the old file that has no name yet.</summary>
+    string Name { get; }
+
+    /// <summary>The <c>host:port</c> it is reached at now: where it announces itself, else the last address it answered at.</summary>
     string Endpoint { get; }
 
     /// <summary>Whether this node holds a grant (a token) for it.</summary>
@@ -82,7 +85,11 @@ public sealed record FleetPeerFacts(string Name, bool Reached, bool Granted, boo
 
 /// <summary>A peer judged: willing, or why not.</summary>
 /// <param name="Reason">Why it does not qualify; null when it does.</param>
-public sealed record FleetVerdict(string Name, string? Reason, FleetPeerFacts Facts);
+public sealed record FleetVerdict(string Name, string? Reason, FleetPeerFacts Facts)
+{
+    /// <summary>The reason as a line: <c>name: reason</c>, unless the reason already begins with the name (a refused grant does).</summary>
+    public string? Said => Reason is null ? null : Reason.StartsWith(Name + " ", StringComparison.OrdinalIgnoreCase) ? Reason : $"{Name}: {Reason}";
+}
 
 /// <summary>
 /// The choice of a node for a flight this node cannot take (#177): each peer judged willing or with its reason, the willing
@@ -97,7 +104,7 @@ public static class FleetChoice
 
     /// <summary>Why <paramref name="peer"/> does not qualify, checked in the order that what is read first decides what can be read next; null when it does.</summary>
     public static string? Reason(FleetPeerFacts peer, string? gitHub) =>
-        !peer.Granted ? "no grant"
+        !peer.Granted ? (peer.Reached ? NodeClient.RefusedHeldGrant(peer.Name) : "no grant")
         : !peer.Reached ? "unreachable"
         : peer.Maintenance ? "in maintenance"
         : !peer.AcceptsFleetFlights ? "not willing (accept-fleet-flights is off)"
@@ -122,8 +129,15 @@ public static class FleetChoice
     }
 }
 
-/// <summary>The fleet as a node reaches it: a <see cref="NodeClient.Remote"/> per held endpoint of <c>client-grants.json</c>.</summary>
-public sealed class HeldTokenFleet(string tokenFile) : IFleet
+/// <summary>
+/// The fleet as a node reaches it: one peer per grant held in <c>client-grants.json</c>, which keeps each under the node's machine name.
+/// A peer is reached at the address its node announces now (<paramref name="heard"/>, the LAN peers this node hears, by their
+/// <c>machine</c> property), else at the last address it answered at (the entry's hint); a peer that answers at another address than its
+/// hint has the hint updated, so a node that changed network keeps its grant.
+/// </summary>
+/// <param name="tokenFile">The held grants.</param>
+/// <param name="heard">The nodes heard announcing themselves on the LAN now; null when this node does not run discovery.</param>
+public sealed class HeldTokenFleet(string tokenFile, Func<IReadOnlyList<LanPeer>>? heard = null) : IFleet
 {
     /// <summary>How long a peer has to answer a read before it counts as unreachable.</summary>
     public static readonly TimeSpan ReadBudget = TimeSpan.FromSeconds(8);
@@ -136,15 +150,29 @@ public sealed class HeldTokenFleet(string tokenFile) : IFleet
 
     public IReadOnlyList<IFleetPeer> Peers()
     {
-        var held = new LanHeldTokenFile(tokenFile);
-        return [.. held.Endpoints.Select(e => (IFleetPeer)new RemotePeer(e, held.TokenFor(e)))];
+        var file = new HeldGrantFile(tokenFile);
+        var announced = heard?.Invoke() ?? [];
+        var peers = new List<IFleetPeer>();
+        foreach (var grant in file.Read().OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            var now = grant.Name is null ? null
+                : announced.FirstOrDefault(p => string.Equals(p.Properties.GetValueOrDefault("machine"), grant.Name, StringComparison.OrdinalIgnoreCase))?.EndPoint.ToString().ToLowerInvariant();
+            var endpoint = now ?? grant.Address;
+            if (endpoint.Length > 0)
+            {
+                peers.Add(new RemotePeer(file, grant, endpoint));
+            }
+        }
+        return peers;
     }
 
-    private sealed class RemotePeer(string endpoint, string? token) : IFleetPeer
+    private sealed class RemotePeer(HeldGrantFile file, HeldGrant grant, string endpoint) : IFleetPeer
     {
         public string Endpoint { get; } = endpoint;
 
-        public bool HasGrant => token is { Length: > 0 };
+        public string Name { get; } = grant.Key;
+
+        public bool HasGrant => grant.Token is { Length: > 0 };
 
         public Task<NodeInfo> NodeAsync(CancellationToken cancellationToken) => WithClientAsync((client, ct) => client.GetNodeAsync(ct), cancellationToken);
 
@@ -155,7 +183,7 @@ public sealed class HeldTokenFleet(string tokenFile) : IFleet
             {
                 { Success: true, Response: { } repos } => repos,
                 { StatusCode: 401 or 403 } => null,
-                _ => throw new HttpRequestException($"{Endpoint} did not list its repos: {envelope.Error}"),
+                _ => throw new HttpRequestException($"{Name} did not list its repos: {envelope.Error}"),
             };
         }, cancellationToken);
 
@@ -163,7 +191,7 @@ public sealed class HeldTokenFleet(string tokenFile) : IFleet
         {
             await using var events = await client.OpenEventsAsync(since: null, stream: null, ct).ConfigureAwait(false);
             var snapshot = await events.ReadAsync(ct).ConfigureAwait(false) as SnapshotEvent
-                ?? throw new IOException($"{Endpoint}'s stream did not start with a snapshot");
+                ?? throw new IOException($"{Name}'s stream did not start with a snapshot");
             return new FleetLoad(snapshot.Usage, snapshot.Flights, snapshot.PrReviews, snapshot.Sessions, snapshot.Legs);
         }, cancellationToken);
 
@@ -171,7 +199,12 @@ public sealed class HeldTokenFleet(string tokenFile) : IFleet
         {
             var limit = command.Verb == Verbs.ReceiveFlight ? HandOverBudget : ReadBudget;
             var envelope = await WithClientAsync((client, ct) => client.SendAsync(command, ct), cancellationToken, limit).ConfigureAwait(false);
-            return envelope.Response ?? throw new HttpRequestException($"{Endpoint} refused {command.Verb}: {envelope.Error}");
+            if (envelope.StatusCode is 401 or 403)
+            {
+                // Only this node's own held token was sent: its refusal is the answer, and no other entry's is tried.
+                return new CommandResult { Verb = command.Verb, Target = command.Target, Who = command.Who, Seq = 0, Ok = false, Error = NodeClient.RefusedHeldGrant(Name) };
+            }
+            return envelope.Response ?? throw new HttpRequestException($"{Name} refused {command.Verb}: {envelope.Error}");
         }
 
         private async Task<T> WithClientAsync<T>(Func<NodeClient, CancellationToken, Task<T>> read, CancellationToken cancellationToken, TimeSpan? limit = null)
@@ -179,14 +212,43 @@ public sealed class HeldTokenFleet(string tokenFile) : IFleet
             var allowed = limit ?? ReadBudget;
             using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             budget.CancelAfter(allowed);
-            using var client = NodeClient.Remote(Endpoint, token);
+            using var client = NodeClient.Remote(Endpoint, grant.Token, grant.Name);
+            T answer;
             try
             {
-                return await read(client, budget.Token).ConfigureAwait(false);
+                answer = await read(client, budget.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                throw new TimeoutException($"{Endpoint} did not answer within {allowed.TotalSeconds:0} s");
+                throw new TimeoutException($"{Name} did not answer within {allowed.TotalSeconds:0} s");
+            }
+            KeepHint();
+            return answer;
+        }
+
+        /// <summary>The peer answered at <see cref="Endpoint"/>: that is its hint from now on, when the entry was not already there.</summary>
+        private void KeepHint()
+        {
+            if (grant.Name is null || string.Equals(grant.Address, Endpoint, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+            try
+            {
+                file.Update(entries =>
+                {
+                    var at = entries.FindIndex(e => string.Equals(e.Name, grant.Name, StringComparison.OrdinalIgnoreCase) && e.Token == grant.Token);
+                    if (at < 0 || string.Equals(entries[at].Address, Endpoint, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return false;
+                    }
+                    entries[at] = entries[at] with { Address = Endpoint };
+                    return true;
+                });
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // A hint that cannot be written is a hint lost: the node is heard again next time.
             }
         }
     }

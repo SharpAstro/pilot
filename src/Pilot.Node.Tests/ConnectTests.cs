@@ -296,7 +296,7 @@ public sealed class ConnectTests : OverlapTestsBase
         await _flights.LookAtPeerConnectionsAsync(Ct);
         F("TIA2").PeerConnections.ShouldHaveSingleItem().UnreachableSince.ShouldBe(since);
         var lines = log.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        lines.ShouldHaveSingleItem().ShouldContain("DE1 could not be asked for PIL294: de1.local:47731: it did not answer");
+        lines.ShouldHaveSingleItem().ShouldContain("DE1 could not be asked for PIL294: DE1: it did not answer");
         lines[0].ShouldNotContain("de2.local");
     }
 
@@ -758,6 +758,8 @@ public sealed class ConnectTests : OverlapTestsBase
 
     private sealed class FakePeer(string name) : IFleetPeer
     {
+        public string Name => name;
+
         public string Endpoint => $"{name.ToLowerInvariant()}.local:47731";
 
         public bool HasGrant => true;

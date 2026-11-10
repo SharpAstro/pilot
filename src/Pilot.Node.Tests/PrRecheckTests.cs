@@ -232,6 +232,8 @@ public abstract class PrRecheckTestsBase : IDisposable
 
     private protected sealed class Peer(string endpoint) : IFleetPeer
     {
+        public string Name => endpoint;
+
         public string Endpoint => endpoint;
 
         public bool HasGrant => true;

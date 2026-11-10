@@ -31,7 +31,8 @@ public static class NodeTargets
         // A name is resolved first (ResolveAsync); one that reaches here unresolved is this machine's.
         if (target is not null && NodeClient.IsEndpoint(target, out var endpoint))
         {
-            return NodeClient.Remote(endpoint, TokenFor(endpoint, tokenFile));
+            var held = Held(tokenFile).Entries.FirstOrDefault(e => e.Name is not null && string.Equals(e.Address, endpoint, StringComparison.OrdinalIgnoreCase));
+            return NodeClient.Remote(endpoint, held?.Token ?? TokenFor(endpoint, tokenFile), held?.Name);
         }
         return new NodeClient(NodeSocket.Resolve(socket));
     }
@@ -54,6 +55,22 @@ public static class NodeTargets
         if (string.Equals(target, Environment.MachineName, StringComparison.OrdinalIgnoreCase))
         {
             return (null, true, null);
+        }
+        // A name this user holds a grant under finds that grant: the node is reached at the address it announces now (its beacon's
+        // machine property), else at the hint it last answered at.
+        if (Held().ByName(target) is { } held)
+        {
+            var announced = await DiscoverAsync(TimeSpan.FromSeconds(3), cancellationToken,
+                peers => peers.Any(p => string.Equals(p.Properties.GetValueOrDefault("machine"), held.Name, StringComparison.OrdinalIgnoreCase)));
+            var now = Match(announced, held.Name!, Environment.MachineName);
+            if (now.Why is null)
+            {
+                return now;
+            }
+            if (held.Address.Length > 0)
+            {
+                return (held.Address, false, null);
+            }
         }
         // Listened to until the node named is heard, not the whole window: a name costs a beacon's round, not 3 s a command.
         var heard = await DiscoverAsync(TimeSpan.FromSeconds(3), cancellationToken,
@@ -78,19 +95,35 @@ public static class NodeTargets
         return Same(match.MachineName, thisHost) ? (null, true, null) : (match.EndPoint.ToString(), false, null);
     }
 
-    /// <summary>This user's held tokens: LAN.Lib's one-file store, over <paramref name="tokenFile"/> or <see cref="TokenFile"/>.</summary>
-    private static LanHeldTokenFile Held(string? tokenFile) => new(tokenFile ?? TokenFile);
+    /// <summary>
+    /// <see cref="Connect"/> for a command that may wait: a node at <c>host:port</c> is reached with the grant held under its machine name,
+    /// found by the address's hint or by asking the node its name (<see cref="HeldGrants.FindAsync"/>), so a node that changed network keeps its grant.
+    /// A refusal of that grant says <c>&lt;name&gt; refused the held grant: Connect again</c>.
+    /// </summary>
+    public static async Task<NodeClient> ConnectAsync(string? node, string? socket, CancellationToken cancellationToken, string? tokenFile = null, bool here = false)
+    {
+        var target = node ?? (Environment.GetEnvironmentVariable(EnvironmentVariable) is { Length: > 0 } fromEnv ? fromEnv : null);
+        if (here || target is null || !NodeClient.IsEndpoint(target, out var endpoint))
+        {
+            return Connect(node, socket, tokenFile, here);
+        }
+        var found = await Held(tokenFile).FindAsync(endpoint, cancellationToken);
+        return NodeClient.Remote(endpoint, found.Token, found.Name);
+    }
 
-    /// <summary>The token saved for <paramref name="endpoint"/>, or null.</summary>
+    /// <summary>This user's held grants: by machine name, with the last address as a hint, over <paramref name="tokenFile"/> or <see cref="TokenFile"/>.</summary>
+    public static HeldGrants Held(string? tokenFile = null) => new(tokenFile ?? TokenFile);
+
+    /// <summary>The token held for <paramref name="endpoint"/> by its hint, or null; no request is made (<see cref="HeldGrants.FindAsync"/> asks the node).</summary>
     public static string? TokenFor(string endpoint, string? tokenFile = null) => Held(tokenFile).TokenFor(endpoint);
 
-    /// <summary>The nodes on the LAN this user holds a grant for, by <c>host:port</c>: the fleet beyond this machine.</summary>
+    /// <summary>The nodes on the LAN this user holds a grant for, by the <c>host:port</c> each last answered at: the fleet beyond this machine.</summary>
     public static IReadOnlyList<string> Granted(string? tokenFile = null) => Held(tokenFile).Endpoints;
 
-    /// <summary>Saves <paramref name="token"/> for <paramref name="endpoint"/>, over any earlier one.</summary>
+    /// <summary>Saves <paramref name="token"/> for <paramref name="endpoint"/>, whose node's name is not known here, over any earlier one at that address.</summary>
     public static void Save(string endpoint, string token, string? tokenFile = null) => Held(tokenFile).Save(endpoint, token);
 
-    /// <summary>Drops the token held for <paramref name="endpoint"/>: that node is watched, not commanded, until connected again. False when none was held.</summary>
+    /// <summary>Drops the grant held for <paramref name="endpoint"/> (or the name): that node is watched, not commanded, until connected again. False when none was held.</summary>
     public static bool Forget(string endpoint, string? tokenFile = null) => Held(tokenFile).Forget(endpoint);
 
     /// <summary>

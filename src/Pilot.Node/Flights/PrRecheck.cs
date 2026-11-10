@@ -647,12 +647,12 @@ public sealed class PrRecheck : IHostedService
                 if (load.Flights.Any(f => f.State != FlightState.Landed && IsFlightOf(f, entry.Repo, entry.Number))
                     || (load.PrReviews ?? []).Any(r => r.Number == entry.Number && string.Equals(r.Repo, entry.Repo, StringComparison.OrdinalIgnoreCase)))
                 {
-                    return peer.Endpoint;
+                    return peer.Name;
                 }
             }
             catch (Exception ex) when (ex is HttpRequestException or TimeoutException or IOException or InvalidOperationException)
             {
-                await Error.WriteLineAsync($"pr recheck: {peer.Endpoint} did not say what it holds: {ex.Message}");
+                await Error.WriteLineAsync($"pr recheck: {peer.Name} did not say what it holds: {ex.Message}");
             }
         }
         return null;

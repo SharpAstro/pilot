@@ -157,8 +157,8 @@ public sealed class TouchesTests : IDisposable
         var result = await Touches(Mine);
 
         var lines = result.Made.ShouldNotBeNull().Split('\n');
-        lines.ShouldContain("de1.local:47731: unknown, this node did not answer (connection refused), so its flights are not known");
-        lines.ShouldContain("de2.local:47731: unknown, no grant is held for this node, so its flights are not known");
+        lines.ShouldContain("DE1: unknown, this node did not answer (connection refused), so its flights are not known");
+        lines.ShouldContain("DE2: unknown, no grant is held for this node, so its flights are not known");
     }
 
     [Fact]
@@ -343,6 +343,8 @@ public sealed class TouchesTests : IDisposable
 
     private sealed class FakePeer(string name) : IFleetPeer
     {
+        public string Name => name;
+
         public string Endpoint => $"{name.ToLowerInvariant()}.local:47731";
 
         public bool HasGrantHeld { get; init; } = true;

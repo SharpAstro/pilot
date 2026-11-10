@@ -29,12 +29,12 @@ public sealed partial class FlightCommander
     /// <summary>The name a peer says it has (its machine prefix, or its endpoint where it has none), remembered under its endpoint.</summary>
     private string Learn(IFleetPeer peer, NodeInfo info)
     {
-        var node = info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Endpoint;
-        _peerNames[peer.Endpoint] = node;
+        var node = info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Name;
+        _peerNames[peer.Name] = node;
         return node;
     }
 
-    private string? NameOf(IFleetPeer peer) => _peerNames.TryGetValue(peer.Endpoint, out var node) ? node : null;
+    private string? NameOf(IFleetPeer peer) => _peerNames.TryGetValue(peer.Name, out var node) ? node : null;
 
     /// <summary>The last copy of each granted peer's flights and legs, fed by every read that answers (#894); null for a node built without one.</summary>
     public FleetCopy? Copy { get; set; }
@@ -107,13 +107,13 @@ public sealed partial class FlightCommander
     {
         if (!peer.HasGrant)
         {
-            return new PeerRead(NameOf(peer), null, $"{peer.Endpoint}: no grant is held for it");
+            return new PeerRead(NameOf(peer), null, $"{peer.Name}: no grant is held for it");
         }
         try
         {
             if (await peer.ReposAsync(budget) is not { } repos)
             {
-                return new PeerRead(NameOf(peer), null, $"{peer.Endpoint}: it refuses the grant held for it");
+                return new PeerRead(NameOf(peer), null, NodeClient.RefusedHeldGrant(peer.Name));
             }
             var info = await peer.NodeAsync(budget);
             var node = Learn(peer, info);
@@ -129,7 +129,7 @@ public sealed partial class FlightCommander
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or OperationCanceledException or WebSocketException && !caller.IsCancellationRequested)
         {
-            return new PeerRead(NameOf(peer), null, $"{peer.Endpoint}: it did not answer ({FirstLineOf(ex.Message)})", Unanswered: true);
+            return new PeerRead(NameOf(peer), null, $"{peer.Name}: it did not answer ({FirstLineOf(ex.Message)})", Unanswered: true);
         }
     }
 
@@ -243,7 +243,7 @@ public sealed partial class FlightCommander
     {
         if (!peer.HasGrant)
         {
-            return new PeerRead(NameOf(peer), null, $"{peer.Endpoint}: no grant is held for it");
+            return new PeerRead(NameOf(peer), null, $"{peer.Name}: no grant is held for it");
         }
         try
         {
@@ -255,7 +255,7 @@ public sealed partial class FlightCommander
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or WebSocketException or OperationCanceledException && !caller.IsCancellationRequested)
         {
-            return new PeerRead(NameOf(peer), null, $"{peer.Endpoint}: it did not answer ({FirstLineOf(ex.Message)})", Unanswered: true);
+            return new PeerRead(NameOf(peer), null, $"{peer.Name}: it did not answer ({FirstLineOf(ex.Message)})", Unanswered: true);
         }
     }
 

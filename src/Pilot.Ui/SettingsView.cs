@@ -59,7 +59,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     // (the first, a refresh, or the one after a fix), so the rows say so; the controls pressed and not yet answered are <see cref="Presses"/>'s.
     // Repos: the node's tracked repos the list pickers offer (null until read); ReposProblem: why they could not be read.
     // ChecksTicket: the ticket of the checks read shown, so a slower, older read cannot put its answer over a newer one.
-    private sealed record Seen(SettingsPage? Page, SetupChecks? Checks, bool Checking, string? ChecksProblem, GrantInfo[] Given, string[] Held, string? Problem, RepoInfo[]? Repos = null, string? ReposProblem = null, long ChecksTicket = 0);
+    private sealed record Seen(SettingsPage? Page, SetupChecks? Checks, bool Checking, string? ChecksProblem, GrantInfo[] Given, Pilot.Contracts.HeldGrant[] Held, string? Problem, RepoInfo[]? Repos = null, string? ReposProblem = null, long ChecksTicket = 0);
 
     private Seen _read = new(null, null, false, null, [], [], null);
     private CancellationTokenSource? _reading;
@@ -96,14 +96,17 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// <summary>Reads the grants this node has given (its grants route); null where there is no node to read.</summary>
     public Func<CancellationToken, Task<GrantInfo[]>>? LoadGrants { get; set; }
 
-    /// <summary>The nodes this user holds a token for, by <c>host:port</c>: read from the token file with each refresh.</summary>
-    public Func<IReadOnlyList<string>>? LoadHeld { get; set; }
+    /// <summary>The nodes this user holds a token for, each by its machine name with the last address it answered at: read from the token file with each refresh.</summary>
+    public Func<IReadOnlyList<Pilot.Contracts.HeldGrant>>? LoadHeld { get; set; }
 
-    /// <summary>Drops the token held for a node; the host also recomputes the steerable set so its rows turn watch-only on the next tick.</summary>
+    /// <summary>Drops the token held for a node, by its machine name (its address for an old entry); the host also recomputes the steerable set so its rows turn watch-only on the next tick.</summary>
     public Action<string>? Forget { get; set; }
 
     /// <summary>The grants given, as last read.</summary>
     public GrantInfo[] Given => Volatile.Read(ref _read).Given;
+
+    /// <summary>The grants this user holds, as last read: each node by its machine name with the address it last answered at.</summary>
+    public Pilot.Contracts.HeldGrant[] Held => Volatile.Read(ref _read).Held;
 
     /// <summary>Called when what the page shows changed, from whichever thread: the host redraws.</summary>
     public Action? Changed { get => Presses.Changed; set => Presses.Changed = value; }
@@ -309,7 +312,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private void ForgetNode(string endpoint)
     {
         // At once in the list; the token file (Forget's write, and the list read back) on the pool.
-        System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { Held = [.. read.Held.Where(h => !string.Equals(h, endpoint, StringComparison.OrdinalIgnoreCase))] });
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { Held = [.. read.Held.Where(h => !string.Equals(HeldKey(h), endpoint, StringComparison.OrdinalIgnoreCase))] });
         Said = $"forgot {endpoint}: its rows are watch-only until you Connect again";
         Changed?.Invoke();
         _ = Task.Run(() =>
@@ -533,13 +536,18 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }
 
-    private Layout.Node HeldRow(string endpoint, int index)
+    /// <summary>What Forget drops an entry by: its machine name, or its address for an old entry that has none.</summary>
+    internal static string HeldKey(Pilot.Contracts.HeldGrant held) => held.Name ?? held.Address;
+
+    private Layout.Node HeldRow(Pilot.Contracts.HeldGrant grant, int index)
     {
+        var endpoint = HeldKey(grant);
+        var title = grant.Name is { } name && grant.Address.Length > 0 ? $"{name} · {grant.Address}" : endpoint;
         var row = Layout.Builder.HStack(
                 Layout.Builder.Spacer().Bg(Ok).WFixed(StripeWidth).HStar(),
                 Layout.Builder.VStack(
-                        Layout.Builder.Text(endpoint, 14f, Bright).RowH(22f),
-                        Layout.Builder.Text("you may command it", 11f, Dim).RowH(18f))
+                        Layout.Builder.Text(title, 14f, Bright).RowH(22f),
+                        Layout.Builder.Text(grant.Name is null ? "you may command it (held by address)" : "you may command it", 11f, Dim).RowH(18f))
                     .WFixed(TitleWidth),
                 Layout.Builder.Text("Forget drops the token: its rows turn watch-only, with Connect offered", 12f, Body).WStar(),
                 Layout.Builder.HStack(
