@@ -216,7 +216,7 @@ public sealed class TestTimeLimitAttribute : BeforeAfterTestAttribute
         {
             var cores = r.StallCpu.TotalSeconds / r.PoolStall.TotalSeconds;
             readings.Append(", while the pool lagged: process CPU ").Append(Short(r.StallCpu)).Append(" (").Append(cores.ToString("F2", System.Globalization.CultureInfo.InvariantCulture))
-                .Append(" cores), ").Append(r.StallCompleted).Append(" pool items finished, ").Append(r.StallContention).Append(" lock waits");
+                .Append(" cores), ").Append(r.StallCompleted).Append(" pool items finished, ").Append(r.StallContention).Append(" lock waits, ").Append(r.StallStarts).Append(" process starts begun");
         }
 
         if (r.MaxTickLate >= ProcessStall.LagThreshold)

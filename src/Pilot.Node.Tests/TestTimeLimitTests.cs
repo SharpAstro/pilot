@@ -75,8 +75,8 @@ public class TestTimeLimitTests
     private static TimeSpan S(double seconds) => TimeSpan.FromSeconds(seconds);
 
     private static StallSample Sample(double at, double lag = 0, int threads = 4, long queue = 0, double gc = 0,
-        double cpu = 0, long contention = 0, long completed = 0, double late = 0)
-        => new(S(at), S(lag), threads, queue, S(gc), S(cpu), contention, completed, S(late));
+        double cpu = 0, long contention = 0, long completed = 0, double late = 0, long starts = 0)
+        => new(S(at), S(lag), threads, queue, S(gc), S(cpu), contention, completed, S(late), starts);
 
     /// <summary>A window in which nothing was wrong: the pool answered in milliseconds and the GC barely paused.</summary>
     private static StallReadings Quiet(double window, params AlsoSlow[] others)
@@ -343,13 +343,13 @@ public class TestTimeLimitTests
         // its two ends are the ones read at 2 s and 8 s.
         var samples = new[]
         {
-            Sample(1, cpu: 0.8, contention: 5, completed: 50),
-            Sample(2, cpu: 1.0, contention: 10, completed: 100),
-            Sample(5, lag: 3, cpu: 1.1, contention: 12, completed: 101, late: sampleLate),
-            Sample(8, lag: 6, cpu: 1.4, contention: 20, completed: 103),
-            Sample(9, cpu: 2.0, contention: 22, completed: 140),
+            Sample(1, cpu: 0.8, contention: 5, completed: 50, starts: 30),
+            Sample(2, cpu: 1.0, contention: 10, completed: 100, starts: 40),
+            Sample(5, lag: 3, cpu: 1.1, contention: 12, completed: 101, late: sampleLate, starts: 44),
+            Sample(8, lag: 6, cpu: 1.4, contention: 20, completed: 103, starts: 49),
+            Sample(9, cpu: 2.0, contention: 22, completed: 140, starts: 70),
         };
-        return ProcessStall.Summarise(samples, Sample(0, cpu: 0.5), Sample(10, cpu: 2.5, contention: 25, completed: 160), []);
+        return ProcessStall.Summarise(samples, Sample(0, cpu: 0.5), Sample(10, cpu: 2.5, contention: 25, completed: 160, starts: 80), []);
     }
 
     [Fact]
@@ -361,10 +361,11 @@ public class TestTimeLimitTests
         readings.StallCpu.ShouldBe(S(0.4), "only the stalled span counts, not the CPU the process used before or after it");
         readings.StallCompleted.ShouldBe(3);
         readings.StallContention.ShouldBe(10);
+        readings.StallStarts.ShouldBe(9, "only the starts begun between the span's two ends (40 to 49), not those before or after it");
 
         var line = new List<string>();
         TestTimeLimitAttribute.Check("C", "M", false, S(10), S(2), TestTimeMode.Report, line.Add, readings);
-        line.ShouldHaveSingleItem().ShouldContain("while the pool lagged: process CPU 400 ms (0.07 cores), 3 pool items finished, 10 lock waits");
+        line.ShouldHaveSingleItem().ShouldContain("while the pool lagged: process CPU 400 ms (0.07 cores), 3 pool items finished, 10 lock waits, 9 process starts begun");
     }
 
     [Fact]
@@ -408,7 +409,7 @@ public class TestTimeLimitTests
     {
         var now = TimeSpan.Zero;
         var pool = new List<Action>();
-        var runtime = new StallRuntime(4, 0, TimeSpan.Zero, Cpu: S(3), Contention: 7, Completed: 9);
+        var runtime = new StallRuntime(4, 0, TimeSpan.Zero, Cpu: S(3), Contention: 7, Completed: 9, Starts: 21);
         var sampler = new StallSampler(() => now, pool.Add, () => runtime, capacity: 100);
 
         sampler.Tick();                                // the first tick has no earlier one to be late after
@@ -423,6 +424,7 @@ public class TestTimeLimitTests
         samples[0].Cpu.ShouldBe(S(3));
         samples[0].Contention.ShouldBe(7);
         samples[0].Completed.ShouldBe(9);
+        samples[0].Starts.ShouldBe(21);
         samples[2].Cpu.ShouldBe(S(3.2));
         sampler.Take().TickLate.ShouldBe(TimeSpan.Zero, "a mark taken by a test is no tick");
     }

@@ -25,6 +25,9 @@ internal static class TestEnvironment
         var mode = ProcessStartGuard.ModeFor(Environment.GetEnvironmentVariable("PILOT_TEST_PROCESS_GUARD"));
         ProcessStarts.Observer = (kind, start) =>
         {
+            // Counted for the stall readings first: a start holds its thread until the process exists, and on Windows the runtime lets
+            // one start run at a time (#794), so a burst of them can leave the pool no thread to run a probe on (#801).
+            ProcessStall.NoteStart();
             // The node's own request handlers run on threads that carry no test (Kestrel starts them without the test's context), so a
             // start there is the test that started the node (CarryOwner, from NodeHarness), or else the test whose folder it runs in: see OwnFolder.
             var current = CurrentTest() ?? _carried.Value ?? OwnerOf(start.WorkingDirectory);
