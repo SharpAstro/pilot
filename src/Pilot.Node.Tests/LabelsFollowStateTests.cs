@@ -156,7 +156,8 @@ public sealed class LabelsFollowStateMoveTests : FlightMoveTestsBase
         _github.IssueLabels[900].ShouldBe([New]);
         _github.IssueLabels[41].ShouldBe([New]);
         _sender.Cards(openOnly: false).ShouldNotContain(c => c.Kind == "node-label-refused");
-        _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == "node-label-refused");
+        // The receiving node may note a refused label of its own repo set-up (a line, Handled); none of them is about the old node's label.
+        _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == "node-label-refused" && c.Title.Contains(Old, StringComparison.Ordinal));
     }
 
     [Fact]
