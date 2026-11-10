@@ -222,6 +222,7 @@ internal static class CardKindCatalog
         new("restart", "Handled", ["NodeSettingsCommands.cs"], "NodeRestartTests.ARestartStartsTheSuccessorStopsTheNodeAndLogsAHandledLineNamingTheCaller"),
         new("store", "ForYou", ["NodeState.cs"], SourcePinned),
         new("stop-unconfirmed", "Ring", ["Sessions/SessionMessenger.cs"], "SessionEndTests.AStopThatDoesNotTakeRaisesOneRingCardAndIsNotConfirmed", "the session's row still shows it live after the stop was asked", [nameof(Verbs.EndSession)]),
+        new("turns-outage", "ForYou", ["Flights/TurnOutage.cs"], "TurnOutageTests.AnAccountChangeOpensOneOutageWithOneCardAndATurnLaterEndsItAndKeepsTheWindow"),
         new("usage-high", "Handled", ["Sessions/UsageReader.cs"], "UsageTests.NearlySpentTheFiveHourWindowRaisesOneCardPerWindow"),
         new("usage-week", "ForYou", ["Flights/StartGate.cs"], "StartGateTests.TheWeekRingsOncePerWindowAndHoldsNothing"),
         new("removal-held", "Handled", ["Flights/RemovalQueue.cs"], "RemovalQueueTests.AFolderHeldPastThreeStartsIsOneHandledLineNamingTheHolderAndNoMoreOnceItIsReleased"),

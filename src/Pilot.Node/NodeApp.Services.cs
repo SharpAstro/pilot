@@ -254,7 +254,10 @@ public static partial class NodeApp
         builder.Services.AddSingleton<ICheckRunner, JobCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
         builder.Services.AddSingleton(_ => new RoleModels(options.Saved));
-        builder.Services.AddSingleton(services => new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton(services => new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
+        {
+            Outage = services.GetRequiredService<TurnOutage>(),
+        });
     }
 
     /// <summary>The admission gate, counting this node's sessions and the fleet's.</summary>
@@ -380,6 +383,7 @@ public static partial class NodeApp
                 Models = services.GetRequiredService<RoleModels>(),
                 Ledger = services.GetRequiredService<SessionLedger>(),
                 Gate = services.GetRequiredService<StartGate>(),
+                Outage = services.GetRequiredService<TurnOutage>(),
                 Error = logWriter,
                 Ready = services.GetRequiredService<JobRunner>().Recovered,
                 StartedPlanner = legs.StartedPlanner,
@@ -457,7 +461,9 @@ public static partial class NodeApp
             services.GetRequiredService<TimeProvider>())
         {
             AccountFile = ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root),
+            Outage = services.GetRequiredService<TurnOutage>(),
         });
+        builder.Services.AddSingleton(services => new TurnOutage(services.GetRequiredService<NodeState>()));
         builder.Services.AddHostedService(services => services.GetRequiredService<UsageReader>());
     }
 
@@ -544,6 +550,7 @@ public static partial class NodeApp
                 Priority = nodeOptions.JobPriority,
                 PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? NodeSettings.JobPlaneOutputDefault,
                 EndedForGood = id => services.GetRequiredService<SessionTracker>().IsEndedForGood(id),
+                Outage = services.GetRequiredService<TurnOutage>(),
                 EndedAfterTurn = id => services.GetRequiredService<SessionTracker>().EndedAfterFinishedTurn(id),
                 // A job's end is told to its owner only once the tracker has listed the sessions (pilot #810), as the watchtower waits.
                 Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,

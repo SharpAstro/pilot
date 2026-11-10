@@ -53,6 +53,25 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     private readonly ConcurrentDictionary<string, DateTimeOffset> _busyTurnEnd = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Whether sessions take turns at all (PIL791). While an outage is open a tell is not sent (the row stays untold, and the sweep tells it
+    /// once the outage has ended) and a retell neither goes nor rings; when it ends, every tell and retell that fell in its window is told
+    /// once more as a redo. The node shares its one; null (a bare runner) holds nothing.
+    /// </summary>
+    public TurnOutage? Outage { get; set; }
+
+    /// <summary>The node log's outcome for a tell that waits for sessions to take turns again.</summary>
+    internal const string HeldOutcome = "held: sessions not taking turns";
+
+    // By job: the outage (by its start) a held tell was logged for, so a sweep every few seconds says it once per outage, not every look.
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _heldLogged = new(StringComparer.Ordinal);
+
+    // The windows of outages that have ended and whose tells are not redone yet (an outage that opens again first holds the redo back), and
+    // the last window seen, so each ended outage is picked up once.
+    private readonly List<(DateTimeOffset Since, DateTimeOffset Until)> _redoWindows = [];
+    private (DateTimeOffset Since, DateTimeOffset Until)? _windowSeen;
+    private readonly object _redoLock = new();
+
     /// <summary>The For-you card for a running job that has used next to no CPU while others queue behind it.</summary>
     public const string IdleKind = "job-idle";
 
@@ -339,7 +358,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             return false;
         }
-        var told = false;
+        // An outage that has ended since the last look: what fell in it is told once more, before the rows it held are told for the first time.
+        var told = owners is null && await RedoToldInOutageAsync(cancellationToken);
         foreach (var row in state.Jobs().Where(j => j is { EndedAt: not null, Owner: not null, Told: false } && j.Kind != JobKind.Check).ToList())
         {
             if (owners is not null && !owners.Contains(row.Owner!) || _watches.ContainsKey(row.Id) || !_tried.TryAdd(row.Id, 0))
@@ -365,7 +385,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             return false;
         }
-        var retold = false;
+        // A tell that fell in an outage that has ended is redone first, and its retell starts from the redo; while an outage is open a session
+        // cannot act on any tell, so a silent owner is neither told again nor rung for.
+        var retold = await RedoToldInOutageAsync(cancellationToken);
+        if (Outage is { IsOpen: true })
+        {
+            return retold;
+        }
         var now = time.GetUtcNow();
         foreach (var row in state.Jobs().Where(j => j is { Owner: not null, Told: true, ToldAt: not null, EndedAt: not null, RetellRung: null } && j.Kind != JobKind.Check).ToList())
         {
@@ -440,6 +466,92 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         return retold;
     }
+
+    /// <summary>
+    /// Once an outage (<see cref="Outage"/>) has ended, tells once more every row whose tell (<see cref="JobRow.ToldAt"/>) or retell
+    /// (<see cref="JobRow.RetoldAt"/>) fell inside its window: a session that was not taking turns never acted on it. The redo leads with
+    /// that, is stamped as the row's tell, and clears <see cref="JobRow.RetoldAt"/> and <see cref="JobRow.RetellRung"/> (and the ring
+    /// they raised), so the retell ladder starts from the redo. A row told outside the window, or to nobody (its owner ended), is left
+    /// alone. Held back while another outage is open, then done. Returns whether any row was told again (PIL791).
+    /// </summary>
+    internal async Task<bool> RedoToldInOutageAsync(CancellationToken cancellationToken)
+    {
+        if (Outage is not { } outage || Say is null)
+        {
+            return false;
+        }
+        (DateTimeOffset Since, DateTimeOffset Until)[] windows;
+        lock (_redoLock)
+        {
+            if (outage.LastWindow is { } ended && ended != _windowSeen)
+            {
+                _windowSeen = ended;
+                _redoWindows.Add(ended);
+            }
+            if (_redoWindows.Count == 0 || outage.IsOpen)
+            {
+                return false;
+            }
+            windows = [.. _redoWindows];
+            _redoWindows.Clear();
+        }
+        var redone = false;
+        foreach (var row in state.Jobs().Where(j => j is { Owner: not null, Told: true, ToldAt: not null, EndedAt: not null } && j.Kind != JobKind.Check).ToList())
+        {
+            // Half-open: a tell stamped at the very moment the outage ended was sent after it, and is not one to redo.
+            if (row.ToldWay is "owner-ended" or "gone"
+                || !windows.Any(w => InWindow(row.ToldAt!.Value, w) || row.RetoldAt is { } retoldAt && InWindow(retoldAt, w)))
+            {
+                continue;
+            }
+            var sessions = state.Sessions();
+            var ownerRow = OwnerRow(row.Owner!, sessions);
+            if (ownerRow is null)
+            {
+                continue;
+            }
+            var candidates = ownerRow.Role == SessionRole.Worker ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray() : sessions;
+            var replacement = Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates, state.CurrentWatchtower);
+            if (replacement is null && (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true))
+            {
+                continue;
+            }
+            var target = replacement ?? sessions.FirstOrDefault(s => s.Id == WakeTarget(row.Owner!, row.OwnerName)) ?? ownerRow;
+            var window = windows.First(w => InWindow(row.ToldAt!.Value, w) || row.RetoldAt is { } at && InWindow(at, w));
+            var how = row.State switch { JobState.Succeeded => "succeeded", JobState.Cancelled => row.Error ?? "was cancelled", _ => $"failed: {row.Error}" };
+            var took = row.EndedAt!.Value - row.StartedAt;
+            var predecessor = replacement is null ? "" : $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; its result is passed on to you.\n";
+            var text = $"{predecessor}Redo: sessions were not taking turns from {window.Since.ToLocalTime():HH:mm} to {window.Until.ToLocalTime():HH:mm}, so the earlier tell of this probably never reached you. "
+                + $"Your job {row.Id} (`{row.Command}`, in {row.Cwd}) {how}, after {Took(took)}. The whole output is in {row.LogPath}. Carry on from here.";
+            string way;
+            try
+            {
+                var said = await Say(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(target.Id), Args = [text], Who = LegWatch.Who }, cancellationToken);
+                way = said.Ok ? said.Way ?? SayWays.Relayed : $"refused: {LegCommander.OneLine(said.Error ?? "no reason given")}";
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return redone;
+            }
+            catch (Exception ex)
+            {
+                way = $"failed: {ex.GetType().Name}: {ex.Message}";
+            }
+            LogTell(row, target.Id, target, $"redo {way}");
+            // Marked either way, once per outage: a refused redo does not go round again, and the retell ladder takes the row from here.
+            _busyTurnEnd.TryRemove(row.Id, out _);
+            state.PutJob(row with
+            {
+                ToldAt = time.GetUtcNow(), ToldWay = way, ToldWhileWorking = target.State == SessionState.Working ? true : null,
+                RetoldAt = null, RetoldWay = null, RetellRung = null,
+            });
+            state.CloseCardsAbout(Verbs.JobTarget(row.Id), "its tells fell in an outage and were redone", UnansweredKind);
+            redone = true;
+        }
+        return redone;
+    }
+
+    private static bool InWindow(DateTimeOffset at, (DateTimeOffset Since, DateTimeOffset Until) window) => at >= window.Since && at < window.Until;
 
     /// <summary>One owner set's untold ended jobs, told now (for an idle check); whether any was told.</summary>
     internal Task<bool> TellUntoldOf(IReadOnlyCollection<string> owners, CancellationToken cancellationToken = default) =>
@@ -2563,6 +2675,18 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             return;
         }
         var targetRow = sessions.FirstOrDefault(s => s.Id == target) ?? ownerRow;
+        if (Outage is { Since: { } outageSince })
+        {
+            // Sessions are not taking turns, so this tell would be lost: the row stays untold, and the sweep tells it once the outage has
+            // ended (not tried yet, so it is not skipped as one already tried). Said once per outage, not at every look of the sweep.
+            _tried.TryRemove(job.Id, out _);
+            if (!_heldLogged.TryGetValue(job.Id, out var logged) || logged != outageSince)
+            {
+                _heldLogged[job.Id] = outageSince;
+                LogTell(job, target, targetRow, HeldOutcome);
+            }
+            return;
+        }
         bool ok;
         string? error;
         string? way = null;

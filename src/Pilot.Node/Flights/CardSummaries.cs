@@ -72,6 +72,7 @@ public static partial class CardSummaries
             "pr-checks-failed" => $"The PR of {what} fails its checks and the node could not send the last leg back to fix them. The first choice starts a fresh worker on that leg, told which checks failed and to push a fix; or fix them by hand, then dismiss this.",
             LegWatch.Stopped => $"The worker of {what} was stopped by the API and the node cannot resume it by itself. Tell it to carry on, or start a fresh worker on the leg.",
             LegWatch.LimitWait => $"The worker of {what} hit the usage limit. The node resumes it by itself after the window resets; nothing to do.",
+            TurnOutage.CardKind => "No session is taking turns, so the node holds its restarts and rings for first turns. Nothing to do; the card closes by itself once any session takes a turn.",
             LegWatch.Idle => $"The worker of {what} has been idle with its leg unfinished and the node's nudges did not help. One more push may get it going, or a fresh worker can take over the leg.",
             LegWatch.Waiting => $"The worker of {what} waits on you for an answer. Answering in its own session lets this worker go on with the call; starting a fresh worker stops this one and starts another on the leg from the branch.",
             LegWatch.NeverTurned => $"The worker of {what} took no first turn after two starts. Tell it to carry on if it is there, or start a fresh worker on the leg.",
