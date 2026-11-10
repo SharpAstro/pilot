@@ -227,8 +227,9 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
         if (_marks.TryGetValue(row.Id, out var mark) && mark.Replaced)
         {
             _stuck.Add(key);
-            state.RaiseCard(CardBin.ForYou, StuckKind, Verbs.WatchtowerTarget, $"{row.Name} is still at {share} of its window after a compaction and a restart",
-                $"The node compacted {row.Name} and started it afresh, and it still reads {share} of its window. It is left as it is, not compacted or restarted again, until it reads under its share; pilot watchtower restart starts a fresh one by hand.");
+            state.RaiseCard(CardBin.ForYou, StuckKind, Verbs.WatchtowerTarget, $"{row.Name} is still full after a compaction and a restart",
+                $"The node compacted {row.Name} and started it afresh, and it still reads {share} of its window. It is left as it is, not compacted or restarted again, until it reads under its share. Restart it to start a fresh one now.",
+                [new CardChoice { Label = "Restart the watchtower", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = [$"still at {share} of its window after a compaction and a restart"] }]);
             await Error.WriteLineAsync($"compactor: {row.Name} ({row.Id}) {why} and a restart; left alone until it reads under its share");
             return;
         }
