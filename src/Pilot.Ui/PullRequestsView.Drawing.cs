@@ -390,7 +390,7 @@ internal sealed partial class PullRequestsView<TSurface>
     // Who read a repo's PRs when another node than this window's did: "read by DE1 2 min ago", cut with an ellipsis, whole on hover; nothing for a read made here.
     private Layout.Node ReadStampNode(string repo) =>
         _screen is { Row: { } row } screen && row.ReadStamp(repo, screen.Node, _now) is { } words
-            ? Layout.Builder.Text(words, SecondarySize, BodyText).WithTooltip(words).WAuto().HStar()
+            ? Layout.Builder.Text(words, SecondarySize, BodyText).WithTooltip(words).WStarUpToContent().HStar()
             : Layout.Builder.Spacer().WFixed(0f);
 
     // A repo's header: its fold mark, its name as a link to the repo, and how many PRs it lists. A click anywhere on it folds it.
