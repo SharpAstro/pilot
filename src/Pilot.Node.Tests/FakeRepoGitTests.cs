@@ -408,6 +408,7 @@ public sealed class FakeRepoGitTests : IDisposable
         RunOn(_git, Repo, "show", "--name-only", "--format=", "HEAD").ShouldBe(".github/workflows/dotnet.yml\nother.txt");
         RunOn(_git, Repo, "ls-tree", "--name-only", "HEAD", ".github/workflows/").ShouldBe(".github/workflows/dotnet.yml");
         RunOn(_git, Repo, "ls-tree", "--name-only", "HEAD", ".github/").ShouldBe(".github/workflows");
+        RunOn(_git, Repo, "ls-tree", "-r", "--name-only", "HEAD").ShouldBe(".github/workflows/dotnet.yml\nREADME.md\nTianwen.slnx\nother.txt");
         RunOn(_git, Repo, "checkout", "-q", "main");
         RunOn(_git, Repo, "symbolic-ref", "--short", "HEAD").ShouldBe("main");
         _git.Run(["checkout", "-q", "-b", "flight/x"], Repo).Error.ShouldContain("already exists");
@@ -423,6 +424,30 @@ public sealed class FakeRepoGitTests : IDisposable
         RunOn(_git, Repo, "remote", "remove", "origin");
         _git.Run(["show-ref", "--verify", "--quiet", "refs/remotes/origin/main"], Repo).Ok.ShouldBeFalse();
         _git.Run(["remote", "get-url", "origin"], Repo).Ok.ShouldBeFalse();
+        _git.Unsupported.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void APushOfTwoRefspecsMovesBothAndSwitchMakesALocalBranchOfARemoteTrackingOne()
+    {
+        RunOn(_git, Repo, "checkout", "-q", "-b", "feature/two", "main");
+        File.WriteAllText(Path.Combine(Repo, "two.txt"), "two\n");
+        RunOn(_git, Repo, "add", ".");
+        RunOn(_git, Repo, [.. Who, "commit", "-q", "-m", "two"]);
+        var head = RunOn(_git, Repo, "rev-parse", "HEAD");
+
+        RunOn(_git, Repo, "push", "-q", "-f", "origin", "HEAD:refs/heads/feature/two", "HEAD:refs/pull/2/head");
+
+        RunOn(_git, Repo, "rev-parse", "refs/remotes/origin/feature/two").ShouldBe(head);
+        var origin = Path.Combine(Path.GetDirectoryName(Repo)!, "origin.git");
+        RunOn(_git, origin, "rev-parse", "refs/pull/2/head").ShouldBe(head);
+        // A branch only origin has (pushed from HEAD to a name no local branch has): switch makes it local, tracking origin's.
+        RunOn(_git, Repo, "push", "-q", "origin", "HEAD:refs/heads/only-origin");
+        RunOn(_git, Repo, "checkout", "-q", "main");
+        RunOn(_git, Repo, "switch", "-q", "only-origin");
+        RunOn(_git, Repo, "symbolic-ref", "--short", "HEAD").ShouldBe("only-origin");
+        RunOn(_git, Repo, "rev-parse", "HEAD").ShouldBe(head);
+        RunOn(_git, Repo, "config", "--get", "branch.only-origin.remote").ShouldBe("origin");
         _git.Unsupported.ShouldBeEmpty();
     }
 

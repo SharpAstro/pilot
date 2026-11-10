@@ -173,12 +173,12 @@ public sealed class StopGateTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
+    [Trait("Category", "Slow")] // A real node on a socket and the hook command talking to it, with a 30 s patience: not a unit.
     public async Task TheHookPrintsTheNodesDecisionAndNothingOnceLetThrough()
     {
         // The hook's 2 s is for a live session; on a loaded machine the node took longer and the test read no decision.
         var patient = TimeSpan.FromSeconds(30);
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
         Fly(Flight(), node.State);
         File.WriteAllText(Path.Combine(Plane, "stray.txt"), "left\n");
 

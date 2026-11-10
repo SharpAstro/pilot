@@ -897,7 +897,14 @@ internal sealed class FakeRepoGit : IGit
         }
         if (!Refs.TryGetValue("refs/heads/" + a[0], out var target))
         {
-            return Fail($"fatal: invalid reference: {a[0]}", 128);
+            // A name only a remote-tracking branch has is made a local branch tracking it, as git's switch does.
+            if (!Refs.TryGetValue("refs/remotes/origin/" + a[0], out target))
+            {
+                return Fail($"fatal: invalid reference: {a[0]}", 128);
+            }
+            Refs["refs/heads/" + a[0]] = target;
+            Cfg[$"branch.{a[0]}.remote"] = "origin";
+            Cfg[$"branch.{a[0]}.merge"] = "refs/heads/" + a[0];
         }
         var before = wt.Index;
         wt.Branch = a[0];
@@ -971,11 +978,26 @@ internal sealed class FakeRepoGit : IGit
             throw new NotSupportedException($"push flag {unknown}");
         }
         var positional = a.Where(x => !x.StartsWith('-')).ToList();
-        if (wt is null || positional.Count is < 1 or > 2 || positional[0] != "origin")
+        if (wt is null || positional.Count < 1 || positional[0] != "origin")
         {
             throw new NotSupportedException("push form");
         }
-        var spec = positional.Count == 2 ? positional[1].TrimStart('+') : "HEAD";
+        // Each refspec is pushed on its own; one that is refused fails the push, and the others that were fine have moved, as git's do.
+        GitRun result = Ok("");
+        IEnumerable<string> specs = positional.Count == 1 ? ["HEAD"] : positional.Skip(1);
+        foreach (var each in specs)
+        {
+            var one = PushOne(each.TrimStart('+'), wt, force, lease);
+            if (!one.Ok)
+            {
+                result = one;
+            }
+        }
+        return result;
+    }
+
+    private GitRun PushOne(string spec, Worktree wt, bool force, string? lease)
+    {
         var colon = spec.IndexOf(':');
         var src = colon < 0 ? spec : spec[..colon];
         var dst = colon < 0 ? (src == "HEAD" ? wt.Branch ?? throw new NotSupportedException("push of a detached HEAD") : src) : spec[(colon + 1)..];
@@ -1063,7 +1085,15 @@ internal sealed class FakeRepoGit : IGit
         }
         if (Directory.Exists(wt.Path))
         {
-            Directory.Delete(wt.Path, recursive: true);
+            try
+            {
+                Directory.Delete(wt.Path, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // A file another process holds open (Windows): git says so as it does for a file held without sharing, and the worktree stays registered.
+                return Fail($"error: failed to delete '{a.Last()}': Invalid argument", 255);
+            }
         }
         Worktrees.Remove(wt);
         return Ok("");
@@ -1391,6 +1421,11 @@ internal sealed class FakeRepoGit : IGit
     /// <summary><c>git ls-tree --name-only &lt;commit&gt; &lt;folder&gt;/</c>: the paths directly in the folder of the commit, folders as their path without a slash.</summary>
     private GitRun LsTree(List<string> a, Worktree? wt)
     {
+        // -r --name-only <commit>: every file of the commit, by path.
+        if (a is ["-r", "--name-only", var all] && !all.StartsWith('-'))
+        {
+            return Resolve(all, wt) is { } tip ? Ok(string.Concat(_commits[tip].Tree.Keys.Order(StringComparer.Ordinal).Select(k => k + "\n"))) : Fail($"fatal: Not a valid object name {all}", 128);
+        }
         if (a is not ["--name-only", var rev, var folder] || !folder.EndsWith('/') || rev.StartsWith('-'))
         {
             throw new NotSupportedException("ls-tree form");
