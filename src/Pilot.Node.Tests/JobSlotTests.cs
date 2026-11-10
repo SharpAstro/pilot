@@ -60,16 +60,42 @@ public sealed class JobSlotTests : JobTestsBase
         var rows = new RunningRows();
         using var watch = _state.Subscribe(null, null, rows);
 
+        var freed = new ConcurrentDictionary<string, TaskCompletionSource>(StringComparer.Ordinal);
+        jobs.SlotFreed = id => freed.GetOrAdd(id, _ => new(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
+
         var ids = Enumerable.Range(0, 4).Select(_ => Hand(jobs, Sleep(30))).ToList();
         foreach (var id in ids)
         {
-            // Once the one before has ended (its row put, its slot free), a look starts this one.
+            // The one before has ended and its slot is free (the row is put first, the slot frees after it): a look starts this one.
             jobs.Dispatch(JobRunner.LookAgain.Instance);
             await Until(id, j => j.State == JobState.Running);
             await gone(id);
+            await freed.GetOrAdd(id, _ => new(TaskCreationOptions.RunContinuationsAsynchronously)).Task.WaitAsync(WaitCeiling, Ct);
         }
 
         ids.ShouldAllBe(id => _state.Jobs().Single(j => j.Id == id).EndedAt != null);
         rows.Most.ShouldBe(1, "a row read running beside another at max-jobs 1: the next job started before the ended one's row was put");
+    }
+
+    [Fact]
+    public async Task ACancelThatComesOnceAJobsProcessHasGoneIsRefusedAsNotRunningAndTheJobEndsAsItWould()
+    {
+        var (jobs, _, _, _) = Idle();
+        jobs.MaxRunning = 1;
+        jobs.SiblingsOf = _ => [];
+        CommandResult? late = null;
+        // The cancel lands where the slot is still taken but the process has gone: on main it said cancelled and cancelled nothing.
+        jobs.BeforeEndedRow = row => late = jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(row.Id), Who = "controller" });
+
+        var id = Hand(jobs, Sleep(30));
+        await Until(id, j => j.State == JobState.Running);
+        Fake!.Exit(id, 0);
+        // The test's clock does not move by itself: the watch is told to look now.
+        jobs.NudgeWatches();
+        var ended = await Until(id, j => j.EndedAt is not null);
+
+        late.ShouldNotBeNull().Ok.ShouldBeFalse();
+        late.Error.ShouldBe($"job {id} is not running");
+        (ended.State, ended.ExitCode).ShouldBe((JobState.Succeeded, 0));
     }
 }
