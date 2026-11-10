@@ -91,7 +91,6 @@ public sealed class TouchesTests : IDisposable
         _legs.RunAsync(new CommandRequest { Verb = Verbs.Touches, Target = "flight/PIL375", Args = files, Who = "tests" }, Ct);
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AnswersALinePerFlightOnThisNodeAndOnAPeerAndPerOpenPrWithTheSharedFilesAndAChoice()
     {
         // This node: one sharing a file (connect), one sharing none (parallel), one landed (not listed).
@@ -127,7 +126,6 @@ public sealed class TouchesTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightOfThisNodeWithTheSameFilesIsOfferedAFoldWithTheWaysToAnswerIt()
     {
         _state.PutFlight(Row("PIL294", 294, "flight/pil294", Repo));
@@ -140,7 +138,6 @@ public sealed class TouchesTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightOfThisNodeNotPushedIsReadFromItsLocalBranch()
     {
         _state.PutFlight(Row("PIL294", 294, "flight/pil294", Repo));
@@ -191,7 +188,6 @@ public sealed class TouchesTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APeerThatDoesNotAnswerTheQuestionStaysUnknownWithWhyEvenWhenItsBranchIsPushed()
     {
         // The branch is pushed, but a peer that cannot be asked is not guessed at by it: unknown, and why.
@@ -209,7 +205,6 @@ public sealed class TouchesTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APeerThatRefusesTheVerbIsReadByItsPushedBranchAsBefore()
     {
         Branch("flight/pil300", push: true, "src/Parser.cs");
@@ -226,7 +221,6 @@ public sealed class TouchesTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ThisNodeAnswersTheVerbForItsOwnFlightFromThePlanesCommittedUncommittedAndUntrackedFiles()
     {
         var plane = Path.Combine(Repo, ".claude", "worktrees", "pil380");
@@ -276,7 +270,6 @@ public sealed class TouchesTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task WithNoOtherFlightAndNoOpenPrItSaysSoAndSendsTheFlightParallel()
     {
         var result = await Touches(Mine);

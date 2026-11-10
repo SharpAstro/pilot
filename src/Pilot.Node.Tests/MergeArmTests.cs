@@ -266,7 +266,6 @@ public sealed class MergeArmTests
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AnArmedMergeTheQueueThrewOutSaysSoNotOnlyThatItMergesWhenChecksPass()
     {
         // tianwen #1846: thrown out of the merge queue three times for merge_conflict, re-queued by GitHub each time its checks

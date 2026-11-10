@@ -257,7 +257,6 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AStartedReviewPrWritesOneLineNamingTheVerbThePrWhoAskedAndTheReviewerAtTheHead()
     {
         _reviews.Error = _log;
@@ -294,7 +293,6 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewPrCutOffBeforeItsRowWasWrittenLeavesNoPendingStatusRowOrWorktree()
     {
         _reviews.Error = _log;
@@ -309,7 +307,6 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewingRowWhoseSessionIsGoneAfterARestartIsStartedAfreshAtTheFirstSweepOnce()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
@@ -334,7 +331,6 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewingRowWhoseSessionEndedAfterARestartIsStartedAfreshButOneStillWorkingIsLeft()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
@@ -357,7 +353,6 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewLostInARestartThatCannotStartAgainTakesItsStatusAndLabelBackAndRaisesACardWithReviewAgain()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
@@ -389,7 +384,6 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
 public sealed class PrReviewTests1 : PrReviewTestsBase
 {
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APrInARepoWithACloneIsReviewedInThatClonePinnedAtItsHead()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
@@ -419,7 +413,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APrInARepoWithNoCloneIsClonedIntoTheCacheOnceAndAFreshReviewEndsTheLast()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/gadget#9", "controller")).Error.ShouldBeNull();
@@ -443,7 +436,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task PostsItselfOnAnOpenPr()
     {
         // #241's review rang with a Post button all night; on an open PR pilot posts its review itself (SE1, 2026-10-26).
@@ -467,7 +459,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ThePostedReviewsVerdictIsAnsweredBeforeItsWorktreeAndReviewerGoAfterTheGrace()
     {
         var grace = TimeSpan.FromSeconds(2);
@@ -499,7 +490,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APostGitHubRefusedOnAnOpenPrLeavesAForYouCardWithPostThatSaysWhy()
     {
         var ask = SelfPosting();
@@ -527,7 +517,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APostThatWentOutOnAnOpenPrAndNeverSaidBackLeavesAForYouCardWithNoPost()
     {
         var ask = SelfPosting();
@@ -550,7 +539,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task OnlyTheReviewersVerdictRaisesTheCardAndTheWorktreeGoesWhenTheCardCloses()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
@@ -589,7 +577,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AChangesVerdictOnTheControllersOwnPrPostsCommentYetSetsFailureAndPilotChanges()
     {
         _github.Login = "ada";
@@ -611,7 +598,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ACleanCommentOnTheControllersOwnPrSetsSuccessAndPilotPassed()
     {
         _github.Login = "ada";
@@ -624,7 +610,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ACleanCommentOnOnesOwnPrQueuesItAtTheReviewedHeadOnceAndSaysSo()
     {
         await ReviewedWidget("comment");
@@ -641,7 +626,6 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
 public sealed class PrReviewTests2 : PrReviewTestsBase
 {
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AChangesVerdictQueuesNothing()
     {
         await ReviewedWidget("changes");
@@ -651,7 +635,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ANewHeadAfterTheReviewQueuesNothing()
     {
         await ReviewedWidget("approve", checks: ChoiceStatus.Pending);
@@ -663,7 +646,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task PendingChecksWaitThenQueueOnceGreenEvenAfterTheCardClosed()
     {
         await ReviewedWidget("approve", checks: ChoiceStatus.Pending);
@@ -681,7 +663,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AHeldReviewWorktreeIsSaidOnceAndAgainWhenItGoesNotAtEverySweep()
     {
         // A file held open keeps a folder only on Windows; elsewhere the removal goes through and there is nothing to hold.
@@ -713,7 +694,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task FailedChecksQueueNothing()
     {
         await ReviewedWidget("approve", checks: ChoiceStatus.Failing);
@@ -722,7 +702,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ADraftQueuesNothing()
     {
         _github.Login = "ada";
@@ -737,7 +716,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ABaseWithoutAMergeQueueRaisesTheMergeCard()
     {
         await ReviewedWidget("approve", queue: false);
@@ -749,7 +727,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AGreenReviewInANoAutoMergeRepoQueuesNothingAndRaisesTheMergeCard()
     {
         _reviews.Models = new RoleModels(new NodeSettings { NoAutoMergeRepos = ["widget"] });
@@ -765,7 +742,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task PostIsOneReviewWithAnInlineCommentOnEachFindingInTheDiffAndIsNeverPostedTwice()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
@@ -815,7 +791,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewOfAnyPrSetsItsStatusPendingAtTheStartAndFromItsVerdictAndLinksThePostedReview()
     {
         const string page = "https://github.com/acme/widget/pull/7";
@@ -839,7 +814,6 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
 public sealed class PrReviewTests3 : PrReviewTestsBase
 {
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewOfAFlightsPrSetsItsStatusButLeavesTheFlightsLabel()
     {
         // acme/widget#7 is a flight's PR: its pilot: label (passed, conflicts, queued) is the flight's, which PrMarks would
@@ -858,7 +832,6 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewOfALandedFlightsPrLabelsItAsAnyPrs()
     {
         // Landed, the flight keeps no label on its PR: a later review's label is the PR's.
@@ -874,7 +847,6 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AnApprovalIsSuccessAndAStatusGitHubRefusesIsACardNotAFailedReview()
     {
         _github.StatusFails = "GitHub refused the status: no permission";
@@ -904,7 +876,6 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
         PrReviews.Event(verdict, "ada", login).ShouldBe(expected);
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task TheEventIsTheLoginsThatPostsNotTheOneThatGaveTheVerdict()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
@@ -920,7 +891,6 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APostGitHubRefusedMayGoAgainButOneThatNeverSaidBackDoesNot()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
@@ -1004,7 +974,6 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewerThatCannotStartLeavesNoWorktree()
     {
         _workers.Fail = new FlightException("claude --bg did not start du1-review-widget-7 (1): folder not trusted");

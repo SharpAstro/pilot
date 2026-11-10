@@ -198,7 +198,7 @@ public sealed class RepoSyncTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
+    [Trait("Category", "Slow")] // About git itself: a clone one commit behind a real bare origin, which the sync fast-forwards with git's own merge.
     public async Task ThroughARealNodeSyncFastForwardsARealCloneIsJournaledAndRefusedFromTheWatchtowerAndTheLan()
     {
         // A clone one commit behind its bare origin, on main.
@@ -257,7 +257,7 @@ public sealed class RepoSyncTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
+    [Trait("Category", "Slow")] // About git itself: a clone one commit behind a real bare origin, which the sync fast-forwards with git's own merge.
     public async Task AMergeOnlySyncTakesWhatWasAlreadyFetchedWhereTheFullSyncFailsOnAnUnreachableRemote()
     {
         // A clone one commit behind a bare origin, whose new commit it has fetched; then the origin goes away.

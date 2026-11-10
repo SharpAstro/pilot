@@ -258,7 +258,6 @@ public abstract class PrRecheckTestsBase : IDisposable
 public sealed class PrRecheckTests1 : PrRecheckTestsBase
 {
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AnUntouchedLabelledPrStartsAReviewAndItsLabelBecomesReviewing()
     {
         await LookAsync();
@@ -313,7 +312,6 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ARecheckThatCannotReadTheJobKeepsTheLabelAndRaisesAForYouCardOnceUntilTheLabelIsPutBack()
     {
         // No grant: gh cannot read the PR.
@@ -345,7 +343,6 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewThatCannotStartKeepsTheLabelAndRaisesAForYouCard()
     {
         _workers.Fail = new FlightException("claude would not start");
@@ -384,7 +381,6 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APeerThatHoldsNothingOfItOrDoesNotAnswerLeavesThePrToThisNode()
     {
         _fleet.Peers.Add(new Peer("a.local:1") { Flights = [Flight("AA1", own: false, number: 8)] });
@@ -397,7 +393,6 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewedPrWhoseHeadMovedSinceTheReviewIsReviewedAfresh()
     {
         var review = await ReviewedAsync();
@@ -414,7 +409,6 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ARecheckOfAMovedHeadLeavesTheOpenDesignRingForTheReviewItStartsInsteadOfClosingItAsMoved()
     {
         // A review whose design question has no option that reaches the criteria: its ring is open.
@@ -442,11 +436,9 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
 }
 
 /// <summary>Part 2 of PrRecheckTests: the class is split so its tests run side by side, not one after another.</summary>
-[Trait("Category", "Slow")]
 public sealed class PrRecheckTests2 :PrRecheckTestsBase
 {
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewedPrWhoseHeadIsTheOneReviewedAndPassedAndGreenIsQueued()
     {
         await ReviewedAsync();
@@ -463,7 +455,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewedPrThatConflictsGetsAForYouCardAndTheConflictsLabel()
     {
         await ReviewedAsync();
@@ -480,7 +471,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewedPrOnTheControllersOwnBranchThatConflictsGetsItsBaseMergedInAndIsReviewedAfresh()
     {
         var (head, main) = OwnBranch(touchesReadme: false, mainEditsReadme: false);
@@ -502,7 +492,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewedPrOnTheControllersOwnBranchWhoseBaseMergeConflictsGetsTheCardAndTheConflictsLabel()
     {
         var (head, _) = OwnBranch(touchesReadme: true, mainEditsReadme: true);
@@ -520,7 +509,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewedPrWhoseChangesNobodyIsFixingStartsItsFixerAndKeepsTheChangesLabel()
     {
         // tianwen #1857: its fixer could not start, and once that was cleared the recheck took the label off with nothing started.
@@ -541,19 +529,16 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ARecheckStartsNoFixerOnAReviewThatAsksAQuestionOfDesign() =>
         await NoFixerAsync(r => r with { Findings = [new PrFinding { Path = "README.md", Line = 1, Body = "design: is this wanted?", Inline = false }] },
             "its review asks a question of design, which is the author's to decide");
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ARecheckStartsNoFixerOnceTheRoundsAreCapped() =>
         await NoFixerAsync(r => r with { FixRound = PrReviews.MaxFixRounds },
             $"{PrReviews.MaxFixRounds} rounds of fixes have pushed and it still asks for changes, so no more start");
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ARecheckStartsNoFixerOnSomeoneElsesPrUntilFixItIsChosen() =>
         await NoFixerAsync(r => r, "it is ada's PR, and Fix it has not been chosen", login: "grace");
 
@@ -594,7 +579,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task TheNoFixerRingClosesNamingTheHeadThatMovedPastIt()
     {
         await NoFixerAsync(AsksDesign, "its review asks a question of design, which is the author's to decide");
@@ -613,7 +597,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task TheFixersPushWhoseReviewCouldNotStartStaysAnOpenCardAfterTheSweep()
     {
         _github.Login = "ada";
@@ -634,7 +617,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task TheFixerGuardSaysNoForARepoTheNodeDoesNotTrack()
     {
         // A recheck only looks at tracked repos, so this is the guard itself: a repo that left the roots between look and fix gets none.
@@ -646,7 +628,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewedPrWithNothingToDoSaysWhereItStands()
     {
         await ReviewedAsync();
@@ -660,7 +641,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightsPrBehindItsBaseHasItMergedInAndItsPassedReviewCarriedToTheNewHead()
     {
         var flight = await PassedFlightAsync();
@@ -687,7 +667,6 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
 public sealed class PrRecheckTests3 : PrRecheckTestsBase
 {
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightsPrWhoseBaseMergeConflictsSendsTheLastLegRoundAndTheHandledLineSaysSo()
     {
         await PassedFlightAsync(readme: "theirs\n");
@@ -706,7 +685,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightsPrWithAFailingCheckIsSentBackAsChangesEvenWhenTheTimedLookTriedThatHeadAlready()
     {
         await PassedFlightAsync();
@@ -733,7 +711,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightsPrWhoseHeadTheReviewNeverReadIsReviewedAfresh()
     {
         await PassedFlightAsync();
@@ -751,7 +728,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightsPassedGreenCleanPrGoesToTheMergeQueue()
     {
         await PassedFlightAsync();
@@ -767,7 +743,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ARecheckWhileTheFlightsMergeRunsSaysSoTakesTheLabelOffAndDoesNotSayMerged()
     {
         await PassedFlightAsync();
@@ -798,7 +773,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightsPrWithNothingToDoSaysSoAndLeavesTheLabelForWhereItStands()
     {
         await PassedFlightAsync();
@@ -815,7 +789,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ALabelPutBackWhileARecheckRunsRunsItOnceMoreAfterNeverTwiceAtOnce()
     {
         var gate = new TaskCompletionSource();
@@ -849,7 +822,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ALabelSeenAgainAfterARecheckEndedRunsItOnceMore()
     {
         _github.Queue = new MergeQueueState("OPEN", _head, Queued: true, Position: 1);
@@ -867,7 +839,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ARepoTheWatchDidNotReadKeepsWhatTheRecheckKnewOfItsLabels()
     {
         // Read and labelled: PR 7's recheck keeps the label (a peer holds it), and is not tried at each look.
@@ -891,7 +862,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightsOwnPrReadWithTheLabelStartsTheRecheckAtOnceAndWithoutTheWatch()
     {
         await PassedFlightAsync();
@@ -906,7 +876,6 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AnIdleHourOfTheWatchWithTheRecheckListeningMakesFourSearchesAndNoLabelListing()
     {
         var time = new ManualClock(DateTimeOffset.Parse("2026-10-31T12:00:00Z"));

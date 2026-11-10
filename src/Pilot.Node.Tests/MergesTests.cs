@@ -343,7 +343,6 @@ public sealed class MergesTests
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AnEntryArmedOnGitHubsAutoMergeEndsMergedWhenGitHubMergesItsPr()
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);

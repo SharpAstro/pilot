@@ -66,7 +66,6 @@ public sealed class GoAroundFromCardTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AGoAroundAnsweredFromTheMergeFailedCardRunsAndTheLegFliesAgainUnderAChangesReview()
     {
         await using var node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
@@ -87,7 +86,6 @@ public sealed class GoAroundFromCardTests : IDisposable
     [Theory]
     [InlineData("conflicts with its base")]
     [InlineData("is behind its base")]
-    [Trait("Category", "Slow")]
     public async Task AGoAroundAnsweredFromAConflictsOrBehindCardRunsAndTheLegFliesAgainUnderAChangesReview(string what)
     {
         await using var node = await NodeHarness.StartAsync(Ct, git: _repos.Git);

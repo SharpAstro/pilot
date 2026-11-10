@@ -91,7 +91,6 @@ public sealed class RemovalQueueTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReviewWhoseWorktreeIsHeldClosesAtOnceWithOneHandledLineAndAQueueEntry()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
@@ -143,7 +142,6 @@ public sealed class RemovalQueueTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ANewPinAtAQueuedHeldPathIsMadeBesideItAndAReleasedOneIsClearedFirst()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
@@ -246,7 +244,6 @@ public sealed class RemovalQueueTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFolderHeldPastThreeStartsIsOneHandledLineNamingTheHolderAndNoMoreOnceItIsReleased()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
@@ -413,7 +410,6 @@ public sealed class RemovalQueueTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AQueuedCachePathReusedAfterReleaseIsNoLongerInTheQueue()
     {
         var (gizmo, head) = PrOrigins.Make(_root, "gizmo", 3);

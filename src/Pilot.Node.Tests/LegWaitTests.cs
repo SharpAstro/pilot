@@ -202,7 +202,6 @@ public sealed class LegWaitTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AGoAroundClearsTheWait()
     {
         (await Leg(Verbs.WaitLeg, "flight/TIA1/parser", $"path={Flag}")).Ok.ShouldBeTrue();

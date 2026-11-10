@@ -85,7 +85,6 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task TheC78CardNamesTheBuildThatFailedAndSaysItIsOutsideTheLegsCode()
     {
         // The real path: the done finish is refused and records the check failure, then the worker says it failed.
@@ -107,7 +106,6 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task TheRoundAndModelOfTheNextWorkerAreInTheDetailNotOnTheButton()
     {
         _legs.Models = new RoleModels(null);
@@ -122,7 +120,6 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightThatChangedTheFailingProjectIsNotCalledOutsideItsCode()
     {
         Write("src/Pilot.Ui/Other.cs", "class Other { int X; }\n");
@@ -136,7 +133,6 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFailingTestCheckNamesTheTestsAndTheClass()
     {
         RecordCheckFailure("  Failed Pilot.Node.Tests.ParserTests.Reads [11 ms]\n  Failed Pilot.Node.Tests.ParserTests.Writes [2 ms]\nFailed!  - Failed: 2, Passed: 5");
@@ -149,7 +145,6 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReportWithNoCheckFailureFallsBackToItsClippedFirstLine()
     {
         var long_ = "the grammar cannot be parsed because the third production loops forever and the tokenizer never ends it";
@@ -162,7 +157,6 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task WhenMainAlreadyChangedTheFailingFilesTheCardSaysTakingMainMayFixIt()
     {
         // Main fixes the file after the flight branched; the plane has fetched it but not merged it.
@@ -186,7 +180,6 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task WithoutAChangeOnMainTheCardSaysNothingOfMain()
     {
         RecordCheckFailure(BuildTail);
