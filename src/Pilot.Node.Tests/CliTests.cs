@@ -1,5 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using System.Diagnostics;
 using Pilot.Commands;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
@@ -15,6 +14,7 @@ public sealed class CliTests : IAsyncLifetime
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2c-" + Guid.NewGuid().ToString("N")[..8]);
     private NodeHarness _node = null!;
+    private SeededRepos _repos = null!;
 
     private string Repo => Path.Combine(_root, "tianwen");
 
@@ -39,37 +39,19 @@ public sealed class CliTests : IAsyncLifetime
 
     public async ValueTask InitializeAsync()
     {
-        // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
-        SeedRepo.Make(_root);
-        _node = await NodeHarness.StartAsync(Ct);
+        // A repo with a bare origin, so a flight's push has somewhere to go: the same seed, laid on the in-memory git (#952), which the node runs on too.
+        _repos = new SeededRepos(_root);
+        SeedRepo.MakeOn(_repos, _root);
+        _node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
     }
 
     public async ValueTask DisposeAsync()
     {
         await _node.DisposeAsync();
-        try
-        {
-            Git(Repo, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        PrOrigins.Delete(_root);
+        _repos.Dispose();
     }
 
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = TestEnvironment.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    private string Git(string cwd, params string[] args) => _repos.Run(cwd, args);
 
     private async Task<(int Exit, string Output, string Error)> Pilot(string cwd, params string[] args)
     {
@@ -201,7 +183,6 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ADirectFlightIsFlownFromTheCliAloneUpToItsLanding()
     {
         // The controller, in the repo: a flight and its one leg.
@@ -298,7 +279,6 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task OutsideAPlaneALegMustBeNamedAndAPlaneWithoutAFlyingLegSaysSo()
     {
         await Ok(Repo, "flight", "create", "7");
@@ -479,7 +459,6 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task Leg_finish_accepts_verified_and_the_node_refuses_it_on_a_leg_that_is_not_failed()
     {
         var plane = await FlightWithAValidatorFlying("1612");
@@ -510,7 +489,6 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AValidatorAnsweringGoFromThePlaneStartsTheLegsWorker()
     {
         var plane = await FlightWithAValidatorFlying("8");
@@ -525,7 +503,6 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AValidatorAnsweringNoGoFromThePlaneRingsAndTheLegStaysPlanned()
     {
         var plane = await FlightWithAValidatorFlying("9");
@@ -745,7 +722,6 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task StatusWritesMarkdownForOutputFormatMarkdownAndPlainTextWhenNoHostCanRenderAuto()
     {
         // A leg start that outlasts the node's 90 s reply deadline on a loaded machine is answered queued, and the leg is not flying yet for the
@@ -792,7 +768,6 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task StatusHandsAutoAndRichToTheHostsRendererAndWritesPlainTextWhenItSettlesOnPlain()
     {
         // The same flight create as the sibling test: on a loaded machine it can outlast the node's 90 s reply deadline and be answered queued,

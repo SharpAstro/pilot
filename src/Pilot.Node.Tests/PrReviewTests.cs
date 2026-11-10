@@ -1021,13 +1021,17 @@ public sealed class PrReviewCliTests : IAsyncLifetime
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2q-" + Guid.NewGuid().ToString("N")[..8]);
     private NodeHarness _node = null!;
+    private FakeRepoGit _git = null!;
     private string _head = "";
 
     public async ValueTask InitializeAsync()
     {
-        var (origin, head) = PrOrigins.Make(_root, "gadget", 9);
+        // The origin is laid on the in-memory git (#952), which the node clones and fetches from too: no git process starts. The node's own folder
+        // (where its clone cache lives) is under the model's root, so the model answers there.
+        _git = FakeRepoGit.Empty(_root);
+        var (origin, head) = FakePrOrigins.Make(_git, _root, "gadget", 9);
         _head = head;
-        _node = await NodeHarness.StartAsync(Ct);
+        _node = await NodeHarness.StartAsync(Ct, git: _git, folder: Path.Combine(_root, "n"));
         _node.GitHub.Origins["acme/gadget"] = origin;
         _node.GitHub.Prs["acme/gadget#9"] = new PullRequest(9, "OPEN", head, "https://github.com/acme/gadget/pull/9", Title: "Gadgets", Author: "bob", Base: "main");
     }
@@ -1038,8 +1042,13 @@ public sealed class PrReviewCliTests : IAsyncLifetime
         await _node.App.StopAsync(Ct);
         PrOrigins.Delete(Path.Combine(_node.Options.DataFolder, "clones"));
         await _node.DisposeAsync();
+        _git.Release();
         PrOrigins.Delete(_root);
+        // A command the model could not answer may have been swallowed by the node's own catch: the test still fails.
+        _git.Unsupported.ShouldBeEmpty("this test needs real git");
     }
+
+    private string Git(string cwd, params string[] args) => FakePrOrigins.Git(_git, cwd, args);
 
     private async Task<(int Exit, string Output, string Error)> Pilot(string cwd, params string[] args)
     {
@@ -1050,14 +1059,13 @@ public sealed class PrReviewCliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APrIsReviewedFromItsLinkAndItsVerdictIsPostedByTheNodeWhileThePrIsOpen()
     {
         var started = await Pilot(_root, "review", "pr", "https://github.com/acme/gadget/pull/9");
         started.Exit.ShouldBe(0, started.Output + started.Error);
         var review = _node.State.PrReviews().ShouldHaveSingleItem();
         review.ClonePath.ShouldBe(Path.Combine(_node.Options.DataFolder, "clones", "acme", "gadget"));
-        PrOrigins.Git(review.Worktree, "rev-parse", "HEAD").ShouldBe(_head);
+        Git(review.Worktree, "rev-parse", "HEAD").ShouldBe(_head);
         (await Pilot(_root, "status")).Output.ShouldContain($"PR acme/gadget#9  Gadgets  (reviewing, {review.Reviewer}, at {_head[..9]})");
 
         // The reviewer, from its worktree: the folder says which PR, and the verdict goes as the reviewer's.
@@ -1079,12 +1087,11 @@ public sealed class PrReviewCliTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ThePostChoicePostsOneReviewWithItsInlineCommentsAndNotFromTheWatchtower()
     {
         (await Pilot(_root, "review", "pr", "acme/gadget#9")).Exit.ShouldBe(0);
         var review = _node.State.PrReviews().ShouldHaveSingleItem();
-        var added = PrOrigins.Git(review.Worktree, "show", "--name-only", "--format=", "HEAD");
+        var added = Git(review.Worktree, "show", "--name-only", "--format=", "HEAD");
 
         // A finding that is no path and line is the reviewer's mistake, caught before it reaches the node.
         var wrong = await Pilot(review.Worktree, "review", "changes", "One defect.", "--finding", "the change is wrong");
