@@ -44,10 +44,11 @@ await using var feed = NodeFeed.For(client);
 // merged into every page.
 await using var fleetWatch = new FleetWatch();
 var fleetKnownAt = DateTimeOffset.MinValue;
-IReadOnlySet<string> granted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-bool CanCommand(string where) => string.Equals(where, remote, StringComparison.OrdinalIgnoreCase) || granted.Contains(where);
+// The grants held, found by a node's machine name (its address only for an old entry), so a node on a new network keeps its grant.
+var held = HeldView.None;
+bool CanCommand(string where, string? name) => string.Equals(where, remote, StringComparison.OrdinalIgnoreCase) || held.Holds(where, name);
 // A row's command goes to the node it came from: this terminal's client for its own, the grant's for another's.
-using var clients = new FleetClients(client, CanCommand);
+using var clients = new FleetClients(client, where => CanCommand(where, null), grantedByName: CanCommand);
 var nodeWhere = remote ?? client.SocketPath;
 
 // The views are the GUI's, generic over the surface; their renderer is never painted with here (the trees are arranged
@@ -312,18 +313,20 @@ cards.OnConnect = node => Connect(node.Where, node.Name);
 // Forget, from the Settings page's held grant or an unreached Fleet row alike: the token is dropped and the fleet stops
 // watching that endpoint (a node still heard on the LAN is known again at the next look). Its rows turn watch-only on
 // the next draw: the steerable set is read again at once, not at the 5 s look.
-void Forget(string endpoint)
+void Forget(string key, string? endpoint = null)
 {
-    NodeTargets.Forget(endpoint);
+    // The entry goes by its machine name (an old one by its address).
+    endpoint ??= held.Entries.FirstOrDefault(e => string.Equals(e.Name, key, StringComparison.OrdinalIgnoreCase))?.Address ?? key;
+    NodeTargets.Forget(key);
     fleetWatch.Forget(endpoint);
     fleetKnownAt = DateTimeOffset.MinValue;
-    fleet.Said = $"forgot {endpoint}";
+    fleet.Said = $"forgot {key}";
     sessions.SayStatus = fleet.Said;
     Redraw();
 }
 fleet.OnForget = line =>
 {
-    Forget(line.Where);
+    Forget(line.HeldName ?? line.Where, line.Where);
     return Task.FromResult<string?>(null);
 };
 // Maintenance on / off on a row's node: this window's, or a granted one, through the client its grant gives.
@@ -360,8 +363,8 @@ if (remote is null)
     settings.LoadGrants = async ct => (await client.GrantsAsync(ct)) is { Success: true, Response: { } given }
         ? given
         : throw new InvalidOperationException("the node did not send its grants");
-    settings.LoadHeld = () => NodeTargets.Granted();
-    settings.Forget = Forget;
+    settings.LoadHeld = () => NodeTargets.Held().Entries;
+    settings.Forget = key => Forget(key);
     settings.Changed = Redraw;
 }
 feed.Start();
@@ -420,8 +423,8 @@ while (!stop.IsCancellationRequested)
         {
             fleetKnownAt = now;
             clients.Refresh();
-            granted = new HashSet<string>(NodeTargets.Granted(), StringComparer.OrdinalIgnoreCase);
-            fleetWatch.Know(granted.Select(e => (e, (string?)null)).Concat((flights.Lan?.Nodes ?? []).Select(n => (n.Endpoint, (string?)n.Name))));
+            held = new HeldView(NodeTargets.Held().Entries);
+            fleetWatch.Know(HeldView.Known(held.Entries, flights.Lan?.Nodes ?? []));
         }
         drawnAt = now;
         var (columns, rows) = terminal.Size;
@@ -439,7 +442,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.Repos => repos.Tree(pages.Repos ?? new ReposScreen([], pages.Sessions.Source, now)),
             PilotPage.PullRequests => pullRequests.Tree(pages.PullRequests ?? new PullRequestsScreen(null, pages.Sessions.Source, now), width),
             PilotPage.Jobs => jobs.Tree(pages.Jobs),
-            PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, now)),
+            PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, held.Entries, now)),
             PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };

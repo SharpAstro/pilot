@@ -337,11 +337,12 @@ chrome.OnPageShown = page =>
 };
 chrome.OnPageShown(chrome.SaidPage);
 var fleetKnownAt = DateTimeOffset.MinValue;
-IReadOnlySet<string> granted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-bool CanCommand(string where) => string.Equals(where, remoteEndpoint, StringComparison.OrdinalIgnoreCase) || granted.Contains(where);
+// The grants held, found by a node's machine name (its address only for an old entry), so a node on a new network keeps its grant.
+var held = HeldView.None;
+bool CanCommand(string where, string? name) => string.Equals(where, remoteEndpoint, StringComparison.OrdinalIgnoreCase) || Volatile.Read(ref held).Holds(where, name);
 // A row's command goes to the node it came from: this window's client for its own, the grant's for another's. A node that
 // refuses the grant reads as watch-only until a new one is saved (the fleet tick looks).
-using var clients = client is null ? null : new FleetClients(client, CanCommand);
+using var clients = client is null ? null : new FleetClients(client, where => CanCommand(where, null), grantedByName: CanCommand);
 bool CanSteer(NodeMark? node) => clients?.CanSteer(node) ?? true;
 // A folder, a file or a link opened the platform's way: ShellExecute can take seconds (a browser starting, a network
 // path), so never on the render thread.
@@ -856,19 +857,20 @@ if (feed is not null && client is not null && clients is not null)
     // Forget, from the Settings page's held grant or an unreached Fleet row alike: the token is dropped and the fleet stops
     // watching that endpoint (a node still heard on the LAN is known again at the next look). Its rows turn watch-only on
     // the next draw: the steerable set is read again at once, not at the 5 s look.
-    Task<string?> ForgetAsync(string endpoint) => Tracked(() => Task.Run<string?>(() =>
+    Task<string?> ForgetAsync(string key, string? endpoint = null) => Tracked(() => Task.Run<string?>(() =>
     {
-        // A file read, a write and a move: off the render thread.
-        Pilot.Commands.NodeTargets.Forget(endpoint);
+        // A file read, a write and a move: off the render thread. The entry goes by its machine name (an old one by its address).
+        endpoint ??= Volatile.Read(ref held).Entries.FirstOrDefault(e => string.Equals(e.Name, key, StringComparison.OrdinalIgnoreCase))?.Address ?? key;
+        Pilot.Commands.NodeTargets.Forget(key);
         fleetWatch.Forget(endpoint);
         fleetKnownAt = DateTimeOffset.MinValue;
-        chrome.Fleet.Said = $"forgot {endpoint}";
+        chrome.Fleet.Said = $"forgot {key}";
         view.SayStatus = chrome.Fleet.Said;
-        Note($"pilot-gui: forgot {endpoint}");
+        Note($"pilot-gui: forgot {key}");
         loop.RequestRedraw();
         return (string?)null;
-    }), $"forget {endpoint}");
-    chrome.Fleet.OnForget = line => ForgetAsync(line.Where);
+    }), $"forget {key}");
+    chrome.Fleet.OnForget = line => ForgetAsync(line.HeldName ?? line.Where, line.Where);
     // Maintenance on / off on a row's node: this window's, or a granted one, through the client its grant gives.
     chrome.Fleet.OnMaintenance = (line, on) => Tracked(async () =>
     {
@@ -923,8 +925,8 @@ if (feed is not null && client is not null && clients is not null)
         chrome.Settings.LoadGrants = async ct => (await client.GrantsAsync(ct)) is { Success: true, Response: { } given }
             ? given
             : throw new InvalidOperationException("the node did not send its grants");
-        chrome.Settings.LoadHeld = () => Pilot.Commands.NodeTargets.Granted();
-        chrome.Settings.Forget = endpoint => _ = ForgetAsync(endpoint);
+        chrome.Settings.LoadHeld = () => Pilot.Commands.NodeTargets.Held().Entries;
+        chrome.Settings.Forget = key => _ = ForgetAsync(key);
         chrome.Settings.Changed = loop.RequestRedraw;
     }
     feed.Start();
@@ -1032,8 +1034,8 @@ if (feed is not null)
                 {
                     fleetKnownAt = now;
                     clients?.Refresh();
-                    granted = new HashSet<string>(Pilot.Commands.NodeTargets.Granted(), StringComparer.OrdinalIgnoreCase);
-                    fleetWatch.Know(granted.Select(e => (e, (string?)null)).Concat((chrome.Flights.Lan?.Nodes ?? []).Select(n => (n.Endpoint, (string?)n.Name))));
+                    Volatile.Write(ref held, new HeldView(Pilot.Commands.NodeTargets.Held().Entries));
+                    fleetWatch.Know(HeldView.Known(held.Entries, chrome.Flights.Lan?.Nodes ?? []));
                 }
                 // The once-a-second look at Home, with no node event and nothing asked: nothing Home draws is counted from the
                 // clock when the pages are built but what its fingerprint counts itself (the summaries' "made ago", the tasks
@@ -1052,7 +1054,7 @@ if (feed is not null)
                 // Every node's rows on every page, each marked with its node, as the header's node selection picks them.
                 var pages = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now);
                 var hereSummary = feed.Summary(now);
-                var fleetScreen = fleetWatch.Screen(nodeWhere, hereSummary, CanCommand, now);
+                var fleetScreen = fleetWatch.Screen(nodeWhere, hereSummary, CanCommand, Volatile.Read(ref held).Entries, now);
                 // This window's node in maintenance: Home and Flights say so (a plain flag, read by the render thread).
                 chrome.Home.Maintenance = chrome.Flights.Maintenance = hereSummary is { Connected: true, Node.Maintenance: true };
                 // And its autopilot, in every header's switch.
