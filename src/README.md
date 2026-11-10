@@ -1196,7 +1196,7 @@ idle until the job wakes it). Each one idle 50 min with more than 100k of contex
 still warm, and one past its share of the window (`watchtower-compact-share`, 60 by default) as soon as it is idle: `compact session/<id>`, which resumes it with Claude
 Code's `/compact` as its next turn, its focus what the summary keeps (for a worker, its task and the job it waits on).
 Below 100k a cold read costs little more than the summary, and a fresh session starts near 50k anyway. A session is
-compacted once per stretch of idleness, not again until it has answered something, and is left to settle for 5 min after a compaction or a replacement (a compaction is itself an answer, and its reading is the old size until a fresh turn; SE1, 2026-11-10, was compacted and replaced every 30 s for four minutes on that old reading); one mid-turn is refused, never sent
+compacted once per stretch of idleness, not again until it has answered something, and is left to settle for 5 min after a compaction or a replacement (a compaction is itself an answer, and its reading is the old size until a fresh turn; SE1, 2026-11-10, was compacted and replaced every 30 s for four minutes on that old reading). A worker compacted for being past its share and still past it once settled is said once on a Handled line and not compacted for its size again until it reads under its share; one mid-turn is refused, never sent
 `/compact` as words, and an interactive session is never touched. Each compaction is a Handled line, and one refused
 is tried again in 10 min. This replaced the watchtower's keep-warm round every 50 min: finding stalls is the leg watch's.
 `pilot compact <session> [focus…]` does it by hand.

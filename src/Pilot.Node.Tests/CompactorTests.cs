@@ -254,13 +254,60 @@ public sealed class CompactorTests : IDisposable
         Handled().Count(t => t.StartsWith("Replaced", StringComparison.Ordinal)).ShouldBe(1);
         var stuck = _state.Cards(openOnly: true).Where(c => c.Kind == "watchtower-still-full").ShouldHaveSingleItem();
         // It says what the replacement came to, not a restart it cannot vouch for, and offers the restart by hand.
-        stuck.Detail.ShouldContain("a fresh one started");
+        stuck.Detail.ShouldNotBeNull().ShouldContain("a fresh one started");
+        stuck.Title.ShouldBe("du1-watchtower is still full after a compaction and a replacement");
         stuck.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.RestartWatchtower);
 
         // Back under its share: the card closes, and a later episode may be replaced again.
         Row(current, "du1-watchtower", context: 200_000, lastResponse: _time.GetUtcNow());
         await _compactor.LookAsync(Ct);
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == "watchtower-still-full");
+    }
+
+    [Fact]
+    public async Task AFailedRestartIsNeverCalledAReplacementAndStaysBounded()
+    {
+        // Review of #957: a restart that fails replaced nothing, so no line or card may say it did.
+        Row("t0000001", "du1-watchtower", context: 800_000);
+        await _compactor.LookAsync(Ct);
+        _workers.Fail = new FlightException("the watchtower did not start");
+
+        for (var look = 0; look < 120; look++)
+        {
+            _time.Advance(TimeSpan.FromSeconds(30));
+            Row("t0000001", "du1-watchtower", context: 800_000, lastResponse: _time.GetUtcNow());
+            await _compactor.LookAsync(Ct);
+        }
+        Handled().ShouldContain(t => t.StartsWith("Could not replace du1-watchtower", StringComparison.Ordinal));
+        Handled().ShouldNotContain(t => t.StartsWith("Replaced", StringComparison.Ordinal));
+        _state.Cards().Where(c => c.Kind == Compactor.StuckKind).ShouldAllBe(c => !c.Title.Contains("replacement"));
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBeLessThanOrEqualTo(2);
+    }
+
+    [Fact]
+    public async Task AWorkerStillFullAfterACompactionIsToldOnceAndNotCompactedEveryFiveMinutes()
+    {
+        // Review of #957: the settle alone would compact a worker whose reading stays past its share every 5 min with no end.
+        Row("w0000001", "du1-tia9-parser", context: 800_000, flight: "TIA9", leg: "parser");
+        Job("w0000001");
+        await _compactor.LookAsync(Ct);
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
+
+        for (var look = 0; look < 120; look++)
+        {
+            _time.Advance(TimeSpan.FromSeconds(30));
+            Row("w0000001", "du1-tia9-parser", context: 800_000, lastResponse: _time.GetUtcNow(), flight: "TIA9", leg: "parser");
+            await _compactor.LookAsync(Ct);
+        }
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
+        Handled().Count(t => t == "du1-tia9-parser is still full after a compaction").ShouldBe(1);
+
+        // Under its share again: an idle hour later it may be compacted again, as any session is.
+        Row("w0000001", "du1-tia9-parser", context: 400_000, lastResponse: _time.GetUtcNow(), flight: "TIA9", leg: "parser");
+        await _compactor.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromMinutes(55));
+        await _compactor.LookAsync(Ct);
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(2);
     }
 
     [Fact]

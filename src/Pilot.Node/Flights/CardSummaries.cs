@@ -203,7 +203,7 @@ public static partial class CardSummaries
             PrReviews.FixFollowUpFailedKind => "A PR merged while its fixer worked and the fixer's commits could not be pushed or opened as a follow-up PR. The detail names the commit and the local branch that holds it; push it by hand.",
             PrReviews.FixLeftKind =>"A fixer's worktree is still held by a process. The node tries again.",
             Compactor.Kind => "The node compacted a session's context, or could not and tries again. Nothing to do.",
-            Compactor.StuckKind => "The watchtower still reads past its share of its window after a compaction and a restart, so the node leaves it alone until it reads under it. pilot watchtower restart starts a fresh one by hand.",
+            Compactor.StuckKind => "The watchtower still reads past its share of its window after a compaction and an attempt at a fresh one, so the node leaves it alone until it reads under it. Restart starts a fresh one by hand.",
             Digest.Kind => "What landed, what was handled and what is parked since the last digest. Read it and dismiss it.",
             StaleWatch.ActedKind => $"{what} has waited a long time, so the node acted on it (told its worker of an ended job, nudged it, or raised its priority). Nothing to do.",
             NodeUpdater.Kind => "A new pilot is out, or an update was installed or failed. The card's choice installs it; otherwise nothing to do.",
