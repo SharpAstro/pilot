@@ -159,10 +159,15 @@ public sealed partial class LegCommander
             // The flight is the other node's: what this one still holds of it is let go with the lock released, git and GitHub being slow.
             if (moved is { } let)
             {
+                await WaitsFollowAsync();
                 await LetGoOfPlaneAsync(let.Flight, let.Text);
             }
         }
     }
+
+    // The flights of this node that waited for the moved flight wait for it on the node it moved to (#818). Taken with this lock released: the
+    // flight verbs have a lock of their own, and nothing here holds one while it waits for the other.
+    private Task WaitsFollowAsync() => flights.FollowMovedFlightsAsync(CancellationToken.None);
 
     /// <summary>
     /// The calls of a move, with the lock let go: the best willing node is chosen as create-flight routing chooses it
@@ -329,6 +334,7 @@ public sealed partial class LegCommander
             _one.Release();
             if (moved is { } let)
             {
+                await WaitsFollowAsync();
                 await LetGoOfPlaneAsync(let.Flight, let.Text);
             }
         }
