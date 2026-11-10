@@ -64,6 +64,10 @@ is neither built nor tested by CI.
   silent for 5 minutes gets a file the node writes from what it knows and is ended. `pilot node reboot status` says how far
   it is, a "Ready to reboot" card says when all are in, and `pilot node reboot done` (after the reboot) or `cancel` leaves
   maintenance mode. The node never reboots the machine.
+- A watch script a session starts in the background has a deadline or an until-condition, never `while true`, and a session
+  checks for the old one before it arms a new one. When the node stops or replaces a session it started, it ends the
+  background shells under that session's process (`SessionWatchers`, #870); a script with no end still piles up under a
+  session the node did not stop.
 - One live watchtower per node. A change to how the node finds, messages, resumes or stops a session keeps
   `OneWatchtowerTests`, `WatchtowerTests` and `ResumeOptionsTests` passing.
 - The fleet summary is kept by the watchtower: the node has it remade after changes while a client is attached, asks
