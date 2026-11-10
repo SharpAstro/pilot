@@ -104,7 +104,7 @@ public sealed partial class CloudBenchJobTests : JobTestsBase, IAsyncDisposable
             MachineOutsideCpu = outsideCpu,
             CloudBench = cloud ?? _cloud,
             BenchSettings = () => settings ?? new NodeSettings(),
-            Git = git,
+            Git = git ?? new GitCli(),
         };
         return (jobs, clock, async id =>
         {
@@ -123,7 +123,7 @@ public sealed partial class CloudBenchJobTests : JobTestsBase, IAsyncDisposable
             MachineCpu = () => 0,
             CloudBench = cloud ?? _cloud,
             BenchSettings = () => settings ?? new NodeSettings(),
-            Git = git,
+            Git = git ?? new GitCli(),
         };
         _started.Add(jobs);
         await jobs.StartAsync(CancellationToken.None);
