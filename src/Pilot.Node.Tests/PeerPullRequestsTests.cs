@@ -97,6 +97,7 @@ public sealed class PeerPullRequestsTests : IDisposable
 
     private static PullRequestsRow RowOf(DateTimeOffset readAt, params int[] numbers) => new()
     {
+        ReadAt = readAt,
         PullRequests = [.. numbers.Select(Pr)],
         RepoReads = [new PullRequestRepoRead("SharpAstro/pilot", readAt, "B1", false)],
     };
