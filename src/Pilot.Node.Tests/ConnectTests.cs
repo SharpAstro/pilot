@@ -590,6 +590,27 @@ public sealed class ConnectTests : OverlapTestsBase
         MergedHoldCards().ShouldBeEmpty();
     }
 
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFlightHeldOnTwoMergedFlightsHasOneCardWithALineEachAndALiftKeepsTheOther_818()
+    {
+        var (flights, clock, _) = await HeldOnAMergedFlightAsync("MERGED");
+        _state.PutFlight(Theirs("TIA3", 3) with { RepoPath = Repo, PullRequest = 77 });
+        (await flights.RunAsync(new CommandRequest { Verb = Verbs.Connect, Target = "flight/TIA2", Args = ["TIA3"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        await flights.LookAtPeerConnectionsAsync(Ct);
+        clock.Now += TimeSpan.FromHours(3);
+
+        await flights.LookAtPeerConnectionsAsync(Ct);
+
+        var card = MergedHoldCards().ShouldHaveSingleItem();
+        card.Detail.ShouldNotBeNull().ShouldContain("pilot flight disconnect TIA2 TIA1");
+        card.Detail.ShouldContain("pilot flight disconnect TIA2 TIA3");
+
+        (await flights.RunAsync(new CommandRequest { Verb = Verbs.Disconnect, Target = "flight/TIA2", Args = ["TIA1"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        await flights.LookAtPeerConnectionsAsync(Ct);
+        MergedHoldCards().ShouldHaveSingleItem().Detail.ShouldNotBeNull().ShouldNotContain("TIA2 TIA1");
+    }
+
     private async Task<FlightCommander> HeldOnLocalAsync(FakeGitHub? github = null, int? pullRequest = null)
     {
         _flights.Machine = "DU1";
