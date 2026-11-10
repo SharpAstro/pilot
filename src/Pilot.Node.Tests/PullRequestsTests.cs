@@ -482,7 +482,7 @@ public sealed class PullRequestsTests : IDisposable
         return Path.Combine(_root, name);
     }
 
-    private PullRequestWatch Watch(NodeState state, FakeGitHub github, TimeProvider? time = null, bool flown = true)
+    private PullRequestWatch Watch(NodeState state, FakeGitHub github, TimeProvider? time = null, bool flown = true, string machine = "")
     {
         // A repo is tracked once pilot has worked in it (#429's rule, narrowed 2026-10-29): each clone made so far has a landed flight,
         // unless the test is about a clone pilot never worked in.
@@ -509,7 +509,41 @@ public sealed class PullRequestsTests : IDisposable
                 }
             }
         }
-        return new(state, new RepoCatalog(state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root])), github, time ?? TimeProvider.System);
+        return new(state, new RepoCatalog(state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root])), github, time ?? TimeProvider.System) { Machine = machine };
+    }
+
+    [Fact]
+    public async Task EachReadStampsTheReposItReadWithThisNodeAndWhetherItFliesInThemAndARepoNotReadKeepsItsStampFromBefore()
+    {
+        var pilot = Clone("SharpAstro", "pilot");
+        Clone("sebgod", "mercury");
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        state.PutFlight(new FlightRow
+        {
+            Code = "PIL1", Repo = "pilot", RepoPath = pilot, Issue = 1, Branch = "flight/pil1", Worktree = Path.Combine(pilot, ".claude", "worktrees", "pil1"),
+            Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
+        });
+        var github = new FakeGitHub();
+        github.PutPullRequest(Row("SharpAstro/pilot", 1, PullRequestKind.Ready));
+        var time = new TimerTime(Noon);
+        var watch = Watch(state, github, time, machine: "LE1");
+
+        // Both repos read now, by this node; it flies a flight in pilot (mercury's flight has landed).
+        var row = (await watch.RefreshAsync(Ct))!;
+        row.RepoReads.ShouldBe([new PullRequestRepoRead("sebgod/mercury", Noon, "LE1", false), new PullRequestRepoRead("SharpAstro/pilot", Noon, "LE1", true)]);
+        state.Snapshot().PullRequests!.RepoReads.ShouldBe(row.RepoReads);
+
+        // A minute on the search fails: nothing is read, and each repo keeps the stamp of the read before.
+        time.Advance(TimeSpan.FromMinutes(1));
+        github.SearchFail.Add("SharpAstro/pilot");
+        var failed = (await watch.RefreshAsync(Ct))!;
+        failed.ReadAt.ShouldBe(Noon.AddMinutes(1));
+        failed.RepoReads.ShouldBe(row.RepoReads);
+
+        // Read again: stamped anew.
+        time.Advance(TimeSpan.FromMinutes(1));
+        github.SearchFail.Clear();
+        (await watch.RefreshAsync(Ct))!.RepoReads.Select(r => (r.Repo, r.ReadAt)).ShouldBe([("sebgod/mercury", Noon.AddMinutes(2)), ("SharpAstro/pilot", Noon.AddMinutes(2))]);
     }
 
     [Fact]
