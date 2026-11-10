@@ -42,6 +42,10 @@ public static class ReleaseInstall
     public const string StagingName = "update";
     public const string AsideSuffix = "~old";
 
+    /// <summary>The folder under an install where the release it replaced is kept (<see cref="UpdateRollback"/>): a copy of that
+    /// release's files, so a start that fails on the new one can go back. <see cref="CleanAside"/> never touches it.</summary>
+    public const string PreviousName = "previous";
+
     /// <summary>The release build <paramref name="folder"/> holds, if it is one of <paramref name="version"/>, the
     /// version that is running from it. Null for any other folder: a build of one's own, or a staging folder.</summary>
     public static ReleaseBuild? Installed(string folder, string version)
@@ -244,15 +248,17 @@ public static class ReleaseInstall
     }
 
     /// <summary>Step 3, at the next start: deletes the files earlier swaps renamed aside, and the staging folder, where
-    /// nothing holds them any more. Returns how many are left (a process still running from one).</summary>
+    /// nothing holds them any more. Returns how many are left (a process still running from one). The
+    /// <see cref="PreviousName"/> folder is the way back to the last release and is left alone, whatever it holds.</summary>
     public static int CleanAside(string install)
     {
         var left = 0;
+        var previous = Path.Combine(install, PreviousName) + Path.DirectorySeparatorChar;
         try
         {
             foreach (var file in Directory.EnumerateFiles(install, "*" + AsideSuffix + "*", SearchOption.AllDirectories))
             {
-                if (!IsAside(file))
+                if (!IsAside(file) || file.StartsWith(previous, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }

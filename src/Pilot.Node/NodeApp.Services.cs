@@ -60,17 +60,32 @@ public static partial class NodeApp
     {
         // The store: the node's events as files in its data folder, read back on the next start (FileJournal).
         builder.Services.AddSingleton<INodeJournal>(_ => new FileJournal(Path.Combine(options.DataFolder, "store")));
+        // The state is built on the store here, and a store that cannot be read is set aside and started again from a backup (StoreRecovery).
+        // A store from a newer node still throws StoreTooNewException from here, which NodeProgram turns into its refusal.
         builder.Services.AddSingleton(services =>
         {
-            var state = new NodeState(services.GetRequiredService<INodeJournal>(), services.GetRequiredService<TimeProvider>(), options.RetainedDeltas)
-            {
-                Error = logWriter,
-                TokensByFlight = () => services.GetRequiredService<SpendLedger>().TokensByFlight(),
-            };
-            // A card about to ring goes to the brain first (PIL855); resolved at the first ring, as the brain needs the watchtower, which needs this state.
-            state.RingJudge = new RingJudge(state, () => services.GetRequiredService<IBrain>()) { Log = line => logWriter.WriteLine(line) };
-            return state;
+            var time = services.GetRequiredService<TimeProvider>();
+            var opened = StoreRecovery.Open(
+                services.GetRequiredService<INodeJournal>(),
+                journal =>
+                {
+                    var state = new NodeState(journal, time, options.RetainedDeltas)
+                    {
+                        Error = logWriter,
+                        TokensByFlight = () => services.GetRequiredService<SpendLedger>().TokensByFlight(),
+                    };
+                    // A card about to ring goes to the brain first (PIL855); resolved at the first ring, as the brain needs the watchtower, which needs this state.
+                    state.RingJudge = new RingJudge(state, () => services.GetRequiredService<IBrain>()) { Log = line => logWriter.WriteLine(line) };
+                    return state;
+                },
+                time);
+            return opened;
         });
+        // The line in node.log and node-start.log and the card, when the start was from a backup: said when the host starts, with every service
+        // there to resolve (the card goes to the brain before it rings, which needs the watchtower, which needs the state built just above).
+        builder.Services.AddHostedService(services => new StoreRecoveryReport(services.GetRequiredService<StoreRecovery>(), logWriter,
+            line => NodeProgram.AppendStartLog(options, $"pilot-node {FileJournal.RunningVersion} {line}")));
+        builder.Services.AddSingleton(services => services.GetRequiredService<StoreRecovery>().State);
         builder.Services.AddSingleton<PageViews>();
         builder.Services.AddSingleton<EventHub>();
     }
