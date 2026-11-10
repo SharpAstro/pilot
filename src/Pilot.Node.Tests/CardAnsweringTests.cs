@@ -243,7 +243,7 @@ public sealed class CardAnsweringTests : IDisposable
                 return Task.CompletedTask;
             }
             reached.TrySetResult();
-            return open.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            return open.Task.WaitAsync(TimeSpan.FromSeconds(20));
         };
         return (open, reached);
     }
