@@ -2517,6 +2517,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             // to RunCheckAsync's look for a carried check: it must not see the row ended with no result yet and queue the check again.
             lock (_checkEndLock)
             {
+                _seeds.TryRemove(ended.Id, out _); // the seed mark goes before the row shows it ended
                 state.PutJob(ended);
                 if (looks > 0)
                 {

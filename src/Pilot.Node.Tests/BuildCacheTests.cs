@@ -203,8 +203,9 @@ public sealed class BuildCacheTests : JobTestsBase
 
         // When the job ends the mark goes: the same row is no seed any more.
         Fake!.Exit(seed.Id, 0);
-        // The ended row is written a moment before the runner drops the mark, so wait (with Until's deadline) for the mark to go.
-        await Until(seed.Id, row => row.EndedAt is not null && !_jobs.EnvironmentOf(row).ContainsKey("MSBuildCacheEnabled"));
+        // The runner drops the mark before it writes the ended row, so the row showing it ended means the mark is gone.
+        var ended = await Until(seed.Id, row => row.EndedAt is not null);
+        _jobs.EnvironmentOf(ended).ShouldNotContainKey("MSBuildCacheEnabled");
     }
 
     [Fact]
