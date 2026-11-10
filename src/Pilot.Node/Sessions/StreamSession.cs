@@ -894,9 +894,18 @@ public sealed class StreamSession : IAsyncDisposable
                 // The tool's name is the command's path joined by '_' (McpServer). Its input is by name, in the model's order, options among the
                 // arguments: a card and its choice are put where pilot answer takes them, and an option (why, words, node) is no word of the line.
                 var path = name[PilotMcpTool.Length..].Split('_');
-                string? Word(string key) => input.TryGetProperty(key, out var v) ? v.ValueKind == JsonValueKind.String ? v.GetString() : v.GetRawText() : null;
-                string[] given = Word("card") is { } card ? [card, .. Word("choice") is { } choice ? [choice.Contains(' ') ? $"\"{choice}\"" : choice] : Array.Empty<string>()]
-                    : [.. input.EnumerateObject().Where(p => !McpOptions.Contains(p.Name) && p.Value.ValueKind == JsonValueKind.String).Select(p => p.Value.GetString() ?? "")];
+                // A value as words, as McpServer.Values reads it: a string is one, an array (pilot answer's choice is Words, a string[] in
+                // the schema) is its items, a number or a boolean as JSON writes it.
+                static IEnumerable<string> Words(JsonElement v) => v.ValueKind switch
+                {
+                    JsonValueKind.String => [v.GetString() ?? ""],
+                    JsonValueKind.Array => v.EnumerateArray().SelectMany(Words).ToArray(),
+                    JsonValueKind.Null or JsonValueKind.Undefined => [],
+                    _ => [v.GetRawText()],
+                };
+                string? Word(string key) => input.TryGetProperty(key, out var v) && string.Join(' ', Words(v)) is { Length: > 0 } words ? words : null;
+                string[] given = Word("card") is { } card ? [card, .. Word("choice") is { } choice ? [choice] : Array.Empty<string>()]
+                    : [.. input.EnumerateObject().Where(p => !McpOptions.Contains(p.Name)).SelectMany(p => Words(p.Value))];
                 yield return (id, string.Join(' ', ["pilot", .. path, .. given]));
             }
         }

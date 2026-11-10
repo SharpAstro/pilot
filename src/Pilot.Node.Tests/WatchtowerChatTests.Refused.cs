@@ -65,12 +65,31 @@ public sealed partial class WatchtowerChatTests
         process.Emit(JsonSerializer.Serialize(new
         {
             type = "assistant",
-            message = new { role = "assistant", content = new object[] { new { type = "tool_use", id = "p1", name = "mcp__pilot__answer", input = new { choice = "1", why = "round-3", card = card.Id } } } },
+            message = new { role = "assistant", content = new object[] { new { type = "tool_use", id = "p1", name = "mcp__pilot__answer", input = new { choice = new[] { "1" }, why = "round-3", card = card.Id } } } },
         }));
         process.Emit(ShellResult("p1", AutoModeRefusal, error: true));
         await UntilAsync(() => _state.Cards(openOnly: true).Single(c => c.Id == card.Id).Bin == CardBin.Ring, "the card to ring");
 
+        // The choice as the schema advertises it (Words, an array of strings), with an option beside it, and the card before it.
         _state.Cards(openOnly: true).Single(c => c.Id == card.Id).Detail.ShouldNotBeNull().ShouldStartWith("What to do: press \"Fix the review's findings\" yourself.");
+    }
+
+    [Fact]
+    public async Task ACardWhoseTitleDoesNotFitAfterThePrefixGetsAShortOneAndKeepsItsOwnInTheDetail()
+    {
+        var process = await StreamIdleAsync();
+        const string Long = "PIL1234/a-rather-long-leg-name's worker has been idle for 3 min with 0 of 6 steps";
+        var card = _state.RaiseCard(CardBin.ForYou, "worker-idle", "flight/PIL1234/a-rather-long-leg-name", Long, null,
+            [new CardChoice { Label = "Nudge it to finish", Verb = Verbs.Say, Target = "session/s1" }]);
+
+        process.Emit(ShellCall("l1", $"pilot answer {card.Id} 1"));
+        process.Emit(ShellResult("l1", AutoModeRefusal, error: true));
+        await UntilAsync(() => _state.Cards(openOnly: true).Single(c => c.Id == card.Id).Bin == CardBin.Ring, "the card to ring");
+
+        var rung = _state.Cards(openOnly: true).Single(c => c.Id == card.Id);
+        rung.Title.ShouldBe(Watchtower.RefusedPrefix + "\"Nudge it to finish\"");
+        rung.Title.Length.ShouldBeLessThanOrEqualTo(70);
+        rung.Detail.ShouldNotBeNull().ShouldContain("The card was: " + Long);
     }
 
     [Fact]
@@ -88,6 +107,11 @@ public sealed partial class WatchtowerChatTests
         // The brief's own shape for git elsewhere, in this very repo: a folder named pilot is not the node's CLI.
         process.Emit(ShellCall("gitc", "git -C C:/Users/x/source/repos/sharpastro/pilot push origin main"));
         process.Emit(ShellResult("gitc", AutoModeRefusal, error: true));
+        // A quoted argument's lines are not commands: a commit body with a line "Pilot is now quiet…", a comment with "pilot answer …".
+        process.Emit(ShellCall("msg", "git commit -m \"Quiet the second ring\n\nPilot is now quiet when a card rings twice.\""));
+        process.Emit(ShellResult("msg", AutoModeRefusal, error: true));
+        process.Emit(ShellCall("gh", $"gh pr comment 1 --body 'Tried:\npilot answer {card.Id} 1'"));
+        process.Emit(ShellResult("gh", AutoModeRefusal, error: true));
 
         // A refused pilot verb that pressed no card's button rings one of its own, with the command to run.
         process.Emit(ShellCall("m1", @"""C:\Users\x\AppData\Local\pilot2\bin\pilot.exe"" flight merge PIL1 abc123"));
@@ -96,9 +120,9 @@ public sealed partial class WatchtowerChatTests
 
         var refused = _state.Cards(openOnly: true).Single(c => c.Kind == Watchtower.RefusedKind);
         refused.Bin.ShouldBe(CardBin.Ring);
-        refused.Title.ShouldBe("The watchtower could not run pilot flight merge: auto mode: [Auto-Mode Bypass] refused it");
+        refused.Title.ShouldBe("The watchtower could not run pilot flight merge");
         refused.Detail.ShouldNotBeNull().ShouldContain("flight merge PIL1 abc123");
-        refused.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([(Watchtower.DoneMyselfLabel, Verbs.Say)], "a ringing card offers the press that moves it");
+        refused.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([(Watchtower.DoneMyselfLabel, Verbs.Tell)], "a ringing card offers the press that moves it");
 
         // Another flight's refused merge is a card of its own; the person's own no, and a verb's words, ring nothing more.
         process.Emit(ShellCall("m2", "pilot flight merge PIL2 def456"));
@@ -109,9 +133,9 @@ public sealed partial class WatchtowerChatTests
         process.Emit(ShellResult("say", AutoModeRefusal, error: true));
         await UntilAsync(() => _state.Cards(openOnly: true).Count(c => c.Kind == Watchtower.RefusedKind) == 3, "the second merge's and the say's cards");
         _state.Cards(openOnly: true).Where(c => c.Kind == Watchtower.RefusedKind).Select(c => c.Title).ShouldBe(
-            ["The watchtower could not run pilot flight merge: auto mode: [Auto-Mode Bypass] refused it",
-             "The watchtower could not run pilot flight merge: auto mode: [Auto-Mode Bypass] refused it",
-             "The watchtower could not run pilot say: auto mode: [Auto-Mode Bypass] refused it"], ignoreOrder: true);
+            ["The watchtower could not run pilot flight merge",
+             "The watchtower could not run pilot flight merge",
+             "The watchtower could not run pilot say"], ignoreOrder: true);
         _state.Cards(openOnly: true).Single(c => c.Id == card.Id).Bin.ShouldBe(CardBin.ForYou, "its press ran");
     }
 }

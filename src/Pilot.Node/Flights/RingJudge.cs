@@ -100,8 +100,12 @@ public sealed class RingJudge(NodeState state, Func<IBrain?> brain)
                 rang = true;
                 return;
             }
-            Ring(card, verdict is null ? null : verdict.Action);
+            var ringsNow = Ring(card, verdict is null ? null : verdict.Action);
             rang = true;
+            if (!ringsNow)
+            {
+                return;
+            }
             // A design card's words are the reviewer's questions and the options its buttons cannot say (PrReviews.DesignSummary), which is what the person
             // answers: a rewording "of what happened" would replace them, up to 600 characters where the panel draws 240.
             if (verdict is not null && card.Kind != PrReviews.DesignKind && brain() is { } b)
@@ -175,15 +179,18 @@ public sealed class RingJudge(NodeState state, Func<IBrain?> brain)
     /// <summary>The card, as it is now, when it is still open; null when it closed or is gone.</summary>
     private CardRow? Open(string id) => state.Cards(openOnly: true).FirstOrDefault(c => c.Id == id);
 
-    private void Ring(CardRow card, string? action)
+    // Whether this verdict rang it: false for a card closed meanwhile, or one that rang while its verdict was pending (a press of it the
+    // watchtower was refused), which already leads with what to do and is not reworded either.
+    private bool Ring(CardRow card, string? action)
     {
-        if (Open(card.Id) is not { } now)
+        if (Open(card.Id) is not { Bin: not CardBin.Ring } now)
         {
-            return;
+            return false;
         }
         // The one action goes in front of the detail, so the card says what it rings for.
         var detail = action is { Length: > 0 } ? $"What to do: {action}" + (string.IsNullOrWhiteSpace(now.Detail) ? "" : "\n\n" + now.Detail) : now.Detail;
         state.UpdateCard(now.Id, now.Title, detail, now.Choices, now.Link, bin: CardBin.Ring);
+        return true;
     }
 
     private void Quiet(CardRow card, string reason)
@@ -219,6 +226,12 @@ public sealed class RingJudge(NodeState state, Func<IBrain?> brain)
             if (title.Length == 0 || title.Contains('\n') || !CardSummaries.Usable(summary) || Open(card.Id) is not { } latest)
             {
                 Log?.Invoke($"ring: the wording of {card.Id} was not usable; it keeps its words");
+                return;
+            }
+            if (latest.Title != now.Title)
+            {
+                // Its title changed while the wording was asked (a refused press of it rang it): a wording of the old card would drop that.
+                Log?.Invoke($"ring: {card.Id} changed while it was reworded; it keeps its new words");
                 return;
             }
             state.UpdateCard(latest.Id, title, latest.Detail, latest.Choices, latest.Link, summary: summary);
