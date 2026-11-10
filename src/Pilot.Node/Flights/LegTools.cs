@@ -26,6 +26,17 @@ public sealed record PullRequest(int Number, string State, string Head, string U
 public sealed record WorkflowRun(long Id, string Name, string Status, string? Conclusion, string Url, string Event, DateTimeOffset? CompletedAt);
 
 /// <summary>
+/// A GitHub Actions run on a PR's branch with the runner time it used (PIL795): <paramref name="RunnerMinutes"/> is the sum of its
+/// jobs' durations over every attempt, a job still running counted up to the time asked.
+/// </summary>
+/// <param name="Name">Its workflow's name.</param>
+/// <param name="Status"><c>queued</c>, <c>in_progress</c> or <c>completed</c>.</param>
+/// <param name="Conclusion">Null until it has completed.</param>
+/// <param name="StartedAt">When it started (its first attempt).</param>
+/// <param name="CompletedAt">When it last completed; null while it runs.</param>
+public sealed record CiRun(long Id, string Name, string Status, string? Conclusion, string Event, DateTimeOffset StartedAt, DateTimeOffset? CompletedAt, double RunnerMinutes);
+
+/// <summary>
 /// Where a PR stands in its base's merge queue. <paramref name="State"/> and <paramref name="Head"/> are the PR's own
 /// (<c>OPEN</c>, <c>MERGED</c>, <c>CLOSED</c>); <paramref name="Queued"/> whether it is in the queue now, at
 /// <paramref name="Position"/>; <paramref name="RemovedAt"/> and <paramref name="RemovedReason"/> its last removal from the
@@ -39,6 +50,12 @@ public sealed record MergeQueueState(string State, string Head, bool Queued, int
 /// <paramref name="FailedName"/> and <paramref name="FailedLink"/>, the page of its run.
 /// </summary>
 public sealed record ChecksSummary(string Status, int Done, int Total, string? FailedName = null, string? FailedLink = null);
+
+/// <summary>
+/// A failed GitHub Actions run, read for what it said: its id and page, the jobs that failed, and the log of those jobs
+/// (<c>gh run view --log-failed</c>, its tail when long), which <see cref="FailureSignature"/> reads the failed tests from.
+/// </summary>
+public sealed record FailedRun(long Id, string Url, string[] FailedJobs, string Log);
 
 /// <summary>The one word for where a PR's merge stands on GitHub, as <see cref="MergeState.Kind"/>.</summary>
 public static class MergeKinds
@@ -82,8 +99,9 @@ public static class MergeKinds
 /// <param name="Reason">What blocks it, in words, when <see cref="MergeKinds.Blocked"/>; what an <see cref="MergeKinds.Armed"/> merge waits for once its checks are green (<c>a review</c>), when it does.</param>
 /// <param name="FailedName">The first failed check, and <paramref name="FailedLink"/> its page.</param>
 /// <param name="DroppedFromQueue">Why GitHub took it out of the queue unmerged, when it did and it is not queued again.</param>
+/// <param name="Draft">The PR is a draft: the <see cref="MergeKinds.Blocked"/> that is cleared by marking it ready for review, not by an approval.</param>
 /// <param name="AwaitsCheck">A <see cref="MergeKinds.Pending"/> with every check shown green: GitHub says BLOCKED because a required check has yet to be created (a gate job starts only once the builds finish), the gap between the last build and it.</param>
-public sealed record MergeState(string Kind, int Done = 0, int Total = 0, int? Position = null, string? Reason = null, string? FailedName = null, string? FailedLink = null, string? DroppedFromQueue = null, bool AwaitsCheck = false)
+public sealed record MergeState(string Kind, int Done = 0, int Total = 0, int? Position = null, string? Reason = null, string? FailedName = null, string? FailedLink = null, string? DroppedFromQueue = null, bool AwaitsCheck = false, bool Draft = false)
 {
     /// <summary>The checks' progress as the card says it: <c>6 of 7</c>; null with no checks.</summary>
     public string? Progress => Total > 0 ? ArmedProgress.Say(Done, Total) : null;
@@ -190,6 +208,14 @@ public interface IGitHub
     Task<WorkflowRun[]> WorkflowRunsAsync(string repoPath, string commit, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Every workflow run GitHub Actions made for <paramref name="branch"/> (the PR's head branch) in the repo at
+    /// <paramref name="repoPath"/>, newest first, each with the runner time its jobs used, so a flight's CI can be counted (PIL795).
+    /// A run that has completed is read once and kept; one still running is read again at each call.
+    /// </summary>
+    /// <exception cref="FlightException">gh could not list them.</exception>
+    Task<CiRun[]> CiRunsAsync(string repoPath, string branch, CancellationToken cancellationToken);
+
+    /// <summary>
     /// PR <paramref name="number"/>'s checks as <see cref="ChecksAsync"/> reads them, with how many are done of how many, and the
     /// first failed one; null with no checks or when GitHub would not say.
     /// </summary>
@@ -249,6 +275,14 @@ public interface IGitHub
     /// <summary>Runs PR <paramref name="number"/>'s failed workflow runs again (<c>gh run rerun --failed</c>); how many runs it asked for.</summary>
     /// <exception cref="FlightException">The PR has no failed run, or gh could not rerun one.</exception>
     Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The failed workflow run behind PR <paramref name="number"/>: its own checks' (the first failed run whose log can be read), or with
+    /// <paramref name="mergeGroup"/> the merge queue's run for it (the <c>merge_group</c> run whose branch is the PR's queue entry).
+    /// Read before a failed run is run again, which replaces the failed jobs' logs. Null when there is none or GitHub would not say: a
+    /// read that fails is no failure to look at, and never an exception that stops a look.
+    /// </summary>
+    Task<FailedRun?> FailedRunAsync(string repoPath, int number, bool mergeGroup, CancellationToken cancellationToken) => Task.FromResult<FailedRun?>(null);
 
     /// <summary>Where PR <paramref name="number"/> stands in its base's merge queue; null when its base has none, or GitHub would not say.</summary>
     Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken);
@@ -327,6 +361,14 @@ public interface IGitHub
     /// <summary>The labels issue <paramref name="number"/> carries; empty when gh cannot say.</summary>
     Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The labels issue <paramref name="number"/> carries, as <see cref="IssueLabelsAsync"/> reads them, but a gh failure throws instead of
+    /// reading as no labels: a caller that acts on a label's absence (the hold sweep releasing a hold) must tell a failed read from a missing label.
+    /// </summary>
+    /// <exception cref="FlightException">gh could not read the issue.</exception>
+    Task<string[]> IssueLabelsOrThrowAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        IssueLabelsAsync(repoPath, number, cancellationToken);
+
     /// <summary>Adds <paramref name="label"/> to issue <paramref name="number"/>, creating it in the repo when it has none like it.</summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task AddIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken);
@@ -342,6 +384,11 @@ public interface IGitHub
     /// <summary>Comments on issue <paramref name="number"/> in the controller's name.</summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken);
+
+    /// <summary>The comments of issue <paramref name="number"/>, oldest first; none by default.</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<IReadOnlyList<PrComment>> IssueCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<PrComment>>([]);
 
     /// <summary>The conversation comments of PR <paramref name="number"/> (not its review comments), oldest first; none by default.</summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
@@ -465,10 +512,28 @@ public static class PilotMarks
     public const string Recheck = LabelPrefix + "recheck";
 
     /// <summary>The labels the node reads from a person; each is made in a repo when the node labels a flight item there. A later one is added here.</summary>
-    public static readonly string[] ReadFromPeople = [Priority, Recheck, HumanVerification];
+    public static readonly string[] ReadFromPeople = [Priority, Recheck, Hold, HumanVerification, SiblingSource];
+
+    /// <summary>
+    /// The owner's hold on a flight (#771), on its issue only: every node reads it from GitHub on its repo sweep. Never put on a PR,
+    /// since a PR's <c>pilot: </c> labels are replaced as a set by a review's label change.
+    /// </summary>
+    public const string Hold = LabelPrefix + "hold";
+
+    /// <summary>What the comment that says a flight was put on hold starts with, so a sweep finds the newest one pilot wrote.</summary>
+    public const string HoldCommentStart = "pilot: on hold";
+
+    /// <summary>What the comment that says a flight was released from its hold starts with: a hold comment older than the newest of these is spent.</summary>
+    public const string OffHoldCommentStart = "pilot: off hold";
 
     /// <summary>Put on a flight's issue by a person: the flight's live behaviour needs a person's check, so its briefs say how to note such checks and the node files each as an issue for the controller.</summary>
     public const string HumanVerification = LabelPrefix + "human verification";
+
+    /// <summary>
+    /// Put on a flight's issue by a person: the exception to building on the published packages. The flight's node jobs in a plane
+    /// compile the sibling clones' source (<c>UseLocalSiblings=true</c>) and hold them while they build (PIL802).
+    /// </summary>
+    public const string SiblingSource = LabelPrefix + "sibling source";
 
     /// <summary>
     /// The prefix of the label that says which node flies an issue or story. Deliberately not starting with
@@ -505,7 +570,9 @@ public static class PilotMarks
         Recheck => ("1d76db", "ask pilot to look at this PR again"),
         Pinned => ("fbca04", "pinned to the top of its section in pilot's Ideas pane"),
         Priority => ("e99695", "pilot: its starts bypass the Opus cap and the repo hold"),
+        Hold => ("b60205", "the owner holds this flight: no pilot node acts on it"),
         HumanVerification => ("c5def5", "a person must check this flight's live behaviour; pilot files those checks as issues"),
+        SiblingSource => ("bfd4f2", "this flight builds on the sibling clones' source, not the published packages"),
         _ => ("ededed", "set by pilot"),
     };
 }
@@ -573,7 +640,7 @@ public sealed partial class GhCli : IGitHub
             start.ArgumentList.Add(arg);
         }
         start.Environment["GH_PROMPT_DISABLED"] = "1";
-        var (process, counted) = NodeTraffic.Shared.Start("gh", start);
+        var (process, counted) = await NodeTraffic.Shared.StartAsync("gh", start, cancellationToken: cancellationToken);
         using var _ = process;
         using var __ = counted;
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

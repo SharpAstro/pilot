@@ -68,13 +68,19 @@ public sealed partial class LegCommander
         }
         // A planner held by the window goes by itself once it has reset: the same start, said again by the node.
         // Also a planner admission holds (queued on its flight, as a node restarted meanwhile has lost its memory of it), in the order admission gives.
-        foreach (var queued in state.Flights().Where(f => f is { State: FlightState.Flying, Queued: not null } && state.Legs(f.Code).Length == 0))
+        foreach (var queued in state.Flights().Where(f => f is { State: FlightState.Flying, Queued: not null, OnHold: null } && state.Legs(f.Code).Length == 0))
         {
             _plannersWaiting.TryAdd(queued.Code, true);
         }
         foreach (var code in Slots.Order(_plannersWaiting.Keys).ToList())
         {
             _plannersWaiting.TryRemove(code, out _);
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is { OnHold: not null })
+            {
+                // The owner's hold (#771): no planner starts; the sweep asks again once it is released.
+                _plannersWaiting[code] = true;
+                continue;
+            }
             if (state.Flights().FirstOrDefault(f => f.Code == code) is { } asking)
             {
                 await PrimeAsync(asking, cancellationToken);
@@ -119,6 +125,11 @@ public sealed partial class LegCommander
             await SettleMoveAsync(flight.Code, cancellationToken);
             return;
         }
+        // The owner's hold (#771): a held flight is advanced by no sweep, no finish and no card, until it is released.
+        if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is { OnHold: not null })
+        {
+            return;
+        }
         if (!Models.Advances || state.Flights().FirstOrDefault(f => f.Code == flight.Code) is not { State: FlightState.Flying } current
             || await InMaintenanceAsync(current, cancellationToken))
         {
@@ -136,11 +147,16 @@ public sealed partial class LegCommander
             }
             return;
         }
-        if (step.Verb is Verbs.StartLeg or Verbs.StartReview)
+        if (step.Verb is Verbs.StartLeg or Verbs.StartReview or Verbs.OpenPr or Verbs.Merge)
         {
             await PrimeAsync(current, cancellationToken);
+            // The prime reads the issue's labels, and a hold on GitHub it found is the owner's hold now (#771): nothing to gate or ring about.
+            if (state.Flights().FirstOrDefault(f => f.Code == current.Code) is { OnHold: not null })
+            {
+                return;
+            }
         }
-        var label = step.Verb == Verbs.StartLeg ? $"start {step.Target.Split('/')[^1]}" : step.Verb == Verbs.StartReview ? "start its reviewer" : "open its PR";
+        var label =step.Verb == Verbs.StartLeg ? $"start {step.Target.Split('/')[^1]}" : step.Verb == Verbs.StartReview ? "start its reviewer" : "open its PR";
         if (Gate.Hold($"{step.Verb} {step.Target}", Models.StartLimitFor(current.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} waits to {label}", Models.WeekPaceFor(current.Repo)))
         {
             return;
@@ -149,9 +165,15 @@ public sealed partial class LegCommander
         {
             return;
         }
-        // An open that conflicted waits on the watchtower's pr-conflicts card: once that card closes (the base merged in and pushed), the
-        // sweep opens the PR itself, as no ring offers it.
-        if (step.Verb == Verbs.OpenPr && state.Cards(openOnly: true).Any(c => c.Kind == PrConflictsKind && c.Subject == Verbs.FlightTarget(current.Code)))
+        // An open that conflicted was put to a worker (ResolveConflictAsync) and is not tried again at the same plane head and base head: it
+        // would only conflict again. Once the worker has merged the base and pushed, or the base moves, the sweep opens the PR itself.
+        if (step.Verb == Verbs.OpenPr && _conflictOpenTried.TryGetValue(current.Code, out var tried) && tried == await ConflictHeadsAsync(current, cancellationToken))
+        {
+            return;
+        }
+        // Another step's calls are out for the flight (a push, a check rerun, a rebase): open-pr would wait for them, as a person's does, but
+        // the sweep takes its flights one at a time, so it leaves this one to the next sweep rather than hold every flight behind it (pilot #871).
+        if (step.Verb == Verbs.OpenPr && IsCallingAnything(current.Code))
         {
             return;
         }
@@ -177,8 +199,8 @@ public sealed partial class LegCommander
         {
             return;
         }
-        // An open that conflicted has raised the watchtower's pr-conflicts card already: no second ring for the owner, and no latch, so the
-        // sweep opens the PR once that card closes.
+        // An open that conflicted was put to a worker already and rings no one: no ring for the owner, and no latch, so the sweep opens the PR
+        // once the plane or the base has moved.
         if (step.Verb == Verbs.OpenPr && result.Error is { } error && IsConflict(error))
         {
             return;
@@ -189,11 +211,11 @@ public sealed partial class LegCommander
         }
         _rung[current.Code] = $"failed {step.Target}";
         // Needs someone: the node tried the step itself and was refused, and says it once; asking again is the choice.
-        var named = label.Replace("its ", $"{current.Code}'s ", StringComparison.Ordinal);
         var reason = result.Error is { Length: > 0 } refused ? refused : "no reason given";
-        state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not {label}: {Clip(reason.Split('\n')[0])}",
+        // The reason is the detail's, not the title's, where it was cut.
+        state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not {label}",
             $"The node tried to {label} as the flight's next step and was refused, and it will not try again by itself: {reason}",
-            [new CardChoice { Label = $"{char.ToUpperInvariant(named[0])}{named[1..]} now, asking the node again", Verb = step.Verb, Target = step.Target, Args = step.Args }]);
+            [new CardChoice { Label = "Try that step again", Verb = step.Verb, Target = step.Target, Args = step.Args }]);
     }
 
     /// <summary>What the flight is to do next by itself, its <see cref="DueStep.Step"/> null when nothing is left to it; or null when it waits on something else (a leg flying or failed, a validator, an overlap's answer).</summary>
@@ -317,9 +339,9 @@ public sealed partial class LegCommander
         }
         _rung[current.Code] = key;
         var refusedBy = result.Error is { Length: > 0 } why ? why : "no reason given";
-        state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not start its reviewer at its new head: {Clip(refusedBy.Split('\n')[0])}",
+        state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not start its reviewer at its new head",
             $"The node tried to start a reviewer at the head it has not reviewed and was refused, and it will not try again by itself: {refusedBy}",
-            [new CardChoice { Label = $"Start {current.Code}'s reviewer at its new head", Verb = Verbs.StartReview, Target = Verbs.FlightTarget(current.Code), Args = [UnreadHeadArg] }]);
+            [new CardChoice { Label = "Start the reviewer", Verb = Verbs.StartReview, Target = Verbs.FlightTarget(current.Code), Args = [UnreadHeadArg] }]);
         return true;
     }
 

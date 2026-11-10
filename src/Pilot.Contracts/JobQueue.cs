@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Pilot.Contracts;
 
 /// <summary>Who holds the job queue: the running job a queued one waits behind, in one place for every client.</summary>
@@ -27,7 +29,10 @@ public static class JobQueue
 
     /// <summary>
     /// How full the node's job slots are, from its queued rows: <c>1 running of 2 slots, 1 waiting on a sibling hold</c>; null while no
-    /// job waits, or from a node that does not say its slots. A running job that is paused still counts: it holds its slot.
+    /// job waits, or from a node that does not say its slots. A running job that is paused still counts: it holds its slot. When the
+    /// node says a hold has left slots idle (<see cref="JobRow.HoldIdleSince"/>) the line adds how many and since when, in the viewer's
+    /// local time: <c>2 running of 4 slots, 2 idle behind the sibling hold since 22:43, 15 waiting on a sibling hold</c>. The hold is the
+    /// build hold when no queued job waits on a sibling one.
     /// </summary>
     public static string? SlotsLine(IEnumerable<JobRow> jobs)
     {
@@ -40,6 +45,11 @@ public static class JobQueue
         var running = all.Count(j => j.State == JobState.Running);
         var line = $"{running} running of {slots} {(slots == 1 ? "slot" : "slots")}";
         var siblings = queued.Count(j => j.WaitsOnSibling == true);
+        var idle = slots - running;
+        if (idle > 0 && queued.Select(j => j.HoldIdleSince).Where(s => s is not null).Min() is { } since)
+        {
+            line += $", {idle} idle behind the {(siblings > 0 ? "sibling" : "build")} hold since {since.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture)}";
+        }
         return siblings > 0 ? $"{line}, {siblings} waiting on a sibling hold" : line;
     }
 

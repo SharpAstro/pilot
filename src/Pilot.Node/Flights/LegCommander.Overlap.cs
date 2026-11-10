@@ -141,7 +141,7 @@ public sealed partial class LegCommander
             choices.Add(new CardChoice { Label = $"Fold into {other.Code}", Verb = Verbs.Fold, Target = target, Args = [other.Code] });
         }
         choices.Add(new CardChoice { Label = $"Connect to {other.Code}", Verb = Verbs.ConnectOverlap, Target = target, Args = [other.Code] });
-        choices.Add(new CardChoice { Label = $"Plan {flight.Code} in parallel with {other.Code}", Verb = Verbs.Separate, Target = target, Args = [other.Code] });
+        choices.Add(new CardChoice { Label = "Plan both in parallel", Verb = Verbs.Separate, Target = target, Args = [other.Code] });
 
         // The title names the choice the planner leans to: a fold reads "Fold PIL365 into PIL294", a connect "Connect PIL365 to PIL294".
         var title = fold ? $"Fold {flight.Code} into {at} ({shared})" : $"Connect {flight.Code} to {at} ({shared})";
@@ -283,13 +283,18 @@ public sealed partial class LegCommander
 
     /// <summary>
     /// After a parallel answer on <paramref name="answered"/>: a leg-end row goes on (<see cref="GoOnAfterLegEndAnswerAsync"/>), a
-    /// planner-asked row has its planner stopped and a fresh one started. Called under the lock.
+    /// planner-asked row has its planner stopped and a fresh one started. A flight on the owner's hold (#771) keeps the planner it has:
+    /// none could be started in its place, and the planner look takes it up once the hold is released. Called under the lock.
     /// </summary>
     private async Task<string> GoOnAfterParallelAnswerAsync(FlightRow flight, OverlapRow answered, string told, CancellationToken cancellationToken)
     {
         if (answered.AfterLeg is not null)
         {
             return await GoOnAfterLegEndAnswerAsync(flight, told, cancellationToken);
+        }
+        if (IsOnHold(flight.Code))
+        {
+            return $"{told.Split(';')[0]}; {flight.Code} is on hold, so its planner is left as it is and waits for the release";
         }
         await StopPlannerAsync(flight, cancellationToken);
         StartPlanner(flight, replacing: true);
@@ -328,6 +333,8 @@ public sealed partial class LegCommander
     /// <summary>Stops the flight's planner and starts a fresh one in its place.</summary>
     internal async Task RestartPlannerAsync(string code, CancellationToken cancellationToken)
     {
+        // Refused before the stop, so a held flight's session is neither stopped nor replaced (#771); the same in the two below.
+        RefuseIfOnHold(code);
         var flight = FlightOf(Verbs.FlightTarget(code));
         await StopPlannerAsync(flight, cancellationToken);
         StartPlanner(flight, replacing: true);
@@ -339,6 +346,7 @@ public sealed partial class LegCommander
     /// </summary>
     internal async Task RestartWorkerAsync(string code, string legName, CancellationToken cancellationToken)
     {
+        RefuseIfOnHold(code);
         var (flight, leg) = LegOf(Verbs.LegTarget(code, legName));
         if (leg.WorkerJob is { } job)
         {
@@ -392,6 +400,7 @@ public sealed partial class LegCommander
     /// <summary>Stops a leg's validator that took no first turn and starts a fresh one in its place.</summary>
     internal async Task RestartValidatorAsync(string code, string legName, CancellationToken cancellationToken)
     {
+        RefuseIfOnHold(code);
         var (flight, leg) = LegOf(Verbs.LegTarget(code, legName));
         if (leg.ValidatorJob is { } job)
         {
@@ -468,6 +477,11 @@ public sealed partial class LegCommander
         if (other.Repo != flight.Repo)
         {
             throw new FlightException($"{flight.Code} is in {flight.Repo} and {other.Code} in {other.Repo}: an issue folds only within one repo");
+        }
+        // A fold starts a planner on the other flight: refused while that one is on hold, before anything is stopped or retired.
+        if (OnHoldRefusal(other) is { } otherHeld)
+        {
+            throw new FlightException($"{flight.Code} cannot fold into {other.Code} now: {otherHeld}, then answer again");
         }
 
         // Its planner first: it holds the plane open. The retirement can refuse (a plane with work on it), and then nothing

@@ -82,17 +82,17 @@ public sealed class FleetAdmission(string machine, TimeProvider time)
     {
         if (!peer.HasGrant)
         {
-            return (null, $"{peer.Endpoint} (no grant is held for it)");
+            return (null, $"{peer.Name} (no grant is held for it)");
         }
         try
         {
             var info = await peer.NodeAsync(budget);
             var load = await peer.LoadAsync(budget);
-            return (new Reached(peer, info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Endpoint, info, load), null);
+            return (new Reached(peer, info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Name, info, load), null);
         }
         catch (Exception ex) when (Unreachable(ex) && !caller.IsCancellationRequested)
         {
-            return (null, $"{peer.Endpoint} (did not answer: {FirstLine(ex.Message)})");
+            return (null, $"{peer.Name} (did not answer: {FirstLine(ex.Message)})");
         }
     }
 
@@ -258,7 +258,7 @@ public sealed class FleetAdmission(string machine, TimeProvider time)
             }
             catch (OperationCanceledException)
             {
-                throw new TimeoutException($"{peer.Endpoint} did not answer within {Budget.TotalSeconds:0} s");
+                throw new TimeoutException($"{peer.Name} did not answer within {Budget.TotalSeconds:0} s");
             }
         }).GetAwaiter().GetResult();
 }

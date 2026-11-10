@@ -91,6 +91,85 @@ public sealed class TranscriptPaneTests
         regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == action).OnClick!.Invoke(InputModifier.None);
     }
 
+    // The list of rows: the widest stack among the page's own children (the head and foot stacks hold a handful). Not deeper, or an
+    // unfolded call's own stack of lines would be taken for the list.
+    private static Layout.Node[] RowsOf(Layout.Node page)
+    {
+        var page0 = page.ShouldBeOfType<Layout.Node.Stack>();
+        var list = page0.Children.OfType<Layout.Node.Stack>().MaxBy(s => s.Children.Length);
+        return [.. list.ShouldNotBeNull().Children];
+    }
+
+    [Fact]
+    public async Task TheMomentsMarkedFirstRowIsTheSameNodeFrameAfterFrame()
+    {
+        var (_, screen, _) = await Open();
+        var entries = Entries();
+        var pane = new TranscriptPane
+        {
+            Load = (_, _, after, _) => Task.FromResult(after < 0
+                ? new TranscriptPage { Total = entries.Length, Entries = entries }
+                : new TranscriptPage { Total = entries.Length, Entries = [] }),
+        };
+        pane.Open(screen.Lines[0], at: Called);
+        for (var i = 0; i < 100 && pane.Entries.Count < entries.Length; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+        pane.Entries.Count.ShouldBe(entries.Length);
+
+        var first = RowsOf(pane.Tree());
+        var second = RowsOf(pane.Tree());
+
+        second.Length.ShouldBe(first.Length);
+        for (var i = 0; i < first.Length; i++)
+        {
+            second[i].ShouldBeSameAs(first[i], $"row {i}, the marked first row included, is kept across frames");
+        }
+        pane.Close();
+    }
+
+    [Fact]
+    public async Task TheMomentsMarkedFirstRowIsBuiltAgainWhenItsRowChangesAndKeptOnceMoreFromThen()
+    {
+        var (view, screen, renderer) = await Open();
+        using var _ = renderer;
+        view.Transcript.Open(screen.Lines[0], at: Called);
+        for (var i = 0; i < 100 && view.Transcript.Entries.Count < Entries().Length; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+        view.Transcript.Entries.Count.ShouldBe(Entries().Length);
+
+        var before = RowsOf(view.Transcript.Tree());
+        RowsOf(view.Transcript.Tree())[0].ShouldBeSameAs(before[0]);
+
+        // Unfolding the marked call builds its row again; the wrapper must follow it, not keep the folded row under it.
+        Click(view, screen, "transcript:call:0");
+        var after = RowsOf(view.Transcript.Tree());
+        after.Length.ShouldBe(before.Length);
+        after[0].ShouldNotBeSameAs(before[0], "the marked wrapper is built again around the row that replaced the folded one");
+        Described(view, screen).ShouldContain("dotnet test src/Pilot.slnx --no-build");
+        // Only the marked row changed: the others are the nodes they were.
+        for (var i = 1; i < before.Length; i++)
+        {
+            after[i].ShouldBeSameAs(before[i], $"row {i} did not change, so it is the same node");
+        }
+
+        // And the new wrapper is kept from then on, until the row under it changes again.
+        var again = RowsOf(view.Transcript.Tree());
+        again[0].ShouldBeSameAs(after[0]);
+
+        // Opening the transcript again drops the kept wrapper, so it is not carried over to another session's rows.
+        view.Transcript.Open(screen.Lines[0], at: Called);
+        for (var i = 0; i < 100 && view.Transcript.Entries.Count < Entries().Length; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+        RowsOf(view.Transcript.Tree())[0].ShouldNotBeSameAs(after[0]);
+        view.Transcript.Close();
+    }
+
     [Fact]
     public async Task AReadsTimeStandsAfterItsPathNotOverIt()
     {

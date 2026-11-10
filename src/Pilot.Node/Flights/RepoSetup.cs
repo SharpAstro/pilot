@@ -45,7 +45,7 @@ public sealed class RepoSetup(NodeState state)
         {
             clean = false;
             state.RaiseCard(CardBin.Handled, "node-label-refused", $"flight/{code}",
-                $"The {GhCli.PriorityFieldName} field could not be made for the repo of {code}, so the {PilotMarks.Priority} label stands in: {LegCommander.OneLine(ex.Message)}", ex.Message);
+                $"The {GhCli.PriorityFieldName} field could not be made for the repo of {code}", $"The {PilotMarks.Priority} label stands in: {ex.Message}");
         }
 
         var existing = await tracker.RepoLabelsAsync(repoPath, cancellationToken);
@@ -66,7 +66,7 @@ public sealed class RepoSetup(NodeState state)
             {
                 clean = false;
                 labelsFailed = true;
-                state.RaiseCard(CardBin.Handled, "node-label-refused", $"flight/{code}", $"The label {label} could not be made in the repo of {code}: {LegCommander.OneLine(ex.Message)}", ex.Message);
+                state.RaiseCard(CardBin.Handled, "node-label-refused", $"flight/{code}", $"The label {label} could not be made in the repo of {code}", ex.Message);
                 break;
             }
         }
@@ -89,7 +89,7 @@ public sealed class RepoSetup(NodeState state)
             catch (FlightException ex)
             {
                 clean = false;
-                state.RaiseCard(CardBin.Handled, "node-label-refused", $"flight/{code}", $"The label {PilotMarks.Priority} could not be deleted in the repo of {code}: {LegCommander.OneLine(ex.Message)}", ex.Message);
+                state.RaiseCard(CardBin.Handled, "node-label-refused", $"flight/{code}", $"The label {PilotMarks.Priority} could not be deleted in the repo of {code}", ex.Message);
             }
         }
 

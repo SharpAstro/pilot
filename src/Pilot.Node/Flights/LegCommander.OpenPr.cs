@@ -14,6 +14,10 @@ public sealed partial class LegCommander
     private async Task OpenPrAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var flight = FlightOf(command.Target);
+        // Another step's calls out for the flight (a push, a check rerun, the node's own sweep) only hold this back: it waits for them, as the
+        // node's own rebase does, instead of refusing as busy, and reads the flight afresh (pilot #871: a loaded run refused it).
+        await WaitForFlightFreeAsync(flight.Code, OpeningPr, cancellationToken);
+        flight = FlightOf(command.Target);
         if (flight.State == FlightState.Landed)
         {
             throw new FlightException($"{flight.Code} has landed");
@@ -84,12 +88,13 @@ public sealed partial class LegCommander
         catch (FlightException ex) when (IsConflict(ex.Message))
         {
             // A base that conflicts is a worker's to resolve, whoever asked to open the PR (the node after the last leg, a card, the CLI):
-            // the last leg goes round by itself with the conflict told, once for each head of the base. Only when that cannot be done
-            // (already sent for this head, the leg not done) is it the watchtower's pr-conflicts card, as the update paths raise.
-            if (await SendConflictRoundAsync(FlightOf(Verbs.FlightTarget(flight.Code)), ex.Message, cancellationToken) is not null)
-            {
-                await ConflictsAsync(flight.Code, ex.Message, cancellationToken);
-            }
+            // a worker flying a leg is told to merge the base, else the last leg goes round by itself with the conflict told, once for each
+            // head of the base (a failed worker is followed by a stronger one), and nothing rings until the last rung fails. The open's own
+            // call on the flight is let go first, as the go-around takes the flight itself.
+            call.Dispose();
+            await ResolveConflictAsync(flight.Code, ex.Message, cancellationToken, lockHeld: true);
+            // Noted for the node's sweep, which does not try the same open again until the plane or the base moves.
+            _conflictOpenTried[flight.Code] = await ConflictHeadsAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken);
             throw;
         }
         var (repaired, pr, mergedBase) = opened;
@@ -98,7 +103,7 @@ public sealed partial class LegCommander
         Record(flight.Code, f => f with { Base = repaired.Base, PullRequest = pr.Number, PullRequestUrl = pr.Url, MergedHead = mergedBase ? null : f.MergedHead });
         EndHoldPastReview(beforeOpen, pr.Head, "flight pr");
         // The PR opened, so a conflict that held its opening is resolved.
-        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR opened", PrConflictsKind);
+        _conflictOpenTried.TryRemove(flight.Code, out _);
         if (mergedBase)
         {
             state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{repaired.Base} merged into {flight.Code}'s plane; a new PR opens", FlightCommander.MergedUnderLegKind);
@@ -177,7 +182,8 @@ public sealed partial class LegCommander
         var theirs = remote.Output.Trim();
         var why = $"{flight.Branch} is not pushed: origin/{flight.Branch} ({CommitRefs.Short(theirs)}) holds commits the plane ({CommitRefs.Short(plane)}) lacks, and merging them conflicts";
         state.RaiseCard(CardBin.ForYou, PushDivergedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} was not pushed: the remote branch holds commits it lacks",
-            $"{why} ({merge.Why}). Nothing was overwritten. Merge origin/{flight.Branch} into the plane by hand ({flight.Worktree}), resolve the conflicts and commit, then push again.");
+            $"{why} ({merge.Why}). Nothing was overwritten. Merge origin/{flight.Branch} into the plane by hand ({flight.Worktree}), resolve the conflicts and commit, then push again.",
+            [new CardChoice { Label = "Push the branch again", Verb = Verbs.OpenPr, Target = Verbs.FlightTarget(flight.Code) }]);
         throw new FlightException($"{why}: merge origin/{flight.Branch} ({theirs}) into the plane's head ({plane}) by hand, then push again");
     }
 
@@ -211,6 +217,11 @@ public sealed partial class LegCommander
     /// <param name="brought">The plane was fetched and has its base merged in already (a leg's finish did it before its check ran): not done again.</param>
     internal async Task PushAsync(FlightRow flight, CancellationToken cancellationToken, bool brought = false, bool early = false)
     {
+        // PIL795: a flight past its CI budget (or red too long) is not pushed for, whatever the push is; the For-you card lifts it.
+        if (CiStop(flight) is { } stopped)
+        {
+            throw new FlightException(stopped);
+        }
         await EnsureNotArmedAsync(flight, cancellationToken);
         // A push after the leg is recorded done sends what the check ran on: a second update here could fail with the leg already done.
         if (!brought)

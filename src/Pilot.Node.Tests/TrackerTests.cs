@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using Pilot.Contracts;
@@ -16,46 +15,20 @@ public sealed class TrackerTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2t-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
 
+    private readonly SeededRepos _repos;
+
     public TrackerTests()
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
+        // The repo is laid on the in-memory git (#952), which the commander's planes run on too: no git process starts.
+        _repos = new SeededRepos(_root);
+        _repos.Seed("bullclip");
     }
 
     private string Repo => Path.Combine(_root, "bullclip");
 
-    public void Dispose()
-    {
-        try
-        {
-            Git(Repo, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
-    }
+    public void Dispose() => _repos.Dispose();
 
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    private string Git(string cwd, params string[] args) => _repos.Run(cwd, args);
 
     private sealed class FakeShortcut(HttpStatusCode status, string body) : HttpMessageHandler
     {
@@ -69,7 +42,7 @@ public sealed class TrackerTests : IDisposable
     }
 
     private FlightCommander Commander(string? token, FakeShortcut handler) =>
-        new(_state, new Planes(new GitCli()), TimeProvider.System)
+        new(_state, _repos.Planes(), TimeProvider.System)
         {
             Trackers = new Trackers([new ShortcutTracker(new HttpClient(handler), () => token)]),
         };
@@ -151,7 +124,6 @@ public sealed class TrackerTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AShortcutFlightIsCodedFromTheRepoPrefixAndTheCardNumberWithSuffixes()
     {
         var commander = Commander(null, new FakeShortcut(HttpStatusCode.NotFound, ""));
@@ -173,7 +145,6 @@ public sealed class TrackerTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AGitHubFlightKeepsItsPlainBranch()
     {
         (await Create(Commander(null, new FakeShortcut(HttpStatusCode.OK, "{}")), "12")).Ok.ShouldBeTrue();
@@ -201,7 +172,6 @@ public sealed class TrackerTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AShortcutTitleIsReadFromTheApiWithTheToken()
     {
         var handler = new FakeShortcut(HttpStatusCode.OK, "{\"id\":101645,\"name\":\"Cards on Shortcut\"}");
@@ -219,7 +189,6 @@ public sealed class TrackerTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AGivenTitleWinsAndNoRequestIsMade()
     {
         var handler = new FakeShortcut(HttpStatusCode.OK, "{\"name\":\"From Shortcut\"}");
@@ -232,7 +201,6 @@ public sealed class TrackerTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task WithoutATokenTheGivenTitleStandsIn()
     {
         var handler = new FakeShortcut(HttpStatusCode.OK, "{\"name\":\"From Shortcut\"}");
@@ -242,7 +210,6 @@ public sealed class TrackerTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AShortcutFlightWithNeitherTokenNorTitleIsRefusedNamingWhatIsMissing()
     {
         var result = await Create(Commander(null, new FakeShortcut(HttpStatusCode.OK, "{}")), "sc-7");
@@ -254,7 +221,6 @@ public sealed class TrackerTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AStoryTheTokenCannotReadIsRefusedWithoutATitle()
     {
         var result = await Create(Commander("bad", new FakeShortcut(HttpStatusCode.Unauthorized, "")), "sc-7");
@@ -264,7 +230,6 @@ public sealed class TrackerTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ABareNumberStaysAGitHubIssueAndNeedsNoTitle()
     {
         var result = await Create(Commander(null, new FakeShortcut(HttpStatusCode.OK, "{}")), "12");

@@ -19,54 +19,24 @@ public sealed class MaintenanceTests : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2m-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private readonly SeededRepos _repos;
     private readonly RoleModels _models = new(null);
     private readonly FlightCommander _flights;
     private readonly LegCommander _legs;
 
     public MaintenanceTests()
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        var git = new GitCli();
-        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System) { Models = _models, Machine = "DU1" };
+        _repos = new SeededRepos(_root);
+        _repos.Seed("tianwen");
+        var git = _repos.Git;
+        _flights = new FlightCommander(_state, _repos.Planes(), TimeProvider.System) { Models = _models, Machine = "DU1" };
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
-        _legs = new LegCommander(_state, new FakeWorkers(), new FakeChecks(), new FakeGitHub(), git, new Planes(git), _flights, options, TimeProvider.System);
+        _legs = new LegCommander(_state, new FakeWorkers(), new FakeChecks(), new FakeGitHub(), git, _repos.Planes(), _flights, options, TimeProvider.System);
     }
 
     private string Repo => Path.Combine(_root, "tianwen");
 
-    public void Dispose()
-    {
-        try
-        {
-            Git(Repo, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
-    }
-
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    public void Dispose() => _repos.Dispose();
 
     private static void Maintenance(RoleModels models, bool on) =>
         models.Apply(NodeSettings.With(new NodeSettings(), NodeSettings.MaintenanceKey, [on ? "on" : "off"]).Settings!);
@@ -100,7 +70,6 @@ public sealed class MaintenanceTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task MaintenanceSetOnANodeIsInForceAtOnceAndPublishedOnTheWire()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -129,7 +98,6 @@ public sealed class MaintenanceTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ACreateFlightIsRefusedWithTheReasonWhileInMaintenanceAndTakenOnceItIsOff()
     {
         Maintenance(_models, on: true);
@@ -145,7 +113,6 @@ public sealed class MaintenanceTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightAlreadyFlyingStillAdvancesItsLegsWhileInMaintenance()
     {
         (await Flight(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "1", "Planets")).Ok.ShouldBeTrue();
@@ -163,7 +130,6 @@ public sealed class MaintenanceTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AHeldFlightStillSettlesWhenWhatItWaitsForLandsWhileInMaintenance()
     {
         (await Flight(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "1")).Ok.ShouldBeTrue();
@@ -179,9 +145,28 @@ public sealed class MaintenanceTests : IDisposable
     }
 
     [Fact]
+    public async Task AFlightWhoseMaintenanceHandOffFailedLandsWithTheFailureAndItsCardGone()
+    {
+        // PIL909: maintenance tried to hand it off with no node reachable, then it merged and landed; the failure stayed on the row
+        // and Home drew a red band for a landed flight, with nothing to press.
+        (await Flight(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "1")).Ok.ShouldBeTrue();
+        _state.UpdateFlight("TIA1", f => f with { MoveFailure = "TIA1 could not move: no node of the fleet takes it" });
+        _state.RaiseCard(CardBin.Ring, LegCommander.MoveFailedKind, Verbs.FlightTarget("TIA1"), "TIA1 could not move");
+
+        (await Flight(Verbs.Land, Verbs.FlightTarget("TIA1"))).Ok.ShouldBeTrue();
+
+        var landed = _state.Flights().Single(f => f.Code == "TIA1");
+        landed.State.ShouldBe(FlightState.Landed);
+        landed.MoveFailure.ShouldBeNull();
+        landed.MoveUnknown.ShouldBeNull();
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.MoveFailedKind);
+    }
+
+    [Fact]
     public async Task OnARunningNodeACreateFlightIsRefusedNamingMaintenance()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        // The node's git is the in-memory model that owns the test's folder (#952): a refused create asks it, and no git starts.
+        await using var node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
         await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["maintenance", "on"], Who = "tests" }, Ct);
 
         var refused = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1"], Who = "tests" }, Ct);

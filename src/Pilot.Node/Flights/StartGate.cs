@@ -116,9 +116,24 @@ public sealed class StartGate(NodeState state, TimeProvider time)
         }
         _weekRung = resets;
         state.CloseCardsAbout(Verbs.NodeTarget, "a new 7-day window", WeekKind);
+        // What the card's buttons do is what its text asks (the review of #797: c3530 told the person to pause flights and offered no
+        // button to): hold each flying flight the person can spare (the owner's hold, ground), and take no new flights (maintenance).
+        var why = string.Create(CultureInfo.InvariantCulture, $"the 7-day window is {week.UsedPercent:0} % spent");
+        var flying = state.Flights().Where(f => f.State == FlightState.Flying && f.OnHold is null).OrderBy(f => f.Code, StringComparer.Ordinal).ToList();
+        List<CardChoice> choices =
+        [
+            .. flying.Take(MaxHoldChoices).Select(f => new CardChoice { Label = $"Hold {f.Code}", Verb = Verbs.Ground, Target = Verbs.FlightTarget(f.Code), Args = [why] }),
+            new CardChoice { Label = "Take no new flights", Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.MaintenanceKey, "on"] },
+        ];
+        var more = flying.Count > MaxHoldChoices ? $" {flying.Count - MaxHoldChoices} more flights fly: hold them from their pages." : "";
         state.RaiseCard(CardBin.ForYou, WeekKind, Verbs.NodeTarget, $"The 7-day window is {week.UsedPercent:0} % spent; it resets {resets.ToLocalTime():ddd HH:mm}",
-            $"The node still starts sessions of its own (the limit for the week is {weekLimit:0} %, and it only rings); the 5-hour limit is what holds a start. Pause flights by hand if the week should last.");
+            $"The limit for the week is {weekLimit:0} %, and it only rings: the node still starts sessions of its own, and the 5-hour limit is what holds a start.{more}",
+            choices,
+            summary: "Nothing stops by itself: hold the flights you can spare, or take no new ones, if the week should last.");
     }
+
+    /// <summary>How many flying flights the 7-day card offers to hold, each its own button; the rest are held from their pages.</summary>
+    internal const int MaxHoldChoices = 3;
 }
 
 /// <summary>A start held by the 5-hour window, the 7-day pace or an outage of turns: why, in words, and when it resets (an outage's start).</summary>

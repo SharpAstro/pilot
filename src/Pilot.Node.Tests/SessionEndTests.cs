@@ -42,7 +42,7 @@ public sealed class SessionEndTests : IDisposable
         _profile.Dispose();
         if (Directory.Exists(_folder))
         {
-            Directory.Delete(_folder, recursive: true);
+            TestDirs.DeleteTree(_folder);
         }
     }
 

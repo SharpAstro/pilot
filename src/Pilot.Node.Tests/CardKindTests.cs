@@ -16,14 +16,14 @@ namespace Pilot.Node.Tests;
 [Trait("Category", InvariantTraitTests.Invariant)]
 public sealed class CardKindTests
 {
-    private static readonly Lazy<string> Src = new(FindSrc);
+    internal static readonly Lazy<string> Src = new(FindSrc);
 
-    private static readonly Lazy<List<(string File, string Source)>> Sources = new(() =>
+    internal static readonly Lazy<List<(string File, string Source)>> Sources = new(() =>
         [.. Directory.EnumerateFiles(Path.Combine(Src.Value, "Pilot.Node"), "*.cs", SearchOption.AllDirectories)
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}") && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
             .Select(f => (File: Path.GetRelativePath(Path.Combine(Src.Value, "Pilot.Node"), f).Replace('\\', '/'), Source: System.IO.File.ReadAllText(f)))]);
 
-    private static readonly Lazy<List<CardCall>> Calls = new(() => [.. Sources.Value.SelectMany(s => CardSource.Calls(s.File, s.Source))]);
+    internal static readonly Lazy<List<CardCall>> Calls = new(() => [.. Sources.Value.SelectMany(s => CardSource.Calls(s.File, s.Source))]);
 
     private static string FindSrc()
     {
@@ -46,7 +46,7 @@ public sealed class CardKindTests
     private static readonly Assembly[] Assemblies = [typeof(NodeState).Assembly, typeof(CardRow).Assembly];
 
     /// <summary>The value of the constant a kind expression names, and the <c>Type.Name</c> a test would write for it; null for a variable.</summary>
-    private static (string Value, string Token)? Resolve(string file, string expr)
+    internal static (string Value, string Token)? Resolve(string file, string expr)
     {
         expr = Compact(expr);
         if (Regex.Match(expr, "^\"([^\"]*)\"$") is { Success: true } literal)
