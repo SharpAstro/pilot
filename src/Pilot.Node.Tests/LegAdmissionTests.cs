@@ -151,7 +151,7 @@ public sealed class LegAdmissionTests : LegCommanderTestsBase
         var flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers, _github);
         var legs = new LegCommander(_state, _workers, _checks, _github, git, new Planes(git), flights,
             new NodeOptions(Path.Combine(_root, "node2.sock"), Path.Combine(_root, "data2"), MachinePrefix: "DU1"), TimeProvider.System) { Models = _legs.Models };
-        _github.IssueLabels[2] = [PilotMarks.Priority];
+        _github.SetIssueLabels(2, PilotMarks.Priority);
         (await legs.RunAsync(new CommandRequest { Verb = Verbs.StartLeg, Target = Verbs.LegTarget("TIA2", "two"), Who = "tests" }, Ct)).Ok.ShouldBeTrue();
         _workers.Started.Select(w => w.Name).ShouldContain("du1-tia2-two");
         Leg1("TIA2", "two").Queued.ShouldBeNull();

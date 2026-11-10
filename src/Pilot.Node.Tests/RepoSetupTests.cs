@@ -92,7 +92,7 @@ public sealed class RepoSetupTests
     {
         _github.HasPriorityField = true;
         _github.RepoLabels.TryAdd(PilotMarks.Priority, 0);
-        _github.IssueLabels[9] = [PilotMarks.Priority];
+        _github.SetIssueLabels(9, PilotMarks.Priority);
 
         await Setup();
 
@@ -100,7 +100,7 @@ public sealed class RepoSetupTests
         _github.RepoLabels.Keys.ShouldContain(PilotMarks.Priority);
 
         // The issue is migrated off the label; the next run (a fresh node) deletes it.
-        _github.IssueLabels[9].Remove(PilotMarks.Priority);
+        _github.IssueLabels[9].TryRemove(PilotMarks.Priority, out _);
         await Setup(new RepoSetup(_state));
 
         _github.LabelsDeleted.ShouldBe([PilotMarks.Priority]);

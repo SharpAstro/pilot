@@ -376,7 +376,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     {
         var flight = await NewFlight("9", "parser");
         // Put on GitHub while this node was down: no sweep has read the repo yet.
-        _github.IssueLabels[flight.Issue] = [PilotMarks.Hold];
+        _github.SetIssueLabels(flight.Issue, PilotMarks.Hold);
         _github.PrConversation.Enqueue((flight.Issue, new PrComment("seb", $"{PilotMarks.HoldCommentStart} by seb from SE1: parked by hand", DateTimeOffset.UtcNow)));
         F(flight.Code).OnHold.ShouldBeNull();
 
@@ -396,7 +396,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     {
         var flight = await NewFlight("19", "parser");
         await Fly(flight, "parser");
-        _github.IssueLabels[flight.Issue] = [PilotMarks.Hold];
+        _github.SetIssueLabels(flight.Issue, PilotMarks.Hold);
         _github.PrConversation.Enqueue((flight.Issue, new PrComment("seb", $"{PilotMarks.HoldCommentStart} by seb from SE1: parked by hand", DateTimeOffset.UtcNow)));
         F(flight.Code).OnHold.ShouldBeNull();
 

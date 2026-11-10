@@ -108,7 +108,7 @@ public sealed class AdoptTests : IDisposable
     public async Task AFlightOfANodeSilentPastAdoptAfterIsTakenFromTheCopyWithItsPlaneLegsLabelCommentsAndAnAtRiskCard()
     {
         HeardOnce();
-        _github.IssueLabels[900] = ["pilot node: DE1", "bug"];
+        _github.SetIssueLabels(900, "pilot node: DE1", "bug");
         _clock.Now = Start.AddHours(2);
 
         var result = await Adopt();
@@ -140,7 +140,7 @@ public sealed class AdoptTests : IDisposable
         (legs[1].Worker, legs[1].WorkerJob, legs[1].StartedAt, legs[1].AttemptModel).ShouldBe((null, null, null, null));
 
         // The item flies here now.
-        _github.IssueLabels[900].OrderBy(l => l, StringComparer.Ordinal).ShouldBe(["bug", "pilot node: SE1"]);
+        _github.IssueLabels[900].Keys.OrderBy(l => l, StringComparer.Ordinal).ShouldBe(["bug", "pilot node: SE1"]);
 
         // The issue and the PR say who adopted it from whom.
         _github.IssueComments.Select(c => c.Number).Order().ShouldBe([41, 900]);

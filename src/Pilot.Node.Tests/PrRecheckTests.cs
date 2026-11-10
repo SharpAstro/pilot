@@ -35,7 +35,7 @@ public abstract class PrRecheckTestsBase : IDisposable
         PrOrigins.Git(WidgetClone, "config", $"url.{widget.Replace('\\', '/')}.insteadOf", "https://github.com/acme/widget.git");
         _github.Prs["acme/widget#7"] = Pr("OPEN");
         _github.OpenPrs[WidgetClone] = [new PullRequestStatus { Number = 7, Title = "PR 7", Head = "feature/seven" }];
-        _github.Labels[7] = [PilotMarks.Recheck];
+        _github.SetLabels(7, PilotMarks.Recheck);
 
         var git = _repos.Git;
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [Roots]);
@@ -79,7 +79,7 @@ public abstract class PrRecheckTestsBase : IDisposable
             Url = "https://github.com/acme/widget/pull/7",
             Kind = PullRequestKind.Unknown,
             Label = "Checking merge state",
-            Labels = [.. _github.Labels.GetValueOrDefault(7) ?? []],
+            Labels = [.. _github.Labels.GetValueOrDefault(7)?.Keys ?? []],
         },
     ];
 
@@ -103,7 +103,7 @@ public abstract class PrRecheckTestsBase : IDisposable
         var reviewer = Review()!.Reviewer;
         (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.PrVerdict, Target = "pr/acme/widget#7", Args = [verdict, "Fine."], Who = reviewer }, Ct)).Error.ShouldBeNull();
         _github.LabelCalls.Clear();
-        _github.Labels[7] = [PilotMarks.Recheck];
+        _github.SetLabels(7, PilotMarks.Recheck);
         return Review()!;
     }
 
@@ -151,7 +151,7 @@ public abstract class PrRecheckTestsBase : IDisposable
         Review()!.Fixer.ShouldBeNull();
         Handled().ShouldBe([$"recheck of widget#7: nothing to do at {Short(_head)}: its review asks for changes, and no fixer starts: {why}"]);
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrRecheck.FailedKind);
-        _github.Labels[7].ShouldBe([PilotMarks.Changes]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Changes]);
     }
 
     /// <summary>A flight of this node's on PR 7 (the recheck's PR), its leg done and pushed, reviewed and passed; the recheck label on the PR.</summary>
@@ -182,7 +182,7 @@ public abstract class PrRecheckTestsBase : IDisposable
         var opened = _state.Flights().Single();
         opened.Review.ShouldNotBeNull($"no review after the PR opened; queued: {opened.Queued}; cards: {string.Join("; ", _state.Cards(openOnly: true).Select(c => $"{c.Kind}: {c.Title}"))}");
         await Run(Verbs.Review, "flight/" + flight.Code, opened.Review.Reviewer, "pass", "fine");
-        _github.Labels[7] = [PilotMarks.Recheck];
+        _github.SetLabels(7, PilotMarks.Recheck);
         return _state.Flights().Single();
     }
 
@@ -280,7 +280,7 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
         var review = Review().ShouldNotBeNull();
         (review.Repo, review.State, review.Head).ShouldBe(("acme/widget", PrReviewState.Reviewing, _head));
         _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-review-widget-7");
-        _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Reviewing]);
         Handled().ShouldBe(["recheck of widget#7: review started"]);
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Bin == CardBin.ForYou);
     }
@@ -288,13 +288,13 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
     [Fact]
     public async Task APrWithoutTheLabelIsLeftAlone()
     {
-        _github.Labels[7] = ["pilot: passed"];
+        _github.SetLabels(7, "pilot: passed");
 
         await LookAsync();
 
         Review().ShouldBeNull();
         _workers.Started.ShouldBeEmpty();
-        _github.Labels[7].ShouldBe(["pilot: passed"]);
+        _github.Labels[7].Keys.ShouldBe(["pilot: passed"]);
     }
 
     [Theory]
@@ -306,7 +306,7 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
 
         await LookAsync();
 
-        _github.Labels[7].ShouldBeEmpty();
+        _github.Labels[7].Keys.ShouldBeEmpty();
         _github.RemoveCalls.ShouldBe([(7, PilotMarks.Recheck)]);
         Handled().ShouldBe([$"recheck of widget#7: already {said}"]);
         Review().ShouldBeNull();
@@ -320,7 +320,7 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
 
         await LookAsync();
 
-        _github.Labels[7].ShouldBe([PilotMarks.Queued]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Queued]);
         Handled().ShouldBe(["recheck of widget#7: already queued"]);
         Review().ShouldBeNull();
         _workers.Started.ShouldBeEmpty();
@@ -334,7 +334,7 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
 
         await LookAsync();
 
-        _github.Labels[7].ShouldBe([PilotMarks.Recheck]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Recheck]);
         var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
         (card.Bin, card.Kind, card.Subject).ShouldBe((CardBin.ForYou, PrRecheck.FailedKind, "pr/acme/widget#7"));
         card.Title.ShouldBe("The recheck of widget#7 could not run");
@@ -351,7 +351,7 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
         _github.Labels[7].Clear();
         await LookAsync();
         _github.Prs["acme/widget#7"] = Pr("OPEN");
-        _github.Labels[7].Add(PilotMarks.Recheck);
+        _github.Labels[7].TryAdd(PilotMarks.Recheck, 0);
         await LookAsync();
         Review().ShouldNotBeNull();
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrRecheck.FailedKind);
@@ -364,7 +364,7 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
 
         await LookAsync();
 
-        _github.Labels[7].ShouldBe([PilotMarks.Recheck]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Recheck]);
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrRecheck.FailedKind);
         (card.Bin, card.Detail).ShouldBe((CardBin.ForYou, card.Detail));
         card.Detail.ShouldNotBeNull().ShouldContain("claude would not start");
@@ -381,7 +381,7 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
 
         Review().ShouldBeNull();
         _workers.Started.ShouldBeEmpty();
-        _github.Labels[7].ShouldBe([PilotMarks.Recheck]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Recheck]);
         _state.Cards().ShouldBeEmpty();
 
         // Its review is as much its own as its flight.
@@ -389,10 +389,10 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
         _fleet.Peers.Add(new Peer("c.local:1") { PrReviews = [new PrReviewRow { Repo = "acme/widget", Number = 7, State = PrReviewState.Closed, Url = "u", Base = "main", Head = "h", ClonePath = "c", Worktree = "w", Reviewer = "r", StartedAt = DateTimeOffset.UtcNow }] });
         _github.Labels[7].Clear();
         await LookAsync();
-        _github.Labels[7].Add(PilotMarks.Recheck);
+        _github.Labels[7].TryAdd(PilotMarks.Recheck, 0);
         await LookAsync();
         Review().ShouldBeNull();
-        _github.Labels[7].ShouldBe([PilotMarks.Recheck]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Recheck]);
     }
 
     [Fact]
@@ -404,7 +404,7 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
         await LookAsync();
 
         Review().ShouldNotBeNull();
-        _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Reviewing]);
     }
 
     [Fact]
@@ -420,7 +420,7 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
         (now.State, now.Head).ShouldBe((PrReviewState.Reviewing, moved));
         now.Head.ShouldNotBe(review.Head);
         Handled().ShouldBe([$"recheck of widget#7: head {Short(moved)} was not the one reviewed ({Short(_head)}), review restarted"]);
-        _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Reviewing]);
     }
 
     [Fact]
@@ -435,7 +435,7 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
         // The node does not post it here, so the controller does: the post is when the design card is raised.
         (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.PostReview, Target = "pr/acme/widget#7", Who = "controller" }, Ct)).Error.ShouldBeNull();
         var ring = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.DesignKind).ShouldHaveSingleItem();
-        _github.Labels[7] = [PilotMarks.Recheck];
+        _github.SetLabels(7, PilotMarks.Recheck);
         var moved = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, "a later push");
         _github.Prs["acme/widget#7"] = Pr("OPEN") with { Head = moved };
 
@@ -466,7 +466,7 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
         _github.Merged.ShouldHaveSingleItem().ShouldBe((7, _head, _reviews.Models.MergeMethod));
         Review()!.QueuedAt.ShouldNotBeNull();
         Handled().ShouldBe([$"recheck of widget#7: passed and green, queued for merge at {Short(_head)}"]);
-        _github.Labels[7].ShouldBe([PilotMarks.Queued]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Queued]);
     }
 
     [Fact]
@@ -481,7 +481,7 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
         (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "pr/acme/widget#7"));
         card.Detail.ShouldNotBeNull().ShouldContain("not pilot's branch to update");
         Handled().ShouldBe(["recheck of widget#7: conflicts with its base, not pilot's branch to update: a card asks you"]);
-        _github.Labels[7].ShouldBe([PilotMarks.Conflicts]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Conflicts]);
         _github.Merged.ShouldBeEmpty();
     }
 
@@ -500,7 +500,7 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
         // The base was merged in, not rebased onto: the head read is kept, and the push was a plain fast-forward of it.
         PrOrigins.Git(Origin, "merge-base", "--is-ancestor", head, updated).ShouldBeEmpty();
         Handled().ShouldBe(["recheck of widget#7: main merged in, review restarted"]);
-        _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Reviewing]);
         Review().ShouldNotBeNull().State.ShouldBe(PrReviewState.Reviewing);
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrRecheck.ConflictKind);
         Directory.Exists(Path.Combine(WidgetClone, ".claude", "worktrees", "update-widget-7")).ShouldBeFalse();
@@ -520,7 +520,7 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
         (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "pr/acme/widget#7"));
         card.Detail.ShouldNotBeNull().ShouldContain("conflicts");
         Handled().ShouldHaveSingleItem().ShouldStartWith("recheck of widget#7: conflicts with its base, its base not merged in (merging main into feature/seven conflicts");
-        _github.Labels[7].ShouldBe([PilotMarks.Conflicts]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Conflicts]);
     }
 
     [Fact]
@@ -540,7 +540,7 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
         _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-fix-widget-7");
         Review()!.Fixer.ShouldBe("du1-fix-widget-7");
         Handled().ShouldBe([$"recheck of widget#7: its review asks for changes at {Short(_head)}, fixer started"]);
-        _github.Labels[7].ShouldBe([PilotMarks.Changes]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Changes]);
     }
 
     [Fact]
@@ -575,16 +575,16 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
 
         // A sweep, and the same recheck again, leave it open and add no second.
         await _reviews.SweepAsync(Ct);
-        _github.Labels[7] = [PilotMarks.Recheck];
+        _github.SetLabels(7, PilotMarks.Recheck);
         await LookAsync();
         NoFixerCards(openOnly: true).ShouldHaveSingleItem().Id.ShouldBe(ring.Id);
 
         // Dismissed, the label put back: a recheck, a sweep and another recheck raise nothing again.
         _state.CloseCard(ring.Id, "dismissed", "controller");
-        _github.Labels[7] = [PilotMarks.Recheck];
+        _github.SetLabels(7, PilotMarks.Recheck);
         await LookAsync();
         await _reviews.SweepAsync(Ct);
-        _github.Labels[7] = [PilotMarks.Recheck];
+        _github.SetLabels(7, PilotMarks.Recheck);
         await LookAsync();
         NoFixerCards().ShouldHaveSingleItem().Outcome.ShouldBe("dismissed");
 
@@ -600,7 +600,7 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
         var ring = NoFixerCards(openOnly: true).ShouldHaveSingleItem();
         var moved = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, "a later push");
         _github.Prs["acme/widget#7"] = Pr("OPEN") with { Head = moved, HeadRef = "feature/seven" };
-        _github.Labels[7] = [PilotMarks.Recheck];
+        _github.SetLabels(7, PilotMarks.Recheck);
 
         await LookAsync();
 
@@ -652,7 +652,7 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
 
         _github.Merged.ShouldBeEmpty();
         Handled().ShouldBe([$"recheck of widget#7: nothing to do at {Short(_head)}: its checks are still running"]);
-        _github.Labels[7].ShouldBe([PilotMarks.Passed]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Passed]);
     }
 
     [Fact]
@@ -673,7 +673,7 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
         read.ShouldNotBe(flight.Review!.ReviewedHead);
         read.ShouldBe(PrOrigins.Git(now.Worktree, "rev-parse", "HEAD").Trim());
         Handled().ShouldBe([$"recheck of widget#7: brought up to date with main, its review carried over to {Short(read)}"]);
-        _github.Labels[7].ShouldBe([PilotMarks.Passed]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Passed]);
         _github.Merged.ShouldBeEmpty();
     }
 }
@@ -713,7 +713,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
         // is taken as done and passed again, the checks still red.
         _state.PutFlight(_state.Flights().Single() with { Review = _state.Flights().Single().Review! with { State = ReviewState.Passed } });
         _github.DraftCalls.Clear();
-        _github.Labels[7] = [PilotMarks.Recheck];
+        _github.SetLabels(7, PilotMarks.Recheck);
         await timed.LookAsync(Ct);
         _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
 
@@ -722,7 +722,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
         _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
         _github.DraftCalls.ShouldContain((7, true));
         Handled().ShouldBe([$"recheck of widget#7: checks failed at {Short(_github.Pr!.Head)}, sent back as changes"]);
-        _github.Labels[7].ShouldBe([PilotMarks.Changes]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Changes]);
     }
 
     [Fact]
@@ -739,7 +739,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
         var review = _state.Flights().Single().Review.ShouldNotBeNull();
         review.State.ShouldBe(ReviewState.Reviewing);
         Handled().ShouldBe([$"recheck of widget#7: head ab12cd34a was not the one reviewed, review restarted at {Short(review.ReviewedHead!)}"]);
-        _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Reviewing]);
     }
 
     [Fact]
@@ -754,7 +754,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
         var head = _github.Pr!.Head;
         _github.Merged.ShouldHaveSingleItem().ShouldBe((7, head, _legs.Models.MergeMethod));
         Handled().ShouldBe([$"recheck of widget#7: passed and green, queued for merge at {Short(head)}"]);
-        _github.Labels[7].ShouldBe([PilotMarks.Queued]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Queued]);
     }
 
     [Fact]
@@ -781,7 +781,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
 
         Handled().ShouldBe([$"recheck of widget#7: a merge is already running at {Short(head)}"]);
         Handled().ShouldNotContain(h => h.Contains("merged at"));
-        _github.Labels[7].ShouldNotContain(PilotMarks.Recheck);
+        _github.Labels[7].Keys.ShouldNotContain(PilotMarks.Recheck);
         open.SetResult();
         (await first).Ok.ShouldBeTrue();
         _github.Merged.ShouldHaveSingleItem();
@@ -800,7 +800,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
         _workers.Started.Count.ShouldBe(started);
         _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
         Handled().ShouldBe([$"recheck of widget#7: nothing to do at {Short(_github.Pr!.Head)}: its checks are still running"]);
-        _github.Labels[7].ShouldBe([PilotMarks.Passed]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Passed]);
     }
 
     [Fact]
@@ -821,7 +821,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
         // Taken off and put back while it runs.
         _github.Labels[7].Clear();
         Look();
-        _github.Labels[7].Add(PilotMarks.Recheck);
+        _github.Labels[7].TryAdd(PilotMarks.Recheck, 0);
         Look();
         _workers.Started.ShouldBeEmpty();
 
@@ -833,7 +833,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
         Handled().ShouldContain("recheck of widget#7: review started");
         Handled().ShouldContain(h => h.Contains("its review is still reading it"));
         Handled().Length.ShouldBe(2);
-        _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Reviewing]);
     }
 
     [Fact]
@@ -845,11 +845,11 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
 
         // Out of the queue, and a person puts the label back on the PR that was rechecked.
         _github.Queue = null;
-        _github.Labels[7].Add(PilotMarks.Recheck);
+        _github.Labels[7].TryAdd(PilotMarks.Recheck, 0);
         await LookAsync();
 
         _workers.Started.ShouldHaveSingleItem();
-        _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Reviewing]);
         Handled().Length.ShouldBe(2);
     }
 
@@ -859,7 +859,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
         // Read and labelled: PR 7's recheck keeps the label (a peer holds it), and is not tried at each look.
         _fleet.Peers.Add(new Peer("a.local:1") { Flights = [Flight("AA1", own: false)] });
         await LookAsync();
-        _github.Labels[7].ShouldBe([PilotMarks.Recheck]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Recheck]);
         _fleet.Peers.Clear();
 
         // A look with the repo's batch failed or rate-limited (not among the repos read): the label is not seen gone, so
@@ -871,7 +871,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
         // Read again with the label gone, and put back: now it is a new ask.
         _github.Labels[7].Clear();
         await LookAsync();
-        _github.Labels[7].Add(PilotMarks.Recheck);
+        _github.Labels[7].TryAdd(PilotMarks.Recheck, 0);
         await LookAsync();
         _workers.Started.ShouldHaveSingleItem();
     }
@@ -887,7 +887,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
         await _recheck.WhenIdleAsync();
 
         Handled().ShouldBe([$"recheck of widget#7: nothing to do at {Short(_github.Pr!.Head)}: its checks are still running"]);
-        _github.Labels[7].ShouldBe([PilotMarks.Passed]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Passed]);
     }
 
     [Fact]

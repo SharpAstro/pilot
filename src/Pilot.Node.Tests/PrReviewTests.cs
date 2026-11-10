@@ -356,7 +356,7 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
     public async Task AReviewLostInARestartThatCannotStartAgainTakesItsStatusAndLabelBackAndRaisesACardWithReviewAgain()
     {
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
-        _github.Labels[7] = [PilotMarks.Reviewing];
+        _github.SetLabels(7, PilotMarks.Reviewing);
         var (state, reviews) = Restarted();
         _workers.Fail = new FlightException("claude is not logged in");
 
@@ -367,7 +367,7 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
         var status = _github.Statuses.Last();
         (status.Sha, status.State).ShouldBe((_widgetHead, "error"));
         _github.RemoveCalls.ShouldContain((7, PilotMarks.Reviewing));
-        _github.Labels[7].ShouldNotContain(PilotMarks.Reviewing);
+        _github.Labels[7].Keys.ShouldNotContain(PilotMarks.Reviewing);
         var card = state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.LostKind).ShouldHaveSingleItem();
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Detail.ShouldNotBeNull().ShouldContain("claude is not logged in");

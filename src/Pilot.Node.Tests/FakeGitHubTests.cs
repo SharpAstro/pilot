@@ -105,6 +105,14 @@ public sealed class FakeGitHubTests
         [nameof(FakeGitHub.LabelCalls)] = Of(
             (g, i) => g.SetPilotLabelAsync(Repo, i, "pilot: passed", CancellationToken.None),
             g => g.LabelCalls.Select(l => l.Number)),
+        // Every task writes the one PR's set, each call a label of its own; a label that is not pilot:'s stays, so each is there after.
+        [nameof(FakeGitHub.Labels)] = Of(
+            (g, i) => g.SetPilotLabelAsync(Repo, 7, $"l{i}", CancellationToken.None),
+            g => g.Labels[7].Keys),
+        // Every task writes the one issue's set, each call a label of its own.
+        [nameof(FakeGitHub.IssueLabels)] = Of(
+            (g, i) => g.AddIssueLabelAsync(Repo, 7, $"l{i}", CancellationToken.None),
+            g => g.IssueLabels[7].Keys),
         [nameof(FakeGitHub.RemoveCalls)] = Of(
             (g, i) => g.RemoveLabelAsync(Repo, i, "pilot: passed", CancellationToken.None),
             g => g.RemoveCalls.Select(l => l.Number)),
@@ -175,40 +183,57 @@ public sealed class FakeGitHubTests
 
     [Fact]
     [Trait("Category", "Invariant")]
-    [Trait("Category", "Slow")] // a real git: a clone runs git against a bare repo made here, which is what the call does
+    public async Task EachScriptedMergeAnswerIsTakenByExactlyOneParallelCall()
+    {
+        // Twice as many answers as calls, each empty (that call merges): every call takes one, so half are left.
+        var github = new FakeGitHub();
+        for (var i = 0; i < 2 * Calls; i++)
+        {
+            github.MergeScript.Enqueue("");
+        }
+
+        await Task.WhenAll(Enumerable.Range(0, Workers).Select(w => Task.Run(async () =>
+        {
+            for (var k = 0; k < CallsEach; k++)
+            {
+                await github.MergeAsync(Repo, w * CallsEach + k, "head", "squash", CancellationToken.None);
+            }
+        })));
+
+        github.MergeScript.Count.ShouldBe(Calls);
+        github.Merged.Count.ShouldBe(Calls);
+    }
+
+    [Fact]
+    [Trait("Category", "Invariant")]
     public async Task ClonesMadeInParallelAreEachRecordedExactlyOnce()
     {
-        // A clone runs git, so this one is 8 tasks x 3 calls, against one empty bare repo made here.
-        var root = Path.Combine(Path.GetTempPath(), "pilot-fakegithub-" + Guid.NewGuid().ToString("N"));
+        // The origin is the bare repo of an in-memory git (FakeRepoGit), so a clone starts no git process. Each clone still writes
+        // its worktree's files to disk, so this one is 8 tasks x 25 calls.
+        const int clonesEach = 25;
+        var root = Path.Combine(Path.GetTempPath(), "pilot-fakegithub-" + Guid.NewGuid().ToString("N")[..8]);
+        var git = new FakeRepoGit(root);
         try
         {
-            var origin = Path.Combine(root, "origin.git");
-            Directory.CreateDirectory(origin);
-            (await new GitCli().RunAsync(["init", "-q", "--bare"], origin, CancellationToken.None)).Ok.ShouldBeTrue();
             var github = new FakeGitHub();
-            github.Origins["acme/gadget"] = origin;
+            github.Origins["acme/gadget"] = Path.Combine(root, "origin.git");
 
             await Task.WhenAll(Enumerable.Range(0, Workers).Select(w => Task.Run(async () =>
             {
-                for (var k = 0; k < 3; k++)
+                for (var k = 0; k < clonesEach; k++)
                 {
                     await github.CloneAsync("acme/gadget", Path.Combine(root, "clones", $"c{w}-{k}"), CancellationToken.None);
                 }
             })));
 
-            github.Cloned.Count.ShouldBe(Workers * 3);
-            github.Cloned.Select(c => c.Path).Distinct().Count().ShouldBe(Workers * 3);
+            git.Runs.ShouldBe(Workers * clonesEach, "every clone is the model's, none a real git's");
+            github.Cloned.Count.ShouldBe(Workers * clonesEach);
+            github.Cloned.Select(c => c.Path).Distinct().Count().ShouldBe(Workers * clonesEach);
         }
         finally
         {
-            try
-            {
-                Directory.Delete(root, true);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // Git may still hold a pack file for a moment on Windows; a temp folder left behind harms nothing.
-            }
+            git.Release();
+            TestDirs.DeleteTree(root);
         }
     }
 
@@ -243,15 +268,21 @@ public sealed class FakeGitHubTests
 
     /// <summary>
     /// A seeded setting is only ever written by a test before the node runs, so a plain collection is safe there. Anything
-    /// else a call writes into must be a concurrent collection, so a List, Dictionary or ImmutableArray property that comes
-    /// back is a recording that loses calls (or throws) under parallel callers.
+    /// else a call writes into must be a concurrent collection, so a plain one that comes back (a List, Dictionary, HashSet,
+    /// Queue or ImmutableArray, on its own or inside a concurrent one) is a recording that loses calls (or throws) under
+    /// parallel callers.
     /// </summary>
     private static readonly Dictionary<string, string> Seeded = new()
     {
         [nameof(FakeGitHub.OpenPrs)] = "seeded by a test: each repo's open PRs, only read by a call",
+        [nameof(FakeGitHub.OpenPrsFail)] = "seeded by a test: the repos whose PR listing fails, only read by a call",
         [nameof(FakeGitHub.PrFiles)] = "seeded by a test: the files of each PR, only read by a call",
+        [nameof(FakeGitHub.PrFilesFail)] = "seeded by a test: the PRs whose file listing fails, only read by a call",
+        [nameof(FakeGitHub.SearchFail)] = "seeded by a test: the repos whose search fails, only read by a call",
+        [nameof(FakeGitHub.IssuesClosedOnGitHub)] = "seeded by a test: the issues GitHub says are closed, only read by a call",
         [nameof(FakeGitHub.PrOf)] = "seeded by a test: one PR per branch, only read by a call",
         [nameof(FakeGitHub.SummaryOf)] = "seeded by a test: the checks summary of each PR, only read by a call",
+        [nameof(FakeGitHub.ProtectedBranches)] = "seeded by a test: the base branches GitHub protects, only read by a call",
         [nameof(FakeGitHub.Runs)] = "seeded by a test: the workflow runs of each commit, only read by a call",
         [nameof(FakeGitHub.MergeOf)] = "seeded by a test: the merge state of each PR, only read by a call",
         [nameof(FakeGitHub.Origins)] = "seeded by a test: where each repo clones from, only read by a call",
@@ -259,13 +290,27 @@ public sealed class FakeGitHubTests
         [nameof(FakeGitHub.CiRuns)] = "seeded by a test: the CI runs of each branch, only read by a call",
     };
 
+    /// <summary>
+    /// A collection of System.Collections.Generic (List, Dictionary, HashSet, Queue, Stack, the sorted ones) or an ImmutableArray, as the
+    /// type itself or as a type argument of another: a HashSet kept in a ConcurrentDictionary is as plain as one on its own.
+    /// </summary>
+    private static bool Plain(Type type) =>
+        type.IsGenericType
+        && ((type.GetGenericTypeDefinition() == typeof(ImmutableArray<>))
+            || (!type.IsInterface && type.Namespace == "System.Collections.Generic" && typeof(System.Collections.IEnumerable).IsAssignableFrom(type))
+            || type.GetGenericArguments().Any(Plain));
+
     [Fact]
     [Trait("Category", "Invariant")]
-    public void NoPlainListDictionaryOrImmutableArrayHoldsAnythingACallWritesInto()
+    public void NoPlainCollectionHoldsAnythingACallWritesInto()
     {
-        static bool Plain(Type type) =>
-            type.IsGenericType && type.GetGenericTypeDefinition() is var d
-            && (d == typeof(List<>) || d == typeof(Dictionary<,>) || d == typeof(ImmutableArray<>));
+        // The guard's own reach, so a change to Plain cannot let a plain set or queue through again.
+        Plain(typeof(Queue<string>)).ShouldBeTrue();
+        Plain(typeof(HashSet<int>)).ShouldBeTrue();
+        Plain(typeof(ConcurrentDictionary<int, HashSet<string>>)).ShouldBeTrue();
+        Plain(typeof(ConcurrentQueue<(int, string)>)).ShouldBeFalse();
+        Plain(typeof(ConcurrentDictionary<int, ConcurrentDictionary<string, byte>>)).ShouldBeFalse();
+        Plain(typeof(KeyValuePair<string, int>)).ShouldBeFalse();
 
         const BindingFlags all = BindingFlags.Public | BindingFlags.Instance;
         var members = typeof(FakeGitHub).GetProperties(all).Select(p => (p.Name, p.PropertyType))

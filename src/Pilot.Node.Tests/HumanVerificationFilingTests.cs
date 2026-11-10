@@ -23,7 +23,7 @@ public sealed class HumanVerificationFilingTests : ReviewTestsBase
         // holds it, and on the row too for the verdict that follows this open-pr without a start.
         if (flagged)
         {
-            (_github.IssueLabels.TryGetValue(int.Parse(issue), out var labels) ? labels : _github.IssueLabels[int.Parse(issue)] = []).Add(PilotMarks.HumanVerification);
+            _github.IssueLabels.GetOrAdd(int.Parse(issue), _ => []).TryAdd(PilotMarks.HumanVerification, 0);
         }
         _state.UpdateFlight(flight.Code, f => f with { HumanVerification = flagged });
         return F(flight.Code);

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
@@ -173,7 +174,7 @@ public abstract class ReviewTestsBase : IDisposable
         return _workers.Started.Last();
     }
 
-    private protected static string[] PilotLabels(HashSet<string>? labels) => [.. (labels ?? []).Where(l => l.StartsWith("pilot: ", StringComparison.Ordinal))];
+    private protected static string[] PilotLabels(ConcurrentDictionary<string, byte>? labels) => [.. (labels?.Keys ?? []).Where(l => l.StartsWith("pilot: ", StringComparison.Ordinal))];
 
     /// <summary>A flight whose done leg's PR passed its review, so its marks are set and its ready card open.</summary>
     private protected async Task<(FlightRow Flight, int Pr)> Passed(string issue)
@@ -735,7 +736,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         (agreed.GitHubHead, agreed.GitHubLabel, agreed.GitHubDisagrees).ShouldBe((reviewed, "pilot: passed", null));
 
         // The label taken off by hand, and the branch pushed to since the reviewer read it.
-        _github.Labels[number].Remove("pilot: passed");
+        _github.Labels[number].TryRemove("pilot: passed", out _);
         _github.Pr = _github.Pr! with { Head = "beef1111beef1111" };
         await checks.LookAsync(Ct);
 
@@ -748,7 +749,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         _github.LabelCalls.Count(c => c.Number == number).ShouldBe(3);
 
         // Changed by hand to another pilot: label, and the branch back: the label is set back and they agree again.
-        _github.Labels[number].Add("pilot: changes");
+        _github.Labels[number].TryAdd("pilot: changes", 0);
         _github.Pr = _github.Pr! with { Head = reviewed };
         await checks.LookAsync(Ct);
         var again = F(flight.Code);

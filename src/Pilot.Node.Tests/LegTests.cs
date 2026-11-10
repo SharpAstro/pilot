@@ -147,7 +147,7 @@ internal sealed class FakeGitHub : IGitHub
     public string? OpenIssuesFail { get; set; }
 
     public Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken) =>
-        OpenIssuesFail is { } why ? Task.FromException<IssueInfo[]>(new FlightException(why)) : Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value, Labels = IssueLabels.TryGetValue(i.Key, out var labels) ? [.. labels] : [] })]);
+        OpenIssuesFail is { } why ? Task.FromException<IssueInfo[]>(new FlightException(why)) : Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value, Labels = IssueLabels.TryGetValue(i.Key, out var labels) ? [.. InOrder(labels)] : [] })]);
 
     /// <summary>Each repo's open PRs, by repo folder path; a repo with none listed has none.</summary>
     public Dictionary<string, PullRequestStatus[]> OpenPrs { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -292,8 +292,17 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>Each repo's issues that are in a milestone, by its folder path: every milestone's, closed ones included; each repo's by issue number.</summary>
     public ConcurrentDictionary<string, ConcurrentDictionary<int, MilestoneIssue>> MilestoneIssuesOf { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The time the next issue made by CreateIssueInMilestoneAsync carries; a minute on for each.</summary>
-    public DateTimeOffset IdeaClock { get; set; } = new(2026, 10, 28, 9, 0, 0, TimeSpan.Zero);
+    private long _ideaTicks = new DateTimeOffset(2026, 10, 28, 9, 0, 0, TimeSpan.Zero).UtcTicks;
+
+    /// <summary>The time the next issue made by CreateIssueInMilestoneAsync carries (UTC); a minute on for each.</summary>
+    public DateTimeOffset IdeaClock
+    {
+        get => new(Interlocked.Read(ref _ideaTicks), TimeSpan.Zero);
+        set => Interlocked.Exchange(ref _ideaTicks, value.UtcTicks);
+    }
+
+    /// <summary>Takes the clock's time and moves it a minute on in one step, so two calls at once never get the same time or a torn one.</summary>
+    private DateTimeOffset TickIdeaClock() => new(Interlocked.Add(ref _ideaTicks, TimeSpan.TicksPerMinute) - TimeSpan.TicksPerMinute, TimeSpan.Zero);
 
     /// <summary>The milestones made by IdeasMilestoneAsync, as (repo folder path, title).</summary>
     public ConcurrentQueue<(string Repo, string Title)> MilestonesMade { get; } = [];
@@ -322,8 +331,7 @@ internal sealed class FakeGitHub : IGitHub
     public MilestoneIssue AddIssue(string repoPath, string title, string? milestone, bool open = true, string body = "", string author = "sebgod")
     {
         var number = NewIssue(title);
-        var at = IdeaClock;
-        IdeaClock = at.AddMinutes(1);
+        var at = TickIdeaClock();
         var issue = new MilestoneIssue(number, title, body, open, milestone, at, at, author, $"https://github.com/SharpAstro/{Path.GetFileName(RepoKey(repoPath))}/issues/{number}");
         MilestoneIssuesOf.GetOrAdd(RepoKey(repoPath), _ => [])[issue.Number] = issue;
         return issue;
@@ -391,7 +399,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             issue = issue with { Priority = level };
         }
-        return IssueLabels.TryGetValue(issue.Number, out var labels) ? issue with { Labels = [.. labels] } : issue;
+        return IssueLabels.TryGetValue(issue.Number, out var labels) ? issue with { Labels = [.. InOrder(labels)] } : issue;
     }
 
     /// <summary>Run once, just before the next guarded write compares updated_at: a change landing on GitHub between the node's read and its save.</summary>
@@ -403,8 +411,7 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>Changes an issue as someone on GitHub would: its updated_at moves on.</summary>
     public MilestoneIssue ChangeElsewhere(string repoPath, int number, Func<MilestoneIssue, MilestoneIssue> change)
     {
-        var at = IdeaClock;
-        IdeaClock = at.AddMinutes(1);
+        var at = TickIdeaClock();
         var changed = change(MilestoneIssuesOf[RepoKey(repoPath)][number]) with { UpdatedAt = at };
         Replace(repoPath, changed);
         return changed;
@@ -528,7 +535,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             throw new FlightException(why);
         }
-        return (PrOf.TryGetValue(branch, out var own) ? own : Pr) is { } pr ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. labels] : [] } : null;
+        return (PrOf.TryGetValue(branch, out var own) ? own : Pr) is { } pr ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. InOrder(labels)] : [] } : null;
     }
 
     /// <summary>Whether a merge joins a merge queue rather than merging, as on a base that has one.</summary>
@@ -543,8 +550,8 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, a merge is answered with this GitHub text: "already in the queue" counts as queued, anything else refuses.</summary>
     public string? MergeAnswers { get; set; }
 
-    /// <summary>One GitHub text per merge call, in order (empty: that call merges); a call past the end merges.</summary>
-    public Queue<string> MergeScript { get; } = new();
+    /// <summary>One GitHub text per merge call, in order (empty: that call merges); a call past the end merges. Each text is taken by exactly one call.</summary>
+    public ConcurrentQueue<string> MergeScript { get; } = [];
 
     /// <summary>What AllowedMergeMethodsAsync answers; all three by default.</summary>
     public AllowedMergeMethods? AllowedMethods { get; set; } = new(true, true, true);
@@ -559,13 +566,11 @@ internal sealed class FakeGitHub : IGitHub
             var answer = Pilot.Node.Flights.MergeAnswers.Classify(1, "", MergeAnswers);
             return answer.Kind == MergeAnswerKind.Done ? true : throw new MergeRefusedException(answer.Kind, answer.Message, MergeAnswers);
         }
-        lock (MergeScript)
+        // An empty scripted text is still taken: that call merges.
+        if (MergeScript.TryDequeue(out var scripted) && scripted.Length > 0)
         {
-            if (MergeScript.Count > 0 && MergeScript.Dequeue() is { Length: > 0 } scripted)
-            {
-                var answer = Pilot.Node.Flights.MergeAnswers.Classify(1, "", scripted);
-                return answer.Kind == MergeAnswerKind.Done ? Queues : throw new MergeRefusedException(answer.Kind, answer.Message, scripted);
-            }
+            var answer = Pilot.Node.Flights.MergeAnswers.Classify(1, "", scripted);
+            return answer.Kind == MergeAnswerKind.Done ? Queues : throw new MergeRefusedException(answer.Kind, answer.Message, scripted);
         }
         if (MergeRefuses is not null)
         {
@@ -880,8 +885,19 @@ internal sealed class FakeGitHub : IGitHub
         return Task.CompletedTask;
     }
 
-    /// <summary>The labels each PR carries, by number: a pilot: label replaces any other, as the real call does; others are left.</summary>
-    public ConcurrentDictionary<int, HashSet<string>> Labels { get; } = [];
+    /// <summary>The labels each PR carries, by number, each set read through its Keys: a pilot: label replaces any other, as the real call does; others are left.</summary>
+    public ConcurrentDictionary<int, ConcurrentDictionary<string, byte>> Labels { get; } = [];
+
+    /// <summary>Seeds the labels a PR carries, replacing any it had.</summary>
+    public void SetLabels(int number, params string[] labels) => Labels[number] = LabelSet(labels);
+
+    /// <summary>Seeds the labels an issue carries, replacing any it had.</summary>
+    public void SetIssueLabels(int number, params string[] labels) => IssueLabels[number] = LabelSet(labels);
+
+    private static ConcurrentDictionary<string, byte> LabelSet(IEnumerable<string> labels) => new(labels.Select(l => KeyValuePair.Create(l, (byte)0)));
+
+    /// <summary>A label set as a call reads it: in ordinal order, since a concurrent set's own order follows string hashes, which change from run to run.</summary>
+    private static IEnumerable<string> InOrder(ConcurrentDictionary<string, byte> labels) => labels.Keys.Order(StringComparer.Ordinal);
 
     /// <summary>Every pilot: label asked for, by PR number, in order.</summary>
     public ConcurrentQueue<(int Number, string Label)> LabelCalls { get; } = [];
@@ -896,9 +912,15 @@ internal sealed class FakeGitHub : IGitHub
             return Task.FromException(new FlightException(why));
         }
         LabelCalls.Enqueue((number, label));
-        var labels = Labels.TryGetValue(number, out var existing) ? existing : Labels[number] = [];
-        labels.RemoveWhere(l => l.StartsWith(PilotMarks.LabelPrefix, StringComparison.Ordinal));
-        labels.Add(label);
+        var labels = Labels.GetOrAdd(number, _ => []);
+        foreach (var (other, _) in labels)
+        {
+            if (other != label && other.StartsWith(PilotMarks.LabelPrefix, StringComparison.Ordinal))
+            {
+                labels.TryRemove(other, out _);
+            }
+        }
+        labels.TryAdd(label, 0);
         return Task.CompletedTask;
     }
 
@@ -910,13 +932,13 @@ internal sealed class FakeGitHub : IGitHub
         RemoveCalls.Enqueue((number, label));
         if (Labels.TryGetValue(number, out var set))
         {
-            set.Remove(label);
+            set.TryRemove(label, out _);
         }
         return Task.CompletedTask;
     }
 
-    /// <summary>The labels each issue carries, by number.</summary>
-    public ConcurrentDictionary<int, HashSet<string>> IssueLabels { get; } = [];
+    /// <summary>The labels each issue carries, by number, each set read through its Keys.</summary>
+    public ConcurrentDictionary<int, ConcurrentDictionary<string, byte>> IssueLabels { get; } = [];
 
     /// <summary>The labels made in the repo, in order.</summary>
     public ConcurrentDictionary<string, byte> LabelsCreated { get; } = [];
@@ -925,7 +947,7 @@ internal sealed class FakeGitHub : IGitHub
     public ConcurrentQueue<(int Number, string Body)> IssueComments { get; } = [];
 
     public Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult(IssueLabelsReadFails is null && IssueLabels.TryGetValue(number, out var labels) ? labels.ToArray() : []);
+        Task.FromResult(IssueLabelsReadFails is null && IssueLabels.TryGetValue(number, out var labels) ? InOrder(labels).ToArray() : []);
 
     /// <summary>When set, a label read that must tell failure from absence (<see cref="IGitHub.IssueLabelsOrThrowAsync"/>) fails with it, as gh exiting non-zero; the plain read answers none, as the real one does.</summary>
     public string? IssueLabelsReadFails { get; set; }
@@ -943,7 +965,7 @@ internal sealed class FakeGitHub : IGitHub
             return Task.FromException(new FlightException(why));
         }
         LabelsCreated.TryAdd(label, 0);
-        (IssueLabels.TryGetValue(number, out var labels) ? labels : IssueLabels[number] = []).Add(label);
+        IssueLabels.GetOrAdd(number, _ => []).TryAdd(label, 0);
         return Task.CompletedTask;
     }
 
@@ -1001,7 +1023,7 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     public Task<int> OpenIssuesWithLabelAsync(string repoPath, string label, CancellationToken cancellationToken) =>
-        Task.FromResult(IssueLabels.Values.Count(l => l.Contains(label)));
+        Task.FromResult(IssueLabels.Values.Count(l => l.ContainsKey(label)));
 
     public Task RemoveIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
     {
@@ -1011,7 +1033,7 @@ internal sealed class FakeGitHub : IGitHub
         }
         if (IssueLabels.TryGetValue(number, out var labels))
         {
-            labels.Remove(label);
+            labels.TryRemove(label, out _);
         }
         return Task.CompletedTask;
     }

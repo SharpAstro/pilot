@@ -16,7 +16,7 @@ public sealed class IssuePinTests : IssueBoardFixture
         var result = await Run(Verbs.PinIssue, Issue(2));
 
         result.Ok.ShouldBeTrue(result.Error);
-        GitHub.IssueLabels[2].ShouldContain(PilotMarks.Pinned);
+        GitHub.IssueLabels[2].Keys.ShouldContain(PilotMarks.Pinned);
         GitHub.LabelsCreated.Keys.ShouldContain(PilotMarks.Pinned);
         PilotMarks.Pinned.StartsWith(PilotMarks.LabelPrefix, StringComparison.Ordinal).ShouldBeFalse();
     }
@@ -29,7 +29,7 @@ public sealed class IssuePinTests : IssueBoardFixture
         var result = await Run(Verbs.PinIssue, Issue(2), Verbs.PinOff);
 
         result.Ok.ShouldBeTrue(result.Error);
-        GitHub.IssueLabels[2].ShouldNotContain(PilotMarks.Pinned);
+        GitHub.IssueLabels[2].Keys.ShouldNotContain(PilotMarks.Pinned);
         State.Issues().Single(i => i.Number == 2).Pinned.ShouldBeFalse();
     }
 
