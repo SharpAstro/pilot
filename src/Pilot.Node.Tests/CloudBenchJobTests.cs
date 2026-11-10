@@ -66,6 +66,11 @@ public sealed partial class CloudBenchJobTests : JobTestsBase, IAsyncDisposable
     private readonly ScriptedCloudBench _cloud = new();
     private readonly List<JobRunner> _started = [];
 
+    // #933: no job here starts a real shell; a local job runs on the in-memory launcher.
+    public CloudBenchJobTests() : base(fakeLauncher: true)
+    {
+    }
+
     public async ValueTask DisposeAsync()
     {
         foreach (var jobs in _started)
@@ -99,6 +104,7 @@ public sealed partial class CloudBenchJobTests : JobTestsBase, IAsyncDisposable
         var clock = new Clock();
         var jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), clock)
         {
+            Launcher = new FakeJobLauncher(clock),
             FreeMemory = () => null,
             MachineCpu = machineCpu,
             MachineOutsideCpu = outsideCpu,
@@ -118,6 +124,7 @@ public sealed partial class CloudBenchJobTests : JobTestsBase, IAsyncDisposable
     {
         var jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), TimeProvider.System)
         {
+            Launcher = new FakeJobLauncher(TimeProvider.System),
             FreeMemory = () => null,
             MachineOutsideCpu = () => 0,
             MachineCpu = () => 0,
