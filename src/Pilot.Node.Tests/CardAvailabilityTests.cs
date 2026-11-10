@@ -177,6 +177,28 @@ public sealed class CardAvailabilityTests
         Says(card, "Redo leg parser").ShouldBe((ChoiceStatus.Unavailable, "TIA1 is held"));
     }
 
+    [Theory]
+    [InlineData(ChoiceStatus.WaitsForLegs, "review-notes-3")]
+    [InlineData(ChoiceStatus.Queued, "2nd in the queue")]
+    [InlineData(ChoiceStatus.Merging, "waiting for its checks")]
+    public void AMergeThatIsAChipKeepsWhatItSaysThroughAHoldAndItsRelease(string status, string note)
+    {
+        // The node's chips are the clients' (ChoiceStatus.IsChip, one list): a chip is not pressed, and what it says outlives the hold.
+        ChoiceStatus.IsChip(status).ShouldBeTrue();
+        var state = NewState();
+        state.PutFlight(Flight("TIA1"));
+        state.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1's PR #63 is ready", null,
+            [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/TIA1", Args = ["abc1234"], Status = status, Note = note }]);
+        var seq = state.Seq;
+
+        state.PutFlight(Flight("TIA1", FlightState.Held, "TIA0"));
+        Says(Only(state), "Merge").ShouldBe((status, note));
+        state.PutFlight(Flight("TIA1"));
+
+        Says(Only(state), "Merge").ShouldBe((status, note), "not blanked on release: it was never marked");
+        state.Seq.ShouldBe(seq + 2, "the flight's two changes, and no card's");
+    }
+
     // ---- a session that is gone, and back ----
 
     [Fact]

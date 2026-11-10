@@ -312,6 +312,15 @@ public static class ChoiceStatus
     /// as before and the press is refused with the reason.
     /// </summary>
     public const string Unavailable = "unavailable";
+
+    /// <summary>
+    /// The statuses a choice is not pressed for, which a truth of their own explains: it is waited on (armed, queued, merging, waiting for
+    /// its legs), blocked by something a press cannot move (a failed check, requested changes), or done (merged). A client draws it as a chip
+    /// in the button's size and place; the node keeps it over <see cref="Unavailable"/>, whose reason is not the more telling one. One list,
+    /// so the node and every client agree on what is a chip.
+    /// </summary>
+    public static bool IsChip(string? status) =>
+        status is Armed or Queued or Blocked or ChangesRequested or WaitsForLegs or Merged or Merging;
 }
 
 /// <summary>

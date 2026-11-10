@@ -1455,8 +1455,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// The statuses a Merge is not pressed for: it is waited on (armed, queued), blocked by something a press cannot move (a
     /// failed check, requested changes), or done (merged). Drawn as a chip in the button's size and place, with no hover or click.
     /// </summary>
-    internal static bool IsChip(string? status) =>
-        status is ChoiceStatus.Armed or ChoiceStatus.Queued or ChoiceStatus.Blocked or ChoiceStatus.ChangesRequested or ChoiceStatus.WaitsForLegs or ChoiceStatus.Merged or ChoiceStatus.Merging;
+    internal static bool IsChip(string? status) => ChoiceStatus.IsChip(status);
 
     // What a chip says when hovered: what is going on, and that there is nothing to press; the whole note, uncut.
     private static string ChipTooltip(CardChoice choice) => choice.Status switch

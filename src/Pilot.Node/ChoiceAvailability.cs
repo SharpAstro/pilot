@@ -43,8 +43,10 @@ internal static class ChoiceAvailability
     /// <summary>
     /// <paramref name="choices"/> as they should read now: a choice the node would refuse is marked unavailable with its reason, one marked
     /// that no longer would be is cleared. A choice that already says what it should is kept as it is (the same instance), so a card
-    /// whose choices are all right is not rewritten. A choice that is a chip for another reason (a merge armed, queued, merging or
-    /// merged, one GitHub blocks) keeps that status: it is not a button, and what it says is the more telling.
+    /// whose choices are all right is not rewritten. A choice that is a chip for another reason (<see cref="ChoiceStatus.IsChip"/>: a merge
+    /// armed, queued, merging, merged or waiting for its legs, one GitHub blocks) keeps that status: it is not a button, and what it says is
+    /// the more telling. A choice marked unavailable over another status (a Merge's Passing or Pending checks) is cleared to no status when
+    /// the mark goes, so it reads blank until the next look at the PR writes its checks again; the mark does not keep what it covered.
     /// </summary>
     internal static CardChoice[] Apply(IReadOnlyList<CardChoice> choices, IEnumerable<FlightRow> flights, IReadOnlyCollection<SessionRow> sessions)
     {
@@ -56,7 +58,7 @@ internal static class ChoiceAvailability
             result[i] = choice;
             if (WhyNot(choice, flightList, sessions) is { } why)
             {
-                if (!IsChip(choice.Status) && !(choice.Status == ChoiceStatus.Unavailable && choice.Note == why))
+                if (!ChoiceStatus.IsChip(choice.Status) && !(choice.Status == ChoiceStatus.Unavailable && choice.Note == why))
                 {
                     result[i] = choice with { Status = ChoiceStatus.Unavailable, Note = why };
                 }
@@ -68,8 +70,4 @@ internal static class ChoiceAvailability
         }
         return result;
     }
-
-    // The statuses a choice is not pressed for, which another truth already explains.
-    private static bool IsChip(string? status) =>
-        status is ChoiceStatus.Armed or ChoiceStatus.Queued or ChoiceStatus.Blocked or ChoiceStatus.ChangesRequested or ChoiceStatus.Merged or ChoiceStatus.Merging;
 }
