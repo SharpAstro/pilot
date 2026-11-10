@@ -135,7 +135,7 @@ public sealed class TurnOutageTests
 
         _outage.Observe("flight/TIA1/solver", Start.AddMinutes(4));
         _outage.IsOpen.ShouldBeTrue();
-        Open().ShouldHaveSingleItem().Title.ShouldContain("2 sessions showed no first turn");
+        Open().ShouldHaveSingleItem().Summary!.ShouldContain("2 sessions showed no first turn");
     }
 
     [Fact]
