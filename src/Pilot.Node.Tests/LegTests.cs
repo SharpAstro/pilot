@@ -1569,7 +1569,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.SiblingBehindKind);
         (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "flight/TIA1/parser"));
         card.Title.ShouldBe("TIA1/parser builds on a sibling clone that is behind");
-        card.Summary.ShouldBe("TIA1/parser started on a sibling clone older than origin, which the node could not pull. Pull it by hand and try again, or let the leg run as it is.");
+        card.Summary.ShouldBe("TIA1/parser started on a sibling clone older than origin, which the node could not pull. Pull it by hand and try again, or let the leg run on what it has.");
         card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Pull the clones again", Verbs.SyncRepos)]);
         card.Detail.ShouldBe($"DIR.Lib is 3 commits behind its origin: git -C {Path.Combine(_root, "DIR.Lib")} pull --ff-only");
 
