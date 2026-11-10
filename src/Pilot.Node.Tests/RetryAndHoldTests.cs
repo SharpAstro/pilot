@@ -134,7 +134,7 @@ public sealed class RetryAndHoldTests : IDisposable
         line.Kind.ShouldBe(FailureAlerts.RetriedKind);
         (line.Bin, line.Subject).ShouldBe((CardBin.Handled, "flight/TIA71"));
         line.Detail.ShouldNotBeNull().ShouldContain("TIA901 investigates");
-        line.Title.ShouldContain("NodePlanetaryTests.ARefusedStartSaysWhyAndHoldsNothing");
+        line.Detail.ShouldNotBeNull().ShouldContain("NodePlanetaryTests.ARefusedStartSaysWhyAndHoldsNothing");
         line.Title.ShouldContain("queued again at " + Head('a')[..7]);
         // The removal is no card for the person: it was dealt with, and it is not a flake or a chance.
         _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.QueueDropped);

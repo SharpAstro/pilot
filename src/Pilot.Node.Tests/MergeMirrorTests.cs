@@ -117,7 +117,7 @@ public sealed class MergeMirrorTests
         node.GitHub.Merge = new MergeState(MergeKinds.Queued, Position: 3);
         node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: true, Position: 3);
 
-        (await Answer(node, ready, "Merge the PR")).Error.ShouldBeNull();
+        (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
 
         node.GitHub.Merged.ShouldBeEmpty();
         var card = Card(node, ready);
@@ -166,7 +166,7 @@ public sealed class MergeMirrorTests
         var ready = Ready(node);
         node.GitHub.Merge = new MergeState(MergeKinds.Blocked, 3, 3, Reason: "a review is required");
 
-        var result = await Answer(node, ready, "Merge the PR");
+        var result = await Answer(node, ready, "Merge");
 
         result.Error.ShouldNotBeNull().ShouldContain("a review is required");
         node.GitHub.Merged.ShouldBeEmpty();
@@ -229,7 +229,7 @@ public sealed class MergeMirrorTests
         var ready = Ready(node);
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
 
-        (await Answer(node, ready, "Merge the PR")).Error.ShouldBeNull();
+        (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
 
         node.GitHub.Merged.Select(m => m.Number).ShouldBe([63]);
         var card = Card(node, ready);
@@ -246,7 +246,7 @@ public sealed class MergeMirrorTests
         var ready = Ready(node);
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
 
-        (await Answer(node, ready, "Merge the PR")).Error.ShouldBeNull();
+        (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
 
         var card = Card(node, ready);
         card.State.ShouldBe(CardState.Open);
@@ -261,7 +261,7 @@ public sealed class MergeMirrorTests
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
         node.GitHub.Queues = true;
 
-        (await Answer(node, ready, "Merge the PR")).Error.ShouldBeNull();
+        (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
         node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: true, Position: 4);
         await Look(node, null);
 

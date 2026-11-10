@@ -112,7 +112,7 @@ public sealed class PersonsWordTests
         node.State.Cards().Single(c => c.Id == ask.Id).State.ShouldBe(CardState.Closed);
         var handled = node.State.Cards().Single(c => c.Kind == CardKinds.PersonsWord);
         handled.Bin.ShouldBe(CardBin.Handled);
-        handled.Title.ShouldBe($"{Lookout(node)} answered {ask.Id} (Allow) at the person's word in the chat");
+        handled.Title.ShouldBe($"{Lookout(node)} answered {ask.Id} (Allow it) at the person's word in the chat");
         handled.Detail.ShouldBe(Quote);
     }
 
@@ -481,7 +481,7 @@ public sealed class PersonsWordTests
         node.State.Cards().Single(c => c.Id == ask.Id).Outcome.ShouldNotBeNull().ShouldStartWith(Autopilot.AllowLabel + ";");
         AutopilotTests.BlackBox(node).Single(l => l.Verb == Verbs.Answer).ShouldSatisfyAllConditions(l => l.Who.ShouldBe(Lookout(node)), l => l.Why.ShouldBe(Quote));
         var handled = node.State.Cards().Single(c => c.Kind == CardKinds.PersonsWord);
-        handled.Title.ShouldBe($"{Lookout(node)} answered {ask.Id} (Allow) at the person's word in the chat");
+        handled.Title.ShouldBe($"{Lookout(node)} answered {ask.Id} (Allow it) at the person's word in the chat");
         handled.Detail.ShouldBe(Quote);
     }
 }
