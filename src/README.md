@@ -999,7 +999,8 @@ keeps a "was refused" about a state it has left. A refusal that lands after the 
 choice that closed its card first and was refused, or this press's own answer ending refused) is kept and drawn: it is the
 outcome of the press that made the change. An ok answer is never a refusal: a press that joined an answer (`already on its way,
 started by cli at 20:35`, `already answered by cli at 20:35`, recognised by `CardAnswering.IsJoined`) clears an older refusal
-and is logged by the GUI and TUI as `joined: ...`, not `done`.
+and is logged by the GUI and TUI as `joined: ...`, not `done`; `pilot answer` (and so the MCP `answer` tool) prints the same
+`joined: ...` line under its `ok:`.
 
 A node the window cannot reach (its stream is down: the same `Connected` the Fleet page shows) leaves the panel with its
 cards, which may be long answered and cannot be commanded now (#325). In their place, at the foot of **For you**, one dim
@@ -1684,8 +1685,8 @@ The GUI's cards panel, the TUI and `pilot cards` show the mark (see the cards pa
 no refusal left on a card that moved on.
 
 **A choice the node would refuse is marked before it is pressed** (#792). A choice has a `Status` where the node can tell how ready it
-is (`passing`, `pending`, `failing`, `conflicting`, `armed`, `queued`, `behind`, `blocked`, `changes-requested`, `merging`, `merged`),
-and one more: `unavailable` (`ChoiceStatus.Unavailable`), with the reason in the choice's `Note`. It is set on an open card's choice
+is (`passing`, `pending`, `failing`, `conflicting`, `armed`, `queued`, `behind`, `blocked`, `changes-requested`, `waits-for-legs`,
+`merging`, `merged`), and one more: `unavailable` (`ChoiceStatus.Unavailable`), with the reason in the choice's `Note`. It is set on an open card's choice
 that needs its flight flying (a go-around, a merge, a re-run of its checks, a leg's start) while the flight is **held**
 (`PIL501 is held: waiting for PIL500`, or just `PIL501 is held` when no wait is named), and on one that names a session the node
 **no longer has** (`session a1b2c3d4 no longer exists`; an ended session that is still listed is not gone, a say to it resumes it).
@@ -1693,7 +1694,9 @@ One rule, `ChoiceAvailability`, both marks the choice and refuses its answer. `N
 (a card raised, turned, or given new choices, so the merge's check refresh never offers a held flight's Merge again) and sweeps the
 open cards where the fact changes: a flight's hold changing (`PutFlight`, `UpdateFlight`) and a session row added or removed. There is no
 polling, a card already right publishes nothing, and a flight that flies again (or a session that is back) clears the mark; a merge that is
-armed, queued, merging, merged or blocked keeps its own status, which says more. An **answer** of such a choice is refused before anything
+a chip (`ChoiceStatus.IsChip`, the one list the node and the card view share: armed, queued, merging, merged, blocked, changes requested
+or waiting for its legs) keeps its own status, which says more. A mark that covered a `passing` or `pending` Merge clears to no status,
+and the next look at the PR writes its checks back. An **answer** of such a choice is refused before anything
 is taken, closed or run, reading the flight and the sessions as they are then: `Merge was refused: PIL501 is held: waiting for PIL500`,
 the card staying open, so a client that pressed before it saw the mark runs nothing. The status is optional on the wire like the rest: an
 older client draws the button as it did and is refused with the reason.
