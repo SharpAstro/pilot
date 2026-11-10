@@ -175,6 +175,7 @@ public sealed class FakeGitHubTests
 
     [Fact]
     [Trait("Category", "Invariant")]
+    [Trait("Category", "Slow")] // a real git: a clone runs git against a bare repo made here, which is what the call does
     public async Task ClonesMadeInParallelAreEachRecordedExactlyOnce()
     {
         // A clone runs git, so this one is 8 tasks x 3 calls, against one empty bare repo made here.
@@ -254,6 +255,8 @@ public sealed class FakeGitHubTests
         [nameof(FakeGitHub.Runs)] = "seeded by a test: the workflow runs of each commit, only read by a call",
         [nameof(FakeGitHub.MergeOf)] = "seeded by a test: the merge state of each PR, only read by a call",
         [nameof(FakeGitHub.Origins)] = "seeded by a test: where each repo clones from, only read by a call",
+        [nameof(FakeGitHub.FailedRuns)] = "seeded by a test: the failed run of each PR, only read by a call",
+        [nameof(FakeGitHub.CiRuns)] = "seeded by a test: the CI runs of each branch, only read by a call",
     };
 
     [Fact]
