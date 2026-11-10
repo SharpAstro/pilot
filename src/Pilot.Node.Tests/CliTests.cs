@@ -568,11 +568,11 @@ public sealed class CliTests : IAsyncLifetime
     [Fact]
     public async Task FlightAdoptIsSentToTheNodeAsAdoptFlightNamingTheOldNode()
     {
-        var (exit, output, error) = await Pilot(_root, "flight", "adopt", "TIA9", "--from", "DE1");
+        var (exit, output, error) = await Pilot(_root, "flight", "adopt", "TIA9", "--from", "ZZ9");
 
         exit.ShouldBe(1);
         (output + error).ShouldContain("refused: adopt-flight flight/TIA9: ");
-        (output + error).ShouldContain("no copy of DE1's flights");
+        (output + error).ShouldContain("no copy of ZZ9's flights");
         (await Pilot(_root, "flight", "adopt", "TIA9")).Exit.ShouldNotBe(0);
         (await Pilot(_root, "flight", "adopt", "--help")).Output.ShouldContain("--from");
     }
