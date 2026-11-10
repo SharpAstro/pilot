@@ -252,7 +252,7 @@ internal sealed partial class FlightsView<TSurface>
             page.Add(Prose($"stale: {staleSummary}", 12f, Held));
             if (line.StaleRaise is { } raise)
             {
-                page.Add(Prose(raise, 12f, Held));
+                page.Add(Prose($"priority {raise}", 12f, Held));
             }
         }
         if (line.StaleMark is { } stale)
