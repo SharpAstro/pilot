@@ -16,7 +16,7 @@ public sealed class PriorityCommandTests : LegCommanderTestsBase
     // The base builds its commanders without a GitHub client, so this one has the tracker the verb writes through.
     private readonly FlightCommander _tracked;
 
-    public PriorityCommandTests() => _tracked = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System, _workers, _github);
+    public PriorityCommandTests() => _tracked = new FlightCommander(_state, new Planes(_git), TimeProvider.System, _workers, _github);
 
     private async Task<CommandResult> Send(string verb, string target, params string[] args) =>
         await _tracked.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct);

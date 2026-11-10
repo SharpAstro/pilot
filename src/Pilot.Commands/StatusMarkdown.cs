@@ -12,7 +12,7 @@ internal static class StatusMarkdown
 {
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
 
-    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyDictionary<string, string>? copies = null, IReadOnlyCollection<SendTimingRow>? sendTimings = null)
+    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyDictionary<string, string>? copies = null, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null)
     {
         var text = new StringBuilder();
         text.AppendLine("# pilot status").AppendLine();
@@ -20,6 +20,10 @@ internal static class StatusMarkdown
         if (maintenance)
         {
             facts.Add("**maintenance** on: this node takes no new flights (`pilot settings set maintenance off`)");
+        }
+        if (reboot is { Length: > 0 })
+        {
+            facts.Add($"**reboot** {reboot} (`pilot node reboot status`)");
         }
         if (autopilot is { } piloting)
         {
@@ -30,6 +34,14 @@ internal static class StatusMarkdown
         if (sendTimings is not null)
         {
             facts.Add($"**sends** {Text(SendTimingRow.Summary(sendTimings))}");
+        }
+        if (commandTimings is not null)
+        {
+            facts.Add($"**commands** {Text(CommandTimingRow.Summary(commandTimings))}");
+        }
+        if (heap is not null)
+        {
+            facts.Add($"**heap** {Text(heap.Line())}");
         }
         if (snapshot.Usage?.Account is { } account)
         {
@@ -42,6 +54,10 @@ internal static class StatusMarkdown
         if (snapshot.Machine is { } machine)
         {
             facts.Add($"**machine** {Text(machine.Line())}");
+            if (machine.Strays.Length > 0)
+            {
+                facts.Add($"**strays** {machine.Strays.Length} in the node's tree: {Text(string.Join("; ", machine.Strays.Select(s => s.Line())))}");
+            }
         }
         if (snapshot.Admission is { } admission)
         {
@@ -77,7 +93,7 @@ internal static class StatusMarkdown
         }
         foreach (var flight in flights)
         {
-            var state = flight.State switch
+            var state = FlightWaiting.OnHoldText(flight) is { } onHold && flight.State != FlightState.Landed ? onHold : flight.State switch
             {
                 FlightState.Held => $"held, waiting for {FlightWaiting.For(flight)}",
                 FlightState.Landed => flight.MovedTo?.Text ?? "landed",

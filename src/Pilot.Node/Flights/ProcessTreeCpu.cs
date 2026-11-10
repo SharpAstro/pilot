@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace Pilot.Node.Flights;
 
 /// <summary>
@@ -14,49 +12,59 @@ public static class ProcessTreeCpu
     /// </summary>
     public sealed class Tally
     {
-        private readonly Dictionary<(int Pid, DateTime Start), TimeSpan> _seen = [];
+        private readonly Dictionary<(int Pid, long Start), TimeSpan> _seen = [];
 
-        public void Note(int pid, DateTime start, TimeSpan cpu)
+        /// <summary>Notes what <paramref name="pid"/>, started at <paramref name="start"/> (the table's own unit), has used so far.</summary>
+        public void Note(int pid, long start, TimeSpan cpu)
         {
             var key = (pid, start);
             _seen[key] = _seen.TryGetValue(key, out var before) && before > cpu ? before : cpu;
         }
 
+        public void Note(int pid, DateTime start, TimeSpan cpu) => Note(pid, start.Ticks, cpu);
+
         public TimeSpan Total => _seen.Values.Aggregate(TimeSpan.Zero, (sum, t) => sum + t);
     }
 
-    public static TimeSpan? Of(int rootPid, Tally tally, IProcessTable? table = null)
+    /// <summary>
+    /// The CPU time of <paramref name="rootPid"/>'s tree, from ONE read of the process table (<paramref name="read"/>, the OS's by
+    /// default): every process's parent, CPU time and start in one <c>NtQuerySystemInformation</c>. It opened a handle on each process
+    /// of the tree with <see cref="System.Diagnostics.Process.GetProcessById(int)"/> before, each of which read the whole table again
+    /// to find it, every idle check of every running job. Null when the table cannot be read.
+    /// </summary>
+    public static TimeSpan? Of(int rootPid, Tally tally, Func<List<SystemProcess>, bool>? read = null)
     {
-        try
-        {
-            var parents = (table ?? OsProcessTable.Instance).Snapshot();
-            var tree = new HashSet<int> { rootPid };
-            // A parent id can be reused, so only descendants found by walking from the root are counted; repeat to a fixpoint.
-            for (var grew = true; grew;)
-            {
-                grew = false;
-                foreach (var (pid, parent, _) in parents)
-                {
-                    grew |= tree.Contains(parent) && tree.Add(pid);
-                }
-            }
-            foreach (var pid in tree)
-            {
-                try
-                {
-                    using var p = Process.GetProcessById(pid);
-                    tally.Note(pid, p.StartTime, p.TotalProcessorTime);
-                }
-                catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception or NotSupportedException)
-                {
-                    // Ended since the snapshot.
-                }
-            }
-            return tally.Total;
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException or NotSupportedException)
+        var all = new List<SystemProcess>();
+        if (!(read ?? OsProcessTable.Instance.ReadAll)(all))
         {
             return null;
         }
+        var started = new Dictionary<int, long>();
+        foreach (var p in all)
+        {
+            started[p.Pid] = p.Started;
+        }
+        var tree = new HashSet<int> { rootPid };
+        // A parent id can be reused, so only descendants found by walking from the root are counted; repeat to a fixpoint. A process
+        // that started before the one its parent id names is not its child but an older process whose parent's pid was reused (#932);
+        // an unknown start (0) is not counted as a child either.
+        for (var grew = true; grew;)
+        {
+            grew = false;
+            foreach (var p in all)
+            {
+                grew |= p.Pid != p.ParentPid && tree.Contains(p.ParentPid) && !tree.Contains(p.Pid)
+                    && p.Started != 0 && started.TryGetValue(p.ParentPid, out var parentStart) && parentStart != 0 && p.Started >= parentStart
+                    && tree.Add(p.Pid);
+            }
+        }
+        foreach (var p in all)
+        {
+            if (tree.Contains(p.Pid))
+            {
+                tally.Note(p.Pid, p.Started, p.Cpu);
+            }
+        }
+        return tally.Total;
     }
 }

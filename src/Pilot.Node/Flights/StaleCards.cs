@@ -92,16 +92,15 @@ public sealed class StaleCards(NodeState state, IGitHub github)
     public const string ClosedBy = "node";
 
     // Cards about a PR: closed once the PR has merged or closed, whatever else they said.
-    private static readonly HashSet<string> PrCards = [LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.QueueDropped, PrChecks.MergeDropped, ConflictKind, ChecksFailedKind, LegCommander.HoldingTimeoutKind];
+    private static readonly HashSet<string> PrCards = [LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.QueueDropped, PrChecks.MergeDropped, ChecksFailedKind, LegCommander.HoldingTimeoutKind];
 
-    private const string ConflictKind = "pr-conflicts";
     private const string ChecksFailedKind = "pr-checks-failed";
 
     // Cards about a flight's progress, which a landed flight has no use for. Not here: what the person decides (an overlap, Ready
     // anyway, an ask, a cap, a digest, a usage window, an update), and what a landing leaves for the person (plane-left, landed).
     private static readonly HashSet<string> FlightCards =
     [
-        LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.QueueDropped, PrChecks.MergeDropped, ConflictKind, ChecksFailedKind, LegCommander.HoldingTimeoutKind,
+        LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.QueueDropped, PrChecks.MergeDropped, ChecksFailedKind, LegCommander.HoldingTimeoutKind,
         LegWatch.ReviewStalled, LegWatch.ValidationStalled, LegWatch.Stopped, LegWatch.Idle, LegWatch.OverBudget, "leg-failed", LegCommander.PushBlockedKind, LegCommander.NextStepKind,
     ];
 
@@ -223,10 +222,6 @@ public sealed class StaleCards(NodeState state, IGitHub github)
 
         try
         {
-            if (card.Kind == ConflictKind)
-            {
-                return await CheckConflictAsync(flight, pull, pr, what, cancellationToken);
-            }
             if (card.Kind == ChecksFailedKind || card is { Kind: LegCommander.MergeFailed } && card.Choices.Any(c => c.Verb == Verbs.RerunChecks))
             {
                 return await CheckChecksAsync(card, flight, pull, pr, what, cancellationToken);
@@ -237,20 +232,6 @@ public sealed class StaleCards(NodeState state, IGitHub github)
             return (null, $"GitHub could not be read: {ex.Message}");
         }
         return (null, $"#{pull} is still open");
-    }
-
-    private async Task<(Found? Found, string Note)> CheckConflictAsync(FlightRow flight, int pull, PullRequest pr, string what, CancellationToken cancellationToken)
-    {
-        if (pr.Mergeable != "MERGEABLE")
-        {
-            return (null, pr.Mergeable == "CONFLICTING" ? $"#{pull} still conflicts with its base" : "GitHub has not said whether #" + pull + " merges cleanly");
-        }
-        // Mergeable is GitHub's word on the conflict; being behind its base is the other thing a rebase cures, so it is read too.
-        if (await github.MergeStateAsync(flight.RepoPath, pull, cancellationToken) is { Kind: MergeKinds.Conflicts or MergeKinds.Behind } merge)
-        {
-            return (null, $"GitHub still shows #{pull} as {merge.Kind}");
-        }
-        return (new Found(flight.Code, what, $"the branch merges cleanly at {CommitRefs.Short(pr.Head)}", pr.Url), "");
     }
 
     private async Task<(Found? Found, string Note)> CheckChecksAsync(CardRow card, FlightRow flight, int pull, PullRequest pr, string what, CancellationToken cancellationToken)
@@ -303,7 +284,6 @@ public sealed class StaleCards(NodeState state, IGitHub github)
         LegCommander.PrReady => "PR card",
         LegCommander.MergeFailed or PrChecks.MergeDropped => "merge card",
         PrChecks.QueueDropped => "queue card",
-        ConflictKind => "conflict",
         ChecksFailedKind => "failed checks",
         LegWatch.ReviewStalled => "review stall",
         LegWatch.ValidationStalled => "validation stall",

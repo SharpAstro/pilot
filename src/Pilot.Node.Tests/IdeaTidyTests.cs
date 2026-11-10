@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using Pilot.Commands;
 using Pilot.Contracts;
@@ -29,6 +28,7 @@ public sealed class IdeaTidyTests : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2t-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private readonly SeededRepos _repos;
     private readonly FakeGitHub _github = new();
     private readonly FakeIdeaMerger _merger = new();
     private readonly FakeIdeaTidier _tidier = new();
@@ -36,12 +36,9 @@ public sealed class IdeaTidyTests : IDisposable
 
     public IdeaTidyTests()
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        var planes = new Planes(new GitCli());
+        _repos = new SeededRepos(_root);
+        _repos.Seed("pilot");
+        var planes = _repos.Planes();
         var flights = new FlightCommander(_state, planes, TimeProvider.System, github: _github);
         var catalog = new RepoCatalog(_state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root]));
         _commander = new IdeaCommander(_state, planes, catalog, _github, _merger, _tidier, new FakeIdeaRepoChooser(), flights, TimeProvider.System);
@@ -49,28 +46,7 @@ public sealed class IdeaTidyTests : IDisposable
 
     private string Repo => Path.Combine(_root, "pilot");
 
-    public void Dispose()
-    {
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
-    }
-
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    public void Dispose() => _repos.Dispose();
 
     private async Task<MilestoneIssue> NotedAsync(string title = "Ring shadows", string body = "on the planet")
     {
@@ -115,7 +91,7 @@ public sealed class IdeaTidyTests : IDisposable
     {
         await NotedAsync();
         _github.AddMilestone(Repo, "v1", null, "The GPU work", 3);
-        var planes = new Planes(new GitCli());
+        var planes = _repos.Planes();
         var catalog = new RepoCatalog(_state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root]));
         var milestoner = new FakeIdeaMilestoner { Answer = new MilestoneAnswer("v1", null, null, "it is the GPU") };
         var proposing = new IdeaCommander(_state, planes, catalog, _github, _merger, _tidier, new FakeIdeaRepoChooser(), new FlightCommander(_state, planes, TimeProvider.System, github: _github), TimeProvider.System, milestoner);

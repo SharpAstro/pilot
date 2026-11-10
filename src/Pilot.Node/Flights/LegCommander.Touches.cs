@@ -335,13 +335,13 @@ public sealed partial class LegCommander
         var ownBranch = mine.Branch;
         if (!peer.HasGrant)
         {
-            return ([], (peer.Endpoint, "no grant is held for this node, so its flights are not known"));
+            return ([], (peer.Name, "no grant is held for this node, so its flights are not known"));
         }
         try
         {
             if (await peer.ReposAsync(budget) is not { } repos)
             {
-                return ([], (peer.Endpoint, "this node refuses the grant held for it, so its flights are not known"));
+                return ([], (peer.Name, $"{NodeClient.RefusedHeldGrant(peer.Name)}, so its flights are not known"));
             }
             if (repos.FirstOrDefault(r => string.Equals(r.GitHub, gitHub, StringComparison.OrdinalIgnoreCase))?.Path is not { } checkout)
             {
@@ -355,14 +355,14 @@ public sealed partial class LegCommander
                 return ([], null);
             }
             var info = await peer.NodeAsync(budget);
-            var node = info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Endpoint;
+            var node = info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Name;
             var touched = await Task.WhenAll(theirs.Select(f => ChangedByPeerAsync(peer, node, f, mine.RepoPath, budget, caller)));
             // The peer's own row says how long its flight has been still.
             return ([.. theirs.Zip(touched, (f, t) => (f, t with { LastMovedAt = f.LastMovedAt }))], null);
         }
         catch (Exception ex) when (DidNotAnswer(ex, caller))
         {
-            return ([], (peer.Endpoint, $"this node did not answer ({FirstLine(ex.Message)}), so its flights are not known"));
+            return ([], (peer.Name, $"this node did not answer ({FirstLine(ex.Message)}), so its flights are not known"));
         }
     }
 

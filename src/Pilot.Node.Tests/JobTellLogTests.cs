@@ -34,7 +34,7 @@ public sealed class JobTellLogTests : IDisposable
         _jobs.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
         try
         {
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
         catch (IOException)
         {

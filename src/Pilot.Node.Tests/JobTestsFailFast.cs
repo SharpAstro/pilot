@@ -5,7 +5,10 @@ using Xunit;
 
 namespace Pilot.Node.Tests;
 
-/// <summary>A check, a --fail-fast run and a reviewer's or fixer's leg check end at their first failed test and free the queue (PIL731).</summary>
+/// <summary>
+/// A check, a --fail-fast run and a reviewer's or fixer's leg check end at their first failed test and free the queue (PIL731).
+/// They run on the in-memory <see cref="FakeJobLauncher"/> (#933); the one test with a real child process is Slow.
+/// </summary>
 [Collection(JobsCollection.Name)]
 public sealed class JobTestsFailFast : JobTestsBase
 {
@@ -19,9 +22,9 @@ public sealed class JobTestsFailFast : JobTestsBase
     // Prints the failure at once, then would run for a minute.
     private static readonly string FailsThenWaits = $"{Report}; sleep 60; echo slept";
 
-    // Longer than the commands' minute: a check that was never stopped ends by itself and fails the asserts that say so, rather
-    // than a wait. How soon it stopped is read from its row, which a loaded machine's slow start does not move.
-    private static readonly TimeSpan CheckWait = TimeSpan.FromMinutes(2);
+    // A ceiling on the wait for a check's result, not a pace: a check that was never stopped fails the asserts that say so, rather
+    // than a wait.
+    private static readonly TimeSpan CheckWait = TimeSpan.FromSeconds(25);
 
     // Starts a child that would sleep a minute and writes its pid, then prints the failure: the job's tree is more than its shell.
     private static string FailsWithAChild(string pidFile) => OperatingSystem.IsWindows()
@@ -29,10 +32,10 @@ public sealed class JobTestsFailFast : JobTestsBase
         : $"sleep 60 & echo $! > '{pidFile}'; {Report}; wait";
 
     [Fact]
-    public async Task ACheckEndsAtItsFirstFailedTestNamesItFreesTheQueueAndLeavesNoProcess()
+    public async Task ACheckEndsAtItsFirstFailedTestNamesItAndFreesTheQueue()
     {
-        var pidFile = Path.Combine(_root, "child.pid");
-        var check = _jobs.RunCheckAsync("TIA1", "parser", FailsWithAChild(pidFile), _root, TimeSpan.FromMinutes(30), Ct);
+        var fake = UseFake();
+        var check = _jobs.RunCheckAsync("TIA1", "parser", FailsThenWaits, _root, TimeSpan.FromMinutes(30), Ct);
         var queued = Run("echo 'behind'; exit 0").Made.ShouldNotBeNull();
 
         var run = await check.WaitAsync(CheckWait, Ct);
@@ -42,6 +45,23 @@ public sealed class JobTestsFailFast : JobTestsBase
         run.Tail.ShouldContain(Assertion);
         var row = _state.Jobs().Single(j => j.Kind == JobKind.Check);
         (row.State, row.Error).ShouldBe((JobState.Failed, $"stopped at its first failure: {Short}"));
+        // Stopped at its first failure (the error above) is the proof: the job would otherwise have held on at its own sleep.
+        var process = fake.Job(row.Id);
+        (process.IsAlive, process.Killed).ShouldBe((false, true));
+        (await Ended(queued)).State.ShouldBe(JobState.Succeeded);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ACheckEndsAtItsFirstFailedTestAndLeavesNoProcessItStarted()
+    {
+        var pidFile = Path.Combine(_root, "child.pid");
+        var check = _jobs.RunCheckAsync("TIA1", "parser", FailsWithAChild(pidFile), _root, TimeSpan.FromMinutes(30), Ct);
+
+        var run = await check.WaitAsync(CheckWait, Ct);
+
+        run.Tail.ShouldContain($"stopped at its first failure: {Short}");
+        var row = _state.Jobs().Single(j => j.Kind == JobKind.Check);
         // Stopped at its first failure (the error above) is the proof: the job would otherwise have run its own 60 s sleep out. No wall-clock bound.
         IsAlive(row.Pid!.Value).ShouldBeFalse();
         var childPid = int.Parse(ReadLog(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
@@ -50,43 +70,58 @@ public sealed class JobTestsFailFast : JobTestsBase
             await Task.Delay(50, Ct);
         }
         IsAlive(childPid).ShouldBeFalse();
-        (await Ended(queued)).State.ShouldBe(JobState.Succeeded);
     }
 
     [Fact]
     public async Task ACheckStoppedAtItsFirstFailureWaitsForWhyItFailedBeforeTheKill()
     {
-        // xunit's [FAIL] line comes first; the block that says why comes later, here half a second.
-        var command = $"echo '[xUnit.net 00:00:01.62]     {Test} [FAIL]'; sleep 0.5; {Report}; echo '  Failed Pilot.Node.Tests.Other.Test [15 ms]'; sleep 60; echo slept";
+        var fake = UseFake();
+        // xunit's [FAIL] line comes first; the block that says why comes later, once the test says so.
+        var check = _jobs.RunCheckAsync("TIA1", "parser", $"echo '[xUnit.net 00:00:01.62]     {Test} [FAIL]'; sleep 60", _root, TimeSpan.FromMinutes(30), Ct);
+        var row = _state.Jobs().Single(j => j.Kind == JobKind.Check);
+        await Until(row.Id, j => j.State == JobState.Running);
+        check.IsCompleted.ShouldBeFalse();
 
-        var run = await _jobs.RunCheckAsync("TIA1", "parser", command, _root, TimeSpan.FromMinutes(30), Ct).WaitAsync(CheckWait, Ct);
+        var process = fake.Job(row.Id);
+        foreach (var line in new[] { $"  Failed {Test} [1 s]", "  Error Message:", $"   {Assertion}", "  Stack Trace:", $"     at {Test}() in B.cs:line 4", "  Failed Pilot.Node.Tests.Other.Test [15 ms]" })
+        {
+            process.Print(line);
+        }
+        var run = await check.WaitAsync(CheckWait, Ct);
 
         run.Tail.ShouldContain($"stopped at its first failure: {Short}");
         run.Tail.ShouldContain(Assertion);
         // The tail ends with the first failure's report: the next test's is cut off with the run.
         run.Tail.ShouldNotContain("Other.Test");
-        var row = _state.Jobs().Single(j => j.Kind == JobKind.Check);
-        // Stopped at its first failure (the error above) is the proof: the job would otherwise have run its own 60 s sleep out. No wall-clock bound.
     }
 
     [Fact]
     public async Task AFirstFailureWhoseReportNeverComesStopsTheCheckAfterTheGrace()
     {
-        _jobs.FailFastGrace = TimeSpan.FromMilliseconds(500);
+        UseFake();
+        // The runner's clock is the test's: the grace runs out when the test moves it, not after a wait.
+        var (jobs, clock, _, _) = Idle();
+        jobs.FailFastGrace = TimeSpan.FromSeconds(10);
+        var check = jobs.RunCheckAsync("TIA1", "parser", $"echo '  Failed {Test} [1 s]'; sleep 60; echo slept", _root, TimeSpan.FromMinutes(30), Ct);
+        jobs.Dispatch(new JobRunner.HandedOver(_state.Jobs().Single(j => j.Kind == JobKind.Check)));
 
-        var run = await _jobs.RunCheckAsync("TIA1", "parser", $"echo '  Failed {Test} [1 s]'; sleep 60; echo slept", _root, TimeSpan.FromMinutes(30), Ct)
-            .WaitAsync(CheckWait, Ct);
+        await AdvanceUntil(clock, check, TimeSpan.FromSeconds(11));
+        var run = await check;
 
         run.Tail.ShouldContain($"stopped at its first failure: {Short}");
-        var row = _state.Jobs().Single(j => j.Kind == JobKind.Check);
-        // Stopped at its first failure (the error above) is the proof: the job would otherwise have run its own 60 s sleep out. No wall-clock bound.
+        await jobs.StopAsync(CancellationToken.None);
     }
 
     [Fact]
     public async Task APlainRunKeepsRunningToItsOwnEndAfterAFailedTest()
     {
+        var fake = UseFake();
         var id = Run($"{Report}; sleep 2; echo slept; exit 1").Made.ShouldNotBeNull();
+        await Until(id, j => j.TestsFailed == 1);
+        // Still running after the failure: it is the line's own end, here the test's say, that ends it.
+        _state.Jobs().Single(j => j.Id == id).State.ShouldBe(JobState.Running);
 
+        fake.Finish(id);
         var ended = await Ended(id);
 
         (ended.State, ended.ExitCode, ended.TestsFailed).ShouldBe((JobState.Failed, 1, 1));
@@ -96,23 +131,17 @@ public sealed class JobTestsFailFast : JobTestsBase
     [Fact]
     public async Task ARunHandedOverWithFailFastStopsLikeACheckAndTellsItsOwnerOnce()
     {
-        var pidFile = Path.Combine(_root, "child.pid");
+        var fake = UseFake();
         var id = _jobs.Run(new CommandRequest
         {
-            Verb = Verbs.Run, Target = "session/a1b2c3d4", Args = [Verbs.FailFastArg, _root, "0", FailsWithAChild(pidFile)], Who = "se1-tia1-parser",
+            Verb = Verbs.Run, Target = "session/a1b2c3d4", Args = [Verbs.FailFastArg, _root, "0", FailsThenWaits], Who = "se1-tia1-parser",
         }).Made.ShouldNotBeNull();
 
         var ended = await Ended(id);
 
         (ended.State, ended.Error, ended.FailFast).ShouldBe((JobState.Failed, $"stopped at its first failure: {Short}", true));
         // Stopped at its first failure (the error above) is the proof, not a wall-clock bound.
-        IsAlive(ended.Pid!.Value).ShouldBeFalse();
-        var childPid = int.Parse(ReadLog(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
-        for (var i = 0; i < 100 && IsAlive(childPid); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
-        IsAlive(childPid).ShouldBeFalse();
+        fake.Job(id).IsAlive.ShouldBeFalse();
         // No early "runs on" word: the end, which names the test, is the one message.
         _said.ShouldHaveSingleItem().Args[0].ShouldContain($"stopped at its first failure: {Short}");
     }
@@ -122,6 +151,7 @@ public sealed class JobTestsFailFast : JobTestsBase
     [InlineData(SessionRole.Worker)]
     public async Task ARunOfALegsCheckStopsForAReviewerAndNotForAWorker(SessionRole role)
     {
+        UseFake();
         _state.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, Check = FailsThenWaits });
         _state.PutSession(new SessionRow
         {
@@ -150,6 +180,7 @@ public sealed class JobTestsFailFast : JobTestsBase
     [Fact]
     public async Task AFixerSessionsLegCheckStopsAtItsFirstFailure()
     {
+        UseFake();
         _state.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, Check = FailsThenWaits });
         _state.PutSession(new SessionRow
         {

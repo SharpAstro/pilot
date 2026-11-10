@@ -298,7 +298,7 @@ public sealed class HookRouteTests
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(Ct);
-        budget.CancelAfter(TimeSpan.FromSeconds(60));
+        budget.CancelAfter(TimeSpan.FromSeconds(25));
         await using var events = await node.Client.OpenEventsAsync(since: null, stream: null, budget.Token);
         (await events.ReadAsync(budget.Token)).ShouldBeOfType<SnapshotEvent>();
         node.Agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-hook", "done", pid: 4343, status: "idle"));

@@ -53,6 +53,31 @@ public sealed class StaleRowTests
     }
 
     [Fact]
+    public void ASummaryAttachedWithALegsTableOfCheckRunsShowsItsFirstLineOnly()
+    {
+        var row = Flight() with { StaleSummary = "19:34 leg main started. TIA1611/main is stale: flying 4 d (card c1). Its check runs:" + Environment.NewLine + "job | started | duration | result | failed" + Environment.NewLine + "j1 | 2026-11-06 07:24 | 30 m | failed | ATest" };
+
+        var line = FlightLine.Build([row], [], Now, []).Single();
+
+        line.StaleSummary.ShouldBe("19:34 leg main started. TIA1611/main is stale: flying 4 d (card c1).");
+
+        // With PILOT_TEST_CAPTURE set, the flight's page at a narrow and a wide size beside that path (ui-changes.md: look at it).
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var screen = new FlightsScreen([line], "test", Now);
+        foreach (var (width, height) in new[] { (700, 500), (1600, 500) })
+        {
+            using var shot = new RgbaImageRenderer((uint)width, (uint)height);
+            var view = NewView(shot, out _);
+            view.OpenDetail("TIA1611");
+            view.Render(screen, new RectF32(0, 0, width, height));
+            File.WriteAllBytes(Path.Combine(Path.GetDirectoryName(capture) ?? ".", $"stale-line-{width}.png"), PngWriter.Encode(shot.Surface.Pixels, width, height));
+        }
+    }
+
+    [Fact]
     public void TheQuestionNamesTheFlightItsSummaryAndAsksForACardOnIt()
     {
         var text = WatchtowerAsks.WhyNotMoving("TIA1611", Summary);

@@ -81,7 +81,7 @@ public sealed class LegTickingPassTests : LegCommanderTestsBase
 
     private static async Task Until(Func<bool> condition)
     {
-        var until = DateTime.UtcNow.AddSeconds(30);
+        var until = DateTime.UtcNow.AddSeconds(25);
         while (!condition() && DateTime.UtcNow < until)
         {
             await Task.Delay(10, Ct);
@@ -286,7 +286,7 @@ public sealed class LegTickingPassTests : LegCommanderTestsBase
         failed.Ok.ShouldBeTrue(failed.Error);
         L("parser").State.ShouldBe(LegState.Failed);
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == "leg-failed");
-        (card.Bin, card.Title).ShouldBe((CardBin.Ring, "TIA1/parser stopped: step 2 is not covered by any commit"));
+        (card.Bin, card.Title).ShouldBe((CardBin.Ring, "TIA1/parser: step 2 is not covered by any commit"));
     }
 
     /// <summary>The ticker of the leg ended with step 1 ticked and step 2 not, and no finish.</summary>
@@ -347,7 +347,10 @@ public sealed class LegTickingPassTests : LegCommanderTestsBase
         L("parser").GoArounds.ShouldBe(1);
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegWatch.Idle);
         card.Bin.ShouldBe(CardBin.Ring);
-        card.Title.ShouldContain("ticker stopped without finishing the leg: its session ended");
+        card.Title.ShouldBe("TIA1 is stuck: its worker ended with the leg unfinished");
+        card.Summary.ShouldBe("The worker of TIA1/parser ended with the leg unfinished and the node's own attempt to finish it failed. Start another worker to carry the leg on.");
+        card.Choices.Select(c => c.Label).ShouldBe([Verbs.RestartWorker]);
+        card.Detail.ShouldNotBeNull().ShouldContain("stopped without finishing it: its session ended");
         _state.Cards(openOnly: true).Count(c => c.Bin == CardBin.Ring).ShouldBe(1);
     }
 
@@ -364,7 +367,8 @@ public sealed class LegTickingPassTests : LegCommanderTestsBase
         L("parser").GoArounds.ShouldBe(0);
         var card = _state.Cards(openOnly: true).Single(c => c.Bin == CardBin.Ring);
         card.Kind.ShouldBe(LegWatch.Idle);
-        card.Title.ShouldContain("go-around refused");
+        card.Title.ShouldBe("TIA1 is stuck: its worker ended with the leg unfinished");
+        card.Detail.ShouldNotBeNull().ShouldContain("the node's go-around was refused");
         _workers.Started.Count(w => w.Name == Ticker).ShouldBe(1);
     }
 
@@ -409,8 +413,8 @@ public sealed class LegTickingPassTests : LegCommanderTestsBase
         L("parser").State.ShouldBe(LegState.Flying);
         var card = _state.Cards(openOnly: true).Single(c => c.Bin == CardBin.Ring);
         card.Kind.ShouldBe(LegWatch.Idle);
-        card.Title.ShouldContain("ticker stopped with every step ticked, and the node's finish was refused");
-        card.Title.ShouldContain("check");
+        card.Title.ShouldBe("TIA1 is stuck: the node could not finish its leg");
+        card.Detail.ShouldNotBeNull().ShouldContain("ran `leg finish done` for it");
         card.Detail.ShouldNotBeNull().ShouldContain("Parser.Tests: 3 failed");
         // The node asks for the finish once per ticker.
         _checks.Runs.Count.ShouldBe(1);

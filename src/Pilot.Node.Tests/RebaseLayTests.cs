@@ -9,7 +9,7 @@ namespace Pilot.Node.Tests;
 /// queue that rebases cannot land. The probe tells so in a throwaway worktree, never touching the plane.
 /// </summary>
 [Trait("Category", "Slow")]
-public sealed class RebaseLayTests : LegCommanderTestsBase
+public sealed class RebaseLayTests() : LegCommanderTestsBase(realGit: true)
 {
     [Theory]
     [InlineData("[{\"type\":\"merge_queue\",\"parameters\":{\"merge_method\":\"REBASE\"}}]", "REBASE")]

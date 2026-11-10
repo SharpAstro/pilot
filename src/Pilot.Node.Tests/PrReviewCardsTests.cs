@@ -20,7 +20,7 @@ public sealed class PrReviewCardsTests : PrFixTestsBase
     private PrReviews Restarted(out NodeState state)
     {
         state = new NodeState(_journal, TimeProvider.System);
-        var git = new GitCli();
+        var git = _git;
         return new PrReviews(state, _workers, _github, git, new Planes(git), new RepoCatalog(state, _options), _options, TimeProvider.System)
         {
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),
@@ -113,16 +113,32 @@ public sealed class PrReviewCardsTests : PrFixTestsBase
     }
 
     [Fact]
-    public async Task AFreshReviewClosesTheEarlierReviewsDesignCardSayingANewerReviewStarted()
+    public async Task AFreshReviewThatAsksNoQuestionOfDesignSettlesTheEarlierReviewsDesignCardSayingALaterReviewNoLongerAsksIt()
     {
         await Review("acme/widget#7", "changes", Design);
         var design = OpenDesign(_state).ShouldNotBeNull();
 
         await Review("acme/widget#7", "approve");
 
+        // Not closed bare as "a newer review started": the later review's own word on the question settles it (pilot #800).
         var closed = _state.Cards().Single(c => c.Id == design.Id);
         closed.State.ShouldBe(CardState.Closed);
-        closed.Outcome.ShouldNotBeNull().ShouldContain("a newer review");
+        closed.Outcome.ShouldNotBeNull().ShouldContain("a later review no longer asks it");
+        _state.Cards().ShouldContain(c => c.Kind == PrReviews.DesignSettledKind && c.Bin == CardBin.Handled);
+    }
+
+    [Fact]
+    public async Task AFreshReviewThatIsStillReadingLeavesTheEarlierReviewsDesignCardRinging()
+    {
+        await Review("acme/widget#7", "changes", Design);
+        var design = OpenDesign(_state).ShouldNotBeNull();
+
+        (await Run(Verbs.ReviewPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
+        await _reviews.SweepAsync(Ct);
+
+        // Nothing is known of the question yet, so the ring stays until the newer review says.
+        _state.Cards().Single(c => c.Id == design.Id).State.ShouldBe(CardState.Open);
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.DesignSettledKind);
     }
 
     [Fact]
