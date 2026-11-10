@@ -38,8 +38,9 @@ public sealed partial class PrReviews
     /// <summary>
     /// What an option's button says (#797, the owner: a button says plainly what happens, "Measure the nebula fields first (recommended)",
     /// never a bare "Option A" when the words fit): the option's own words, with <c>(recommended)</c> on the recommended one, when they fit a
-    /// button whole (<see cref="MaxOptionLabel"/>); never cut. Null when they do not: the button is then <see cref="PickLabel"/> and the
-    /// body carries the option's words whole by its tag.
+    /// button whole (<see cref="MaxOptionLabel"/>) in 2 to 5 words (the card rules' button, <see cref="ButtonWordsMin"/> to
+    /// <see cref="ButtonWordsMax"/>: a one-word "Keep" does not say what it keeps); never cut. Null when they do not: the button is then
+    /// <see cref="PickLabel"/> and the body carries the option's words whole by its tag.
     /// </summary>
     internal static string? OwnWordsLabel(DesignOption option)
     {
@@ -49,8 +50,12 @@ public sealed partial class PrReviews
             return null;
         }
         var label = char.ToUpperInvariant(words[0]) + words[1..] + (option.Recommended ? " (recommended)" : "");
-        return label.Length <= MaxOptionLabel && CardSummaries.Usable(label) ? label : null;
+        var count = label.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+        return label.Length <= MaxOptionLabel && count is >= ButtonWordsMin and <= ButtonWordsMax && CardSummaries.Usable(label) ? label : null;
     }
+
+    /// <summary>The fewest and most words a button carries (#797): fewer does not say what it does, more is a sentence pasted into a button.</summary>
+    internal const int ButtonWordsMin = 2, ButtonWordsMax = 5;
 
     // The words after an option's text: its consequence, then what it misses; the colon the text takes comes first, a semicolon joins the two.
     private static string DesignOptionWords(DesignOption option)
@@ -64,25 +69,40 @@ public sealed partial class PrReviews
     }
 
     /// <summary>
-    /// The design card's choices: one per option of every question, the recommended first within each, each a <c>review fix</c> whose args
-    /// are the option's words as the answer (on a card with several questions, naming the question it answers) and whose button is the
-    /// option's own words (<see cref="OwnWordsLabel"/>) or, when they do not fit, <see cref="PickLabel"/> by its tag; then the free-text
-    /// Answer, which is never the only choice of a card whose questions have options. The answer the button sends is its hover.
+    /// The design card's choices. A press is one whole decision: it is acted on at once and settles the card (<c>ActOnAnswerAsync</c>), so
+    /// a button never answers part of what the card asks.
+    /// <list type="bullet">
+    /// <item>One question: one choice per option, the recommended first, each a <c>review fix</c> whose args are the option's words as the
+    /// answer and whose button is the option's own words (<see cref="OwnWordsLabel"/>) or, when they do not fit, <see cref="PickLabel"/> by
+    /// its letter.</item>
+    /// <item>Several questions: one button that takes every question's recommended answer together (<see cref="RecommendedLabel"/>, its
+    /// args one line per question naming the question it answers, as <see cref="DesignQuestion.Decide"/> writes them), when each question has
+    /// one. A button per option answered one question and closed the card with the others dropped (the review of #797, c3479); every
+    /// option is in the body by its tag instead, and own words take the tags (<c>1A 2B</c>, <see cref="DesignQuestion.ExpandTags"/>).</item>
+    /// </list>
+    /// Then the free-text Answer, which is the only choice only of a card whose questions have no options, or several questions without a
+    /// recommended answer each. The answer a button sends is its hover.
     /// </summary>
     internal static List<CardChoice> DesignChoices(string subject, IReadOnlyList<DesignQuestion> questions)
     {
         var choices = new List<CardChoice>();
-        for (var n = 0; n < questions.Count; n++)
+        if (questions.Count > 1)
         {
-            var question = questions[n];
-            var number = n;
+            if (DesignQuestion.RecommendedAnswers(questions) is { } recommended)
+            {
+                choices.Add(new CardChoice { Label = RecommendedLabel(questions.Count), Verb = Verbs.FixPr, Target = subject, Args = [recommended], Hint = recommended });
+            }
+            choices.Add(AnswerChoice(subject, questions.Count));
+            return choices;
+        }
+        foreach (var question in questions)
+        {
             choices.AddRange(question.RecommendedFirst.Select((o, i) =>
             {
-                // With several questions the answer names its question as the node's own decided answer does (DesignQuestion.Decide).
-                var answer = questions.Count > 1 ? $"{Clean(question.Question, int.MaxValue)} => {o.Answer}" : o.Answer;
+                var answer = DesignQuestion.AnswerTo(questions, question, o);
                 return new CardChoice
                 {
-                    Label = OwnWordsLabel(o) ?? PickLabel(OptionTag(questions, number, i)), Verb = Verbs.FixPr, Target = subject, Args = [answer], Hint = answer,
+                    Label = OwnWordsLabel(o) ?? PickLabel(OptionTag(questions, 0, i)), Verb = Verbs.FixPr, Target = subject, Args = [answer], Hint = answer,
                 };
             }));
         }
@@ -90,11 +110,15 @@ public sealed partial class PrReviews
         return choices;
     }
 
+    /// <summary>The label of the one button that takes the recommended answer of each of a card's <paramref name="questions"/> questions together.</summary>
+    internal static string RecommendedLabel(int questions) => questions == 2 ? "Take both recommended answers" : $"Take all {questions} recommended answers";
+
     /// <summary>
     /// The design card's body: each question itself (numbered on a card with several), and by its tag the whole words of every option whose
     /// button could not carry them (<c>A: ... (recommended). B: ...</c>), so the card says what is asked and what each button picks without
     /// opening its detail (owner, 2026-11-09: "it doesn't even list the question"; the review of #797: an option's words are never only
-    /// behind the detail or a hover). An option whose button says its own words is not said again (#797 rule 5). The options are never
+    /// behind the detail or a hover). An option whose button says its own words is not said again (#797 rule 5). On a card with several
+    /// questions no option has a button of its own, so every option is said by its tag (<c>1A</c>, <c>2B</c>), the tags own words take. The options are never
     /// dropped: to stay within what the panel draws (<see cref="PanelSummaryChars"/>, <c>CardsView.SummaryChars</c>) the reason it rings
     /// goes first, then the questions end with an ellipsis down to <see cref="QuestionFloor"/>; past that the line is longer than the panel
     /// draws and its whole text is the hover there. Text that <see cref="CardSummaries.Usable"/> would refuse (a path of three segments, a
@@ -124,8 +148,8 @@ public sealed partial class PrReviews
     private static string DesignLine(IReadOnlyList<DesignQuestion> questions, bool plain)
     {
         string Words(string text, int max) => Clean(plain ? WithoutLogLooks(text) : text, max);
-        // Each question's options whose button cannot say them, whole, by their tag.
-        var options = questions.Select((q, n) => string.Concat(q.RecommendedFirst.Select((o, i) => OwnWordsLabel(o) is null
+        // Each question's options whose button cannot say them, whole, by their tag: on a card with several, every option.
+        var options = questions.Select((q, n) => string.Concat(q.RecommendedFirst.Select((o, i) => questions.Count > 1 || OwnWordsLabel(o) is null
             ? $" {OptionTag(questions, n, i)}: {Words(o.Text, int.MaxValue).TrimEnd('.')}{(o.Recommended ? " (recommended)" : "")}."
             : ""))).ToList();
         string Line(int share) => string.Join(' ', questions.Select((q, n) => QuestionNumber(questions, n) + Words(q.Question, share) + options[n]));
@@ -175,8 +199,14 @@ public sealed partial class PrReviews
         return Cut(System.Text.RegularExpressions.Regex.Replace(plain, @"\s+", " ").Trim(), max);
     }
 
-    /// <summary>The design card's Answer: <c>review fix</c> with the words the person types, which the card's answer appends to its args.</summary>
-    internal static CardChoice AnswerChoice(string subject) => new() { Label = AnswerLabel, Verb = Verbs.FixPr, Target = subject, AsksFor = "Your answer" };
+    /// <summary>
+    /// The design card's Answer: <c>review fix</c> with the words the person types, which the card's answer appends to its args. On a card of
+    /// several <paramref name="questions"/> the box asks for an answer to each, and says the tags it takes.
+    /// </summary>
+    internal static CardChoice AnswerChoice(string subject, int questions = 1) => new()
+    {
+        Label = AnswerLabel, Verb = Verbs.FixPr, Target = subject, AsksFor = questions > 1 ? "Your answer to each question, such as 1A 2B" : "Your answer",
+    };
 
     /// <summary>
     /// Raises a review's card once: the review keeps which kinds it raised (<see cref="PrReviewRow.Raised"/>, in the journal), so a

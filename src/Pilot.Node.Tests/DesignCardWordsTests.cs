@@ -9,9 +9,9 @@ namespace Pilot.Node.Tests;
 /// A design card says what it asks and what each button picks (owner, 2026-11-09: "it doesn't even list the question"; #797: a button says
 /// plainly what happens, "Measure the nebula fields first (recommended)", never a bare "Option A" when the words fit). An option's button
 /// is its own words when they fit a button whole; when they do not it is <c>Pick option A</c> and the option's words are in the body by
-/// that letter, never only behind the detail or a hover. A card with several questions offers every question's options, so "Answer in
-/// your own words" is never its only button (c3479). Each test raises the card on the node's state, so <c>CardSummaries.Usable</c> judges
-/// the summary as it does for the node. In memory only: no process, no disk.
+/// that letter, never only behind the detail or a hover. A card with several questions takes every question's recommended answer in one
+/// press, so "Answer in your own words" is not its only button (c3479) and no press answers one question of several. Each test raises the
+/// card on the node's state, so <c>CardSummaries.Usable</c> judges the summary as it does for the node. In memory only: no process, no disk.
 /// </summary>
 public sealed class DesignCardWordsTests
 {
@@ -84,19 +84,50 @@ public sealed class DesignCardWordsTests
         CardsPanelFixture.ShouldMatch("c3483", card, title: false);
     }
 
+    /// <summary>
+    /// c3479: a press answers the whole card, so a card of two questions has one button that takes both recommended answers, never a
+    /// button per option that answered one question and closed the card with the other dropped (the review of #797). Every option is in
+    /// the body by its tag, which own words take (1A 2B).
+    /// </summary>
     [Fact]
-    public void C3479ACardWithTwoQuestionsOffersEachQuestionsOptionsNotOnlyAnswerInYourOwnWords()
+    public void C3479ACardWithTwoQuestionsTakesBothRecommendedAnswersInOnePressAndListsEveryOptionByItsTag()
     {
         var card = Raise(C3479);
 
-        card.Choices.Select(c => c.Label).ShouldBe(
-            ["Remind it first (recommended)", "Restart it at once", "Pick option 2A", "Wait for the review too", PrReviews.AnswerLabel]);
-        card.Summary.ShouldBe("1. Should a stalled worker be restarted or reminded first? 2. Is a leg done when its check passes?"
-            + " 2A: mark it done when its check passes (recommended).");
-        // Each answer names the question it answers, as the card asks two.
-        card.Choices[0].Args.ShouldBe(["Should a stalled worker be restarted or reminded first? => remind it first (restart it only if the reminder does nothing)"]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Take both recommended answers", PrReviews.AnswerLabel]);
+        card.Summary.ShouldBe("1. Should a stalled worker be restarted or reminded first? 1A: remind it first (recommended). 1B: restart it at once."
+            + " 2. Is a leg done when its check passes? 2A: mark it done when its check passes (recommended). 2B: wait for the review too.");
+        // One answer for both questions, each line naming the question it answers; the hover says the same.
+        card.Choices[0].Args.ShouldBe(["Should a stalled worker be restarted or reminded first? => remind it first (restart it only if the reminder does nothing)\n"
+            + "Is a leg done when its check passes? => mark it done when its check passes (the review comes after)"]);
+        card.Choices[0].Hint.ShouldBe(card.Choices[0].Args[0]);
+        card.Choices[1].AsksFor.ShouldBe("Your answer to each question, such as 1A 2B");
         CardsPanelFixture.ShouldMatch("c3479", card, title: false);
-        card.Choices[2].Args.ShouldBe(["Is a leg done when its check passes? => mark it done when its check passes (the review comes after)"]);
+    }
+
+    [Fact]
+    public void ThreeQuestionsTakeAllThreeAndAQuestionWithNoRecommendedAnswerLeavesOnlyOwnWords()
+    {
+        Raise(C3479[0], C3479[1], Asked("q3?")).Choices.Select(c => c.Label).ShouldBe(["Take all 3 recommended answers", PrReviews.AnswerLabel]);
+
+        var noneRecommended = new DesignQuestion(null!, "and the name?", [new DesignOption("keep it", "", false), new DesignOption("rename it", "", false)]);
+        var card = Raise(C3479[0], noneRecommended);
+
+        card.Choices.Select(c => c.Label).ShouldBe([PrReviews.AnswerLabel]);
+        card.Summary.ShouldNotBeNull().ShouldContain("2A: keep it. 2B: rename it.");
+    }
+
+    [Theory]
+    [InlineData("Keep")]
+    [InlineData("Rename")]
+    [InlineData("restart the worker at once, then nudge it")]
+    public void AnOptionOfOneWordOrOverFiveIsPickedByItsLetterWithItsWordsInTheBody(string words)
+    {
+        var card = Raise(new DesignQuestion(null!, "and the name?", [new DesignOption(words, "", false), new DesignOption("keep the old name", "", false)]));
+
+        card.Choices.Select(c => c.Label).ShouldBe(["Pick option A", "Keep the old name", PrReviews.AnswerLabel]);
+        card.Summary.ShouldNotBeNull().ShouldContain($"A: {words.TrimEnd('.')}.");
+        card.Choices.SelectMany(c => CardLint.Button(c.Label)).ShouldBeEmpty();
     }
 
     [Fact]

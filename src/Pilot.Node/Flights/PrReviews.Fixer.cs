@@ -244,6 +244,12 @@ public sealed partial class PrReviews
         }
         var words = string.Join(' ', command.Args ?? []).Trim();
         string? given = null;
+        if (asksDesign && words.Length > 0)
+        {
+            // Own words that are only the card's tags (1A 2B) are each question's option, as a button's answer reads; tags that leave a
+            // question unanswered are refused here, with the card still open, so no answer drops a question.
+            words = DesignQuestion.ExpandTags([.. review.Findings.Select(DesignQuestion.Parse).OfType<DesignQuestion>()], words);
+        }
         if (asksDesign)
         {
             given = words.Length > 0 ? words : review.DesignAnswer is { Length: > 0 } stored ? stored : await AnswerCommentAsync(pr, review, cancellationToken);
@@ -360,11 +366,13 @@ public sealed partial class PrReviews
     }
 
     // A question of design answered, once: the findings asked, the options the design card offered (its choices that are not the free
-    // Answer), the option picked or the free text, and the words as the reason. On a flight's PR the flight is the subject.
+    // Answer), the option picked or the free text, and the words as the reason. On a flight's PR the flight is the subject. A card of
+    // several questions has one button for all their recommended answers, so its options are the reviewer's, each question's by its choice.
     private Task RecordDesignAsync(PrRef pr, FlightRow? flight, PrReviewRow review, CommandRequest command, string? given, string words, CancellationToken cancellationToken)
     {
         var target = Verbs.PrTarget(pr.Repo, pr.Number);
-        var options = state.Cards().Where(c => c.Kind == DesignKind && c.Subject == target)
+        var questions = review.Findings.Select(DesignQuestion.Parse).OfType<DesignQuestion>().ToList();
+        var options = questions.Count > 1 ? DesignQuestion.OptionLabels(questions) : state.Cards().Where(c => c.Kind == DesignKind && c.Subject == target)
             // The option's words are the answer its button sends: the label is only its letter (Pick option A).
             .SelectMany(c => c.Choices).Where(c => c.AsksFor is null).Select(c => c.Args.FirstOrDefault() ?? c.Label).Distinct().ToArray();
         var byKind = command.Autopilot ? DecisionByKinds.Autopilot
