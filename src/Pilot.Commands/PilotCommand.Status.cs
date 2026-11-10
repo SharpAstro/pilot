@@ -231,7 +231,6 @@ public static partial class PilotCommand
                 var snapshot = await SnapshotAsync(client, ct);
                 var owner = p.GetValue(attachmentsOwner);
                 string? dataFolder = null;
-                string? thisNode = null;
                 try
                 {
                     dataFolder = (await client.GetNodeAsync(ct)).DataFolder;
