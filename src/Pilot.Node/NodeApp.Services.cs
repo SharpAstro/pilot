@@ -227,6 +227,8 @@ public static partial class NodeApp
         {
             var sync = ActivatorUtilities.CreateInstance<RepoSync>(services);
             sync.Error = logWriter;
+            var jobs = services.GetRequiredService<JobRunner>();
+            sync.Seed = new BuildSeed(services.GetRequiredService<IGit>(), () => jobs.BuildCache, jobs.QueueSeed) { Error = logWriter };
             return sync;
         });
         builder.Services.AddSingleton<RepoCommander>();

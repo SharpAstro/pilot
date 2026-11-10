@@ -115,6 +115,39 @@ public sealed class BuildCacheTests : JobTestsBase
     }
 
     [Fact]
+    public void ASeedJobGetsTheVariablesAndTheCachedFormThoughItsFolderIsNoPlane()
+    {
+        var main = Path.Combine(_root, "org", "pilot");
+
+        BuildCache.Variables(true, main, Root, seed: true).ShouldContainKey("MSBuildCacheEnabled");
+        BuildCache.Variables(false, main, Root, seed: true).ShouldBeEmpty();
+        BuildCache.With("dotnet build Pilot.slnx -c Release", true, main, Root, MsBuild, seed: true).ShouldContain("-reportfileaccesses");
+        BuildCache.With("dotnet build Pilot.slnx -c Release", false, main, Root, MsBuild, seed: true).ShouldBe("dotnet build Pilot.slnx -c Release");
+    }
+
+    [Fact]
+    public async Task AQueuedSeedRunsAsAnOrdinaryNodeJobWithTheCacheOnAndAnOrdinaryJobInTheSameCloneDoesNot()
+    {
+        var main = Directory.CreateDirectory(Path.Combine(_root, "org", "pilot")).FullName;
+        _jobs.BuildCache = true;
+        _jobs.MsBuild = () => MsBuild;
+
+        _jobs.QueueSeed(main, "dotnet build Pilot.slnx -c Release").ShouldBeNull();
+        var seed = _state.Jobs().Single();
+        await Until(seed.Id, _ => Fake!.JobOrNull(seed.Id) is not null);
+        var launch = Fake!.JobOrNull(seed.Id)!.Launch;
+
+        seed.Owner.ShouldBeNull();
+        launch.Environment!.ShouldContainKey("MSBuildCacheEnabled");
+        launch.Command.ShouldContain("-reportfileaccesses");
+
+        var other = _jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = Verbs.NodeTarget, Args = [main, "0", "dotnet build Other.slnx"], Who = "node" }).Made!;
+        await Until(other, _ => Fake!.JobOrNull(other) is not null);
+        Fake!.JobOrNull(other)!.Launch.Environment!.ShouldNotContainKey("MSBuildCacheEnabled");
+        Fake!.JobOrNull(other)!.Launch.Command.ShouldBe("dotnet build Other.slnx");
+    }
+
+    [Fact]
     public async Task ByDefaultAPlaneJobRunsAsGivenWithNoCacheVariables()
     {
         var launch = await Launched(null, "dotnet build Pilot.slnx -c Release", PlaneIn("pil1"));

@@ -8,7 +8,8 @@ namespace Pilot.Node.Flights;
 /// the cache. <c>docs/build-cache.md</c> has the trial: the cache does not run under <c>dotnet build</c> (it needs
 /// <c>-reportfileaccesses</c>, which only Visual Studio's x64 <c>MSBuild.exe</c> has), so each <c>dotnet build</c> segment of a
 /// job's command becomes a <c>dotnet restore</c> and that MSBuild with the trial's flags (<see cref="With"/>). Pure: the MSBuild path and the
-/// cache root are given, so a test reads the result without a machine that has Visual Studio. Off by default, and a no-op outside a plane.
+/// cache root are given, so a test reads the result without a machine that has Visual Studio. Off by default, and a no-op outside a plane
+/// except for a seed job (<see cref="BuildSeed"/>), the node's own build of a main clone that fills the cache for the planes cut from it.
 /// </summary>
 public static class BuildCache
 {
@@ -22,8 +23,8 @@ public static class BuildCache
     public static string RootIn(string dataFolder) => Path.Combine(dataFolder, FolderName);
 
     /// <summary>The variables a job run in <paramref name="cwd"/> gets when the setting is on: none for a job outside a plane, or with the setting off.</summary>
-    public static IReadOnlyDictionary<string, string> Variables(bool enabled, string cwd, string cacheRoot) =>
-        enabled && PlaneOutput.PlaneOf(cwd) is not null
+    public static IReadOnlyDictionary<string, string> Variables(bool enabled, string cwd, string cacheRoot, bool seed = false) =>
+        enabled && (seed || PlaneOutput.PlaneOf(cwd) is not null)
             ? new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 [EnabledProperty] = "true",
@@ -37,9 +38,9 @@ public static class BuildCache
     /// <c>dotnet build</c> (a <c>dotnet test</c> too: the trial found no cached form of it). The whole command is returned as it is
     /// when <paramref name="msBuild"/> is null (no Visual Studio here), outside a plane, or with the setting off.
     /// </summary>
-    public static string With(string command, bool enabled, string cwd, string cacheRoot, string? msBuild)
+    public static string With(string command, bool enabled, string cwd, string cacheRoot, string? msBuild, bool seed = false)
     {
-        if (!enabled || msBuild is null || PlaneOutput.PlaneOf(cwd) is null)
+        if (!enabled || msBuild is null || (!seed && PlaneOutput.PlaneOf(cwd) is null))
         {
             return command;
         }
