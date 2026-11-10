@@ -672,6 +672,14 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             return state.Complete(command, WholeSuiteRefusal(whole, owner));
         }
+        // A flight's session can't approve its own whole suite: PIL801's worker gave itself a why and ran every test, the Slow ones
+        // included, for 23 min on a loaded node (j4444, 2026-11-10). Only a leg planned with whole-suite=<why> lets its sessions
+        // run one; the owner (a terminal) and the controller still can.
+        if (wholeSuiteWhy is not null && CheckScope.WholeSuite(line) is { } wholeAsked && owner is { Role: SessionRole.Worker or SessionRole.Reviewer or SessionRole.Planner } asker
+            && !LegAllowsWholeSuite(asker))
+        {
+            return state.Complete(command, $"{WholeSuiteRefusal(wholeAsked, owner)}. A flight's session can't approve its own whole suite: its leg must be planned with {CheckScope.WholeSuiteKey}=<why>, or the owner runs it");
+        }
 
         // A session that replaced another of its name and role takes up the predecessor's queued job of the same command in the
         // same folder, rather than queueing the same work twice (its end already goes to the replacement, #601). A running one only
@@ -740,6 +748,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <see cref="CheckScope.Refusal"/> for a run of a whole suite, with the filter suggested from the owner's flight's plane changes
     /// when the owner has a flight with a plane, and the way past it for a run.
     /// </summary>
+    /// <summary>Whether <paramref name="session"/>'s leg was planned to run the whole suite (its done-when carries <see cref="CheckScope.WholeSuiteMark"/>).</summary>
+    private bool LegAllowsWholeSuite(SessionRow session) =>
+        session.Flight is { Length: > 0 } flight && session.Leg is { Length: > 0 } leg
+        && state.Legs(flight).FirstOrDefault(l => l.Name == leg) is { } row
+        && row.DoneWhen.Contains(CheckScope.WholeSuiteMark, StringComparison.Ordinal);
+
     private string WholeSuiteRefusal(string segment, SessionRow? owner)
     {
         string? suggestion = null;
