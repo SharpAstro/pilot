@@ -541,7 +541,7 @@ public sealed class ConnectTests : OverlapTestsBase
 
         F("TIA2").State.ShouldBe(FlightState.Held);
         var card = MergedHoldCards().ShouldHaveSingleItem();
-        (card.Bin, card.Subject).ShouldBe((CardBin.Ring, "flight/TIA2"));
+        (card.Kind, card.Bin, card.Subject).ShouldBe((FlightCommander.MergedHoldKind, CardBin.Ring, "flight/TIA2"));
         card.Title.ShouldContain("TIA2");
         card.Title.ShouldContain("TIA1");
         card.Title.ShouldContain("#77");
