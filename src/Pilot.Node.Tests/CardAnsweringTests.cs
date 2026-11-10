@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
 using Pilot.Contracts;
@@ -14,7 +13,7 @@ namespace Pilot.Node.Tests;
 /// "refused", another choice is refused saying which answer is underway, and the mark ends with the answer. The owner's press of
 /// Resolve the conflict, two minutes after the controller's CLI had pressed the same button and it sat queued, was told it was refused.
 /// </summary>
-public sealed class CardAnsweringTests : IDisposable
+public sealed class CardAnsweringTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -27,46 +26,11 @@ public sealed class CardAnsweringTests : IDisposable
     // gone since #869, which resolves a conflict without ringing).
     private const string FixLastLeg = "Fix its last leg";
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2a-" + Guid.NewGuid().ToString("N")[..8]);
-
-    private string Repo => Path.Combine(_root, "tianwen");
-
-    public void Dispose()
-    {
-        try
-        {
-            if (Directory.Exists(Repo))
-            {
-                Git(Repo, "worktree", "prune");
-            }
-            if (Directory.Exists(_root))
-            {
-                foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-                {
-                    File.SetAttributes(file, FileAttributes.Normal);
-                }
-                Directory.Delete(_root, recursive: true);
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
-        {
-            // A temp folder a scanner still holds is the OS's to clear.
-        }
-    }
-
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    /// <summary>
+    /// The real repos of a test that runs the go-around through to git (tagged Slow): seeded through <see cref="SeededRepos"/>, which starts
+    /// its git through <see cref="TestEnvironment.Start"/> so the process-start guard (#933) sees it, and clears its folder when disposed.
+    /// </summary>
+    private static SeededRepos RealRepos() => new(Path.Combine(Path.GetTempPath(), "p2a-" + Guid.NewGuid().ToString("N")[..8]), realGit: true);
 
     private static string Local(DateTimeOffset at) => at.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture);
 
@@ -196,22 +160,17 @@ public sealed class CardAnsweringTests : IDisposable
     // ---- a go-around from the conflict card, on a node ----
 
     /// <summary>
-    /// TIA1 with its one leg done, its review passed and PR #63 open, in a real repo; a PR-ready card (a done leg under a passed review goes
-    /// around only while an open card offers it) and the conflicts card with Resolve the conflict and a second go-around choice.
+    /// TIA1 with its one leg done, its review passed and PR #63 open, in a repo of <paramref name="repos"/> (the node's in-memory model, or real
+    /// git for a Slow test); a PR-ready card (a done leg under a passed review goes around only while an open card offers it) and the merge-failed
+    /// card with two go-around choices.
     /// </summary>
-    private (CardRow Ready, CardRow Conflicts) Conflicted(NodeHarness node)
+    private static (CardRow Ready, CardRow Conflicts) Conflicted(NodeHarness node, SeededRepos repos)
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        Git(Repo, "config", "user.email", "t@example.com");
-        Git(Repo, "config", "user.name", "t");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "commit", "-q", "-m", "first");
-        Git(Repo, "branch", "flight/tia1");
+        var repo = repos.Seed("tianwen");
+        repos.Run(repo, "branch", "flight/tia1");
         node.State.PutFlight(new FlightRow
         {
-            Code = "TIA1", Repo = "tianwen", RepoPath = Repo, Issue = 1, Branch = "flight/tia1", Worktree = Path.Combine(_root, "plane-TIA1"),
+            Code = "TIA1", Repo = "tianwen", RepoPath = repo, Issue = 1, Branch = "flight/tia1", Worktree = Path.Combine(Path.GetDirectoryName(repo)!, "plane-TIA1"),
             Base = "main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow, PullRequest = 63, PullRequestUrl = PrUrl,
             Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow },
         });
@@ -255,8 +214,9 @@ public sealed class CardAnsweringTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task AGuiPressOfAGoAroundWhileTheClisIdenticalAnswerIsStillInsideTheGoAroundsCallingWindowGetsOkNotRefused()
     {
+        using var repos = RealRepos();
         await using var node = await NodeHarness.StartAsync(Ct);
-        var (_, conflicts) = Conflicted(node);
+        var (_, conflicts) = Conflicted(node, repos);
         var (open, reached) = HoldTheDraft(node);
         var cli = Press(node, "cli", conflicts, FixLastLeg);
         await Reaches(reached);
@@ -289,8 +249,9 @@ public sealed class CardAnsweringTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task ADifferentChoiceMeanwhileIsRefusedSayingWhichAnswerIsUnderwayAndADismissWaitsForIt()
     {
+        using var repos = RealRepos();
         await using var node = await NodeHarness.StartAsync(Ct);
-        var (_, conflicts) = Conflicted(node);
+        var (_, conflicts) = Conflicted(node, repos);
         var (open, reached) = HoldTheDraft(node);
         var cli = Press(node, "cli", conflicts, FixLastLeg);
         await Reaches(reached);
@@ -318,8 +279,9 @@ public sealed class CardAnsweringTests : IDisposable
     [Trait("Category", "Slow")]
     public async Task AnAnswerRefusedWhileTheFlightHasCallsOutSaysWhatItWaitsOnOnTheStreamAndLeavesNoMark()
     {
+        using var repos = RealRepos();
         await using var node = await NodeHarness.StartAsync(Ct);
-        var (ready, conflicts) = Conflicted(node);
+        var (ready, conflicts) = Conflicted(node, repos);
         var (open, reached) = HoldTheDraft(node);
         var cli = Press(node, "cli", conflicts, FixLastLeg);
         await Reaches(reached);
@@ -351,8 +313,9 @@ public sealed class CardAnsweringTests : IDisposable
     [Fact]
     public async Task AnAnswerThatIsRefusedBeforeItRunsLeavesNoMarkOnItsCard()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
-        var (_, conflicts) = Conflicted(node);
+        // In memory: the node's git and the seeded repo are the model, so the test starts no real process (#933).
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
+        var (_, conflicts) = Conflicted(node, node.Repos!);
         // A go-around needs a why: refused, the card stays for the person to try again.
         var blank = node.State.UpdateChoices(conflicts.Id, [new CardChoice { Label = FixLastLeg, Verb = Verbs.GoAround, Target = Verbs.LegTarget("TIA1", "parser"), Args = [" "] }]);
         blank.ShouldBeTrue();
@@ -373,8 +336,9 @@ public sealed class CardAnsweringTests : IDisposable
     [Fact]
     public async Task AnAnswerWhoseRunThrowsClearsItsMarkAndLeavesTheCardOpen()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
-        var (_, conflicts) = Conflicted(node);
+        // In memory, as above: whatever git the go-around asks before its gh call is answered by the model.
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
+        var (_, conflicts) = Conflicted(node, node.Repos!);
         // Not a refusal: the node is cut off in the middle of its gh call.
         node.GitHub.OnCall = call => call == nameof(IGitHub.SetDraftAsync) ? throw new InvalidOperationException("the node is stopping") : Task.CompletedTask;
 
@@ -412,6 +376,32 @@ public sealed class CardAnsweringTests : IDisposable
         other.Ok.ShouldBeFalse();
         other.Error.ShouldBe("card c1 is closed already (Note it)");
         node.State.Snapshot().Notes.ShouldHaveSingleItem().Text.ShouldBe("noted from a card");
+    }
+
+    [Fact]
+    public async Task PilotAnswerSaysAPressThatJoinedAnAnswerAlreadyTakenWasJoinedNotRun()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var card = node.State.RaiseCard(CardBin.ForYou, "question", "node", "Keep a note?", choices:
+            [new CardChoice { Label = "Note it", Verb = Verbs.Note, Target = Verbs.NodeTarget, Args = ["noted from a card"] }]);
+
+        async Task<string> Cli()
+        {
+            var output = new StringWriter();
+            var error = new StringWriter();
+            var exit = await Pilot.Commands.PilotCommand.RunAsync(["--node-socket", node.SocketPath, "answer", card.Id, "1"], node.Folder, output, error, Ct);
+            exit.ShouldBe(0, $"{output}{error}");
+            return output.ToString();
+        }
+
+        var first = await Cli();
+        var again = await Cli();
+
+        first.ShouldNotContain("joined:");
+        var closed = node.State.Cards().Single();
+        // What the GUI and TUI log for the same answer: the caller can tell a press that joined from one that ran.
+        again.ShouldContain($"joined: already answered by {closed.ClosedBy} at {Local(closed.ClosedAt!.Value)}");
+        node.State.Snapshot().Notes.ShouldHaveSingleItem();
     }
 
     [Fact]
