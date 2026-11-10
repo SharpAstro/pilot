@@ -1089,6 +1089,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     private void Finish(JobRow ended, string[]? last)
     {
+        _seeds.TryRemove(ended.Id, out _);
         if (_benchWaiters.TryRemove(ended.Id, out var bench))
         {
             bench.TrySetResult(ended);
@@ -1672,9 +1673,11 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>The cache root, <c>&lt;data folder&gt;\build-cache</c>.</summary>
     public string BuildCacheRoot => Flights.BuildCache.RootIn(options.DataFolder);
 
-    private readonly ConcurrentDictionary<(string Cwd, string Command), byte> _seeds = new();
+    // A seed is marked by its job id, and the mark goes when the job ends; between queueing and the id it is known by folder and command.
+    private readonly ConcurrentDictionary<string, byte> _seeds = new();
+    private readonly ConcurrentDictionary<(string Cwd, string Command), byte> _seedsQueueing = new();
 
-    private bool IsSeed(JobRow job) => _seeds.ContainsKey((job.Cwd, job.Command));
+    private bool IsSeed(JobRow job) => _seeds.ContainsKey(job.Id) || _seedsQueueing.ContainsKey((job.Cwd, job.Command));
 
     /// <summary>
     /// Queues the node's own seed build (<see cref="BuildSeed"/>) of a main clone: an ordinary below-normal job through the queue, owned by
@@ -1682,9 +1685,21 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     public string? QueueSeed(string cwd, string command)
     {
-        _seeds[(cwd, command)] = 0;
-        var result = Run(new CommandRequest { Verb = Verbs.Run, Target = Verbs.NodeTarget, Args = [cwd, "0", command], Who = BuildSeed.Who });
-        return result.Error;
+        _seedsQueueing[(cwd, command)] = 0;
+        try
+        {
+            var result = Run(new CommandRequest { Verb = Verbs.Run, Target = Verbs.NodeTarget, Args = [cwd, "0", command], Who = BuildSeed.Who });
+            if (result.Error is null
+                && state.Jobs().FirstOrDefault(j => j.EndedAt is null && j.Cwd == cwd && j.Command == command && !_seeds.ContainsKey(j.Id)) is { } queued)
+            {
+                _seeds[queued.Id] = 0;
+            }
+            return result.Error;
+        }
+        finally
+        {
+            _seedsQueueing.TryRemove((cwd, command), out _);
+        }
     }
 
     /// <summary>Where Visual Studio's MSBuild is; settable so a test gives one without a machine that has it.</summary>
@@ -1977,7 +1992,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             var variables = EnvironmentOf(job);
             // The recorded command stays as given; the cached build form is what runs.
             var command = BuildCache && (Flights.PlaneOutput.PlaneOf(job.Cwd) is not null || IsSeed(job))
-                ? Flights.BuildCache.With(job.Command, true, job.Cwd, BuildCacheRoot, MsBuild(), IsSeed(job))
+                ? Flights.BuildCache.With(job.Command, true, job.Cwd, BuildCacheRoot, MsBuild(), IsSeed(job), SiblingSource(job))
                 : job.Command;
             launched = Launcher.Start(new JobLaunch(job.Id, command, job.Cwd, job.LogPath, exitPath, Priority, variables,
                 Flights.PlaneOutput.NoBuildNotice(PlaneOutput, job.Command, job.Cwd)));

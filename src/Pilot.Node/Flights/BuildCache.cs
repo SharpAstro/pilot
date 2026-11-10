@@ -24,7 +24,7 @@ public static class BuildCache
 
     /// <summary>The variables a job run in <paramref name="cwd"/> gets when the setting is on: none for a job outside a plane, or with the setting off.</summary>
     public static IReadOnlyDictionary<string, string> Variables(bool enabled, string cwd, string cacheRoot, bool seed = false) =>
-        enabled && (seed || PlaneOutput.PlaneOf(cwd) is not null)
+        enabled && (seed || PlaneOutput.PlaneOf(cwd) is not null) && OptsIn(cwd)
             ? new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 [EnabledProperty] = "true",
@@ -32,15 +32,51 @@ public static class BuildCache
             }
             : new Dictionary<string, string>(StringComparer.Ordinal);
 
+    /// <summary>The package a repo names to opt in to the cache (PIL860 limits the trial to repos that do).</summary>
+    public const string PackageName = "Microsoft.MSBuildCache.Local";
+
+    /// <summary>
+    /// Whether the repo holding <paramref name="cwd"/> names <see cref="PackageName"/> in a <c>Directory.Packages.props</c> or
+    /// <c>Directory.Build.props</c> at the folder, under its <c>src</c>, or (for a <c>src</c> folder) beside it. A repo that does not is
+    /// left alone: no rewrite, no variables, no seed.
+    /// </summary>
+    public static bool OptsIn(string cwd)
+    {
+        var folders = new List<string> { cwd, Path.Combine(cwd, "src") };
+        if (Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(cwd))).Equals("src", StringComparison.OrdinalIgnoreCase)
+            && Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(cwd))) is { } parent)
+        {
+            folders.Add(parent);
+        }
+        foreach (var folder in folders)
+        {
+            foreach (var name in new[] { "Directory.Packages.props", "Directory.Build.props" })
+            {
+                try
+                {
+                    var file = Path.Combine(folder, name);
+                    if (File.Exists(file) && File.ReadAllText(file).Contains(PackageName, StringComparison.Ordinal))
+                    {
+                        return true;
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                }
+            }
+        }
+        return false;
+    }
+
     /// <summary>
     /// <paramref name="command"/> with each <c>dotnet build [project] [-c config]</c> segment rewritten to the trial's restore and cached
     /// MSBuild build. A segment is left alone when it already carries the cache flag, when it says <c>--no-build</c>, or is no
     /// <c>dotnet build</c> (a <c>dotnet test</c> too: the trial found no cached form of it). The whole command is returned as it is
     /// when <paramref name="msBuild"/> is null (no Visual Studio here), outside a plane, or with the setting off.
     /// </summary>
-    public static string With(string command, bool enabled, string cwd, string cacheRoot, string? msBuild, bool seed = false)
+    public static string With(string command, bool enabled, string cwd, string cacheRoot, string? msBuild, bool seed = false, bool siblingSource = false)
     {
-        if (!enabled || msBuild is null || (!seed && PlaneOutput.PlaneOf(cwd) is null))
+        if (!enabled || msBuild is null || (!seed && PlaneOutput.PlaneOf(cwd) is null) || !OptsIn(cwd))
         {
             return command;
         }
@@ -56,14 +92,14 @@ public static class BuildCache
             var body = segment.Trim();
             var lead = segment[..(segment.Length - segment.TrimStart().Length)];
             var trail = segment[segment.TrimEnd().Length..];
-            var rewritten = body.Length == 0 ? segment : lead + Rewrite(body, cacheRoot, msBuild) + trail;
+            var rewritten = body.Length == 0 ? segment : lead + Rewrite(body, cacheRoot, msBuild, siblingSource) + trail;
             result = string.Concat(result.AsSpan(0, at), rewritten, result.AsSpan(at + segment.Length));
             cursor = at + rewritten.Length;
         }
         return result;
     }
 
-    private static string Rewrite(string segment, string cacheRoot, string msBuild)
+    private static string Rewrite(string segment, string cacheRoot, string msBuild, bool siblingSource)
     {
         var tokens = CheckPaths.Tokenize(segment);
         var start = tokens.Count > 0 && tokens[0].Value == "&" ? 1 : 0;
@@ -76,6 +112,7 @@ public static class BuildCache
         string? project = null;
         string? configuration = null;
         var noRestore = false;
+        var setsSiblings = false;
         var extra = new List<string>();
         for (var i = start + 2; i < tokens.Count; i++)
         {
@@ -99,6 +136,7 @@ public static class BuildCache
             else if (value.StartsWith("-p:", StringComparison.OrdinalIgnoreCase) || value.StartsWith("-property:", StringComparison.OrdinalIgnoreCase))
             {
                 extra.Add(tokens[i].Raw);
+                setsSiblings |= value.Contains(PlaneOutput.UseLocalSiblings + "=", StringComparison.OrdinalIgnoreCase);
             }
             else if (!value.StartsWith('-') && project is null)
             {
@@ -111,7 +149,10 @@ public static class BuildCache
         }
         var cacheOn = $"-p:{EnabledProperty}=true";
         var config = $"-p:Configuration={configuration ?? "Debug"}";
-        var shared = string.Join(' ', new[] { config, cacheOn }.Concat(extra));
+        // Seed and plane build on the same references: the packages (a plane's probe is shut, PIL802), unless the flight builds on sibling source.
+        // Without it a main clone's 3-level probe finds the sibling beside it and the keys of the two would never match.
+        var siblings = setsSiblings ? null : $"-p:{PlaneOutput.UseLocalSiblings}={(siblingSource ? "true" : "false")}";
+        var shared = string.Join(' ', new[] { config, cacheOn, siblings }.Where(s => s is not null).Concat(extra)!);
         var build = string.Join(' ', new[]
         {
             "&", Quote(msBuild), project, "-graph -reportfileaccesses -m -nologo -v:m -clp:Summary", shared,

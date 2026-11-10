@@ -333,7 +333,7 @@ public sealed class RepoSyncTests : IDisposable
         git.Merges.ShouldBe(1);
     }
 
-    private (RepoSync Sync, ScriptedGit Git, List<(string Cwd, string Command)> Queued) Seeded(string clone, bool on, int behind, string? solution)
+    private (RepoSync Sync, ScriptedGit Git, List<(string Cwd, string Command)> Queued) Seeded(string clone, bool on, int behind, string? solution, bool optIn = true)
     {
         var git = new ScriptedGit();
         git.Repo(clone, behind: behind);
@@ -343,6 +343,10 @@ public sealed class RepoSyncTests : IDisposable
             var folder = Path.GetDirectoryName(Path.Combine(clone, solution))!;
             Directory.CreateDirectory(folder);
             File.WriteAllText(Path.Combine(clone, solution), "");
+            if (optIn)
+            {
+                File.WriteAllText(Path.Combine(folder, "Directory.Packages.props"), "<Project><ItemGroup><PackageVersion Include=\"Microsoft.MSBuildCache.Local\" Version=\"0.1.0\" /></ItemGroup></Project>");
+            }
         }
         var queued = new List<(string Cwd, string Command)>();
         var (sync, _) = Sync(git, new FakeGitHub(), new NodeState(new InMemoryJournal(), TimeProvider.System), _root);
@@ -385,6 +389,11 @@ public sealed class RepoSyncTests : IDisposable
         var (bareSync, _, bareQueued) = Seeded(bare, on: true, behind: 1, solution: null);
         (await bareSync.SyncOneAsync("bare", bare, Ct)).Status.ShouldBe(RepoSyncStatus.Updated);
         bareQueued.ShouldBeEmpty();
+
+        var plain = Clone("plain");
+        var (plainSync, _, plainQueued) = Seeded(plain, on: true, behind: 1, solution: "Plain.slnx", optIn: false);
+        (await plainSync.SyncOneAsync("plain", plain, Ct)).Status.ShouldBe(RepoSyncStatus.Updated);
+        plainQueued.ShouldBeEmpty();
 
         var root = Clone("rooted");
         var (rootSync, _, rootQueued) = Seeded(root, on: true, behind: 1, solution: "Rooted.sln");

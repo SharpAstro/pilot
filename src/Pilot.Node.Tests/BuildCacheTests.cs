@@ -19,7 +19,16 @@ public sealed class BuildCacheTests : JobTestsBase
     {
         var plane = Path.Combine(_root, "org", "pilot", ".claude", "worktrees", code);
         Directory.CreateDirectory(plane);
+        OptIn(plane);
         return plane;
+    }
+
+    // A repo opts in by naming the package in its Directory.Packages.props.
+    private static string OptIn(string folder)
+    {
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "Directory.Packages.props"), "<Project><ItemGroup><PackageVersion Include=\"Microsoft.MSBuildCache.Local\" Version=\"0.1.0\" /></ItemGroup></Project>");
+        return folder;
     }
 
     private string Root => BuildCache.RootIn(Path.Combine(_root, "data"));
@@ -64,7 +73,7 @@ public sealed class BuildCacheTests : JobTestsBase
         });
         BuildCache.Variables(true, Path.Combine(plane, "src"), Root).ShouldContainKey("MSBuildCacheEnabled");
         BuildCache.Variables(false, plane, Root).ShouldBeEmpty();
-        BuildCache.Variables(true, Path.Combine(_root, "org", "pilot"), Root).ShouldBeEmpty();
+        BuildCache.Variables(true, OptIn(Path.Combine(_root, "org", "pilot")), Root).ShouldBeEmpty();
     }
 
     [Fact]
@@ -74,7 +83,7 @@ public sealed class BuildCacheTests : JobTestsBase
 
         var command = BuildCache.With("cd src && dotnet build Pilot.slnx -c Release && dotnet test Pilot.Node.Tests -c Release --no-build", true, plane, Root, MsBuild);
 
-        command.ShouldStartWith("cd src && dotnet restore Pilot.slnx -p:Configuration=Release -p:MSBuildCacheEnabled=true && & 'C:\\VS\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe' Pilot.slnx -graph -reportfileaccesses");
+        command.ShouldStartWith("cd src && dotnet restore Pilot.slnx -p:Configuration=Release -p:MSBuildCacheEnabled=true -p:UseLocalSiblings=false && & 'C:\\VS\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe' Pilot.slnx -graph -reportfileaccesses");
         command.ShouldContain("-p:MSBuildCacheAsyncCacheMaterialization=false");
         command.ShouldContain(@"'-p:MSBuildCacheIdenticalDuplicateOutputPatterns=**\*'");
         command.ShouldContain($"'-p:MSBuildCacheLocalCacheRootPath={Root}'");
@@ -110,14 +119,14 @@ public sealed class BuildCacheTests : JobTestsBase
         const string build = "dotnet build Pilot.slnx -c Release";
 
         BuildCache.With(build, false, plane, Root, MsBuild).ShouldBe(build);
-        BuildCache.With(build, true, Path.Combine(_root, "org", "pilot"), Root, MsBuild).ShouldBe(build);
+        BuildCache.With(build, true, OptIn(Path.Combine(_root, "org", "pilot")), Root, MsBuild).ShouldBe(build);
         BuildCache.With(build, true, plane, Root, null).ShouldBe(build);
     }
 
     [Fact]
     public void ASeedJobGetsTheVariablesAndTheCachedFormThoughItsFolderIsNoPlane()
     {
-        var main = Path.Combine(_root, "org", "pilot");
+        var main = OptIn(Path.Combine(_root, "org", "pilot"));
 
         BuildCache.Variables(true, main, Root, seed: true).ShouldContainKey("MSBuildCacheEnabled");
         BuildCache.Variables(false, main, Root, seed: true).ShouldBeEmpty();
@@ -128,7 +137,7 @@ public sealed class BuildCacheTests : JobTestsBase
     [Fact]
     public async Task AQueuedSeedRunsAsAnOrdinaryNodeJobWithTheCacheOnAndAnOrdinaryJobInTheSameCloneDoesNot()
     {
-        var main = Directory.CreateDirectory(Path.Combine(_root, "org", "pilot")).FullName;
+        var main = OptIn(Path.Combine(_root, "org", "pilot"));
         _jobs.BuildCache = true;
         _jobs.MsBuild = () => MsBuild;
 
@@ -143,9 +152,60 @@ public sealed class BuildCacheTests : JobTestsBase
     }
 
     [Fact]
+    public void ASeedAndAPlaneCheckCarryTheSameGlobalProperties()
+    {
+        var plane = PlaneIn("pil1");
+        var main = OptIn(Path.Combine(_root, "org", "pilot"));
+        const string build = "dotnet build Pilot.slnx -c Release";
+
+        var fromPlane = BuildCache.With(build, true, plane, Root, MsBuild);
+        var fromMain = BuildCache.With(build, true, main, Root, MsBuild, seed: true);
+
+        fromMain.ShouldBe(fromPlane);
+        fromPlane.ShouldContain("-p:UseLocalSiblings=false");
+        BuildCache.With(build, true, plane, Root, MsBuild, siblingSource: true).ShouldContain("-p:UseLocalSiblings=true");
+        BuildCache.With("dotnet build Pilot.slnx -c Release -p:UseLocalSiblings=true", true, plane, Root, MsBuild).ShouldNotContain("UseLocalSiblings=false");
+    }
+
+    [Fact]
+    public async Task ARepoThatDoesNotNameThePackageIsLeftAloneInPlaneAndMainClone()
+    {
+        var plane = Path.Combine(_root, "org", "other", ".claude", "worktrees", "x1");
+        Directory.CreateDirectory(plane);
+        var main = Directory.CreateDirectory(Path.Combine(_root, "org", "other")).FullName;
+        const string build = "dotnet build Other.slnx -c Release";
+
+        BuildCache.OptsIn(plane).ShouldBeFalse();
+        BuildCache.With(build, true, plane, Root, MsBuild).ShouldBe(build);
+        BuildCache.With(build, true, main, Root, MsBuild, seed: true).ShouldBe(build);
+        BuildCache.Variables(true, plane, Root).ShouldBeEmpty();
+        BuildCache.Variables(true, main, Root, seed: true).ShouldBeEmpty();
+        BuildSeed.BuildOf(main).ShouldBeNull();
+        (await Launched(true, build, plane)).Command.ShouldBe(build);
+    }
+
+    [Fact]
+    public async Task TheSeedMarkIsTheJobsAndGoesWhenItEnds()
+    {
+        var main = OptIn(Path.Combine(_root, "org", "pilot"));
+        _jobs.BuildCache = true;
+        _jobs.MsBuild = () => MsBuild;
+        const string build = "dotnet build Pilot.slnx -c Release";
+
+        _jobs.QueueSeed(main, build).ShouldBeNull();
+        var seed = _state.Jobs().Single();
+        await Until(seed.Id, _ => Fake!.JobOrNull(seed.Id) is not null);
+        _jobs.EnvironmentOf(seed).ShouldContainKey("MSBuildCacheEnabled");
+
+        // Another job with the identical command in the clone is no seed.
+        var other = seed with { Id = "jother" };
+        _jobs.EnvironmentOf(other).ShouldNotContainKey("MSBuildCacheEnabled");
+    }
+
+    [Fact]
     public async Task AnOrdinaryNodeJobInAMainCloneKeepsNoCacheVariablesEvenWithTheSettingOn()
     {
-        var main = Directory.CreateDirectory(Path.Combine(_root, "org", "pilot")).FullName;
+        var main = OptIn(Path.Combine(_root, "org", "pilot"));
         _jobs.BuildCache = true;
         _jobs.MsBuild = () => MsBuild;
 
