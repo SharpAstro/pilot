@@ -980,6 +980,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     /// <summary>Test hook: runs inside the lock after a check's ended row is put and before its result is given or kept.</summary>
     internal Action<JobRow>? AfterEndedRow { get; set; }
 
+    /// <summary>Test hook: runs when a job's ending is known and before its ended row is put, where a dispatch must not find its slot free.</summary>
+    internal Action<JobRow>? BeforeEndedRow { get; set; }
+
     private async Task<CheckRun> RunCheckLockedAsync(string flight, string leg, string command, string cwd, CheckLimit limit, CancellationToken cancellationToken)
     {
         var budget = limit.Limit;
@@ -2533,71 +2536,79 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         Launcher.DeleteScripts(job.ScriptPath);
         ReleaseHold(job.Id);
 
-        _running.TryRemove(job.Id, out _);
         _siblings.TryRemove(job.Id, out _);
         _released.TryRemove(job.Id, out _);
         _watches.TryRemove(job.Id, out _);
         _nudges.TryRemove(job.Id, out _);
         Tree.Forget(job.Id);
-        // Its slot is free, but the next in line starts only once the row says this one ended (the Pump after PutJob below): started here,
-        // the next one's row said running while this one's still did, and five rows read running at max-jobs four (JobTests2, main CI
-        // after #985).
-        string[] last = [.. tail.Snapshot];
-        // Ended while frozen (a cancel or timeout thaws it to kill it): the span counts, and it is no longer paused.
-        var latest = Unpaused(state.Jobs().FirstOrDefault(j => j.Id == job.Id) ?? job, time.GetUtcNow());
-        JobRow ended;
-        if (_cancelled.TryRemove(job.Id, out var by))
-        {
-            ended = latest with { State = JobState.Cancelled, Error = _forced.TryRemove(job.Id, out _) ? $"cancelled (forced) by {by}" : $"cancelled by {by}" };
-        }
-        else if (timedOut)
-        {
-            ended = latest with { State = JobState.Failed, Error = $"{TimeoutPrefix} of {Took(job.Timeout)}" };
-        }
-        else if (stoppedAt is not null)
-        {
-            ended = latest with { State = JobState.Failed, Error = $"stopped at its first failure: {stoppedAt}" };
-        }
-        else if (exitCode is { } code)
-        {
-            ended = code == 0
-                ? latest with { State = JobState.Succeeded, ExitCode = 0 }
-                : latest with { State = JobState.Failed, ExitCode = code, Error = $"exit {code}" };
-        }
-        else
-        {
-            ended = latest with { State = JobState.Failed, Error = "its process ended without leaving an exit code" };
-        }
-        ended = ended with { Step = StepOf(last, job), EndedAt = time.GetUtcNow() };
-        if (memory.Count > 0)
-        {
-            ended = ended with { MemoryMedian = JobMemory.Median(memory), MemoryPeak = memory.Max() };
-        }
-        // This watch tells it, so the sweep leaves it alone (marked before the row shows it ended).
-        _tried[job.Id] = 0;
+        // Its slot stays taken until the row says it ended (the finally below): freed before, a dispatch in between started the next one
+        // beside this one's Running row, and five rows read running at max-jobs four (JobTests2, main CI after #985).
+        string[] last = [];
+        var ended = job;
         try
         {
-            // The row that shows a check ended and its result (given to its waiter, or kept for the finish that comes back) are one step
-            // to RunCheckAsync's look for a carried check: it must not see the row ended with no result yet and queue the check again.
-            lock (_checkEndLock)
+            last = [.. tail.Snapshot];
+            // Ended while frozen (a cancel or timeout thaws it to kill it): the span counts, and it is no longer paused.
+            var latest = Unpaused(state.Jobs().FirstOrDefault(j => j.Id == job.Id) ?? job, time.GetUtcNow());
+            if (_cancelled.TryRemove(job.Id, out var by))
             {
-                _seeds.TryRemove(ended.Id, out _); // the seed mark goes before the row shows it ended
-                state.PutJob(ended);
-                if (looks > 0)
-                {
-                    _saturation[job.Id] = (double)hot / looks;
-                }
-                AfterEndedRow?.Invoke(ended);
-                Finish(ended, last);
+                ended = latest with { State = JobState.Cancelled, Error = _forced.TryRemove(job.Id, out _) ? $"cancelled (forced) by {by}" : $"cancelled by {by}" };
             }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // The job's owner is told all the same.
+            else if (timedOut)
+            {
+                ended = latest with { State = JobState.Failed, Error = $"{TimeoutPrefix} of {Took(job.Timeout)}" };
+            }
+            else if (stoppedAt is not null)
+            {
+                ended = latest with { State = JobState.Failed, Error = $"stopped at its first failure: {stoppedAt}" };
+            }
+            else if (exitCode is { } code)
+            {
+                ended = code == 0
+                    ? latest with { State = JobState.Succeeded, ExitCode = 0 }
+                    : latest with { State = JobState.Failed, ExitCode = code, Error = $"exit {code}" };
+            }
+            else
+            {
+                ended = latest with { State = JobState.Failed, Error = "its process ended without leaving an exit code" };
+            }
+            ended = ended with { Step = StepOf(last, job), EndedAt = time.GetUtcNow() };
+            if (memory.Count > 0)
+            {
+                ended = ended with { MemoryMedian = JobMemory.Median(memory), MemoryPeak = memory.Max() };
+            }
+            // This watch tells it, so the sweep leaves it alone (marked before the row shows it ended).
+            _tried[job.Id] = 0;
+            BeforeEndedRow?.Invoke(ended);
+            try
+            {
+                // The row that shows a check ended and its result (given to its waiter, or kept for the finish that comes back) are one step
+                // to RunCheckAsync's look for a carried check: it must not see the row ended with no result yet and queue the check again.
+                lock (_checkEndLock)
+                {
+                    _seeds.TryRemove(ended.Id, out _); // the seed mark goes before the row shows it ended
+                    state.PutJob(ended);
+                    if (looks > 0)
+                    {
+                        _saturation[job.Id] = (double)hot / looks;
+                    }
+                    AfterEndedRow?.Invoke(ended);
+                    Finish(ended, last);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // The job's owner is told all the same.
+            }
         }
         finally
         {
-            // The slot's look, now this run is in the history (with its estimate): whatever happened above, the next in line may start.
+            // The slot frees once the row says it ended, and its look comes now this run is in the history (with its estimate):
+            // whatever happened above, the next in line may start.
+            _running.TryRemove(job.Id, out _);
+            // A cancel that reached the dispatcher after its ending was read found it still running: nothing is left to cancel.
+            _cancelled.TryRemove(job.Id, out _);
+            _forced.TryRemove(job.Id, out _);
             Pump();
         }
         await TellAsync(ended, CancellationToken.None, last);
