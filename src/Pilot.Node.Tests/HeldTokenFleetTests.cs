@@ -41,7 +41,9 @@ public sealed class HeldTokenFleetTests : IDisposable
         var ticket = (await asking.AskGrantAsync("tests@fleet", Ct)).Response.ShouldNotBeNull();
         var card = node.State.Cards(openOnly: true).First(c => c.Kind == NodeLan.AskedKind);
         (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [card.Choices[0].Label], Who = "controller" }, Ct)).Success.ShouldBeTrue();
-        return (await asking.GrantTicketAsync(ticket.Id, Ct)).Response.ShouldNotBeNull().Token.ShouldNotBeNullOrEmpty();
+        var token = (await asking.GrantTicketAsync(ticket.Id, Ct)).Response.ShouldNotBeNull().Token;
+        token.ShouldNotBeNullOrEmpty();
+        return token;
     }
 
     private static CommandRequest Note() => new() { Verb = Verbs.Note, Target = Verbs.NodeTarget, Args = ["hi"], Who = "tests" };
