@@ -142,8 +142,8 @@ public sealed class CompactorTests : IDisposable
         _said.ShouldHaveSingleItem();
         Handled().ShouldBe(["Compacted du1-watchtower"]);
 
-        // Answered; thirty-nine more messages is under the count, forty is not.
-        _time.Advance(TimeSpan.FromMinutes(1));
+        // Answered and settled; thirty-nine more messages is under the count, forty is not.
+        _time.Advance(_compactor.Settle + TimeSpan.FromMinutes(1));
         Row("t0000001", "du1-watchtower", context: 60_000, lastResponse: _time.GetUtcNow());
         _persons = 79;
         await _compactor.LookAsync(Ct);
@@ -192,13 +192,63 @@ public sealed class CompactorTests : IDisposable
         await _compactor.LookAsync(Ct);
         _said.ShouldHaveSingleItem();
 
-        // Answered, and still at 75%: a fresh watchtower in its place, through the watchtower's own start.
-        _time.Advance(TimeSpan.FromMinutes(1));
+        // Answered, and once it has settled still at 75%: a fresh watchtower in its place, through the watchtower's own start.
+        _time.Advance(_compactor.Settle + TimeSpan.FromMinutes(1));
         Row("t0000001", "du1-watchtower", context: 750_000, lastResponse: _time.GetUtcNow());
         await _compactor.LookAsync(Ct);
         _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
         _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-watchtower");
         Handled().ShouldContain(t => t.StartsWith("Replaced du1-watchtower", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AWatchtowerIsCompactedOnceThenLeftToSettleAndAStaleReadingNeverLoopsIt()
+    {
+        // SE1, 2026-11-10: compacted and "replaced" every 30 s for four minutes, each time on the reading from before the compaction.
+        Row("t0000001", "du1-watchtower", context: 800_000);
+        await _compactor.LookAsync(Ct);
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
+
+        // The compaction answers, and the reading stays the old one: looks every 30 s through the settle window act on nothing.
+        for (var look = 0; look < 8; look++)
+        {
+            _time.Advance(TimeSpan.FromSeconds(30));
+            Row("t0000001", "du1-watchtower", context: 800_000, lastResponse: _time.GetUtcNow());
+            await _compactor.LookAsync(Ct);
+        }
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
+        _workers.Started.ShouldBeEmpty();
+
+        // Settled and read again under its share: nothing more to do, and nothing was said twice.
+        _time.Advance(_compactor.Settle);
+        Row("t0000001", "du1-watchtower", context: 250_000, lastResponse: _time.GetUtcNow());
+        await _compactor.LookAsync(Ct);
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
+        _workers.Started.ShouldBeEmpty();
+        Handled().ShouldBe(["Compacted du1-watchtower"]);
+    }
+
+    [Fact]
+    public async Task AWatchtowerStillFullAfterACompactionAndARestartIsSaidOnceAndLeftAlone()
+    {
+        Row("t0000001", "du1-watchtower", context: 800_000);
+        await _compactor.LookAsync(Ct);
+        // The restart comes back with the same session as the live watchtower (as on SE1, where every "Replaced" named the same row).
+        _workers.OnStart = _ => Row("t0000001", "du1-watchtower", context: 800_000, lastResponse: _time.GetUtcNow());
+
+        // However many looks over an hour, with the reading stuck past its share: a bounded few actions, never a loop. SE1 made
+        // eight compactions and eight "replacements" in four minutes.
+        for (var look = 0; look < 120; look++)
+        {
+            _time.Advance(TimeSpan.FromSeconds(30));
+            Row("t0000001", "du1-watchtower", context: 800_000, lastResponse: _time.GetUtcNow());
+            await _compactor.LookAsync(Ct);
+        }
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBeLessThanOrEqualTo(2);
+        _workers.Started.Count.ShouldBeLessThanOrEqualTo(1);
+        Handled().Count(t => t.StartsWith("Replaced", StringComparison.Ordinal)).ShouldBeLessThanOrEqualTo(1);
+        // Still full after that is said on one watchtower-still-full card at most, never one per look.
+        _state.Cards().Count(c => c.Kind == "watchtower-still-full").ShouldBeLessThanOrEqualTo(1);
     }
 
     [Fact]

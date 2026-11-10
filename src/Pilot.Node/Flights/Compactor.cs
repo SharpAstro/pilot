@@ -57,6 +57,17 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     /// <summary>How long after a refused compaction the next one is tried.</summary>
     public TimeSpan RetryAfter { get; init; } = TimeSpan.FromMinutes(10);
 
+    /// <summary>
+    /// How long a session is left alone after a compaction or a replacement: the context the node reads is the last turn's, so for a
+    /// while after a <c>/compact</c> it is still the size before it, and a look in that while would judge the old figure. SE1, 2026-11-10:
+    /// the watchtower was compacted and "replaced" every 30 s for four minutes, each time "still at 62% after a compaction", on a reading
+    /// taken before the compaction; once it settled it read 25%.
+    /// </summary>
+    public TimeSpan Settle { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>The card kind that says the watchtower is still past its share after a compaction and a replacement: raised once, not looped.</summary>
+    public const string StuckKind = "watchtower-still-full";
+
     /// <summary>What the watchtower's summary keeps.</summary>
     public const string WatchtowerFocus = "Keep what you are watching and waiting on: the flights, legs, jobs and cards you know of, what you did about "
         + "each, and what you told the controller. `pilot status` and `pilot cards` say where things stand now.";
@@ -69,11 +80,16 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     private readonly Dictionary<string, DateTimeOffset?> _compactedAt = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTimeOffset> _retryAt = new(StringComparer.Ordinal);
 
+    // By role for the watchtower (a replacement is a new row of the same role), by row otherwise: until when it is left to settle,
+    // and the watchtowers replaced and still found full, which are not compacted or replaced again until they read below their share.
+    private readonly Dictionary<string, DateTimeOffset> _settleUntil = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _stuck = new(StringComparer.Ordinal);
+
     // By watchtower row: what it was at its last compaction. Pending until the compaction has answered; the first look after it
     // finds the watchtower still past its share (then it is replaced, as a worker is, never nudged or compacted again) or below it.
     private readonly Dictionary<string, WatchtowerMark> _marks = new(StringComparer.Ordinal);
 
-    private sealed record WatchtowerMark(DateTimeOffset? Response, int Persons, bool Pending);
+    private sealed record WatchtowerMark(DateTimeOffset? Response, int Persons, bool Pending, bool Replaced = false);
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
@@ -141,8 +157,24 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
                 continue;
             }
             var isTower = row.Name == watchtower.Name;
+            var key = isTower ? row.Name : row.Id;
+            if (_settleUntil.TryGetValue(key, out var until) && now < until)
+            {
+                // Just compacted or replaced: its reading is not yet what the compaction left (see Settle).
+                continue;
+            }
             var share = isTower ? Models.WatchtowerCompactShare / 100.0 : WindowShare;
             var full = row.ContextWindow > 0 && row.ContextTokens > share * row.ContextWindow;
+            if (_stuck.Contains(key))
+            {
+                if (full)
+                {
+                    // Compacted and replaced, and still full: said once on a card; looping would only spend turns.
+                    continue;
+                }
+                _stuck.Remove(key);
+                state.CloseCardsAbout(Verbs.WatchtowerTarget, "its context is back under its share", StuckKind);
+            }
             // The watchtower's idle time and context threshold are node settings (Settings); a worker waiting on its job keeps the fixed ones.
             var cooling = now - last >= (isTower ? Models.WatchtowerCompactIdle : IdleFor) && row.ContextTokens > (isTower ? Models.WatchtowerCompactAbove : Above);
             string? chatty = null;
@@ -155,7 +187,7 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
                     _marks[row.Id] = mark with { Pending = false };
                     if (full)
                     {
-                        await ReplaceAsync(row, cancellationToken);
+                        await ReplaceAsync(row, key, cancellationToken);
                         continue;
                     }
                 }
@@ -185,14 +217,28 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
         }
     }
 
-    // A watchtower still past its share after a compaction: a fresh one in its place, from the node's state, as a full worker is sent round (pilot #578).
-    private async Task ReplaceAsync(SessionRow row, CancellationToken cancellationToken)
+    // A watchtower still past its share after a compaction (read once it settled): a fresh one in its place, from the node's state, as a full
+    // worker is sent round (pilot #578). Once only: still full after that, it is said on one card and left until it reads under its share.
+    private async Task ReplaceAsync(SessionRow row, string key, CancellationToken cancellationToken)
     {
         var share = string.Create(CultureInfo.InvariantCulture, $"{100.0 * row.ContextTokens / row.ContextWindow:0}%");
         var why = $"still at {share} of its window after a compaction";
-        var error = await watchtower.RestartAsync(why, cancellationToken);
-        state.RaiseCard(CardBin.Handled, Kind, Verbs.WatchtowerTarget, error is null ? $"Replaced {row.Name}" : $"Could not replace {row.Name}", $"{why}{(error is null ? "" : $": {error}")}");
-        await Error.WriteLineAsync($"compactor: {(error is null ? "replaced" : "could not replace")} {row.Name} ({row.Id}): {why}{(error is null ? "" : $": {error}")}");
+        _settleUntil[key] = time.GetUtcNow() + Settle;
+        if (_marks.TryGetValue(row.Id, out var mark) && mark.Replaced)
+        {
+            _stuck.Add(key);
+            state.RaiseCard(CardBin.ForYou, StuckKind, Verbs.WatchtowerTarget, $"{row.Name} is still at {share} of its window after a compaction and a restart",
+                $"The node compacted {row.Name} and started it afresh, and it still reads {share} of its window. It is left as it is, not compacted or restarted again, until it reads under its share; pilot watchtower restart starts a fresh one by hand.");
+            await Error.WriteLineAsync($"compactor: {row.Name} ({row.Id}) {why} and a restart; left alone until it reads under its share");
+            return;
+        }
+        var (error, way) = await watchtower.RestartWithWayAsync(why, cancellationToken);
+        // A restart that joined a start already in flight started nothing: said as it is, never as a replacement (SE1 said "Replaced" four times over one session).
+        var joined = error is null && way == Watchtower.JoinedWay;
+        var title = error is not null ? $"Could not replace {row.Name}" : joined ? $"Did not replace {row.Name}: a watchtower start was in progress" : $"Replaced {row.Name}";
+        _marks[row.Id] = (_marks.TryGetValue(row.Id, out var before) ? before : new WatchtowerMark(row.LastResponseAt, 0, Pending: false)) with { Replaced = true };
+        state.RaiseCard(CardBin.Handled, Kind, Verbs.WatchtowerTarget, title, $"{why}{(error is null ? "" : $": {error}")}");
+        await Error.WriteLineAsync($"compactor: {title} ({row.Id}): {why}{(error is null ? "" : $": {error}")}");
     }
 
     private async Task CompactAsync(SessionRow row, string focus, string why, CancellationToken cancellationToken)
@@ -212,9 +258,12 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
             _compactedAt[row.Id] = row.LastResponseAt;
             _retryAt.Remove(row.Id);
             var at = time.GetUtcNow();
+            _settleUntil[row.Name == watchtower.Name ? row.Name : row.Id] = at + Settle;
             if (row.Name == watchtower.Name)
             {
-                _marks[row.Id] = new WatchtowerMark(row.LastResponseAt, PersonMessages?.Invoke(row) ?? 0, Pending: true);
+                // A replacement already tried on this row is kept on its mark, so a second "still full" is said once, not looped.
+                var replaced = _marks.TryGetValue(row.Id, out var earlier) && earlier.Replaced;
+                _marks[row.Id] = new WatchtowerMark(row.LastResponseAt, PersonMessages?.Invoke(row) ?? 0, Pending: true, replaced);
             }
             // The compaction took seconds: stamp the row as the state holds it now, not the copy read before it ran.
             var stamped = (state.Sessions().FirstOrDefault(r => r.Id == row.Id) ?? row) with { LastCompactedAt = at, CompactedBecause = why };
