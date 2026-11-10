@@ -614,6 +614,9 @@ public sealed class ConnectTests : OverlapTestsBase
         var flights = await HeldOnLocalAsync(new FakeGitHub { Pr = new PullRequest(77, "OPEN", "head", "https://github.com/x/tianwen/pull/77") }, pullRequest: 77);
         var peer = Peer("SE1", Theirs("TIA1", 1));
         Moves("TIA1", "SE1");
+
+        // SE1 answers once (TIA1 still flying there), so this node knows it by name; only a known peer gone silent is "not on the LAN".
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
         peer.Unreachable = true;
 
         (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
