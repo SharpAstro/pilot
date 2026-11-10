@@ -15,6 +15,11 @@ internal static class PrOrigins
 {
     public static string Git(string cwd, params string[] args)
     {
+        // A folder a test's model owns (PrFixTestsBase on FakeRepoGit) is answered by the model, as ReviewTestsBase.Git does.
+        if (TestGit.Answer(cwd, args) is { } answered)
+        {
+            return answered;
+        }
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
         {
@@ -45,6 +50,10 @@ internal static class PrOrigins
     /// <summary>One more commit on the PR, pushed to its head as GitHub keeps it; returns the new head.</summary>
     public static string Push(string work, int number, string what)
     {
+        if (FakeRepoGit.Owning(work) is { } fake)
+        {
+            return FakePrOrigins.Push(fake, work, number, what);
+        }
         File.WriteAllText(Path.Combine(work, $"{Guid.NewGuid():N}.txt"), what + "\n");
         Commit(work, what);
         Git(work, "push", "-q", "-f", "origin", $"HEAD:refs/pull/{number}/head");
