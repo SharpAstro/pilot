@@ -398,6 +398,7 @@ public sealed class CliTests : IAsyncLifetime
     public async Task PilotRunAloneLocalSendsTheLocalFlagAndTheBenchJobKeepsItOnItsRow()
     {
         var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        FakeJobs(runner);
         await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         runner.BenchQuietCpu = 100;
 
