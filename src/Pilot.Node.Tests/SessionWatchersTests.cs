@@ -131,6 +131,22 @@ public sealed class SessionWatchersTests : IDisposable
     }
 
     [Fact]
+    public async Task AResumeThatReplacesAnIdleBackgroundSessionEndsItsWatchersAndLogsThem()
+    {
+        _table.Add(1, 0, "claude", T0).Add(2, 1, "pwsh", T0).Add(3, 2, "sleep", T0);
+        var cwd = _profile.Folder.Replace("\\", "\\\\", StringComparison.Ordinal);
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionA, "pil5-end", "done", pid: 1, status: "idle", cwd: cwd));
+        await _tracker.PollAsync(Ct);
+        var id = _state.Sessions().Single().Id;
+
+        var said = await _messenger.SayAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = ["go on"], Who = "tests" }, Ct);
+
+        said.Ok.ShouldBeTrue(said.Error);
+        _table.Killed.ShouldBe([2, 3]);
+        _log.ToString().ShouldContain("watchers: ended 2 of pil5-end: pwsh 2, sleep 3");
+    }
+
+    [Fact]
     public async Task AStopWithNothingUnderTheSessionEndsNothingAndLogsNoWatchersLine()
     {
         _table.Add(1, 0, "claude", T0);
@@ -163,7 +179,7 @@ public sealed class SessionWatchersTests : IDisposable
         // Slow because it starts a real shell and a real child, and waits for the child's exit.
         var windows = OperatingSystem.IsWindows();
         var parentInfo = windows
-            ? new ProcessStartInfo("pwsh", ["-NoProfile", "-Command", "$c = Start-Process pwsh -ArgumentList '-NoProfile','-Command','for ($i = 0; $i -lt 60; $i++) { Start-Sleep 1 }' -PassThru -WindowStyle Hidden; $c.Id; Start-Sleep 60"])
+            ? new ProcessStartInfo("pwsh", ["-NoProfile", "-Command", "$c = Start-Process pwsh -ArgumentList '-NoProfile','-Command','for ($i = 0; $i -lt 60; $i++) { Start-Sleep 1 }' -PassThru -NoNewWindow; $c.Id; Start-Sleep 60"])
             : new ProcessStartInfo("sh", ["-c", "sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done' & echo $!; wait"]);
         parentInfo.RedirectStandardOutput = true;
         parentInfo.UseShellExecute = false;

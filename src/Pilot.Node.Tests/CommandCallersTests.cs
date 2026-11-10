@@ -57,6 +57,25 @@ public sealed class CommandCallersTests
     }
 
     [Fact]
+    public void AGitBashLoopThatForksABashPerCommandIsOneCallerTheLoopBash()
+    {
+        // MSYS shape: the loop's bash 20 forks bash 21, 22, 23 (one per command), each the parent of a pilot.exe.
+        for (var i = 0; i < 3; i++)
+        {
+            _table.Add(21 + i, 20, "bash.exe", _time.GetUtcNow(), Loop);
+            RunPilot(31 + i, 21 + i);
+            _callers.CountPeer(31 + i);
+            _table.Remove(31 + i).Remove(21 + i);
+            _time.Advance(TimeSpan.FromMinutes(2));
+        }
+
+        var row = _callers.Rows(Hour(12)).ShouldHaveSingleItem();
+        row.Pid.ShouldBe(20);
+        row.Name.ShouldBe("bash");
+        row.Count.ShouldBe(3);
+    }
+
+    [Fact]
     public void APidReusedByANewProcessIsANewCaller()
     {
         // The loop runs once, ends, and the OS hands bash's pid and the pilot's pid to new processes within the minute.

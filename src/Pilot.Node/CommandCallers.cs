@@ -358,6 +358,13 @@ public sealed class CommandCallers(IProcessTable table, TimeProvider time)
             }
             if (PilotProgram(entry) is not { } added)
             {
+                // Git Bash (MSYS) forks a bash before each external command, so the pilot's parent is a one-off bash
+                // under the loop's own bash: walk up to the outermost bash of the run, the loop.
+                if (IsShell(entry) && Lookup(entry.ParentPid) is { } up && IsShell(up) && SameProgram(entry, up) && !seen.Contains(up.Pid))
+                {
+                    pid = up.Pid;
+                    continue;
+                }
                 return (CallerOf(entry), via);
             }
             via |= added;
@@ -367,6 +374,14 @@ public sealed class CommandCallers(IProcessTable table, TimeProvider time)
         // Nothing but pilot's own programs up to a parent that is gone: the topmost of them is the caller.
         return top is { } last ? (CallerOf(last), via) : null;
     }
+
+    private static string ProgramOf(ProcessEntry entry) => Path.GetFileNameWithoutExtension(entry.Name);
+
+    private static bool IsShell(ProcessEntry entry) =>
+        ProgramOf(entry).ToLowerInvariant() is "bash" or "sh";
+
+    private static bool SameProgram(ProcessEntry a, ProcessEntry b) =>
+        ProgramOf(a).Equals(ProgramOf(b), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>What <paramref name="entry"/> adds to the chain when it is one of pilot's own programs (<see cref="CallerVia.None"/> for the CLI of a command); null when it is not.</summary>
     private CallerVia? PilotProgram(ProcessEntry entry)

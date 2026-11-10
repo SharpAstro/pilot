@@ -100,6 +100,27 @@ public sealed class PollerSweepTests
     }
 
     [Fact]
+    public void AGitBashLoopThatForksABashPerCommandRingsOneCardNamingTheLoopBash()
+    {
+        // MSYS shape: bash 20 forks a bash (21 to 23), each the parent of a pilot.exe (41 to 43); the fork is never the caller.
+        for (var i = 0; i < 3; i++)
+        {
+            _table.Add(21 + i, 20, "bash.exe", Start, "bash");
+            _table.Add(41 + i, 21 + i, "pilot.exe", Start, "pilot status");
+            for (var n = 0; n < 300; n++)
+            {
+                _callers.CountPeer(41 + i);
+            }
+            _time.Advance(NodeTraffic.HourOf(_time.GetUtcNow()).AddHours(1).AddSeconds(30) - _time.GetUtcNow());
+        }
+
+        _sweep.SweepOnce().ShouldBe([(20, "bash")]);
+        var card = Open().ShouldHaveSingleItem();
+        card.Title.ShouldContain("20");
+        card.Title.ShouldContain("bash");
+    }
+
+    [Fact]
     public void AJobsProcessAtThatRateRingsNone()
     {
         _state.PutJob(new JobRow
