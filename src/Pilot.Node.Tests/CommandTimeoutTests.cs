@@ -13,26 +13,20 @@ public sealed class CommandTimeoutTests : IAsyncLifetime
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2o-" + Guid.NewGuid().ToString("N")[..8]);
     private NodeHarness _node = null!;
+
+    // The node's own folder: its git is the in-memory model (#952), which owns it, so the repo made there is the node's and no git starts.
+    private string _root => _node.Folder;
 
     private string Repo => Path.Combine(_root, "tianwen");
 
     public async ValueTask InitializeAsync()
     {
-        SeedRepo.Make(_root);
-        _node = await NodeHarness.StartAsync(Ct);
+        _node = await NodeHarness.StartOnModelAsync(Ct);
+        SeedRepo.MakeOn(_node.Repos!, _root);
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        await _node.DisposeAsync();
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        TestDirs.DeleteTree(_root);
-    }
+    public async ValueTask DisposeAsync() => await _node.DisposeAsync();
 
     private async Task<(int Exit, string Output, string Error)> Pilot(TimeSpan timeout, string? requestId, params string[] args)
     {

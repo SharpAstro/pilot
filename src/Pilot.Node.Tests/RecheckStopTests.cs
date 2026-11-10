@@ -62,7 +62,7 @@ public sealed class RecheckStopTests : LegCommanderTestsBase
         };
         await jobs.StartAsync(CancellationToken.None);
         await jobs.Recovered.WaitAsync(Ceiling, Ct);
-        var legs = new LegCommander(_state, _workers, new JobCheckRunner(jobs), _github, new GitCli(), new Planes(new GitCli()), _flights,
+        var legs = new LegCommander(_state, _workers, new JobCheckRunner(jobs), _github, _git, new Planes(_git), _flights,
             new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1"), TimeProvider.System);
 
         var finishing = legs.RunAsync(new CommandRequest { Verb = Verbs.FinishLeg, Target = "flight/TIA1/parser", Args = ["done", "parser in"], Who = "tests" }, lifetime.ApplicationStopping);

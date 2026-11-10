@@ -20,6 +20,7 @@ internal sealed class SeededRepos : IDisposable
     public SeededRepos(string root, bool realGit = false)
     {
         _root = root;
+        TestEnvironment.OwnFolder(root);
         if (realGit || Environment.GetEnvironmentVariable("PILOT_TEST_REAL_GIT") == "1")
         {
             Directory.CreateDirectory(root);

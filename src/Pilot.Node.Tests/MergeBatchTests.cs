@@ -108,7 +108,7 @@ public sealed class MergeBatchTests
     private static async Task<(NodeHarness Node, BatchGit Git, TaskCompletionSource Release, Task<CommandResult> Held, string[] Waiting)> QueueAsync(bool batch, string[] codes, string ci,
         Func<NodeHarness, string, Task<CommandResult>>? merge = null, Func<FlightRow, FlightRow>? shape = null, string method = "merge")
     {
-        var node = await NodeHarness.StartAsync(Ct);
+        var node = await NodeHarness.StartOnModelAsync(Ct);
         var git = new BatchGit();
         var legs = node.App.Services.GetRequiredService<LegCommander>();
         legs.Batcher = Batcher(git, node.GitHub);
@@ -422,7 +422,7 @@ public sealed class MergeBatchTests
     [Fact]
     public async Task AnEntryThatConflictsIsLeftOutOfTheBatchAndMergedOnItsOwn()
     {
-        var node = await NodeHarness.StartAsync(Ct);
+        var node = await NodeHarness.StartOnModelAsync(Ct);
         await using var disposing = node;
         var git = new BatchGit { ConflictingMerge = 2 };
         var legs = node.App.Services.GetRequiredService<LegCommander>();
@@ -553,7 +553,7 @@ public sealed class MergeBatchTests
     [Fact]
     public async Task TheNodesLookSkipsAMergeWhoseReposTurnIsHeldAndAsksItAtTheNextLook()
     {
-        var node = await NodeHarness.StartAsync(Ct);
+        var node = await NodeHarness.StartOnModelAsync(Ct);
         await using var disposing = node;
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
         node.GitHub.Queues = true;
