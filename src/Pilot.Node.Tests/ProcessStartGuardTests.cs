@@ -97,6 +97,8 @@ public sealed class ProcessStartGuardTests
     [Fact]
     public void TheObserverThrowsInAnUnmarkedTestNamingTheKindAndTheCommand()
     {
+        // Provoked on purpose, so the observer checks it but leaves it out of the process-start report.
+        using var provoking = TestEnvironment.ProvokingAStart();
         var ex = Should.Throw<ProcessStartNotAllowedException>(() => ProcessStarts.Observe("git", new ProcessStartInfo("git", "status")));
 
         ex.Message.ShouldContain("git status");

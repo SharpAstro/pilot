@@ -29,8 +29,9 @@ internal static class TestEnvironment
             // start there is the test whose folder it runs in: see OwnFolder.
             var current = Xunit.TestContext.Current.Test is { } running ? new Owner(running.TestDisplayName, running.Traits) : OwnerOf(start.WorkingDirectory);
             var test = current?.Name;
-            // Written first, so the report names the start even when the guard throws.
-            if (ProcessStartGuard.Verdict(kind, ProcessStartGuard.Command(start), test, current?.Traits) is not null)
+            // Written first, so the report names the start even when the guard throws (a node path that catches the throw would
+            // otherwise hide it). A start a guard test provokes on purpose (ProvokingAStart) is checked but not written.
+            if (!_provoking.Value && ProcessStartGuard.Verdict(kind, ProcessStartGuard.Command(start), test, current?.Traits) is not null)
             {
                 // A start with no test is named by its command and working folder, so its source (a fixture, a background loop) can be traced.
                 // The Pilot frames of the stack follow it (the test's own frames are absent where the work runs on the node's threads).
@@ -39,6 +40,23 @@ internal static class TestEnvironment
             ProcessStartGuard.Check(kind, ProcessStartGuard.Command(start), test, current?.Traits, mode);
         };
         AppDomain.CurrentDomain.ProcessExit += (_, _) => WriteProcessStartReport();
+    }
+
+    private static readonly AsyncLocal<bool> _provoking = new();
+
+    /// <summary>
+    /// For the guard's own tests: while the returned scope is open on this flow, a start the observer refuses still throws but is not
+    /// written to the report, since the test provokes it on purpose and expects the throw (a report line would fail CI's process-start step).
+    /// </summary>
+    internal static IDisposable ProvokingAStart()
+    {
+        _provoking.Value = true;
+        return new ProvokeScope();
+    }
+
+    private sealed class ProvokeScope : IDisposable
+    {
+        public void Dispose() => _provoking.Value = false;
     }
 
     /// <summary>
