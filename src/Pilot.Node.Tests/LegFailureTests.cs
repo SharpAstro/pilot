@@ -26,6 +26,7 @@ public sealed class LegFailureTests : IDisposable
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2legfail-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly SeededRepos _repos;
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     // The plane is clean and at origin/<branch>, so a passing check would let the node finish a failed leg itself and raise no card:
     // the check fails here, as it does in the flights this pins.
