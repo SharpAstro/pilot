@@ -151,7 +151,7 @@ public sealed class UnreadHeadTests : ReviewTestsBase
             var clock = Stopwatch.StartNew();
             while (F(flight.Code).Review?.ReviewedHead != head)
             {
-                clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20), "the first sweep did not review the unread head");
+                clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(120), "the first sweep did not review the unread head"); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
                 await Task.Delay(20, Ct);
             }
             await Started(_legs, flight.Code);
@@ -247,7 +247,7 @@ public sealed class UnreadHeadTests : ReviewTestsBase
 
         _workers.Started.ShouldNotContain(s => s.Name == Reviewer(flight.Code));
         F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
-        Open().Single(c => c.Kind == LegCommander.ReviewChanges).Title.ShouldStartWith($"{flight.Code}'s review did not start: ");
+        Open().Single(c => c.Kind == LegCommander.ReviewChanges).Title.ShouldBe($"{flight.Code}'s review did not start");
         _state.Cards().Count(c => c.Kind == LegCommander.ReviewChanges).ShouldBe(cards);
     }
 

@@ -203,6 +203,7 @@
       "step": "Passed Orbit.Lib.Tests.Parser.NestedGroups [12 ms]",
       "slots": null,
       "waitsOnSibling": null,
+      "holdIdleSince": null,
       "error": null,
       "exitCode": null,
       "logPath": "/home/ada/.local/share/pilot2/jobs/j14.log",
@@ -234,7 +235,8 @@
       "failureTold": false,
       "failFast": false,
       "local": false,
-      "benchVm": null
+      "benchVm": null,
+      "wholeSuite": null
     },
     {
       "id": "j15",
@@ -249,6 +251,7 @@
       "step": "waiting for a slot: 1 of 1 running",
       "slots": 1,
       "waitsOnSibling": false,
+      "holdIdleSince": null,
       "error": null,
       "exitCode": null,
       "logPath": "/home/ada/.local/share/pilot2/jobs/j15.log",
@@ -280,7 +283,8 @@
       "failureTold": false,
       "failFast": false,
       "local": false,
-      "benchVm": null
+      "benchVm": null,
+      "wholeSuite": null
     },
     {
       "id": "j13",
@@ -295,6 +299,7 @@
       "step": "Failed!  - Failed: 2, Passed: 311, Skipped: 0, Total: 313",
       "slots": null,
       "waitsOnSibling": null,
+      "holdIdleSince": null,
       "error": "exit 1",
       "exitCode": 1,
       "logPath": "/home/ada/.local/share/pilot2/jobs/j13.log",
@@ -326,7 +331,8 @@
       "failureTold": false,
       "failFast": false,
       "local": false,
-      "benchVm": null
+      "benchVm": null,
+      "wholeSuite": null
     },
     {
       "id": "j12",
@@ -341,6 +347,7 @@
       "step": "built in 41s",
       "slots": null,
       "waitsOnSibling": null,
+      "holdIdleSince": null,
       "error": null,
       "exitCode": 0,
       "logPath": "/home/ada/.local/share/pilot2/jobs/j12.log",
@@ -372,7 +379,8 @@
       "failureTold": false,
       "failFast": false,
       "local": false,
-      "benchVm": null
+      "benchVm": null,
+      "wholeSuite": null
     }
   ],
   "merges": [],
@@ -917,7 +925,8 @@
       "markdown": "## Needs you\n- c41: the PR review of bullclip-backend#2479 asks for changes.\n\n## Where it is\nTIA1611 is flying its second leg, parser, with 2 of 4 steps ticked.",
       "madeAt": "2026-10-18T09:40:00+00:00",
       "tokens": 9412,
-      "cost": 0.0123
+      "cost": 0.0123,
+      "notFollowing": null
     }
   ]
 }

@@ -159,10 +159,15 @@ public sealed partial class LegCommander
             // The flight is the other node's: what this one still holds of it is let go with the lock released, git and GitHub being slow.
             if (moved is { } let)
             {
+                await WaitsFollowAsync();
                 await LetGoOfPlaneAsync(let.Flight, let.Text);
             }
         }
     }
+
+    // The flights of this node that waited for the moved flight wait for it on the node it moved to (#818). Taken with this lock released: the
+    // flight verbs have a lock of their own, and nothing here holds one while it waits for the other.
+    private Task WaitsFollowAsync() => flights.FollowMovedFlightsAsync(CancellationToken.None);
 
     /// <summary>
     /// The calls of a move, with the lock let go: the best willing node is chosen as create-flight routing chooses it
@@ -180,7 +185,7 @@ public sealed partial class LegCommander
         {
             return (null, Failed(flight, null, peers.Count == 0
                 ? "this node knows no other node of the fleet. Grant it one, or fly the flight on here."
-                : $"no node of the fleet takes it ({string.Join("; ", verdicts.Select(v => $"{v.Name}: {v.Reason}"))}). Put one out of maintenance and willing (accept-fleet-flights on), or move it again later."), null);
+                : $"no node of the fleet takes it ({string.Join("; ", verdicts.Select(v => v.Said))}). Put one out of maintenance and willing (accept-fleet-flights on), or move it again later."), null);
         }
 
         // The node it is named for in a failure: the one chosen, when it is the only one willing.
@@ -302,7 +307,7 @@ public sealed partial class LegCommander
             {
                 return (null, false);
             }
-            var peer = flights.Fleet?.Peers().FirstOrDefault(p => string.Equals(p.Endpoint, unknown.Endpoint, StringComparison.OrdinalIgnoreCase));
+            var peer = flights.Fleet?.Peers().FirstOrDefault(p => string.Equals(p.Name, unknown.To, StringComparison.OrdinalIgnoreCase) || string.Equals(p.Endpoint, unknown.Endpoint, StringComparison.OrdinalIgnoreCase));
             var holds = peer is null ? PeerHolds.Unreachable : await OffLockAsync(null, () => AskPeerAsync(peer, flight.Code));
             // Whatever changed the row meanwhile (a settling by another call) is that call's.
             if (state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) is not { MoveUnknown: not null } now)
@@ -329,6 +334,7 @@ public sealed partial class LegCommander
             _one.Release();
             if (moved is { } let)
             {
+                await WaitsFollowAsync();
                 await LetGoOfPlaneAsync(let.Flight, let.Text);
             }
         }
@@ -431,7 +437,7 @@ public sealed partial class LegCommander
         var split = failure.IndexOf(": ", StringComparison.Ordinal);
         var (title, detail) = split > 0 ? (failure[..split], failure[(split + 2)..]) : (failure, null);
         var subject = Verbs.FlightTarget(flight.Code);
-        CardChoice[] retry = [new CardChoice { Label = "Retry move", Verb = Verbs.MoveFlight, Target = subject }];
+        CardChoice[] retry = [new CardChoice { Label = "Try the move again", Verb = Verbs.MoveFlight, Target = subject }];
         if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == MoveFailedKind && c.Subject == subject) is { } open)
         {
             state.UpdateCard(open.Id, title, detail, retry, open.Link);
@@ -480,7 +486,7 @@ public sealed partial class LegCommander
         }
         catch (FlightException ex)
         {
-            state.RaiseCard(CardBin.ForYou, "plane-left", Verbs.FlightTarget(flight.Code), $"{text}, but its plane folder is still here", $"{ex.Message}; the flight is no longer flown here, so delete the folder by hand");
+            state.RaiseCard(CardBin.Handled, "plane-left", Verbs.FlightTarget(flight.Code), $"{text}, but its plane folder is still here", $"{ex.Message}; the flight is no longer flown here, so delete the folder by hand");
         }
         if (flights.Trackers?.Of(flight.Tracker) is { } tracker)
         {
@@ -490,7 +496,19 @@ public sealed partial class LegCommander
             }
             catch (FlightException ex)
             {
-                state.RaiseCard(CardBin.ForYou, "node-label-refused", Verbs.FlightTarget(flight.Code), $"{PilotMarks.NodeLabel(options.Machine)} is still on {flight.Item.Noun} {flight.Item.Display}", ex.Message);
+                state.RaiseCard(CardBin.Handled, "node-label-refused", Verbs.FlightTarget(flight.Code), $"{PilotMarks.NodeLabel(options.Machine)} is still on {flight.Item.Noun} {flight.Item.Display}", ex.Message);
+            }
+        }
+        // OpenPr put the node label on the PR as well: it goes from there too, so the PR says which node flies it as its item does.
+        if (flight.PullRequest is { } pr)
+        {
+            try
+            {
+                await github.RemoveIssueLabelAsync(flight.RepoPath, pr, PilotMarks.NodeLabel(options.Machine), CancellationToken.None);
+            }
+            catch (FlightException ex)
+            {
+                state.RaiseCard(CardBin.Handled, "node-label-refused", Verbs.FlightTarget(flight.Code), $"{PilotMarks.NodeLabel(options.Machine)} is still on {flight.Code}'s PR #{pr}", ex.Message);
             }
         }
     }

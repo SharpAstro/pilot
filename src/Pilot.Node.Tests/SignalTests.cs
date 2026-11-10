@@ -102,6 +102,8 @@ public sealed class SignalTests
 
         (first.Bin, first.Kind, first.Subject).ShouldBe((CardBin.ForYou, Digest.Kind, "node"));
         first.Title.ShouldBe("Digest: 1 landed, 1 flying, 1 card open");
+        // The golden card (#797): a card only to be read says so, with the one button that closes it.
+        first.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Mark it read", Verbs.Dismiss)]);
         first.Detail.ShouldBe(string.Join(Environment.NewLine,
             "Landed:",
             "- TIA1: Planets TIA1",
@@ -138,7 +140,8 @@ public sealed class SignalTests
         (card.Bin, card.Kind, card.Title).ShouldBe((CardBin.Ring, LegWatch.OverBudget, "TIA3/parser's worker has spent 1,200,000 of its 1,000,000 budget"));
         card.Detail.ShouldNotBeNull().ShouldContain("it keeps working until you choose");
         card.Choices.Select(c => (c.Label, c.Verb, c.Args.FirstOrDefault())).ShouldBe(
-            [("Let TIA3/parser's worker spend up to 1,500,000", Verbs.ExtendBudget, "1500000"), ("Start a fresh worker on parser (the last one spent 1,200,000 of a 1,000,000 budget)", Verbs.GoAround, "the last worker spent 1,200,000 of a 1,000,000 budget")]);
+            [("Raise the budget", Verbs.ExtendBudget, "1500000"), (Verbs.RestartWorker, Verbs.GoAround, "the last worker spent 1,200,000 of a 1,000,000 budget")]);
+        card.Summary.ShouldBe("The worker of TIA3/parser is past its budget but keeps working. Give it more room, or let it go and start another.");
 
         var git = new GitCli();
         var legs = new LegCommander(_state, new FakeWorkers(), new FakeChecks(), new FakeGitHub(), git, new Planes(git), new FlightCommander(_state, new Planes(git), _time),

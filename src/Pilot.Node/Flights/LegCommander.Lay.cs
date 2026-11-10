@@ -214,7 +214,7 @@ public sealed partial class LegCommander
         state.RaiseCard(MergeCardBin(), PrReady, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}'s PR #{flight.PullRequest} is ready to merge",
             $"{flight.Title ?? flight.Item.Noun}: laid on {flight.Base} as {CommitRefs.Short(laid)}, its review carried over. The queue would not take it yet ({why}); Merge queues it once its checks pass.",
-            [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [laid] }], link: flight.PullRequestUrl,
+            [new CardChoice { Label = MergeLabel, Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [laid] }], link: flight.PullRequestUrl,
             summary: $"{flight.Code} was laid on its base and is reviewed; its PR is ready. Merge lands it.");
 
     /// <summary>

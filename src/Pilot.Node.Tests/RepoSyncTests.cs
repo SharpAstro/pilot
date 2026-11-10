@@ -20,7 +20,7 @@ public sealed class RepoSyncTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private string Clone(string name)
@@ -190,7 +190,7 @@ public sealed class RepoSyncTests : IDisposable
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
@@ -198,7 +198,7 @@ public sealed class RepoSyncTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
+    [Trait("Category", "Slow")] // About git itself: a clone one commit behind a real bare origin, which the sync fast-forwards with git's own merge.
     public async Task ThroughARealNodeSyncFastForwardsARealCloneIsJournaledAndRefusedFromTheWatchtowerAndTheLan()
     {
         // A clone one commit behind its bare origin, on main.
@@ -257,7 +257,7 @@ public sealed class RepoSyncTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
+    [Trait("Category", "Slow")] // About git itself: a clone one commit behind a real bare origin, which the sync fast-forwards with git's own merge.
     public async Task AMergeOnlySyncTakesWhatWasAlreadyFetchedWhereTheFullSyncFailsOnAnUnreachableRemote()
     {
         // A clone one commit behind a bare origin, whose new commit it has fetched; then the origin goes away.
@@ -336,10 +336,10 @@ public sealed class RepoSyncTests : IDisposable
     [Fact]
     public async Task CreateIssueAsksGhForTheTitleAndBodyAndReturnsItsNumberAndRefusesWithoutATitle()
     {
-        var repo = Path.Combine(_root, "tianwen");
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
+        var repo = Path.Combine(node.Folder, "tianwen");
         Directory.CreateDirectory(repo);
-        Git(repo, "init", "-q", "-b", "main");
-        await using var node = await NodeHarness.StartAsync(Ct);
+        node.Repos!.Run(repo, "init", "-q", "-b", "main");
 
         var made = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.CreateIssue, Target = Verbs.RepoTarget(repo), Args = ["Planets", "on the GPU", "please"], Who = "gui" }, Ct)).Response!;
 
@@ -356,7 +356,7 @@ public sealed class RepoSyncTests : IDisposable
         var output = new StringWriter();
         (await PilotCommand.RunAsync(["--node-socket", node.SocketPath, "issue", "create", "--repo", repo, "--body", "text", "Rings"], _root, output, new StringWriter(), Ct)).ShouldBe(0);
         output.ToString().ShouldContain("created issue #2");
-        node.GitHub.IssuesCreated[1].Body.ShouldBe("text");
+        node.GitHub.IssuesCreated.ToArray()[1].Body.ShouldBe("text");
     }
 
     private static int Port()

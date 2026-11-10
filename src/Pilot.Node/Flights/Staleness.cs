@@ -78,6 +78,12 @@ public sealed record StaleItem
     /// <summary>Why it is stale, in one line.</summary>
     public required string Cause { get; init; }
 
+    /// <summary>
+    /// What backs the cause, for the digest and the watchtower brief only (a stale leg's table of check runs, #752); null when the
+    /// cause says it all. Kept out of <see cref="Summary"/>, which a flight's page shows as one line.
+    /// </summary>
+    public string? Detail { get; init; }
+
     /// <summary>The timeline and the cause as one text.</summary>
     public string Summary => Timeline.Count == 0 ? Cause : $"{string.Join("; ", Timeline)}. {Cause}";
 
@@ -95,7 +101,7 @@ public sealed record StaleItem
 public sealed record StalenessReading(IReadOnlyList<StaleItem> Stale, IReadOnlyList<StaleItem> Nearing);
 
 /// <summary>
-/// A pure reading of what has gone stale (#736): no I/O, the time passed in. A flight open too long, a PR with green CI open too long, a
+/// A pure reading of what has gone stale (#736; a flight on the owner's hold is skipped, it is parked on purpose and the digest and summary say so): no I/O, the time passed in. A flight open too long, a PR with green CI open too long, a
 /// leg rechecking too long, a card ringing too long, a hold that passed its timeout more than once.
 /// </summary>
 public static class Staleness
@@ -120,7 +126,8 @@ public static class Staleness
             }
         }
 
-        foreach (var flight in flights.Where(InAir))
+        // A held flight is waiting on its owner on purpose, so it is never read as stale or nearing it.
+        foreach (var flight in flights.Where(f => InAir(f) && f.OnHold is null))
         {
             var mine = legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order).ToList();
             var flightCards = cards.Where(c => c.Subject == Verbs.FlightTarget(flight.Code) || c.Subject.StartsWith(Verbs.FlightTarget(flight.Code) + "/", StringComparison.Ordinal)).ToList();
@@ -129,14 +136,19 @@ public static class Staleness
             var idle = now - lastMove;
             string[] Timeline() => [.. events.Where(e => e.At >= lastMove).OrderBy(e => e.At).Select(e => $"{Local(e.At, zone)} {e.Text}")];
 
-            // The flight open too long.
+            // The flight open too long, and not moving: one that moved within half the bound (a leg started minutes ago) is at work, not
+            // stale, however long it has been open. Its row read "stale · no progress for 12 m" for flights released from a hold and
+            // flying again (SE1, 2026-11-09): a mark that says it moved in the same breath as it says it is stuck.
             var openFor = now - flight.CreatedAt;
             var (waits, action) = Waits(flight, mine, flightCards, jobs, pullRequests);
-            Add(new StaleItem
+            if (idle >= TimeSpan.FromHours(bounds.FlightHours) / 2)
             {
-                Kind = StaleKind.Flight, Subject = flight.Code, Flight = flight.Code, Age = openFor, AgeText = Say(openFor), WaitsOn = waits, Action = action,
-                Timeline = Timeline(), Cause = $"open {Say(openFor)}, waiting on {waits}", Bound = Hours(bounds.FlightHours), Idle = idle,
-            }, TimeSpan.FromHours(bounds.FlightHours));
+                Add(new StaleItem
+                {
+                    Kind = StaleKind.Flight, Subject = flight.Code, Flight = flight.Code, Age = openFor, AgeText = Say(openFor), WaitsOn = waits, Action = action,
+                    Timeline = Timeline(), Cause = $"open {Say(openFor)}, waiting on {waits}", Bound = Hours(bounds.FlightHours), Idle = idle,
+                }, TimeSpan.FromHours(bounds.FlightHours));
+            }
 
             // Its PR open with green CI.
             if (flight.PullRequest is { } number && PullRequestFor(flight, pullRequests) is var pr && IsGreen(pr) && OpenSince(flight, pr, flightCards) is { } opened)
@@ -193,8 +205,8 @@ public static class Staleness
                 break;
             }
 
-            // A leg past the go-around or flying limits (#752): the leg-stale card's table of check runs is its cause, so the digest
-            // and the brief show why without the job logs. Read from the card, or built without logs while no card is raised yet.
+            // A leg past the go-around or flying limits (#752): the leg-stale card's table of check runs is its detail, so the digest
+            // and the brief show why without the job logs; the flight's one-line summary leaves it out. Read from the card, or built without logs while no card is raised yet.
             var goneStale = new HashSet<string>(StringComparer.Ordinal);
             foreach (var leg in mine.Where(l => l.State == LegState.Flying))
             {
@@ -213,7 +225,7 @@ public static class Staleness
                 stale.Add(new StaleItem
                 {
                     Kind = StaleKind.Leg, Subject = subject, Flight = flight.Code, Age = legAge, AgeText = Say(legAge), WaitsOn = waits, Action = action,
-                    Timeline = Timeline(), Cause = $"{subject} is stale: {why}{(card is null ? "" : $" (card {card.Id})")}. Its check runs:\n{table}",
+                    Timeline = Timeline(), Cause = $"{subject} is stale: {why}{(card is null ? "" : $" (card {card.Id})")}", Detail = $"Its check runs:\n{table}",
                     Bound = $"{StaleLegs.MostGoArounds.ToString(CultureInfo.InvariantCulture)} go-arounds or {Say(StaleLegs.MostFlying)}",
                 });
             }
@@ -449,8 +461,9 @@ public static class StaleSection
         var summary = item.Summary.ReplaceLineEndings(" ").Replace('"', '\'');
         var raise = flights?.FirstOrDefault(f => f.Code == item.Flight)?.StaleRaises?.LastOrDefault(r => r.Bound == StaleWatch.BoundKey(item.Kind));
         var raised = raise is null ? "" : $" ({raise.Note})";
+        var detail = item.Detail is { } more ? $" {more.ReplaceLineEndings(" ").Replace('"', '\'')}" : "";
         var still = item.Idle is { } idle ? $" no progress for {Staleness.Say(idle)}," : "";
-        return $"- {item.Subject}, {word} {item.AgeText}{raised}:{still} waiting on {item.WaitsOn}. Next: {item.Action}. \"{summary}\"";
+        return $"- {item.Subject}, {word} {item.AgeText}{raised}:{still} waiting on {item.WaitsOn}. Next: {item.Action}. \"{summary}\"{detail}";
     }
 
     /// <summary>The heading and a line per item, oldest first, as lines; empty when nothing is stale.</summary>

@@ -71,7 +71,7 @@ the answer says how many carry on.
 
 ```bash
 pilot status [--all]                      # flights in the air (--all: landed too), their legs, and the live sessions
-pilot summary [--fleet] [--fresh]         # "where are we": what needs you, where it is (one Haiku call, kept with its age); --fleet covers every node
+pilot summary [--fleet] [--fresh]         # "where are we": what needs you, where it is (the watchtower remakes it after changes while a client is attached, nothing is asked with none; Refresh and `pilot summarise` ask at once; the Haiku call runs only when the watchtower is down; kept with its age); --fleet covers every node
 pilot issue create "<title>" --body "<text>" --repo <checkout>
 pilot flight create <issue> --repo <checkout>   # the flight, its plane made
 pilot flight plan <code>                  # a planner plans the legs; then they fly

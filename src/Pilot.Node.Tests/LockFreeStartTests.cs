@@ -42,7 +42,7 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
         var command = run();
         while (_workers.Hold is not null && !command.IsCompleted)
         {
-            waited.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(30), "the launcher was not asked");
+            waited.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(25), "the launcher was not asked");
             await Task.Delay(5, Ct);
         }
         var clock = Stopwatch.StartNew();
@@ -55,7 +55,7 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
         var clock = Stopwatch.StartNew();
         while (!done())
         {
-            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20), "it did not come about");
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(120), "it did not come about"); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
             await Task.Delay(10, Ct);
         }
     }
@@ -201,10 +201,10 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
         await Until(() => _state.Cards(openOnly: true).Any(c => c.Kind == LegCommander.StartFailedKind));
         var choice = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.StartFailedKind).Choices.Single();
         choice.Verb.ShouldBe(Verbs.GoAround);
-        choice.Label.ShouldBe("Start a fresh worker on parser (the last one did not start)");
+        choice.Label.ShouldBe(Verbs.FreshWorker);
     }
 
-    private LegCommander Bounded(TimeSpan bound) => new(_state, _workers, _checks, _github, new GitCli(), new Planes(new GitCli()), _flights,
+    private LegCommander Bounded(TimeSpan bound) => new(_state, _workers, _checks, _github, _git, new Planes(_git), _flights,
         new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1"), TimeProvider.System)
     {
         StartBound = bound,

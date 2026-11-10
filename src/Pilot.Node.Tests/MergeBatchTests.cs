@@ -108,7 +108,7 @@ public sealed class MergeBatchTests
     private static async Task<(NodeHarness Node, BatchGit Git, TaskCompletionSource Release, Task<CommandResult> Held, string[] Waiting)> QueueAsync(bool batch, string[] codes, string ci,
         Func<NodeHarness, string, Task<CommandResult>>? merge = null, Func<FlightRow, FlightRow>? shape = null, string method = "merge")
     {
-        var node = await NodeHarness.StartAsync(Ct);
+        var node = await NodeHarness.StartOnModelAsync(Ct);
         var git = new BatchGit();
         var legs = node.App.Services.GetRequiredService<LegCommander>();
         legs.Batcher = Batcher(git, node.GitHub);
@@ -126,12 +126,12 @@ public sealed class MergeBatchTests
             if (call == nameof(IGitHub.MergeAsync) && Interlocked.Increment(ref first) == 1)
             {
                 reached.TrySetResult();
-                await release.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(25));
             }
         };
         Flight(node, "TIA9", 9);
         var held = Merge(node, "TIA9", method);
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(20), Ct);
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(120), Ct); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         var number = 10;
         foreach (var code in codes)
         {
@@ -243,8 +243,8 @@ public sealed class MergeBatchTests
 
         release.TrySetResult();
         await held;
-        await Until(node, () => Entry(node, "TIA2").State is MergeEntryState.Dropped or MergeEntryState.Merging
-            && Entry(node, "TIA1").State == MergeEntryState.Merging && Entry(node, "TIA3").State == MergeEntryState.Merging
+        await Until(node, () => Entry(node, "TIA2").State is MergeEntryState.Dropped or MergeEntryState.Merging or MergeEntryState.Merged
+            && Entry(node, "TIA1").State is MergeEntryState.Merging or MergeEntryState.Merged && Entry(node, "TIA3").State is MergeEntryState.Merging or MergeEntryState.Merged
             && Has(git, $"push --quiet origin {BatchHead}:refs/heads/main") && node.GitHub.Merged.Any(m => m.Number == 11) == (odd == "base"), "TIA1 and TIA3 landed with the batch, TIA2 on its own");
 
         node.GitHub.Drafts.ShouldHaveSingleItem().Title.ShouldBe("pilot merge batch: #10, #12");
@@ -259,7 +259,7 @@ public sealed class MergeBatchTests
         }
         else
         {
-            Entry(node, "TIA2").State.ShouldBe(MergeEntryState.Merging);
+            Entry(node, "TIA2").State.ShouldBeOneOf(MergeEntryState.Merging, MergeEntryState.Merged);
             node.GitHub.Merged.ShouldContain(m => m.Number == 11);
         }
     }
@@ -422,7 +422,7 @@ public sealed class MergeBatchTests
     [Fact]
     public async Task AnEntryThatConflictsIsLeftOutOfTheBatchAndMergedOnItsOwn()
     {
-        var node = await NodeHarness.StartAsync(Ct);
+        var node = await NodeHarness.StartOnModelAsync(Ct);
         await using var disposing = node;
         var git = new BatchGit { ConflictingMerge = 2 };
         var legs = node.App.Services.GetRequiredService<LegCommander>();
@@ -438,12 +438,12 @@ public sealed class MergeBatchTests
             if (call == nameof(IGitHub.MergeAsync) && Interlocked.Increment(ref first) == 1)
             {
                 reached.TrySetResult();
-                await release.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(25));
             }
         };
         Flight(node, "TIA9", 9);
         var held = Merge(node, "TIA9");
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(20), Ct);
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(120), Ct); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         foreach (var (code, number) in new[] { ("TIA1", 10), ("TIA2", 11), ("TIA3", 12) })
         {
             Flight(node, code, number);
@@ -540,8 +540,9 @@ public sealed class MergeBatchTests
         await giveUp.CancelAsync();
 
         (await Record.ExceptionAsync(() => leader!)).ShouldBeAssignableTo<OperationCanceledException>();
-        // The two left are not Batched waiting on each other for good: each takes its turn and merges on its own.
-        await Until(node, () => node.GitHub.Merged.Count == 3 && Entry(node, "TIA2").State == MergeEntryState.Merging && Entry(node, "TIA3").State == MergeEntryState.Merging
+        // The two left are not Batched waiting on each other for good: each takes its turn and merges on its own (on the in-memory git it
+        // may already be Merged by the time of a look, as Merging lasts only as long as the merge takes).
+        await Until(node, () => node.GitHub.Merged.Count == 3 && Entry(node, "TIA2").State is MergeEntryState.Merging or MergeEntryState.Merged && Entry(node, "TIA3").State is MergeEntryState.Merging or MergeEntryState.Merged
             && Has(git, $"push --quiet origin --delete {Batch1}") && node.GitHub.ClosedPrs.Count == 1, "TIA2 and TIA3 merged one at a time after TIA9, and the batch ended");
         Entry(node, "TIA1").State.ShouldBe(MergeEntryState.Dropped);
         Entry(node, "TIA1").Why.ShouldNotBeNull().ShouldContain("given up");
@@ -553,7 +554,7 @@ public sealed class MergeBatchTests
     [Fact]
     public async Task TheNodesLookSkipsAMergeWhoseReposTurnIsHeldAndAsksItAtTheNextLook()
     {
-        var node = await NodeHarness.StartAsync(Ct);
+        var node = await NodeHarness.StartOnModelAsync(Ct);
         await using var disposing = node;
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
         node.GitHub.Queues = true;
@@ -565,13 +566,13 @@ public sealed class MergeBatchTests
             if (call == nameof(IGitHub.MergeAsync) && Interlocked.Increment(ref first) == 1)
             {
                 reached.TrySetResult();
-                await release.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(25));
             }
         };
         // TIA9's merge holds tianwen's turn (as a batch holds it through its CI).
         Flight(node, "TIA9", 9);
         var held = Merge(node, "TIA9", "rebase");
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(20), Ct);
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(120), Ct); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         // TIA2 waits in the queue for a review that has now passed at its head; TIA1's merge was armed while its checks ran, and they
         // are green now.
         Flight(node, "TIA2", 11);
@@ -607,7 +608,7 @@ public sealed class MergeBatchTests
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();

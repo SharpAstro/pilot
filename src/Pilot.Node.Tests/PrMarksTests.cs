@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
@@ -20,17 +21,25 @@ public abstract class PrMarksTestsBase : IDisposable
     private protected const string Moved = "beef1111beef1111";
 
     private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2m-" + Guid.NewGuid().ToString("N")[..8]);
-    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private protected readonly NodeState _state;
     private protected readonly FakeWorkers _workers = new();
     private protected readonly FakeGitHub _github = new();
     private protected readonly FlightCommander _flights;
     private protected readonly LegCommander _legs;
 
-    protected PrMarksTestsBase()
+    /// <summary>The git every commander of the test runs: <see cref="FakeRepoGit"/>, or real git for a class that is about git itself. See <see cref="TestGit"/> (#813).</summary>
+    private protected readonly IGit _git;
+
+    private readonly TestGit _testGit;
+
+    /// <param name="journal">Where the node writes; a test that reads the black box gives a file journal.</param>
+    /// <param name="realGit">Real git for a class that is about git itself; the in-memory one otherwise (#813).</param>
+    protected PrMarksTestsBase(INodeJournal? journal = null, bool realGit = false)
     {
-        // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
-        SeedRepo.Make(_root);
-        var git = new GitCli();
+        _state = new NodeState(journal ?? new InMemoryJournal(), TimeProvider.System);
+        // Real: a repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
+        _git = _testGit = new TestGit(_root, realGit, () => SeedRepo.Make(_root));
+        var git = _git;
         _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
         _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, git, new Planes(git), _flights, options, TimeProvider.System)
@@ -41,30 +50,42 @@ public abstract class PrMarksTestsBase : IDisposable
 
     private protected string Repo => Path.Combine(_root, "tianwen");
 
-    public void Dispose()
+    /// <summary>Runs this test on git itself, before it has used the repo: for a test of a class that otherwise checks what the node decides.</summary>
+    private protected void RealGit() => _testGit.UseReal();
+
+    public virtual void Dispose()
     {
-        try
+        if (_testGit.IsReal)
         {
-            Git(Repo, "worktree", "prune");
+            try
+            {
+                Git(Repo, "worktree", "prune");
+            }
+            catch (InvalidOperationException)
+            {
+            }
         }
-        catch (InvalidOperationException)
-        {
-        }
+        _testGit.Release();
         foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
+        _testGit.Verify();
     }
 
     private protected static string Git(string cwd, params string[] args)
     {
+        if (TestGit.Answer(cwd, args) is { } answered)
+        {
+            return answered;
+        }
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
@@ -102,7 +123,7 @@ public abstract class PrMarksTestsBase : IDisposable
     private protected Task<CommandResult> Verdict(string code, string verdict, string report) =>
         Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), verdict, report);
 
-    private protected static string[] Pilot(HashSet<string>? labels) => [.. (labels ?? []).Where(l => l.StartsWith("pilot: ", StringComparison.Ordinal))];
+    private protected static string[] Pilot(ConcurrentDictionary<string, byte>? labels) => [.. (labels?.Keys ?? []).Where(l => l.StartsWith("pilot: ", StringComparison.Ordinal))];
 }
 
 /// <summary>Part 1 of PrMarksTests: the class is split so its tests run side by side, not one after another.</summary>
@@ -114,22 +135,22 @@ public sealed class PrMarksTests1 : PrMarksTestsBase
     {
         var flight = await Opened();
 
-        _github.IssueLabels[71].ShouldBe(["pilot node: DU1"]);
+        _github.IssueLabels[71].Keys.ShouldBe(["pilot node: DU1"]);
         // The state label is the PR's one pilot: label; the node label is another kind and stays through every swap.
         Pilot(_github.Labels[71]).ShouldBe(["pilot: reviewing"]);
         (await Verdict(flight.Code, "pass", "every Done-when holds")).Error.ShouldBeNull();
         Pilot(_github.Labels[71]).ShouldBe(["pilot: passed"]);
-        _github.IssueLabels[71].ShouldBe(["pilot node: DU1"]);
+        _github.IssueLabels[71].Keys.ShouldBe(["pilot node: DU1"]);
     }
 
     [Fact]
     public async Task APilotLabelSwapLeavesANodeLabelInPlace()
     {
-        _github.Labels[5] = ["pilot node: DU1", "pilot: reviewing", "bug"];
+        _github.SetLabels(5, "pilot node: DU1", "pilot: reviewing", "bug");
 
         await _github.SetPilotLabelAsync(Repo, 5, "pilot: changes", Ct);
 
-        _github.Labels[5].OrderBy(l => l, StringComparer.Ordinal).ShouldBe(["bug", "pilot node: DU1", "pilot: changes"]);
+        _github.Labels[5].Keys.OrderBy(l => l, StringComparer.Ordinal).ShouldBe(["bug", "pilot node: DU1", "pilot: changes"]);
     }
 
     [Fact]
@@ -191,13 +212,13 @@ public sealed class PrMarksTests1 : PrMarksTestsBase
     {
         var flight = await Opened();
         // A label of someone else's stays; every pilot: label but the current one goes.
-        _github.Labels[71] = ["bug", "pilot: conflicts"];
+        _github.SetLabels(71, "bug", "pilot: conflicts");
 
         (await Verdict(flight.Code, "changes", "- the null check in Parse is gone\n- no test for it")).Error.ShouldBeNull();
 
         _github.Statuses.Last().ShouldBe((Reviewed, "failure", "changes: the null check in Parse is gone", "https://github.com/x/tianwen/pull/71#pullrequestreview-9001"));
         Pilot(_github.Labels[71]).ShouldBe(["pilot: changes"]);
-        _github.Labels[71].ShouldContain("bug");
+        _github.Labels[71].Keys.ShouldContain("bug");
 
         // A fresh review and its pass replace it in turn: one pilot: label throughout.
         (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
@@ -221,8 +242,8 @@ public sealed class PrMarksTests1 : PrMarksTestsBase
 
         _github.Posted.Count.ShouldBe(2);
         _github.Posted.Select(p => System.Text.Json.JsonDocument.Parse(p.Payload).RootElement.GetProperty("event").GetString()).ShouldAllBe(e => e == "COMMENT");
-        _github.Posted[0].Payload.ShouldContain("first round");
-        _github.Posted[1].Payload.ShouldContain("second round");
+        _github.Posted.ToArray()[0].Payload.ShouldContain("first round");
+        _github.Posted.ToArray()[1].Payload.ShouldContain("second round");
         F(flight.Code).Review!.ReviewUrl.ShouldNotBeNull().ShouldEndWith("pullrequestreview-9002");
     }
 }
@@ -247,8 +268,9 @@ public sealed class PrMarksTests2 : PrMarksTestsBase
         review.MarksWhy.ShouldContain("rate limited");
         review.MarksWhy.ShouldContain("Resource not accessible");
         (review.StatusState, review.Label, review.ReviewUrl).ShouldBe(("pending", "pilot: reviewing", null));
-        var card = Open().Single(c => c.Kind == PrMarks.RefusedKind);
-        card.Bin.ShouldBe(CardBin.ForYou);
+        // A line to read (Handled, born closed): the node sets the marks itself at its next look, so nothing is asked of the person.
+        var card = _state.Cards().Single(c => c.Kind == PrMarks.RefusedKind);
+        card.Bin.ShouldBe(CardBin.Handled);
         card.Title.ShouldStartWith("GitHub refused a mark on TIA1's PR #71: the review comment: GitHub refused the review: Resource not accessible");
         // The merge is still offered: the review passed.
         Open().ShouldContain(c => c.Kind == LegCommander.PrReady);
@@ -263,12 +285,12 @@ public sealed class PrMarksTests2 : PrMarksTestsBase
         (await Verdict(flight.Code, "pass", "all good")).Error.ShouldBeNull();
         _github.Posted.Count.ShouldBe(1);
         F(flight.Code).Review!.MarksWhy.ShouldNotBeNull();
-        var cards = Open().Count(c => c.Kind == PrMarks.RefusedKind);
+        var cards = _state.Cards().Count(c => c.Kind == PrMarks.RefusedKind);
         cards.ShouldBe(1);
 
         // Still refused: the same why is not carded again.
         await _legs.RetryMarksAsync(Ct);
-        Open().Count(c => c.Kind == PrMarks.RefusedKind).ShouldBe(cards);
+        _state.Cards().Count(c => c.Kind == PrMarks.RefusedKind).ShouldBe(cards);
 
         _github.StatusFails = null;
         await _legs.RetryMarksAsync(Ct);
@@ -277,7 +299,7 @@ public sealed class PrMarksTests2 : PrMarksTestsBase
         (review.StatusState, review.Label, review.MarksWhy).ShouldBe(("success", "pilot: passed", null));
         _github.Statuses.Last().ShouldBe((Reviewed, "success", $"passed at {Reviewed[..9]}", review.ReviewUrl));
         _github.Posted.Count.ShouldBe(1);
-        Open().ShouldNotContain(c => c.Kind == PrMarks.RefusedKind);
+        _state.Cards().Count(c => c.Kind == PrMarks.RefusedKind).ShouldBe(cards);
     }
 
     [Fact]

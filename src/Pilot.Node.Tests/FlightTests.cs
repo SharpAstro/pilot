@@ -105,7 +105,7 @@ public sealed class FlightCommanderTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private static string Git(string cwd, params string[] args)
@@ -115,7 +115,7 @@ public sealed class FlightCommanderTests : IDisposable
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
@@ -162,8 +162,8 @@ public sealed class FlightCommanderTests : IDisposable
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "11", "an", "issue")).Ok.ShouldBeTrue();
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "sc-12", "a", "story")).Ok.ShouldBeTrue();
 
-        github.IssueLabels[11].ShouldBe(["pilot node: DE1"]);
-        github.LabelsCreated.ShouldBe(["pilot node: DE1"]);
+        github.IssueLabels[11].Keys.ShouldBe(["pilot node: DE1"]);
+        github.LabelsCreated.Keys.ShouldBe(["pilot node: DE1"]);
         shortcut.Labels[12].ShouldBe(["pilot node: DE1"]);
         PilotMarks.NodeLabelPrefix.StartsWith(PilotMarks.LabelPrefix, StringComparison.Ordinal).ShouldBeFalse();
     }
@@ -178,9 +178,9 @@ public sealed class FlightCommanderTests : IDisposable
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "52", "two")).Ok.ShouldBeTrue();
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "sc-53", "story")).Ok.ShouldBeTrue();
 
-        // The fake's org gets the Priority field at setup, so only the recheck and human-verification labels are made; 'pilot: priority' is made only without the field.
+        // The fake's org gets the Priority field at setup, so only the recheck, hold and human-verification labels are made; 'pilot: priority' is made only without the field.
         github.FieldsCreated.ShouldBe(1);
-        github.LabelsEnsured.Select(e => e.Label).ShouldBe([PilotMarks.Recheck, PilotMarks.HumanVerification]);
+        github.LabelsEnsured.Select(e => e.Label).ShouldBe([PilotMarks.Recheck, PilotMarks.Hold, PilotMarks.HumanVerification, PilotMarks.SiblingSource]);
         github.LabelsEnsured.Select(e => e.Repo).Distinct().Count().ShouldBe(1);
         PilotMarks.LabelStyle(PilotMarks.Priority).Description.ShouldContain("Opus cap");
         PilotMarks.LabelStyle(PilotMarks.Priority).Color.ShouldNotBe(PilotMarks.LabelStyle("pilot: other").Color);
@@ -195,7 +195,7 @@ public sealed class FlightCommanderTests : IDisposable
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "61", "kept")).Ok.ShouldBeTrue();
 
         Flight("TIA61").State.ShouldBe(FlightState.Flying);
-        github.IssueLabels[61].ShouldBe(["pilot node: DE1"]);
+        github.IssueLabels[61].Keys.ShouldBe(["pilot node: DE1"]);
         // The fake org cannot make the field either, so that refusal is a card of its own beside the label's.
         var card = _state.Cards(openOnly: false).Single(c => c.Kind == "node-label-refused" && c.Title.StartsWith("The label", StringComparison.Ordinal));
         card.Bin.ShouldBe(CardBin.Handled);
@@ -205,7 +205,7 @@ public sealed class FlightCommanderTests : IDisposable
     public async Task AnItemWithAnotherNodesLabelIsRefusedNamingThatNodeAndMakesNoPlane()
     {
         var (github, shortcut) = Trackered();
-        github.IssueLabels[21] = ["pilot node: SE1"];
+        github.SetIssueLabels(21, "pilot node: SE1");
         shortcut.Labels[22] = ["pilot node: SE1"];
 
         var issue = await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "21");
@@ -215,14 +215,14 @@ public sealed class FlightCommanderTests : IDisposable
         story.Error.ShouldNotBeNull().ShouldContain("SE1");
         _state.Flights().ShouldBeEmpty();
         Directory.Exists(Path.Combine(Repo, ".claude", "worktrees", "tia21")).ShouldBeFalse();
-        github.IssueLabels[21].ShouldBe(["pilot node: SE1"]);
+        github.IssueLabels[21].Keys.ShouldBe(["pilot node: SE1"]);
     }
 
     [Fact]
     public async Task ThisNodesOwnLabelIsNoRefusal()
     {
         var (github, _) = Trackered();
-        github.IssueLabels[31] = ["pilot node: DE1", "bug"];
+        github.SetIssueLabels(31, "pilot node: DE1", "bug");
 
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "31")).Ok.ShouldBeTrue();
 
@@ -235,14 +235,14 @@ public sealed class FlightCommanderTests : IDisposable
     public async Task AnywayCreatesOverAnotherNodesLabelAndCommentsOnTheIssue()
     {
         var (github, shortcut) = Trackered();
-        github.IssueLabels[41] = ["pilot node: SE1"];
+        github.SetIssueLabels(41, "pilot node: SE1");
         shortcut.Labels[42] = ["pilot node: SE1"];
 
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "41", "--anyway", "Over", "there")).Ok.ShouldBeTrue();
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "sc-42", "T", "--anyway")).Ok.ShouldBeTrue();
 
         Flight("TIA41").Title.ShouldBe("Over there");
-        github.IssueLabels[41].ShouldBe(["pilot node: DE1"]);
+        github.IssueLabels[41].Keys.ShouldBe(["pilot node: DE1"]);
         var comment = github.IssueComments.ShouldHaveSingleItem();
         comment.Number.ShouldBe(41);
         comment.Body.ShouldContain("anyway");
@@ -256,15 +256,15 @@ public sealed class FlightCommanderTests : IDisposable
     public async Task LandingAFlightTakesThisNodesLabelOffItsIssueOrStoryAndLeavesOthers()
     {
         var (github, shortcut) = Trackered();
-        github.IssueLabels[51] = ["bug"];
+        github.SetIssueLabels(51, "bug");
         await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "51");
         await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "sc-52", "A", "story");
-        github.IssueLabels[51].Order().ShouldBe(["bug", "pilot node: DE1"]);
+        github.IssueLabels[51].Keys.Order().ShouldBe(["bug", "pilot node: DE1"]);
 
         (await Run(Verbs.Land, Verbs.FlightTarget("TIA51"))).Ok.ShouldBeTrue();
         (await Run(Verbs.Land, Verbs.FlightTarget("TIA52"))).Ok.ShouldBeTrue();
 
-        github.IssueLabels[51].ShouldBe(["bug"]);
+        github.IssueLabels[51].Keys.ShouldBe(["bug"]);
         shortcut.Labels[52].ShouldBeEmpty();
     }
 
@@ -278,10 +278,10 @@ public sealed class FlightCommanderTests : IDisposable
         Flight("TIA81a").State.ShouldNotBe(FlightState.Landed);
 
         (await Run(Verbs.Land, Verbs.FlightTarget("TIA81"))).Ok.ShouldBeTrue();
-        github.IssueLabels[81].ShouldBe(["pilot node: DE1"]);
+        github.IssueLabels[81].Keys.ShouldBe(["pilot node: DE1"]);
 
         (await Run(Verbs.Land, Verbs.FlightTarget("TIA81a"))).Ok.ShouldBeTrue();
-        github.IssueLabels[81].ShouldBeEmpty();
+        github.IssueLabels[81].Keys.ShouldBeEmpty();
     }
 
     [Fact]
@@ -297,8 +297,8 @@ public sealed class FlightCommanderTests : IDisposable
 
         Flight("TIA61").State.ShouldBe(FlightState.Landed);
         Flight("TIA62").State.ShouldBe(FlightState.Landed);
-        github.IssueLabels[61].ShouldBeEmpty();
-        github.IssueLabels[62].ShouldBeEmpty();
+        github.IssueLabels[61].Keys.ShouldBeEmpty();
+        github.IssueLabels[62].Keys.ShouldBeEmpty();
     }
 
     [Fact]
@@ -437,7 +437,7 @@ public sealed class FlightStoreTests : IDisposable
     {
         if (Directory.Exists(_folder))
         {
-            Directory.Delete(_folder, recursive: true);
+            TestDirs.DeleteTree(_folder);
         }
     }
 
@@ -514,7 +514,7 @@ public sealed class PlaneSettingsTests : IDisposable
 {
     private readonly string _plane = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "p2p-" + Guid.NewGuid().ToString("N")[..8])).FullName;
 
-    public void Dispose() => Directory.Delete(_plane, recursive: true);
+    public void Dispose() => TestDirs.DeleteTree(_plane);
 
     [Fact]
     public void ThePlanesLocalSettingsDisableTheRepoMcpServersAndKeepTheRest()

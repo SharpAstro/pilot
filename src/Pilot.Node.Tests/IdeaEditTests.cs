@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
@@ -29,18 +28,16 @@ public sealed class IdeaEditTests : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2e-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private readonly SeededRepos _repos;
     private readonly FakeGitHub _github = new();
     private readonly FakeIdeaMerger _merger = new();
     private readonly IdeaCommander _commander;
 
     public IdeaEditTests()
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        var planes = new Planes(new GitCli());
+        _repos = new SeededRepos(_root);
+        _repos.Seed("pilot");
+        var planes = _repos.Planes();
         var flights = new FlightCommander(_state, planes, TimeProvider.System, github: _github);
         var catalog = new RepoCatalog(_state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root]));
         _commander = new IdeaCommander(_state, planes, catalog, _github, _merger, new FakeIdeaTidier(), new FakeIdeaRepoChooser(), flights, TimeProvider.System);
@@ -48,35 +45,7 @@ public sealed class IdeaEditTests : IDisposable
 
     private string Repo => Path.Combine(_root, "pilot");
 
-    public void Dispose()
-    {
-        try
-        {
-            Git(Repo, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
-    }
-
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    public void Dispose() => _repos.Dispose();
 
     /// <summary>An idea on GitHub that the node has read, as a person starts an edit of it.</summary>
     private async Task<MilestoneIssue> NotedAsync(string title = "Ring shadows", string body = "on the planet")
@@ -96,7 +65,7 @@ public sealed class IdeaEditTests : IDisposable
             Who = "tests",
         }, Ct);
 
-    private MilestoneIssue OnGitHub(int number) => _github.MilestoneIssuesOf[Path.GetFullPath(Repo)].Single(i => i.Number == number);
+    private MilestoneIssue OnGitHub(int number) => _github.MilestoneIssuesOf[Path.GetFullPath(Repo)].Values.Single(i => i.Number == number);
 
     [Fact]
     public async Task AnEditOverAnIdeaGitHubHasNotChangedIsSavedVerbatimAndNeverMerged()

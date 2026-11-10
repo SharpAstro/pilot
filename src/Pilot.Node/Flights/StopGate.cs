@@ -53,7 +53,7 @@ public sealed class StopGate(NodeState state, Planes planes)
         {
             var files = await planes.UncommittedFilesAsync(flight.Worktree, cancellationToken);
             state.RaiseCard(CardBin.Ring, Kind, subject, $"{flight.Code}: a session stopped with {uncommitted}", $"it was told once to commit them and stopped again, so the node will not tell it a third time by itself",
-                [new CardChoice { Label = $"Tell the session to commit its files in {flight.Code}'s plane", Verb = Verbs.Say, Target = Verbs.SessionTarget(sessionId), Args = [reason] }],
+                [new CardChoice { Label = "Tell it to commit", Verb = Verbs.Say, Target = Verbs.SessionTarget(sessionId), Args = [reason] }],
                 summary: Summary(flight.Code, files));
             return null;
         }

@@ -26,7 +26,7 @@ public sealed class LockWaitTests : LegCommanderTestsBase, IDisposable
         var clock = Stopwatch.StartNew();
         while (!done())
         {
-            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20), "it did not come about");
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(120), "it did not come about"); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
             await Task.Delay(10, Ct);
         }
     }
@@ -57,7 +57,7 @@ public sealed class LockWaitTests : LegCommanderTestsBase, IDisposable
             {
                 File.SetAttributes(file, FileAttributes.Normal);
             }
-            Directory.Delete(_nodeRoot, recursive: true);
+            TestDirs.DeleteTree(_nodeRoot);
         }
         base.Dispose();
     }

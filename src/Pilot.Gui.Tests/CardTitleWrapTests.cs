@@ -110,6 +110,23 @@ public sealed class CardTitleWrapTests
         arranged.Select(a => a.Node.Tooltip).ShouldContain(title);
     }
 
+    [Theory]
+    [InlineData(CardsView<RgbaImage>.MinWidth)]
+    [InlineData(CardsView<RgbaImage>.Width)]
+    public void ATitleCutByItsCapEndsItsLastLineInAnEllipsis(float width)
+    {
+        // #923: the third line ended with no mark, so a capture (which has no hover) showed the title cut silently.
+        var title = string.Join(' ', Enumerable.Repeat("a session stopped with uncommitted files in its plane", 12));
+        var card = IssueCards()[0] with { Title = title, Summary = "short" };
+        var arranged = Arrange([card], width, out var renderer);
+        using var _ = renderer;
+
+        var lines = TextOf(arranged, 14f).GroupBy(n => n.Bounds.Y).OrderBy(g => g.Key).ToList();
+        lines.Count.ShouldBe(CardsView<RgbaImage>.TitleLines);
+        var last = string.Concat(lines[^1].OrderBy(n => n.Bounds.X).Select(n => n.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } ? t.Value : "")).TrimEnd();
+        last.ShouldEndWith("…");
+    }
+
     [Fact]
     public void ALinkTitleWrapsWithEveryWordTheLinkAndTheArrowOnTheLastWord()
     {

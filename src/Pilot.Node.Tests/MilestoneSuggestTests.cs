@@ -134,7 +134,7 @@ public sealed class MilestoneSuggestTests : IssueBoardFixture
         result.Ok.ShouldBeTrue(result.Error);
         result.Made.ShouldBe("pilot #1 #4 #6");
         GitHub.MilestonesMade.Where(m => m.Title == "Rings").Count().ShouldBe(1);
-        GitHub.MilestonesOf.Values.Single().Single(m => m.Title == "Rings").Description.ShouldBe("Draw the rings well");
+        GitHub.MilestonesOf.Values.Single().Values.Single(m => m.Title == "Rings").Description.ShouldBe("Draw the rings well");
         GitHub.Moves.ShouldBe([(1, "v1"), (4, "Rings"), (6, "Rings")]);
         new[] { 1, 4, 6 }.Select(MilestoneOf).ShouldBe(["v1", "Rings", "Rings"]);
         State.Milestones().ShouldContain(m => m.Title == "Rings");

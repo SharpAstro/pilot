@@ -42,7 +42,7 @@ internal sealed partial class FlightsView<TSurface>
     public Action<CardRow>? OnChatAboutCard { get; set; }
 
     /// <summary>The button of a card whose press is with the node, as the cards panel marks it: the page's Merge is the same card's.</summary>
-    public Func<string, string?>? CardWorking { get; set; }
+    public Func<CardRow, string?>? CardWorking { get; set; }
 
     /// <summary>Called as a flight's page is about to open, before what the window shows changes: the chrome records the place being left.</summary>
     public Action? Opening { get; set; }
@@ -213,7 +213,7 @@ internal sealed partial class FlightsView<TSurface>
 
         _legBlocks.Clear();
         var legs = detail.Legs.Count == 0
-            ? [Layout.Builder.Text(line.Node is null or { Here: true } ? "no legs yet: Plan a leg" : "no legs yet", 13f, Dim).RowH(24f)]
+            ? [Layout.Builder.Text(line.Row.OnHold is null && line.Node is null or { Here: true } ? "no legs yet: Plan a leg" : "no legs yet", 13f, Dim).RowH(24f)]
             : detail.Legs.Select(l => LegBlock(line, l)).ToList();
         // The flight's own summary leads what scrolls: the legs are the detail under it.
         if (Summary is { } board && _summaryCard.Build(board, board.Shelf.Flight(line.Code, line.Node), P, _screen.AsOf) is { } summary)
@@ -252,7 +252,7 @@ internal sealed partial class FlightsView<TSurface>
             page.Add(Prose($"stale: {staleSummary}", 12f, Held));
             if (line.StaleRaise is { } raise)
             {
-                page.Add(Prose(raise, 12f, Held));
+                page.Add(Prose($"priority {raise}", 12f, Held));
             }
         }
         if (line.StaleMark is { } stale)
@@ -375,7 +375,7 @@ internal sealed partial class FlightsView<TSurface>
             // A stale flight's (its node unreachable) is dead: the choice goes to the node, which cannot be asked.
             cells.Add(line.Stale is not null
                 ? CardsView<TSurface>.Dead(choice.Label).WithTooltip(StaleWhy(line))
-                : CardWorking?.Invoke(card.Id) is not null
+                : CardWorking?.Invoke(card) is not null
                 ? CardsView<TSurface>.Dead($"{choice.Label} …")
                 : CardsView<TSurface>.ChoiceControl(choice, card.Detail, $"flight:{line.Code}:merge-card", () => answer(card, number)));
         }
@@ -383,7 +383,7 @@ internal sealed partial class FlightsView<TSurface>
         {
             cells.Add(line.Stale is not null
                 ? CardsView<TSurface>.Dead(CardsView<TSurface>.ChatAboutLabel).WithTooltip(StaleWhy(line))
-                : CardWorking?.Invoke(card.Id) is not null
+                : CardWorking?.Invoke(card) is not null
                 ? CardsView<TSurface>.Dead(CardsView<TSurface>.ChatAboutLabel)
                 : Pill(CardsView<TSurface>.ChatAboutLabel, $"flight:{line.Code}:chat-card", () => about(card)));
         }
@@ -406,7 +406,7 @@ internal sealed partial class FlightsView<TSurface>
         }
         var button = line.Stale is not null
             ? CardsView<TSurface>.Dead(action.Label).WithTooltip(StaleWhy(line))
-            : CardWorking?.Invoke(card.Id) is not null
+            : CardWorking?.Invoke(card) is not null
             ? Layout.Builder.Text("Starting…", 12f, Dim, TextAlign.Center, TextAlign.Center)
                 .Bg(P.Button).WithTooltip($"Asking the node to fix {line.Code}'s review findings").WFixed(104f).HStar()
             : Pill(action.Label, $"flight:{line.Code}:address-review", () => answer(card, action.Choice)).WithTooltip(action.Tooltip);
@@ -444,6 +444,12 @@ internal sealed partial class FlightsView<TSurface>
                         : CardsView<TSurface>.Dead($"{who}'s transcript").WithTooltip(StaleWhy(line));
                 }
             }
+        }
+        else if (line.Row.State != FlightState.Landed && FlightWaiting.OnHoldText(line.Row) is { } onHold)
+        {
+            // The owner's hold comes first: the node refuses every step but Release while it stands, so a held flight with no legs does
+            // not read "not planned yet" and offers no Plan it (FlightAction.For offers it only Release).
+            yield return WrappedProse.Of($"{onHold}; nothing runs on it until it is released", 12f, Held).WAuto();
         }
         else if (line.Row.State == FlightState.Flying && line.LegRows.Count == 0)
         {

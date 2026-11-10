@@ -27,7 +27,7 @@ public sealed class UpdateTests : IDisposable
     {
         if (Directory.Exists(_root))
         {
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
     }
 
@@ -304,7 +304,7 @@ public sealed class UpdateTests : IDisposable
         card.Kind.ShouldBe(NodeUpdater.Kind);
         card.Title.ShouldBe("pilot 2.0.2 is out (this is 2.0.1)");
         card.Choices.ShouldHaveSingleItem().ShouldSatisfyAllConditions(
-            c => c.Label.ShouldBe("Install pilot 2.0.2 and restart the node"), c => c.Verb.ShouldBe(Verbs.Update), c => c.Args.ShouldBe([UpdateArgs.Install]));
+            c => c.Label.ShouldBe("Install 2.0.2 and restart"), c => c.Verb.ShouldBe(Verbs.Update), c => c.Args.ShouldBe([UpdateArgs.Install]));
 
         Read(node).ShouldBe("old " + node);
     }

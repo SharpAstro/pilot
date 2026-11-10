@@ -61,7 +61,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
 
     private async Task Within(Task task, string what)
     {
-        (await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(20), Ct))).ShouldBe(task, what);
+        (await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(120), Ct))).ShouldBe(task, what); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         await task;
     }
 
@@ -141,7 +141,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         await Fly(flight, "parser");
         var other = await OtherFlight();
         var gate = new Gate();
-        var git = new GatedGit(new GitCli(), gate, args => args is ["push", ..]);
+        var git = new GatedGit(_git, gate, args => args is ["push", ..]);
         var legs = Another(git);
 
         var open = legs.RunAsync(new CommandRequest { Verb = Verbs.OpenPr, Target = Verbs.FlightTarget(flight.Code), Who = "controller" }, Ct);
@@ -164,7 +164,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         var (flight, _) = await Passed("1");
         var other = await OtherFlight();
         var gate = new Gate();
-        var git = new GatedGit(new GitCli(), gate, args => args is ["fetch", ..]);
+        var git = new GatedGit(_git, gate, args => args is ["fetch", ..]);
         var legs = Another(git);
 
         var rebase = legs.BringUpToDateAsync(flight.Code, Ct);
@@ -189,7 +189,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
     {
         var (flight, _) = await Passed("1");
         var gate = new Gate();
-        var git = new GatedGit(new GitCli(), gate, args => args is ["fetch", ..]);
+        var git = new GatedGit(_git, gate, args => args is ["fetch", ..]);
         var legs = Another(git);
 
         var rebase = legs.BringUpToDateAsync(flight.Code, Ct);
@@ -218,7 +218,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         var flight = await NewFlight("1", "parser");
         await Fly(flight, "parser");
         var gate = new Gate();
-        var git = new GatedGit(new GitCli(), gate, args => args is ["fetch", ..]);
+        var git = new GatedGit(_git, gate, args => args is ["fetch", ..]);
         var legs = Another(git);
         // A test's commander does not advance flights by itself (RoleModels.Advances); the sweep is what is under test here.
         legs.Models = new RoleModels(new NodeSettings());
@@ -244,7 +244,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         var flight = await NewFlight("1", "parser");
         await Fly(flight, "parser");
         var gate = new Gate();
-        var git = new GatedGit(new GitCli(), gate, args => args is ["push", ..]);
+        var git = new GatedGit(_git, gate, args => args is ["push", ..]);
         var legs = Another(git);
 
         var open = legs.RunAsync(new CommandRequest { Verb = Verbs.OpenPr, Target = Verbs.FlightTarget(flight.Code), Who = "controller" }, Ct);
@@ -268,7 +268,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         var flight = await NewFlight("1", "parser");
         var other = await OtherFlight();
         var gate = new Gate();
-        var flights = new FlightCommander(_state, new Planes(new GatedGit(new GitCli(), gate, args => args is ["worktree", "remove", ..])), TimeProvider.System, _workers);
+        var flights = new FlightCommander(_state, new Planes(new GatedGit(_git, gate, args => args is ["worktree", "remove", ..])), TimeProvider.System, _workers);
 
         var land = flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget(flight.Code), Who = "controller" }, Ct);
         await Within(gate.Reached, "the plane's removal was out");
@@ -325,7 +325,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         var other = await OtherFlight();
         // A merge armed on the node and on GitHub, which plan-leg takes back.
         _state.PutFlight(F(flight.Code) with { MergeWhenGreen = [_github.Pr!.Head, "squash"] });
-        _github.AutoMergeArmed.Add((_github.Pr!.Number, _github.Pr!.Head, "squash"));
+        _github.AutoMergeArmed.Enqueue((_github.Pr!.Number, _github.Pr!.Head, "squash"));
         var gate = new Gate();
         _github.OnCall = call => call == nameof(IGitHub.PullRequestAsync) ? gate.PassAsync() : Task.CompletedTask;
         string[] plan = ["name=render", "goal=Draw the planets", "done-when=The capture shows them", "item=Draw them"];

@@ -21,10 +21,24 @@ public static partial class NodeApp
         var logWriter = new LogWriter(log);
         builder.Logging.AddProvider(new FileLoggerProvider(log));
         DetachedShell.Error = logWriter;
+        NodeTraffic.Shared.Log = logWriter;
         builder.Services.AddSingleton(log);
         builder.Services.AddSingleton(logWriter);
         // First, so its start line leads and its stop line (hosts stop in reverse) closes the log of this run.
         builder.Services.AddHostedService(_ => new NodeLifecycleLog(options, log));
+        // A reboot made ready (#916): maintenance mode, every live session told to save its state, the node collecting the files.
+        builder.Services.AddSingleton(services =>
+        {
+            var messenger = services.GetRequiredService<SessionMessenger>();
+            return new RebootPrep(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>(), RebootPrep.FolderIn(options.DataFolder))
+            {
+                Say = async (id, text, ct) => (await messenger.SayAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = "node" }, ct)).Ok,
+                End = async (id, why, ct) => await messenger.EndAsync(new CommandRequest { Verb = Verbs.EndSession, Target = Verbs.SessionTarget(id), Args = [why], Who = Flights.LegWatch.Who }, ct),
+                SetMaintenance = on => services.GetRequiredService<NodeSettingsCommands>().Set(new CommandRequest
+                    { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.MaintenanceKey, on ? "on" : "off"], Who = "node" }),
+            };
+        });
+        builder.Services.AddHostedService(services => services.GetRequiredService<RebootPrep>());
         return logWriter;
     }
 
@@ -35,6 +49,9 @@ public static partial class NodeApp
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton(NodeTraffic.Shared);
+        // What GET /node reads the heap with: the live figures, unless a test host registers a fixed reading after this (a live
+        // working set moves between any two calls, so two `pilot status` outputs of one node would never be equal).
+        builder.Services.AddSingleton<Func<NodeHeapRow>>(_ => () => NodeHeap.Read());
         builder.Services.AddHostedService(services => new TrafficLog(services.GetRequiredService<NodeTraffic>(), services.GetRequiredService<RollingLog>(), services.GetRequiredService<TimeProvider>()));
     }
 
@@ -43,12 +60,32 @@ public static partial class NodeApp
     {
         // The store: the node's events as files in its data folder, read back on the next start (FileJournal).
         builder.Services.AddSingleton<INodeJournal>(_ => new FileJournal(Path.Combine(options.DataFolder, "store")));
-        builder.Services.AddSingleton(services => new NodeState(
-            services.GetRequiredService<INodeJournal>(), services.GetRequiredService<TimeProvider>(), options.RetainedDeltas)
+        // The state is built on the store here, and a store that cannot be read is set aside and started again from a backup (StoreRecovery).
+        // A store from a newer node still throws StoreTooNewException from here, which NodeProgram turns into its refusal.
+        builder.Services.AddSingleton(services =>
         {
-            Error = logWriter,
-            TokensByFlight = () => services.GetRequiredService<SpendLedger>().TokensByFlight(),
+            var time = services.GetRequiredService<TimeProvider>();
+            var opened = StoreRecovery.Open(
+                services.GetRequiredService<INodeJournal>(),
+                journal =>
+                {
+                    var state = new NodeState(journal, time, options.RetainedDeltas)
+                    {
+                        Error = logWriter,
+                        TokensByFlight = () => services.GetRequiredService<SpendLedger>().TokensByFlight(),
+                    };
+                    // A card about to ring goes to the brain first (PIL855); resolved at the first ring, as the brain needs the watchtower, which needs this state.
+                    state.RingJudge = new RingJudge(state, () => services.GetRequiredService<IBrain>()) { Log = line => logWriter.WriteLine(line) };
+                    return state;
+                },
+                time);
+            return opened;
         });
+        // The line in node.log and node-start.log and the card, when the start was from a backup: said when the host starts, with every service
+        // there to resolve (the card goes to the brain before it rings, which needs the watchtower, which needs the state built just above).
+        builder.Services.AddHostedService(services => new StoreRecoveryReport(services.GetRequiredService<StoreRecovery>(), logWriter,
+            line => NodeProgram.AppendStartLog(options, $"pilot-node {FileJournal.RunningVersion} {line}")));
+        builder.Services.AddSingleton(services => services.GetRequiredService<StoreRecovery>().State);
         builder.Services.AddSingleton<PageViews>();
         builder.Services.AddSingleton<EventHub>();
     }
@@ -81,6 +118,18 @@ public static partial class NodeApp
             GitHub = services.GetService<IGitHub>(),
             Queue = services.GetRequiredService<RemovalQueue>(),
             Repos = () => [.. services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path)],
+        });
+        // The Claude Code jobs pilot started and has as ended or replaced are stopped and removed once the tracker has listed, then hourly (#891).
+        builder.Services.AddSingleton<IClaudeJobs>(services => new ClaudeCliJobs(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")));
+        // The same removal, at once, when the node ends a session it started (a worker's stop, a session end).
+        builder.Services.AddSingleton(services => new ClaudeJobRemoval(services.GetRequiredService<IClaudeJobs>(), logWriter));
+        builder.Services.AddHostedService(services => new ClaudeJobSweep(
+            services.GetRequiredService<NodeState>(), services.GetRequiredService<SessionLedger>(), services.GetRequiredService<IClaudeJobs>(),
+            services.GetRequiredService<IClaudeAgents>(), options.Machine, services.GetRequiredService<TimeProvider>())
+        {
+            Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,
+            CurrentWatchtower = () => services.GetRequiredService<Watchtower>().Current(),
+            Error = logWriter,
         });
         builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>(), services.GetRequiredService<RemovalQueue>()));
         builder.Services.AddSingleton<StopGate>();
@@ -125,6 +174,7 @@ public static partial class NodeApp
             flights.Say = async (id, text, ct) =>
                 (await services.GetRequiredService<NodeCommands>().RunAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = LegWatch.Who }, ct)).Ok;
             flights.CancelJobs = (flight, owners, who) => services.GetRequiredService<JobRunner>().CancelFor(flight, owners, who);
+            flights.CancelHeldJobs = (flight, who) => services.GetRequiredService<JobRunner>().CancelRunningFor(flight, who);
             var models = services.GetRequiredService<RoleModels>();
             var trackers = new List<ITracker> { new ShortcutTracker(new HttpClient(new CountingHandler(NodeTraffic.Shared) { InnerHandler = new HttpClientHandler() }) { Timeout = TimeSpan.FromSeconds(30) }, () => ShortcutTracker.TokenFrom(models.ShortcutToken)) };
             if (services.GetService<IGitHub>() is { } gitHub)
@@ -135,9 +185,15 @@ public static partial class NodeApp
             // The nodes this user's own grants reach (pilot connect): the file beside the node's data, as the clients keep it.
             flights.Fleet = new HeldTokenFleet(Environment.GetEnvironmentVariable("PILOT_CLIENT_GRANTS") is { Length: > 0 } grants
                 ? grants
-                : Path.Combine(options.DataFolder, "client-grants.json"));
+                : Path.Combine(options.DataFolder, "client-grants.json"),
+                // Where each held node announces itself now, when this node runs LAN discovery; else the last address it answered at.
+                services.GetService<LAN.Lib.LanDiscovery>() is { } lan ? () => lan.PeersOf(NodeWire.LanService) : null);
+            // The last copy of each peer's flights and legs, so a flight of a node that went down can still be read (#894).
+            flights.Copy = services.GetRequiredService<FleetCopy>();
             return flights;
         });
+        builder.Services.AddSingleton(services => new FleetCopy(FleetCopy.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = services.GetRequiredService<LogWriter>() });
+        builder.Services.AddHostedService(services => new FleetCopyWatch(services.GetRequiredService<FlightCommander>(), services.GetRequiredService<TimeProvider>()) { Error = services.GetRequiredService<LogWriter>() });
     }
 
     /// <summary>The repos: the catalog, the watches on them and on their PRs, the sync and the commander.</summary>
@@ -203,7 +259,8 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => new SessionLedger(SessionLedger.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         builder.Services.AddSingleton(_ => new SpendLedger(SpendLedger.FileIn(options.DataFolder)) { Error = logWriter });
         builder.Services.AddSingleton(services => new ClaudeWorkerLauncher(services.GetRequiredService<ClaudeTrust>(), services.GetRequiredService<StartOptionsBook>(),
-            services.GetRequiredService<SessionLedger>(), options, services.GetRequiredService<SendTimings>(), ClaudeWorkerLauncher.BriefFolderIn(options.DataFolder)));
+            services.GetRequiredService<SessionLedger>(), options, services.GetRequiredService<SendTimings>(), ClaudeWorkerLauncher.BriefFolderIn(options.DataFolder),
+            services.GetRequiredService<ClaudeJobRemoval>()));
         builder.Services.AddSingleton(services => new LoggingWorkerLauncher(
             services.GetRequiredService<ClaudeWorkerLauncher>(), logWriter,
             new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")), services.GetRequiredService<TimeProvider>()));
@@ -212,7 +269,10 @@ public static partial class NodeApp
         builder.Services.AddSingleton<ICheckRunner, JobCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
         builder.Services.AddSingleton(_ => new RoleModels(options.Saved));
-        builder.Services.AddSingleton(services => new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton(services => new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
+        {
+            Outage = services.GetRequiredService<TurnOutage>(),
+        });
     }
 
     /// <summary>The admission gate, counting this node's sessions and the fleet's.</summary>
@@ -228,6 +288,28 @@ public static partial class NodeApp
                 Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = args, Who = "fleet", Grant = "fleet",
             }).Error;
             return slots;
+        });
+    }
+
+    /// <summary>
+    /// The failures looked into: a failure in a test the PR does not touch is filed as an investigation. Its ledger is kept in the
+    /// node's data folder, so a restart keeps which failure already has its investigation.
+    /// </summary>
+    private static void AddFailureInvestigations(WebApplicationBuilder builder, LogWriter logWriter, NodeOptions options)
+    {
+        builder.Services.AddSingleton(_ => new FailureLedger(FailureLedger.FileIn(options.DataFolder)) { Error = logWriter });
+        builder.Services.AddSingleton(services => new FailureInvestigations(services.GetRequiredService<NodeState>(), services.GetRequiredService<IGitHub>(),
+            services.GetRequiredService<FailureLedger>(), services.GetRequiredService<TimeProvider>())
+        {
+            Error = logWriter,
+            CreateFlight = (command, token) => services.GetRequiredService<FlightCommander>().RunAsync(command, token),
+        });
+        // What a failure under investigation does to its PR: retried once, then the tower on alert and the flights held. Its alerts are kept
+        // in the data folder too, so a restart keeps the holds.
+        builder.Services.AddSingleton(services => new FailureAlerts(services.GetRequiredService<NodeState>(), services.GetRequiredService<IGitHub>(),
+            services.GetRequiredService<FailureInvestigations>(), services.GetRequiredService<TimeProvider>(), FailureAlerts.FileIn(options.DataFolder))
+        {
+            Error = logWriter,
         });
     }
 
@@ -248,6 +330,13 @@ public static partial class NodeApp
             // Read as it is when a finish's check ends: a finish that outlasts the command route's deadline was answered queued.
             legs.ReplyDeadline = () => services.GetRequiredService<NodeCommands>().ReplyDeadline;
             legs.Error = services.GetRequiredService<LogWriter>();
+            legs.Investigations = services.GetRequiredService<FailureInvestigations>();
+            // The alerts run a held leg check through the commander, which refuses the go-around of a held flight: set here, as it needs both.
+            legs.Alerts = services.GetRequiredService<FailureAlerts>();
+            legs.Alerts.Legs = legs;
+            // A PR's conflict with its base is put to the flight's flying worker as a line from the node, as a landing tells its sessions.
+            legs.Say = async (id, text, ct) =>
+                (await services.GetRequiredService<NodeCommands>().RunAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = LegWatch.Who }, ct)).Ok;
             // A flight another node hands over goes on by the normal advance, as the sweep takes every flying flight's.
             services.GetRequiredService<FlightCommander>().Advance = legs.AdvanceFlightAsync;
             // A flight made here is planned at once: the create starts its planner, so no further plan-flight is needed.
@@ -266,6 +355,8 @@ public static partial class NodeApp
             reviews.Models = services.GetRequiredService<RoleModels>();
             reviews.Slots = services.GetRequiredService<AdmissionGate>();
             reviews.Error = logWriter;
+            reviews.Investigations = services.GetRequiredService<FailureInvestigations>();
+            reviews.Alerts = services.GetRequiredService<FailureAlerts>();
             reviews.DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why);
             reviews.TakeFlightVerdict = services.GetRequiredService<LegCommander>().TakePrVerdictAsync;
             reviews.SendFlightRound = services.GetRequiredService<LegCommander>().AnsweredDesignAsync;
@@ -307,6 +398,7 @@ public static partial class NodeApp
                 Models = services.GetRequiredService<RoleModels>(),
                 Ledger = services.GetRequiredService<SessionLedger>(),
                 Gate = services.GetRequiredService<StartGate>(),
+                Outage = services.GetRequiredService<TurnOutage>(),
                 Error = logWriter,
                 Ready = services.GetRequiredService<JobRunner>().Recovered,
                 StartedPlanner = legs.StartedPlanner,
@@ -346,11 +438,21 @@ public static partial class NodeApp
                 Error = logWriter,
                 JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
                 Transcripts = services.GetRequiredService<TranscriptBook>(),
+                // The watchtower is one long-lived claude -p stream-json process the node owns (PIL855).
+                Streams = new ClaudeStreamProcessLauncher(),
+                Ledger = services.GetRequiredService<SessionLedger>(),
+                Prepare = start => services.GetRequiredService<ClaudeWorkerLauncher>().WithMcp(start),
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());
+        // The node's thinking (summaries, the verdict before a ring, the plain wording of a card) is asked of the watchtower's own stream (PIL855).
+        builder.Services.AddSingleton<IBrain>(services => new BrainClient(() => services.GetRequiredService<Watchtower>().CurrentStream(), services.GetRequiredService<TimeProvider>())
+        {
+            Log = line => logWriter.WriteLine(line),
+        });
         builder.Services.AddSingleton<SendLog>();
         builder.Services.AddSingleton(services => new SendTimings(services.GetRequiredService<TimeProvider>(), logWriter));
+        builder.Services.AddSingleton(services => new CommandTimings(services.GetRequiredService<TimeProvider>(), logWriter));
         builder.Services.AddSingleton(services => new WatchtowerChat(services.GetRequiredService<Watchtower>(), services.GetRequiredService<TranscriptBook>(), services.GetRequiredService<SendLog>()));
         builder.Services.AddSingleton(services => new Compactor(services.GetRequiredService<NodeState>(), services.GetRequiredService<Watchtower>(),
             services.GetRequiredService<NodeCommands>().RunAsync, services.GetRequiredService<TimeProvider>())
@@ -374,7 +476,9 @@ public static partial class NodeApp
             services.GetRequiredService<TimeProvider>())
         {
             AccountFile = ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root),
+            Outage = services.GetRequiredService<TurnOutage>(),
         });
+        builder.Services.AddSingleton(services => new TurnOutage(services.GetRequiredService<NodeState>()));
         builder.Services.AddHostedService(services => services.GetRequiredService<UsageReader>());
     }
 
@@ -408,6 +512,8 @@ public static partial class NodeApp
                 },
                 // The repos' drive, else the Claude profile's (one and the same on most machines).
                 DiskPath = () => options.RepoRoots.FirstOrDefault(Directory.Exists) ?? services.GetRequiredService<SessionTrackerOptions>().Profile.Root,
+                // Every 5 s while a GUI or TUI shows Home, where the machine is drawn; every 15 s otherwise.
+                Views = services.GetRequiredService<PageViews>(),
                 Logger = services.GetService<ILogger<MachineSampler>>(),
             };
         });
@@ -415,6 +521,9 @@ public static partial class NodeApp
         if (options.MachineSampling)
         {
             builder.Services.AddHostedService(services => services.GetRequiredService<MachineSampler>());
+            // One sweep, both the hosted look and the handler of a stray card's End (end-stray), which only ends what it named.
+            builder.Services.AddSingleton(services => new StraySweep(services.GetRequiredService<NodeState>(), OsProcessTable.Instance, services.GetRequiredService<TimeProvider>()) { LivePids = () => services.GetRequiredService<SessionTracker>().LivePids().Select(p => (p.Id, p.Pid)).ToList(), KnownOf = services.GetRequiredService<JobRunner>().KnownOf });
+            builder.Services.AddHostedService(services => services.GetRequiredService<StraySweep>());
             // The node's own row rides the same tick of the clock (a settings change has no event to hook).
             builder.Services.AddHostedService(services =>
             {
@@ -450,16 +559,23 @@ public static partial class NodeApp
             var nodeOptions = services.GetRequiredService<NodeOptions>();
             return new JobRunner(services.GetRequiredService<NodeState>(), nodeOptions, services.GetRequiredService<TimeProvider>())
             {
+                // The real shell launcher unless a test registered another (an in-memory one, #933).
+                Launcher = services.GetService<IJobLauncher>() ?? RealJobLauncher.Instance,
                 Say = commands.RunAsync,
                 Log = services.GetRequiredService<LogWriter>(),
                 Ledger = services.GetRequiredService<SessionLedger>(),
                 MaxRunning = Math.Max(1, nodeOptions.MaxJobs),
+                JobsPerRepo = nodeOptions.Saved?.JobsPerRepo ?? NodeSettings.JobsPerRepoDefault,
                 MinFreeMemory = (long)(Math.Max(0, nodeOptions.JobMemoryGigabytes) * (1L << 30)),
                 Priority = nodeOptions.JobPriority,
-                PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? false,
+                PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? NodeSettings.JobPlaneOutputDefault,
                 CloudBench = services.GetRequiredService<ICloudBench>(),
                 Git = services.GetRequiredService<IGit>(),
                 EndedForGood = id => services.GetRequiredService<SessionTracker>().IsEndedForGood(id),
+                Outage = services.GetRequiredService<TurnOutage>(),
+                EndedAfterTurn = id => services.GetRequiredService<SessionTracker>().EndedAfterFinishedTurn(id),
+                // A job's end is told to its owner only once the tracker has listed the sessions (pilot #810), as the watchtower waits.
+                Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,
                 Lifetime = services.GetService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
             };
         });
@@ -499,6 +615,8 @@ public static partial class NodeApp
             checks.RerunFirst = true;
             checks.WatchtowerLive = () => services.GetRequiredService<Watchtower>().IsLive();
             checks.Recheck = services.GetRequiredService<PrRecheck>();
+            checks.Investigations = services.GetRequiredService<FailureInvestigations>();
+            checks.Alerts = services.GetRequiredService<FailureAlerts>();
             checks.Error = logWriter;
             return checks;
         });
@@ -506,9 +624,12 @@ public static partial class NodeApp
     }
 
     /// <summary>The summaries and the digest.</summary>
-    private static void AddSummaries(WebApplicationBuilder builder, NodeOptions options)
+    private static void AddSummaries(WebApplicationBuilder builder, NodeOptions options, LogWriter logWriter)
     {
-        builder.Services.AddSingleton<ISummaryModel>(_ => new ClaudeSummaryModel(Path.Combine(options.DataFolder, "summary")));
+        // The brain answers a summary; the one-off call of the summary model (sonnet by default) is what runs when it is down (PIL855).
+        builder.Services.AddSingleton<ISummaryModel>(services => new BrainSummaryModel(services.GetRequiredService<IBrain>(),
+            new ClaudeSummaryModel(Path.Combine(options.DataFolder, "summary"), services.GetRequiredService<RoleModels>()),
+            line => logWriter.WriteLine(line)));
         builder.Services.AddSingleton(services => new Summaries(services.GetRequiredService<NodeState>(), services.GetRequiredService<ISummaryModel>(), services.GetRequiredService<TimeProvider>())
         {
             Machine = options.Machine,
@@ -518,6 +639,13 @@ public static partial class NodeApp
             // The nodes this user's grants reach, the same a create-flight in maintenance may route to.
             Fleet = services.GetRequiredService<FlightCommander>().Fleet,
         });
+        // The fleet summary follows changes through the watchtower while a client is attached (PIL903).
+        builder.Services.AddSingleton(services => new SummaryFollower(services.GetRequiredService<NodeState>(), services.GetRequiredService<Summaries>(), services.GetRequiredService<TimeProvider>())
+        {
+            Bounds = () => services.GetRequiredService<RoleModels>().Stale,
+            Error = logWriter,
+        });
+        builder.Services.AddHostedService(services => services.GetRequiredService<SummaryFollower>());
         builder.Services.AddSingleton(services => new Digest(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
         {
             Bounds = () => services.GetRequiredService<RoleModels>().Stale,
@@ -578,6 +706,7 @@ public static partial class NodeApp
             Ledger = services.GetRequiredService<SpendLedger>(),
             Error = logWriter,
             IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
+            IsStreamSession = id => services.GetRequiredService<Watchtower>().OwnsSession(id),
             JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
             // A session that ends on its own takes its queued jobs off the queue (#327).
             DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why),
@@ -586,7 +715,7 @@ public static partial class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.
         builder.Services.AddSingleton<ISessionDelivery>(services => new ClaudeCliDelivery(
-            services.GetRequiredService<IClaudeAgents>(), relayFolder, services.GetRequiredService<SessionTrackerOptions>().Profile));
+            services.GetRequiredService<IClaudeAgents>(), relayFolder, services.GetRequiredService<SessionTrackerOptions>().Profile) { RosterFile = SessionRoster.FileIn(options.DataFolder) });
         builder.Services.AddSingleton(services => new SessionMessenger(
             services.GetRequiredService<NodeState>(),
             services.GetRequiredService<SessionTracker>(),
@@ -599,6 +728,8 @@ public static partial class NodeApp
             CancelJobs = (owners, who) => services.GetRequiredService<JobRunner>().CancelOwnedBy(owners, who),
             Sends = services.GetRequiredService<SendLog>(),
             Timings = services.GetRequiredService<SendTimings>(),
+            Removal = services.GetRequiredService<ClaudeJobRemoval>(),
+            Streams = () => services.GetRequiredService<Watchtower>(),
         });
     }
 

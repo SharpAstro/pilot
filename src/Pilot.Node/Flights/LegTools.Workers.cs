@@ -39,7 +39,8 @@ public interface IWorkerLauncher
 /// trusted repo under the repo's trust (it locks it while there; landing unlocks it).
 /// </remarks>
 public sealed partial class ClaudeWorkerLauncher(
-    ClaudeTrust trust, StartOptionsBook? starts = null, SessionLedger? ledger = null, NodeOptions? options = null, SendTimings? timings = null, string? briefFolder = null) : IWorkerLauncher
+    ClaudeTrust trust, StartOptionsBook? starts = null, SessionLedger? ledger = null, NodeOptions? options = null, SendTimings? timings = null, string? briefFolder = null,
+    ClaudeJobRemoval? removal = null) : IWorkerLauncher
 {
     /// <summary>The start with its MCP config file written and named (pilot's server, and the repo's declared extras); unchanged when the node has no options (a test's launcher).</summary>
     public WorkerStart WithMcp(WorkerStart start) =>
@@ -137,6 +138,12 @@ public sealed partial class ClaudeWorkerLauncher(
             throw new FlightException($"claude --bg did not start {start.Name} ({run.ExitCode}): {Clip(run.Output + run.Error)}");
         }
         timings?.Record(SendTimings.Start, clock.Elapsed, $"name={start.Name} job={job.Groups[1].Value}");
+        // The node's own session, for the hooks that refuse a direct test run in it (TestGuard): PILOT_SESSION is on the call (ClaudeCli.StartInfo,
+        // from the -n name), and the job id goes on the roster too, since claude --bg hands the session to a daemon whose hooks may not see that environment.
+        if (options is not null)
+        {
+            SessionRoster.Mark(SessionRoster.FileIn(options.DataFolder), job.Groups[1].Value);
+        }
         starts?.Record(new SessionStartOptions(start.Name, job.Groups[1].Value, [.. SessionArguments(start)]));
         ledger?.Started(job.Groups[1].Value, start.Name, SessionRoles.Resolve(start.Name, background: true), start.Reason ?? SessionStartReasons.Other, start.Model, start.Pr);
         return job.Groups[1].Value;
@@ -201,14 +208,36 @@ public sealed partial class ClaudeWorkerLauncher(
             "Read that whole file first and follow it as your brief; it is everything you were started to do.";
     }
 
-    public async Task StopAsync(string job, CancellationToken cancellationToken) =>
+    /// <summary>What stops a job; a test replaces it so no <c>claude</c> process runs. Null runs <c>claude stop</c>.</summary>
+    public Func<string, CancellationToken, Task>? Stopper { get; init; }
+
+    public async Task StopAsync(string job, CancellationToken cancellationToken)
+    {
+        if (Stopper is { } stopper)
+        {
+            await stopper(job, cancellationToken);
+            return;
+        }
         await ClaudeCli.RunAsync(["stop", job], stdin: null, cwd: null, Timeout, cancellationToken);
+    }
 
     public async Task StopAsync(string job, string reason, string by, CancellationToken cancellationToken)
     {
         // Recorded before the stop, so the poll that sees it end finds the node's reason and does not call it finished.
         ledger?.Stopped([job], reason, by);
-        await StopAsync(job, cancellationToken);
+        try
+        {
+            await StopAsync(job, cancellationToken);
+        }
+        finally
+        {
+            // The job goes at once (unless its plane still exists, then the hourly sweep takes it), also when claude stop failed: a stop that
+            // fails is mostly one for a job that is already gone, and the failure still reaches the caller. Never throws; the ledger keeps the reason.
+            if (removal is not null)
+            {
+                await removal.RemoveAsync([job], reason, cancellationToken);
+            }
+        }
     }
 
     private static string Clip(string text) => text.Trim() is { Length: > 400 } long_ ? long_[..400] + "…" : text.Trim();
