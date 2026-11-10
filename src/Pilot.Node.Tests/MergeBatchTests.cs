@@ -540,8 +540,9 @@ public sealed class MergeBatchTests
         await giveUp.CancelAsync();
 
         (await Record.ExceptionAsync(() => leader!)).ShouldBeAssignableTo<OperationCanceledException>();
-        // The two left are not Batched waiting on each other for good: each takes its turn and merges on its own.
-        await Until(node, () => node.GitHub.Merged.Count == 3 && Entry(node, "TIA2").State == MergeEntryState.Merging && Entry(node, "TIA3").State == MergeEntryState.Merging
+        // The two left are not Batched waiting on each other for good: each takes its turn and merges on its own (on the in-memory git it
+        // may already be Merged by the time of a look, as Merging lasts only as long as the merge takes).
+        await Until(node, () => node.GitHub.Merged.Count == 3 && Entry(node, "TIA2").State is MergeEntryState.Merging or MergeEntryState.Merged && Entry(node, "TIA3").State is MergeEntryState.Merging or MergeEntryState.Merged
             && Has(git, $"push --quiet origin --delete {Batch1}") && node.GitHub.ClosedPrs.Count == 1, "TIA2 and TIA3 merged one at a time after TIA9, and the batch ended");
         Entry(node, "TIA1").State.ShouldBe(MergeEntryState.Dropped);
         Entry(node, "TIA1").Why.ShouldNotBeNull().ShouldContain("given up");
