@@ -175,7 +175,7 @@ public sealed class PollerSweep(NodeState state, CommandCallers callers, IProces
             + $"has called the node {poller.Rate} times an hour for {poller.Hours} hours. Command line: {command ?? "not readable"}. "
             + $"It is none of a job's or a session's and none of pilot's own programs. End it on this card, or by hand: {KillCommand(poller.Pid)}";
         state.RaiseCard(CardBin.Ring, Kind, key,
-            $"Process {poller.Pid} ({poller.Name}) has polled the node {poller.Rate} times an hour for {poller.Hours} hours",
+            $"{(poller.Name.Length > 20 ? poller.Name[..20] : poller.Name)} {poller.Pid} polls the node {poller.Rate} an hour",
             detail,
             [new CardChoice { Label = $"End process {poller.Pid}", Verb = Verbs.EndPoller, Target = key }],
             summary: $"Press the button if process {poller.Pid} should not be polling the node: {poller.Rate} requests an hour for {poller.Hours} hours",

@@ -87,6 +87,7 @@ public sealed class PollerSweepTests
         _sweep.SweepOnce();
 
         var card = Open().ShouldHaveSingleItem();
+        card.Kind.ShouldBe(PollerSweep.Kind);
         card.Bin.ShouldBe(CardBin.Ring);
         card.Title.ShouldContain("20");
         card.Title.ShouldContain("bash");
@@ -198,7 +199,7 @@ public sealed class PollerSweepTests
         _sweep.EndOnWord(new CommandRequest { Verb = Verbs.EndPoller, Target = card.Subject, Who = "gui" }).Error.ShouldBeNull();
         _table.Killed.ShouldBe([20]);
         Open().ShouldBeEmpty();
-        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == PollerSweep.EndedKind && c.Bin == CardBin.Handled);
+        _state.Cards().ShouldContain(c => c.Kind == PollerSweep.EndedKind && c.Bin == CardBin.Handled);
         _sweep.EndOnWord(new CommandRequest { Verb = Verbs.EndPoller, Target = "process:999@1", Who = "gui" }).Error.ShouldNotBeNull();
     }
 
