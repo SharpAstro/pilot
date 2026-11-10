@@ -202,7 +202,7 @@ public sealed class HeldTokenFleet(string tokenFile, Func<IReadOnlyList<LanPeer>
             if (envelope.StatusCode is 401 or 403)
             {
                 // Only this node's own held token was sent: its refusal is the answer, and no other entry's is tried.
-                return new CommandResult { Ok = false, Error = NodeClient.RefusedHeldGrant(Name) };
+                return new CommandResult { Verb = command.Verb, Target = command.Target, Who = command.Who, Seq = 0, Ok = false, Error = NodeClient.RefusedHeldGrant(Name) };
             }
             return envelope.Response ?? throw new HttpRequestException($"{Name} refused {command.Verb}: {envelope.Error}");
         }
