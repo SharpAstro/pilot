@@ -173,7 +173,7 @@ public sealed class PollerSweep(NodeState state, CommandCallers callers, IProces
         var command = poller.CommandLine is { Length: > 1000 } text ? text[..1000] : poller.CommandLine;
         var detail = $"Process {poller.Pid} ({poller.Name}), parent {parent}, started {poller.Start.ToString("yyyy-MM-dd HH:mm'Z'", CultureInfo.InvariantCulture)}, "
             + $"has called the node {poller.Rate} times an hour for {poller.Hours} hours. Command line: {command ?? "not readable"}. "
-            + $"It is none of a job's or a session's and none of pilot's own programs. End it on this card, or by hand: {KillCommand(poller.Pid)}";
+            + $"It is none of a job's or a session's and none of pilot's own programs. It may be the shell a loop runs under, an interactive one included, so check the command line first. End it on this card, or by hand: {KillCommand(poller.Pid)}";
         state.RaiseCard(CardBin.Ring, Kind, key,
             $"{(poller.Name.Length > 20 ? poller.Name[..20] : poller.Name)} {poller.Pid} polls the node {poller.Rate} an hour",
             detail,
