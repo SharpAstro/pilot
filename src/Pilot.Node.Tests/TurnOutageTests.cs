@@ -240,9 +240,9 @@ public sealed class TurnOutageTests
         _stopped.ShouldBeEmpty();
         Open().ShouldBeEmpty();
         _state.Cards().Where(c => c.Bin == CardBin.Handled && c.Kind == LegWatch.NeverTurned).ShouldHaveSingleItem()
-            .Title.ShouldBe("TIA1/parser's worker (job a1b2c3d4) was started again after sessions stopped taking turns");
+            .Title.ShouldBe("TIA1/parser's worker was started again: no session took a turn");
         _state.Cards().Where(c => c.Bin == CardBin.Handled && c.Kind == LegWatch.PlanStalled).ShouldHaveSingleItem()
-            .Title.ShouldBe("TIA2's planner (job c3c3c3c3) was started again after sessions stopped taking turns");
+            .Title.ShouldBe("TIA2's planner was started again: no session took a turn");
 
         // The node's fresh starts replace the old ones (the old worker's process is stopped by the restart; the planner's already on its
         // first turn): another look redoes nothing again.

@@ -1416,8 +1416,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             {
                 await restart(cancellationToken);
                 state.CloseCardsAbout(subject, "started again", cardKind);
-                state.RaiseCard(CardBin.Handled, cardKind, subject, $"{name}'s {what} (job {job}) was started again after sessions stopped taking turns",
-                    $"it was started at {startedAt.ToLocalTime():HH:mm}, while no session took a turn, and still shows no first turn; stopped it and started a fresh {what}, whose first-turn ladder starts from the top");
+                state.RaiseCard(CardBin.Handled, cardKind, subject, $"{name}'s {what} was started again: no session took a turn",
+                    $"its {what} (job {job}) was started at {startedAt.ToLocalTime():HH:mm}, while no session took a turn, and still shows no first turn; stopped it and started a fresh {what}, whose first-turn ladder starts from the top");
                 return (true, null);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -1536,8 +1536,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 try
                 {
                     await RestartPlanner(flight.Code, cancellationToken);
-                    state.RaiseCard(CardBin.Handled, PlanStalled, subject, $"{flight.Code}'s planner (job {plannerJob}) was started again after sessions stopped taking turns",
-                        $"it was started at {begun.ToLocalTime():HH:mm}, while no session took a turn, and still shows no first turn; stopped it and started a fresh planner, whose first-turn ladder starts from the top");
+                    state.RaiseCard(CardBin.Handled, PlanStalled, subject, $"{flight.Code}'s planner was started again: no session took a turn",
+                        $"its planner (job {plannerJob}) was started at {begun.ToLocalTime():HH:mm}, while no session took a turn, and still shows no first turn; stopped it and started a fresh planner, whose first-turn ladder starts from the top");
                     continue;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
