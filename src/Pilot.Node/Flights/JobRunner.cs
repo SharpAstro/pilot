@@ -36,7 +36,7 @@ namespace Pilot.Node.Flights;
 /// any job. Its timeout does not run while it is paused (<see cref="JobRow.PausedFor"/> and the open span are added back), and
 /// the idle check skips it. Cancel and a timeout thaw the tree before they kill it, so nothing is left frozen behind.</para>
 /// </remarks>
-public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider time) : BackgroundService
+public sealed partial class JobRunner(NodeState state, NodeOptions options, TimeProvider time) : BackgroundService
 {
     public const string UntoldKind = "job-untold";
 
@@ -301,14 +301,18 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         _stopping = stopping;
+        Task? lost = null;
         try
         {
-            await RecoverAsync(stopping);
+            lost = await RecoverCoreAsync(stopping);
         }
         finally
         {
             _recovered.TrySetResult();
         }
+        // The Azure deletes of lost cloud benches run beside the dispatcher and the leg watch, which wait on Recovered: a slow or
+        // failing delete holds neither (the rows end and their owners are told when it is done).
+        _lostCloud = lost;
         _ = TickAsync(stopping);
         try
         {
@@ -563,10 +567,19 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     public async Task RecoverAsync(CancellationToken cancellationToken)
     {
+        await (await RecoverCoreAsync(cancellationToken));
+    }
+
+    private Task? _lostCloud;
+
+    /// <summary>Recovery with the lost cloud benches' Azure deletes started, not awaited: the returned task ends them and tells their owners.</summary>
+    private async Task<Task> RecoverCoreAsync(CancellationToken cancellationToken)
+    {
         var left = state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && !_mine.ContainsKey(j.Id)).ToList();
         // The jobs that ended while no node ran, told once every other job is back in its place: a tell waits for the tracker's
         // first poll (see TellAsync), and no live job's follow or queued job's turn waits behind it.
         var toTell = new List<(JobRow Ended, string[] Last)>();
+        var lostCloud = new List<JobRow>();
         // A running check is followed like a running job: the stop let go of its kill-on-close hold, so it outlived the node, and the
         // finish that comes back waits on it by id (RunCheckAsync). One with no pid or start time cannot be found again, so it is ended.
         // A queued one has not started, so it stays queued, in its place with the other carried jobs (below) (pilot #737).
@@ -582,6 +595,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         foreach (var job in left.Where(j => j.State == JobState.Running))
         {
             _mine[job.Id] = 0;
+            if (job is { Kind: JobKind.Bench, Pid: null, BenchVm.Size: not null })
+            {
+                // A bench that ran on a VM has no process to find; what it left in Azure is deleted from here.
+                lostCloud.Add(job);
+                continue;
+            }
             if (RecoverRunning(job) is { } gone)
             {
                 toTell.Add(gone);
@@ -597,6 +616,14 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             await TellAsync(ended, cancellationToken, last);
         }
+        return Task.Run(async () =>
+        {
+            foreach (var job in lostCloud)
+            {
+                var ended = await EndLostCloudBenchAsync(job, cancellationToken);
+                await TellAsync(ended, cancellationToken, []);
+            }
+        }, CancellationToken.None);
     }
 
     private const string OrphanedCheckError = "the node restarted and nothing waits for this check any more, so it was ended";
@@ -734,6 +761,16 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             args = [.. args.Skip(1)];
         }
+        // --local follows --alone: the benchmark stays on this machine (it needs its hardware), whatever cloud benches the settings turn on.
+        var local = args.Length > 0 && args[0] == Verbs.LocalArg;
+        if (local)
+        {
+            if (!alone)
+            {
+                return state.Complete(command, $"{Verbs.LocalArg} is for a benchmark: use it with {Verbs.AloneArg}");
+            }
+            args = [.. args.Skip(1)];
+        }
         if (args.Length < 3)
         {
             return state.Complete(command, "run takes the folder, the timeout in seconds (0 for the default) and the command");
@@ -838,6 +875,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             Flight = owner?.Flight,
             Leg = owner?.Leg,
             Kind = alone ? JobKind.Bench : JobKind.Run,
+            Local = local,
             State = JobState.Queued,
             LogPath = logPath,
             ExitPath = ExitPathOf(logPath),
@@ -851,6 +889,11 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
         // Handed to the dispatcher, which starts it at once when nothing waits before it and the machine has room.
         _mine[jobId] = 0;
+        if (alone && !local)
+        {
+            // What a spot VM needs of it, should the settings send it there: the words (it runs them under bash), its folder's commit is read then.
+            _plans[jobId] = new CloudBenchPlan { Command = [.. args.Skip(2)] };
+        }
         state.PutJob(job);
         _signals.Writer.TryWrite(new HandedOver(job));
         return state.Complete(command, null, made: jobId);
@@ -1053,8 +1096,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>
     /// Queues a benchmark as a job of kind <see cref="JobKind.Bench"/> (the node to itself) and returns its id and a task that
     /// completes with the ended row when the job ends however it ends. <paramref name="owner"/>, when given, is woken as for any job.
+    /// <paramref name="local"/> keeps the benchmark on this machine (<c>--local</c>) and is kept on the row as <see cref="JobRow.Local"/>.
+    /// <paramref name="cloud"/> is what a spot VM needs to run it instead, when the settings send it there (#823); without it the bench runs here.
     /// </summary>
-    public (string Id, Task<JobRow> Ended) QueueBench(string command, string cwd, TimeSpan timeout, SessionRow? owner)
+    public (string Id, Task<JobRow> Ended) QueueBench(string command, string cwd, TimeSpan timeout, SessionRow? owner, bool local = false, CloudBenchPlan? cloud = null)
     {
         var jobId = state.NextJobId();
         var folder = Path.Combine(options.DataFolder, "jobs");
@@ -1071,6 +1116,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             Flight = owner?.Flight,
             Leg = owner?.Leg,
             Kind = JobKind.Bench,
+            Local = local,
             State = JobState.Queued,
             LogPath = logPath,
             ExitPath = ExitPathOf(logPath),
@@ -1082,6 +1128,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         var done = new TaskCompletionSource<JobRow>(TaskCreationOptions.RunContinuationsAsynchronously);
         _benchWaiters[jobId] = done;
         _mine[jobId] = 0;
+        if (cloud is not null && !local)
+        {
+            _plans[jobId] = cloud;
+        }
         state.PutJob(job);
         _signals.Writer.TryWrite(new HandedOver(job));
         return (jobId, done.Task);
@@ -1089,6 +1139,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     private void Finish(JobRow ended, string[]? last)
     {
+        _plans.TryRemove(ended.Id, out _);
+        _localWhy.TryRemove(ended.Id, out _);
         _seeds.TryRemove(ended.Id, out _);
         if (_benchWaiters.TryRemove(ended.Id, out var bench))
         {
@@ -1151,8 +1203,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 CancelBeforeItsTurn(handed.Job, by.Who, by.Dropped);
                 break;
             case HandedOver { Job.Kind: JobKind.Bench } handed:
-                // A benchmark goes ahead of the other jobs, so the drain it waits for is not endless; benchmarks keep their own order.
-                _queue.Insert(_queue.FindLastIndex(j => j.Kind == JobKind.Bench) + 1, handed.Job);
+                // To a VM at once when the cloud settings say so (a job of its own, no slot, no wait), else into the queue for this machine.
+                HandBench(handed.Job);
                 break;
             case HandedOver handed:
                 _queue.Add(handed.Job);
@@ -1216,7 +1268,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             var place = why is null ? "" : $" ({why})";
             _queue[i] = job with
             {
-                Step = i == 0 ? $"next in line: {whys[0]}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : BehindHeld(i, whys) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : BuildHold(job) is { } building ? $"queued, {i} ahead of it{place}; {building}" : BehindOwn(i, whys) is { } own ? $"queued, {i} ahead of it{place}; {own}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
+                Step = WithLocalNote(job, i == 0 ? $"next in line: {whys[0]}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : BehindHeld(i, whys) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : BuildHold(job) is { } building ? $"queued, {i} ahead of it{place}; {building}" : BehindOwn(i, whys) is { } own ? $"queued, {i} ahead of it{place}; {own}" : $"queued, {i} ahead of it{place}; {Needs(job)}"),
                 Slots = MaxRunning,
                 WaitsOnSibling = SiblingHold(job) is not null,
                 HoldIdleSince = idleSince,
@@ -2108,6 +2160,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             {
                 return state.Complete(command, $"There is no job {id}");
             }
+            if (_cloud.ContainsKey(id))
+            {
+                return state.Complete(command, $"job {id} runs on a VM in the cloud, and a VM cannot be {(pause ? "paused" : "resumed")}: cancel it to stop it");
+            }
             if (!_running.TryGetValue(id, out var process) || row.State != JobState.Running || _cancelled.ContainsKey(id))
             {
                 return state.Complete(command, row.State == JobState.Queued ? $"job {id} is queued, not running: only a running job can be {(pause ? "paused" : "resumed")}" : $"job {id} is not running");
@@ -2225,6 +2281,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>Stops a running job or takes a queued one out; null when it did, else why not.</summary>
     private string? CancelJob(string id, string who, bool force)
     {
+        // A bench on a VM: the runner deletes the VM, then the row ends cancelled.
+        if (_cloud.ContainsKey(id))
+        {
+            _cancelled[id] = who;
+            CancelCloud(id);
+            return null;
+        }
         if (_running.TryGetValue(id, out var process))
         {
             _cancelled[id] = who;

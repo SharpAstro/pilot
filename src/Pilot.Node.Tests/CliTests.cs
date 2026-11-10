@@ -389,7 +389,86 @@ public sealed class CliTests : IAsyncLifetime
         // Let it end before the folder goes, or its log is still held.
         var job = await TheJobUntil(j => j.EndedAt is not null, "the bench job did not end");
         job.Kind.ShouldBe(JobKind.Bench);
+        job.Local.ShouldBeFalse();
         global::Pilot.Commands.PilotCommand.JobLine(job).ShouldContain("bench");
+    }
+
+    /// <summary>--local after --alone reaches the node and stays on the job's row, so a later leg that sends a bench to a cloud VM can route on it (#823).</summary>
+    [Fact]
+    public async Task PilotRunAloneLocalSendsTheLocalFlagAndTheBenchJobKeepsItOnItsRow()
+    {
+        var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        FakeJobs(runner);
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        runner.BenchQuietCpu = 100;
+
+        await Ok(_root, "run", "--alone", "--local", "--", "echo benched");
+
+        for (var i = 0; _node.State.Jobs().Single().EndedAt is null; i++)
+        {
+            i.ShouldBeLessThan(300, "the bench job did not end");
+            await Task.Delay(100, Ct);
+        }
+        var job = _node.State.Jobs().Single();
+        (job.Kind, job.Local, job.Command).ShouldBe((JobKind.Bench, true, "echo benched"));
+    }
+
+    [Fact]
+    public async Task PilotRunLocalWithoutAloneIsAUsageErrorAndStartsNothing()
+    {
+        var (exit, output, error) = await Pilot(_root, "run", "--local", "--", "echo", "x");
+
+        exit.ShouldNotBe(0);
+        $"{output}{error}".ShouldContain("--local is for a benchmark: use it with --alone");
+        _node.State.Jobs().ShouldBeEmpty();
+    }
+
+    /// <summary>The node refuses a --local that is not after --alone too (a client of its own could send one).</summary>
+    [Fact]
+    public async Task TheNodeRefusesALocalRunThatIsNotAlone()
+    {
+        var sent = await _node.Client.SendAsync(new CommandRequest { Verb = Verbs.Run, Target = Verbs.NodeTarget, Args = [Verbs.LocalArg, _root, "0", "echo", "x"], Who = "tests" }, Ct);
+
+        sent.Response.ShouldNotBeNull().Error.ShouldBe("--local is for a benchmark: use it with --alone");
+        _node.State.Jobs().ShouldBeEmpty();
+    }
+
+    /// <summary>pilot bench --local queues a local bench job; without it the job is the same but for the flag (#823).</summary>
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task PilotBenchLocalReachesTheNodeAsALocalBenchAndWithoutItTheBenchIsNot()
+    {
+        var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        runner.BenchQuietCpu = 100;
+        // A bench names a repo the node knows, and it knows one by a flight made in it.
+        await Ok(Repo, "flight", "create", "1611", "Planets", "on", "the", "GPU");
+        await _node.PlannedAsync();
+
+        await Ok(_root, "bench", "tianwen", "--ref", "HEAD", "--", "echo", "benched");
+        await BenchesEnded(1);
+        await Ok(_root, "bench", "tianwen", "--ref", "HEAD", "--local", "--", "echo", "benched");
+        await BenchesEnded(2);
+
+        var benches = _node.State.Jobs().Where(j => j.Kind == JobKind.Bench).OrderBy(j => j.StartedAt).ToArray();
+        benches.Select(j => j.Local).ShouldBe([false, true]);
+        // The worktrees go after the card: the folder is not left behind for the next test.
+        for (var i = 0; Directory.Exists(Path.Combine(Repo, ".claude", "worktrees", "b1")) || Directory.Exists(Path.Combine(Repo, ".claude", "worktrees", "b2")); i++)
+        {
+            i.ShouldBeLessThan(1500, "the bench worktrees are still there");
+            await Task.Delay(20, Ct);
+        }
+    }
+
+    // The jobs, not the cards: a second bench of the same repo raises no card of its own while the first one's is open.
+    // The wait is generous because a bench is a git worktree and a shell on a machine that may be busy.
+    private async Task BenchesEnded(int count)
+    {
+        for (var i = 0; _node.State.Jobs().Count(j => j.Kind == JobKind.Bench && j.State == JobState.Succeeded) < count; i++)
+        {
+            i.ShouldBeLessThan(4500, "the benches did not end");
+            await Task.Delay(20, Ct);
+        }
     }
 
     [Theory]

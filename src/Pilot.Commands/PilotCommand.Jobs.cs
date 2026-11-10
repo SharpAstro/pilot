@@ -22,7 +22,8 @@ public static partial class PilotCommand
         var end = job.Error is { } error ? $": {error}" : job.State == JobState.Running && job.FailuresSoFar() is { } failing ? $" · {failing}" : "";
         var took = (job.EndedAt ?? DateTimeOffset.UtcNow) - job.StartedAt;
         var told = job.EndedAt is not null && job.Owner is not null && !job.Told ? ", owner not told" : "";
-        return $"{job.Id}  {state}{end}  {job.Command}  ({job.OwnerName ?? "terminal"}, {(int)took.TotalMinutes}m{told}){(job.Shell is { Length: > 0 } shell ? $"  [{shell}]" : "")}{(job.Step is { } step ? $"  · {step}" : "")}";
+        var vm = job.Kind == JobKind.Bench && BenchText.Vm(job.BenchVm) is { } where ? $"  · {where}" : "";
+        return $"{job.Id}  {state}{end}  {job.Command}  ({job.OwnerName ?? "terminal"}, {(int)took.TotalMinutes}m{told}){(job.Shell is { Length: > 0 } shell ? $"  [{shell}]" : "")}{(job.Step is { } step ? $"  · {step}" : "")}{vm}";
     }
 
     /// <summary>A merge queue entry in a line: <c>TIA61  #63  tianwen  1  abc1234  checks  · merging when checks pass</c>: flight, PR, repo, place, head, state, then why.</summary>
@@ -64,16 +65,21 @@ public static partial class PilotCommand
             // run, jobs, job: a long run handed to the node, which wakes the session that handed it over
             var runTimeout = new Option<string?>("--timeout") { Description = "How long it may run: 90m, 2h, 45s; 2h by default, 8h at most" };
             var runAlone = new Option<bool>("--alone") { Description = "Run with the node to itself (a benchmark): waits for no other job and a quiet CPU, and holds every other job (not new legs) until it ends" };
+            var runLocal = new Option<bool>("--local") { Description = "With --alone: keep the benchmark on this node's own machine (it needs its hardware: a camera, a GPU kernel test), never on a cloud VM" };
             var runFailFast = new Option<bool>("--fail-fast") { Description = "End the job at its first failed test, so a run whose first failure is all you need frees the queue (a check does this by itself)" };
             var runWholeSuite = new Option<string?>("--whole-suite") { Description = "Why this run is a dotnet test over a whole project or solution with no --filter (refused otherwise: the whole suite is CI's, on the PR)" };
             var runWords = new Argument<string[]>("command") { Description = "The command, after --: pilot run -- dotnet test", Arity = ArgumentArity.OneOrMore };
             var runCommand = Action(new Command("run", "Hand a long run to the node as a job, then end your turn: the node wakes this session with how it ended")
                 {
                     Arguments = { runWords },
-                    Options = { runTimeout, runAlone, runFailFast, runWholeSuite },
+                    Options = { runTimeout, runAlone, runLocal, runFailFast, runWholeSuite },
                 },
                 async (p, client, ct) =>
                 {
+                    if (p.GetValue(runLocal) && !p.GetValue(runAlone))
+                    {
+                        throw new UsageException("--local is for a benchmark: use it with --alone");
+                    }
                     var seconds = p.GetValue(runTimeout) is { } given
                         ? (TryDuration(given, out var span) ? (long)span.TotalSeconds : throw new UsageException($"--timeout takes 90m, 2h or 45s, not {given}"))
                         : 0;
@@ -86,7 +92,7 @@ public static partial class PilotCommand
                     {
                         Verb = Verbs.Run,
                         Target = target,
-                        Args = [.. p.GetValue(runFailFast) ? new[] { Verbs.FailFastArg } : [], .. p.GetValue(runWholeSuite) is { Length: > 0 } suiteWhy ? new[] { Verbs.WholeSuiteArg, suiteWhy } : [], .. p.GetValue(runAlone) ? new[] { Verbs.AloneArg } : [], cwd, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
+                        Args = [.. p.GetValue(runFailFast) ? new[] { Verbs.FailFastArg } : [], .. p.GetValue(runWholeSuite) is { Length: > 0 } suiteWhy ? new[] { Verbs.WholeSuiteArg, suiteWhy } : [], .. p.GetValue(runAlone) ? new[] { Verbs.AloneArg } : [], .. p.GetValue(runLocal) ? new[] { Verbs.LocalArg } : [], cwd, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
                         Who = owner?.Name ?? who,
                         Agent = byAgent,
                         RequestId = requestId,
@@ -116,12 +122,13 @@ public static partial class PilotCommand
             var benchCandidate = new Option<string?>("--candidate") { Description = "The candidate ref of an A/B, measured after the baseline" };
             var benchFetch = new Option<string?>("--fetch") { Description = "The repo's fetch step, run in each worktree before the command (fetch-webp-external.sh)" };
             var benchPr = new Option<int?>("--pr") { Description = "Also post the tables as a comment on this PR" };
+            var benchLocal = new Option<bool>("--local") { Description = "Keep the benchmark on this node's own machine (it needs its hardware: a camera, a GPU kernel test), never on a cloud VM" };
             var benchTimeout = new Option<string?>("--timeout") { Description = "How long the whole job may run: 90m, 2h; 2h by default, 8h at most" };
             var benchWords = new Argument<string[]>("command") { Description = "The benchmark command, after --: pilot bench codecs --ref main -- dotnet run -c Release", Arity = ArgumentArity.OneOrMore };
             var benchCommand = Action(new Command("bench", "Run a benchmark alone on the node, on a ref or a baseline and a candidate, and post the tables on a card (and a PR)")
                 {
                     Arguments = { benchRepo, benchWords },
-                    Options = { benchRef, benchBaseline, benchCandidate, benchFetch, benchPr, benchTimeout },
+                    Options = { benchRef, benchBaseline, benchCandidate, benchFetch, benchPr, benchLocal, benchTimeout },
                 },
                 async (p, client, ct) =>
                 {
@@ -144,6 +151,10 @@ public static partial class PilotCommand
                         {
                             args.AddRange([flag, value]);
                         }
+                    }
+                    if (p.GetValue(benchLocal))
+                    {
+                        args.Add(Verbs.LocalArg);
                     }
                     args.AddRange(["--timeout", seconds.ToString(CultureInfo.InvariantCulture), "--", .. p.GetValue(benchWords) ?? []]);
                     var sent = await SendCommandAsync(client, new CommandRequest
@@ -252,6 +263,11 @@ public static partial class PilotCommand
                     {
                         await output.WriteLineAsync($"  {row.Key.PadRight(width)}  {row.Tokens.ToString("N0", inv),14} tokens  {row.Weighted.ToString("N0", inv),14} weighted  {row.Share.ToString("0.0", inv),5} %");
                     }
+                }
+                if (report.Bench is { } bench)
+                {
+                    await output.WriteLineAsync();
+                    await output.WriteLineAsync($"bench VMs, {BenchText.Month(bench)}");
                 }
                 return 0;
             });

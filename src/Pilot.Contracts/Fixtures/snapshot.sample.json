@@ -234,6 +234,8 @@
       "firstBuildError": null,
       "failureTold": false,
       "failFast": false,
+      "local": false,
+      "benchVm": null,
       "wholeSuite": null
     },
     {
@@ -280,6 +282,8 @@
       "firstBuildError": null,
       "failureTold": false,
       "failFast": false,
+      "local": false,
+      "benchVm": null,
       "wholeSuite": null
     },
     {
@@ -326,6 +330,8 @@
       "firstBuildError": null,
       "failureTold": false,
       "failFast": false,
+      "local": false,
+      "benchVm": null,
       "wholeSuite": null
     },
     {
@@ -372,6 +378,8 @@
       "firstBuildError": null,
       "failureTold": false,
       "failFast": false,
+      "local": false,
+      "benchVm": null,
       "wholeSuite": null
     }
   ],

@@ -403,6 +403,12 @@ public static class Verbs
     /// <summary>The leading argument of <c>run</c> that asks for the node to itself (a benchmark, <see cref="JobKind.Bench"/>).</summary>
     public const string AloneArg = "--alone";
 
+    /// <summary>
+    /// The argument of <c>run</c> (right after <see cref="AloneArg"/>) and of <c>bench</c> that keeps a benchmark on the node's own machine:
+    /// one that needs its hardware (a camera, a GPU kernel test) never goes to a cloud VM. The job's row keeps it as <see cref="JobRow.Local"/>.
+    /// </summary>
+    public const string LocalArg = "--local";
+
     /// <summary>The leading argument of <c>run</c> (before <see cref="AloneArg"/>) that ends the job at its first failed test.</summary>
     public const string FailFastArg = "--fail-fast";
 

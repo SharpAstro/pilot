@@ -915,6 +915,55 @@ The run is without `--inProcess`: BenchmarkDotNet builds and starts its own proc
 detached worktree and its short name are for. A node that stops while the job runs leaves the worktrees and the post
 undone; the next bench picks free names beside them.
 
+**Where a bench runs (#823).** A bench on a busy machine waits for a quiet CPU and then carries whatever else the machine was
+doing, so the node can be told where a bench may run in Azure instead: a spot VM of a fixed size, image and region, so two
+runs compare. These are settings (`pilot settings`, `pilot set node <key> <value>`), live as soon as they are saved:
+
+| key | takes | default |
+|---|---|---|
+| `bench-subscription` | the Azure subscription id (a GUID) | unset |
+| `bench-resource-group` | an Azure resource group name | unset |
+| `bench-region` | an Azure region, as `az account list-locations` names it | `westeurope` |
+| `bench-vm-size` | an Azure VM size | `Standard_F8s_v2` |
+| `bench-image` | a marketplace image URN, `publisher:offer:sku:version` | `Canonical:ubuntu-24_04-lts:server:latest` |
+| `bench-spot-price` | the most to pay per VM hour, in USD | `0.30` |
+| `bench-monthly-cap` | the most cloud benches may cost in a calendar month, in USD | `50` |
+| `bench-auth` | `az-login` (this machine's own `az login`) or `service-principal` | `az-login` |
+| `bench-sp-app-id`, `bench-sp-tenant`, `bench-sp-secret` | the service principal's app id (GUID), tenant (GUID or domain) and secret | unset |
+
+**An unset subscription or resource group means cloud benches are off**, and every bench runs on the node's machine exactly as
+described above; the answer to a `set` of any of these keys says whether cloud benches are on. With `service-principal` the app
+id, tenant and secret must all be set too. Nothing secret is in the repo: `az-login` stores nothing, and the secret lives only in
+the node's `settings.json`, which the Settings page, `pilot settings` and the answer to `set` show only as `set` or not.
+
+`--local` (`pilot bench ... --local`, `pilot run --alone --local -- <command>`) keeps one benchmark on the node's own machine, for
+one that needs its hardware (a camera, a GPU kernel test): it is never sent to a VM. The job's row keeps it as `Local`. A job row
+also has an optional `BenchVm` (size, image, region, price per hour, minutes, cost, evictions, and why the bench ran local when it
+did); both fields are optional, so `NodeWire.Version` stays.
+
+**Setting cloud benches up once.** The owner does this on the node's machine, one time:
+
+1. Install the Azure CLI and sign in with `az login` (the default `bench-auth az-login`), or make a service principal and set
+   `bench-auth service-principal` with `bench-sp-app-id`, `bench-sp-tenant` and `bench-sp-secret` (the secret is kept only in the
+   node's `settings.json`).
+2. Make a resource group for the bench VMs (`az group create`), and set `bench-subscription` and `bench-resource-group`. These two
+   switch cloud benches on; the node deletes each VM and its resources when the bench ends, so the group stays empty.
+3. Leave `bench-region`, `bench-vm-size` and `bench-image` at their defaults unless a bench needs more cores, and set
+   `bench-spot-price` (the most to pay per VM hour) and `bench-monthly-cap` (the most the month's cloud benches may cost).
+4. A bench that needs the machine's own hardware takes `--local`. Once the month's cost has reached the monthly cap, the next
+   bench runs on the node's machine instead and says why (a bench that starts just under the cap can run past it).
+   `pilot run --alone` with cloud settings goes to a VM too: its command runs under `bash` on Linux at the checkout's root, from
+   a clean checkout only, so a command that needs pwsh or Windows takes `--local`.
+5. If the node stops or crashes while a bench runs on its VM, the node that takes the row up (on its next start) deletes the VM and
+   its resources by name and by a sweep of the resource group, and ends the row saying what was deleted or could not be.
+6. A spot eviction re-queues the bench once on a new VM, and a second eviction ends it.
+
+**Seeing what it cost.** `pilot jobs` and `pilot job` add the VM to a bench's line (size, region, minutes, cost and evictions; or
+why it ran local), and nothing to any other job. `pilot spend` ends with a line for this calendar month's bench VMs (runs, minutes,
+cost against the cap), and the Spend page shows the same under the token figures. That line is of the month, not of the window
+picked, and it is left out while cloud benches are off and none has run. The figures come from the job rows, and are the
+`SpendReport.Bench` member, optional so `NodeWire.Version` stays.
+
 ### The MCP server
 
 **Sessions the node starts are lean.** Every session it starts or resumes (watchtower, planner, worker, reviewer, validator,

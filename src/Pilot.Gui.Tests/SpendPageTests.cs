@@ -68,6 +68,25 @@ public sealed class SpendPageTests
         texts.ShouldContain("4,200,000 tokens in 420 messages, " + frame);
     }
 
+    private static SpendScreen WithBench() =>
+        Screen() with { Report = Screen().Report! with { Bench = new SpendBench { Month = "2026-10", Runs = 3, Minutes = 41.5, Cost = 0.3125, Evictions = 1, Cap = 50 } } };
+
+    [Fact]
+    public void TheBenchVmLineIsDrawnOnlyWhenThereIsSomethingToShow()
+    {
+        using var renderer = new RgbaImageRenderer(1400, 900);
+        var (_, page) = Chrome(renderer);
+
+        TextsOf(renderer, page, Screen()).ShouldNotContain(t => t.StartsWith("Bench VMs", StringComparison.Ordinal));
+        Screen().ToDump().ShouldNotContain("Bench VMs");
+
+        var screen = WithBench();
+        var texts = TextsOf(renderer, page, screen);
+        texts.ShouldContain("Bench VMs, this month (not the window above)");
+        texts.ShouldContain("Bench VMs, 2026-10: 3 benches on VMs, 41.5 min, $0.3125 of the $50.00 cap, 1 eviction");
+        screen.ToDump().ShouldContain("Bench VMs, 2026-10: 3 benches on VMs, 41.5 min, $0.3125 of the $50.00 cap, 1 eviction");
+    }
+
     [Fact]
     public void TheWasteListIsWorstFirst()
     {
