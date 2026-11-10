@@ -192,7 +192,7 @@ public abstract class PrRecheckTestsBase : IDisposable
         var clock = System.Diagnostics.Stopwatch.StartNew();
         while (!recorded())
         {
-            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(120), what);
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(120), what); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
             await Task.Delay(10, Ct);
         }
     }
@@ -775,7 +775,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
             return Task.WhenAny(open.Task, Task.Delay(TimeSpan.FromSeconds(25)));
         };
         var first = _legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = Verbs.FlightTarget(_state.Flights().Single().Code), Args = [head], Who = "controller" }, Ct);
-        (await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(120), Ct))).ShouldBe(reached.Task, "the first merge did not reach GitHub");
+        (await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(120), Ct))).ShouldBe(reached.Task, "the first merge did not reach GitHub"); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
 
         await LookAsync();
 

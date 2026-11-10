@@ -131,7 +131,7 @@ public sealed class MergeBatchTests
         };
         Flight(node, "TIA9", 9);
         var held = Merge(node, "TIA9", method);
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(120), Ct);
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(120), Ct); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         var number = 10;
         foreach (var code in codes)
         {
@@ -443,7 +443,7 @@ public sealed class MergeBatchTests
         };
         Flight(node, "TIA9", 9);
         var held = Merge(node, "TIA9");
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(120), Ct);
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(120), Ct); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         foreach (var (code, number) in new[] { ("TIA1", 10), ("TIA2", 11), ("TIA3", 12) })
         {
             Flight(node, code, number);
@@ -572,7 +572,7 @@ public sealed class MergeBatchTests
         // TIA9's merge holds tianwen's turn (as a batch holds it through its CI).
         Flight(node, "TIA9", 9);
         var held = Merge(node, "TIA9", "rebase");
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(120), Ct);
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(120), Ct); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         // TIA2 waits in the queue for a review that has now passed at its head; TIA1's merge was armed while its checks ran, and they
         // are green now.
         Flight(node, "TIA2", 11);

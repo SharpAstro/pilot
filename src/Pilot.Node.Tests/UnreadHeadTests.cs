@@ -151,7 +151,7 @@ public sealed class UnreadHeadTests : ReviewTestsBase
             var clock = Stopwatch.StartNew();
             while (F(flight.Code).Review?.ReviewedHead != head)
             {
-                clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(120), "the first sweep did not review the unread head");
+                clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(120), "the first sweep did not review the unread head"); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
                 await Task.Delay(20, Ct);
             }
             await Started(_legs, flight.Code);

@@ -174,7 +174,7 @@ public sealed class CheckCarryOverTests : JobTestsBase
         var crashed = _state.Jobs().Single(j => j.Id == "jc1");
         (crashed.State, crashed.EndedAt is not null).ShouldBe((JobState.Failed, true));
 
-        var result = await _jobs.RunCheckAsync(Flight, LegName, command, _root, TimeSpan.FromMinutes(30), Ct).WaitAsync(TimeSpan.FromSeconds(120), Ct);
+        var result = await _jobs.RunCheckAsync(Flight, LegName, command, _root, TimeSpan.FromMinutes(30), Ct).WaitAsync(TimeSpan.FromSeconds(120), Ct); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
 
         (result.ExitCode, result.Tail.Contains("fresh", StringComparison.Ordinal)).ShouldBe((0, true));
         var checks = _state.Jobs().Where(j => j.Kind == JobKind.Check).ToList();

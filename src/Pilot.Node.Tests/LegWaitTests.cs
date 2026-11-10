@@ -42,7 +42,7 @@ public sealed class LegWaitTests : IDisposable
         Leg(Verbs.StartLeg, "flight/TIA1/parser").GetAwaiter().GetResult().Ok.ShouldBeTrue();
         // The worker is launched after the command answers; a loaded machine records it much later.
         var clock = Stopwatch.StartNew();
-        while (_legs.Starting("TIA1") && clock.Elapsed < TimeSpan.FromSeconds(120))
+        while (_legs.Starting("TIA1") && clock.Elapsed < TimeSpan.FromSeconds(120)) // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         {
             Thread.Sleep(10);
         }

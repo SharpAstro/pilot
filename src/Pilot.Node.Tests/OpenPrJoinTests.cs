@@ -13,7 +13,7 @@ namespace Pilot.Node.Tests;
 public sealed class OpenPrJoinTests : ReviewTestsBase
 {
     private async Task Reaches(TaskCompletionSource reached) =>
-        (await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(120), Ct))).ShouldBe(reached.Task, "the call was not reached");
+        (await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(120), Ct))).ShouldBe(reached.Task, "the call was not reached"); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
 
     // CreateAsync held until the returned source is set, then failing when asked to or passing.
     private (TaskCompletionSource Open, TaskCompletionSource Reached) HoldCreate(bool fail)

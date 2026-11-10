@@ -1258,7 +1258,7 @@ public abstract class LegCommanderTestsBase : IDisposable
         if (verb == Verbs.StartLeg && result.Ok && target.Split('/') is [_, var code, ..])
         {
             var clock = Stopwatch.StartNew();
-            while (_legs.Starting(code) && !_workers.Holding && clock.Elapsed < TimeSpan.FromSeconds(120))
+            while (_legs.Starting(code) && !_workers.Holding && clock.Elapsed < TimeSpan.FromSeconds(120)) // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
             {
                 await Task.Delay(10, Ct);
             }
@@ -1770,7 +1770,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
 
         // The worker is launched after the command answers; a loaded machine does not do that within it.
         var clock = Stopwatch.StartNew();
-        while (_legs.Starting("TIA1") && clock.Elapsed < TimeSpan.FromSeconds(120))
+        while (_legs.Starting("TIA1") && clock.Elapsed < TimeSpan.FromSeconds(120)) // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         {
             await Task.Delay(10, Ct);
         }

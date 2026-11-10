@@ -41,7 +41,7 @@ public sealed class EndedSessionJobsTests : IDisposable
         _tracker.DropJobs = (owners, why) => _jobs.DropQueuedOf(owners, why);
         _jobs.EndedForGood = _tracker.IsEndedForGood;
         _jobs.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
-        _jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct).GetAwaiter().GetResult();
+        _jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct).GetAwaiter().GetResult(); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
     }
 
     public void Dispose()

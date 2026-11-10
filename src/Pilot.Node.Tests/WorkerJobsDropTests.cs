@@ -27,7 +27,7 @@ public sealed class WorkerJobsDropTests : ReviewTestsBase
             },
         };
         jobs.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
-        jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct).GetAwaiter().GetResult();
+        jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct).GetAwaiter().GetResult(); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
         _legs.DropJobs = jobs.DropQueuedOf;
         return jobs;
     }
