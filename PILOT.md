@@ -70,6 +70,16 @@ is neither built nor tested by CI.
   nothing with none, and `pilot summarise` and the panel's Refresh ask at once. The Haiku call runs only when the
   watchtower is down (`SummaryRow.NotFollowing` says so); only then does the panel name a price.
 
+## Stored records
+
+An update starts on the store the last release wrote, and the JSON reader sets a member missing from it to null whatever its
+initialiser says (beta 1718 stopped every node so, on `AdmissionRow.WaitingOnPerson`).
+
+- A member added to a stored record (snapshot, journal events, settings, job and session rows) is nullable, or defaulted
+  in its setter (`init => field = value ?? []`). A kind or field an older reader would drop also bumps `FileJournal.StoreContract`.
+- `StoreCompatibilityTests` loads each store under `src/Pilot.Node.Tests/Fixtures/Store/<version>/`, written by that release's
+  code, and fails naming `Type.Member` for a null its type forbids. How a fixture is refreshed: `src/README.md`, "Stored records".
+
 ## Build and check
 
 Always `-c Release`, as CI does; a Debug build of a consumer of a Release package can fail with a misleading

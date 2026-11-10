@@ -88,6 +88,44 @@ public sealed class JobTellLogTests : IDisposable
         _state.Jobs().Single(j => j.Id == "j2").Told.ShouldBeFalse();
     }
 
+    private string[] LinesOf(string id) => [.. _log.ToString().Split('\n').Where(l => l.Contains($"job tell {id} "))];
+
+    // PIL791: while sessions are not taking turns a tell is not sent, and says so in the log once per outage.
+    [Fact]
+    public async Task ATellHeldByAnOutageIsLoggedOnceAsHeldAndIsSentAndLoggedWhenItEnds()
+    {
+        var outage = new TurnOutage(_state);
+        _jobs.Outage = outage;
+        var since = DateTimeOffset.UtcNow;
+        outage.AccountChanged(since);
+        var row = Seed("j4");
+
+        // The sweep asks every few seconds: the held tell is said once, and neither sent nor refused nor rung for.
+        await _jobs.TellAsync(row, TestContext.Current.CancellationToken);
+        await _jobs.TellAsync(row, TestContext.Current.CancellationToken);
+        (await _jobs.TellUntoldAsync(null, TestContext.Current.CancellationToken)).ShouldBeFalse();
+        var held = LinesOf("j4").ShouldHaveSingleItem();
+        held.ShouldContain("owner=w0000001");
+        held.ShouldContain("target=w0000001");
+        held.ShouldContain($"outcome={JobRunner.HeldOutcome}");
+        held.ShouldContain("outcome=held: sessions not taking turns");
+        held.ShouldContain("state=Idle");
+        var waiting = _state.Jobs().Single(j => j.Id == "j4");
+        (waiting.Told, waiting.ToldAt).ShouldBe((false, null));
+        _state.Cards().Where(c => c.Kind == JobRunner.UntoldKind).ShouldBeEmpty();
+
+        // A session takes a turn: the outage ends, and the same tell goes out.
+        outage.Look([.. _state.Sessions().Select(s => s with { LastResponseAt = since.AddMinutes(1) })], since.AddMinutes(1));
+        outage.IsOpen.ShouldBeFalse();
+        _say = c => _state.Complete(c, null, way: SayWays.Relayed);
+        (await _jobs.TellUntoldAsync(null, TestContext.Current.CancellationToken)).ShouldBeTrue();
+
+        var lines = LinesOf("j4");
+        lines.Length.ShouldBe(2);
+        lines[1].ShouldContain($"outcome={SayWays.Relayed}");
+        _state.Jobs().Single(j => j.Id == "j4").Told.ShouldBeTrue();
+    }
+
     [Fact]
     public async Task AThrowingSayIsLoggedAsFailed()
     {

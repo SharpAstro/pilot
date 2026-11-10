@@ -522,9 +522,16 @@ if (feed is not null && client is not null && clients is not null)
         // outcome, which is what brings a refused Dismiss's card back (PIL853).
         var node = chrome.Cards.NodeOf(card);
         var to = clients.For(node);
+        // An ok answer that joined an answer already underway (or already given) is logged as such, so the log does not read as a second
+        // run: the card itself says who pressed what (#792).
+        string? joined = null;
         var refused = await CardCommands.SendAsync(chrome.Cards, verb, card, args, GuiSay.Who, to is null ? null : to.SendAsync, FleetClients.WatchOnly(node),
-            cts.Token, result => clients.NoteRefusal(node, result));
-        Note($"pilot-gui: {verb} {card.Id} ({card.Title}): {refused ?? "done"}");
+            cts.Token, result =>
+            {
+                clients.NoteRefusal(node, result);
+                joined = DashboardCommands.JoinedOf(result);
+            });
+        Note($"pilot-gui: {verb} {card.Id} ({card.Title}): {refused ?? (joined is null ? "done" : $"joined: {joined}")}");
         loop.RequestRedraw();
     }
     // Every task a click starts goes through the tracker, never `_ =`: it is drained at shutdown and a fault it did not

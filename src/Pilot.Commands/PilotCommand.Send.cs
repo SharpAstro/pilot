@@ -147,6 +147,11 @@ public static partial class PilotCommand
         if (envelope.Success && envelope.Response is { Ok: true } result)
         {
             await output.WriteLineAsync($"ok: {verb} {target}{(result.Way is { } way ? $" ({way})" : "")}");
+            if (verb == Verbs.Answer && CardAnswering.IsJoined(result.Made))
+            {
+                // A press that joined an answer already taken (#792): said, so the caller can tell it from a fresh run, as the GUI and TUI log it.
+                await output.WriteLineAsync($"joined: {result.Made}");
+            }
             if (verb == Verbs.SyncRepos)
             {
                 foreach (var outcome in RepoSyncOutcome.Parse(result.Made))

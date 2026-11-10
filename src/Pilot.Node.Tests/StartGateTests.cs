@@ -247,6 +247,121 @@ public sealed class StartGateTests : IDisposable
         _workers.Started.Count.ShouldBe(2);
     }
 
+    // PIL791: an open outage holds every start but one probe per TurnOutage.ProbeEvery.
+    private TurnOutage OpenOutage()
+    {
+        var outage = new TurnOutage(_state);
+        _gate.Outage = outage;
+        outage.AccountChanged(_time.GetUtcNow());
+        return outage;
+    }
+
+    private bool Ask(string key) => _gate.Hold(key, 90, 90, "next-step", "flight/TIA9", $"TIA9 waits to {key}");
+
+    [Fact]
+    public void AStartAskedDuringAnOutageIsHeldWithOneCardAndGoesOnceTheOutageHasEnded()
+    {
+        var outage = OpenOutage();
+        _time.Advance(TimeSpan.FromMinutes(1));
+
+        Ask("start parser").ShouldBeTrue();
+        Ask("start parser").ShouldBeTrue();
+        Ask("plan flight").ShouldBeTrue();
+
+        // One Handled card per waiting start, each saying it waits for sessions to take turns again; the outage's own ring is another kind.
+        var waits = Cards("next-step");
+        waits.Length.ShouldBe(2);
+        waits.ShouldAllBe(c => c.Bin == CardBin.Handled);
+        waits.Select(c => c.Title).ShouldBe([
+            $"TIA9 waits to start parser: sessions are not taking turns since {Start.ToLocalTime():HH:mm}, so it waits until they take turns again",
+            $"TIA9 waits to plan flight: sessions are not taking turns since {Start.ToLocalTime():HH:mm}, so it waits until they take turns again",
+        ], ignoreOrder: true);
+
+        // A session takes a turn: the outage ends and the starts that waited go.
+        outage.Look([Turned("w0000001", _time.GetUtcNow())], _time.GetUtcNow());
+        outage.IsOpen.ShouldBeFalse();
+        Ask("start parser").ShouldBeFalse();
+        Ask("plan flight").ShouldBeFalse();
+        Cards("next-step").Length.ShouldBe(2);
+
+        // Another outage is another wait, said again.
+        _time.Advance(TimeSpan.FromHours(1));
+        outage.AccountChanged(_time.GetUtcNow());
+        Ask("start parser").ShouldBeTrue();
+        Cards("next-step").Length.ShouldBe(3);
+    }
+
+    [Fact]
+    public void OneStartPassesAsAProbeEveryFiveMinutesTheOldestOneFirst()
+    {
+        var outage = OpenOutage();
+
+        // The outage's opening counts as the last probe: nothing passes before the period is over.
+        _time.Advance(TimeSpan.FromMinutes(1));
+        Ask("start parser").ShouldBeTrue();
+        _time.Advance(TimeSpan.FromMinutes(1));
+        Ask("plan flight").ShouldBeTrue();
+        _time.Advance(TimeSpan.FromMinutes(2));
+        Ask("start parser").ShouldBeTrue();
+        Ask("plan flight").ShouldBeTrue();
+
+        // Five minutes after the opening: the oldest asking start passes, the other does not.
+        _time.Advance(TimeSpan.FromMinutes(1));
+        Ask("plan flight").ShouldBeTrue();
+        Ask("start parser").ShouldBeFalse();
+        // The probe asks the gate again at its next step (the sweep's, then the command's own): still let through, and nothing said again.
+        Ask("start parser").ShouldBeFalse();
+        Cards("next-step").Count(c => c.Title.StartsWith("TIA9 waits to start parser")).ShouldBe(1);
+
+        // Within the period nothing else passes.
+        _time.Advance(TimeSpan.FromMinutes(3));
+        Ask("plan flight").ShouldBeTrue();
+
+        // The next period: the one that waited longest, the plan, is the probe; the start that went first is held again behind it, and says so again.
+        _time.Advance(TimeSpan.FromMinutes(2));
+        Ask("start parser").ShouldBeTrue();
+        Ask("plan flight").ShouldBeFalse();
+        Cards("next-step").Count(c => c.Title.StartsWith("TIA9 waits to start parser")).ShouldBe(2);
+        Cards("next-step").Count(c => c.Title.StartsWith("TIA9 waits to plan flight")).ShouldBe(1);
+        outage.IsOpen.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AStartThatStoppedAskingIsNotWaitedForByTheProbe()
+    {
+        OpenOutage();
+        _time.Advance(TimeSpan.FromMinutes(1));
+        Ask("start parser").ShouldBeTrue();
+        _time.Advance(TimeSpan.FromMinutes(1));
+        Ask("plan flight").ShouldBeTrue();
+
+        // The older one is not asked for again (its leg went another way): once its last ask is older than a period, the other is the probe.
+        _time.Advance(TimeSpan.FromMinutes(5));
+        Ask("plan flight").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AStartTheWindowHoldsDoesNotUseUpTheProbe()
+    {
+        OpenOutage();
+        _time.Advance(TimeSpan.FromMinutes(6));
+        Usage(95, resetsIn: TimeSpan.FromMinutes(30));
+
+        // Held for the window, which says until when; the outage's probe is still there when the window has reset.
+        Ask("start parser").ShouldBeTrue();
+        Cards("next-step").ShouldHaveSingleItem().Title.ShouldContain("the 5-hour window is 95 % spent");
+
+        _time.Advance(TimeSpan.FromMinutes(31));
+        Usage(3, resetsIn: TimeSpan.FromHours(5));
+        Ask("start parser").ShouldBeFalse();
+    }
+
+    private SessionRow Turned(string id, DateTimeOffset at) => new()
+    {
+        Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = "du1-tia9-" + id, Kind = SessionKind.Background, Cwd = "/r/w", Role = SessionRole.Worker,
+        Flight = "TIA9", Leg = "parser", ContextTokens = 20_000, ContextWindow = 1_000_000, State = SessionState.Working, SpendWeighted = 0, LastResponseAt = at, StartedAt = Start,
+    };
+
     private void Session(string id, string name, string? flight, string? leg) =>
         _state.PutSession(new SessionRow
         {
