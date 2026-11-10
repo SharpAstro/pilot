@@ -13,6 +13,14 @@ namespace Pilot.Node.Flights;
 /// (<see cref="SystemProcesses"/>), and only the top few are opened for their command line; the GPU is read every
 /// <see cref="GpuEvery"/> (#794). The maths and the parsers are pure static functions, so a test feeds them fixed figures.
 /// </summary>
+/// <remarks>
+/// <para><b>WmiPrvSE's bursts on DE1 are not this sampler's (#794).</b> Nothing here queries WMI: the process table is
+/// NtQuerySystemInformation and the GPU is PDH. Microsoft-Windows-WMI-Activity/Operational named the client of the bursts
+/// as Claude Code's IDE detection, a <c>cmd /c tasklist | findstr Code.exe</c> run at each session start, so they follow
+/// how often sessions start, not pilot's sampling. Measured before this change on DE1 (typeperf, 2 min, idle): pilot-node
+/// at 99.6% of one core on average, WmiPrvSE at 10.7%. A profile of the node then put process reads at about 20 to 25% of
+/// its CPU; the rest was the session poll and <c>NodeState.CloseCardsAbout</c> scanning every card.</para>
+/// </remarks>
 public sealed class MachineSampler(NodeState state, TimeProvider time) : BackgroundService
 {
     /// <summary>How many processes the row names.</summary>
