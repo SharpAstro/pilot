@@ -278,6 +278,10 @@ public sealed class RemovalQueueTests : IDisposable
             await Start().StartingAsync(Ct);
             var card = state.Cards(openOnly: true).Where(c => c.Kind == RemovalQueueStart.Kind).ShouldHaveSingleItem();
             card.Bin.ShouldBe(CardBin.ForYou);
+            // The golden card (#797): what to do first, then the one button; the holder is named in the detail, never "unknown".
+            card.Title.ShouldBe("1 folder Windows still holds open");
+            card.Summary.ShouldBe("Close whatever holds the folder open (the detail names it): the node removes it once it is let go.");
+            card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("I will close it", Verbs.Dismiss)]);
             var detail = card.Detail.ShouldNotBeNull();
             detail.ShouldContain(Path.GetFullPath(folder));
             detail.ShouldContain("4 starts tried");

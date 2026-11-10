@@ -110,6 +110,9 @@ public sealed class StraySweepTests
         host.Title.ShouldContain("testhost.exe");
         host.Title.ShouldContain("501");
         host.Title.ShouldContain("job j7");
+        // The golden card (#797): the first line says what to do with the kill command, the one button leaves it running.
+        host.Summary.ShouldNotBeNull().ShouldStartWith("End process 501 with Stop-Process -Id 501 -Force if it should not be running, or leave it: ");
+        host.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Leave it running", Verbs.Dismiss)]);
         host.Detail.ShouldNotBeNull();
         host.Detail.ShouldContain("Process 501 (testhost.exe) of job j7");
         host.Detail.ShouldContain("running 2 h 59 min");

@@ -66,17 +66,16 @@ public sealed partial class PrReviews
                 return;
             }
             var design = DesignDetail(questions);
-            var asked = questions.Count == 1 ? $": {Clean(questions[0].Question, 80)}" : "";
             var choices = DesignChoices(subject, questions);
             var rings = DesignRings(questions);
             if (flight is not null)
             {
-                RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr} ({flight.Code}'s PR): the review asks a question of design{asked}",
+                RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr} ({flight.Code}'s PR): the review asks a question of design",
                     $"{design}{rings}\nNo fixer started: {flight.Code}'s own legs make changes. review fix {pr} <answer> sends its last leg round with the answer, as the card's Answer does.",
                     choices, DesignSummary(questions));
                 return;
             }
-            RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design{asked}", $"{design}{rings}\nNo fixer started: this is the author's to decide. An option or Answer in your own words posts the answer on the PR and starts the fixer.",
+            RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design", $"{design}{rings}\nNo fixer started: this is the author's to decide. An option or Answer in your own words posts the answer on the PR and starts the fixer.",
                 choices, DesignSummary(questions));
             return;
         }

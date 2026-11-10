@@ -92,7 +92,11 @@ public sealed class RebootPrepTests
 
         prep.Ready.ShouldBeTrue();
         _ended.Count.ShouldBe(3);
-        _state.Cards(openOnly: true).Single(c => c.Kind == RebootPrep.ReadyKind).Title.ShouldStartWith("Ready to reboot");
+        var ready = _state.Cards(openOnly: true).Single(c => c.Kind == RebootPrep.ReadyKind);
+        ready.Title.ShouldBe("Ready to reboot: every session's state is saved");
+        // The golden card (#797): reboot is the first line's action; the one button is what the node can do, calling it off.
+        ready.Summary.ShouldBe("Reboot the machine now; once it is back, run pilot node reboot done and each flight resumes from its file.");
+        ready.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Cancel the reboot", Verbs.Reboot)]);
         prep.Status().ShouldStartWith("Ready to reboot: 3 sessions saved, 0 running");
     }
 

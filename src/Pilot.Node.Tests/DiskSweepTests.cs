@@ -266,6 +266,9 @@ public sealed class DiskSweepTests : IDisposable
         var card = _state.Cards().Single(c => c.Kind == DiskSweep.WorktreeDirtyKind);
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Subject.ShouldBe(path);
+        // The golden card (#797): the title says what is wrong, the first line what to do, one button.
+        card.Summary.ShouldNotBeNull().ShouldStartWith("Commit or discard the changes in worktree ");
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("I will deal with it", Verbs.Dismiss)]);
     }
 
     [Fact]
@@ -380,6 +383,9 @@ public sealed class DiskSweepTests : IDisposable
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Title.ShouldContain("D:");
         card.Title.ShouldContain("5.0 GB");
+        // The golden card (#797): the title says the drive is low, the first line what to do, one button.
+        card.Summary.ShouldNotBeNull().ShouldStartWith("Free some space on D: or lower the alert (setting disk-alert-gb): ");
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("I will free space", Verbs.Dismiss)]);
         card.Detail!.ShouldContain("job scratch bbbbbbbb");
         card.Detail!.IndexOf("bbbbbbbb", StringComparison.Ordinal).ShouldBeLessThan(card.Detail!.IndexOf("cccccccc", StringComparison.Ordinal));
 

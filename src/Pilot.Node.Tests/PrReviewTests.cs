@@ -341,6 +341,9 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
         var card = state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.LostKind).ShouldHaveSingleItem();
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Detail.ShouldNotBeNull().ShouldContain("claude is not logged in");
+        // The golden card (#797): what happened in the title, what to do first (with the reason), one short verb.
+        card.Title.ShouldBe("acme/widget#7: the review was lost in a restart and did not start again");
+        card.Summary.ShouldNotBeNull().ShouldStartWith("Start the review of acme/widget#7 afresh: it was running when the node restarted and could not be started again (");
         var choice = card.Choices.ShouldHaveSingleItem();
         (choice.Label, choice.Verb, choice.Target).ShouldBe(("Start the review again", Verbs.ReviewPr, "pr/acme/widget#7"));
         Directory.Exists(row.Worktree).ShouldBeFalse();

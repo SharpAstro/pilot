@@ -113,6 +113,9 @@ public sealed class StartGateTests : IDisposable
 
         var ring = Cards(StartGate.WeekKind).ShouldHaveSingleItem();
         (ring.Bin, ring.Title).ShouldBe((CardBin.ForYou, $"The 7-day window is 99 % spent; it resets {_time.GetUtcNow().AddDays(3).ToLocalTime():ddd HH:mm}"));
+        // The golden card (#797): what happened, what to do in the first line, and the one button that closes it (it offered none before).
+        ring.Summary.ShouldBe("Nothing stops by itself: pause the flights you can spare if the week should last.");
+        ring.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Keep flying", Verbs.Dismiss)]);
 
         // Under its limit, it rings nothing.
         _gate.RingWeek(100);

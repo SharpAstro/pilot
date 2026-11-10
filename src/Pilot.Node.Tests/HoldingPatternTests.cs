@@ -149,6 +149,10 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         var card = Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind);
         card.Bin.ShouldBe(CardBin.Ring);
         card.Choices.Select(c => c.Label).ShouldBe(["Merge as it is", "Keep waiting"]);
+        // The golden card (#797): on hold, not "circled in a holding pattern"; the first line says what to do and why.
+        card.Title.ShouldEndWith("is still on hold");
+        card.Summary.ShouldNotBeNull().ShouldContain("has been on hold for 30 minutes because ");
+        card.Summary.ShouldContain("merge it now with its notes, or hold off and be asked again");
         _github.Merged.ShouldBeEmpty();
 
         var merge = card.Choices[0];

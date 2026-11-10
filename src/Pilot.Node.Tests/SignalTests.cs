@@ -102,6 +102,8 @@ public sealed class SignalTests
 
         (first.Bin, first.Kind, first.Subject).ShouldBe((CardBin.ForYou, Digest.Kind, "node"));
         first.Title.ShouldBe("Digest: 1 landed, 1 flying, 1 card open");
+        // The golden card (#797): a card only to be read says so, with the one button that closes it.
+        first.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Mark it read", Verbs.Dismiss)]);
         first.Detail.ShouldBe(string.Join(Environment.NewLine,
             "Landed:",
             "- TIA1: Planets TIA1",
