@@ -43,7 +43,7 @@ public sealed class StartGateTests : IDisposable
     {
         if (Directory.Exists(_data))
         {
-            Directory.Delete(_data, recursive: true);
+            TestDirs.DeleteTree(_data);
         }
     }
 
@@ -107,16 +107,47 @@ public sealed class StartGateTests : IDisposable
     public void TheWeekRingsOncePerWindowAndHoldsNothing()
     {
         Usage(10, week: 99);
+        // A second flight in the air and one landed: each flying flight is offered a hold, the landed one is not.
+        _state.PutFlight(_state.Flights().Single() with { Code = "TIA8", Branch = "flight/tia8" });
+        _state.PutFlight(_state.Flights().First() with { Code = "TIA7", Branch = "flight/tia7", State = FlightState.Landed });
 
         _gate.Hold("k", 90, 90, "kind", "flight/TIA9", "x").ShouldBeFalse();
         _gate.Hold("k", 90, 90, "kind", "flight/TIA9", "x").ShouldBeFalse();
 
         var ring = Cards(StartGate.WeekKind).ShouldHaveSingleItem();
-        (ring.Bin, ring.Title).ShouldBe((CardBin.Ring, $"The 7-day window is 99 % spent; it resets {_time.GetUtcNow().AddDays(3).ToLocalTime():ddd HH:mm}"));
+        (ring.Bin, ring.Title).ShouldBe((CardBin.ForYou, $"The 7-day window is 99 % spent; it resets {_time.GetUtcNow().AddDays(3).ToLocalTime():ddd HH:mm}"));
+        // The golden card (#797, c3530): what happened, what to do in the first line, and buttons that do it: hold a flying flight (the
+        // owner's hold) or take no new flights (maintenance). It offered no button before, then only a dismiss.
+        ring.Summary.ShouldBe("Nothing stops by itself: hold the flights you can spare, or take no new ones, if the week should last.");
+        ring.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe(
+            [("Hold TIA8", Verbs.Ground, "flight/TIA8"), ("Hold TIA9", Verbs.Ground, "flight/TIA9"), ("Take no new flights", Verbs.Set, Verbs.NodeTarget)]);
+        ring.Choices[0].Args.ShouldBe(["the 7-day window is 99 % spent"]);
+        ring.Choices[2].Args.ShouldBe([NodeSettings.MaintenanceKey, "on"]);
+        CardsPanelFixture.ShouldMatch("c3530", ring, title: false, ("TIA8", "PIL716"), ("TIA9", "PIL795"));
 
         // Under its limit, it rings nothing.
         _gate.RingWeek(100);
         Cards(StartGate.WeekKind).Length.ShouldBe(1);
+    }
+
+    [Fact]
+    public void ALandedFlightsHoldButtonLeavesTheWeekCardAndTheOthersStay()
+    {
+        Usage(10, week: 99);
+        _state.PutFlight(_state.Flights().Single() with { Code = "TIA8", Branch = "flight/tia8" });
+        _gate.RingWeek(90);
+
+        // TIA8 lands after the card was raised: its button goes, the other flight's and the node-wide one stay.
+        _state.DropHoldChoiceOfLanded("TIA8");
+        Cards(StartGate.WeekKind).ShouldHaveSingleItem().Choices.Select(c => c.Label).ShouldBe(["Hold TIA9", "Take no new flights"]);
+
+        // Nothing left to drop for it: no change, and a flight with no button is a no-op.
+        _state.DropHoldChoiceOfLanded("TIA8");
+        _state.DropHoldChoiceOfLanded("TIA1");
+        Cards(StartGate.WeekKind).ShouldHaveSingleItem().Choices.Select(c => c.Label).ShouldBe(["Hold TIA9", "Take no new flights"]);
+
+        _state.DropHoldChoiceOfLanded("TIA9");
+        Cards(StartGate.WeekKind).ShouldHaveSingleItem().Choices.Select(c => c.Label).ShouldBe(["Take no new flights"]);
     }
 
     [Fact]

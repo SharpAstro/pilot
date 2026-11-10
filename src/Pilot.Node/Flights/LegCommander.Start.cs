@@ -74,6 +74,91 @@ public sealed partial class LegCommander
         StartWorker(flight, leg, legs);
     }
 
+    /// <summary>The Handled line the node writes when it starts a leg's ticking pass in place of ringing for a go-around.</summary>
+    public const string TickerStartedKind = "leg-ticker-started";
+
+    /// <summary>
+    /// The plane's HEAD for the leg watch, read off the lock: the watch compares it with <see cref="LegRow.StartHead"/> to tell whether
+    /// the worker committed anything. Null when the flight is gone or HEAD cannot be read.
+    /// </summary>
+    internal Task<string?> PlaneHeadOfAsync(string code, CancellationToken cancellationToken) =>
+        state.Flights().FirstOrDefault(f => f.Code == code) is { } flight ? PlaneHeadAsync(flight, cancellationToken) : Task.FromResult<string?>(null);
+
+    /// <summary>
+    /// Starts the ticking pass of a flying leg for the leg watch, under the lock so a leg that moved meanwhile (finished, sent round,
+    /// ticked, or already given a ticker) starts nothing, nor one on a flight put on the owner's hold since the watch looked (#771).
+    /// Throws a <see cref="FlightException"/> saying why not.
+    /// </summary>
+    internal async Task StartTickerAsync(string code, string legName, CancellationToken cancellationToken)
+    {
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            RefuseIfOnHold(code);
+            var (flight, leg) = LegOf(Verbs.LegTarget(code, legName));
+            if (flight.State != FlightState.Flying || leg.State != LegState.Flying)
+            {
+                throw new FlightException($"{code}/{legName} is no longer flying");
+            }
+            if (leg.TickerJob is not null)
+            {
+                throw new FlightException($"{code}/{legName} has its ticker already");
+            }
+            if (leg.Checklist.All(i => i.Done))
+            {
+                throw new FlightException($"{code}/{legName} has every step ticked: nothing to tick");
+            }
+            StartTicker(flight, leg);
+        }
+        finally
+        {
+            _one.Release();
+        }
+    }
+
+    /// <summary>
+    /// The ticking pass (PIL804): a worker that committed its leg's work and ended with steps unticked is not sent round; a short
+    /// session in the plane maps its commits to the steps, ticks them and finishes the leg. Its job is kept on the leg
+    /// (<see cref="LegRow.TickerJob"/>), so a second one is never started for the same worker.
+    /// </summary>
+    private void StartTicker(FlightRow flight, LegRow leg)
+    {
+        var ticker = TickerName(flight, leg);
+        var target = Verbs.LegTarget(flight.Code, leg.Name);
+        var model = Models.Model(RoleModels.Worker);
+        Launching(LegsKey(flight.Code), $"{ticker}, to tick {flight.Code}/{leg.Name}'s steps its commits cover", target,
+            new CardChoice { Label = Verbs.FreshWorker, Verb = Verbs.GoAround, Target = target, Args = ["the last worker ended with steps unticked, and its ticker did not start"] },
+            async entering =>
+            {
+                await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
+                string? commits = null;
+                if (leg.StartHead is { Length: > 0 } head)
+                {
+                    var log = await git.RunAsync(["log", "--oneline", $"{head}..HEAD"], flight.Worktree, CancellationToken.None);
+                    commits = log.Ok ? log.Output : null;
+                }
+                var brief = Briefs.Tick(flight, leg, state.Legs(flight.Code), Briefs.Run(Cli, Socket), options.Machine, commits);
+                entering();
+                return await workers.StartAsync(new WorkerStart(ticker, flight.RepoPath, PlaneOf(flight), brief, model, "low", Reason: SessionStartReasons.LegTicker), CancellationToken.None);
+            },
+            job =>
+            {
+                if (Unchanged(flight.Code, leg) is not { } now)
+                {
+                    return $"{flight.Code}/{leg.Name} changed while {ticker} was being started";
+                }
+                state.PutLeg(now with { TickerJob = job });
+                state.RaiseCard(CardBin.Handled, TickerStartedKind, target,
+                    $"{flight.Code} is being finished: its worker ended with steps open",
+                    $"{flight.Code}/{leg.Name}'s worker ended with commits made and steps unticked. The node starts the ticking pass ({ticker}) instead of sending the leg round: it ticks each step a commit covers and finishes the leg, which reruns the check.");
+                return null;
+            },
+            // The watch's start has no command waiting on it, so Launching would say a failure to nobody: the cause goes to the node's log,
+            // and the ladder's worker-idle ring is the one ring the person gets.
+            quietFailure: why => Error.WriteLineAsync($"leg watch: the ticker {ticker} of {flight.Code}/{leg.Name} did not start: {why}"),
+            model: model);
+    }
+
     /// <summary>The card a leg's validator start raises, saying the leg is being read against the tree.</summary>
     public const string ValidatingKind = "leg-validating";
 
@@ -82,12 +167,13 @@ public sealed partial class LegCommander
 
     private void StartValidator(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs)
     {
+        RefuseIfOnHold(flight.Code);
         var validator = ValidatorName(flight, leg);
         var target = Verbs.LegTarget(flight.Code, leg.Name);
         var brief = Briefs.Validate(flight, leg, legs, Briefs.Run(Cli, Socket), options.Machine);
         var model = Models.Model(RoleModels.Worker);
         Launching(LegsKey(flight.Code), $"{validator}, to check {flight.Code}/{leg.Name} against the tree", target,
-            new CardChoice { Label = $"Start {leg.Name} again, its validator first", Verb = Verbs.StartLeg, Target = target },
+            new CardChoice { Label = "Start the leg again", Verb = Verbs.StartLeg, Target = target },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
@@ -103,7 +189,8 @@ public sealed partial class LegCommander
                 state.PutLeg(now with { Validation = LegValidation.Pending, Validator = validator, ValidatorJob = job, ValidationReport = null });
                 state.CloseCardsAbout(target, "validated afresh", NoGoKind);
                 state.RaiseCard(CardBin.Handled, ValidatingKind, target,
-                    $"Started {validator} to check {flight.Code}/{leg.Name} against the tree before it starts");
+                    $"{flight.Code}/{leg.Name} is being checked against the tree",
+                    $"Started {validator} to check it before its worker starts; the node starts the leg on its answer.");
                 return null;
             });
     }
@@ -125,9 +212,11 @@ public sealed partial class LegCommander
         }
         var how = string.Join(", ", new[] { spent.Model, spent.Effort }.Where(s => !string.IsNullOrEmpty(s)));
         state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"round {round + 1} has its own", SpendAlertKind);
-        state.RaiseCard(CardBin.Ring, SpendAlertKind, Verbs.LegTarget(flight.Code, leg.Name),
-            string.Create(CultureInfo.InvariantCulture, $"{flight.Code}/{leg.Name} has spent {spent.Tokens:N0} tokens, {spent.Share:0.#} % of the 7-day window, before round {round + 1}"),
-            string.Create(CultureInfo.InvariantCulture, $"The leg's rounds so far went past the alert share ({Models.SpendAlert:0.#} %), latest on {(how.Length > 0 ? how : "an unknown model")}. The share is of the weighted tokens this machine's ledger holds for the 7-day window, not of the account's weekly figure, so early in a window one leg is a large share. The next round still starts; stop the flight by hand if it should not."));
+        // Handled, not For you: it holds nothing and the round goes ahead, and nothing on the card can be pressed to change that.
+        state.RaiseCard(CardBin.Handled, SpendAlertKind, Verbs.LegTarget(flight.Code, leg.Name),
+            string.Create(CultureInfo.InvariantCulture, $"{flight.Code}/{leg.Name} has used {spent.Share:0.#} % of the week's budget"),
+            string.Create(CultureInfo.InvariantCulture, $"The leg's rounds so far spent {spent.Tokens:N0} tokens before round {round + 1}, past the alert share ({Models.SpendAlert:0.#} %), latest on {(how.Length > 0 ? how : "an unknown model")}. The share is of the weighted tokens this machine's ledger holds for the 7-day window, not of the account's weekly figure, so early in a window one leg is a large share. The next round still starts; stop the flight by hand if it should not."),
+            summary: string.Create(CultureInfo.InvariantCulture, $"{flight.Code}/{leg.Name} has used {spent.Share:0.#} % of the 7-day window and its next round still starts. Nothing to do unless that is too much."));
     }
 
     // A session the node gives up on while its leg, review or plan still wants what it was for: what it spent bought nothing kept.
@@ -145,8 +234,25 @@ public sealed partial class LegCommander
         }
     }
 
+    // The flight's reboot file not yet handed on (#916): its next worker is briefed from it, and it moves to read/ once that worker started.
+    private (string File, string Text)? RebootFileOf(FlightRow flight) => RebootPrep.FileFor(RebootPrep.FolderIn(options.DataFolder), flight.Code);
+
+    // The brief names the file where it will be once read, and carries its text, so the move cannot pull it from under the session.
+    private static (string File, string Text)? BriefedAs((string File, string Text)? reboot) => reboot is { } r ? (RebootPrep.ReadPathOf(r.File), r.Text) : null;
+
+    // A worker that started took the reboot file: it moves to read/, so no later brief carries it again.
+    private static string ReadOnStart((string File, string Text)? reboot, string started)
+    {
+        if (reboot is { } r)
+        {
+            RebootPrep.MarkRead(r.File);
+        }
+        return started;
+    }
+
     private void StartWorker(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs)
     {
+        RefuseIfOnHold(flight.Code);
         RingSpendAlert(flight, leg, leg.GoArounds);
         var worker = WorkerName(flight, leg);
         var target = Verbs.LegTarget(flight.Code, leg.Name);
@@ -162,11 +268,14 @@ public sealed partial class LegCommander
         // A fresh worker steps up the ladder by attempt (PIL402). Only a fresh session does: a nudge, Resume or wake keeps the
         // model its session started with, as a changed model would drop the session's prompt cache.
         var (attemptModel, attemptEffort) = Models.WorkerFor(leg.Model, leg.Effort, leg.GoArounds + 1);
+        // The plane's HEAD as the worker starts, read off the lock with the plane in place; null when it cannot be read.
+        string? startHead = null;
         Launching(LegsKey(flight.Code), $"{worker}, on {flight.Code}/{leg.Name}", target,
-            new CardChoice { Label = $"Start {leg.Name}'s worker again", Verb = Verbs.StartLeg, Target = target },
+            new CardChoice { Label = "Start the worker again", Verb = Verbs.StartLeg, Target = target },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
+                startHead = await PlaneHeadAsync(flight, CancellationToken.None);
                 await WarnSiblingsBehindAsync(flight, leg, CancellationToken.None);
                 Briefs.PlaneState? plane = null;
                 if (resumed is not null)
@@ -176,9 +285,10 @@ public sealed partial class LegCommander
                     plane = new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : "");
                 }
                 // Read before the launcher is asked: from entering() on a command waits only StartAnswerWithin for the start.
-                var brief = Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed, machine: options.Machine, pilotMd: await PilotMdOfAsync(flight));
+                var reboot = RebootFileOf(flight);
+                var brief = Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed, machine: options.Machine, pilotMd: await PilotMdOfAsync(flight), reboot: BriefedAs(reboot));
                 entering();
-                return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, attemptModel, attemptEffort, Reason: SessionStartReasons.LegLaunch), CancellationToken.None);
+                return ReadOnStart(reboot, await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, attemptModel, attemptEffort, Reason: SessionStartReasons.LegLaunch), CancellationToken.None));
             },
             job =>
             {
@@ -188,7 +298,7 @@ public sealed partial class LegCommander
                 }
                 // A flight in a holding pattern waits on this leg now: the hold says so, and its watch covers the wait.
                 HoldForLeg(flight.Code, leg.Name);
-                state.PutLeg(now with { State = LegState.Flying, AttemptModel = attemptModel, AttemptEffort = attemptEffort, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), Report = resumed, Wait = null, Queued = null });
+                state.PutLeg(now with { State = LegState.Flying, AttemptModel = attemptModel, AttemptEffort = attemptEffort, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), StartHead = startHead, TickerJob = null, Report = resumed, Wait = null, Queued = null });
                 state.CloseCardsAbout(target, $"{flight.Code}/{leg.Name} started", NoGoKind, ValidatingKind);
                 // A ring that this step could not be taken by itself is moot once it is.
                 state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}/{leg.Name} started", NextStepKind);
@@ -244,17 +354,12 @@ public sealed partial class LegCommander
         else
         {
             // Needs someone: whether the plan still holds against the tree is the controller's.
-            var goAs = $"Start {leg.Name} as the tree is";
-            var dropIt = $"Drop {leg.Name} from {flight.Code}";
-            var replan = $"Plan {flight.Code} again";
-            var firstLine = report.Split('\n', 2)[0].Trim();
-            state.RaiseCard(CardBin.Ring, NoGoKind, target, firstLine.Length > 0 ? $"{flight.Code}/{leg.Name} is NO-GO: {Clip(firstLine)}" : $"{flight.Code}/{leg.Name} is NO-GO: the tree is not as its brief assumes", report,
+            state.RaiseCard(CardBin.Ring, NoGoKind, target, $"{flight.Code}/{leg.Name} cannot start: its brief no longer fits the tree", report,
                 [
-                    new CardChoice { Label = goAs, Verb = Verbs.StartLeg, Target = target, Args = ["anyway"] },
-                    new CardChoice { Label = dropIt, Verb = Verbs.RemoveLeg, Target = target, Args = ["failed validation"] },
-                    new CardChoice { Label = replan, Verb = Verbs.PlanFlight, Target = Verbs.FlightTarget(flight.Code) },
+                    new CardChoice { Label = "Remove the leg", Verb = Verbs.RemoveLeg, Target = target, Args = ["failed validation"] },
+                    new CardChoice { Label = "Plan the flight again", Verb = Verbs.PlanFlight, Target = Verbs.FlightTarget(flight.Code) },
                 ],
-                summary: $"The validator of {flight.Code}/{leg.Name} reports the tree is not as its brief assumes. {goAs} flies it unchanged; {dropIt} removes it; {replan} replans the flight.");
+                summary: $"Take {leg.Name} off the flight or plan {flight.Code} again: the check against the tree found its brief out of date.");
         }
 
         // The validator has answered: it is stopped after a grace to end its turn, as a worker that finished its own leg.
@@ -339,8 +444,10 @@ public sealed partial class LegCommander
         var lines = left.Select(l => $"{l.Sibling.Name} is {l.Sibling.Behind} {(l.Sibling.Behind == 1 ? "commit" : "commits")} behind its origin"
             + (l.Why is { } why ? $" and was not pulled ({why})" : "") + $": git -C {l.Sibling.Path} pull --ff-only");
         state.RaiseCard(CardBin.ForYou, SiblingBehindKind, subject,
-            $"{flight.Code}/{leg.Name} compiles against {(left.Count == 1 ? "a sibling clone" : $"{left.Count} sibling clones")} behind origin",
-            string.Join('\n', lines));
+            $"{flight.Code}/{leg.Name} builds on {(left.Count == 1 ? "a sibling clone" : $"{left.Count} sibling clones")} that {(left.Count == 1 ? "is" : "are")} behind",
+            string.Join('\n', lines),
+            [new CardChoice { Label = "Pull the clones again", Verb = Verbs.SyncRepos, Target = Verbs.NodeTarget }],
+            summary: $"{flight.Code}/{leg.Name} started on {(left.Count == 1 ? "a sibling clone" : "sibling clones")} older than origin, which the node could not pull. Pull {(left.Count == 1 ? "it" : "them")} by hand and try again, or let the leg run on what it has.");
     }
 
     private void Tick(CommandRequest command)

@@ -50,7 +50,7 @@ public sealed class EndedSessionJobsTests : IDisposable
         _profile.Dispose();
         try
         {
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
         catch (IOException)
         {
@@ -157,6 +157,29 @@ public sealed class EndedSessionJobsTests : IDisposable
         await Task.Delay(200, Ct);
         _state.Jobs().Single(j => j.Id == queued).State.ShouldBe(JobState.Queued);
 
+        await Release(holder);
+    }
+
+    [Fact]
+    public async Task AnEndedSessionTheCommanderIsReplacingKeepsItsQueuedJobsUntilItsReplacementExists()
+    {
+        var worker = AgentRows.SessionA[..8];
+        var replacing = true;
+        _tracker.IsBeingReplaced = id => replacing && id == worker;
+        await Poll(Live(AgentRows.SessionA, "worker-a", 4242));
+        var holder = Queue(Verbs.NodeTarget, "sleep 60; echo slept");
+        await Until(holder, j => j.State == JobState.Running);
+        var queued = Queue(Verbs.SessionTarget(worker), "echo one");
+        await Until(queued, j => j.Step?.StartsWith("next in line") == true);
+
+        // Ended and nothing listed in its place yet: the replacement is still starting, so its jobs stay.
+        await Poll(AgentRows.Background(AgentRows.SessionA, "worker-a", "done"));
+        await Poll(AgentRows.Background(AgentRows.SessionA, "worker-a", "done"));
+        await Task.Delay(200, Ct);
+        _state.Jobs().Single(j => j.Id == queued).State.ShouldBe(JobState.Queued);
+        _tracker.IsEndedForGood(worker).ShouldBeFalse();
+
+        replacing = false;
         await Release(holder);
     }
 

@@ -5,6 +5,8 @@ public static class SessionStartReasons
 {
     public const string LegLaunch = "leg launch";
     public const string LegValidator = "leg validator";
+    /// <summary>A short session the node starts in a plane whose worker committed and ended with nothing ticked, to tick what the commits cover.</summary>
+    public const string LegTicker = "leg ticker";
     public const string Planner = "planner";
     public const string FlightReview = "flight review";
     public const string PrReview = "PR review";
@@ -26,6 +28,8 @@ public static class SessionEndReasons
     public const string Watchtower = "stopped by the watchtower";
     public const string Person = "stopped by a person";
     public const string Crashed = "crashed";
+    /// <summary>The node itself stopped, and ended the stream session (the watchtower) it owns.</summary>
+    public const string NodeStopped = "stopped with the node";
     /// <summary>A flight's planner the node ended once its first leg's worker started: its plan is done, and it holds no Opus slot (#568).</summary>
     public const string Planned = "stopped once planned";
 }

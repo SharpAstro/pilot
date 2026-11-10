@@ -14,7 +14,7 @@ namespace Pilot.Ui;
 /// has its choices as buttons, a click on one saying it. A box at the foot sends through <see cref="OnSend"/>
 /// (the node's tell): Enter sends, Shift+Enter starts a new line. A refusal is said in the chat itself.
 /// </summary>
-internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
+internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     /// <summary>How often an open page asks for what came after.</summary>
     public static readonly TimeSpan Every = TimeSpan.FromSeconds(2);
@@ -23,6 +23,10 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     internal const int NoticesKept = 3;
 
     private const float Gutter = 16f;
+
+    // The status line under the box (how fast the watchtower answers): its text and the row it takes.
+    private const float StatusSize = 11f;
+    private const float StatusHeight = 16f;
 
     // The question's card and the feed share the page's height by these weights, the card taking its content up to its share
     // and never under AskMinHeight, so a long question with many choices on a short window cannot squeeze the feed to nothing
@@ -45,9 +49,21 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     // What the follow has read, as one immutable record swapped whole: the follow appends on the pool, the render thread
     // reads the record it finds, and neither ever waits on the other.
-    private sealed record Held(ImmutableList<TranscriptEntry> Entries, int Total, string? Problem, bool Working, string? Question, string[] Choices, string[] Queued, string?[] QueuedIds)
+    // Ids is the stable id (TranscriptEntry.Id) of each held entry and the feed index it was read at, kept beside Entries in the
+    // same record so the two always agree: the follow keys on the id, since a feed index shifts when the feed gains a divider.
+    // Epoch names the feed's indexing the entries were read under: a token swapped for a new one whenever the held list's indices
+    // may all have moved (a reread, another node's feed). The render thread's row caches are keyed by feed index, so it forgets
+    // them when the Epoch of the list it is about to draw is not the one it last drew. It travels with the list it belongs to, so
+    // a render that still holds the old list neither takes the signal away from the next render nor draws new rows from old caches.
+    private sealed record Held(ImmutableList<TranscriptEntry> Entries, ImmutableDictionary<string, int> Ids, int Total, string? Problem, bool Working, string? Question, string[] Choices, string[] Queued, string?[] QueuedIds, string? Partial, string? Doing, string[] QueuedBehind, ChatTiming[] Timings, ChatAsk[] Asks, object Epoch)
     {
-        public static readonly Held Empty = new([], 0, null, false, null, [], [], []);
+        public static readonly Held Empty = Fresh();
+
+        // An empty list under an epoch of its own.
+        public static Held Fresh() => new([], ImmutableDictionary<string, int>.Empty, 0, null, false, null, [], [], [], null, null, [], [], [], new object());
+
+        /// <summary>Whether a page of the feed has been read into it: until then the chat says it is loading, not that nothing was said.</summary>
+        public bool Read { get; init; }
     }
 
     private Held _held = Held.Empty;
@@ -58,9 +74,70 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive, Anchor = ScrollAnchor.Bottom };
     private readonly TranscriptEntryView _entries = new() { PromptLabel = "you", AssistantLabel = "watchtower", AssistantLines = int.MaxValue };
+    // The Held.Epoch _entries' index-keyed caches were last built under: a render clears them first when the list it draws has another.
+    private object _rowsEpoch = Held.Empty.Epoch;
     private readonly ChatComposer _composer = new();
 
     // The question card's own scroll, fresh for each question so a new one starts at its top.
+    // What the render reads of the held entries on every frame, kept for the list it was made from and carried on as entries are appended,
+    // so a frame with nothing new asks nothing of the whole transcript (PIL907): the entries as the chat shows them (a thinking entry left
+    // out, a card's quote folded in; each one the same record frame after frame, so its row is the same node), the ids and words the
+    // outbox is matched against, and where the person and the watchtower last spoke. Read and changed on the render thread only.
+    private sealed class Shown
+    {
+        public required object Epoch;
+        public int Count;
+        public readonly List<TranscriptEntry> Quoted = [];
+        public readonly HashSet<string> SendIds = new(StringComparer.Ordinal);
+        public readonly List<string> UnnamedUserTexts = [];
+        public TranscriptEntry? LastAssistant;
+        public int LastAssistantAt = -1;
+        public int LastPersonAt = -1;
+    }
+
+    private Shown? _shown;
+
+    // The held entries' derived view: the one kept when the epoch is the same (the held indices have not moved, so the list only grew)
+    // and brought up to the entries appended since, else made anew.
+    private Shown ShownOf(Held held)
+    {
+        var shown = _shown;
+        if (shown is null || !ReferenceEquals(shown.Epoch, held.Epoch) || shown.Count > held.Entries.Count)
+        {
+            shown = _shown = new Shown { Epoch = held.Epoch };
+        }
+        for (var i = shown.Count; i < held.Entries.Count; i++)
+        {
+            var entry = held.Entries[i];
+            if (entry.Kind != TranscriptKind.Thinking)
+            {
+                shown.Quoted.Add(AsQuoted(entry));
+            }
+            if (entry.Kind == TranscriptKind.Assistant)
+            {
+                shown.LastAssistant = entry;
+                shown.LastAssistantAt = i;
+            }
+            if (entry is { Kind: TranscriptKind.User, From: null, Note: false })
+            {
+                shown.LastPersonAt = i;
+            }
+            if (entry.Kind == TranscriptKind.User)
+            {
+                if (entry.SendId is { } sendId)
+                {
+                    shown.SendIds.Add(sendId);
+                }
+                else
+                {
+                    shown.UnnamedUserTexts.Add(entry.Text);
+                }
+            }
+        }
+        shown.Count = held.Entries.Count;
+        return shown;
+    }
+
     private ListScrollController _askScroll = NewAskScroll();
     private string? _askedKey;
 
@@ -116,6 +193,15 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>Says a message to another node's watchtower, given that node: null when it took it, else what it said in refusing it.</summary>
     public Func<NodeMark, string, Task<string?>>? OnSendOn { get; set; }
 
+    /// <summary>
+    /// Cancels the turn the watchtower is on so the queued message with the given send id is answered next (the node's <c>chat-now</c>):
+    /// null when the node did it, else what it said in refusing it. Null leaves a queued line without its Answer now.
+    /// </summary>
+    public Func<string, Task<string?>>? OnAnswerNow { get; set; }
+
+    /// <summary>Cancels the turn another node's watchtower is on for a queued message, given that node and the send id; as <see cref="OnAnswerNow"/>.</summary>
+    public Func<NodeMark, string, Task<string?>>? OnAnswerNowOn { get; set; }
+
     // The node the conversation is with; null is this window's own. Swapped whole.
     private NodeMark? _node;
 
@@ -136,7 +222,8 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var open = _following is not null;
         Close();
         Volatile.Write(ref _node, node);
-        Volatile.Write(ref _held, Held.Empty);
+        // Another feed, another indexing: a fresh epoch, so no cache built for the old node's indices is drawn from.
+        Volatile.Write(ref _held, Held.Fresh());
         Volatile.Write(ref _notices, []);
         // What was sent for the old node stays in the outbox and is delivered to it; its page draws only its own entries, so a
         // failed line is back with Retry and Edit when the person returns. Only what is done with (sent) goes.
@@ -197,6 +284,10 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     private Func<string, Task<string?>>? CurrentSend() => Node is { } node
         ? (OnSendOn is { } on ? text => on(node, text) : null)
         : OnSend;
+
+    private Func<string, Task<string?>>? CurrentAnswerNow() => Node is { } node
+        ? (OnAnswerNowOn is { } on ? sendId => on(node, sendId) : null)
+        : OnAnswerNow;
 
     // The card the next message is about, quoted above the box until it goes or is dropped; swapped whole.
     private sealed record Quoted(CardRow Card, NodeMark? Node);
@@ -283,6 +374,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>The entries it holds now, oldest first.</summary>
     public IReadOnlyList<TranscriptEntry> Entries => Volatile.Read(ref _held).Entries;
 
+    /// <summary>The words of the turn the watchtower is on, as the last read carried them (not as the list shows them while held under the pointer); null with none.</summary>
+    internal string? Partial => Volatile.Read(ref _held).Partial;
+
     /// <summary>What a choice or restart was refused with, as the chat shows it, oldest first.</summary>
     public IReadOnlyList<string> Notices => Volatile.Read(ref _notices);
 
@@ -327,6 +421,56 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>Asks the follow to read now rather than at its next look: after a message went.</summary>
     public void Refresh() => Volatile.Read(ref _nudge).TrySetResult();
 
+    // Whether a page after the held last index shows the feed's indices moved under what is held (see FollowAsync). An entry
+    // without an Id (an older node) cannot show it, and keeps the index rule.
+    private static bool Shifted(Held held, ChatPage page)
+    {
+        if (page.Entries.Length == 0)
+        {
+            return false;
+        }
+        var known = 0;
+        foreach (var entry in page.Entries)
+        {
+            if (entry.Id is { } id && held.Ids.TryGetValue(id, out var at))
+            {
+                if (at != entry.Index)
+                {
+                    return true;
+                }
+                known++;
+            }
+        }
+        return known == page.Entries.Length && page.Total > held.Total;
+    }
+
+    // What the follow holds once the page is in. Appends only the entries whose Id is not held (one without an Id: whose Index is
+    // past the held last, as before). With `whole` the page is the feed read again from its start: it is the held list, in the order
+    // the feed gives, each id once, with every index as the feed has it now.
+    private static Held Merge(Held held, ChatPage page, bool whole)
+    {
+        var entries = whole ? ImmutableList.CreateBuilder<TranscriptEntry>() : held.Entries.ToBuilder();
+        var ids = whole ? ImmutableDictionary.CreateBuilder<string, int>() : held.Ids.ToBuilder();
+        var last = whole || held.Entries.Count == 0 ? int.MinValue : held.Entries[^1].Index;
+        foreach (var entry in page.Entries)
+        {
+            if (entry.Id is { } id)
+            {
+                if (ids.TryAdd(id, entry.Index))
+                {
+                    entries.Add(entry);
+                }
+            }
+            else if (entry.Index > last)
+            {
+                entries.Add(entry);
+            }
+        }
+        // A reread may have moved every index: a new epoch tells the render to forget its index-keyed caches.
+        return new Held(entries.ToImmutable(), ids.ToImmutable(), page.Total, null, page.Working, page.PendingQuestion, page.Choices ?? [], page.Queued ?? [], page.QueuedIds ?? [],
+            page.Partial, page.Doing, page.QueuedBehind ?? [], page.Timings ?? [], page.Asks ?? [], whole ? new object() : held.Epoch) { Read = true };
+    }
+
     private async Task FollowAsync(Func<int, CancellationToken, Task<ChatPage>> load, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
@@ -335,21 +479,29 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             Volatile.Write(ref _nudge, nudge);
             try
             {
-                var had = Volatile.Read(ref _held).Entries;
-                var after = had.Count == 0 ? -1 : had[^1].Index;
+                var had = Volatile.Read(ref _held);
+                var after = had.Entries.Count == 0 ? -1 : had.Entries[^1].Index;
                 var page = await load(after, cancellationToken).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
                 var renumbered = after >= 0 && page.Total <= after;
-                if (renumbered)
+                // The feed shifted: an entry already held comes back at another index (a divider went in below it), or the page
+                // after the held last index brings nothing but entries already held while the feed grew. Its new entries sit
+                // somewhere else than after the held last index, so read it all again and merge by id.
+                var reread = renumbered || (after >= 0 && Shifted(had, page));
+                if (reread)
                 {
-                    // The feed is shorter than what is held (an earlier watchtower's transcript is gone, so every index dropped):
-                    // asking after the old index would skip the entries that now sit below it. Read it all again.
+                    // Renumbered: the feed is shorter than what is held (an earlier watchtower's transcript is gone, so every index
+                    // dropped), and asking after the old index would skip the entries that now sit below it. Read it all again.
                     page = await load(-1, cancellationToken).ConfigureAwait(false);
                     cancellationToken.ThrowIfCancellationRequested();
                 }
-                ImmutableInterlocked.Update(ref _held, held => new Held(
-                    renumbered ? ImmutableList.CreateRange(page.Entries) : held.Entries.AddRange(page.Entries.Where(e => held.Entries.Count == 0 || e.Index > held.Entries[^1].Index)),
-                    page.Total, null, page.Working, page.PendingQuestion, page.Choices ?? [], page.Queued ?? [], page.QueuedIds ?? []));
+                // A reread holds the newest TranscriptBook.FirstRead entries the feed gives, as a fresh open does: the entries before
+                // that window are not asked for again, and the folds opened by index cannot be matched to the new indices, so they
+                // close. That is accepted: a feed that shifted (or renumbered) has no older indexing to keep them under.
+                // The row caches (parsed Markdown, opened folds) are keyed by feed index, and every held entry may now sit at another
+                // one: the merged list carries a new epoch (see Held), so the render thread (which owns them) forgets them before it
+                // builds rows from it, and no row is drawn with its neighbour's text.
+                ImmutableInterlocked.Update(ref _held, held => Merge(held, page, reread));
                 Changed?.Invoke();
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -631,9 +783,12 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         return line.Length > 60 ? line[..59] + "…" : line;
     }
 
+    /// <summary>How many rows the last frame built rather than took from the row cache (PIL907): none when nothing changed.</summary>
+    internal int RowsBuilt => _entries.RowsBuilt;
+
     internal override Action<string>? SelectionCopy => CopyText;
 
-    internal override RectF32 SelectionViewport => _scroll.Viewport;
+    internal override RectF32 PageSelectionViewport => _scroll.Viewport;
 
     internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true };
 
@@ -698,19 +853,54 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : $"held by {WatchtowerOwner}'s watchtower"),
         }, new TopBarParts(null, null, Autopilot, About, Night, NodePills()));
 
-        var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking).Select(AsQuoted)], held.Working).Select(r => r.WStar()).ToList();
+        if (!ReferenceEquals(Interlocked.Exchange(ref _rowsEpoch, held.Epoch), held.Epoch))
+        {
+            _entries.Reset();
+        }
+        var derived = ShownOf(held);
+        // The rows come kept, one node an entry, already stretched to the page's width.
+        var rows = _entries.Rows(derived.Quoted, held.Working);
         // What was said and the watchtower has not taken yet: last among the messages, dim, and saying so.
         // One send is one row, matched by its id and never by its words, so two sends of the same words are two rows: a queued
         // line whose id an entry carries is that entry's send already taken (a stale line), and shows no more.
-        var entryIds = held.Entries.Where(e => e.Kind == TranscriptKind.User && e.SendId is not null).Select(e => e.SendId!).ToHashSet(StringComparer.Ordinal);
+        var entryIds = derived.SendIds;
         var queuedIds = held.Queued.Select((_, i) => i < held.QueuedIds.Length ? held.QueuedIds[i] : null).ToArray();
-        rows.AddRange(held.Queued.Where((_, i) => queuedIds[i] is not { } qid || !entryIds.Contains(qid)).Select(q => Waiting(q).WStar()));
+        // The watchtower's reply as it is written comes before what waits behind it, in the bubble a finished reply has.
+        if (ShownPartial(held, derived.LastAssistant) is { } writing)
+        {
+            rows.Add(_entries.Streaming(writing).WStar());
+        }
+        var answerNow = CurrentAnswerNow();
+        for (var i = 0; i < held.Queued.Length; i++)
+        {
+            if (queuedIds[i] is { } stale && entryIds.Contains(stale))
+            {
+                continue;
+            }
+            // "read at its next step" (written mid-turn) or "queued behind its start" is the node's word for it. Only the line the watchtower
+            // reads next can be answered now (it reads in order), and only while a turn runs: elsewhere the pill could only be refused, so it is not drawn.
+            var behind = i < held.QueuedBehind.Length ? held.QueuedBehind[i] : null;
+            Layout.Node? pill = null;
+            Layout.Node? refusal = null;
+            if (queuedIds[i] is { Length: > 0 } sendId)
+            {
+                var key = AnswerNowKey(sendId);
+                refusal = Presses.RefusalLine(key, 12f, Failed, 3);
+                if (i == 0 && held.Working && behind is not null && answerNow is not null)
+                {
+                    pill = Presses.Button(key, key,
+                        () => CardsView<TSurface>.Pill("Answer now", key, () => AnswerNow(sendId, answerNow)),
+                        pressed => CardsView<TSurface>.Dead(pressed ? "Answering…" : "Answer now"));
+                }
+            }
+            rows.Add(Waiting(held.Queued[i], behind, pill, refusal).WStar());
+        }
         // What the person sent that the feed does not carry yet: once an entry or a queued line carries its id only the feed's copy
         // shows. The words are compared only with the feed's lines that have no id (an older node's).
-        var carried = entryIds.Concat(queuedIds.OfType<string>()).ToHashSet(StringComparer.Ordinal);
-        var unnamed = held.Entries.Where(e => e.Kind == TranscriptKind.User && e.SendId is null).Select(e => e.Text)
-            .Concat(held.Queued.Where((_, i) => queuedIds[i] is null)).ToList();
-        bool InFeed(Out m) => carried.Contains(m.SendId) || unnamed.Any(t => t.Contains(m.Text, StringComparison.Ordinal));
+        var queuedCarried = queuedIds.OfType<string>().ToHashSet(StringComparer.Ordinal);
+        var unnamedQueued = held.Queued.Where((_, i) => queuedIds[i] is null).ToList();
+        bool InFeed(Out m) => entryIds.Contains(m.SendId) || queuedCarried.Contains(m.SendId)
+            || derived.UnnamedUserTexts.Any(t => t.Contains(m.Text, StringComparison.Ordinal)) || unnamedQueued.Any(t => t.Contains(m.Text, StringComparison.Ordinal));
         var here = Node?.Where;
         ImmutableInterlocked.Update(ref _outbox, o => o.RemoveAll(m => m.Where == here && m.State == OutState.Sent && InFeed(m)));
         var place = 0;
@@ -737,13 +927,16 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         // A message from the person after the watchtower's last words answers the ask: the card closes, and only a newer ask
         // (the watchtower speaking again) reopens it.
         // Only the person's own line counts: a node note or a hand-back (Note, or From set) leaves the ask pending.
-        var answeredAlready = held.Entries.Count > 0
-            && held.Entries.FindLastIndex(e => e is { Kind: TranscriptKind.User, From: null, Note: false }) is var lastUser and >= 0
-            && lastUser > held.Entries.FindLastIndex(e => e.Kind == TranscriptKind.Assistant);
-        if (canSend && !answeredAlready && held.Question is { Length: > 0 } question)
+        var answeredAlready = derived.LastPersonAt >= 0 && derived.LastPersonAt > derived.LastAssistantAt;
+        // What the stream watchtower waits on the person for (a permission prompt, a question) comes first: it is answered here or on its card.
+        if (canSend && held.Asks.Length > 0)
+        {
+            asked = WaitingOnYou(held.Asks);
+        }
+        else if (canSend && !answeredAlready && held.Question is { Length: > 0 } question)
         {
             // The reply the question ends already says it in the feed: the card then holds only the choices.
-            var said = held.Entries.LastOrDefault(e => e.Kind == TranscriptKind.Assistant)?.Text;
+            var said = derived.LastAssistant?.Text;
             if (_askedKey != question)
             {
                 _askedKey = question;
@@ -772,10 +965,13 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var sending = Presses.AnyPending || Volatile.Read(ref _outbox).Any(m => m.Where == here && m.State is OutState.Queued or OutState.Sending);
         if (held.Working || sending)
         {
-            rows.Add(Layout.Builder.Text(sending ? "● sending…" : "● working…", 13f, Running).Selectable().Pad(0f, 4f).WStar());
+            // What it is doing, in the node's words ("running pilot status"), else the plain "working…".
+            var doing = held.Doing is { Length: > 0 } now ? now.ReplaceLineEndings(" ") : "working…";
+            // Wrapped, never cut: a long tool command is in what it is doing.
+            rows.Add((sending ? Layout.Builder.Text("● sending…", 13f, Running).Selectable() : WrappedProse.Of($"● {doing}", 13f, Running)).Pad(0f, 4f).WStar());
         }
         var list = rows.Count == 0
-            ? Layout.Builder.Text(held.Problem ?? (CurrentLoad() is null ? "The chat is read from a live node." : "Nothing said yet. Tell the watchtower what you want: “let's launch a flight for issue 12”."), 13f, Dim).Selectable().Stretch()
+            ? Layout.Builder.Text(held.Problem ?? (CurrentLoad() is null ? "The chat is read from a live node." : !held.Read ? "Loading the conversation…" : "Nothing said yet. Tell the watchtower what you want: “let's launch a flight for issue 12”."), 13f, Dim).Selectable().Stretch()
             : Layout.Builder.VStack([.. rows]).WithGap(ToolGap).WithScroll(_scroll).Stretch();
 
         var page = !canSend
@@ -787,7 +983,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
                 : Layout.Builder.VStack(list.HStarUpToContent(FeedWeight), Layout.Builder.Spacer().HStar(), asked, Foot());
         var body = page.WithGap(8f).Pad(Gutter, 8f).Stretch();
         var whole = Layout.Builder.VStack(ScrollingHead(top), body.HStar(1f, BodyFloor)).Bg(PageBg).Stretch();
-        whole = WithSelection(whole);
+        whole = WithPageSelection(whole);
         return About?.Over(whole) ?? whole;
     }
 
@@ -885,6 +1081,55 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             .HStarUpToContent(AskWeight, AskMinHeight);
     }
 
+    // The press of one queued line's Answer now: a key (and hit) of its own, so its working state and its refusal belong to that line
+    // and go with it once the node has taken it.
+    private static string AnswerNowKey(string sendId) => $"chat:now:{sendId}";
+
+    // Asks the node to cancel the turn it is on so this queued line is answered next. The node's answer sets the state: the pill reads
+    // "Answering…" while it has it, a refusal is said under the line, and the line goes when the feed no longer carries it.
+    private void AnswerNow(string sendId, Func<string, Task<string?>> ask)
+    {
+        var key = AnswerNowKey(sendId);
+        if (Presses.PendingOf(key) is not null)
+        {
+            return;
+        }
+        var run = AnswerNowAsync(key, sendId, ask);
+        Track?.Invoke(() => run, "chat answer now");
+    }
+
+    private async Task AnswerNowAsync(string key, string sendId, Func<string, Task<string?>> ask)
+    {
+        await Presses.PressAsync(key, key, _ => ask(sendId));
+        // Read the feed at once: the line has gone from the queue if the node did it.
+        Refresh();
+        Changed?.Invoke();
+    }
+
+    // The words held while the pointer is over the list: the reply in progress as it stood when the pointer came, until it leaves, so
+    // the rows under the pointer do not move as the words stream in. Null while the pointer is elsewhere.
+    private string? _frozenPartial;
+
+    // The reply in progress as the list shows it, or null when there is none. A turn that has ended carries its words as an entry and no
+    // Partial; a reply already held as the last entry is not drawn a second time.
+    private string? ShownPartial(Held held, TranscriptEntry? lastAssistant)
+    {
+        if (held.Partial is not { Length: > 0 } now
+            || lastAssistant is { } last && last.Text.Trim() == now.Trim())
+        {
+            _frozenPartial = null;
+            return null;
+        }
+        var view = _scroll.Viewport;
+        var over = Pointer is { } p && p.X >= view.X && p.X < view.X + view.Width && p.Y >= view.Y && p.Y < view.Y + view.Height;
+        if (!over)
+        {
+            _frozenPartial = null;
+            return now;
+        }
+        return _frozenPartial ??= now;
+    }
+
     // A choice answers the question: said to the watchtower as the person's message, through the same send as a typed one.
     private void Choose(string question, string choice, string hit)
     {
@@ -931,6 +1176,14 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             rows.Add(Quote(quoted.Card, quoted.Node));
         }
         rows.Add(Layout.Builder.TextEditor(_composer.Input, 14f, colors: Palette.Input, focusOnOpen: true).WStar());
+        if (ChatStatus.Line(Volatile.Read(ref _held).Timings) is { } status)
+        {
+            // How fast it answers, on one line under the box: cut with an ellipsis where the window is narrow, the whole of it on hover.
+            var words = status.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Select(w => (Layout.Node)Layout.Builder.Text(w + " ", StatusSize, Dim).WAuto().Selectable())
+                .ToArray();
+            rows.Add(Layout.Builder.WrapH(words).WithMaxLines(1, ellipsis: true).WStar().RowH(StatusHeight).WithTooltip(status, Layout.DockSide.Top));
+        }
         rows.Add(Layout.Builder.Text(lines > 1 ? $"{lines} lines · Enter sends · Shift+Enter a new line" : "Enter sends · Shift+Enter a new line", 10f, Dim).RowH(16f));
         return Layout.Builder.VStack([.. rows]).Pad(12f, 6f).Bg(FootBg).WStar().HAuto();
     }

@@ -62,6 +62,18 @@ public sealed record MachineRow
     /// </summary>
     public double? OwnedCpuPercent { get; init; }
 
+    /// <summary>
+    /// The processes of the node's own trees that should not be there (pilot #909): a job's or a session's leftovers, named by the node's stray sweep with
+    /// why and the command that ends each. Optional, so it does not raise <c>NodeWire.Version</c>: an older client ignores it and an older node's row reads none.
+    /// </summary>
+    public MachineStray[] Strays
+    {
+        get => _strays ?? [];
+        init => _strays = value;
+    }
+
+    private readonly MachineStray[]? _strays;
+
     /// <summary>The CPU share not pilot's: <see cref="CpuPercent"/> less <see cref="OwnedCpuPercent"/>, at least 0; null where the node does not say its own.</summary>
     public double? OutsideCpuPercent => OwnedCpuPercent is { } owned ? Math.Max(0, CpuPercent - owned) : null;
 
@@ -144,6 +156,54 @@ public sealed record MachineRow
     private static double Fraction(double percent) => Math.Clamp(percent / 100d, 0d, 1d);
 
     private static string Gigabytes(long bytes) => (bytes / (double)(1L << 30)).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+}
+
+/// <summary>
+/// A process the node's stray sweep named: whose it is, what it is and how old, why it is a stray, and the command a person runs to end it. The pid with
+/// <see cref="StartedAt"/> names it (a later process may reuse the pid).
+/// </summary>
+public sealed record MachineStray
+{
+    public required int Pid { get; init; }
+
+    public required string Name { get; init; }
+
+    /// <summary>How it was started, as the OS holds it; null where it cannot be read.</summary>
+    public string? CommandLine { get; init; }
+
+    /// <summary>When it started; null where the OS would not say.</summary>
+    public DateTimeOffset? StartedAt { get; init; }
+
+    /// <summary>How long it has run, in seconds.</summary>
+    public required long AgeSeconds { get; init; }
+
+    /// <summary>The CPU time it has used, in seconds; null where the OS would not say.</summary>
+    public double? CpuSeconds { get; init; }
+
+    /// <summary>Whose it was: <c>job &lt;id&gt;</c> or <c>session &lt;name&gt;</c>.</summary>
+    public required string Owner { get; init; }
+
+    /// <summary>Why it is a stray, in plain words.</summary>
+    public required string Reason { get; init; }
+
+    /// <summary>The command a person runs to end it on that machine.</summary>
+    public required string KillCommand { get; init; }
+
+    /// <summary>Whether the node started its owner, so the node ends it itself once the owner has ended.</summary>
+    public bool NodeLaunched { get; init; }
+
+    /// <summary>The stray as one line: <c>pwsh 4242 (job j12, 3 d 2 h, cpu 52 h): still running ...</c>.</summary>
+    public string Line() => $"{Name} {Pid} ({Owner}, {Age(AgeSeconds)}{(CpuSeconds is { } cpu ? ", cpu " + Age((long)cpu) : "")}): {Reason}";
+
+    /// <summary>A span in the largest unit that reads plainly: <c>45 s</c>, <c>12 min</c>, <c>3 h 5 min</c>, <c>2 d 3 h</c>.</summary>
+    public static string Age(long seconds)
+    {
+        var span = TimeSpan.FromSeconds(Math.Max(0, seconds));
+        return span.TotalDays >= 1 ? $"{(int)span.TotalDays} d {span.Hours} h"
+            : span.TotalHours >= 1 ? $"{(int)span.TotalHours} h {span.Minutes} min"
+            : span.TotalMinutes >= 1 ? $"{(int)span.TotalMinutes} min"
+            : $"{(int)span.TotalSeconds} s";
+    }
 }
 
 /// <summary>One figure of a <see cref="MachineRow"/>: its label (<c>cpu</c>, <c>gpu</c>, <c>mem</c>), how full it is (0 to 1, for a bar) and the number as written.</summary>

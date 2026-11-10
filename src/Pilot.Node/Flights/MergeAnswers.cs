@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Pilot.Contracts;
 
 namespace Pilot.Node.Flights;
 
@@ -32,6 +33,16 @@ public sealed class MergeRefusedException(MergeAnswerKind kind, string said, str
 
     /// <summary>GitHub's own text, every line.</summary>
     public string Said { get; } = said;
+
+    /// <summary>The class of GitHub's sorted answer (<see cref="MergeRefusals.Of(MergeAnswerKind)"/>).</summary>
+    public override MergeRefusal? Refusal => MergeRefusals.Of(Kind);
+}
+
+/// <summary>A merge asked of a PR GitHub has merged already: the state the merge wanted, never a refusal to ring (#799).</summary>
+public sealed class AlreadyMergedException(string message) : FlightException(message)
+{
+    /// <summary>The state wanted, not a refusal: the node lands the flight, so nobody is asked.</summary>
+    public override MergeRefusal? Refusal => MergeRefusals.NodeWait;
 }
 
 /// <summary>The merge methods a repo allows (<c>allow_squash_merge</c>, <c>allow_rebase_merge</c>, <c>allow_merge_commit</c>).</summary>

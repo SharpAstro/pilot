@@ -64,7 +64,8 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
         var cards = state.Cards(openOnly: true);
         var legs = state.Legs();
         // Every live-listed row decides a flight's phase and repo hold; only the counted subset takes an Opus slot (an Idle row counts while it has work pending).
-        var live = state.Sessions().Where(s => !s.Archived && s.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Planner && ignoring?.Contains(s.Name) != true
+        // A PR fixer is an ad-hoc session the node started for a PR fix: it counts as a fixer (#912), where it was not counted at all.
+        var live = state.Sessions().Where(s => !s.Archived && (s.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Planner || IsFixer(s)) && ignoring?.Contains(s.Name) != true
             && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle).ToArray();
         var counted = live.Select(s => (Row: s, Note: s.State == SessionState.Idle ? PendingWork(s, jobs, cards, legs) : null))
             .Where(c => c.Row.State != SessionState.Idle || c.Note is not null).ToArray();
@@ -78,11 +79,13 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
             .Concat(state.Flights().Where(f => f.Review is { State: ReviewState.Reviewing, Reviewer: not null })
                 .Select(f => new Start(f, f.Review!.Reviewer!, f.Code, AdmissionRole.Reviewer, settings.ReviewerModel(ReviewDepth.Standard), f.Review.StartedAt)));
         var starts = _starts.Values.Concat(recorded).Where(s => ignoring?.Contains(s.Label) != true && !Listed(s)).ToArray();
-        var sessions = counted.Select(c => new FleetSession(machine, c.Row.Name, c.Row.Model) { Identity = FleetAdmission.IdentityOf(RoleOf(c.Row.Role), c.Row.Flight), Note = c.Note })
-            .Concat(starts.Select(s => new FleetSession(machine, s.Label, s.Model) { Identity = FleetAdmission.IdentityOf(s.Role, s.Flight) })).ToArray();
+        var sessions = counted.Select(c => new FleetSession(machine, c.Row.Name, c.Row.Model) { Identity = FleetAdmission.IdentityOf(RoleOf(c.Row), c.Row.Flight), Note = c.Note, Role = RoleOf(c.Row) })
+            .Concat(starts.Select(s => new FleetSession(machine, s.Label, s.Model) { Identity = FleetAdmission.IdentityOf(s.Role, s.Flight), Role = s.Role })).ToArray();
+        // The live reading the job queue takes too (one source of free memory), not the sampled machine row.
+        var free = FreeMemory();
         if (localOnly)
         {
-            return new AdmissionInput(sessions, [], settings.OpusCap, settings.OneFlightPerRepo);
+            return new AdmissionInput(sessions, [], settings.OpusCap, settings.OneFlightPerRepo) { ReviewLimit = settings.ReviewLimit, FreeMemory = free, MemoryFloor = SessionMemoryFloor };
         }
         var flights = state.Flights().Select(f =>
         {
@@ -104,43 +107,65 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
             return new FleetFlight(machine, f.Code, f.Repo, phase) { Waits = [.. waits], Priority = IsPriority(f), Level = LevelOf(f), Since = f.CreatedAt };
         }).Concat(FleetAdmission.FlightsOf(view)).ToArray();
         var (cap, onePerRepo) = Fleet.Settings(view, settings);
-        return new AdmissionInput(sessions, flights, cap, onePerRepo);
+        return new AdmissionInput(sessions, flights, cap, onePerRepo) { ReviewLimit = settings.ReviewLimit, FreeMemory = free, MemoryFloor = SessionMemoryFloor };
     }
 
     /// <summary>
-    /// What an Idle session has pending that the node will wake it for, said as <c>idle, job j12 running</c>; null when it has nothing, and then it holds no
-    /// slot. A job Queued or Running it owns, an open card it asked (or one about its flight or leg a person must answer), or its leg's wait.
+    /// What an Idle session has pending that still holds its slot, said as <c>idle, leg wait</c>; null when it has nothing, and then it holds no
+    /// slot. See <see cref="Pending"/>: a session waiting on a person or a job holds none (a woken one resumes without admission).
     /// </summary>
-    private static string? PendingWork(SessionRow session, JobRow[] jobs, CardRow[] cards, LegRow[] legs)
+    private static string? PendingWork(SessionRow session, JobRow[] jobs, CardRow[] cards, LegRow[] legs) => Pending(session, jobs, cards, legs).Holds;
+
+    /// <summary>
+    /// Splits an Idle session's pending work in two. <c>Holds</c> keeps its slot: no first turn yet, a job result not yet told (the node wakes it
+    /// now) and a leg wait. <c>Waiting</c> is a session waiting on a person (an open card it asked, or one for the owner about its flight or leg,
+    /// which covers a planner whose plan is filed and whose planned card waits) or on a job of its own queued or running: it holds no slot, and a
+    /// woken session resumes without admission. The two are not mutually exclusive in the data, but <c>Holds</c> wins.
+    /// </summary>
+    private static (string? Holds, string? Waiting) Pending(SessionRow session, JobRow[] jobs, CardRow[] cards, LegRow[] legs)
     {
         // A session the node just started has taken no first turn: it holds the slot it was admitted for.
         if (session is { ContextTokens: 0, LastResponseAt: null, Gone: false })
         {
-            return "idle, no first turn yet";
+            return ("idle, no first turn yet", null);
         }
         // The owner is matched as JobRunner.WakeTarget does: by the row's id, session id or an earlier session id (a continuation, #560).
         bool Owns(string? owner) => owner is not null && (string.Equals(owner, session.Id, StringComparison.Ordinal) || string.Equals(owner, session.SessionId, StringComparison.Ordinal)
             || session.EarlierSessionIds?.Contains(owner) == true);
+        // A job that ended but whose owner the node has not told yet: the node wakes the owner with its result, so it holds its slot until then.
+        if (jobs.FirstOrDefault(j => !j.Told && j.State is not (JobState.Queued or JobState.Running) && j.Kind != JobKind.Check && Owns(j.Owner)) is { } ended)
+        {
+            return ($"idle, job {ended.Id} result to tell", null);
+        }
+        if (session.Flight is not null && session.Leg is not null
+            && legs.Any(l => l.Wait is not null && string.Equals(l.Flight, session.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(l.Name, session.Leg, StringComparison.OrdinalIgnoreCase)))
+        {
+            return ("idle, leg wait", null);
+        }
         if (jobs.FirstOrDefault(j => j.State is JobState.Queued or JobState.Running && Owns(j.Owner)) is { } job)
         {
-            return $"idle, job {job.Id} {(job.State == JobState.Queued ? "queued" : "running")}";
-        }
-        // A job that ended but whose owner the node has not told yet: the node wakes the owner with its result, so it holds its slot until then.
-        if (jobs.FirstOrDefault(j => !j.Told && j.Kind != JobKind.Check && Owns(j.Owner)) is { } ended)
-        {
-            return $"idle, job {ended.Id} result to tell";
+            return (null, $"idle, job {job.Id} {(job.State == JobState.Queued ? "queued" : "running")}");
         }
         var subjects = session.Flight is null ? [] : session.Leg is null ? new[] { $"flight/{session.Flight}" } : [$"flight/{session.Flight}", $"flight/{session.Flight}/{session.Leg}"];
         var card = cards.FirstOrDefault(c => c.State == CardState.Open
             && (string.Equals(c.AskedBy, session.Name, StringComparison.OrdinalIgnoreCase) || c.AlsoAskedBy.Contains(session.Name, StringComparer.OrdinalIgnoreCase)
                 || c.Bin is CardBin.Ring or CardBin.ForYou && subjects.Contains(c.Subject, StringComparer.OrdinalIgnoreCase)));
-        if (card is not null)
-        {
-            return $"idle, card {card.Id} open";
-        }
-        return session.Flight is not null && session.Leg is not null
-            && legs.Any(l => l.Wait is not null && string.Equals(l.Flight, session.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(l.Name, session.Leg, StringComparison.OrdinalIgnoreCase))
-            ? "idle, leg wait" : null;
+        return card is not null ? (null, $"idle, card {card.Id} open") : (null, null);
+    }
+
+    /// <summary>
+    /// The Idle Opus sessions that wait on a person or a job and so hold no slot, as <c>label (note)</c>, for the status line. Only Opus ones are
+    /// listed: the line says "not counted" against the Opus cap, and a Sonnet or Haiku session never counted, so naming it would explain nothing.
+    /// </summary>
+    private string[] WaitingOnPerson()
+    {
+        var jobs = state.Jobs();
+        var cards = state.Cards(openOnly: true);
+        var legs = state.Legs();
+        return [.. state.Sessions().Where(s => !s.Archived && s.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Planner && s.State == SessionState.Idle
+                && Admission.IsOpus(s.Model))
+            .Select(s => (Row: s, Pending: Pending(s, jobs, cards, legs))).Where(p => p.Pending.Holds is null && p.Pending.Waiting is not null)
+            .Select(p => $"{p.Row.Name} ({p.Pending.Waiting})")];
     }
 
     private static AdmissionRole RoleOf(SessionRole role) => role switch
@@ -150,6 +175,24 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
         _ => AdmissionRole.Worker,
     };
 
+    private static AdmissionRole RoleOf(SessionRow row) => IsFixer(row) ? AdmissionRole.Fixer : RoleOf(row.Role);
+
+    // A PR fixer: the ad-hoc session the node starts to make a review's changes.
+    private static bool IsFixer(SessionRow row) => row.Role == SessionRole.AdHoc && row.StartReason == SessionStartReasons.PrFix;
+
+    /// <summary>The free memory a session start needs (#912): a claude session and its build take 0.5 to 1 GB, so under 1.5 GB nothing starts.</summary>
+    public long SessionMemoryFloor { get; set; } = 1536L * 1024 * 1024;
+
+    /// <summary>The machine's free memory now, as the job queue reads it; a test swaps it.</summary>
+    public Func<long?> FreeMemory { get; init; } = () => MachineFreeMemory();
+
+    /// <summary>
+    /// Where a gate given no <see cref="FreeMemory"/> of its own reads the machine's free memory: <see cref="MachineMemory.Available"/>.
+    /// The test assembly sets it to read nothing (null: no memory wait), so a unit test of a start never waits on the memory of the
+    /// machine it runs on; a test of the memory wait gives its gate or its input the free memory it means.
+    /// </summary>
+    internal static Func<long?> MachineFreeMemory { get; set; } = MachineMemory.Available;
+
     /// <summary>
     /// Whether a session of <paramref name="role"/> on <paramref name="model"/> may start now for <paramref name="flight"/> (null for a bare PR's, named by
     /// <paramref name="subject"/>). The peers' flights and settings count, and an Opus start takes its slot on the node that keeps the count; a node
@@ -157,11 +200,6 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
     /// </summary>
     public AdmissionDecision Ask(AdmissionRole role, string? model, FlightRow? flight, IReadOnlySet<string>? ignoring = null, string? subject = null)
     {
-        // A benchmark queued or running has the node to itself: no new session starts until it ends. Sessions already running go on.
-        if (state.Jobs().FirstOrDefault(j => j.Kind == JobKind.Bench && j.State is JobState.Queued or JobState.Running) is { } bench)
-        {
-            return new AdmissionDecision.Wait($"a benchmark ({bench.Id}) holds the node");
-        }
         var view = Fleet.Current();
         var input = Input(flight?.Code, ignoring, view);
         var decision = Admission.Decide(input, new AdmissionRequest(role, model, machine, flight?.Code));
@@ -259,6 +297,7 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
             Counted = counted,
             Priority = [.. state.Flights().Where(f => f.State != FlightState.Landed && IsPriority(f)).Select(f => f.Code).Order(StringComparer.Ordinal)],
             PeersNotCounted = FleetAdmission.Note(view),
+            WaitingOnPerson = WaitingOnPerson(),
         });
     }
 
@@ -376,9 +415,9 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
             case Verbs.AdmissionSync when args.Length >= 1:
                 Fleet.Sync(args[0], args.Skip(1).Select(a => a.Split('|')).Where(p => p.Length >= 2).Select(p => (p[0], p[1], p.Length > 2 && p[2].Length > 0 ? p[2] : null)));
                 break;
-            case Verbs.AdmissionSetting when args.Length >= 2 && (args[0] is NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey || NodeSettings.IsRoleKey(args[0])):
+            case Verbs.AdmissionSetting when args.Length >= 2 && (args[0] is NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey || NodeSettings.IsLayeredKey(args[0])):
                 // A peer may only set the fleet layer of a role range, never this node's own range.
-                error = NodeSettings.IsRoleKey(args[0]) && !args.Skip(1).Contains("--fleet", StringComparer.OrdinalIgnoreCase)
+                error = NodeSettings.IsLayeredKey(args[0]) && !args.Skip(1).Contains("--fleet", StringComparer.OrdinalIgnoreCase)
                     ? $"a peer may only set the fleet layer of {args[0]}; send it with --fleet"
                     : SettingApplier is null ? "this node cannot apply settings" : SettingApplier(args);
                 break;

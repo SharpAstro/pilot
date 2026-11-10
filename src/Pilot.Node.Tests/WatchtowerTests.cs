@@ -67,7 +67,7 @@ public sealed class WatchtowerTests : IDisposable
     {
         if (Directory.Exists(_data))
         {
-            Directory.Delete(_data, recursive: true);
+            TestDirs.DeleteTree(_data);
         }
     }
 
@@ -153,9 +153,12 @@ public sealed class WatchtowerTests : IDisposable
         await _tower.LookAsync(Ct);
 
         var brief = _workers.Started.ShouldHaveSingleItem().Brief;
-        brief.ShouldContain("whose legs are all done, whose PR carries `pilot: changes` and whose PR head is not the head its");
-        brief.ShouldContain("`read head`");
-        brief.ShouldContain("start it yourself with `pilot flight review <code>`");
+        // The rule is in the rules file the brief names, not in the brief (PIL855).
+        var rules = Briefs.WatchtowerRules("du1-watchtower", "pilot");
+        rules.ShouldContain("whose legs are all done, whose PR carries `pilot: changes` and whose PR head is not the head its");
+        rules.ShouldContain("`read head`");
+        rules.ShouldContain("start it yourself with `pilot flight review <code>`");
+        brief.ShouldContain("watchtower-rules.md");
     }
 
     [Fact]
@@ -215,12 +218,12 @@ public sealed class WatchtowerTests : IDisposable
         _time.Advance(TimeSpan.FromMinutes(2));
         await _tower.LookAsync(Ct);
         Ended().ShouldBe(["job00007"]);
-        _state.Cards().Single(c => c.Bin == CardBin.Handled).Title.ShouldStartWith("Stopped the watchtower: no flight in the air and no UI connected");
+        _state.Cards().Single(c => c.Bin == CardBin.Handled).Title.ShouldStartWith("Stopped the watchtower: no flight in the air");
         _said.ShouldBeEmpty();
 
         // The next thing to watch starts a fresh one, and says why.
         Row("job00007", SessionState.Ended);
-        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9/parser", "TIA9/parser failed");
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9", "TIA9/parser failed");
         await _tower.LookAsync(Ct);
         _workers.Started.ShouldHaveSingleItem();
         _state.Cards().ShouldContain(c => c.Title == "Started a fresh watchtower: c2 rings, and the last one ended");
@@ -885,7 +888,7 @@ public sealed class WatchtowerTests : IDisposable
             _profile.Dispose();
             if (Directory.Exists(_folder))
             {
-                Directory.Delete(_folder, recursive: true);
+                TestDirs.DeleteTree(_folder);
             }
         }
     }
@@ -1139,5 +1142,19 @@ public sealed class WatchtowerRouteTests
         (card.Bin, card.Kind, card.Title, card.Detail).ShouldBe((CardBin.Ring, Watchtower.RaisedKind, "TIA1 forks: SQLite or JSON?", "both work (from du1-watchtower)"));
         bad.Response.ShouldNotBeNull().Error.ShouldStartWith("raise takes ring, for-you or handled");
         tell.Response.ShouldNotBeNull().Error.ShouldBe("this node keeps no watchtower (--no-watchtower)");
+    }
+
+    [Fact]
+    public async Task AWatchtowerForYouCardShowsItsOwnTitleAndNoHelpLineAsItsFirstLine()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+
+        (await node.Client.SendAsync(new CommandRequest
+        {
+            Verb = Verbs.Raise, Target = "node", Args = ["for-you", "SE1 has 3 flights ringing and 2 held", "3 ringing, 2 held by the owner, 1 waiting on a PR."], Who = "se1-watchtower",
+        }, Ct)).Success.ShouldBeTrue();
+
+        // c3651 of the cards-panel capture is this card: its title and detail are the watchtower's own, and the kind's help line is no first line (#797 rule 5).
+        CardsPanelFixture.ShouldMatch("c3651", node.State.Cards().ShouldHaveSingleItem());
     }
 }

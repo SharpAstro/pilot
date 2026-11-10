@@ -15,7 +15,7 @@ public sealed class DiskUsageTests : IDisposable
     {
         try
         {
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
         catch (IOException)
         {

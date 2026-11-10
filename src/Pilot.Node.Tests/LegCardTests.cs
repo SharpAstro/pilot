@@ -41,7 +41,7 @@ public sealed class LegCardTests
         });
     }
 
-    private void Worker(SessionState state, string? apiError = null, DateTimeOffset? resetsAt = null, string? waitingFor = null) =>
+    private void Worker(SessionState state, string? apiError = null, DateTimeOffset? resetsAt = null, string? waitingFor = null, string? asking = null) =>
         _state.PutSession(new SessionRow
         {
             Id = "a1b2c3d4",
@@ -56,6 +56,7 @@ public sealed class LegCardTests
             ContextWindow = 200_000,
             State = state,
             WaitingFor = waitingFor,
+            Asking = asking,
             SpendWeighted = 0,
             ApiError = apiError,
             ApiErrorResetsAt = resetsAt,
@@ -91,7 +92,7 @@ public sealed class LegCardTests
         var card = Open().ShouldHaveSingleItem();
         card.Title.ShouldBe("TIA1/parser's worker was stopped by the API: overloaded");
         card.Detail.ShouldStartWith("the API gave no time the stop clears");
-        card.Choices.Select(c => c.Label).ShouldBe(["Tell du1-tia1-parser to carry on with parser", "Start a fresh worker on parser (the last one was stopped by the API)"]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Tell the worker to carry on", Verbs.RestartWorker]);
     }
 
     [Fact]
@@ -104,10 +105,12 @@ public sealed class LegCardTests
         await _watch.LookAsync(Ct);
 
         var card = Open().ShouldHaveSingleItem();
-        card.Title.ShouldBe("TIA1/parser's worker has been idle 10 min with 1 of 2 steps ticked");
+        // How long and how many steps are the detail's; the title says what happened (#797).
+        card.Title.ShouldBe("TIA1 is stuck: its worker stopped working");
+        card.Detail!.ShouldStartWith("no turn for 10 min, 1 of 2 steps");
         card.Detail!.ShouldContain("idle with room in its context");
         card.Detail!.ShouldContain("nudged 2 times with no answer, and the node nudges no more");
-        card.Choices.Select(c => c.Label).ShouldBe(["Nudge du1-tia1-parser to finish parser or say why not", "Start a fresh worker on parser (the last one went idle with the leg unfinished)"]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Nudge the worker", Verbs.RestartWorker]);
     }
 
     [Fact]
@@ -120,9 +123,10 @@ public sealed class LegCardTests
         await _watch.LookAsync(Ct);
 
         var card = Open().ShouldHaveSingleItem();
-        card.Title.ShouldBe("TIA1/parser's worker has been idle 10 min with 1 of 2 steps ticked, and could not be nudged: the folder is gone");
+        card.Title.ShouldBe("TIA1 is stuck: its worker stopped and cannot be nudged");
         card.Detail.ShouldEndWith("the node tried to nudge it: the folder is gone");
-        card.Detail.ShouldStartWith("idle with room in its context");
+        card.Detail.ShouldStartWith("no turn for 10 min, 1 of 2 steps");
+        card.Detail.ShouldContain("idle with room in its context");
     }
 
     [Fact]
@@ -135,7 +139,49 @@ public sealed class LegCardTests
         var card = Open().ShouldHaveSingleItem();
         card.Title.ShouldBe("TIA1/parser's worker waits on you for permission to run rm -rf build");
         card.Detail.ShouldStartWith("permission to run rm -rf build; the worker cannot go on until it is answered in its own session");
-        card.Choices.Select(c => c.Label).ShouldBe(["Start a fresh worker on parser (the last one waited on you)"]);
+        card.Choices.Select(c => c.Label).ShouldBe([Verbs.RestartWorker]);
+    }
+
+    [Theory]
+    [InlineData("Bash: git push origin main", "TIA1/parser's worker wants to run: git push origin main (Bash)")]
+    [InlineData("Edit: src/Parser.cs", "TIA1/parser's worker wants to edit src/Parser.cs (Edit)")]
+    [InlineData("Read: src/Parser.cs", "TIA1/parser's worker wants to read src/Parser.cs (Read)")]
+    [InlineData("EnterWorktree: /r/other", "TIA1/parser's worker wants to switch its folder to /r/other (EnterWorktree)")]
+    [InlineData("EnterWorktree: /r/w", "TIA1/parser's worker wants to switch its folder to its own plane (EnterWorktree)")]
+    public async Task AWaitingWorkerWithAKnownPendingCallSaysWhatItWantsAndWhatEachChoiceDoes(string asking, string title)
+    {
+        Worker(SessionState.Waiting, waitingFor: "permission to use Tool", asking: asking);
+        _state.PutFlight(new FlightRow
+        {
+            Code = "TIA1", Repo = "tianwen", RepoPath = "/r", Issue = 1, Branch = "flight/tia1", Worktree = "/r/w", Base = "origin/main",
+            State = FlightState.Flying, CreatedAt = Start,
+        });
+        // A call inside the plane (the Edit, the Read, EnterWorktree into /r/w) first sends the leg round (PermissionGateTests covers
+        // that); with the go-around refused it rings at once, so every row here shows the card's words.
+        _refuse = "the cap is reached";
+
+        await _watch.LookAsync(Ct);
+
+        var card = Open().ShouldHaveSingleItem();
+        card.Title.ShouldBe(title);
+        card.Detail.ShouldNotBeNull().ShouldStartWith(title["TIA1/parser's worker ".Length..].Insert(0, "it ") + ";");
+        card.Detail.ShouldContain("answered in its own session");
+        var summary = card.Summary.ShouldNotBeNull();
+        summary.ShouldContain("Answering in its own session lets this worker go on with the call");
+        summary.ShouldContain("stops this one and starts another on the leg from the branch");
+        summary.ShouldNotContain(card.Choices.Single().Label);
+        $"{card.Title}{card.Detail}{card.Summary}".ShouldNotContain("—");
+        $"{card.Title}{card.Detail}{card.Summary}".ShouldNotContain("--");
+    }
+
+    [Fact]
+    public async Task AWaitingWorkersRealQuestionKeepsItsOwnWordsEvenWithACallPending()
+    {
+        Worker(SessionState.Waiting, waitingFor: "Which branch should I use?", asking: "Bash: git checkout");
+
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldHaveSingleItem().Title.ShouldBe("TIA1/parser's worker waits on you for Which branch should I use?");
     }
 
     [Fact]
@@ -147,7 +193,8 @@ public sealed class LegCardTests
 
         var card = Open().ShouldHaveSingleItem();
         card.Title.ShouldBe("TIA1/parser's worker failed: the API said invalid_request");
-        card.Choices.Select(c => c.Label).ShouldBe(["Tell du1-tia1-parser to carry on with parser", "Start a fresh worker on parser (the last one failed)"]);
+        card.Summary.ShouldBe("The worker of TIA1/parser failed. Telling it to carry on may get it going again; if it does not, a fresh worker takes the leg over from the branch.");
+        card.Choices.Select(c => c.Label).ShouldBe(["Tell the worker to carry on", Verbs.RestartWorker]);
     }
 
     [Fact]
@@ -163,6 +210,7 @@ public sealed class LegCardTests
         var card = Open().ShouldHaveSingleItem();
         card.Title.ShouldBe("TIA1/parser's worker du1-tia1-parser never showed up, 10 min after it started");
         card.Detail.ShouldStartWith("started as job a1b2c3d4");
-        card.Choices.Select(c => c.Label).ShouldBe(["Start a fresh worker on parser (the last one never showed up)"]);
+        card.Summary.ShouldBe("The worker of TIA1/parser never showed up. Only a fresh start gets the leg going again.");
+        card.Choices.Select(c => c.Label).ShouldBe([Verbs.RestartWorker]);
     }
 }

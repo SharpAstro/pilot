@@ -85,8 +85,9 @@ public sealed partial class LegCommander
         }
         catch (FlightException ex)
         {
-            state.RaiseCard(CardBin.Ring, LayFailedKind, Verbs.FlightTarget(flight.Code),
-                $"{flight.Code} could not be laid on {flight.Base}", ex.Message);
+            state.RaiseCard(CardBin.ForYou, LayFailedKind, Verbs.FlightTarget(flight.Code),
+                $"{flight.Code} could not be laid on {flight.Base}", ex.Message,
+                [new CardChoice { Label = "Try merging again", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [head, method] }]);
             throw new FlightException($"{flight.Code} does not rebase onto {flight.Base} and could not be laid on it: {ex.Message}");
         }
         _laidAt[$"{flight.Code} {shaped}"] = DateTimeOffset.UtcNow;

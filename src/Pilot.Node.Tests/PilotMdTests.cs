@@ -49,7 +49,7 @@ public sealed class PilotMdTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private async Task CommitAsync(string? pilotMd)
@@ -207,12 +207,11 @@ public sealed class PilotMdTests : IDisposable
     [Fact]
     public void TheWatchtowerBriefLeavesHumanVerificationIssuesToTheController()
     {
-        var brief = Briefs.Watchtower("wt", [], [], [], "pilot");
+        var brief = Briefs.WatchtowerRules("wt", "pilot");
 
         brief.ShouldContain("Close a human-verification issue");
         brief.ShouldContain(LegCommander.HumanVerificationMilestone);
         brief.ShouldContain("controller closes each once checked");
-        brief.Length.ShouldBeLessThan(Briefs.MaxWatchtowerBrief);
     }
 
     [Fact]

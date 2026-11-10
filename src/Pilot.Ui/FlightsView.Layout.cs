@@ -216,7 +216,7 @@ internal sealed partial class FlightsView<TSurface>
         }
         var page = WhenShort(Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch());
         // After the page's text and before the menus over it: where the selection is drawn.
-        page = WithSelection(page);
+        page = WithPageSelection(page);
         page = About?.Over(page, NightOrNull) ?? page;
         page = Gallery.Over(page);
         page = _menu.IsOpen ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg)) : page;
@@ -240,7 +240,7 @@ internal sealed partial class FlightsView<TSurface>
         }
         if (line.LegRows.Count == 0)
         {
-            legs.Add(Layout.Builder.Text(line.Node is null or { Here: true } ? "no legs yet: Plan a leg" : "no legs yet", 12f, Dim).RowH(20f));
+            legs.Add(Layout.Builder.Text(line.Row.OnHold is null && line.Node is null or { Here: true } ? "no legs yet: Plan a leg" : "no legs yet", 12f, Dim).RowH(20f));
         }
         if (flight.Review is { } review)
         {

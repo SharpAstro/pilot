@@ -52,6 +52,7 @@ public static partial class NodeApp
         AddIdeas(builder, logWriter);
         AddWorkers(builder, options, logWriter);
         AddAdmission(builder, options);
+        AddFailureInvestigations(builder, logWriter, options);
         AddLegs(builder);
         AddPrReviews(builder, logWriter);
         AddCommands(builder, options);
@@ -62,7 +63,7 @@ public static partial class NodeApp
         AddJobs(builder);
         AddFlightAdvance(builder, logWriter);
         AddPrChecks(builder, logWriter);
-        AddSummaries(builder, options);
+        AddSummaries(builder, options, logWriter);
         AddUpdates(builder, options);
         AddSettings(builder, options);
         AddSessions(builder, options, logWriter);
@@ -128,13 +129,17 @@ public static partial class NodeApp
     {
         // A hook's stdin, forwarded by `pilot-node hook`: the session it names takes the hook's state, and the tracker
         // looks again now. 204, so a hook never learns anything worth failing over; but a Stop in a plane with files
-        // not committed is answered with the decision that sends the session back to commit them (StopGate).
-        app.MapPost(NodeWire.HooksRoute, async (HttpContext context, HookBook hooks, StopGate gate, SessionTracker tracker, TimeProvider time, ILogger<HookBook> logger) =>
+        // not committed is answered with the decision that sends the session back to commit them (StopGate), and a permission
+        // prompt for a call that only acts inside the session's own plane with the allow that runs it (PermissionGate).
+        app.MapPost(NodeWire.HooksRoute, async (HttpContext context, HookBook hooks, StopGate gate, PermissionGate permissions, SessionTracker tracker, TimeProvider time, ILogger<HookBook> logger) =>
         {
             try
             {
                 using var hook = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
-                if (hooks.Apply(hook.RootElement, time.GetUtcNow()) is { } session)
+                // A permission prompt for a call that only acts inside the session's own plane is allowed here, so no one is asked for it.
+                // Decided before the hook is taken in, so a session the node lets go on is told working, never waiting on a prompt it does not show.
+                var allow = await permissions.DecideAsync(hook.RootElement, context.RequestAborted);
+                if (hooks.Apply(hook.RootElement, time.GetUtcNow(), allowed: allow is not null) is { } session)
                 {
                     // Debug only: PreToolUse fires on every tool call. Logging__LogLevel__Pilot.Node=Debug shows them.
                     logger.LogDebug("hook {Event} for {Session}", ClaudeAgentsJson.Text(hook.RootElement, "hook_event_name"), session[..Math.Min(8, session.Length)]);
@@ -144,6 +149,11 @@ public static partial class NodeApp
                 {
                     logger.LogInformation("stop held for {Session} in {Cwd}: files not committed", ClaudeAgentsJson.Text(hook.RootElement, "session_id"), ClaudeAgentsJson.Text(hook.RootElement, "cwd"));
                     return Results.Text(decision, "application/json");
+                }
+                if (allow is not null)
+                {
+                    logger.LogInformation("permission allowed for {Session}: {Tool} in its plane", ClaudeAgentsJson.Text(hook.RootElement, "session_id"), ClaudeAgentsJson.Text(hook.RootElement, "tool_name"));
+                    return Results.Text(allow, "application/json");
                 }
             }
             catch (JsonException)
@@ -155,7 +165,7 @@ public static partial class NodeApp
         var startedAt = DateTimeOffset.UtcNow;
         var version = typeof(NodeApp).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
-        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower, AdmissionGate slots, NodeTraffic traffic, SendTimings timings) => Results.Json(
+        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower, AdmissionGate slots, NodeTraffic traffic, SendTimings timings, CommandTimings commandTimings, Func<NodeHeapRow> heap, RebootPrep reboot) => Results.Json(
             ResponseEnvelope<NodeInfo>.Ok(new NodeInfo
             {
                 WireVersion = NodeWire.Version,
@@ -168,6 +178,7 @@ public static partial class NodeApp
                 SocketPath = options.SocketPath,
                 Stream = state.Stream,
                 Maintenance = models.Maintenance,
+                Reboot = reboot.Headline,
                 Autopilot = models.Autopilot,
                 AcceptsFleetFlights = models.AcceptsFleetFlights,
                 Account = state.Usage()?.Account,
@@ -179,6 +190,8 @@ public static partial class NodeApp
                 Leases = slots.Fleet.Leases() is { Length: > 0 } leases ? leases : null,
                 Traffic = traffic.LastHourRow(),
                 SendTimings = timings.Rows(),
+                CommandTimings = commandTimings.Rows(),
+                Heap = heap(),
             }),
             PilotJsonContext.Default.ResponseEnvelopeNodeInfo));
 

@@ -40,9 +40,11 @@ public sealed class SpendAlertTests : LegHoldTestsBase
         await GoAround();
 
         var ring = Alerts().ShouldHaveSingleItem();
-        ring.Bin.ShouldBe(CardBin.Ring);
+        // A note with nothing to press is Handled (#797); the tokens and the round are the detail's.
+        ring.Bin.ShouldBe(CardBin.Handled);
         ring.Kind.ShouldBe(LegCommander.SpendAlertKind);
-        ring.Title.ShouldStartWith("TIA1/parser has spent 1,000 tokens, 10 % of the 7-day window, before round 2");
+        ring.Title.ShouldBe("TIA1/parser has used 10 % of the week's budget");
+        ring.Detail.ShouldNotBeNull().ShouldStartWith("The leg's rounds so far spent 1,000 tokens before round 2,");
         ring.Detail.ShouldNotBeNull().ShouldContain("claude-sonnet-5-5, high");
         ring.Detail.ShouldContain("weighted tokens this machine's ledger holds for the 7-day window, not of the account's weekly figure");
 
@@ -52,7 +54,7 @@ public sealed class SpendAlertTests : LegHoldTestsBase
 
         // The next round rings again, with its own number.
         await GoAround();
-        Alerts().Select(c => c.Title).ShouldContain(t => t.StartsWith("TIA1/parser has spent 1,000 tokens, 10 % of the 7-day window, before round 3", StringComparison.Ordinal));
+        Alerts().Select(c => c.Detail).ShouldContain(d => d!.StartsWith("The leg's rounds so far spent 1,000 tokens before round 3,", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -66,7 +68,7 @@ public sealed class SpendAlertTests : LegHoldTestsBase
 
         _legs.Models = new RoleModels(new NodeSettings { SpendAlert = 1 });
         await GoAround();
-        Alerts().ShouldHaveSingleItem().Title.ShouldContain("2 % of the 7-day window");
+        Alerts().ShouldHaveSingleItem().Title.ShouldBe("TIA1/parser has used 2 % of the week's budget");
 
         new RoleModels(null).SpendAlert.ShouldBe(3);
         NodeSettings.With(new NodeSettings(), "spend-alert", ["5"]).Settings!.SpendAlert.ShouldBe(5);

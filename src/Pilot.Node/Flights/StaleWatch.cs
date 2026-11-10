@@ -13,7 +13,10 @@ namespace Pilot.Node.Flights;
 public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundService
 {
     public const string ActedKind = "stale-acted";
-    public const string ReminderKind = "stale-card-reminder";
+
+    // The kind of the card an earlier node raised about an unanswered card. Nothing raises it now (the card itself rings again, #799 rule 5);
+    // one still open in a store from before is closed at the first tick, as its card is no longer asked of anyone through it.
+    private const string LegacyReminderKind = "stale-card-reminder";
 
     /// <summary>How often it reads.</summary>
     public TimeSpan Every { get; init; } = TimeSpan.FromMinutes(5);
@@ -46,14 +49,23 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         _ => IssuePriority.High,
     };
 
+    /// <summary>
+    /// How often every in-air flight's last move is read between ticks. A pure read of what the node holds that writes only when a
+    /// move changed, so a row's last move (and the age the UI counts from it) is never as old as a whole <see cref="Every"/>.
+    /// </summary>
+    public TimeSpan MovesEvery { get; init; } = TimeSpan.FromSeconds(20);
+
+    // When the next whole tick is due; unset until the first wake, which starts the clock for it.
+    private DateTimeOffset? _nextTick;
+
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         while (!stopping.IsCancellationRequested)
         {
             try
             {
-                await Task.Delay(Every, time, stopping);
-                await TickAsync(stopping);
+                await Task.Delay(MovesEvery < Every ? MovesEvery : Every, time, stopping);
+                await StepAsync(stopping);
             }
             catch (OperationCanceledException) when (stopping.IsCancellationRequested)
             {
@@ -66,25 +78,53 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         }
     }
 
+    /// <summary>
+    /// One wake of the loop: a whole tick once <see cref="Every"/> has passed since the last one began, otherwise only a refresh of the
+    /// last moves. The next tick is set before this one runs, so a tick that throws is tried again after <see cref="Every"/> and not on
+    /// the very next wake, which would repeat a failing tick (and its tracker calls) every <see cref="MovesEvery"/>.
+    /// </summary>
+    public async Task StepAsync(CancellationToken cancellationToken)
+    {
+        var now = time.GetUtcNow();
+        var due = _nextTick ??= now + Every;
+        if (now >= due)
+        {
+            _nextTick = now + Every;
+            await TickAsync(cancellationToken);
+        }
+        else
+        {
+            RefreshLastMoves();
+        }
+    }
+
     /// <summary>One reading and what follows from it.</summary>
     public async Task TickAsync(CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
         var reading = Staleness.Read(state.Flights(), state.Legs(), state.Cards(), state.Jobs(), state.PullRequests(), now, Bounds(), time.LocalTimeZone);
 
-        CloseOrphanReminders();
+        foreach (var legacy in state.Cards(openOnly: true).Where(c => c.Kind == LegacyReminderKind))
+        {
+            state.CloseCard(legacy.Id, "the card itself is rung again now", "node");
+        }
         foreach (var item in reading.Nearing)
         {
             await ActAsync(item, cancellationToken);
         }
+        var legs = state.Legs();
+        var cards = state.Cards();
+        var pullRequests = state.PullRequests();
         foreach (var flight in state.Flights())
         {
-            if (flight is not { State: not FlightState.Landed, FoldedInto: null, MovedTo: null })
+            if (!Staleness.InAir(flight))
             {
                 // A flight that landed, folded or moved is done here: it keeps no stale summary.
                 Attach(flight.Code, null, now);
                 continue;
             }
+            // Every in-air flight carries its last real activity, stale or not, read the same way the stale items read it.
+            RecordLastMove(flight, Staleness.LastMove(flight, legs, cards, pullRequests, time.LocalTimeZone));
             var mine = reading.Stale.Where(i => i.Flight == flight.Code).ToList();
             if (mine.Count > 0)
             {
@@ -94,19 +134,26 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         }
     }
 
-    // A reminder about a card is closed once that card is: its choices would answer a card that is no longer asked.
-    private void CloseOrphanReminders()
+    /// <summary>Reads every in-air flight's last move now, without the rest of a tick (no action, no raise, no summary).</summary>
+    public void RefreshLastMoves()
     {
-        var open = state.Cards(openOnly: true);
-        var openIds = open.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
-        foreach (var reminder in open.Where(c => c.Kind == ReminderKind))
+        var legs = state.Legs();
+        var cards = state.Cards();
+        var pullRequests = state.PullRequests();
+        foreach (var flight in state.Flights().Where(Staleness.InAir))
         {
-            var target = reminder.Subject.StartsWith(Verbs.CardTargetPrefix, StringComparison.Ordinal) ? reminder.Subject[Verbs.CardTargetPrefix.Length..] : null;
-            if (target is null || !openIds.Contains(target))
-            {
-                state.CloseCard(reminder.Id, $"card {target} is closed", "node");
-            }
+            RecordLastMove(flight, Staleness.LastMove(flight, legs, cards, pullRequests, time.LocalTimeZone));
         }
+    }
+
+    // The row is rewritten only when the last move or its words changed, so a quiet flight causes no churn on the wire.
+    private void RecordLastMove(FlightRow flight, (DateTimeOffset At, string Text)? last)
+    {
+        if (last is not { } move || (flight.LastMovedAt == move.At && flight.LastMove == move.Text))
+        {
+            return;
+        }
+        state.UpdateFlight(flight.Code, f => f.LastMovedAt == move.At && f.LastMove == move.Text ? f : f with { LastMovedAt = move.At, LastMove = move.Text });
     }
 
     // Half a bound: the node's own action where one exists, once per item and per kind of action.
@@ -117,8 +164,9 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         {
             if (state.Cards(openOnly: true).FirstOrDefault(c => c.Id == item.Subject) is { } card && _acted.TryAdd($"card:{card.Id}", 0))
             {
-                state.RaiseCard(CardBin.ForYou, ReminderKind, Verbs.CardTarget(card.Id), $"Still ringing after {item.AgeText}: {card.Title}", $"Card {card.Id} has had no answer. {item.Action}.", card.Choices);
-                state.RaiseCard(CardBin.Handled, ActedKind, subject, $"{item.Subject} has rung {item.AgeText} unanswered; the node rang it again");
+                // The card itself rings again, in place, sorted first and marked with how long it has waited: a second card or a log line
+                // about the first would be a meta-card on top of it (#799 rule 5, #797 rule 7).
+                state.RingAgain(card.Id, item.AgeText);
             }
             return;
         }
@@ -136,7 +184,8 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         {
             // A worker just told of a job has something to do: no nudge on top of it.
             _acted.TryAdd($"nudge:{item.Kind}:{item.Subject}", 0);
-            state.RaiseCard(CardBin.Handled, ActedKind, subject, $"{item.Subject} is {item.AgeText} old, past half its bound; the node told its worker of a job that had ended");
+            state.RaiseCard(CardBin.Handled, ActedKind, subject, $"{item.Subject} has waited {item.AgeText}: the node told its worker of an ended job",
+                $"The worker had a job of its own that ended without telling it, so the node told it; no nudge on top of that.");
             return;
         }
         if (Say is not null && workers.FirstOrDefault(w => w.State == SessionState.Idle) is { } idle && _acted.TryAdd($"nudge:{item.Kind}:{item.Subject}", 0))
@@ -144,7 +193,8 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
             var text = $"Stale check: {item.Subject} has been open {item.AgeText}, past half its bound of {item.Bound}. It waits on {item.WaitsOn}. If your leg can move, move it; otherwise say what holds it.";
             if (await Say(idle.Id, text, cancellationToken))
             {
-                state.RaiseCard(CardBin.Handled, ActedKind, subject, $"{item.Subject} is {item.AgeText} old, past half its bound; the node nudged its idle worker");
+                state.RaiseCard(CardBin.Handled, ActedKind, subject, $"{item.Subject} has waited {item.AgeText}: the node nudged its idle worker",
+                    $"It waits on {item.WaitsOn}; the worker was asked to move it or say what holds it.");
             }
         }
     }
@@ -194,7 +244,7 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
             IssuePriority = level ?? f.IssuePriority,
             HasPriorityField = level is not null || f.HasPriorityField,
         });
-        state.RaiseCard(CardBin.Handled, ActedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}: {note}");
+        state.RaiseCard(CardBin.Handled, ActedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} has waited long; its priority {(level is not null ? "was raised" : "stays")}", $"{flight.Code}: {note}.");
     }
 
     // The cause up to what it waits on, which follows its last ", waiting on".

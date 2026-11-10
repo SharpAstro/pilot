@@ -42,9 +42,9 @@ public sealed class DesignDecisionMirrorFlightTests : FlightDesignTestsBase
 
         LastLeg(flight.Code).State.ShouldBe(LegState.Flying);
         _state.Decisions(kind: DecisionKinds.Design).ShouldHaveSingleItem();
-        var card = _state.Cards(openOnly: true).Single(c => c.Kind == DesignDecisionMirror.FailedKind);
-        card.Bin.ShouldBe(CardBin.Ring);
-        card.Title.ShouldContain("HTTP 502");
+        var card = _state.Cards().Single(c => c.Kind == DesignDecisionMirror.FailedKind);
+        card.Bin.ShouldBe(CardBin.Handled);
+        card.Detail.ShouldNotBeNull().ShouldContain("HTTP 502");
     }
 }
 
@@ -103,8 +103,8 @@ public sealed class DesignDecisionMirrorTests : PrFixTestsBase
 
         Fixers.ShouldHaveSingleItem();
         _state.Decisions(kind: DecisionKinds.Design).ShouldHaveSingleItem();
-        var card = _state.Cards(openOnly: true).Single(c => c.Kind == "design-mirror-failed");
-        card.Bin.ShouldBe(CardBin.Ring);
+        var card = _state.Cards().Single(c => c.Kind == "design-mirror-failed");
+        card.Bin.ShouldBe(CardBin.Handled);
         card.Subject.ShouldBe("pr/acme/widget#7");
         card.Title.ShouldContain("acme/widget#7");
     }

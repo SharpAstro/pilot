@@ -59,7 +59,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     // (the first, a refresh, or the one after a fix), so the rows say so; the controls pressed and not yet answered are <see cref="Presses"/>'s.
     // Repos: the node's tracked repos the list pickers offer (null until read); ReposProblem: why they could not be read.
     // ChecksTicket: the ticket of the checks read shown, so a slower, older read cannot put its answer over a newer one.
-    private sealed record Seen(SettingsPage? Page, SetupChecks? Checks, bool Checking, string? ChecksProblem, GrantInfo[] Given, string[] Held, string? Problem, RepoInfo[]? Repos = null, string? ReposProblem = null, long ChecksTicket = 0);
+    private sealed record Seen(SettingsPage? Page, SetupChecks? Checks, bool Checking, string? ChecksProblem, GrantInfo[] Given, Pilot.Contracts.HeldGrant[] Held, string? Problem, RepoInfo[]? Repos = null, string? ReposProblem = null, long ChecksTicket = 0);
 
     private Seen _read = new(null, null, false, null, [], [], null);
     private CancellationTokenSource? _reading;
@@ -96,14 +96,17 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// <summary>Reads the grants this node has given (its grants route); null where there is no node to read.</summary>
     public Func<CancellationToken, Task<GrantInfo[]>>? LoadGrants { get; set; }
 
-    /// <summary>The nodes this user holds a token for, by <c>host:port</c>: read from the token file with each refresh.</summary>
-    public Func<IReadOnlyList<string>>? LoadHeld { get; set; }
+    /// <summary>The nodes this user holds a token for, each by its machine name with the last address it answered at: read from the token file with each refresh.</summary>
+    public Func<IReadOnlyList<Pilot.Contracts.HeldGrant>>? LoadHeld { get; set; }
 
-    /// <summary>Drops the token held for a node; the host also recomputes the steerable set so its rows turn watch-only on the next tick.</summary>
+    /// <summary>Drops the token held for a node, by its machine name (its address for an old entry); the host also recomputes the steerable set so its rows turn watch-only on the next tick.</summary>
     public Action<string>? Forget { get; set; }
 
     /// <summary>The grants given, as last read.</summary>
     public GrantInfo[] Given => Volatile.Read(ref _read).Given;
+
+    /// <summary>The grants this user holds, as last read: each node by its machine name with the address it last answered at.</summary>
+    public Pilot.Contracts.HeldGrant[] Held => Volatile.Read(ref _read).Held;
 
     /// <summary>Called when what the page shows changed, from whichever thread: the host redraws.</summary>
     public Action? Changed { get => Presses.Changed; set => Presses.Changed = value; }
@@ -138,14 +141,21 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     {
         Palette.Use(Night);
         BeginFrame();
+        PageWidth = Scale.ToDesignX(bounds.Width);
         RenderLayout(Tree(now), bounds);
     }
 
+    /// <summary>The room's width in design units as the last <see cref="Render"/> or <c>Tree(now, width)</c> had it; null before the first. A range row lays its captions out against it (#770).</summary>
+    internal float? PageWidth { get; set; }
+
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
-    internal Layout.Node Tree(DateTimeOffset now)
+    internal Layout.Node Tree(DateTimeOffset now, float? width = null)
     {
         Palette.Use(Night);
         _drawnAt = now;
+        _measured = null;
+        // A host with no render of its own (pilot-tui) hands the room's width in design units, as PullRequests.Tree takes it.
+        PageWidth = width ?? PageWidth;
         Read();
         var read = Volatile.Read(ref _read);
         var page = read.Page;
@@ -302,7 +312,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private void ForgetNode(string endpoint)
     {
         // At once in the list; the token file (Forget's write, and the list read back) on the pool.
-        System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { Held = [.. read.Held.Where(h => !string.Equals(h, endpoint, StringComparison.OrdinalIgnoreCase))] });
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with { Held = [.. read.Held.Where(h => !string.Equals(HeldKey(h), endpoint, StringComparison.OrdinalIgnoreCase))] });
         Said = $"forgot {endpoint}: its rows are watch-only until you Connect again";
         Changed?.Invoke();
         _ = Task.Run(() =>
@@ -354,11 +364,27 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
                     // What the person chose for this verb goes only once the node has taken it: a refusal leaves the choice to amend.
                     taken?.Invoke();
                 }
-                // The node's words, refusal included, are the page's line (Said); the control itself is back to its label.
-                Said = reply.Line.ReplaceLineEndings(" ").Trim();
+                if (verb == Verbs.Set && reply.Row is null && reply.Kind == ReplyKind.NoAnswer && Load is { } load)
+                {
+                    // No row came (the node may be restarting for the change): read the settings, as the only way to know. The
+                    // pill keeps saying it is setting until that read is in, so it never reads done for a change not yet seen.
+                    try
+                    {
+                        await RefreshAsync(load, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // A client timeout while the node is still down: the line below says there was no answer, and the
+                        // page's own next read shows the outcome. Unhandled, it left the header on "setting …" for good.
+                    }
+                }
+                // The node's words, refusal included, are the page's line (Said); the control itself is back to its label. A
+                // single value taken names what was set, from the row the node sent back; a list's value is lines, so its line is
+                // the node's own, on one line as the header has.
+                Said = SaidOf(reply);
                 return null;
             }).ConfigureAwait(false);
-            if (reply is not { } answered)
+            if (reply is null)
             {
                 return;
             }
@@ -369,11 +395,6 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             else if (verb == Verbs.RevokeGrant)
             {
                 await RefreshGrantsAsync(CancellationToken.None).ConfigureAwait(false);
-            }
-            else if (verb == Verbs.Set && answered.Row is null && answered.Kind == ReplyKind.NoAnswer && Load is { } load)
-            {
-                // No row came (the node may be restarting for the change): read the settings, as the only way to know.
-                await RefreshAsync(load, CancellationToken.None).ConfigureAwait(false);
             }
             Changed?.Invoke();
         }
@@ -466,8 +487,8 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     private static Layout.Node Section(string title, string hint) =>
         Layout.Builder.HStack(
-                Layout.Builder.Text(title, 15f, Bright).WAuto(),
-                Layout.Builder.Text(hint, 12f, Faint).WStar())
+                Layout.Builder.Text(title, 15f, Bright).Selectable().WAuto(),
+                Layout.Builder.Text(hint, 12f, Faint).Whole(hint).Selectable().WStar())
             .WithGap(12f).Pad(8f, 10f).RowH(38f);
 
     // Setup's heading carries the refresh: it measures the checks again, and shows it is working until the node answers.
@@ -515,13 +536,18 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }
 
-    private Layout.Node HeldRow(string endpoint, int index)
+    /// <summary>What Forget drops an entry by: its machine name, or its address for an old entry that has none.</summary>
+    internal static string HeldKey(Pilot.Contracts.HeldGrant held) => held.Name ?? held.Address;
+
+    private Layout.Node HeldRow(Pilot.Contracts.HeldGrant grant, int index)
     {
+        var endpoint = HeldKey(grant);
+        var title = grant.Name is { } name && grant.Address.Length > 0 ? $"{name} · {grant.Address}" : endpoint;
         var row = Layout.Builder.HStack(
                 Layout.Builder.Spacer().Bg(Ok).WFixed(StripeWidth).HStar(),
                 Layout.Builder.VStack(
-                        Layout.Builder.Text(endpoint, 14f, Bright).RowH(22f),
-                        Layout.Builder.Text("you may command it", 11f, Dim).RowH(18f))
+                        Layout.Builder.Text(title, 14f, Bright).RowH(22f),
+                        Layout.Builder.Text(grant.Name is null ? "you may command it (held by address)" : "you may command it", 11f, Dim).RowH(18f))
                     .WFixed(TitleWidth),
                 Layout.Builder.Text("Forget drops the token: its rows turn watch-only, with Connect offered", 12f, Body).WStar(),
                 Layout.Builder.HStack(
@@ -580,20 +606,55 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         var state = setting.Source == SettingSources.CommandLine ? "from the node's command line, which wins"
             : setting.Pending ? $"saved as {(setting.Saved ?? "the default")}: applies at the next start"
             : setting.Source == SettingSources.File ? "saved" : "default";
-        var row = Layout.Builder.HStack(
-                Layout.Builder.Spacer().Bg(setting.Pending ? Todo : Faint).WFixed(StripeWidth).HStar(),
-                Layout.Builder.VStack(
-                        Layout.Builder.Text(setting.Label, 14f, Bright).RowH(22f),
-                        Layout.Builder.Text(state, 11f, setting.Pending ? Todo : Dim).RowH(18f))
-                    .WFixed(TitleWidth),
-                Layout.Builder.VStack(
-                        setting.Many ? Editor(setting).HAuto() : Editor(setting).RowH(26f),
-                        Layout.Builder.Text(setting.Detail, 11f, Dim).WithTooltip(setting.Detail).RowH(18f))
-                    .WStar())
-            .WithGap(14f).Pad(8f, 6f);
-        // Repo roots grow a line per folder: their row takes the height its lines ask for.
-        row = setting.Many ? row.HAuto() : row.RowH(RowHeight);
+        // Beside its title when the editor's line fits the room left of it; else under the title with the row's whole width, where
+        // what still does not fit flows onto lines of its own (#770), so no pill or chip is cut by the page's edge.
+        var measure = TextWidth();
+        var need = EditorNeed(setting, measure);
+        var room = PageWidth ?? WideRoom;
+        var stacked = room - SlackAround - 14f - TitleWidth < need;
+        var width = Math.Max(0f, room - SlackAround - (stacked ? 0f : 14f + TitleWidth));
+        var stripe = Layout.Builder.Spacer().Bg(setting.Pending ? Todo : Faint).WFixed(StripeWidth).HStar();
+        var title = Layout.Builder.VStack(
+            Layout.Builder.Text(setting.Label, 14f, Bright).Selectable().RowH(22f),
+            Layout.Builder.Text(state, 11f, setting.Pending ? Todo : Dim).Selectable().RowH(18f));
+        var body = Layout.Builder.VStack(
+            Editor(setting, width, need, measure),
+            Layout.Builder.Text(setting.Detail, 11f, Dim).WithTooltip(setting.Detail).Selectable().RowH(18f));
+        Layout.Node row;
+        if (stacked)
+        {
+            // WStar: as the range row's, the row is Auto wide by default and an Auto stack counts its Star body as nothing.
+            row = Layout.Builder.HStack(stripe, Layout.Builder.VStack(title.WStar().HAuto(), body.WithGap(4f).WStar().HAuto()).WithGap(4f).WStar().HAuto())
+                .WithGap(14f).Pad(8f, 6f).WStar().HAuto();
+        }
+        else
+        {
+            row = Layout.Builder.HStack(stripe, title.WFixed(TitleWidth), body.WStar()).WithGap(14f).Pad(8f, 6f);
+            // Repo roots grow a line per folder: their row takes the height its lines ask for.
+            // WStar as the range row's: an Auto wide row counts its Star body as nothing, so the list's wrapping controls measured against no width.
+            row = setting.Many ? row.WStar().HAuto() : row.RowH(RowHeight);
+        }
         return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
+    }
+
+    // What a setting's editor asks for on one line, in design units: its pills (and the reset after them) or its field. A list is a chip a line,
+    // each cut to the room it has, so it asks for what a chip can read in.
+    private const float EditorGap = 6f;
+    private const float PillPad = 10f;
+    private const float FieldWidth = 220f;
+    private const float ListNeed = 240f;
+
+    private static float EditorNeed(SettingRow setting, Func<string, float, float> measure)
+    {
+        if (setting.Many)
+        {
+            return ListNeed;
+        }
+        float PillOf(string label) => measure(label, 12f) + 2 * PillPad;
+        var width = setting.Choices.Length > 0
+            ? setting.Choices.Sum(c => PillOf(c == "none" ? "default" : c)) + (setting.Choices.Length - 1) * EditorGap
+            : FieldWidth;
+        return setting.Saved is not null && setting.Source != SettingSources.CommandLine ? width + EditorGap + PillOf("reset") : width;
     }
 
     // A role's range (#599): its key ends in -range and its choices are the line of pairs, in order.
@@ -656,14 +717,6 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         return next.Item1 > next.Item2 || next == now ? null : next;
     }
 
-    private static string ShortPair(string pair)
-    {
-        var cut = pair.IndexOf('-');
-        var model = cut < 0 ? pair : pair[..cut];
-        var effort = cut < 0 ? "" : pair[(cut + 1)..];
-        return $"{(model.Length > 0 ? char.ToUpperInvariant(model[0]) : '?')} {(effort == "medium" ? "med" : effort)}".TrimEnd();
-    }
-
     private static string SourceWords(SettingRow setting) => setting.Source switch
     {
         SettingSources.Fleet => "set for the fleet",
@@ -673,15 +726,57 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         _ => setting.Source,
     };
 
+    // What the room around a range row's line of pairs takes, in design units: the page's gutters (2 x 16), the row's padding (2 x 8), the
+    // stripe (4), a gap (14) and a scroll bar's slack, so the width worked out is never more than the line gets.
+    private const float SlackAround = 2 * Gutter + 16f + StripeWidth + 14f + 16f;
+    private const float WideRoom = 900f;
+    private const float PairGap = 2f;
+    private const float TextMargin = 6f;
+
+    // A text's width in design units: measured with the font the page draws with, or a guess where there is none (a terminal, before a first render).
+    // One measure context and one memo a frame (Tree starts them over), not a context per row: the same text at the same size is measured once.
+    private Func<string, float, float>? _measured;
+
+    private Func<string, float, float> TextWidth()
+    {
+        if (_measured is { } cached)
+        {
+            return cached;
+        }
+        if (PageWidth is null || string.IsNullOrEmpty(FontPath))
+        {
+            return _measured = (text, size) => text.Length * size * 0.6f;
+        }
+        var context = MeasureContext();
+        var scale = Scale.X <= 0f ? 1f : Scale.X;
+        var memo = new Dictionary<(string, float), float>();
+        return _measured = (text, size) =>
+        {
+            if (!memo.TryGetValue((text, size), out var width))
+            {
+                memo[(text, size)] = width = context.MeasureText(text, size).Width / scale;
+            }
+            return width;
+        };
+    }
+
     private Layout.Node RangeRowNode(SettingRow setting, int index)
     {
         var key = setting.Key;
         var handle = _handle.GetValueOrDefault(key, "");
         var fleet = _fleetScope.GetValueOrDefault(key);
         var (def, max) = HandlesOf(setting, fleet);
+        var n = setting.Choices.Length;
+        var measure = TextWidth();
+        // Beside its title when the line has room for a cell a pair can read in; else under the title, with the row's whole width.
+        var room = PageWidth ?? WideRoom;
+        var beside = room - SlackAround - 14f - TitleWidth;
+        var stacked = beside < n * 30f;
+        var lineWidth = Math.Max(n * 12f, stacked ? room - SlackAround : beside);
+        var cellWidth = RangeCaptions.Column(n, lineWidth, PairGap);
+        var form = RangeCaptions.LabelForm(setting.Choices, cellWidth - 2 * 2f, TextMargin, text => measure(text, 11f));
         var cells = new List<Layout.Node>();
-        var marks = new List<Layout.Node>();
-        for (var i = 0; i < setting.Choices.Length; i++)
+        for (var i = 0; i < n; i++)
         {
             var pair = setting.Choices[i];
             var at = i;
@@ -689,28 +784,51 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             var inside = i > def && i < max;
             var allowed = PressedRange(setting, EditedText(setting, fleet), i, handle) is not null;
             var action = $"settings:{key}:pair:{pair}";
-            var cell = Layout.Builder.Text(ShortPair(pair), 11f, end ? Bright : allowed || inside ? Body : Faint, TextAlign.Center).Pad(2f, 4f).WStar().HFixed(ControlH)
-                .Bg(end ? Chosen : inside ? FieldBg : Button).WithTooltip(pair);
-            if (allowed)
-            {
-                cell = cell.BgHover(end ? Chosen : ButtonHover).Follows(new HitResult.ButtonHit(action), _ => PickPair(setting, at));
-            }
+            var label = RangeCaptions.Label(pair, form);
+            // A pair whose press is with the node reads as working, as the done mark does: off the Button blue that says it can be pressed,
+            // onto the menu ground in the dim ink (4.6:1; Dim on Button is only 3.3:1). A handle's pair keeps its Chosen mark and its Bright ink
+            // (5.1:1; Body on Chosen is only 3.7:1), as a chosen working Pill does: it shows it is working by the missing hit alone.
+            Layout.Node CellOf(bool working) => Layout.Builder.Text(label, 11f, end ? Bright : working ? Dim : allowed || inside ? Body : Faint, TextAlign.Center).Pad(2f, 4f).WStar().HFixed(ControlH)
+                .Bg(end ? Chosen : working || inside ? FieldBg : Button).WithTooltip(pair);
+            // A pair that can be pressed asks the node, so it goes through Presses (working at once, no second press while it is out);
+            // one that cannot is a plain control label.
+            var cell = allowed
+                ? Presses.Button(action, action,
+                    () => CellOf(false).BgHover(end ? Chosen : ButtonHover).Follows(new HitResult.ButtonHit(action), _ => PickPair(setting, at)),
+                    _ => CellOf(true), doneMark: false)
+                : CellOf(false);
             cells.Add(cell);
-            var label = i == def && i == max ? "default · max" : i == def ? "default" : i == max ? "max" : "";
-            marks.Add(Layout.Builder.Text(label, 10f, handle.Length > 0 && label.StartsWith(handle, StringComparison.Ordinal) ? Bright : Body, TextAlign.Center).WStar().HFixed(14f));
         }
-        var scope = Layout.Builder.HStack(
-                Pill("this node", $"settings:{key}:scope:node", () => SetScope(key, false), chosen: !fleet),
-                Pill("fleet", $"settings:{key}:scope:fleet", () => SetScope(key, true), chosen: fleet),
-                Pill("default handle", $"settings:{key}:handle:default", () => SetHandle(key, "default"), chosen: handle == "default"),
-                Pill("max handle", $"settings:{key}:handle:max", () => SetHandle(key, "max"), chosen: handle == "max"),
-                Layout.Builder.Spacer().WStar())
-            .WithGap(6f).HFixed(ControlH);
-        var lines = new List<Layout.Node>
+        var pairLines = new List<Layout.Node>();
+        if (form > 0)
         {
-            Layout.Builder.HStack([.. cells]).WithGap(2f).HFixed(ControlH),
-            Layout.Builder.HStack([.. marks]).WithGap(2f).HFixed(14f),
-            Layout.Builder.Text($"{(fleet ? "setting the fleet's range" : "setting this node's range")}: a press moves {(handle.Length > 0 ? "the " + handle + " handle" : "the nearer handle")}", 11f, Dim).RowH(16f),
+            // The effort alone says nothing of the model: it shows once over its run of pairs, in full when the run is wide enough.
+            var models = RangeCaptions.Groups(setting.Choices).Select(g =>
+            {
+                var span = (g.To - g.From + 1) * cellWidth + (g.To - g.From) * PairGap;
+                var name = measure(g.Model, 10f) + TextMargin <= span ? g.Model : g.Model.Length > 0 ? char.ToUpperInvariant(g.Model[0]).ToString() : "?";
+                return (name, g.From, g.To);
+            });
+            pairLines.Add(CaptionLine(models, n, lineWidth, Dim, null, ""));
+        }
+        // WStar on every line: a stack of Star cells is Auto wide by default, and measures to its gaps alone, so its cells were given no width.
+        pairLines.Add(Layout.Builder.HStack([.. cells]).WithGap(PairGap).WStar().HFixed(ControlH));
+        var captions = RangeCaptions.Place(n, def, max, lineWidth, PairGap, TextMargin, text => measure(text, 10f));
+        foreach (var line in captions.Select(c => c.Line).Distinct().Order())
+        {
+            pairLines.Add(CaptionLine(captions.Where(c => c.Line == line).Select(c => (c.Text, c.From, c.To)), n, lineWidth, Body, Bright, handle));
+        }
+        // The four pills flow onto a second line where the row is too narrow for them on one: Auto wide pills in a stack ran past the page's edge (#770).
+        var scope = Layout.Builder.WrapH(
+                Pill("this node", $"settings:{key}:scope:node", () => SetScope(key, false), chosen: !fleet).HFixed(ControlH),
+                Pill("fleet", $"settings:{key}:scope:fleet", () => SetScope(key, true), chosen: fleet).HFixed(ControlH),
+                Pill("default handle", $"settings:{key}:handle:default", () => SetHandle(key, "default"), chosen: handle == "default").HFixed(ControlH),
+                Pill("max handle", $"settings:{key}:handle:max", () => SetHandle(key, "max"), chosen: handle == "max").HFixed(ControlH))
+            .WithGap(6f).WithLineGap(4f).WStar().HAuto();
+        var pressLine = $"{(fleet ? "setting the fleet's range" : "setting this node's range")}: a press moves {(handle.Length > 0 ? "the " + handle + " handle" : "the nearer handle")}";
+        var lines = new List<Layout.Node>(pairLines)
+        {
+            Layout.Builder.Text(pressLine, 11f, Dim).Whole(pressLine).Selectable().RowH(16f),
             scope,
         };
         if ((setting.Saved is not null && setting.Source != SettingSources.CommandLine && !fleet) || (fleet && setting.FleetValue is not null))
@@ -720,22 +838,35 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             lines.Add(Layout.Builder.HStack(NodePill(fleet ? "reset the fleet's" : "reset", action, () => Act(Verbs.Set, args, $"{setting.Label}: back to the default…", action)), Layout.Builder.Spacer().WStar()).HFixed(ControlH));
         }
         var fleetLine = setting.FleetValue is { } fv ? $"the fleet's range is {fv}" : "no fleet range is set";
-        lines.Add(Layout.Builder.Text($"{setting.Value} · {SourceWords(setting)} · {fleetLine}", 11f, Body).WithTooltip(setting.Detail).RowH(18f));
+        // The tooltip is the line's own whole text: the page cuts it with an ellipsis where it is narrow, and the fleet's range would be unreadable (#887).
+        var summaryLine = $"{setting.Value} · {SourceWords(setting)} · {fleetLine}";
+        lines.Add(Layout.Builder.Text(summaryLine, 11f, Body).Whole(summaryLine).Selectable().RowH(18f));
         if (setting.Deviations.Length > 0)
         {
             var text = "differs from the fleet's: " + string.Join("; ", setting.Deviations.Select(d => $"{d.Node} runs {d.Value}"));
             lines.Add(WrappedProse.Paragraphs(text, 11f, Todo, 40));
         }
-        lines.Add(Layout.Builder.Text(setting.Detail, 11f, Dim).WithTooltip(setting.Detail).RowH(18f));
-        var row = Layout.Builder.HStack(
-                Layout.Builder.Spacer().Bg(setting.Deviations.Length > 0 ? Todo : Faint).WFixed(StripeWidth).HStar(),
-                Layout.Builder.VStack(
-                        Layout.Builder.Text(setting.Label, 14f, Bright).RowH(22f),
-                        Layout.Builder.Text(SourceWords(setting), 11f, Dim).RowH(18f))
-                    .WFixed(TitleWidth),
-                Layout.Builder.VStack([.. lines]).WithGap(4f).WStar().HAuto())
-            .WithGap(14f).Pad(8f, 6f).HAuto();
+        lines.Add(Layout.Builder.Text(setting.Detail, 11f, Dim).WithTooltip(setting.Detail).Selectable().RowH(18f));
+        var title = Layout.Builder.VStack(
+            Layout.Builder.Text(setting.Label, 14f, Bright).Selectable().RowH(22f),
+            Layout.Builder.Text(SourceWords(setting), 11f, Dim).Selectable().RowH(18f));
+        var body = Layout.Builder.VStack([.. lines]).WithGap(4f);
+        var stripe = Layout.Builder.Spacer().Bg(setting.Deviations.Length > 0 ? Todo : Faint).WFixed(StripeWidth).HStar();
+        var row = (stacked
+                ? Layout.Builder.HStack(stripe, Layout.Builder.VStack(title.WStar().HAuto(), body.WStar().HAuto()).WithGap(4f).WStar().HAuto())
+                : Layout.Builder.HStack(stripe, title.WFixed(TitleWidth), body.WStar().HAuto()))
+            // WStar: the row is Auto wide by default, and an Auto stack counts its Star body as nothing, so it was as wide as the stripe and the title and no more.
+            .WithGap(14f).Pad(8f, 6f).WStar().HAuto();
         return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
+    }
+
+    // One line of captions under (or, for the models, over) the line of pairs: runs over their columns, spacers between, each run as wide as its columns.
+    private static Layout.Node CaptionLine(IEnumerable<(string Text, int From, int To)> runs, int columns, float width, RGBAColor32 colour, RGBAColor32? chosen, string handle)
+    {
+        var parts = RangeCaptions.Segments(runs, columns, width, PairGap).Select(s => s.Text is { } text
+            ? Layout.Builder.Text(text, 10f, chosen is { } bright && handle.Length > 0 && text.StartsWith(handle, StringComparison.Ordinal) ? bright : colour, TextAlign.Center).Selectable().WStar(s.Width).HFixed(14f)
+            : Layout.Builder.Spacer().WStar(s.Width).HFixed(14f));
+        return Layout.Builder.HStack([.. parts]).WStar().HFixed(14f);
     }
 
     private void SetScope(string key, bool fleet)
@@ -763,8 +894,14 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     }
 
     // How a setting is changed: a pill per choice, a field (Enter saves), or for repo roots each folder with an x and a field to add one.
-    private Layout.Node Editor(SettingRow setting)
+    // It has `width` design units: on one line where its `need` fits, else its pills flow onto lines of their own (#770).
+    private Layout.Node Editor(SettingRow setting, float width, float need, Func<string, float, float> measure)
     {
+        if (setting.Many)
+        {
+            // WStar: the list's controls wrap, and a wrap in an Auto wide stack measures against no width, so each pill took a line of its own.
+            return ListEditor(setting, width, measure).WStar().HAuto();
+        }
         var parts = new List<Layout.Node>();
         if (setting.Choices.Length > 0)
         {
@@ -774,16 +911,12 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
                 var action = $"settings:{setting.Key}:{choice}";
                 // The wire value for "leave it to Claude Code" is none; the button says default, as the help line does.
                 var label = choice == "none" ? "default" : choice;
-                parts.Add(NodePill(label, action, () => Act(Verbs.Set, [setting.Key, choice], $"{setting.Label}: {label}…", action), chosen));
+                parts.Add(NodePill(label, action, () => Act(Verbs.Set, [setting.Key, choice], $"setting {setting.Label} to {label}…", action), chosen, working: SettingWord, doneMark: false));
             }
-        }
-        else if (setting.Many)
-        {
-            return ListEditor(setting);
         }
         else
         {
-            parts.Add(Field(setting, setting.Value, text => [setting.Key, text]).WFixed(220f));
+            parts.Add(Field(setting, setting.Value, text => [setting.Key, text]).WFixed(Math.Min(FieldWidth, width)));
         }
         if (setting.Saved is not null && setting.Source != SettingSources.CommandLine)
         {
@@ -791,8 +924,12 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             // "reset" takes the saved value out (back to what the node does unset); no choice on the row reads the same.
             parts.Add(NodePill("reset", action, () => Act(Verbs.Set, [setting.Key, "default"], $"{setting.Label}: back to the default…", action)));
         }
-        parts.Add(Layout.Builder.Spacer().WStar());
-        return Layout.Builder.HStack([.. parts]).WithGap(6f);
+        if (need <= width)
+        {
+            parts.Add(Layout.Builder.Spacer().WStar());
+            return Layout.Builder.HStack([.. parts]).WithGap(EditorGap).RowH(ControlH);
+        }
+        return Layout.Builder.WrapH([.. parts.Select(p => p.HFixed(ControlH))]).WithGap(EditorGap).WithLineGap(4f).WStar().HAuto();
     }
 
     // The lists of repos (named by folder) offer the node's repos to choose from; repo roots hold folders, which are not repos.
@@ -809,7 +946,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// A list setting: each entry as a chip with a × (the list without it is what is sent), then for a list of repos a choice of
     /// the node's repos by name with an Add (and for repo-trackers the tracker), and a free entry for a folder outside them.
     /// </summary>
-    private Layout.Node ListEditor(SettingRow setting)
+    private Layout.Node ListEditor(SettingRow setting, float width, Func<string, float, float> measure)
     {
         var key = setting.Key;
         var entries = Roots(setting);
@@ -828,7 +965,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         }
         foreach (var entry in entries)
         {
-            stack.Add(Layout.Builder.HStack(Chip(setting, entry, entries), Layout.Builder.Spacer().WStar()).RowH(ControlH));
+            stack.Add(Layout.Builder.HStack(Chip(setting, entry, entries, width, measure), Layout.Builder.Spacer().WStar()).RowH(ControlH));
         }
         var controls = new List<Layout.Node>();
         var offering = IsRepoList(key) && LoadRepos is not null;
@@ -836,7 +973,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         {
             controls.Add(read.Repos is null
                 ? Idle(read.ReposProblem is null ? "reading repos…" : "repos not read", read.ReposProblem is null ? "the node's repos are being read" : $"the node did not list its repos: {read.ReposProblem}", Button)
-                : Pill(pick is null ? "Choose a repo ▾" : $"{pick} ▾", $"settings:{key}:choose", () => Toggle(key), chosen: pick is not null).HFixed(ControlH));
+                : ChoosePill(key, pick));
             if (trackers)
             {
                 foreach (var which in new[] { "github", "shortcut" })
@@ -852,13 +989,13 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         var field = Field(setting, offering ? "or a folder's path, then Enter" : "add a folder, then Enter", text => [key, .. entries, trackers && !HasTracker(text) ? $"{text}={tracker}" : text]);
         if (offering)
         {
-            controls.Add(Layout.Builder.Spacer().WStar());
-            stack.Add(Layout.Builder.HStack([.. controls]).WithGap(6f).RowH(ControlH));
+            // The pills flow onto a second line where the row is too narrow for them (a long picked repo's name widens its pill): an Auto wide stack ran past the page's edge.
+            stack.Add(Layout.Builder.WrapH([.. controls]).WithGap(6f).WithLineGap(4f).WStar().HAuto());
             if (choice.Opened == key && read.Repos is { } repos)
             {
                 stack.Add(Layout.Builder.HStack(Offered(key, repos, entries, pick), Layout.Builder.Spacer().WStar()).HAuto());
             }
-            stack.Add(Layout.Builder.HStack(field.WFixed(280f), Layout.Builder.Spacer().WStar()).RowH(ControlH));
+            stack.Add(Layout.Builder.HStack(field.WFixed(Math.Min(280f, width)), Layout.Builder.Spacer().WStar()).RowH(ControlH));
         }
         else
         {
@@ -867,14 +1004,23 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         return Layout.Builder.VStack([.. stack]).WithGap(6f);
     }
 
+    // The pill that opens the repo menu: the picked repo's name cut to a chip's room, the whole name on hover.
+    private Layout.Node ChoosePill(string key, string? pick)
+    {
+        var pill = Pill(pick is null ? "Choose a repo ▾" : $"{Elide(pick)} ▾", $"settings:{key}:choose", () => Toggle(key), chosen: pick is not null);
+        return (pick is null ? pill : pill.WithTooltip(pick)).HFixed(ControlH);
+    }
+
     private static bool HasTracker(string text) => text.EndsWith("=github", StringComparison.OrdinalIgnoreCase) || text.EndsWith("=shortcut", StringComparison.OrdinalIgnoreCase);
 
-    // An entry as a chip: its text (a long one elided in the middle, the whole on hover) and the × that sends the list without it.
-    private Layout.Node Chip(SettingRow setting, string entry, string[] entries)
+    // An entry as a chip: its text (a long one elided in the middle to the room the chip has, the whole on hover) and the × that sends the list without it.
+    private Layout.Node Chip(SettingRow setting, string entry, string[] entries, float width, Func<string, float, float> measure)
     {
         var action = $"settings:{setting.Key}:remove:{entry}";
+        // The room the text has: the chip's width less its padding (2 x 8), the × pill and a margin for a measure's rounding.
+        var budget = width - 2 * 8f - (measure("×", 12f) + 2 * PillPad) - TextMargin;
         return Layout.Builder.HStack(
-                Layout.Builder.Text(Elide(entry), 12f, Body, TextAlign.Center).WithTooltip(entry).Pad(8f, 4f).WAuto(),
+                Layout.Builder.Text(ElideToFit(entry, budget, measure), 12f, Body, TextAlign.Center).WithTooltip(entry).Selectable().Pad(8f, 4f).WAuto(),
                 // The × stays a typeset rune for want of a close glyph: SharpAstro/DIR.Lib#151.
                 NodePill("×", action, () => Act(Verbs.Set, [setting.Key, .. entries.Where(e => e != entry).DefaultIfEmpty("default")], $"{setting.Label}: removing {entry}…", action)))
             .WithGap(0f).Bg(FieldBg).WAuto().HFixed(ControlH);
@@ -933,12 +1079,41 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         System.Collections.Immutable.ImmutableInterlocked.Update(ref _choice, c => c with { Picked = c.Picked.Remove(key) });
 
     // Long text elided in the middle (a path's ends say the most); where it is shown the whole of it is on hover.
-    private static string Elide(string text) =>
-        text.Length <= ChipChars ? text : $"{text[..(ChipChars / 3)]}…{text[^(ChipChars - ChipChars / 3 - 1)..]}";
+    internal static string Elide(string text, int chars = ChipChars) =>
+        text.Length <= chars ? text : $"{text[..(chars / 3)]}…{text[^(chars - chars / 3 - 1)..]}";
+
+    // The most a chip's text is cut to (a path's drive and last folders, still), however narrow the room.
+    private const int LeastChars = 9;
+
+    // The text elided as little as the room (design units, at 12 units) allows, never past LeastChars and never longer than ChipChars.
+    // A binary search over the character counts (the elided text only gets shorter as the count falls): log2(35) measures, not up to 35 a chip a frame.
+    internal static string ElideToFit(string text, float room, Func<string, float, float> measure)
+    {
+        var most = Math.Min(text.Length, ChipChars);
+        if (most <= LeastChars || measure(Elide(text, most), 12f) <= room)
+        {
+            return Elide(text, most);
+        }
+        var low = LeastChars;
+        var high = most;
+        while (high - low > 1)
+        {
+            var mid = (low + high) / 2;
+            if (measure(Elide(text, mid), 12f) <= room)
+            {
+                low = mid;
+            }
+            else
+            {
+                high = mid;
+            }
+        }
+        return Elide(text, low);
+    }
 
     // A control that cannot be pressed now, in the shape of a pill.
     private static Layout.Node Idle(string label, string why, RGBAColor32 background) =>
-        Layout.Builder.Text(label, 12f, Dim, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(background).WithTooltip(why).HFixed(ControlH);
+        Layout.Builder.Text(label, 12f, Dim, TextAlign.Center).Selectable().Pad(10f, 4f).WAuto().Bg(background).WithTooltip(why).HFixed(ControlH);
 
     // A field's working id is its own: Enter sends, and the field says "saving…" until the node answers (a second Enter is ignored meanwhile).
     private Layout.Node Field(SettingRow setting, string placeholder, Func<string, string[]> args)
@@ -965,9 +1140,25 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private static string[] Roots(SettingRow setting) =>
         (setting.Saved ?? setting.Value).Split('\n', StringSplitOptions.RemoveEmptyEntries);
 
-    // A pill that asks the node, through the press helper: while its press is with the node it reads "label…", dimmed, with no hit.
-    private Layout.Node NodePill(string label, string action, Action onClick, bool chosen = false) =>
-        Presses.Button(action, action, () => Pill(label, action, onClick, chosen), _ => Pill(label, action, onClick, chosen, working: true));
+    /// <summary>What a setting's choice pill reads while its <c>set</c> is with the node (the owner, 2026-11-07: "when clicking 'on' instead of 'done' it should show 'Setting...'").</summary>
+    internal const string SettingWord = "setting";
+
+    /// <summary>
+    /// The header's line for a reply: the node's own words when it said more than a bare "done"; a single value taken with a bare
+    /// "done" names the setting and what it is now ("LAN set to off", the wire's
+    /// none read as "default", as its pill says); anything else, a list's change and a refusal included, is the node's own
+    /// words on one line, as the header has one.
+    /// </summary>
+    internal static string SaidOf(SettingsReply reply) =>
+        reply.Kind == ReplyKind.Done && reply.Row is { Many: false } set && reply.Line == SettingsCommands.BareDone
+            ? $"{set.Label} set to {(set.Value == "none" ? "default" : set.Value.ReplaceLineEndings(" ").Trim())}"
+            : reply.Line.ReplaceLineEndings(" ").Trim();
+
+    // A pill that asks the node, through the press helper: while its press is with the node it reads "label…" (or "working…" when
+    // given), dimmed, with no hit.
+    private Layout.Node NodePill(string label, string action, Action onClick, bool chosen = false, string? working = null, bool doneMark = true) =>
+        // A choice (given its working word) shows the node's new value once taken, not "done" in place of the pill.
+        Presses.Button(action, action, () => Pill(label, action, onClick, chosen), _ => Pill(working ?? label, action, onClick, chosen, working: true), doneMark);
 
     // A pill whose verb is out shows "…" after its label and does not click again until the node answers.
     private static Layout.Node Pill(string label, string action, Action onClick, bool chosen = false, bool working = false)
@@ -995,13 +1186,16 @@ internal sealed record SettingsReply(string Line, ReplyKind Kind = ReplyKind.Don
 /// <summary>The Settings page's verbs on the node, for either host: what became of each, in a line, with the changed row.</summary>
 internal static class SettingsCommands
 {
+    /// <summary>A reply's line when the node took the verb and said nothing of how (no <c>Way</c>).</summary>
+    public const string BareDone = "done";
+
     public static async Task<SettingsReply> SendAsync(NodeClient client, string verb, string[] args, string who, CancellationToken cancellationToken)
     {
         try
         {
             var envelope = await client.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.NodeTarget, Args = args, Who = who }, cancellationToken);
             return envelope.Success && envelope.Response is { Ok: true } result
-                ? new SettingsReply(result.Way ?? "done", ReplyKind.Done, result.Setting)
+                ? new SettingsReply(result.Way ?? BareDone, ReplyKind.Done, result.Setting)
                 : new SettingsReply($"refused: {envelope.Response?.Error ?? envelope.Error}", ReplyKind.Refused);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or System.Text.Json.JsonException)

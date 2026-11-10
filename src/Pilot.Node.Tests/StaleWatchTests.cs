@@ -180,18 +180,29 @@ public sealed class StaleWatchTests
     }
 
     [Fact]
-    public async Task AReminderClosesOnceTheCardItRemindsOfIsAnswered()
+    public async Task ARungAgainCardClosesWithItsAnswerAndLeavesNoReminderBehind()
     {
         Fly(TimeSpan.FromHours(1));
         var card = _state.RaiseCard(CardBin.Ring, "x", Verbs.FlightTarget("DIR178"), "question");
         _clock.Now += TimeSpan.FromHours(1.5);
         await _watch.TickAsync(Ct);
-        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == StaleWatch.ReminderKind);
+        _state.Cards(openOnly: true).Single(c => c.Id == card.Id).RungAgainAt.ShouldNotBeNull();
 
         _state.CloseCard(card.Id, "answered", "person");
         await _watch.TickAsync(Ct);
 
-        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == StaleWatch.ReminderKind);
+        _state.Cards(openOnly: true).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AReminderLeftOpenByAnEarlierNodeIsClosedAtTheFirstTick()
+    {
+        Fly(TimeSpan.FromHours(1));
+        var old = _state.RaiseCard(CardBin.ForYou, "stale-card-reminder", Verbs.CardTarget("c99"), "Still ringing after 2 h: question");
+
+        await _watch.TickAsync(Ct);
+
+        _state.Cards().Single(c => c.Id == old.Id).State.ShouldBe(CardState.Closed);
     }
 
     [Fact]
@@ -221,7 +232,7 @@ public sealed class StaleWatchTests
 
         _said.ShouldBeEmpty();
         _tracker.Sets.ShouldBeEmpty();
-        _state.Cards().ShouldContain(c => c.Kind == StaleWatch.ActedKind && c.Title.Contains("told its worker of a job that had ended"));
+        _state.Cards().ShouldContain(c => c.Kind == StaleWatch.ActedKind && c.Title.Contains("told its worker of an ended job"));
     }
 
     [Fact]
@@ -248,8 +259,25 @@ public sealed class StaleWatchTests
         await _watch.TickAsync(Ct);
         await _watch.TickAsync(Ct);
 
-        _state.Cards().Count(c => c.Kind == StaleWatch.ReminderKind).ShouldBe(1);
-        _state.Cards().ShouldContain(c => c.Kind == StaleWatch.ActedKind && c.Title.Contains(card.Id));
+        _state.Cards().Count(c => c.Kind == "x").ShouldBe(1);
+        _state.Cards().Single(c => c.Id == card.Id).RungAgainAt.ShouldBe(_clock.Now);
+        // The card itself is the only trace: no log line or second card about it, and it says how long it has waited (#797 rule 7).
+        _state.Cards().Count(c => c.Kind == StaleWatch.ActedKind).ShouldBe(0);
+        _state.Cards().Single(c => c.Id == card.Id).Summary.ShouldNotBeNull().ShouldEndWith("Waiting 1 h for you.");
+    }
+
+    [Fact]
+    public async Task ARingAgainCardKeepsOneWaitingMarkAndTheSameTitle()
+    {
+        Fly(TimeSpan.FromHours(1));
+        var card = _state.RaiseCard(CardBin.Ring, "x", Verbs.FlightTarget("DIR178"), "question", summary: "Answer it in the chat.");
+
+        _state.RingAgain(card.Id, "2 h");
+        _state.RingAgain(card.Id, "3 h");
+
+        var rung = _state.Cards().Single(c => c.Id == card.Id);
+        rung.Summary.ShouldBe("Answer it in the chat. Waiting 3 h for you.");
+        rung.Title.ShouldBe("question");
     }
 
     [Fact]
@@ -273,6 +301,116 @@ public sealed class StaleWatchTests
         await _watch.TickAsync(Ct);
         Row().StaleCause.ShouldNotBe(first.StaleCause);
         Row().StaleSince.ShouldBe(_clock.Now);
+    }
+
+    [Fact]
+    public async Task ALastEventTenHoursAgoIsTheLastMoveWhateverStaleSaysAndAFlightThatIsNotStaleCarriesOneToo()
+    {
+        Fly(TimeSpan.FromHours(30));
+        _state.PutFlight(Row() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "r", StartedAt = Start - TimeSpan.FromHours(11), FinishedAt = Start - TimeSpan.FromHours(10) } });
+
+        await _watch.TickAsync(Ct);
+
+        Row().StaleSince.ShouldBe(Start);
+        Row().LastMovedAt.ShouldBe(Start - TimeSpan.FromHours(10));
+        Row().LastMove.ShouldBe("review passed");
+
+        // A flight that is not stale at all carries its last move too.
+        _state.PutFlight(Row() with { Code = "DIR179", Branch = "flight/dir179", CreatedAt = Start - TimeSpan.FromMinutes(20), Review = null, StaleCause = null, StaleSince = null, StaleSummary = null, LastMovedAt = null, LastMove = null });
+        await _watch.TickAsync(Ct);
+        var fresh = _state.Flights().Single(f => f.Code == "DIR179");
+        fresh.StaleCause.ShouldBeNull();
+        fresh.LastMovedAt.ShouldBe(Start - TimeSpan.FromMinutes(20));
+        fresh.LastMove.ShouldBe("flight created");
+    }
+
+    [Fact]
+    public async Task TheLastMoveMovesForwardWhenALegFinishes()
+    {
+        Fly(TimeSpan.FromHours(2));
+        await _watch.TickAsync(Ct);
+        Row().LastMovedAt.ShouldBe(Start - TimeSpan.FromHours(2));
+
+        _clock.Now += TimeSpan.FromMinutes(30);
+        _state.PutLeg(new LegRow { Flight = "DIR178", Name = "main", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done, FinishedAt = _clock.Now });
+        await _watch.TickAsync(Ct);
+
+        Row().LastMovedAt.ShouldBe(_clock.Now);
+        Row().LastMove.ShouldBe("leg main done");
+    }
+
+    [Fact]
+    public async Task BetweenTicksTheLoopOnlyRefreshesLastMovesAndAWholeTickComesEveryFiveMinutes()
+    {
+        Fly(TimeSpan.FromHours(19));
+
+        // The first wake starts the clock for the tick; it only refreshes: the last move is there, no raise was made.
+        await _watch.StepAsync(Ct);
+        Row().LastMovedAt.ShouldBe(Start - TimeSpan.FromHours(19));
+        _tracker.Sets.ShouldBeEmpty();
+        Row().StaleSummary.ShouldBeNull();
+
+        // Twenty seconds on a leg's finish is recorded (it finished seven hours ago, so the flight is still not moving: a flight that
+        // moved within half the bound is never stale): the row follows at the next wake, still with no tick (no raise, no summary).
+        _clock.Now += TimeSpan.FromSeconds(20);
+        var finished = Start - TimeSpan.FromHours(7);
+        _state.PutLeg(new LegRow { Flight = "DIR178", Name = "main", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done, FinishedAt = finished });
+        await _watch.StepAsync(Ct);
+        Row().LastMovedAt.ShouldBe(finished);
+        Row().LastMove.ShouldBe("leg main done");
+        _tracker.Sets.ShouldBeEmpty();
+
+        // Five minutes after the first wake the whole tick runs.
+        _clock.Now = Start + TimeSpan.FromMinutes(5);
+        await _watch.StepAsync(Ct);
+        Row().StaleSummary.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task ATickThatThrowsIsTriedAgainAfterAWholeIntervalNotAtTheNextRefresh()
+    {
+        Fly(TimeSpan.FromHours(1));
+        var reads = 0;
+        var fail = true;
+        _watch.Bounds = () =>
+        {
+            reads++;
+            return fail ? throw new InvalidOperationException("boom") : new StaleBounds();
+        };
+        await _watch.StepAsync(Ct);
+
+        _clock.Now = Start + TimeSpan.FromMinutes(5);
+        await Should.ThrowAsync<InvalidOperationException>(() => _watch.StepAsync(Ct));
+        reads.ShouldBe(1);
+
+        // The wakes in between only refresh (the failing tick is not run again); the row still follows.
+        _state.PutLeg(new LegRow { Flight = "DIR178", Name = "main", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done, FinishedAt = _clock.Now });
+        for (var i = 0; i < 14; i++)
+        {
+            _clock.Now += TimeSpan.FromSeconds(20);
+            await _watch.StepAsync(Ct);
+        }
+        reads.ShouldBe(1);
+        Row().LastMove.ShouldBe("leg main done");
+
+        // A whole interval after the failed tick it runs again, and goes through once it can.
+        fail = false;
+        _clock.Now = Start + TimeSpan.FromMinutes(10);
+        await _watch.StepAsync(Ct);
+        reads.ShouldBe(2);
+    }
+
+    [Fact]
+    public void TheRefreshReadsOnlyInAirFlights()
+    {
+        Fly(TimeSpan.FromHours(2));
+        var flying = Row();
+        _state.PutFlight(flying with { Code = "DIR179", Branch = "flight/dir179", State = FlightState.Landed });
+        _state.PutFlight(flying with { Code = "DIR180", Branch = "flight/dir180", FoldedInto = "DIR178" });
+
+        _watch.RefreshLastMoves();
+
+        _state.Flights().Where(f => f.LastMovedAt is not null).Select(f => f.Code).ShouldBe(["DIR178"]);
     }
 
     [Fact]

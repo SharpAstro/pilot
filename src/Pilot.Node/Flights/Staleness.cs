@@ -84,6 +84,9 @@ public sealed record StaleItem
     /// <summary>The bound it passes, or is half way to, in words (<c>12 h</c>, <c>2 holds</c>).</summary>
     public required string Bound { get; init; }
 
+    /// <summary>How long its flight has not moved (now minus its last move); null for an item that is not about a flight's progress (a card).</summary>
+    public TimeSpan? Idle { get; init; }
+
     /// <summary>The line the digest and the brief use.</summary>
     public string Line => $"{Subject} {Kind.ToString().ToLowerInvariant()} {AgeText} (bound {Bound}): waits on {WaitsOn}. Next: {Action}.";
 }
@@ -92,7 +95,7 @@ public sealed record StaleItem
 public sealed record StalenessReading(IReadOnlyList<StaleItem> Stale, IReadOnlyList<StaleItem> Nearing);
 
 /// <summary>
-/// A pure reading of what has gone stale (#736): no I/O, the time passed in. A flight open too long, a PR with green CI open too long, a
+/// A pure reading of what has gone stale (#736; a flight on the owner's hold is skipped, it is parked on purpose and the digest and summary say so): no I/O, the time passed in. A flight open too long, a PR with green CI open too long, a
 /// leg rechecking too long, a card ringing too long, a hold that passed its timeout more than once.
 /// </summary>
 public static class Staleness
@@ -117,21 +120,29 @@ public static class Staleness
             }
         }
 
-        foreach (var flight in flights.Where(f => f is { State: not FlightState.Landed, FoldedInto: null, MovedTo: null }))
+        // A held flight is waiting on its owner on purpose, so it is never read as stale or nearing it.
+        foreach (var flight in flights.Where(f => InAir(f) && f.OnHold is null))
         {
             var mine = legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order).ToList();
             var flightCards = cards.Where(c => c.Subject == Verbs.FlightTarget(flight.Code) || c.Subject.StartsWith(Verbs.FlightTarget(flight.Code) + "/", StringComparison.Ordinal)).ToList();
-            var (events, lastMove) = Events(flight, mine, flightCards, pullRequests, zone);
+            var (events, last) = Events(flight, mine, flightCards, pullRequests, zone);
+            var lastMove = last.At;
+            var idle = now - lastMove;
             string[] Timeline() => [.. events.Where(e => e.At >= lastMove).OrderBy(e => e.At).Select(e => $"{Local(e.At, zone)} {e.Text}")];
 
-            // The flight open too long.
+            // The flight open too long, and not moving: one that moved within half the bound (a leg started minutes ago) is at work, not
+            // stale, however long it has been open. Its row read "stale · no progress for 12 m" for flights released from a hold and
+            // flying again (SE1, 2026-11-09): a mark that says it moved in the same breath as it says it is stuck.
             var openFor = now - flight.CreatedAt;
             var (waits, action) = Waits(flight, mine, flightCards, jobs, pullRequests);
-            Add(new StaleItem
+            if (idle >= TimeSpan.FromHours(bounds.FlightHours) / 2)
             {
-                Kind = StaleKind.Flight, Subject = flight.Code, Flight = flight.Code, Age = openFor, AgeText = Say(openFor), WaitsOn = waits, Action = action,
-                Timeline = Timeline(), Cause = $"open {Say(openFor)}, waiting on {waits}", Bound = Hours(bounds.FlightHours),
-            }, TimeSpan.FromHours(bounds.FlightHours));
+                Add(new StaleItem
+                {
+                    Kind = StaleKind.Flight, Subject = flight.Code, Flight = flight.Code, Age = openFor, AgeText = Say(openFor), WaitsOn = waits, Action = action,
+                    Timeline = Timeline(), Cause = $"open {Say(openFor)}, waiting on {waits}", Bound = Hours(bounds.FlightHours), Idle = idle,
+                }, TimeSpan.FromHours(bounds.FlightHours));
+            }
 
             // Its PR open with green CI.
             if (flight.PullRequest is { } number && PullRequestFor(flight, pullRequests) is var pr && IsGreen(pr) && OpenSince(flight, pr, flightCards) is { } opened)
@@ -140,7 +151,7 @@ public static class Staleness
                 Add(new StaleItem
                 {
                     Kind = StaleKind.PullRequest, Subject = $"{flight.Code} PR #{number}", Flight = flight.Code, Age = prAge, AgeText = Say(prAge), WaitsOn = waits, Action = action,
-                    Timeline = Timeline(), Cause = $"PR #{number} has been open {Say(prAge)} with green CI, waiting on {waits}", Bound = Hours(bounds.PrHours),
+                    Timeline = Timeline(), Cause = $"PR #{number} has been open {Say(prAge)} with green CI, waiting on {waits}", Bound = Hours(bounds.PrHours), Idle = idle,
                 }, TimeSpan.FromHours(bounds.PrHours));
             }
 
@@ -160,6 +171,7 @@ public static class Staleness
                     Timeline = Timeline(),
                     Cause = $"its hold passed the timeout {timeouts.Count} {(timeouts.Count == 1 ? "time" : "times")}, waiting on {waits}",
                     Bound = bounds.Holds == 1 ? "1 hold" : $"{bounds.Holds} holds",
+                    Idle = idle,
                 };
                 if (timeouts.Count >= bounds.Holds)
                 {
@@ -181,7 +193,7 @@ public static class Staleness
                 {
                     Kind = StaleKind.Unreachable, Subject = flight.Code, Flight = flight.Code, Age = off, AgeText = Say(off),
                     WaitsOn = $"{peer.Code} on {peer.Node}, which has not been on the LAN since {Local(peer.UnreachableSince.Value, zone)}", Action = disconnect,
-                    Timeline = Timeline(), Cause = $"{peer.Node} has been unreachable for {Say(off)}, so {flight.Code} is held on {peer.Code}",
+                    Timeline = Timeline(), Cause = $"{peer.Node} has been unreachable for {Say(off)}, so {flight.Code} is held on {peer.Code}", Idle = idle,
                     Bound = Hours(bounds.UnreachableHours),
                 }, TimeSpan.FromHours(bounds.UnreachableHours));
                 break;
@@ -220,7 +232,7 @@ public static class Staleness
                 Add(new StaleItem
                 {
                     Kind = StaleKind.Leg, Subject = $"{flight.Code}/{leg.Name}", Flight = flight.Code, Age = age, AgeText = Say(age), WaitsOn = legWaits, Action = legAction,
-                    Timeline = Timeline(), Cause = $"rechecking `{leg.Recheck.Check}` for {Say(age)}, waiting on {legWaits}", Bound = Hours(bounds.RecheckHours),
+                    Timeline = Timeline(), Cause = $"rechecking `{leg.Recheck.Check}` for {Say(age)}, waiting on {legWaits}", Bound = Hours(bounds.RecheckHours), Idle = idle,
                 }, TimeSpan.FromHours(bounds.RecheckHours));
             }
         }
@@ -244,16 +256,7 @@ public static class Staleness
     }
 
     /// <summary>An age in words: <c>35 m</c>, <c>19 h</c>, <c>2 d 4 h</c>.</summary>
-    public static string Say(TimeSpan span)
-    {
-        if (span < TimeSpan.Zero)
-        {
-            span = TimeSpan.Zero;
-        }
-        return span.TotalHours < 1 ? $"{(int)span.TotalMinutes} m"
-            : span.TotalDays < 1 ? $"{(int)span.TotalHours} h"
-            : $"{(int)span.TotalDays} d {span.Hours} h";
-    }
+    public static string Say(TimeSpan span) => Waited.Coarse(span);
 
     private static string Hours(int hours) => $"{hours.ToString(CultureInfo.InvariantCulture)} h";
 
@@ -272,17 +275,49 @@ public static class Staleness
     private static DateTimeOffset? OpenSince(FlightRow flight, PullRequestRow? pr, List<CardRow> cards) =>
         pr?.CreatedAt ?? cards.Where(c => c.Kind == LegCommander.PrReady).Select(c => (DateTimeOffset?)c.At).Min();
 
+    // Who closes a card that no one answered: the node (a sweep, a replacement) and GitHub (the PR was merged or closed there).
+    private const string ClosedByNode = "node";
+    private const string ClosedByGitHub = "github";
+
     private sealed record Event(DateTimeOffset At, string Text);
 
-    // The flight's happenings, and the time of the last one that moved it (a leg start or finish, a review verdict, the PR opening, its creation).
-    private static (List<Event> Events, DateTimeOffset LastMove) Events(FlightRow flight, List<LegRow> legs, List<CardRow> cards, PullRequestsRow? pullRequests, TimeZoneInfo zone)
+    /// <summary>A flight that has not landed, folded into another or moved to another node: the only kind staleness and last moves read.</summary>
+    public static bool InAir(FlightRow flight) => flight is { State: not FlightState.Landed, FoldedInto: null, MovedTo: null };
+
+    /// <summary>
+    /// A flight's last real activity: when it happened and its words (<c>review passed</c>, <c>leg parser finished</c>). It is the same last
+    /// move the stale items measure from, so a row and a stale line never disagree. Null for a flight that landed, folded or moved.
+    /// </summary>
+    public static (DateTimeOffset At, string Text)? LastMove(
+        FlightRow flight, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, PullRequestsRow? pullRequests, TimeZoneInfo? zone = null)
     {
-        var events = new List<Event> { new(flight.CreatedAt, "flight created") };
-        var moves = new List<DateTimeOffset> { flight.CreatedAt };
+        if (!InAir(flight))
+        {
+            return null;
+        }
+        var target = Verbs.FlightTarget(flight.Code);
+        var mine = legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order).ToList();
+        var flightCards = cards.Where(c => c.Subject == target || c.Subject.StartsWith(target + "/", StringComparison.Ordinal)).ToList();
+        var (_, last) = Events(flight, mine, flightCards, pullRequests, zone ?? TimeZoneInfo.Local);
+        return (last.At, last.Text);
+    }
+
+    // The flight's happenings, and the last one that moved it (a leg start or finish, a card answered, a review verdict, the PR opening, its
+    // creation). A push and a check finishing are deliberately not moves here:
+    //  - no row holds the time of a push (the PR's UpdatedAt also moves on a comment, a label or a bot, so it would hide a still flight);
+    //  - a check finishing says nothing about progress: a leg whose check fails again and again finishes a check every time, and that
+    //    loop is the stale case (#752), not a flight that moves. A check that passes ends its leg, and the leg's finish is the move;
+    //  - a leg's recheck finishing is the same (a recheck keeps only when it began).
+    private static (List<Event> Events, Event LastMove) Events(FlightRow flight, List<LegRow> legs, List<CardRow> cards, PullRequestsRow? pullRequests, TimeZoneInfo zone)
+    {
+        var created = new Event(flight.CreatedAt, "flight created");
+        var events = new List<Event> { created };
+        var moves = new List<Event> { created };
         void Move(DateTimeOffset at, string text)
         {
-            events.Add(new Event(at, text));
-            moves.Add(at);
+            var e = new Event(at, text);
+            events.Add(e);
+            moves.Add(e);
         }
         foreach (var leg in legs)
         {
@@ -311,6 +346,12 @@ public static class Staleness
         {
             events.Add(new Event(holding.Since, $"hold began: {holding.Reason}"));
         }
+        // A card a person or a session answered counts as a move; one the node closed on its own, one GitHub closed (a PR merged or
+        // closed there: nobody answered it), or a handled record, does not.
+        foreach (var card in cards.Where(c => c is { State: CardState.Closed, ClosedAt: not null } && c.Bin != CardBin.Handled && c.ClosedBy is not (ClosedByNode or ClosedByGitHub)))
+        {
+            Move(card.ClosedAt!.Value, $"card {card.Id} answered");
+        }
         foreach (var card in cards.Where(c => c.Kind == LegCommander.HoldingTimeoutKind))
         {
             events.Add(new Event(card.At, $"holding-timeout card {card.Id} raised, the hold passed its timeout"));
@@ -319,7 +360,8 @@ public static class Staleness
         {
             events.Add(new Event(card.At, $"card {card.Id} rang: {card.Title}"));
         }
-        return (events, moves.Max());
+        // The latest move; of equal times the one added last (a verdict after the leg that asked for it).
+        return (events, moves.Select((e, i) => (e, i)).OrderBy(x => x.e.At).ThenBy(x => x.i).Last().e);
     }
 
     // What a flight waits on now, and the one action that moves it, in the order of what is nearest to hand.
@@ -413,7 +455,8 @@ public static class StaleSection
         var summary = item.Summary.ReplaceLineEndings(" ").Replace('"', '\'');
         var raise = flights?.FirstOrDefault(f => f.Code == item.Flight)?.StaleRaises?.LastOrDefault(r => r.Bound == StaleWatch.BoundKey(item.Kind));
         var raised = raise is null ? "" : $" ({raise.Note})";
-        return $"- {item.Subject}, {word} {item.AgeText}{raised}: waiting on {item.WaitsOn}. Next: {item.Action}. \"{summary}\"";
+        var still = item.Idle is { } idle ? $" no progress for {Staleness.Say(idle)}," : "";
+        return $"- {item.Subject}, {word} {item.AgeText}{raised}:{still} waiting on {item.WaitsOn}. Next: {item.Action}. \"{summary}\"";
     }
 
     /// <summary>The heading and a line per item, oldest first, as lines; empty when nothing is stale.</summary>

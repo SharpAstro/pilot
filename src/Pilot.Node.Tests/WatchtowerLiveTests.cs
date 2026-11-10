@@ -34,7 +34,7 @@ public sealed class WatchtowerLiveTests : IDisposable
     {
         if (Directory.Exists(_data))
         {
-            Directory.Delete(_data, recursive: true);
+            TestDirs.DeleteTree(_data);
         }
     }
 
@@ -129,7 +129,7 @@ public sealed class WatchtowerLiveTests : IDisposable
 
         var end = _ends.ShouldHaveSingleItem();
         end.Args!.Single().ShouldStartWith("quiet:");
-        _state.Cards().Single(c => c.Bin == CardBin.Handled).Title.ShouldContain("no UI connected");
+        _state.Cards().Single(c => c.Bin == CardBin.Handled).Title.ShouldContain("no UI");
     }
 
     [Fact]
@@ -152,7 +152,7 @@ public sealed class WatchtowerLiveTests : IDisposable
         _views.Say(new object(), "cards");
         await _tower.LookAsync(Ct);
 
-        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9/parser", "TIA9/parser failed");
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9", "TIA9/parser failed");
         await _tower.LookAsync(Ct);
 
         _said.ShouldContain(c => c.Verb == Verbs.Say);

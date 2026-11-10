@@ -57,14 +57,18 @@ public sealed partial class NodeState
     {
         lock (_gate)
         {
-            // Nothing held and nothing to say (no session counted, no priority flight, no peer left out): a node that has just started and swept
-            // adds no event, so a client's first snapshot is the same as before the sweep ran at start.
-            if (_admission is null && row.OpusCount == 0 && row.Counted.Length == 0 && row.Priority.Length == 0 && row.PeersNotCounted is null)
+            // Nothing held and nothing to say (no session counted, no priority flight, no peer left out, no idle session waiting on a person or a job):
+            // a node that has just started and swept adds no event, so a client's first snapshot is the same as before the sweep ran at start. A node
+            // whose only sessions are waiting ones has something to say (the "not counted" line is for exactly that case), so it is published.
+            if (_admission is null && row.OpusCount == 0 && row.Counted.Length == 0 && row.Priority.Length == 0 && row.PeersNotCounted is null
+                && row.WaitingOnPerson.Length == 0)
             {
                 return;
             }
+            // Who waits is compared as written, like who is counted: the count staying put while a worker's job ends or a session asks a card is a change.
             if (_admission is { } held && held.OpusCount == row.OpusCount && held.OpusCap == row.OpusCap && held.OneFlightPerRepo == row.OneFlightPerRepo
-                && held.PeersNotCounted == row.PeersNotCounted && held.Counted.SequenceEqual(row.Counted) && held.Priority.SequenceEqual(row.Priority))
+                && held.PeersNotCounted == row.PeersNotCounted && held.Counted.SequenceEqual(row.Counted) && held.Priority.SequenceEqual(row.Priority)
+                && held.WaitingOnPerson.SequenceEqual(row.WaitingOnPerson))
             {
                 return;
             }
@@ -89,11 +93,44 @@ public sealed partial class NodeState
     {
         lock (_gate)
         {
+            // The sampler knows no strays: what the stray sweep last said rides on every row, so a sample never wipes it.
+            sampled = sampled with { Strays = _strays ?? _machine?.Strays ?? [] };
             if (_machine is { } held && !Pilot.Node.Flights.MachineSampler.Differs(held, sampled))
             {
                 return;
             }
             Publish(new MachineChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Machine = sampled });
+        }
+    }
+
+    // What the stray sweep last named (pilot #909); null before its first sweep.
+    private MachineStray[]? _strays;
+
+    /// <summary>The strays the sweep last named, as the machine row carries them; none before the first sweep.</summary>
+    public MachineStray[] Strays()
+    {
+        lock (_gate)
+        {
+            return _strays ?? _machine?.Strays ?? [];
+        }
+    }
+
+    /// <summary>
+    /// Puts the strays the sweep named, into the machine row, when they differ from the ones held (compared as written, ages aside: a row
+    /// that grew a minute older is no news). Nothing is published before the first machine sample; the next sample carries them.
+    /// </summary>
+    public void PutStrays(IReadOnlyList<MachineStray> strays)
+    {
+        lock (_gate)
+        {
+            var held = _strays ?? _machine?.Strays ?? [];
+            _strays = [.. strays];
+            if (_machine is not { } machine
+                || held.Select(h => (h.Pid, h.StartedAt, h.Reason)).SequenceEqual(_strays.Select(h => (h.Pid, h.StartedAt, h.Reason))))
+            {
+                return;
+            }
+            Publish(new MachineChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Machine = machine with { Strays = _strays } });
         }
     }
 

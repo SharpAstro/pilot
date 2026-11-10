@@ -11,6 +11,9 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public sealed record JobProcess(int Pid, DateTimeOffset StartedAt, Process? Child = null)
 {
+    /// <summary>What answers for a process that is not a real one the node holds (a test's in-memory launcher); null for a real process.</summary>
+    public IJobProcessProbe? Probe { get; init; }
+
     /// <summary>How far apart two readings of one process's start may be: the same kernel time read two ways differs by a tick or so.</summary>
     internal static readonly TimeSpan StartTolerance = TimeSpan.FromSeconds(2);
 
@@ -24,6 +27,10 @@ public sealed record JobProcess(int Pid, DateTimeOffset StartedAt, Process? Chil
     /// <summary>Whether it is still running: its pid is alive and is the process that started then, not another that took the pid.</summary>
     public bool IsAlive()
     {
+        if (Probe is { } probe)
+        {
+            return probe.IsAlive();
+        }
         if (Child is { } child)
         {
             try
@@ -42,6 +49,11 @@ public sealed record JobProcess(int Pid, DateTimeOffset StartedAt, Process? Chil
     /// <summary>Kills the process and everything it started, when it is the one that started at <see cref="StartedAt"/>; gone already is nothing.</summary>
     public void Kill()
     {
+        if (Probe is { } probe)
+        {
+            probe.Kill();
+            return;
+        }
         try
         {
             if (Child is { } child)

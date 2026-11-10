@@ -108,7 +108,7 @@ public sealed class PushTests : IDisposable
         Git(Plane, "status", "--porcelain").ShouldBe("");
         File.Exists(Path.Combine(Plane, ".git", "MERGE_HEAD")).ShouldBeFalse();
         var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
-        card.Bin.ShouldBe(CardBin.Ring);
+        card.Bin.ShouldBe(CardBin.ForYou);
         card.Kind.ShouldBe(LegCommander.PushDivergedKind);
         card.Detail.ShouldNotBeNull().ShouldContain(theirs[..8]);
         card.Detail.ShouldContain(mine[..8]);
@@ -206,7 +206,7 @@ public sealed class PushTests : IDisposable
         {
             File.SetAttributes(file, FileAttributes.Normal);
         }
-        Directory.Delete(_root, recursive: true);
+        TestDirs.DeleteTree(_root);
     }
 
     private static void Commit(string cwd, string message)
@@ -226,7 +226,7 @@ public sealed class PushTests : IDisposable
         {
             start.ArgumentList.Add(arg);
         }
-        using var process = Process.Start(start)!;
+        using var process = TestEnvironment.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();

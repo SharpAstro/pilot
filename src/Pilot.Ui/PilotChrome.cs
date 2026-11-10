@@ -191,11 +191,12 @@ internal sealed class PilotChrome<TSurface>
         More = new RailMoreMenu<TSurface>(renderer);
         // A flight page's Merge is its card's own choice, run as the panel runs it.
         Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
-        Flights.CardWorking = Cards.WorkingOn;
+        // The pages read a card's press state by the card, so its node is part of the key, as in the panel (#922).
+        Flights.CardWorking = card => Cards.WorkingOn(card);
         // So is a PR row's Merge or Go around: the same card button, so the node is told what the card's button tells it.
         PullRequests.OnAnswer = (card, number) => Cards.OnAnswer?.Invoke(card, number);
-        PullRequests.RefusedOf = Cards.RefusedOn;
-        PullRequests.CardWorking = Cards.WorkingOn;
+        PullRequests.RefusedOf = card => Cards.RefusedOn(card);
+        PullRequests.CardWorking = card => Cards.WorkingOn(card);
         // One route to a PR's row: a card's title, a flight's PR link and chip, and the Repos page's open-PRs line all take it.
         Cards.OnPullRequest = (_, pr) => OpenPullRequest(pr.Repo, pr.Number);
         Flights.OnPullRequest = OpenPullRequest;
@@ -402,10 +403,22 @@ internal sealed class PilotChrome<TSurface>
     public TooltipLayer<TSurface> Tooltips { get; }
 
     /// <summary>
-    /// Called with <see cref="ClientPages.PullRequests"/> when the Pull requests page comes to be shown and with null when it stops being,
-    /// by whatever way the page changed: the host says it to each node it streams from (<c>NodeFeed.SayPage</c>), which also says it again after a reconnect.
+    /// Called with <see cref="ClientPages.PullRequests"/> when the Pull requests page comes to be shown, <see cref="ClientPages.Home"/>
+    /// for Home (where the machine is drawn), and null when neither is, by whatever way the page changed: the host says it to each
+    /// node it streams from (<c>NodeFeed.SayPage</c>), which also says it again after a reconnect. The host says <see cref="SaidPage"/>
+    /// once when it starts, as the first page is shown with no switch.
     /// </summary>
     public Action<string?>? OnPageShown { get; set; }
+
+    /// <summary>What the page shown now says to the nodes (<see cref="OnPageShown"/>).</summary>
+    public string? SaidPage => SaidOf(Page);
+
+    private static string? SaidOf(PilotPage page) => page switch
+    {
+        PilotPage.PullRequests => ClientPages.PullRequests,
+        PilotPage.Home => ClientPages.Home,
+        _ => null,
+    };
 
     /// <summary>The page shown beside the rail.</summary>
     public PilotPage Page { get; private set; } = PilotPage.Home;
@@ -515,10 +528,11 @@ internal sealed class PilotChrome<TSurface>
         }
         var before = Page;
         Page = page;
-        // The node reads the pull requests every minute only while a page shows them, so it is told when this one does and when it stops.
-        if ((before == PilotPage.PullRequests) != (page == PilotPage.PullRequests))
+        // The node reads the pull requests every minute, and the machine every 5 s, only while a page shows them, so it is told
+        // when one of those pages is shown and when it stops.
+        if (SaidOf(before) != SaidOf(page))
         {
-            OnPageShown?.Invoke(page == PilotPage.PullRequests ? ClientPages.PullRequests : null);
+            OnPageShown?.Invoke(SaidOf(page));
         }
         // The chat follows its feed while its page is the one shown, and only then.
         if (page == PilotPage.Chat)
@@ -671,11 +685,11 @@ internal sealed class PilotChrome<TSurface>
         PilotWidgetBase<TSurface> target = page;
         if (panel is not null)
         {
-            if (page.Selection.Dragging)
+            if (page.PageSelection.Dragging)
             {
                 target = page;
             }
-            else if (panel.Selection.Dragging)
+            else if (panel.PageSelection.Dragging)
             {
                 target = panel;
             }
@@ -683,7 +697,7 @@ internal sealed class PilotChrome<TSurface>
             {
                 target = Over(CardsBounds!.Value, px, py) ? panel : page;
             }
-            else if (!page.Selection.HasSelection && panel.Selection.HasSelection)
+            else if (!page.PageSelection.HasSelection && panel.PageSelection.HasSelection)
             {
                 target = panel;
             }
@@ -1149,7 +1163,7 @@ internal sealed class PilotChrome<TSurface>
         Cards.IdeaLinks = (ideas ?? IdeasScreen.Empty).LinksIn;
         ShowsCards = cards is { HasAny: true } || (cards is not null && Cards.CanTell && !Cards.OnChatPage);
         // The page's flight lights its cards in the panel, and the flight's own page offers the merge its card does.
-        Flights.Cards = cards;
+        Flights.Cards = cards is null ? null : Cards.Visible(cards);
         // A flight with a PR says where it stands in the chip the Pull requests page has, and a click on it opens that row.
         Flights.PullRequests = pullRequests?.Row;
         Cards.PullRequests = pullRequests?.Row;

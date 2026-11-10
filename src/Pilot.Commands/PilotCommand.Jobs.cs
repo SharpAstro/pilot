@@ -63,13 +63,14 @@ public static partial class PilotCommand
         {
             // run, jobs, job: a long run handed to the node, which wakes the session that handed it over
             var runTimeout = new Option<string?>("--timeout") { Description = "How long it may run: 90m, 2h, 45s; 2h by default, 8h at most" };
-            var runAlone = new Option<bool>("--alone") { Description = "Run with the node to itself (a benchmark): waits for no other job and a quiet CPU, and holds every other job and new leg until it ends" };
+            var runAlone = new Option<bool>("--alone") { Description = "Run with the node to itself (a benchmark): waits for no other job and a quiet CPU, and holds every other job (not new legs) until it ends" };
             var runFailFast = new Option<bool>("--fail-fast") { Description = "End the job at its first failed test, so a run whose first failure is all you need frees the queue (a check does this by itself)" };
+            var runWholeSuite = new Option<string?>("--whole-suite") { Description = "Why this run is a dotnet test over a whole project or solution with no --filter (refused otherwise: the whole suite is CI's, on the PR)" };
             var runWords = new Argument<string[]>("command") { Description = "The command, after --: pilot run -- dotnet test", Arity = ArgumentArity.OneOrMore };
             var runCommand = Action(new Command("run", "Hand a long run to the node as a job, then end your turn: the node wakes this session with how it ended")
                 {
                     Arguments = { runWords },
-                    Options = { runTimeout, runAlone, runFailFast },
+                    Options = { runTimeout, runAlone, runFailFast, runWholeSuite },
                 },
                 async (p, client, ct) =>
                 {
@@ -85,7 +86,7 @@ public static partial class PilotCommand
                     {
                         Verb = Verbs.Run,
                         Target = target,
-                        Args = [.. p.GetValue(runFailFast) ? new[] { Verbs.FailFastArg } : [], .. p.GetValue(runAlone) ? new[] { Verbs.AloneArg } : [], cwd, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
+                        Args = [.. p.GetValue(runFailFast) ? new[] { Verbs.FailFastArg } : [], .. p.GetValue(runWholeSuite) is { Length: > 0 } suiteWhy ? new[] { Verbs.WholeSuiteArg, suiteWhy } : [], .. p.GetValue(runAlone) ? new[] { Verbs.AloneArg } : [], cwd, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
                         Who = owner?.Name ?? who,
                         Agent = byAgent,
                         RequestId = requestId,

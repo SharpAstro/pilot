@@ -10,7 +10,7 @@ public sealed class GitCliBudgetTests : IDisposable
 {
     private readonly string _dir = Directory.CreateTempSubdirectory("p2g-").FullName;
 
-    public void Dispose() => Directory.Delete(_dir, recursive: true);
+    public void Dispose() => TestDirs.DeleteTree(_dir);
 
     // An alias that says something, marks that it said it, and then waits: a git that does not exit.
     private static string[] SlowGit(string marker) =>
@@ -80,7 +80,7 @@ public sealed class GitCliBudgetTests : IDisposable
 
         ex.Message.ShouldContain("said-before-leaving");
         ex.Message.ShouldContain("had exited");
-        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(40));
+        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(25));
     }
 
     [Fact]
