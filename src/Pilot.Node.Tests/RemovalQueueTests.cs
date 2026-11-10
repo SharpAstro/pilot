@@ -170,17 +170,13 @@ public sealed class RemovalQueueTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
+    [Trait("Category", "Slow")] // About git itself: a file git ignores (.git/info/exclude) keeps status clean while a process holds it; real git, in a folder of its own.
     public async Task ALandedFlightWhosePlaneFolderIsHeldSaysSoOnAHandledLineAndQueuesIt()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
-        var repo = Path.Combine(_root, "tianwen");
-        Directory.CreateDirectory(repo);
-        PrOrigins.Git(repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(repo, "README.md"), "hello\n");
-        PrOrigins.Git(repo, "add", ".");
-        PrOrigins.Git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        var flights = new FlightCommander(_state, _planes, TimeProvider.System);
+        using var real = new SeededRepos(Path.Combine(Path.GetTempPath(), "p2q-real-" + Guid.NewGuid().ToString("N")[..8]), realGit: true);
+        var repo = real.Seed("tianwen");
+        var flights = new FlightCommander(_state, new Planes(real.Git, _queue), TimeProvider.System);
         (await flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(repo), Args = ["1"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
         var flight = _state.Flights().Single();
 

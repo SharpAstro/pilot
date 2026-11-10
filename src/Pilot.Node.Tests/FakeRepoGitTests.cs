@@ -409,9 +409,13 @@ public sealed class FakeRepoGitTests : IDisposable
         RunOn(_git, Repo, "ls-tree", "--name-only", "HEAD", ".github/workflows/").ShouldBe(".github/workflows/dotnet.yml");
         RunOn(_git, Repo, "ls-tree", "--name-only", "HEAD", ".github/").ShouldBe(".github/workflows");
         RunOn(_git, Repo, "ls-tree", "-r", "--name-only", "HEAD").ShouldBe(".github/workflows/dotnet.yml\nREADME.md\nTianwen.slnx\nother.txt");
+        RunOn(_git, Repo, "grep", "-l", "-i", "-F", "-e", "\"nope\"", "-e", "ON: PUSH", "HEAD", "--", "*.yml", "*.props").ShouldBe("HEAD:.github/workflows/dotnet.yml");
+        _git.Run(["grep", "-l", "-F", "-e", "ON: PUSH", "HEAD", "--", "*.yml"], Repo).Ok.ShouldBeFalse();
         RunOn(_git, Repo, "checkout", "-q", "main");
         RunOn(_git, Repo, "symbolic-ref", "--short", "HEAD").ShouldBe("main");
         _git.Run(["checkout", "-q", "-b", "flight/x"], Repo).Error.ShouldContain("already exists");
+        RunOn(_git, Repo, "merge", "--ff-only", "-q", "flight/x");
+        RunOn(_git, Repo, "rev-parse", "main").ShouldBe(RunOn(_git, Repo, "rev-parse", "flight/x"));
 
         var detached = Path.Combine(Repo, ".claude", "worktrees", "d");
         RunOn(_git, Repo, "worktree", "add", "--detach", detached, "HEAD");

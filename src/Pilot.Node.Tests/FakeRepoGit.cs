@@ -361,6 +361,7 @@ internal sealed class FakeRepoGit : IGit
             "switch" => Switch(a, wt),
             "checkout" => Checkout(a, wt),
             "ls-tree" => LsTree(a, wt),
+            "grep" => Grep(a, wt),
             "update-ref" => UpdateRef(a, wt),
             _ => throw new NotSupportedException("verb"),
         };
@@ -1418,6 +1419,49 @@ internal sealed class FakeRepoGit : IGit
         return _commits[id].Tree.TryGetValue(path, out var content) ? Ok(content) : Fail($"fatal: path '{path}' does not exist in '{rev}'", 128);
     }
 
+    /// <summary>
+    /// <c>git grep -l [-i] [-F] -e &lt;text&gt;... &lt;commit&gt; -- &lt;glob&gt;...</c>: the files of the commit that hold any of the texts, as <c>commit:path</c> a line, sorted
+    /// (exit 1 and nothing when none do). A glob without a slash matches the file's name at any depth, as git's pathspecs do.
+    /// </summary>
+    private GitRun Grep(List<string> a, Worktree? wt)
+    {
+        var ignoreCase = a.Remove("-i");
+        var fixedText = a.Remove("-F");
+        var namesOnly = a.Remove("-l");
+        var dash = a.IndexOf("--");
+        var head = dash < 0 ? a : a.Take(dash).ToList();
+        var globs = dash < 0 ? [] : a.Skip(dash + 1).ToList();
+        var texts = new List<string>();
+        string? rev = null;
+        for (var i = 0; i < head.Count; i++)
+        {
+            if (head[i] == "-e" && i + 1 < head.Count)
+            {
+                texts.Add(head[++i]);
+            }
+            else if (!head[i].StartsWith('-') && rev is null)
+            {
+                rev = head[i];
+            }
+            else
+            {
+                throw new NotSupportedException("grep form");
+            }
+        }
+        if (!fixedText || !namesOnly || texts.Count == 0 || rev is null)
+        {
+            throw new NotSupportedException("grep form");
+        }
+        if (Resolve(rev, wt) is not { } id)
+        {
+            return Fail($"fatal: unable to resolve revision: {rev}", 128);
+        }
+        var comparison = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        bool InGlobs(string path) => globs.Count == 0 || globs.Any(g => new System.Text.RegularExpressions.Regex("^" + System.Text.RegularExpressions.Regex.Escape(g).Replace("\\*", ".*").Replace("\\?", ".") + "$").IsMatch(g.Contains('/') ? path : Path.GetFileName(path)));
+        var found = _commits[id].Tree.Where(f => InGlobs(f.Key) && texts.Any(t => f.Value.Contains(t, comparison))).Select(f => $"{rev}:{f.Key}\n").Order(StringComparer.Ordinal).ToList();
+        return found.Count == 0 ? new GitRun(1, "", "") : Ok(string.Concat(found));
+    }
+
     /// <summary><c>git ls-tree --name-only &lt;commit&gt; &lt;folder&gt;/</c>: the paths directly in the folder of the commit, folders as their path without a slash.</summary>
     private GitRun LsTree(List<string> a, Worktree? wt)
     {
@@ -2064,6 +2108,7 @@ internal sealed class FakeRepoGit : IGit
             return Ok("");
         }
         var noFastForward = a.Remove("--no-ff");
+        var fastForwardOnly = a.Remove("--ff-only");
         var noCommit = a.Remove("--no-commit");
         var strategyOurs = false;
         string? favour = null;
@@ -2103,6 +2148,10 @@ internal sealed class FakeRepoGit : IGit
         if (IsAncestor(target, current))
         {
             return Ok("Already up to date.\n");
+        }
+        if (fastForwardOnly && !IsAncestor(current, target))
+        {
+            return Fail("fatal: Not possible to fast-forward, aborting.", 128);
         }
         var previous = wt.Index;
         if (IsAncestor(current, target) && !noFastForward && !strategyOurs)
