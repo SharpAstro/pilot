@@ -231,24 +231,36 @@ public sealed class CompactorTests : IDisposable
     [Fact]
     public async Task AWatchtowerStillFullAfterACompactionAndARestartIsSaidOnceAndLeftAlone()
     {
-        Row("t0000001", "du1-watchtower", context: 800_000);
+        var current = "t0000001";
+        Row(current, "du1-watchtower", context: 800_000);
         await _compactor.LookAsync(Ct);
-        // The restart comes back with the same session as the live watchtower (as on SE1, where every "Replaced" named the same row).
-        _workers.OnStart = _ => Row("t0000001", "du1-watchtower", context: 800_000, lastResponse: _time.GetUtcNow());
+        // The replacement comes back as a fresh row of the role, and it too reads past its share.
+        _workers.OnStart = _ =>
+        {
+            current = "t0000002";
+            Row(current, "du1-watchtower", context: 800_000, lastResponse: _time.GetUtcNow());
+        };
 
-        // However many looks over an hour, with the reading stuck past its share: a bounded few actions, never a loop. SE1 made
-        // eight compactions and eight "replacements" in four minutes.
+        // An hour of looks every 30 s with the reading stuck past its share. SE1 made eight compactions and eight "replacements" in
+        // four minutes; here it is one compaction of each row, one replacement, and one card.
         for (var look = 0; look < 120; look++)
         {
             _time.Advance(TimeSpan.FromSeconds(30));
-            Row("t0000001", "du1-watchtower", context: 800_000, lastResponse: _time.GetUtcNow());
+            Row(current, "du1-watchtower", context: 800_000, lastResponse: _time.GetUtcNow());
             await _compactor.LookAsync(Ct);
         }
-        _said.Count(c => c.Verb == Verbs.Compact).ShouldBeLessThanOrEqualTo(2);
-        _workers.Started.Count.ShouldBeLessThanOrEqualTo(1);
-        Handled().Count(t => t.StartsWith("Replaced", StringComparison.Ordinal)).ShouldBeLessThanOrEqualTo(1);
-        // Still full after that is said on one watchtower-still-full card at most, never one per look.
-        _state.Cards().Count(c => c.Kind == "watchtower-still-full").ShouldBeLessThanOrEqualTo(1);
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(2);
+        _workers.Started.ShouldHaveSingleItem();
+        Handled().Count(t => t.StartsWith("Replaced", StringComparison.Ordinal)).ShouldBe(1);
+        var stuck = _state.Cards(openOnly: true).Where(c => c.Kind == "watchtower-still-full").ShouldHaveSingleItem();
+        // It says what the replacement came to, not a restart it cannot vouch for, and offers the restart by hand.
+        stuck.Detail.ShouldContain("a fresh one started");
+        stuck.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.RestartWatchtower);
+
+        // Back under its share: the card closes, and a later episode may be replaced again.
+        Row(current, "du1-watchtower", context: 200_000, lastResponse: _time.GetUtcNow());
+        await _compactor.LookAsync(Ct);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == "watchtower-still-full");
     }
 
     [Fact]
