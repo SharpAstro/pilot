@@ -353,7 +353,7 @@ public sealed class StoreRecovery : IDisposable
             return State.RaiseCard(
                 CardBin.Ring, NodeState.StoreCardKind, SubjectPrefix + Path.GetFileName(recovered.AsideFolder),
                 $"The store could not be read: started from {recovered.Started}, lost {recovered.Lost}", detail,
-                [new CardChoice { Label = "File it as an idea", Verb = Verbs.NoteIdea, Target = Verbs.RepoTarget(Verbs.AnyRepo), Args = [$"The store could not be read at start: {recovered.Error}\n\n{detail}"] }]);
+                [new CardChoice { Label = "File unreadable store idea", Verb = Verbs.NoteIdea, Target = Verbs.RepoTarget(Verbs.AnyRepo), Args = [$"The store could not be read at start: {recovered.Error}\n\n{detail}"] }]);
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
