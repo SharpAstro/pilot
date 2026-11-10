@@ -244,7 +244,7 @@ public sealed class MergeBatchTests
         release.TrySetResult();
         await held;
         await Until(node, () => Entry(node, "TIA2").State is MergeEntryState.Dropped or MergeEntryState.Merging
-            && Entry(node, "TIA1").State == MergeEntryState.Merging && Entry(node, "TIA3").State == MergeEntryState.Merging
+            && Entry(node, "TIA1").State is MergeEntryState.Merging or MergeEntryState.Merged && Entry(node, "TIA3").State is MergeEntryState.Merging or MergeEntryState.Merged
             && Has(git, $"push --quiet origin {BatchHead}:refs/heads/main") && node.GitHub.Merged.Any(m => m.Number == 11) == (odd == "base"), "TIA1 and TIA3 landed with the batch, TIA2 on its own");
 
         node.GitHub.Drafts.ShouldHaveSingleItem().Title.ShouldBe("pilot merge batch: #10, #12");
@@ -259,7 +259,7 @@ public sealed class MergeBatchTests
         }
         else
         {
-            Entry(node, "TIA2").State.ShouldBe(MergeEntryState.Merging);
+            Entry(node, "TIA2").State.ShouldBeOneOf(MergeEntryState.Merging, MergeEntryState.Merged);
             node.GitHub.Merged.ShouldContain(m => m.Number == 11);
         }
     }

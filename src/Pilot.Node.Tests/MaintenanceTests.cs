@@ -165,7 +165,8 @@ public sealed class MaintenanceTests : IDisposable
     [Fact]
     public async Task OnARunningNodeACreateFlightIsRefusedNamingMaintenance()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        // The node's git is the in-memory model that owns the test's folder (#952): a refused create asks it, and no git starts.
+        await using var node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
         await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["maintenance", "on"], Who = "tests" }, Ct);
 
         var refused = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1"], Who = "tests" }, Ct);
