@@ -36,7 +36,8 @@ public abstract class FlightMoveTestsBase : IAsyncDisposable
     // The sending node, SE1: its own state, settings, workers and git (which a test makes refuse a push), reaching DE1 through a peer.
     private protected readonly RoleModels _senderModels = new(null);
     private protected readonly FakeWorkers _senderWorkers = new();
-    private protected readonly RefusingGit _senderGit = new(new GitCli());
+    private protected readonly RefusingGit _senderGit;
+    private protected readonly SeededRepos _repos;
     private protected readonly FlightCommander _senderFlights;
     private protected readonly LegCommander _senderLegs;
     private protected readonly MovePeer _peer;
@@ -44,7 +45,9 @@ public abstract class FlightMoveTestsBase : IAsyncDisposable
     protected FlightMoveTestsBase()
     {
         // Two machines' clones of one GitHub repo: both name github.com as origin, which this machine's git turns into the bare folder.
-        SeedRepo.Make(Path.Combine(_root, "receiver"));
+        _repos = new SeededRepos(_root);
+        _senderGit = new RefusingGit(_repos.Git);
+        SeedRepo.MakeOn(_repos, Path.Combine(_root, "receiver"));
         var origin = Path.Combine(_root, "receiver", "origin.git");
         Git(Receiving, "config", "remote.origin.url", $"https://github.com/{GitHub}.git");
         Git(Receiving, "config", $"url.{origin}.insteadOf", $"https://github.com/{GitHub}.git");
@@ -63,18 +66,18 @@ public abstract class FlightMoveTestsBase : IAsyncDisposable
         Git(Sending, "push", "-q", "origin", Branch);
         _pushedHead = Git(Sending, "rev-parse", "HEAD");
 
-        var git = new GitCli();
-        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, github: _github) { Models = _models, Machine = "DE1" };
+        var git = _repos.Git;
+        _flights = new FlightCommander(_state, _repos.Planes(), TimeProvider.System, github: _github) { Models = _models, Machine = "DE1" };
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DE1", RepoRootsGiven: [Path.Combine(_root, "receiver")]);
         _flights.Repos = new RepoCatalog(_state, options);
-        _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, git, new Planes(git), _flights, options, TimeProvider.System) { Models = new RoleModels(null) };
+        _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, git, _repos.Planes(), _flights, options, TimeProvider.System) { Models = new RoleModels(null) };
         _flights.Advance = _legs.AdvanceFlightAsync;
         Fleet(true);
 
         var senderOptions = new NodeOptions(Path.Combine(_root, "sender.sock"), Path.Combine(_root, "sender-data"), MachinePrefix: "SE1", RepoRootsGiven: [Path.Combine(_root, "sender")]);
         _peer = new MovePeer(_flights) { Checkout = Receiving, State = _state };
-        _senderFlights = new FlightCommander(_sender, new Planes(git), TimeProvider.System, github: _senderGitHub) { Models = _senderModels, Machine = "SE1", Fleet = new MoveFleet(_peer) };
-        _senderLegs = new LegCommander(_sender, _senderWorkers, new FakeChecks(), _senderGitHub, _senderGit, new Planes(git), _senderFlights, senderOptions, TimeProvider.System) { Models = _senderModels };
+        _senderFlights = new FlightCommander(_sender, _repos.Planes(), TimeProvider.System, github: _senderGitHub) { Models = _senderModels, Machine = "SE1", Fleet = new MoveFleet(_peer) };
+        _senderLegs = new LegCommander(_sender, _senderWorkers, new FakeChecks(), _senderGitHub, _senderGit, _repos.Planes(), _senderFlights, senderOptions, TimeProvider.System) { Models = _senderModels };
     }
 
     private protected string Receiving => Path.Combine(_root, "receiver", "tianwen");
@@ -88,33 +91,10 @@ public abstract class FlightMoveTestsBase : IAsyncDisposable
         // A receive-flight starts the flight's advance off the reply; its git still runs in the repo this deletes.
         await _flights.WhenAdvancedAsync();
         await _senderFlights.WhenAdvancedAsync();
-        try
-        {
-            Git(Receiving, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        TestDirs.DeleteTree(_root);
+        _repos.Dispose();
     }
 
-    private protected static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = TestEnvironment.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    private protected string Git(string cwd, params string[] args) => _repos.Run(cwd, args);
 
     private protected void Fleet(bool willing) =>
         _models.Apply(NodeSettings.With(new NodeSettings(), NodeSettings.AcceptFleetFlightsKey, [willing ? "on" : "off"]).Settings!);

@@ -19,59 +19,23 @@ public sealed class FleetRoutingTests : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2f-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private readonly SeededRepos _repos;
     private readonly RoleModels _models = new(null);
     private readonly FakeFleet _fleet = new();
     private readonly FlightCommander _flights;
 
     public FleetRoutingTests()
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        Git(Repo, "remote", "add", "origin", $"https://github.com/{GitHub}.git");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
+        _repos = new SeededRepos(_root);
         // The remote stays GitHub's (a peer's checkout is told apart by it), but a fetch or a plane's base comes from a local bare copy (#462).
-        var bare = Path.Combine(_root, "origin.git");
-        Git(_root, "clone", "-q", "--bare", Repo, bare);
-        Git(Repo, "config", $"url.{bare.Replace('\\', '/')}.insteadOf", $"https://github.com/{GitHub}.git");
-        Git(Repo, "fetch", "-q", "origin");
-        Git(Repo, "remote", "set-head", "origin", "main");
-        _flights = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System) { Models = _models, Machine = "SE1", Fleet = _fleet };
+        _repos.Seed("tianwen", $"https://github.com/{GitHub}.git", withOrigin: true);
+        _flights = new FlightCommander(_state, _repos.Planes(), TimeProvider.System) { Models = _models, Machine = "SE1", Fleet = _fleet };
         Maintenance(true);
     }
 
     private string Repo => Path.Combine(_root, "tianwen");
 
-    public void Dispose()
-    {
-        try
-        {
-            Git(Repo, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        TestDirs.DeleteTree(_root);
-    }
-
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = TestEnvironment.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    public void Dispose() => _repos.Dispose();
 
     private void Maintenance(bool on) =>
         _models.Apply(NodeSettings.With(new NodeSettings(), NodeSettings.MaintenanceKey, [on ? "on" : "off"]).Settings!);
@@ -238,7 +202,7 @@ public sealed class FleetRoutingTests : IDisposable
     {
         Maintenance(false);
         // A plane is made from origin's main: without the GitHub remote the repo has no network to wait on.
-        Git(Repo, "remote", "remove", "origin");
+        _repos.Run(Repo, "remote", "remove", "origin");
         var peer = Willing("DE1");
         _fleet.Peers.Add(peer);
 

@@ -57,7 +57,9 @@ internal sealed class SeededRepos : IDisposable
         File.WriteAllText(Path.Combine(repo, "README.md"), "hello\n");
         foreach (var (path, content) in files ?? new Dictionary<string, string>())
         {
-            File.WriteAllText(Path.Combine(repo, path), content);
+            var file = Path.Combine(repo, path);
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            File.WriteAllText(file, content);
         }
         if (remoteUrl is not null)
         {

@@ -82,8 +82,9 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <param name="machine">The node's machine prefix (two harness nodes of one fleet need two); default the one this machine has.</param>
     /// <param name="watchtower">Keeps a watchtower, started through the fake workers; off by default, as it would count among them.</param>
     /// <param name="journal">The node's store in place of its files in the data folder: one the test can make fail.</param>
+    /// <param name="git">The git the node runs in place of git itself: the in-memory model for a test that is about what the node decides (#952).</param>
     /// <param name="jobLauncher">What starts the node's jobs in place of real shells: an in-memory <c>FakeJobLauncher</c> (#933).</param>
-    public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false, bool watchtower = false, int? lanPort = null, bool localOnly = false, string? folder = null, NodeTraffic? traffic = null, string? machine = null, INodeJournal? journal = null, Pilot.Node.Flights.IJobLauncher? jobLauncher = null)
+    public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false, bool watchtower = false, int? lanPort = null, bool localOnly = false, string? folder = null, NodeTraffic? traffic = null, string? machine = null, INodeJournal? journal = null, Pilot.Node.Flights.IJobLauncher? jobLauncher = null, Pilot.Node.Flights.IGit? git = null)
     {
         // Short: a socket path must fit in 107 bytes, and the temp folder on Windows is already long.
         // An existing folder is a restart: the node starts on the data an earlier one left (see StopKeepingFolderAsync).
@@ -143,6 +144,10 @@ internal sealed class NodeHarness : IAsyncDisposable
                 if (journal is not null)
                 {
                     builder.Services.AddSingleton(journal);
+                }
+                if (git is not null)
+                {
+                    builder.Services.AddSingleton(git);
                 }
                 if (jobLauncher is not null)
                 {
@@ -257,6 +262,32 @@ internal sealed class NodeHarness : IAsyncDisposable
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // A socket file still closing or held by a scanner; the temp folder is the OS's to clear.
+        }
+        // Lets go of the model, and fails the test when the node asked it something it cannot answer.
+        Repos?.Dispose();
+    }
+
+    /// <summary>The repos a node started with <see cref="StartOnModelAsync"/> runs git on: the in-memory model under <see cref="Folder"/>, or real git on a PILOT_TEST_REAL_GIT=1 run; null for any other node.</summary>
+    public SeededRepos? Repos { get; private set; }
+
+    /// <summary>
+    /// A node whose git is the in-memory model (#952), for a test of what the node decides about repos it has on disk: the model owns the node's
+    /// folder, so a repo a test makes under it (<see cref="Repos"/>) is the node's repo, and both are answered by the model. The node's dispose lets go of it.
+    /// </summary>
+    public static async Task<NodeHarness> StartOnModelAsync(CancellationToken cancellationToken, bool watchtower = false, string? machine = null)
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "p2t", Guid.NewGuid().ToString("N")[..8]);
+        var repos = new SeededRepos(folder);
+        try
+        {
+            var node = await StartAsync(cancellationToken, folder: folder, git: repos.Git, watchtower: watchtower, machine: machine);
+            node.Repos = repos;
+            return node;
+        }
+        catch
+        {
+            repos.Dispose();
+            throw;
         }
     }
 }

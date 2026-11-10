@@ -52,7 +52,7 @@ public sealed class MergeArmTests
 
     private static async Task<(NodeHarness Node, CardRow Card)> Armed(ChecksSummary at)
     {
-        var node = await NodeHarness.StartAsync(Ct);
+        var node = await NodeHarness.StartOnModelAsync(Ct);
         var card = Ready(node);
         node.GitHub.Summary = at;
         (await Answer(node, card, "Merge")).Error.ShouldBeNull();
@@ -179,7 +179,7 @@ public sealed class MergeArmTests
     [Fact]
     public async Task ChecksAlreadyGreenMergeAtOnce()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
         node.GitHub.Summary = Passing();
 
@@ -202,7 +202,7 @@ public sealed class MergeArmTests
 
     private static async Task<(NodeHarness Node, CardRow Card)> ArmedNatively(ChecksSummary at)
     {
-        var node = await NodeHarness.StartAsync(Ct);
+        var node = await NodeHarness.StartOnModelAsync(Ct);
         node.GitHub.AutoMergeAllowed = true;
         var card = Ready(node);
         node.GitHub.Summary = at;
@@ -399,7 +399,7 @@ public sealed class MergeArmTests
     [Fact]
     public async Task AGitHubThatWillNotArmLeavesTheNodePollingWithoutTheSwitchHint()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         node.GitHub.AutoMergeAllowed = true;
         node.GitHub.ArmFails = "gh could not arm auto-merge on #63: Pull request is in clean status";
         var ready = Ready(node);
@@ -417,7 +417,7 @@ public sealed class MergeArmTests
     [InlineData("HAS_HOOKS")]
     public async Task AutoMergeAllowedButTheChecksNotRequiredMergesNothingAndTheNodePollsWithoutSayingGitHubMergesIt(string status)
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         node.GitHub.AutoMergeAllowed = true;
         // Running checks that are not required leave the PR immediately mergeable: gh's own --auto would merge it here and now.
         node.GitHub.MergeStateStatus = status;
@@ -480,7 +480,7 @@ public sealed class MergeArmTests
     {
         // SharpAstro/pilot: merge queue, auto-merge off, the node polls; the only required check, gate, is created after both builds
         // finish, so a look in the gap reads every check green with GitHub saying BLOCKED (Fixtures/gh/gate-absent.json).
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: false);
         node.GitHub.Queues = true;
         var ready = Ready(node);
@@ -519,7 +519,7 @@ public sealed class MergeArmTests
     [Fact]
     public async Task AMergeQueueBaseKeepsJoiningTheQueueAtGreenInsteadOfArmingGitHub()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         node.GitHub.AutoMergeAllowed = true;
         node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: false);
         node.GitHub.Queues = true;
@@ -611,7 +611,7 @@ public sealed class MergeArmTests
     {
         foreach (var queues in new[] { false, true })
         {
-            await using var node = await NodeHarness.StartAsync(Ct);
+            await using var node = await NodeHarness.StartOnModelAsync(Ct);
             var ready = Ready(node);
             node.GitHub.Summary = queues ? Passing() : Pending(1);
             node.GitHub.Queues = queues;
@@ -629,7 +629,7 @@ public sealed class MergeArmTests
     [Fact]
     public async Task AMergeThatIsRefusedLeavesTheCardOpenAndNeverClosesIt()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
         node.GitHub.Summary = Passing();
         node.GitHub.Merge = new MergeState(MergeKinds.ChangesRequested, 3, 3);
@@ -713,7 +713,7 @@ public sealed class MergeArmTests
     [Fact]
     public async Task AMergeThatOnlyJoinedTheQueueLeavesTheCardOpenSayingSo()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
         node.GitHub.Summary = Passing();
         node.GitHub.Queues = true;

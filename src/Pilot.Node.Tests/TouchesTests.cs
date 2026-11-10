@@ -21,54 +21,28 @@ public sealed class TouchesTests : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2t-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private readonly SeededRepos _repos;
     private readonly FakeFleet _fleet = new();
     private readonly FakeGitHub _github = new();
     private readonly LegCommander _legs;
 
     public TouchesTests()
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
+        _repos = new SeededRepos(_root);
         // The checkout's remote is GitHub's, as a peer's is told apart by it; the fetch comes from a bare copy of its own.
-        var bare = Path.Combine(_root, "origin.git");
-        Git(_root, "clone", "-q", "--bare", Repo, bare);
-        Git(Repo, "remote", "add", "origin", $"https://github.com/{GitHub}.git");
-        Git(Repo, "config", $"url.{bare.Replace('\\', '/')}.insteadOf", $"https://github.com/{GitHub}.git");
-        Git(Repo, "fetch", "-q", "origin");
-        var git = new GitCli();
-        var flights = new FlightCommander(_state, new Planes(git), TimeProvider.System) { Machine = "SE1", Fleet = _fleet };
+        _repos.Seed("tianwen", $"https://github.com/{GitHub}.git", withOrigin: true);
+        var git = _repos.Git;
+        var flights = new FlightCommander(_state, _repos.Planes(), TimeProvider.System) { Machine = "SE1", Fleet = _fleet };
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "SE1");
-        _legs = new LegCommander(_state, new FakeWorkers(), new FakeChecks(), _github, git, new Planes(git), flights, options, TimeProvider.System);
+        _legs = new LegCommander(_state, new FakeWorkers(), new FakeChecks(), _github, git, _repos.Planes(), flights, options, TimeProvider.System);
         _state.PutFlight(Row("PIL375", 375, "flight/pil375", Repo));
     }
 
     private string Repo => Path.Combine(_root, "tianwen");
 
-    public void Dispose()
-    {
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        TestDirs.DeleteTree(_root);
-    }
+    public void Dispose() => _repos.Dispose();
 
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = TestEnvironment.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    private void Git(string cwd, params string[] args) => _repos.Run(cwd, args);
 
     // A branch with one commit changing these files, pushed to the origin the check fetches (or left unpushed, local only).
     private void Branch(string name, bool push, params string[] files)

@@ -12,6 +12,7 @@ public sealed class RemovalQueueTests : IDisposable
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2q-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly SeededRepos _repos;
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private readonly FakeWorkers _workers = new();
     private readonly FakeGitHub _github = new();
@@ -23,6 +24,8 @@ public sealed class RemovalQueueTests : IDisposable
 
     public RemovalQueueTests()
     {
+        // The model owns _root, so PrOrigins.Git and the PrOrigins.Push below are answered by it; real git only when the run asks (PILOT_TEST_REAL_GIT=1).
+        _repos = new SeededRepos(_root);
         var (widget, head) = PrOrigins.Make(_root, "widget", 7);
         _widgetHead = head;
         Directory.CreateDirectory(Roots);
@@ -31,7 +34,7 @@ public sealed class RemovalQueueTests : IDisposable
         PrOrigins.Git(WidgetClone, "config", $"url.{widget.Replace('\\', '/')}.insteadOf", "https://github.com/acme/widget.git");
         _github.Prs["acme/widget#7"] = new PullRequest(7, "OPEN", head, "https://github.com/acme/widget/pull/7", Title: "PR 7", Author: "ada", Base: "main");
 
-        var git = new GitCli();
+        var git = _repos.Git;
         _options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [Roots]);
         _queue = new RemovalQueue(RemovalQueue.FileIn(_options.DataFolder), TimeProvider.System);
         _planes = new Planes(git, _queue);
@@ -46,17 +49,7 @@ public sealed class RemovalQueueTests : IDisposable
 
     private string WidgetClone => Path.Combine(Roots, "widget");
 
-    public void Dispose()
-    {
-        try
-        {
-            PrOrigins.Git(WidgetClone, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        PrOrigins.Delete(_root);
-    }
+    public void Dispose() => _repos.Dispose();
 
     private Task<CommandResult> Run(string verb, string target, string who, params string[] args) =>
         _reviews.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct);

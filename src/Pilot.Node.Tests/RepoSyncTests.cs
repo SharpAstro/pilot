@@ -336,10 +336,10 @@ public sealed class RepoSyncTests : IDisposable
     [Fact]
     public async Task CreateIssueAsksGhForTheTitleAndBodyAndReturnsItsNumberAndRefusesWithoutATitle()
     {
-        var repo = Path.Combine(_root, "tianwen");
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
+        var repo = Path.Combine(node.Folder, "tianwen");
         Directory.CreateDirectory(repo);
-        Git(repo, "init", "-q", "-b", "main");
-        await using var node = await NodeHarness.StartAsync(Ct);
+        node.Repos!.Run(repo, "init", "-q", "-b", "main");
 
         var made = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.CreateIssue, Target = Verbs.RepoTarget(repo), Args = ["Planets", "on the GPU", "please"], Who = "gui" }, Ct)).Response!;
 

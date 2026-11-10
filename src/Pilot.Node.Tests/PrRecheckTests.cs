@@ -7,13 +7,14 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// The <c>pilot: recheck</c> label (#286): the node sees it on any open PR of a tracked repo, decides whether the PR is its
-/// own to look at, and runs one recheck of it at a time. GitHub is a fake gh over bare repos; git is real.
+/// own to look at, and runs one recheck of it at a time. GitHub is a fake gh over bare repos; git is the in-memory model, or real git under PILOT_TEST_REAL_GIT=1.
 /// </summary>
 public abstract class PrRecheckTestsBase : IDisposable
 {
     private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2r-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly SeededRepos _repos;
     private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private protected readonly FakeWorkers _workers = new();
     private protected readonly FakeGitHub _github = new();
@@ -24,6 +25,8 @@ public abstract class PrRecheckTestsBase : IDisposable
 
     protected PrRecheckTestsBase()
     {
+        // The model owns _root, so PrOrigins.Git and PrOrigins.Push are answered by it; real git only when the run asks (PILOT_TEST_REAL_GIT=1).
+        _repos = new SeededRepos(_root);
         var (widget, head) = PrOrigins.Make(_root, "widget", 7);
         _head = head;
         Directory.CreateDirectory(Roots);
@@ -34,10 +37,10 @@ public abstract class PrRecheckTestsBase : IDisposable
         _github.OpenPrs[WidgetClone] = [new PullRequestStatus { Number = 7, Title = "PR 7", Head = "feature/seven" }];
         _github.Labels[7] = [PilotMarks.Recheck];
 
-        var git = new GitCli();
+        var git = _repos.Git;
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [Roots]);
         var catalog = new RepoCatalog(_state, options);
-        _reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), catalog, options, TimeProvider.System)
+        _reviews = new PrReviews(_state, _workers, _github, git, _repos.Planes(), catalog, options, TimeProvider.System)
         {
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),
             PostsItself = false,
@@ -45,8 +48,8 @@ public abstract class PrRecheckTestsBase : IDisposable
         // The node's own rebases make commits, and a CI runner has no identity of its own to make them with.
         PrOrigins.Git(WidgetClone, "config", "user.email", "t@example.com");
         PrOrigins.Git(WidgetClone, "config", "user.name", "t");
-        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers);
-        _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, git, new Planes(git), _flights, options, TimeProvider.System)
+        _flights = new FlightCommander(_state, _repos.Planes(), TimeProvider.System, _workers);
+        _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, git, _repos.Planes(), _flights, options, TimeProvider.System)
         {
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),
         };
@@ -63,20 +66,7 @@ public abstract class PrRecheckTestsBase : IDisposable
     private protected PullRequest Pr(string state) =>
         new(7, state, _head, "https://github.com/acme/widget/pull/7", Title: "PR 7", Author: "ada", Base: "main");
 
-    public void Dispose()
-    {
-        if (Directory.Exists(WidgetClone))
-        {
-            try
-            {
-                PrOrigins.Git(WidgetClone, "worktree", "prune");
-            }
-            catch (InvalidOperationException)
-            {
-            }
-        }
-        PrOrigins.Delete(_root);
-    }
+    public void Dispose() => _repos.Dispose();
 
     /// <summary>What the watch's search reads of acme/widget: PR 7, with the labels the fake gives it.</summary>
     private protected PullRequestRow[] WatchRead() =>

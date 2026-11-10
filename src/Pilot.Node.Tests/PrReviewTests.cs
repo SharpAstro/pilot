@@ -82,7 +82,7 @@ internal static class PrOrigins
 /// <summary>
 /// A review of any PR (#113): pinned at the PR's head in a worktree of the node's own, made in the repo's clone under the
 /// repo roots or in the node's clone cache, its verdict on a card, and its worktree gone once that card closes. GitHub is
-/// a fake gh over bare repos; git is real.
+/// a fake gh over bare repos; git is the in-memory model (#952), or real git for a class or test that asks for it.
 /// </summary>
 public abstract class PrReviewTestsBase : IDisposable
 {
@@ -97,8 +97,8 @@ public abstract class PrReviewTestsBase : IDisposable
     private protected readonly PrReviews _reviews;
 
     /// <summary>acme/widget has a clone under the repo roots; acme/gadget has none.</summary>
-    private protected readonly string _widgetHead;
-    private protected readonly string _gadgetHead;
+    private protected string _widgetHead;
+    private protected string _gadgetHead;
 
     // The two origins and the clone, built once a run and copied into each test's folder: about twenty git processes a test
     // otherwise, most of the class's three minutes.
@@ -117,18 +117,26 @@ public abstract class PrReviewTestsBase : IDisposable
         return (root, widgetHead, gadgetHead);
     }, LazyThreadSafetyMode.ExecutionAndPublication);
 
-    protected PrReviewTestsBase()
+    /// <summary>The git the node under test runs: the model, or <see cref="GitCli"/> on a real-git run.</summary>
+    private protected readonly IGit _git;
+
+    private readonly TestGit _testGit;
+
+    /// <param name="realGit">The class is about git itself, or needs a git behaviour the model lacks: it runs on real git (say which in a comment at the class).</param>
+    protected PrReviewTestsBase(bool realGit = false)
     {
-        SeedRepo.CopyTree(Seed.Value.Root, _root);
+        // The model builds the fixture in memory; on real git the seed is built once a run and copied in.
+        FakePrOrigins.Shape? shape = null;
+        _git = _testGit = new TestGit(_root, realGit, () => SeedRepo.CopyTree(Seed.Value.Root, _root), makeFake: () => (shape = FakePrOrigins.Build(_root)).Git);
         var gadget = Path.Combine(_root, "github", "gadget.git");
-        (_widgetHead, _gadgetHead) = (Seed.Value.WidgetHead, Seed.Value.GadgetHead);
+        (_widgetHead, _gadgetHead) = shape is { } built ? (built.WidgetHead, built.GadgetHead) : (Seed.Value.WidgetHead, Seed.Value.GadgetHead);
         var (widgetHead, gadgetHead) = (_widgetHead, _gadgetHead);
         _github.Origins["acme/gadget"] = gadget;
         _github.Prs["acme/widget#7"] = Pr("acme/widget", 7, widgetHead, author: "ada");
         _github.Prs["acme/gadget#9"] = Pr("acme/gadget", 9, gadgetHead, author: "bob");
 
         _state = new NodeState(_journal, TimeProvider.System);
-        var git = new GitCli();
+        var git = _git;
         _options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [Roots]);
         _reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, _options), _options, TimeProvider.System)
         {
@@ -147,19 +155,37 @@ public abstract class PrReviewTestsBase : IDisposable
     private protected static PullRequest Pr(string repo, int number, string head, string author, string state = "OPEN") =>
         new(number, state, head, $"https://github.com/{repo}/pull/{number}", Title: $"PR {number} of {repo}", Author: author, Base: "main");
 
+    /// <summary>
+    /// Runs this test on git itself, for a test that checks what git does in a class that otherwise checks what the node decides. Called first,
+    /// before the test has used the repos: the model's folders are replaced by the real seed, and the PR heads are the seed's.
+    /// </summary>
+    private protected void RealGit()
+    {
+        _testGit.UseReal();
+        (_widgetHead, _gadgetHead) = (Seed.Value.WidgetHead, Seed.Value.GadgetHead);
+        _github.Prs["acme/widget#7"] = Pr("acme/widget", 7, _widgetHead, author: "ada");
+        _github.Prs["acme/gadget#9"] = Pr("acme/gadget", 9, _gadgetHead, author: "bob");
+    }
+
     public void Dispose()
     {
-        foreach (var clone in new[] { WidgetClone, GadgetCache }.Where(Directory.Exists))
+        if (_testGit.IsReal)
         {
-            try
+            foreach (var clone in new[] { WidgetClone, GadgetCache }.Where(Directory.Exists))
             {
-                PrOrigins.Git(clone, "worktree", "prune");
-            }
-            catch (InvalidOperationException)
-            {
+                try
+                {
+                    PrOrigins.Git(clone, "worktree", "prune");
+                }
+                catch (InvalidOperationException)
+                {
+                }
             }
         }
+        _testGit.Release();
         PrOrigins.Delete(_root);
+        // A command the model could not answer may have been swallowed by the node's own catch: the test still fails.
+        _testGit.Verify();
     }
 
     private protected Task<CommandResult> Run(string verb, string target, string who, params string[] args) =>
@@ -174,7 +200,7 @@ public abstract class PrReviewTestsBase : IDisposable
     /// <summary>Reviews as the node runs them, posting a verdict on an open PR itself; asks the verb of PR 7, as the one asking.</summary>
     private protected Asker SelfPosting(TimeSpan? grace = null)
     {
-        var git = new GitCli();
+        var git = _git;
         var reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, _options), _options, TimeProvider.System)
         {
             SelfFinishGrace = grace ?? TimeSpan.FromMilliseconds(1),
@@ -220,7 +246,7 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
     private (NodeState State, PrReviews Reviews) Restarted()
     {
         var state = new NodeState(_journal, TimeProvider.System);
-        var git = new GitCli();
+        var git = _git;
         var reviews = new PrReviews(state, _workers, _github, git, new Planes(git), new RepoCatalog(state, _options), _options, TimeProvider.System)
         {
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),
