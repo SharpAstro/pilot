@@ -50,7 +50,7 @@ public sealed class MergeMirrorTests
     [Fact]
     public async Task ChecksRunningMirrorsAsPendingWithHowManyAreDoneAndTheButtonStaysAMergeThatArms()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
 
         await Look(node, new MergeState(MergeKinds.Pending, 2, 7));
@@ -63,10 +63,9 @@ public sealed class MergeMirrorTests
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task EachLookUpdatesTheSameCardInPlaceAsTheChecksProgressAndThenAreReady()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
 
         foreach (var done in new[] { 2, 5, 6 })
@@ -85,7 +84,7 @@ public sealed class MergeMirrorTests
     [Fact]
     public async Task InTheMergeQueueMirrorsAsQueuedAtItsPositionAndTheCardStaysOpenUntilItMerges()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
 
         await Look(node, new MergeState(MergeKinds.Queued, Position: 2));
@@ -112,7 +111,7 @@ public sealed class MergeMirrorTests
     [Fact]
     public async Task AMergePressedWhileTheCardIsQueuedDoesNotQueueItAgainAndKeepsTheCardOpen()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
         node.GitHub.Merge = new MergeState(MergeKinds.Queued, Position: 3);
         node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: true, Position: 3);
@@ -128,7 +127,7 @@ public sealed class MergeMirrorTests
     [Fact]
     public async Task AQueueEntryGitHubDroppedSaysWhyOnTheSameCardAndOffersMergeAgain()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
         await Look(node, new MergeState(MergeKinds.Queued, Position: 1));
 
@@ -146,7 +145,7 @@ public sealed class MergeMirrorTests
     [Fact]
     public async Task ABlockedMergeNamesTheFailedCheckLinkedAndIsNotAMergeToPress()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         // Reviewed already as asking for changes: nothing is sent back, so the card stays to be read.
         var ready = Ready(node, ReviewState.Changes);
 
@@ -162,7 +161,7 @@ public sealed class MergeMirrorTests
     [Fact]
     public async Task ABlockedMergePressedIsRefusedWithWhyAndTheCardStaysOpen()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
         node.GitHub.Merge = new MergeState(MergeKinds.Blocked, 3, 3, Reason: "a review is required");
 
@@ -176,7 +175,7 @@ public sealed class MergeMirrorTests
     [Fact]
     public async Task ChangesRequestedOnGitHubMirrorsAsChangesRequestedAndMergeIsRefused()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
 
         await Look(node, new MergeState(MergeKinds.ChangesRequested, 3, 3));
@@ -184,7 +183,7 @@ public sealed class MergeMirrorTests
         var card = Card(node, ready);
         Merge(card).Status.ShouldBe(ChoiceStatus.ChangesRequested);
         card.Title.ShouldContain("changes requested");
-        (await Answer(node, ready, "Merge")).Error.ShouldNotBeNull().ShouldContain("changes requested");
+        (await Answer(node, ready, "Merge the PR")).Error.ShouldNotBeNull().ShouldContain("changes requested");
         node.GitHub.Merged.ShouldBeEmpty();
         Card(node, ready).State.ShouldBe(CardState.Open);
     }
@@ -194,7 +193,7 @@ public sealed class MergeMirrorTests
     [InlineData(MergeKinds.Behind, "is behind its base")]
     public async Task ConflictsOrBehindTurnTheCardToAGoAroundThatMergesTheBaseInWithNoMerge(string kind, string title)
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         // Even with its review not a passed one, a rebase is the node's own work (PIL846; owner 2026-11-09: never bother the owner about
         // rebases): the conflict hand-over sends the last leg round, and the ready card closes as handled with no ring in its place.
         var ready = Ready(node, ReviewState.Changes);
@@ -211,7 +210,7 @@ public sealed class MergeMirrorTests
     [Fact]
     public async Task ACardClosedForAConflictStaysClosedAndMergesNothingOnceGitHubSaysItMerges()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node, ReviewState.Changes);
         await Look(node, new MergeState(MergeKinds.Conflicts));
 
@@ -225,7 +224,7 @@ public sealed class MergeMirrorTests
     [Fact]
     public async Task AMergePressedOnReadyMergesAndTheCardReadsMergedBeforeItGoes()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
 
@@ -242,7 +241,7 @@ public sealed class MergeMirrorTests
     [Fact]
     public async Task AMergePressedOnPendingArmsAndTheCardStaysOpenWithItsProgressOnTheChoice()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
 
@@ -256,7 +255,7 @@ public sealed class MergeMirrorTests
     [Fact]
     public async Task AQueueMergeJoinsTheQueueAndTheCardStaysOpenAtItsPosition()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
         node.GitHub.Queues = true;

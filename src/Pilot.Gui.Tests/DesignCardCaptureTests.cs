@@ -9,8 +9,8 @@ namespace Pilot.Gui.Tests;
 /// <summary>
 /// A CAPTURE, not a check: it writes images and asserts nothing about them (the hover on a cut button is asserted in CardHoverTests, the
 /// words in the node's DesignCardWordsTests). Captures of a design card as the panel draws it, before (the question whole, so the panel cuts it at 240 with no mark; options of about
-/// 120 characters, cut at two lines with no mark) and after (the summary bounded to 240 with an ellipsis, Recommended dropped when it does
-/// not fit; option buttons ending in an ellipsis, the whole option on hover) at a narrow and a wide window. Only with PILOT_TEST_CAPTURE set
+/// 120 characters, cut at two lines with no mark) and after (the summary bounded to 240 with an ellipsis, the options and Recommended dropped
+/// when they do not fit; option buttons a short verb, Pick option A, with the whole option on hover) at a narrow and a wide window. Only with PILOT_TEST_CAPTURE set
 /// (ui-changes.md). The words are sliced by hand in the shape <c>PrReviews.DesignSummary</c> and <c>DesignChoices</c> make; nothing ties them.
 /// </summary>
 public sealed class DesignCardCaptureTests
@@ -38,7 +38,7 @@ public sealed class DesignCardCaptureTests
         const string other = "same, and also ring a card on the flight when the label is on a repo that has no sibling clones on this node at all (one more card kind)";
         var before = Card("before", question + " Recommended: " + recommended[..80] + ". It rings because no option reaches the criteria.", Choice(recommended), Choice(other));
         var afterQuestion = question[..(240 - " It rings because no option reaches the criteria.".Length - 3)].TrimEnd() + "...";
-        var after = Card("after", afterQuestion + " It rings because no option reaches the criteria.", Choice(recommended[..41] + "...", recommended), Choice(other[..41] + "...", other));
+        var after = Card("after", afterQuestion + " It rings because no option reaches the criteria.", Choice("Pick option A", recommended), Choice("Pick option B", other));
         var dir = Path.GetDirectoryName(capture) ?? ".";
         foreach (var (width, height) in new[] { (700, 600), (1600, 600) })
         {

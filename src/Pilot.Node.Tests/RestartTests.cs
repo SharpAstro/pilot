@@ -33,9 +33,9 @@ public sealed class RestartTests
     /// two empty ones end the owner's restored row for good before the test said it lived, and a restarted node then judged its
     /// owner ended. <paramref name="duringFirstPoll"/> runs while that first poll is still held, the recovery waiting for it.
     /// </summary>
-    private static async Task<NodeHarness> StartAsync(string? folder = null, Func<NodeHarness, Task>? duringFirstPoll = null, INodeJournal? journal = null)
+    private static async Task<NodeHarness> StartAsync(string? folder = null, Func<NodeHarness, Task>? duringFirstPoll = null, INodeJournal? journal = null, IJobLauncher? launcher = null)
     {
-        var node = await NodeHarness.StartAsync(Ct, folder: folder, holdFirstListing: true, journal: journal);
+        var node = await NodeHarness.StartAsync(Ct, folder: folder, holdFirstListing: true, journal: journal, jobLauncher: launcher);
         try
         {
             node.Agents.Json = Listing;
@@ -85,18 +85,16 @@ public sealed class RestartTests
 
     private static async Task<JobRow> Until(NodeHarness node, string id, Func<JobRow, bool> condition, int seconds = WaitSeconds)
     {
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        while (true)
+        // Waits for the state's next change, never on a timer: only the ceiling bounds it.
+        var (changes, subscription) = StateChanges.Watch(node.State);
+        using (subscription)
         {
-            if (node.State.Jobs().FirstOrDefault(j => j.Id == id) is { } job && condition(job))
-            {
-                return job;
-            }
-            if (clock.Elapsed >= TimeSpan.FromSeconds(seconds))
-            {
-                throw new TimeoutException($"job {id} never came to the state awaited within {seconds} s: {node.State.Jobs().FirstOrDefault(j => j.Id == id)}");
-            }
-            await Task.Delay(50, Ct);
+            JobRow? found = null;
+            await changes.UntilAsync(
+                () => node.State.Jobs().FirstOrDefault(j => j.Id == id) is { } job && condition(found = job),
+                TimeSpan.FromSeconds(seconds), Ct, $"job {id} never came to the state awaited",
+                () => node.State.Jobs().FirstOrDefault(j => j.Id == id)?.ToString() ?? "no such job");
+            return found!;
         }
     }
 
@@ -212,24 +210,27 @@ public sealed class RestartTests
         Deliveries(second).ShouldBe(1, Why(second, id));
     }
 
-    /// <summary>A job the first node started and then stopped over, killed while no node ran and with no exit file: its data folder and its id.</summary>
-    private static async Task<(string Folder, string Id)> JobThatDiedWhileNoNodeRanAsync(INodeJournal? journal = null)
+    /// <summary>
+    /// A job the first node started and then stopped over, gone while no node ran and with no exit file: its data folder, its id and the
+    /// in-memory launcher whose process table the next node reads. The real process and its reattach are the Slow tests' (#933).
+    /// </summary>
+    private static async Task<(string Folder, string Id, FakeJobLauncher Launcher)> JobThatDiedWhileNoNodeRanAsync(INodeJournal? journal = null)
     {
-        var first = await StartAsync(journal: journal);
-        var id = Run(first, Sleeping(60, 0));
-        var running = await Until(first, id, j => j.State == JobState.Running);
+        var launcher = new FakeJobLauncher(TimeProvider.System);
+        var first = await StartAsync(journal: journal, launcher: launcher);
+        var id = Run(first, "sleep 60; echo 'finished'; exit 0");
+        await Until(first, id, j => j.State == JobState.Running);
         await first.StopKeepingFolderAsync();
-        KillProcess(running.Pid!.Value);
-        await WaitForAsync(() => !Alive(running.Pid!.Value));
-        return (first.Folder, id);
+        launcher.Die(id);
+        return (first.Folder, id, launcher);
     }
 
     [Fact]
     public async Task AJobThatDiedWhileNoNodeRanWithoutAnExitFileIsFailedOnRestart()
     {
-        var (folder, id) = await JobThatDiedWhileNoNodeRanAsync();
+        var (folder, id, launcher) = await JobThatDiedWhileNoNodeRanAsync();
 
-        await using var second = await StartAsync(folder);
+        await using var second = await StartAsync(folder, launcher: launcher);
         var ended = await Until(second, id, j => j.EndedAt is not null && j.Told);
 
         (ended.State, ended.Error).ShouldBe((JobState.Failed, "ended while the node was down, no exit recorded"), Why(second, id));
@@ -252,16 +253,25 @@ public sealed class RestartTests
     public async Task AJobThatDiedWhileNoNodeRanIsToldToItsLiveOwnerOnlyOnceTheTrackerHasListedIt()
     {
         var journal = new InMemoryJournal();
-        var (folder, id) = await JobThatDiedWhileNoNodeRanAsync(journal);
+        var (folder, id, launcher) = await JobThatDiedWhileNoNodeRanAsync(journal);
         var kept = new NodeState(journal, TimeProvider.System).Snapshot();
         kept.Sessions.ShouldContain(s => s.Id == Owner);
         var restored = new RestoredJournal(kept with { Sessions = [.. kept.Sessions.Where(s => s.Id != Owner)] });
 
-        await using var second = await StartAsync(folder, journal: restored, duringFirstPoll: async node =>
+        await using var second = await StartAsync(folder, launcher: launcher, journal: restored, duringFirstPoll: async node =>
         {
             // The recovery has read the exit file and ended the row; its tell waits for the first poll the test holds.
             await Until(node, id, j => j.EndedAt is not null);
-            await Task.Delay(300, Ct);
+            // A tell the runner made too early would follow the row's end on its next turns, not on a timer: give those turns to the pool
+            // (no wall-clock wait, no spin), so a premature tell shows in the checks below. The 50 turns are a bound, not a measure: the
+            // tell is a few continuations on the pool and each turn here queues behind the ones already there, so 50 leaves room for a
+            // slow runner at a cost of microseconds, and a tell the turns miss still shows in the checks after the poll (Deliveries must
+            // be exactly 1). Left as it is, by decision.
+            for (var turn = 0; turn < 50; turn++)
+            {
+                await Task.Yield();
+                await Task.Run(() => { }, Ct);
+            }
             node.State.Sessions().ShouldNotContain(s => s.Id == Owner, "the owner has a row before the first poll");
             node.State.Jobs().Single(j => j.Id == id).Told.ShouldBeFalse($"told before the first poll: {Why(node, id)}");
             Deliveries(node).ShouldBe(0, $"told before the first poll: {Why(node, id)}");

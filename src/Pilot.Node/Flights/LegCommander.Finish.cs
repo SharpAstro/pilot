@@ -239,14 +239,15 @@ public sealed partial class LegCommander
                     : null;
                 // The Detail holds the worker's report and the notes about main, not the tail of the recorded check output: the summary and
                 // the title name the cause, and the leg's report keeps the rest (pilot #844 review, round 3 note 3: left as it is).
-                var detail = string.Join("\n\n", new[] { report, notWhy, mainDetail }.Where(s => !string.IsNullOrEmpty(s)));
+                var detail = string.Join("\n\n", new[] { report, notWhy, mainDetail, Models.NextWorkerNote(leg) }.Where(s => !string.IsNullOrEmpty(s)));
                 state.RaiseCard(CardBin.Ring, "leg-failed", Verbs.LegTarget(flight.Code, leg.Name),
                     // "files this leg did not change": what was compared is the failing files and their src/<Project>/ folders, not the leg's code as a whole.
                     $"{name}: {reason}{(outside ? ", in files this leg did not change" : "")}", detail.Length > 0 ? detail : null,
                     [
                         // The go-around still carries the whole report to the fresh worker; the buttons carry none of its words.
-                        new CardChoice { Label = Models.SendBackLabel(leg, "Send it round: a fresh worker fixes it and finishes"), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker stopped: {(report.Length > 0 ? report : "no reason given")}"] },
-                        new CardChoice { Label = failure.CheckFailed ? "Accept as it is: the flight goes on with the check failing" : "Accept as it is: the flight goes on, the failure kept in its report", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
+                        // No override that marks the failed leg done: that stays the CLI's, with a reason (#797, the owner: "the mark done
+                        // anyway is the worst thing").
+                        new CardChoice { Label = Verbs.FreshWorker, Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker stopped: {(report.Length > 0 ? report : "no reason given")}"] },
                     ],
                     // The panel draws a summary up to CardsView.SummaryChars (240) only, so it says what stopped, whether the flight changed
                     // the failing files and whether main has; the buttons already say what each leads to (#844 review).
@@ -449,13 +450,13 @@ public sealed partial class LegCommander
         var target = Verbs.LegTarget(flight.Code, leg.Name);
         state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "branch needs a force push", Wait = null });
         state.RaiseCard(CardBin.Ring, PushBlockedKind, target,
-            $"{flight.Code}/{leg.Name} is done, but its rebased branch needs a force push with lease or a merge",
-            $"Check passed at {CommitRefs.Short(blocked.Head)}, origin/{flight.Branch} at {CommitRefs.Short(blocked.Origin)} is not an ancestor of it, so a plain push is refused. Nothing was pushed or overwritten.{(report.Length > 0 ? $"\nThe worker said: {report}" : "")}",
+            $"{flight.Code}/{leg.Name} is done, but its branch was rebased and is not pushed",
+            $"Check passed at {CommitRefs.Short(blocked.Head)}, origin/{flight.Branch} at {CommitRefs.Short(blocked.Origin)} is not an ancestor of it, so a plain push is refused. Nothing was pushed or overwritten.\nOverwriting is a push with lease; the other way merges origin/{flight.Branch} into the plane and pushes plain.{(report.Length > 0 ? $"\nThe worker said: {report}" : "")}",
             [
-                new CardChoice { Label = "Push the rebased branch with lease", Verb = Verbs.FinishLeg, Target = target, Args = [PushedWithLease, blocked.Origin] },
-                new CardChoice { Label = $"Merge origin/{flight.Branch} into the plane and push", Verb = Verbs.FinishLeg, Target = target, Args = [MergedWithOrigin] },
+                new CardChoice { Label = "Overwrite origin's branch", Verb = Verbs.FinishLeg, Target = target, Args = [PushedWithLease, blocked.Origin] },
+                new CardChoice { Label = "Merge origin's branch in", Verb = Verbs.FinishLeg, Target = target, Args = [MergedWithOrigin] },
             ],
-            summary: $"{flight.Code}/{leg.Name} is done and its check passes, but its branch was rebased off origin/{flight.Branch}. Push the rebased branch with lease overwrites origin's only if it is still at {CommitRefs.Short(blocked.Origin)}; Merge origin/{flight.Branch} keeps its commits and pushes plain.");
+            summary: $"{flight.Code}/{leg.Name} is done and its check passes, but its branch was rebased off origin's, so a plain push is refused. Overwriting replaces origin's only if it is still at {CommitRefs.Short(blocked.Origin)}; merging keeps origin's commits and pushes plain.");
         return true;
     }
 

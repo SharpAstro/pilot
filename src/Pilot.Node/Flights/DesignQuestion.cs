@@ -124,10 +124,80 @@ public sealed record DesignQuestion(PrFinding Finding, string Question, IReadOnl
                 ? $"{PrReviews.Clean(one.Text, 120)} is the only option that reaches the criteria ({Criteria}), and no other was offered."
                 : $"{PrReviews.Clean(one.Text, 120)} is the only option that reaches the criteria ({Criteria}); "
                     + $"the others miss: {string.Join("; ", others.Select(o => $"{PrReviews.Clean(o.Text, 120)}: {PrReviews.Clean(o.Misses ?? "", 200)}"))}.";
-            answers.Add(questions.Count == 1 ? one.Answer : $"{PrReviews.Clean(question.Question, 200)} => {one.Answer}");
+            answers.Add(AnswerTo(questions, question, one));
             reasons.Add(questions.Count == 1 ? why : $"{question.Finding.Path}:{question.Finding.Line} {why}");
         }
         return new DesignDecided(string.Join('\n', answers), string.Join(' ', reasons));
+    }
+
+    /// <summary>
+    /// The answer <paramref name="option"/> gives <paramref name="question"/> as the node acts on it: the option's words alone when the card
+    /// asks one question, the question followed by them (<c>Is a leg done? =&gt; mark it done</c>) when it asks several, so the answer says
+    /// which question it answers. One line per question of an answer that answers several.
+    /// </summary>
+    internal static string AnswerTo(IReadOnlyList<DesignQuestion> questions, DesignQuestion question, DesignOption option) =>
+        questions.Count == 1 ? option.Answer : $"{PrReviews.Clean(question.Question, 200)} => {option.Answer}";
+
+    /// <summary>
+    /// Each question's one recommended option (<c>Option*</c>), or null when a question has none or more than one: the answer the design
+    /// card's one button for several questions takes for all of them at once.
+    /// </summary>
+    internal static string? RecommendedAnswers(IReadOnlyList<DesignQuestion> questions) =>
+        questions.Count > 0 && questions.All(q => q.Options.Count(o => o.Recommended) == 1)
+            ? string.Join('\n', questions.Select(q => AnswerTo(questions, q, q.Options.Single(o => o.Recommended))))
+            : null;
+
+    private static readonly Regex Tag = new(@"^(?<n>\d+)?(?<l>[A-Za-z])$", RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// The words typed as the answer when they are only the options' tags as the card shows them (<c>A</c> on a card with one question,
+    /// <c>1A 2B</c> or <c>1A, 2B</c> on a card with several; <see cref="RecommendedFirst"/> order, so A is the recommended one): each tag
+    /// becomes its option's answer, one line per question, as a button's answer reads. Words that are not only tags are the person's own
+    /// and come back unchanged. Tags that leave a question unanswered, give one question two options or name no option are refused, so an
+    /// answer of tags never drops a question (the review of #797: one answer to a card of two questions closed it with the other unanswered).
+    /// A card with a question that has no options takes own words, never tags, as no tag can answer that question.
+    /// </summary>
+    /// <exception cref="FlightException">The tags do not answer every question once.</exception>
+    internal static string ExpandTags(IReadOnlyList<DesignQuestion> questions, string words)
+    {
+        var tokens = words.Split([' ', ',', ';', '\t', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(t => t.TrimEnd('.')).Where(t => t.Length > 0 && !t.Equals("and", StringComparison.OrdinalIgnoreCase)).ToList();
+        var questionsWithOptions = questions.Where(q => q.Options.Count > 0).ToList();
+        if (tokens.Count == 0 || questionsWithOptions.Count == 0 || !tokens.All(t => Tag.IsMatch(t)))
+        {
+            return words;
+        }
+        // A question with no options has no tag to answer it by: tags alone would close the card with that question unanswered.
+        if (questions.Select((q, n) => (q, n)).Where(x => x.q.Options.Count == 0).Select(x => x.n + 1).ToList() is { Count: > 0 } open)
+        {
+            throw new FlightException($"question {string.Join(" and ", open)} has no options to pick: answer in your own words, since tags would leave it unanswered");
+        }
+        var picked = new Dictionary<int, DesignOption>();
+        foreach (var token in tokens)
+        {
+            var match = Tag.Match(token);
+            // On a card with one question its options go by their letter alone; 1A names the same option.
+            var n = match.Groups["n"].Success ? int.Parse(match.Groups["n"].Value, System.Globalization.CultureInfo.InvariantCulture) - 1 : questions.Count == 1 ? 0 : -1;
+            if (n < 0)
+            {
+                throw new FlightException($"{token} does not say which question it answers: give each question's number and letter, such as 1A 2B");
+            }
+            var letter = char.ToUpperInvariant(match.Groups["l"].Value[0]) - 'A';
+            if (n >= questions.Count || letter >= questions[n].Options.Count)
+            {
+                throw new FlightException($"the review offers no option {token.ToUpperInvariant()}: the card names each option by its tag");
+            }
+            if (!picked.TryAdd(n, questions[n].RecommendedFirst.ElementAt(letter)))
+            {
+                throw new FlightException($"question {n + 1} was given two options: pick one option for each question");
+            }
+        }
+        var unanswered = questions.Select((q, n) => (q, n)).Where(x => x.q.Options.Count > 0 && !picked.ContainsKey(x.n)).Select(x => x.n + 1).ToList();
+        if (unanswered.Count > 0)
+        {
+            throw new FlightException($"question {string.Join(" and ", unanswered)} has no answer: give an option for each question, such as 1A 2B, or answer in your own words");
+        }
+        return string.Join('\n', picked.OrderBy(p => p.Key).Select(p => AnswerTo(questions, questions[p.Key], p.Value)));
     }
 
     /// <summary>The options' words as a decision lists them: the choice of each option of each question, each once.</summary>

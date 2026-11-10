@@ -199,6 +199,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>The machine CPU percent above which a look counts as saturated.</summary>
     public const double SaturatedAbove = 90;
 
+    /// <summary>
+    /// What starts a job's shell, finds it again after a restart and ends its tree: the real <see cref="DetachedShell"/> in the node;
+    /// a test puts an in-memory one before its first job (#933).
+    /// </summary>
+    public IJobLauncher Launcher { get; set; } = RealJobLauncher.Instance;
+
     /// <summary>The OS's process table, as the node reads a job's tree and kills it: a test puts a fake one.</summary>
     public IProcessTable ProcessTable { get; init; } = OsProcessTable.Instance;
 
@@ -484,15 +490,15 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     {
         if (check is { State: JobState.Running, Pid: { } pid, ProcessStartedAt: { } startedAt })
         {
-            var process = new JobProcess(pid, startedAt);
+            var process = Launcher.Attach(pid, startedAt);
             // Only a live process of that pid and start time is touched: its named job object first, then the wrapper's tree.
             if (process.IsAlive())
             {
-                DetachedShell.TerminateJob(check.Id, check.LogPath);
+                Launcher.TerminateJob(check.Id, check.LogPath);
                 process.Kill();
             }
         }
-        DetachedShell.DeleteScripts(check.ScriptPath);
+        Launcher.DeleteScripts(check.ScriptPath);
         var ended = Unpaused(check, time.GetUtcNow()) with
         {
             State = JobState.Failed,
@@ -512,7 +518,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     {
         var exitPath = job.ExitPath ?? ExitPathOf(job.LogPath);
         // A pid alone proves nothing: a process that took it since has another start time.
-        var process = job is { Pid: { } pid, ProcessStartedAt: { } startedAt } ? new JobProcess(pid, startedAt) : null;
+        var process = job is { Pid: { } pid, ProcessStartedAt: { } startedAt } ? Launcher.Attach(pid, startedAt) : null;
         if (process is not null && process.IsAlive())
         {
             _running[job.Id] = process;
@@ -570,7 +576,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             state.PutJob(ended);
             Finish(ended, last);
         }
-        DetachedShell.DeleteScripts(job.ScriptPath);
+        Launcher.DeleteScripts(job.ScriptPath);
         return (ended, last);
     }
 
@@ -1414,7 +1420,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             {
                 var waiting = string.Join(", ", _queue.Select(q => $"{q.Id} ({q.OwnerName ?? q.Owner ?? "the node"})"));
                 state.RaiseCard(CardBin.ForYou, IdleKind, subject, $"job {id} holds the slot but has used next to no CPU for {Took(now - mark.At)}",
-                    $"`{job.Command}` is run by {job.OwnerName ?? job.Owner ?? "the node"}; {_queue.Count} wait behind it: {waiting}. It may only be waiting on something; cancel it with `pilot job cancel {id}` if so, and the owner can wait with `pilot leg wait`.");
+                    $"`{job.Command}` is run by {job.OwnerName ?? job.Owner ?? "the node"}; {_queue.Count} wait behind it: {waiting}. It may only be waiting on something; the owner can wait with `pilot leg wait` instead.",
+                    [new CardChoice { Label = "Cancel the job", Verb = Verbs.CancelJob, Target = subject }],
+                    summary: $"Job {id} holds the machine's slot and does almost nothing while {_queue.Count} wait behind it: cancel it if it is only waiting.");
             }
         }
     }
@@ -1797,28 +1805,31 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     }
 
     /// <summary>
-    /// Starts a job detached from the node (<see cref="DetachedShell"/>: on Windows in a named job object of its own, inheriting
-    /// only its log and NUL); null when it started, else why not.
+    /// Starts a job detached from the node through <see cref="Launcher"/> (the real one is <see cref="DetachedShell"/>: on Windows in
+    /// a named job object of its own, inheriting only its log and NUL); null when it started, else why not.
     /// </summary>
     private string? Start(JobRow job)
     {
-        DetachedShell? shell = null;
-        JobProcess process;
+        LaunchedJob launched;
         var exitPath = job.ExitPath ?? ExitPathOf(job.LogPath);
         try
         {
             // An exit file of an earlier run of this id would end the job at once: there is none.
             File.Delete(exitPath);
             var variables = EnvironmentOf(job);
-            shell = DetachedShell.For(job.Id, job.Command, job.Cwd, job.LogPath, exitPath, Priority, variables,
-                Flights.PlaneOutput.NoBuildNotice(PlaneOutput, job.Command, job.Cwd));
-            var started = shell.Start();
-            process = new JobProcess(started.Id, StartOf(started), started);
+            launched = Launcher.Start(new JobLaunch(job.Id, job.Command, job.Cwd, job.LogPath, exitPath, Priority, variables,
+                Flights.PlaneOutput.NoBuildNotice(PlaneOutput, job.Command, job.Cwd)));
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException)
         {
-            shell?.Dispose();
             return ex.Message;
+        }
+        var process = launched.Process;
+        // A launcher that knows when its process ends wakes the watch at once, as a cancel does, instead of at its next look.
+        if (launched.Exited is { } exited)
+        {
+            var id = job.Id;
+            _ = exited.ContinueWith(_ => Nudge(id), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
         // A check never outlives the node, a crash included: its wrapper (and so whatever it starts) is held by a kill-on-close job.
         if (job.Kind == JobKind.Check && process.Child is { } wrapper && KillOnCloseJob.Hold(wrapper, Priority) is { } hold)
@@ -1826,7 +1837,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             _holds[job.Id] = hold;
         }
         // What a later node needs to find it again, on the row before it is put. The scripts stay until the job has ended.
-        job = job with { ExitPath = exitPath, Pid = process.Pid, ProcessStartedAt = process.StartedAt, ScriptPath = shell.Script, Shell = shell.Shell };
+        job = job with { ExitPath = exitPath, Pid = process.Pid, ProcessStartedAt = process.StartedAt, ScriptPath = launched.Script, Shell = launched.Shell };
         // In _running before the Running row is put: a cancel that sees the row must find the process.
         _running[job.Id] = process;
         state.PutJob(job);
@@ -1841,19 +1852,6 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>A job's step from its last lines: the last non-empty one, but never the shell header, so a job that wrote nothing has no step rather than its shell.</summary>
     private static string? StepOf(string[] lines, JobRow job) =>
         lines.LastOrDefault(l => l.Trim().Length > 0 && !IsShellHeader(l, job)) is { } l ? Clip(l) : null;
-
-    /// <summary>When <paramref name="process"/> started, in UTC; now when it cannot be read (it ended already, and the watch finds it so).</summary>
-    private DateTimeOffset StartOf(Process process)
-    {
-        try
-        {
-            return new DateTimeOffset(process.StartTime.ToUniversalTime(), TimeSpan.Zero);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-            return time.GetUtcNow();
-        }
-    }
 
     /// <summary>
     /// Ends a job's whole tree: on Windows by its named job object first, which holds a descendant whose parent already exited
@@ -1870,7 +1868,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     // Thawed first, by pid through the same table: nothing is left frozen, and a frozen tree is never killed unseen.
                     SignalTree(id, process, stop: false);
                 }
-                DetachedShell.TerminateJob(id, row.LogPath);
+                Launcher.TerminateJob(id, row.LogPath);
             }
         }
         process.Kill();
@@ -2076,6 +2074,15 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         return state.Jobs().Any(j => j.Id == id) ? $"job {id} is not running" : $"There is no job {id}";
     }
 
+    /// <summary>Wakes every watch to look again now: a test moved its clock, and a real clock would have woken them at their next look.</summary>
+    internal void NudgeWatches()
+    {
+        foreach (var id in _nudges.Keys)
+        {
+            Nudge(id);
+        }
+    }
+
     private void Nudge(string id)
     {
         if (_nudges.TryGetValue(id, out var nudge))
@@ -2094,7 +2101,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         JobProcess? process = null;
         if (job.State == JobState.Running)
         {
-            process = _running.TryGetValue(job.Id, out var held) ? held : job is { Pid: { } pid, ProcessStartedAt: { } startedAt } ? new JobProcess(pid, startedAt) : null;
+            process = _running.TryGetValue(job.Id, out var held) ? held : job is { Pid: { } pid, ProcessStartedAt: { } startedAt } ? Launcher.Attach(pid, startedAt) : null;
         }
         if (process is null)
         {
@@ -2152,6 +2159,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 }
                 if (failure is { } found)
                 {
+                    // The grace counts from the moment the failure was read, before the row that says so is published: a clock moved on that
+                    // change (the tests') or a late turn of the loop must not give the report a fresh grace (it hung a test for its ceiling).
+                    if (job.FailFast)
+                    {
+                        failedAt ??= time.GetUtcNow();
+                    }
                     NoteFailure(job, found);
                 }
                 // The step, put on the stream now and then: a long run shows it is alive, without a delta per line.
@@ -2278,7 +2291,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         // What the job wrote last, after the process has gone, and the whole of a last line it left without a newline.
         Follow(final: true);
         // Ended: the scripts it ran are of no use now.
-        DetachedShell.DeleteScripts(job.ScriptPath);
+        Launcher.DeleteScripts(job.ScriptPath);
         ReleaseHold(job.Id);
 
         _running.TryRemove(job.Id, out _);
@@ -2578,8 +2591,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         else
         {
-            state.RaiseCard(CardBin.Ring, UntoldKind, Verbs.JobTarget(job.Id), $"{job.Id} ended but {job.OwnerName ?? job.Owner} could not be told: its session refused the say ({LegCommander.OneLine(error ?? "no reason given")})",
-                $"{how}; the say was refused: {error}");
+            state.RaiseCard(CardBin.Ring, UntoldKind, Verbs.JobTarget(job.Id), $"Job {job.Id} ended and its owner could not be told",
+                $"{how}; the say was refused: {error}",
+                summary: $"Tell {job.OwnerName ?? job.Owner} yourself that job {job.Id} ended: its session refused the message ({LegCommander.OneLine(error ?? "no reason given")}).");
         }
     }
 

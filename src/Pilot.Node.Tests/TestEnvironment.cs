@@ -22,34 +22,131 @@ internal static class TestEnvironment
     [ModuleInitializer]
     internal static void WatchProcessStarts()
     {
-        ProcessStarts.Observer = (kind, _) =>
+        var mode = ProcessStartGuard.ModeFor(Environment.GetEnvironmentVariable("PILOT_TEST_PROCESS_GUARD"));
+        ProcessStarts.Observer = (kind, start) =>
         {
-            var test = Xunit.TestContext.Current.Test?.TestDisplayName ?? "(no test: a fixture or a background loop)";
-            _starts.GetOrAdd(test, _ => new()).AddOrUpdate(kind, 1, (_, n) => n + 1);
+            // The node's own request handlers run on threads that carry no test (Kestrel starts them without the test's context), so a
+            // start there is the test that started the node (CarryOwner, from NodeHarness), or else the test whose folder it runs in: see OwnFolder.
+            var current = CurrentTest() ?? _carried.Value ?? OwnerOf(start.WorkingDirectory);
+            var test = current?.Name;
+            // Written first, so the report names the start even when the guard throws (a node path that catches the throw would
+            // otherwise hide it). A start a guard test provokes on purpose (ProvokingAStart) is checked but not written.
+            if (!_provoking.Value && ProcessStartGuard.Verdict(kind, ProcessStartGuard.Command(start), test, current?.Traits) is not null)
+            {
+                // A start with no test is named by its command and working folder, so its source (a fixture, a background loop) can be traced.
+                // The Pilot frames of the stack follow it (the test's own frames are absent where the work runs on the node's threads).
+                _starts.GetOrAdd(test ?? $"(no test: a fixture or a background loop) {ProcessStartGuard.Command(start)} in {start.WorkingDirectory} via {Where()}", _ => new()).AddOrUpdate(kind, 1, (_, n) => n + 1);
+            }
+            ProcessStartGuard.Check(kind, ProcessStartGuard.Command(start), test, current?.Traits, mode);
         };
         AppDomain.CurrentDomain.ProcessExit += (_, _) => WriteProcessStartReport();
     }
+
+    private static readonly AsyncLocal<bool> _provoking = new();
+
+    /// <summary>
+    /// For the guard's own tests: while the returned scope is open on this flow, a start the observer refuses still throws but is not
+    /// written to the report, since the test provokes it on purpose and expects the throw (a report line would fail CI's process-start step).
+    /// </summary>
+    internal static IDisposable ProvokingAStart()
+    {
+        _provoking.Value = true;
+        return new ProvokeScope();
+    }
+
+    private sealed class ProvokeScope : IDisposable
+    {
+        public void Dispose() => _provoking.Value = false;
+    }
+
+    /// <summary>
+    /// How a test's own helper starts a process (its <c>Git(...)</c> that seeds a repo, a probe): through the same hook as the node's starts, so the report
+    /// counts it too. Its kind is the program with <c> (test helper)</c> after it, to tell it from a start the node under test made.
+    /// </summary>
+    internal static System.Diagnostics.Process? Start(System.Diagnostics.ProcessStartInfo start, string? kindSuffix = null)
+    {
+        ProcessStarts.Observe($"{Path.GetFileNameWithoutExtension(start.FileName)} ({kindSuffix ?? "test helper"})", start);
+        return System.Diagnostics.Process.Start(start);
+    }
+
+    /// <summary>A test a start is counted against: its display name and its traits (the method's and its class's).</summary>
+    internal sealed record Owner(string Name, IReadOnlyDictionary<string, IReadOnlyCollection<string>> Traits);
+
+    /// <summary>The test running on this flow, or null outside one (a fixture, or a thread that carries no test).</summary>
+    internal static Owner? CurrentTest() => Xunit.TestContext.Current.Test is { } running ? new Owner(running.TestDisplayName, running.Traits) : null;
+
+    private static readonly AsyncLocal<Owner?> _carried = new();
+
+    /// <summary>
+    /// Names <paramref name="owner"/> as the test of every start made from here on in this flow, where no test is running: what a test node's
+    /// request middleware does (NodeHarness), since Kestrel runs a request on a thread that carries no test, though the test that started the
+    /// node made it. A running test still names itself first.
+    /// </summary>
+    internal static void CarryOwner(Owner owner) => _carried.Value = owner;
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Owner> _folders = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Names the current test as the owner of <paramref name="folder"/> (a node's folder, a seeded repo's root): a git the node runs there on
+    /// a request handler's thread, which carries no test, is then the test's start. Call it from the test's own thread (its constructor,
+    /// <c>InitializeAsync</c> or body); with no test running it records nothing.
+    /// </summary>
+    internal static void OwnFolder(string folder)
+    {
+        if (Xunit.TestContext.Current.Test is { } test)
+        {
+            _folders[Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder))] = new Owner(test.TestDisplayName, test.Traits);
+        }
+    }
+
+    private static Owner? OwnerOf(string? workingDirectory)
+    {
+        for (var at = string.IsNullOrEmpty(workingDirectory) ? null : Path.TrimEndingDirectorySeparator(Path.GetFullPath(workingDirectory)); at is not null; at = Path.GetDirectoryName(at))
+        {
+            if (_folders.TryGetValue(at, out var owner))
+            {
+                return owner;
+            }
+        }
+        return null;
+    }
+
+    private static string Where() => string.Join(" < ", new System.Diagnostics.StackTrace(1, false).GetFrames()
+        .Select(f => f.GetMethod()).Where(m => m?.DeclaringType?.FullName?.StartsWith("Pilot.", StringComparison.Ordinal) == true)
+        .Select(m => $"{m!.DeclaringType!.Name}.{m.Name}").Take(8));
 
     /// <summary>The report: one line per test that started a process, with how many of each kind; empty when none did.</summary>
     internal static string ProcessStartReport() =>
         string.Join('\n', _starts.OrderByDescending(t => t.Value.Values.Sum()).Select(t => $"{t.Value.Values.Sum(),5}  {t.Key}  ({string.Join(", ", t.Value.OrderBy(k => k.Key).Select(k => $"{k.Key} {k.Value}"))})"));
 
-    /// <summary>Writes the report next to the test assembly (or to PILOT_TEST_PROCESS_REPORT), once the run ends.</summary>
+    /// <summary>
+    /// Writes the report next to the test assembly (or to PILOT_TEST_PROCESS_REPORT), once the run ends. A run in which nothing started a process
+    /// writes none, and removes the one an earlier run left: a file there means this run started processes (CI says "No test started a real process" without it).
+    /// </summary>
     internal static void WriteProcessStartReport()
     {
-        if (_starts.IsEmpty)
-        {
-            return;
-        }
         var path = Environment.GetEnvironmentVariable("PILOT_TEST_PROCESS_REPORT") is { Length: > 0 } given ? given : Path.Combine(AppContext.BaseDirectory, "process-starts.txt");
         try
         {
+            if (_starts.IsEmpty)
+            {
+                File.Delete(path);
+                return;
+            }
             File.WriteAllText(path, $"{_starts.Count} tests started real processes (#933)\n" + ProcessStartReport() + "\n");
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
         }
     }
+
+    /// <summary>
+    /// No test's session start waits on the memory of the machine it runs on (#934's gate read it, so 13 start tests failed on a machine
+    /// with under 1.5 GB free, and passed on one with more). A gate built with no free memory of its own reads none, as on a machine
+    /// where it cannot be read; the tests of the memory wait give theirs the free memory they mean.
+    /// </summary>
+    [ModuleInitializer]
+    internal static void KeepStartsOffMachineMemory() => Pilot.Node.Flights.AdmissionGate.MachineFreeMemory = () => null;
 
     /// <summary>
     /// No test's git may reach GitHub or prompt for credentials (#462: a checkout whose origin was the real GitHub URL, with no

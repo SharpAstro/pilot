@@ -151,8 +151,8 @@ public sealed class DiskSweepTests : IDisposable
         (scratch, probes, bytes).ShouldBe((2, 1, 2500));
         var card = _state.Cards().Single(c => c.Kind == "disk-swept");
         card.Bin.ShouldBe(CardBin.Handled);
-        card.Title.ShouldContain("2 job scratch folders");
-        card.Title.ShouldContain("1 probe folder");
+        card.Detail.ShouldNotBeNull().ShouldContain("2 job scratch folders");
+        card.Detail.ShouldNotBeNull().ShouldContain("1 p2o-* probe folders");
         card.Title.ShouldContain("2.4 KB");
 
         // A second sweep has nothing left to free and says nothing.
@@ -253,7 +253,7 @@ public sealed class DiskSweepTests : IDisposable
     }
 
     [Fact]
-    public async Task ADirtyHandMadeWorktreeRaisesOneForYouCardAndNoSecondOnTheNextSweep()
+    public async Task ADirtyHandMadeWorktreeIsKeptWithOneHandledLineAndNoSecondOnTheNextSweep()
     {
         var (sweep, git, _) = WorktreeSweep();
         var path = MakeWt(git, "dirty");
@@ -264,8 +264,12 @@ public sealed class DiskSweepTests : IDisposable
 
         Directory.Exists(path).ShouldBeTrue();
         var card = _state.Cards().Single(c => c.Kind == DiskSweep.WorktreeDirtyKind);
-        card.Bin.ShouldBe(CardBin.ForYou);
+        // A Handled line (#797): nothing to press, so no For-you card whose only button would say the panel's Dismiss again.
+        card.Bin.ShouldBe(CardBin.Handled);
         card.Subject.ShouldBe(path);
+        card.Title.ShouldStartWith("Kept worktree ");
+        card.Detail.ShouldNotBeNull().ShouldContain("Commit or discard them by hand");
+        card.Choices.ShouldBeEmpty();
     }
 
     [Fact]
@@ -366,7 +370,7 @@ public sealed class DiskSweepTests : IDisposable
     {
         var free = 5L << 30;
         var (sweep, _, _) = WorktreeSweep();
-        sweep = new DiskSweep(Jobs, Temp, _state, _time) { DiskAlertGb = () => 20, FreeSpace = _ => (free, 100L << 30, "D:"), Repos = () => [Repo] };
+        sweep = new DiskSweep(Jobs, Temp, _state, _time) { DiskAlertGb = () => 20, FreeSpace = _ => (free, 100L << 30, "D:"), Repos = () => [Repo], BigItem = 1000 };
         var big = Job("bbbbbbbb", TimeSpan.FromMinutes(5));
         File.WriteAllBytes(Path.Combine(big, "tmp", "more.bin"), new byte[9000]);
         Session("bbbbbbbb", "PIL1", SessionState.Working);
@@ -380,6 +384,13 @@ public sealed class DiskSweepTests : IDisposable
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Title.ShouldContain("D:");
         card.Title.ShouldContain("5.0 GB");
+        // The golden card (#797): the title says the drive is low, the first line what to do, one button.
+        card.Summary.ShouldNotBeNull().ShouldStartWith("Free some space on D:, or lower the alert. Biggest items to reclaim");
+        // The one button does what the node can: it lowers the alert, asking for the new one (#797: no button that only dismisses).
+        var lower = card.Choices.ShouldHaveSingleItem();
+        (lower.Label, lower.Verb, lower.Target).ShouldBe(("Lower the disk alert", Verbs.Set, Verbs.NodeTarget));
+        lower.Args.ShouldBe([NodeSettings.DiskAlertGbKey]);
+        lower.AsksFor.ShouldNotBeNull();
         card.Detail!.ShouldContain("job scratch bbbbbbbb");
         card.Detail!.IndexOf("bbbbbbbb", StringComparison.Ordinal).ShouldBeLessThan(card.Detail!.IndexOf("cccccccc", StringComparison.Ordinal));
 
@@ -387,6 +398,23 @@ public sealed class DiskSweepTests : IDisposable
         await sweep.SweepAsync(TestContext.Current.CancellationToken);
 
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == DiskSweep.DiskLowKind);
+    }
+
+    [Fact]
+    public async Task FreeSpaceBelowTheThresholdNamesNoItemUnderOneGbAndSaysNothingBigIsToReclaim()
+    {
+        // c3472 as SE1 had it: C: with 12.1 GB free of 476 GB, the alert at 20 GB, and a 721-byte job scratch the old card named.
+        var sweep = new DiskSweep(Jobs, Temp, _state, _time) { DiskAlertGb = () => 20, FreeSpace = _ => ((long)(12.1 * (1L << 30)), 476L << 30, "C:"), Repos = () => [Repo] };
+        Session("bbbbbbbb", "PIL1", SessionState.Working);
+        File.WriteAllBytes(Path.Combine(Job("bbbbbbbb", TimeSpan.FromMinutes(5)), "tmp", "more.bin"), new byte[721]);
+
+        await sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        var card = _state.Cards().Single(c => c.Kind == DiskSweep.DiskLowKind);
+        CardsPanelFixture.ShouldMatch("c3472", card);
+        var detail = card.Detail!;
+        detail.ShouldContain("Nothing big to reclaim here: the space is used outside pilot.");
+        detail.ShouldNotContain("bbbbbbbb");
     }
 
     [Fact]
@@ -494,7 +522,7 @@ public sealed class DiskSweepTests : IDisposable
         Directory.Exists(Path.Combine(plane, "src/A/bin")).ShouldBeTrue();
         Directory.Exists(Path.Combine(plane, ".git/obj")).ShouldBeTrue();
         Directory.Exists(Path.Combine(plane, "models/obj")).ShouldBeTrue();
-        _state.Cards().Single(c => c.Kind == "disk-swept").Title.ShouldContain("2 obj folders");
+        _state.Cards().Single(c => c.Kind == "disk-swept").Detail.ShouldNotBeNull().ShouldContain("2 obj folders");
     }
 
     [Fact]
@@ -577,8 +605,8 @@ public sealed class DiskSweepTests : IDisposable
         // 2 obj folders (200 B) + artifacts/obj (2 files) + the bin of 2 sibling projects (1 file each) = 600 B.
         bytes.ShouldBe(600);
         var card = _state.Cards().Single(c => c.Kind == "disk-swept");
-        card.Title.ShouldContain("2 obj folders");
-        card.Title.ShouldContain("3 artifacts folders");
+        card.Detail.ShouldNotBeNull().ShouldContain("2 obj folders");
+        card.Detail.ShouldNotBeNull().ShouldContain("3 artifacts folders");
         card.Title.ShouldContain("600 B");
         card.Detail!.ShouldContain("artifacts/obj");
         card.Detail!.ShouldContain("artifacts/bin");
@@ -627,7 +655,7 @@ public sealed class DiskSweepTests : IDisposable
         Directory.Exists(Path.Combine(plane, "artifacts/bin/Sib.Lib")).ShouldBeFalse();
         Directory.Exists(Path.Combine(plane, "artifacts/bin/A/release")).ShouldBeTrue();
         var card = _state.Cards().Single(c => c.Kind == "disk-swept");
-        card.Title.ShouldContain("1 artifacts folder of finished legs");
+        card.Detail.ShouldNotBeNull().ShouldContain("1 artifacts folders");
         card.Title.ShouldContain("100 B");
         card.Title.ShouldNotContain("obj folder");
     }

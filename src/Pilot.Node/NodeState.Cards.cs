@@ -200,11 +200,12 @@ public sealed partial class NodeState
     }
 
     /// <summary>
-    /// Rings an open card again where it is (#799 rule 5): one <see cref="CardChangedEvent"/> with <see cref="CardRow.RungAgainAt"/> set to
+    /// Rings an open card again where it is (#799 rule 5, #797 rule 7): one <see cref="CardChangedEvent"/> with <see cref="CardRow.RungAgainAt"/> set to
     /// now, so it sorts first again on every client and pushes as a change. Its id, kind, choices and <see cref="CardRow.At"/> stay, so
-    /// no second card says what the first already did. False when it is not open.
+    /// no second card says what the first already did. With <paramref name="waited"/> (how long it has waited, as a person says it) the card's
+    /// summary ends in "Waiting 1 h for you."; a second ring replaces that mark. False when it is not open.
     /// </summary>
-    public bool RingAgain(string id)
+    public bool RingAgain(string id, string? waited = null)
     {
         lock (_gate)
         {
@@ -213,10 +214,19 @@ public sealed partial class NodeState
                 return false;
             }
             var now = _time.GetUtcNow();
-            Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { RungAgainAt = now } });
+            var summary = card.Summary;
+            if (waited is { Length: > 0 })
+            {
+                var plain = WaitingMark().Replace(summary ?? "", "").TrimEnd();
+                summary = plain.Length == 0 ? $"Waiting {waited} for you." : $"{plain} Waiting {waited} for you.";
+            }
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { RungAgainAt = now, Summary = summary } });
             return true;
         }
     }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*Waiting [^.]* for you\.$")]
+    private static partial System.Text.RegularExpressions.Regex WaitingMark();
 
     /// <summary>Closes an open card with what became of it; false when it is not open (closed already, or no such card).</summary>
     public bool CloseCard(string id, string outcome, string closedBy)
@@ -233,6 +243,13 @@ public sealed partial class NodeState
         }
     }
 
+    /// <summary>
+    /// Points the Dismiss choice of a card that is only to be read (written with an empty target, as the card's id is not known before it is
+    /// raised) at the card itself: the one button, "Mark it read", that closes it. A card with no such choice is left as it is.
+    /// </summary>
+    public void AimDismiss(CardRow card) =>
+        UpdateChoices(card.Id, [.. card.Choices.Select(c => c.Verb == Verbs.Dismiss && c.Target.Length == 0 ? c with { Target = Verbs.CardTarget(card.Id) } : c)]);
+
     /// <summary>Gives an open card new choices (a merge's checks turned green, say); false when it is not open or nothing changed.</summary>
     public bool UpdateChoices(string id, IReadOnlyList<CardChoice> choices, IReadOnlyList<CardChoice>? ifStill = null)
     {
@@ -247,6 +264,24 @@ public sealed partial class NodeState
             }
             Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { Choices = [.. choices] } });
             return true;
+        }
+    }
+
+    /// <summary>
+    /// A flight landed: the open 7-day card (<see cref="StartGate.WeekKind"/>) loses its <c>Hold &lt;code&gt;</c> button for that flight, as
+    /// the buttons were fixed when the card was raised and a landed flight has nothing left to hold (the review of #797). The card keeps
+    /// every other choice; when no flight button is left it still offers the node-wide one. One <see cref="CardChangedEvent"/> per card changed.
+    /// </summary>
+    public void DropHoldChoiceOfLanded(string code)
+    {
+        lock (_gate)
+        {
+            var target = Verbs.FlightTarget(code);
+            foreach (var card in _cards.Values.Where(c => c.State == CardState.Open && c.Kind == StartGate.WeekKind
+                && c.Choices.Any(ch => ch.Verb == Verbs.Ground && ch.Target == target)).ToList())
+            {
+                UpdateCard(card.Id, card.Title, card.Detail, [.. card.Choices.Where(ch => !(ch.Verb == Verbs.Ground && ch.Target == target))], card.Link);
+            }
         }
     }
 

@@ -191,7 +191,7 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
         var share = string.Create(CultureInfo.InvariantCulture, $"{100.0 * row.ContextTokens / row.ContextWindow:0}%");
         var why = $"still at {share} of its window after a compaction";
         var error = await watchtower.RestartAsync(why, cancellationToken);
-        state.RaiseCard(CardBin.Handled, Kind, Verbs.WatchtowerTarget, error is null ? $"Replaced {row.Name}: {why}" : $"Could not replace {row.Name} ({why}): {error}");
+        state.RaiseCard(CardBin.Handled, Kind, Verbs.WatchtowerTarget, error is null ? $"Replaced {row.Name}" : $"Could not replace {row.Name}", $"{why}{(error is null ? "" : $": {error}")}");
         await Error.WriteLineAsync($"compactor: {(error is null ? "replaced" : "could not replace")} {row.Name} ({row.Id}): {why}{(error is null ? "" : $": {error}")}");
     }
 
@@ -223,12 +223,12 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
                 state.PutSession(stamped);
             }
             await Error.WriteLineAsync($"compactor: compacted {row.Name} ({row.Id}): {why}");
-            state.RaiseCard(CardBin.Handled, Kind, subject, $"Compacted {row.Name}: {why}");
+            state.RaiseCard(CardBin.Handled, Kind, subject, $"Compacted {row.Name}", why);
         }
         else
         {
             _retryAt[row.Id] = time.GetUtcNow() + RetryAfter;
-            state.RaiseCard(CardBin.Handled, Kind, subject, $"Could not compact {row.Name} ({why}): {result.Error}; tried again in {RetryAfter.TotalMinutes:0} minutes");
+            state.RaiseCard(CardBin.Handled, Kind, subject, $"Could not compact {row.Name}; trying again in {RetryAfter.TotalMinutes:0} min", $"{why}: {result.Error}");
         }
     }
 

@@ -19,61 +19,25 @@ public sealed class OneNodePerFlightTests : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2o-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private readonly SeededRepos _repos;
     private readonly FakeFleet _fleet = new();
     private readonly FlightCommander _flights;
     private readonly LegCommander _legs;
 
     public OneNodePerFlightTests()
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
+        _repos = new SeededRepos(_root);
         // The checkout's remote is GitHub's, as a peer's is told apart by it; the fetch and the plane's base come from a bare copy of its own.
-        var bare = Path.Combine(_root, "origin.git");
-        Git(_root, "clone", "-q", "--bare", Repo, bare);
-        Git(Repo, "remote", "add", "origin", $"https://github.com/{GitHub}.git");
-        Git(Repo, "config", $"url.{bare.Replace('\\', '/')}.insteadOf", $"https://github.com/{GitHub}.git");
-        Git(Repo, "fetch", "-q", "origin");
-        Git(Repo, "remote", "set-head", "origin", "main");
-        var git = new GitCli();
-        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System) { Machine = "SE1", Fleet = _fleet };
+        _repos.Seed("tianwen", $"https://github.com/{GitHub}.git", withOrigin: true);
+        var git = _repos.Git;
+        _flights = new FlightCommander(_state, _repos.Planes(), TimeProvider.System) { Machine = "SE1", Fleet = _fleet };
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "SE1");
-        _legs = new LegCommander(_state, new FakeWorkers(), new FakeChecks(), new FakeGitHub(), git, new Planes(git), _flights, options, TimeProvider.System);
+        _legs = new LegCommander(_state, new FakeWorkers(), new FakeChecks(), new FakeGitHub(), git, _repos.Planes(), _flights, options, TimeProvider.System);
     }
 
     private string Repo => Path.Combine(_root, "tianwen");
 
-    public void Dispose()
-    {
-        try
-        {
-            Git(Repo, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        TestDirs.DeleteTree(_root);
-    }
-
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    public void Dispose() => _repos.Dispose();
 
     private Task<CommandResult> Create(params string[] args) =>
         _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = args, Who = "tests" }, Ct);
@@ -142,7 +106,6 @@ public sealed class OneNodePerFlightTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APlanOfAFlightWhoseBranchAPeerFliesIsRefusedWithARingNamingThePeer()
     {
         var flight = await OwnFlight(7);
@@ -154,12 +117,11 @@ public sealed class OneNodePerFlightTests : IDisposable
         result.Error!.ShouldContain("on DE1");
         result.Error!.ShouldContain("PEER7");
         var card = _state.Cards().Single(c => c.Kind == LegCommander.FlownElsewhereKind);
-        (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, Verbs.FlightTarget(flight.Code)));
+        (card.Bin, card.Subject).ShouldBe((CardBin.Handled, Verbs.FlightTarget(flight.Code)));
         card.Title.ShouldContain("DE1");
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AStartOfALegOnAFlightWhoseBranchAPeerFliesIsRefusedWithARingNamingThePeer()
     {
         var flight = await OwnFlight(8);
@@ -170,12 +132,11 @@ public sealed class OneNodePerFlightTests : IDisposable
 
         result.Ok.ShouldBeFalse();
         result.Error!.ShouldContain("on DE1");
-        _state.Cards().Single(c => c.Kind == LegCommander.FlownElsewhereKind).Bin.ShouldBe(CardBin.ForYou);
+        _state.Cards().Single(c => c.Kind == LegCommander.FlownElsewhereKind).Bin.ShouldBe(CardBin.Handled);
         _state.Legs(flight.Code).Single().State.ShouldBe(LegState.Planned);
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AnUnreachablePeerDoesNotBlockACreate()
     {
         var peer = Peer("DE1", PeerFlight("PIL294", 294, "flight/pil294"));
@@ -189,7 +150,6 @@ public sealed class OneNodePerFlightTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AUnreachablePeerDoesNotBlockAPlan()
     {
         var flight = await OwnFlight(9);
@@ -204,7 +164,6 @@ public sealed class OneNodePerFlightTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APeersLandedFlightDoesNotBlockACreate()
     {
         _fleet.Peers.Add(Peer("DE1", PeerFlight("PIL294", 294, "flight/pil294", FlightState.Landed)));
@@ -215,7 +174,6 @@ public sealed class OneNodePerFlightTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APeersFlightOnAnotherRepoDoesNotBlockACreate()
     {
         var peer = Peer("DE1", PeerFlight("PIL294", 294, "flight/pil294", repoPath: "D:/src/other"));
@@ -228,7 +186,6 @@ public sealed class OneNodePerFlightTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APeerThatRefusesTheGrantDoesNotBlockACreate()
     {
         var peer = Peer("DE1", PeerFlight("PIL294", 294, "flight/pil294"));

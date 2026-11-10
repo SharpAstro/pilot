@@ -71,48 +71,20 @@ public sealed class RepoSetupTests
     public async Task ARefusedFieldStillLetsTheFlightBeMade()
     {
         var root = Path.Combine(Path.GetTempPath(), "p2s-" + Guid.NewGuid().ToString("N")[..8]);
-        var repo = Path.Combine(root, "tianwen");
-        Directory.CreateDirectory(repo);
-        try
+        using var repos = new SeededRepos(root);
+        var repo = repos.Seed("tianwen");
+        _github.FieldCreateFails = "no rights";
+        var commander = new FlightCommander(_state, repos.Planes(), TimeProvider.System)
         {
-            Git(repo, "init", "-q", "-b", "main");
-            File.WriteAllText(Path.Combine(repo, "README.md"), "hello\n");
-            Git(repo, "add", ".");
-            Git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-            _github.FieldCreateFails = "no rights";
-            var commander = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System)
-            {
-                Machine = "DE1",
-                Trackers = new Trackers([new GitHubTracker(_github)]),
-            };
+            Machine = "DE1",
+            Trackers = new Trackers([new GitHubTracker(_github)]),
+        };
 
-            var result = await commander.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(repo), Args = ["71", "kept"], Who = "tests" }, Ct);
+        var result = await commander.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(repo), Args = ["71", "kept"], Who = "tests" }, Ct);
 
-            result.Ok.ShouldBeTrue(result.Error);
-            _state.Flights().Single().State.ShouldBe(FlightState.Flying);
-            _github.LabelsEnsured.Select(e => e.Label).ShouldContain(PilotMarks.Priority);
-        }
-        finally
-        {
-            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    private static void Git(string cwd, params string[] args)
-    {
-        var start = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = System.Diagnostics.Process.Start(start)!;
-        process.StandardOutput.ReadToEnd();
-        process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        result.Ok.ShouldBeTrue(result.Error);
+        _state.Flights().Single().State.ShouldBe(FlightState.Flying);
+        _github.LabelsEnsured.Select(e => e.Label).ShouldContain(PilotMarks.Priority);
     }
 
     [Fact]

@@ -34,7 +34,9 @@ public sealed class NodeTraffic
     public TextWriter Log { get; set; } = TextWriter.Null;
 
     /// <summary>The call that starts a process; a test swaps it for a slow or instant one.</summary>
-    public Func<ProcessStartInfo, Process?> Starter { get; init; } = Process.Start;
+    public Func<ProcessStartInfo, Process?> Starter { get; init; } = RealStart;
+
+    private static readonly Func<ProcessStartInfo, Process?> RealStart = Process.Start;
 
     /// <summary>
     /// The budget of background starts, one per node: a start made outside a command takes a slot of it for the
@@ -50,7 +52,11 @@ public sealed class NodeTraffic
     /// </summary>
     public async Task<Process> StartProcessAsync(string tool, ProcessStartInfo start, CancellationToken cancellationToken = default)
     {
-        ProcessStarts.Observe(tool, start);
+        // Only a real start is reported (#952): a test that swaps the starter for a fake starts no process.
+        if (ReferenceEquals(Starter, RealStart))
+        {
+            ProcessStarts.Observe(tool, start);
+        }
         var began = Time.GetUtcNow();
         var process = await Gate.StartAsync(() => Starter(start), cancellationToken).ConfigureAwait(false) ?? throw new InvalidOperationException($"{tool} did not start");
         var waited = Time.GetUtcNow() - began;

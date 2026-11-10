@@ -17,7 +17,7 @@ public sealed class LegFailureTests : IDisposable
     private const string Target = "flight/TIA9/parser";
     private const string Worker = "du1-tia9-parser";
     private const string Report = "All 7 steps done and committed; filtered tests pass (115, run on the plane)";
-    private const string SendRound = "Send it round: a fresh worker fixes it and finishes";
+    private const string SendRound = Verbs.FreshWorker;
 
     /// <summary>The c78 card's summary (PIL834/read-stamps) as the node raises it with the outside and the main notes; LegFailedCardTests draws the same text.</summary>
     internal const string C78Summary = "The worker of PIL834/read-stamps stopped and its check fails building Pilot.Ui. The flight changed none of the failing files or their projects. "
@@ -26,6 +26,7 @@ public sealed class LegFailureTests : IDisposable
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2legfail-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly SeededRepos _repos;
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     // The plane is clean and at origin/<branch>, so a passing check would let the node finish a failed leg itself and raise no card:
     // the check fails here, as it does in the flights this pins.
@@ -34,11 +35,13 @@ public sealed class LegFailureTests : IDisposable
 
     public LegFailureTests()
     {
-        Directory.CreateDirectory(_root);
+        _repos = new SeededRepos(_root);
         Git(_root, "init", "-q", "--bare", "-b", "main", "remote.git");
-        Git(_root, "clone", "-q", Remote, "plane");
+        // Made by init and a remote, not by cloning the empty origin (git can, the model has no default branch of an empty origin to clone).
+        Git(_root, "init", "-q", "-b", "main", "plane");
         Git(Plane, "config", "user.email", "t@example.com");
         Git(Plane, "config", "user.name", "t");
+        Git(Plane, "remote", "add", "origin", Remote);
         Write("src/Pilot.Ui/PilotWidgetBase.cs", "class PilotWidgetBase {}\n");
         Write("src/Pilot.Ui/Other.cs", "class Other {}\n");
         Commit(Plane, "first");
@@ -48,10 +51,10 @@ public sealed class LegFailureTests : IDisposable
         Commit(Plane, "mine");
         Git(Plane, "push", "-q", "-u", "origin", Branch);
 
-        var git = new GitCli();
-        var flights = new FlightCommander(_state, new Planes(git), TimeProvider.System);
+        var git = _repos.Git;
+        var flights = new FlightCommander(_state, _repos.Planes(), TimeProvider.System);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
-        _legs = new LegCommander(_state, new FakeWorkers(), _checks, new FakeGitHub(), git, new Planes(git), flights, options, TimeProvider.System);
+        _legs = new LegCommander(_state, new FakeWorkers(), _checks, new FakeGitHub(), git, _repos.Planes(), flights, options, TimeProvider.System);
         _state.PutFlight(new FlightRow
         {
             Code = "TIA9", Repo = "tianwen", RepoPath = Plane, Issue = 9, Branch = Branch, Worktree = Plane, Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow,
@@ -82,7 +85,6 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task TheC78CardNamesTheBuildThatFailedAndSaysItIsOutsideTheLegsCode()
     {
         // The real path: the done finish is refused and records the check failure, then the worker says it failed.
@@ -93,7 +95,8 @@ public sealed class LegFailureTests : IDisposable
         var card = await FailedCard();
 
         card.Title.ShouldBe("TIA9/parser: its check fails building Pilot.Ui, in files this leg did not change");
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([(SendRound, Verbs.GoAround), ("Accept as it is: the flight goes on with the check failing", Verbs.FinishLeg)]);
+        // No override that marks the failed leg done (#797): that is the CLI's, with a reason.
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([(SendRound, Verbs.GoAround)]);
         card.Choices.ShouldNotContain(c => c.Label.Contains("All 7 steps") || c.Label.Contains("filtered tests"));
         card.Choices.Single(c => c.Verb == Verbs.GoAround).Args.ShouldBe([$"the last worker stopped: {Report}"]);
         card.Summary.ShouldNotBeNull().ShouldContain("its check fails building Pilot.Ui");
@@ -103,8 +106,7 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
-    public async Task TheRoundAndModelSuffixOfTheSendRoundButtonIsKept()
+    public async Task TheRoundAndModelOfTheNextWorkerAreInTheDetailNotOnTheButton()
     {
         _legs.Models = new RoleModels(null);
         RecordCheckFailure(BuildTail);
@@ -112,11 +114,12 @@ public sealed class LegFailureTests : IDisposable
 
         var card = await FailedCard();
 
-        card.Choices.Single(c => c.Verb == Verbs.GoAround).Label.ShouldStartWith(SendRound + " (round 2");
+        // The round and the model are the detail's, never the button's (#797).
+        card.Choices.Single(c => c.Verb == Verbs.GoAround).Label.ShouldBe(SendRound);
+        card.Detail.ShouldNotBeNull().ShouldContain("Next worker (round 2, on Opus).");
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFlightThatChangedTheFailingProjectIsNotCalledOutsideItsCode()
     {
         Write("src/Pilot.Ui/Other.cs", "class Other { int X; }\n");
@@ -130,7 +133,6 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFailingTestCheckNamesTheTestsAndTheClass()
     {
         RecordCheckFailure("  Failed Pilot.Node.Tests.ParserTests.Reads [11 ms]\n  Failed Pilot.Node.Tests.ParserTests.Writes [2 ms]\nFailed!  - Failed: 2, Passed: 5");
@@ -138,12 +140,11 @@ public sealed class LegFailureTests : IDisposable
         var card = await FailedCard();
 
         card.Title.ShouldBe("TIA9/parser: its check fails 2 tests in ParserTests");
-        card.Choices.Last().Label.ShouldBe("Accept as it is: the flight goes on with the check failing");
+        card.Choices.ShouldHaveSingleItem().Label.ShouldBe(SendRound);
         card.Summary.ShouldNotBeNull().ShouldNotContain("changed none of the failing files");
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AReportWithNoCheckFailureFallsBackToItsClippedFirstLine()
     {
         var long_ = "the grammar cannot be parsed because the third production loops forever and the tokenizer never ends it";
@@ -151,12 +152,11 @@ public sealed class LegFailureTests : IDisposable
         var card = await FailedCard(long_ + "\nmore");
 
         card.Title.ShouldBe($"TIA9/parser: {long_[..67].TrimEnd()}...");
-        card.Choices.Select(c => c.Label).ShouldBe([SendRound, "Accept as it is: the flight goes on, the failure kept in its report"]);
+        card.Choices.Select(c => c.Label).ShouldBe([SendRound]);
         card.Choices.ShouldNotContain(c => c.Label.Contains("grammar"));
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task WhenMainAlreadyChangedTheFailingFilesTheCardSaysTakingMainMayFixIt()
     {
         // Main fixes the file after the flight branched; the plane has fetched it but not merged it.
@@ -180,7 +180,6 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task WithoutAChangeOnMainTheCardSaysNothingOfMain()
     {
         RecordCheckFailure(BuildTail);
@@ -298,23 +297,11 @@ public sealed class LegFailureTests : IDisposable
         File.WriteAllText(path, text);
     }
 
-    private static void Commit(string cwd, string message)
+    private void Commit(string cwd, string message)
     {
         Git(cwd, "add", ".");
         Git(cwd, "commit", "-q", "-m", message);
     }
 
-    private static string Git(string cwd, params string[] args)
-    {
-        var info = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in args)
-        {
-            info.ArgumentList.Add(arg);
-        }
-        using var process = Process.Start(info)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {error}");
-    }
+    private string Git(string cwd, params string[] args) => _repos.Run(cwd, args);
 }

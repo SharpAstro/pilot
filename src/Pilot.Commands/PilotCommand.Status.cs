@@ -249,9 +249,9 @@ public static partial class PilotCommand
         /// <summary>Makes the summarise, review-cost and summary: the kept summary and what reviews cost.</summary>
         internal (Command, Command, Command) SummaryCommands()
         {
-            // summarise: the watchtower makes it from what the node holds (the one-off Haiku call only when it is down), kept on the node for every client.
+            // summarise: the watchtower makes it from what the node holds (the one-off summary call only when it is down), kept on the node for every client.
             var summariseFlight = new Argument<string?>("flight") { Description = "The flight's code; leave it out for every flight in play", Arity = ArgumentArity.ZeroOrOne };
-            var summarise = Action(new Command("summarise", "Summarise the flights in play (or one flight) now, through the watchtower (the Haiku call only when it is down): what needs you, where it is") { Arguments = { summariseFlight } },
+            var summarise = Action(new Command("summarise", "Summarise the flights in play (or one flight) now, through the watchtower (one summary call only when it is down): what needs you, where it is") { Arguments = { summariseFlight } },
                 (p, client, ct) => Send(client, Verbs.Summarise, p.GetValue(summariseFlight) is { Length: > 0 } code ? Verbs.FlightTarget(code) : Verbs.NodeTarget, [], who, ct));
             // review-cost: what reviews cost per landed flight, from the reviewer transcripts; a read, nothing is changed.
             var costSince = new Option<string?>("--since") { Description = "Flights landed on or after this date (2026-10-22)" };
@@ -273,7 +273,7 @@ public static partial class PilotCommand
                 });
             // summary: the kept summary, or one made when there is none or --fresh asks; the fleet's records are the node's to gather.
             var summaryOf = new Argument<string?>("flight") { Description = "The flight's code; leave it out for every flight in play on this node", Arity = ArgumentArity.ZeroOrOne };
-            var summaryFresh = new Option<bool>("--fresh") { Description = "Make a new one now (the watchtower, the Haiku call only when it is down) instead of showing the kept one" };
+            var summaryFresh = new Option<bool>("--fresh") { Description = "Make a new one now (the watchtower, one summary call only when it is down) instead of showing the kept one" };
             var summaryFleet = new Option<bool>("--fleet") { Description = "Every node this machine holds a grant for, not only this node: their records are fetched from each node" };
             var summary = Action(new Command("summary", "The kept summary (needs you, where it is) with its age, tokens and cost; made now when there is none or with --fresh. Use it to answer 'where are we'")
                 { Arguments = { summaryOf }, Options = { summaryFresh, summaryFleet } },

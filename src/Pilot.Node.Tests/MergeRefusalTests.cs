@@ -45,26 +45,12 @@ public sealed class MergeRefusalTests
     }
 
     /// <summary>A plane on disk at <paramref name="worktree"/>: a repo of one commit, whose sha it returns as the head it holds.</summary>
-    private static string Plane(string worktree)
+    private static string Plane(NodeHarness node, string worktree)
     {
         Directory.CreateDirectory(worktree);
-        Git(worktree, "init", "-q", "-b", "main");
-        Git(worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "first");
-        return Git(worktree, "rev-parse", "HEAD");
-    }
-
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
+        node.Repos!.Run(worktree, "init", "-q", "-b", "main");
+        node.Repos.Run(worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "first");
+        return node.Repos.Run(worktree, "rev-parse", "HEAD");
     }
 
     private static Task<CommandResult> Merge(NodeHarness node, params string[] args) =>
@@ -83,7 +69,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task LegsNotDoneIsANodeWait()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, leg: LegState.Flying);
 
         Refused(await Merge(node), NodeWait, "has legs not done: parser");
@@ -92,7 +78,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task AFlightNotReviewedIsANodeWait()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, review: null);
 
         Refused(await Merge(node), NodeWait, "has not been reviewed");
@@ -101,7 +87,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task AReviewNotPassedIsANodeWait()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, review: ReviewState.Reviewing);
 
         Refused(await Merge(node), NodeWait, "review is reviewing, not passed");
@@ -110,7 +96,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task AHoldingPatternIsANodeWait()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, holding: new FlightHolding { Reason = "a leg is held", Since = DateTimeOffset.UtcNow, By = "node" });
 
         Refused(await Merge(node), NodeWait, "is in a holding pattern");
@@ -119,12 +105,12 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task AHeadNewerThanTheOneReviewedIsANodeWait()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var flight = Flight(node);
         // After this refusal the node reads the plane (HeadMovedAsync), so the flight has one, holding the reviewed head: the head moved
         // from outside it, and the merge is dropped saying so, with no reviewer started. The merge names a head that is not the reviewed
         // one, so the refusal is this one and not a re-pin's.
-        var reviewed = Plane(flight.Worktree);
+        var reviewed = Plane(node, flight.Worktree);
         node.State.PutFlight(flight with { Review = flight.Review! with { ReviewedHead = reviewed } });
         node.GitHub.Pr = new PullRequest(63, "OPEN", "def5678aaaabbbbccccdddd", PrUrl);
 
@@ -134,7 +120,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task AMergeUnderWayIsANodeWait()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var open = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -166,7 +152,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task ChecksRunningIsAWaitTheMergeArmsOnAndNoRefusal()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
 
@@ -183,7 +169,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task ABranchBehindItsBaseOnGitHubIsPassing()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
         node.GitHub.Merge = new MergeState(MergeKinds.Behind);
 
@@ -193,7 +179,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task AMergeRefusedForTheBaseBranchBeingModifiedIsPassing()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
         node.GitHub.MergeAnswers = "GraphQL: Base branch was modified. Review and try the merge again. (mergePullRequest)";
 
@@ -203,7 +189,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task APrConflictingWithItsBaseIsPassing()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
         node.GitHub.MergeAnswers = "gh: Pull Request is not mergeable";
 
@@ -213,7 +199,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task APrGitHubReadsAsConflictingIsPassingNamingTheConflict()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
         node.GitHub.Pr = new PullRequest(63, "OPEN", PrHead, PrUrl, Mergeable: "CONFLICTING");
 
@@ -236,7 +222,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task ABranchProtectionApprovalIsApproveOnGitHub()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
         node.GitHub.Merge = new MergeState(MergeKinds.Blocked, Reason: "at least 1 approving review is required");
 
@@ -246,7 +232,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task ChangesRequestedIsReadChanges()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
         node.GitHub.Merge = new MergeState(MergeKinds.ChangesRequested);
 
@@ -256,7 +242,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task AFailedRequiredCheckIsRerunFailedCheck()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3);
 
@@ -266,7 +252,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task AnOpenDesignQuestionIsAnswerDesignQuestion()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
         node.State.RaiseCard(CardBin.ForYou, PrReviews.DesignKind, Verbs.PrTarget("x/tianwen", 63), "Which way?");
 
@@ -276,7 +262,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task AFlightWithNoPrIsOpenPrAgain()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
         node.GitHub.Pr = null;
 
@@ -286,11 +272,11 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task CommitsUnpushedInThePlaneAreOpenPrAgain()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var flight = Flight(node);
         // The plane holds one commit past the PR's head, which is the head the review passed.
-        var pushed = Plane(flight.Worktree);
-        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "second");
+        var pushed = Plane(node, flight.Worktree);
+        node.Repos!.Run(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "second");
         node.State.PutFlight(flight with { Review = flight.Review! with { ReviewedHead = pushed } });
         node.GitHub.Pr = new PullRequest(63, "OPEN", pushed, PrUrl);
 
@@ -300,7 +286,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task ADraftPrIsMarkReadyOnGitHubNotAnApproval()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
         node.GitHub.Merge = new MergeState(MergeKinds.Blocked, Reason: "it is a draft", Draft: true);
 
@@ -310,7 +296,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task AClosedPrIsAFactToReadWithNothingToPress()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
         node.GitHub.Pr = new PullRequest(63, "CLOSED", PrHead, PrUrl);
 
@@ -320,7 +306,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task AMergeGitHubRefusesInItsOwnWordsIsAPersonsWithNothingToPress()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
         node.GitHub.MergeAnswers = "gh: Required status check build is expected";
 
@@ -330,7 +316,7 @@ public sealed class MergeRefusalTests
     [Fact]
     public async Task ABadAskIsAPersonsWithNothingToPress()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
 
         Refused(await Merge(node, "abc"), Persons(MergeAction.None), "7 characters");

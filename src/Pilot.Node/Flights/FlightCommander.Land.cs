@@ -273,7 +273,7 @@ public sealed partial class FlightCommander
         }
         else if (leftover is not null)
         {
-            state.RaiseCard(CardBin.ForYou, "plane-left", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed, but its plane folder is still there",
+            state.RaiseCard(CardBin.Handled, "plane-left", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed, but its plane folder is still there",
                 $"{leftover}; nothing of git's is in it, so delete it by hand once whatever holds it lets go");
         }
         if (Attachments is not null)
@@ -302,6 +302,8 @@ public sealed partial class FlightCommander
             MoveUnknown = null,
         }) ?? flight;
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code} landed", LegCommander.MoveFailedKind);
+        // The 7-day card's Hold button for this flight was fixed when the card was raised: a landed flight has nothing to hold.
+        state.DropHoldChoiceOfLanded(flight.Code);
         // After a merge the entry ends merged whatever it stood at: a look that saw the arm cleared, or a merge refused as the PR was
         // merged already, may have dropped it just before (pilot #395). A landing by hand ends only an entry still open.
         if (mergedHead is not null)

@@ -11,7 +11,7 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// A Stop in a flight's plane with files not committed is sent back to commit them, once per turn; a second stop is let
-/// through and rings. Every other stop goes through in silence. Over a real git repo of the test's own.
+/// through and rings. Every other stop goes through in silence. Over a repo of the test's own, on the in-memory git model.
 /// </summary>
 public sealed class StopGateTests : IDisposable
 {
@@ -19,19 +19,17 @@ public sealed class StopGateTests : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2g-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private readonly SeededRepos _repos;
     private readonly StopGate _gate;
 
     public StopGateTests()
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        Git(Repo, "worktree", "add", "-q", "-b", "flight/tia7", Plane);
+        _repos = new SeededRepos(_root);
+        _repos.Seed("tianwen");
+        _repos.Run(Repo, "worktree", "add", "-q", "-b", "flight/tia7", Plane);
         // Claude Code's own worktree for a background session, beside the plane: no flight of the node's.
-        Git(Repo, "worktree", "add", "-q", "-b", "worktree-other", Theirs);
-        _gate = new StopGate(_state, new Planes(new GitCli()));
+        _repos.Run(Repo, "worktree", "add", "-q", "-b", "worktree-other", Theirs);
+        _gate = new StopGate(_state, _repos.Planes());
         Fly(Flight());
     }
 
@@ -41,14 +39,7 @@ public sealed class StopGateTests : IDisposable
 
     private string Theirs => Path.Combine(Repo, ".claude", "worktrees", "other");
 
-    public void Dispose()
-    {
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        TestDirs.DeleteTree(_root);
-    }
+    public void Dispose() => _repos.Dispose();
 
     private FlightRow Flight() => new()
     {
@@ -68,20 +59,6 @@ public sealed class StopGateTests : IDisposable
         state ??= _state;
         state.PutFlight(flight);
         state.PutLeg(new LegRow { Flight = flight.Code, Name = "parser", Order = 1, Goal = "parse", DoneWhen = "it parses", State = LegState.Flying });
-    }
-
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
     }
 
     private static string StopJson(string cwd, bool active = false, string name = "Stop", string extra = "") =>
@@ -138,7 +115,7 @@ public sealed class StopGateTests : IDisposable
         again.Verb.ShouldBe(Verbs.Say);
         again.Target.ShouldBe(Verbs.SessionTarget(AgentRows.SessionA));
         // The only choice is to tell it to commit: no card button drops files.
-        again.Label.ShouldBe("Tell the session to commit its files in TIA7's plane");
+        again.Label.ShouldBe("Tell it to commit");
         again.Args.ShouldHaveSingleItem().ShouldNotContain("drop", Case.Insensitive);
         // The summary names the file, says it was told once and stopped again, and does not repeat the button.
         var summary = ring.Summary.ShouldNotBeNull();
@@ -151,8 +128,8 @@ public sealed class StopGateTests : IDisposable
         summary.Length.ShouldBeLessThanOrEqualTo(240);
 
         // Committed at last: the next stop goes through and the ring closes.
-        Git(Plane, "add", ".");
-        Git(Plane, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "stray");
+        _repos.Run(Plane, "add", ".");
+        _repos.Run(Plane, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "stray");
         (await Decide(Plane)).ShouldBeNull();
         Rings().ShouldBeEmpty();
     }
@@ -196,12 +173,12 @@ public sealed class StopGateTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
+    [Trait("Category", "Slow")] // A real node on a socket and the hook command talking to it, with a 30 s patience: not a unit.
     public async Task TheHookPrintsTheNodesDecisionAndNothingOnceLetThrough()
     {
         // The hook's 2 s is for a live session; on a loaded machine the node took longer and the test read no decision.
         var patient = TimeSpan.FromSeconds(30);
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
         Fly(Flight(), node.State);
         File.WriteAllText(Path.Combine(Plane, "stray.txt"), "left\n");
 

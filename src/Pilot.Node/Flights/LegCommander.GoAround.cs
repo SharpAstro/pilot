@@ -11,7 +11,7 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public sealed partial class LegCommander
 {
-    /// <summary>The card kind of a leg held at its go-around cap: what each round said, and the person's Go around or Accept.</summary>
+    /// <summary>The card kind of a leg held at its go-around cap: what each round said, and the person's choice of one more fresh worker.</summary>
     public const string GoAroundCapKind = "go-around-cap";
 
     private void RaiseGoAroundCap(FlightRow flight, LegRow leg, int cap, string asked)
@@ -22,15 +22,15 @@ public sealed partial class LegCommander
         {
             rounds.Insert(0, $"({leg.GoArounds - rounds.Count} earlier rounds were not recorded)");
         }
-        var detail = $"{leg.GoArounds} go-arounds, the cap is {cap}. Each round said:\n{string.Join('\n', rounds)}\nAnother round asked for: {asked}";
+        var detail = $"Redone {leg.GoArounds} times, the most is {cap}. Each time said:\n{string.Join('\n', rounds)}\nAnother round asked for: {asked}";
         state.RaiseCard(CardBin.Ring, GoAroundCapKind, target,
-            $"{flight.Code}/{leg.Name} has gone around {leg.GoArounds} times, the cap is {cap}",
-            detail,
+            $"{flight.Code}/{leg.Name} was redone {leg.GoArounds} times, its limit of {cap}",
+            Models.NextWorkerNote(leg) is { } note ? $"{detail}\n{note}" : detail,
             [
-                new CardChoice { Label = Models.RedoLabel(leg, "went round past the cap"), Verb = Verbs.GoAround, Target = target, Args = [asked] },
-                new CardChoice { Label = $"Accept {leg.Name} as it stands", Verb = Verbs.FinishLeg, Target = target, Args = ["accepted", $"accepted at the go-around cap ({leg.GoArounds} rounds)"] },
+                new CardChoice { Label = Verbs.FreshWorker, Verb = Verbs.GoAround, Target = target, Args = [asked] },
             ],
-            summary: $"{flight.Code}/{leg.Name} has gone around {leg.GoArounds} times, the cap. The watchtower and the node send it round no more; Go around sends one more, Accept takes the leg as it stands.");
+            // No override that takes the leg as done: that stays the CLI's, with a reason (#797).
+            summary: $"Decide whether {flight.Code}/{leg.Name} gets one more fresh worker: the node and the watchtower start no more on it by themselves.");
     }
 
     private async Task GoAroundAsync(CommandRequest command, CancellationToken cancellationToken, bool conflictRound = false, ConflictRung? rung = null)
@@ -163,11 +163,11 @@ public sealed partial class LegCommander
         var legs = state.Legs(flight.Code);
         // A conflict worker runs on its rung's model and effort, whatever the leg's plan or go-around count says (PIL846).
         var (attemptModel, attemptEffort) = rung is { } onRung ? (onRung.Model, onRung.Effort) : Models.WorkerFor(leg.Model, leg.Effort, next.GoArounds + 1);
-        var rungWords = rung is { } named ? $", {named.Label}" : "";
+        var rungWords = rung is { } named ? $", {named.Name}" : "";
         // The plane's HEAD as this go-around's worker starts, read off the lock with the plane in place; null when it cannot be read.
         string? startHead = null;
         Launching(LegsKey(flight.Code), $"{worker}, going around {flight.Code}/{leg.Name}{rungWords}", target,
-            new CardChoice { Label = Models.RedoLabel(leg, "did not start"), Verb = Verbs.GoAround, Target = target, Args = [why] },
+            new CardChoice { Label = Verbs.FreshWorker, Verb = Verbs.GoAround, Target = target, Args = [why] },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);

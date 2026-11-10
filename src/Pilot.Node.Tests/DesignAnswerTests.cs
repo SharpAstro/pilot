@@ -282,7 +282,7 @@ public sealed class FlightDesignAnswerTests : FlightDesignTestsBase
         var flight = await AskedDesign(DesignAnswerQuestions.WithOptions);
 
         var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.DesignKind).ShouldHaveSingleItem();
-        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library", "Make it a service", PrReviews.AnswerLabel]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library (recommended)", "Make it a service", PrReviews.AnswerLabel]);
         var option = card.Choices[0];
 
         (await RunPr(option.Verb, "controller", option.Args)).Error.ShouldBeNull();
@@ -322,10 +322,11 @@ public sealed class DesignOptionsCardTests : PrFixTestsBase
         await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions);
 
         var card = OpenDesign();
-        card.Title.ShouldContain("should this be a service at all?");
+        card.Title.ShouldBe("acme/widget#7: the review asks a question of design");
+        card.Summary.ShouldNotBeNull().ShouldContain("should this be a service at all?");
         card.Detail.ShouldNotBeNull().ShouldContain("README.md:1 should this be a service at all?");
         card.Detail.ShouldContain("Make it a service: more to run");
-        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library", "Make it a service", PrReviews.AnswerLabel]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library (recommended)", "Make it a service", PrReviews.AnswerLabel]);
         card.Choices.Take(2).ShouldAllBe(c => c.Verb == Verbs.FixPr && c.Target == "pr/acme/widget#7" && c.AsksFor == null);
         card.Choices[2].AsksFor.ShouldNotBeNull();
     }
@@ -356,23 +357,91 @@ public sealed class DesignOptionsCardTests : PrFixTestsBase
     }
 
     [Fact]
-    public async Task SeveralQuestionsOfferNoOptionsOnlyTheFreeTextChoice()
+    public async Task SeveralQuestionsOfferOneButtonForEveryRecommendedAnswerThenTheFreeTextChoice()
     {
-        await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions, "README.md:9 design: and the name? Option: Keep => none Option: Rename => churn");
+        await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions, DesignAnswerQuestions.TheName);
 
-        OpenDesign().Choices.ShouldHaveSingleItem().Label.ShouldBe(PrReviews.AnswerLabel);
+        // c3479: a card with two questions offered only "Answer in your own words", then a button per option that answered one question
+        // and closed the card; now one press takes both questions' recommended answers, each naming its question.
+        var choices = OpenDesign().Choices;
+        choices.Select(c => c.Label).ShouldBe(["Take both recommended answers", PrReviews.AnswerLabel]);
+        choices[0].Args.ShouldBe(["should this be a service at all? => Keep a library (no new process)\nand the name? => Keep it (none)"]);
+    }
+
+    /// <summary>
+    /// The review of #797: one press on a card of two questions answered one, and the card closed with the other dropped. Through the real
+    /// raiser and the card's answer: the one button acts on both questions' answers at once, and own words of tags that answer only one
+    /// question are refused with the card left open and nothing acted on.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task OnACardOfTwoQuestionsOnePressAnswersBothAndTagsForOneAreRefusedWithTheCardOpen()
+    {
+        await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions, DesignAnswerQuestions.TheName);
+        var card = OpenDesign();
+
+        var partial = await _commands.RunAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["2", "1B"], Who = "controller" }, Ct);
+
+        partial.Error.ShouldNotBeNull().ShouldContain("question 2 has no answer");
+        _state.Cards(openOnly: true).ShouldContain(c => c.Id == card.Id);
+        Row.DesignAnswer.ShouldBeNull();
+        Fixers.ShouldBeEmpty();
+        _github.IssueComments.ShouldBeEmpty();
+
+        var both = await _commands.RunAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["1"], Who = "controller" }, Ct);
+
+        both.Error.ShouldBeNull();
+        Row.DesignAnswer.ShouldBe("should this be a service at all? => Keep a library (no new process)\nand the name? => Keep it (none)");
+        var brief = Fixers.ShouldHaveSingleItem().Brief;
+        brief.ShouldContain("should this be a service at all? => Keep a library (no new process)");
+        brief.ShouldContain("and the name? => Keep it (none)");
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Id == card.Id);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task OwnWordsOfATagForEachQuestionAreEachQuestionsOption()
+    {
+        await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions, DesignAnswerQuestions.TheName);
+        var card = OpenDesign();
+
+        var result = await _commands.RunAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["2", "1B, 2b"], Who = "controller" }, Ct);
+
+        result.Error.ShouldBeNull();
+        Row.DesignAnswer.ShouldBe("should this be a service at all? => Make it a service (more to run)\nand the name? => Rename it (churn)");
     }
 }
 
 internal static class DesignAnswerQuestions
 {
     public const string WithOptions = "README.md:1 design: should this be a service at all? Option: Make it a service => more to run Option*: Keep a library => no new process";
+
+    // A second question, its recommended option first in the reviewer's order this time.
+    public const string TheName = "README.md:9 design: and the name? Option*: Keep it => none Option: Rename it => churn";
 }
 
 /// <summary>The design finding read apart: question, options with consequences, the recommended mark, and the fallback.</summary>
 public sealed class DesignQuestionTests
 {
     private static PrFinding F(string body) => new() { Path = "a.cs", Line = 3, Body = body };
+
+    /// <summary>
+    /// The review of #797: on a card of several questions where one has no options, <c>1A</c> alone passed (<c>unanswered</c> skipped the
+    /// question without options) and the open question got no answer. Tags are refused then; own words and a card of one question are not.
+    /// </summary>
+    [Fact]
+    public void TagsAreRefusedWhenAnyQuestionHasNoOptionsAndOwnWordsAreNot()
+    {
+        var withOptions = DesignQuestion.Parse(F("design: Keep it? Option: Yes => cheap Option*: No => costly"))!;
+        var open = DesignQuestion.Parse(F("design: and the name?"))!;
+
+        Should.Throw<FlightException>(() => DesignQuestion.ExpandTags([withOptions, open], "1A")).Message.ShouldContain("question 2 has no options");
+        Should.Throw<FlightException>(() => DesignQuestion.ExpandTags([withOptions, open], "1A 2A")).Message.ShouldContain("question 2 has no options");
+
+        DesignQuestion.ExpandTags([withOptions, open], "keep it, and call it Foo").ShouldBe("keep it, and call it Foo");
+        DesignQuestion.ExpandTags([open], "A").ShouldBe("A");
+        DesignQuestion.ExpandTags([withOptions], "A").ShouldBe("No (costly)");
+    }
 
     [Fact]
     public void ParsesTheQuestionAndEachOptionWithItsConsequenceAndTheRecommendedMark()

@@ -6,7 +6,10 @@ using Xunit;
 
 namespace Pilot.Node.Tests;
 
-/// <summary>Every card carries a summary: one or two plain sentences, written for the kind, never the raw detail.</summary>
+/// <summary>
+/// A card's summary is one or two plain sentences about that card, never the raw detail. A kind whose line only describes the kind
+/// (it names nothing of the card) carries none: that line is help, and the card shows its own title and detail (#797 rule 5).
+/// </summary>
 public sealed class CardSummaryTests
 {
     private static NodeState NewState() => new(new InMemoryJournal(), TimeProvider.System);
@@ -28,8 +31,14 @@ public sealed class CardSummaryTests
         { LegCommander.PlannedKind, "flight/PIL355" },
         { "landed", "flight/PIL355" },
         { "not-landed", "flight/PIL355" },
+    };
+
+    /// <summary>Kinds whose line says nothing of the card's own subject, and a kind the table does not know.</summary>
+    public static TheoryData<string, string> DescribingKinds => new()
+    {
         { CardKinds.SessionWaiting, "session/a1b2c3d4" },
         { CardKinds.AssistantAsk, "session/a1b2c3d4" },
+        { Watchtower.RaisedKind, "flight/PIL355" },
         { "some-kind-nobody-wrote-yet", "flight/PIL355" },
     };
 
@@ -45,6 +54,42 @@ public sealed class CardSummaryTests
         card.Summary.ShouldNotBe(detail);
         CardSummaries.Usable(card.Summary).ShouldBeTrue();
         card.Summary.Count(c => c is '.' or '?' or '!').ShouldBeLessThanOrEqualTo(2);
+    }
+
+    [Theory]
+    [MemberData(nameof(DescribingKinds))]
+    public void AKindsHelpLineIsNeverACardsFirstLineInTheEventOrTheSnapshot(string kind, string subject)
+    {
+        var state = NewState();
+        var card = state.RaiseCard(CardBin.ForYou, kind, subject, "Something happened", "the raiser's own words",
+            [new CardChoice { Label = "Do it now", Verb = "go-around", Target = subject }]);
+
+        card.Summary.ShouldBeNull();
+        // The snapshot a client loads says what the event said, so a client that connects later shows no help line either.
+        state.Cards().Single(c => c.Id == card.Id).Summary.ShouldBeNull();
+        CardSummaries.For(kind, subject, card.Title, card.Choices).ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public void AStoredHelpLineIsDroppedWhenTheStateIsLoaded()
+    {
+        var help = CardSummaries.For(Watchtower.RaisedKind, "flight/PIL355", "Look at PIL355", []);
+        var old = new SnapshotEvent
+        {
+            Seq = 1, At = DateTimeOffset.UnixEpoch, Stream = "s", Notes = [], Sessions = [],
+            Cards =
+            [
+                new CardRow
+                {
+                    Id = "c1", Bin = CardBin.ForYou, Kind = Watchtower.RaisedKind, Subject = "flight/PIL355", Title = "Look at PIL355", Summary = help,
+                    Detail = "The watchtower's own words.", At = DateTimeOffset.UnixEpoch, State = CardState.Open,
+                },
+            ],
+        };
+
+        var loaded = new NodeState(new OldJournal(old), TimeProvider.System);
+
+        loaded.Cards().Single().Summary.ShouldBeNull();
     }
 
     [Fact]
@@ -67,12 +112,14 @@ public sealed class CardSummaryTests
     }
 
     [Fact]
-    public void AnUnknownKindGetsTheTitleAndTheChoices()
+    public void AnUnknownKindShowsItsOwnTitleAndButtonsAndKeepsTheGenericLineAsHelp()
     {
-        var card = NewState().RaiseCard(CardBin.ForYou, "brand-new", "flight/PIL355", "Something odd happened", null,
-            [new CardChoice { Label = "Retry", Verb = "x", Target = "t" }, new CardChoice { Label = "Skip", Verb = "y", Target = "t" }]);
+        CardChoice[] choices = [new CardChoice { Label = "Retry", Verb = "x", Target = "t" }, new CardChoice { Label = "Skip", Verb = "y", Target = "t" }];
+        var card = NewState().RaiseCard(CardBin.ForYou, "brand-new", "flight/PIL355", "Something odd happened", null, choices);
 
-        card.Summary.ShouldBe("Something odd happened. Choose Retry or Skip, or dismiss it.");
+        // Its title and its buttons already say this; a line saying them again would say it twice (#797 rule 5).
+        card.Summary.ShouldBeNull();
+        CardSummaries.For("brand-new", "flight/PIL355", "Something odd happened", choices).ShouldBe("Something odd happened. Choose Retry or Skip, or dismiss it.");
     }
 
     [Theory]
@@ -83,10 +130,14 @@ public sealed class CardSummaryTests
     [InlineData("one\ntwo\nthree")]
     public void ALogLikeSummaryIsNeverKept(string logLike)
     {
-        var card = NewState().RaiseCard(CardBin.Ring, "brand-new", "flight/PIL355", "Something odd happened", logLike, summary: logLike);
+        var state = NewState();
+        var card = state.RaiseCard(CardBin.Ring, "leg-failed", "flight/PIL355/redo", "PIL355/redo failed", logLike, summary: logLike);
+        var unknown = state.RaiseCard(CardBin.Ring, "brand-new", "flight/PIL355", "Something odd happened", logLike, summary: logLike);
 
+        // The kind's own line about the card takes its place; a kind with none shows its title and detail.
         card.Summary.ShouldNotBe(logLike);
         CardSummaries.Usable(card.Summary).ShouldBeTrue();
+        unknown.Summary.ShouldBeNull();
     }
 
     [Fact]

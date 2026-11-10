@@ -9,6 +9,10 @@ namespace Pilot.Node.Tests;
 [Collection(JobsCollection.Name)]
 public sealed class BenchSlotTests : JobTestsBase
 {
+    public BenchSlotTests() : base(fakeLauncher: true)
+    {
+    }
+
     private double? _cpu = 5;
 
     private string HandBench(JobRunner jobs, string command)

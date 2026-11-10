@@ -235,7 +235,7 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
         // The refusal is the node's own, not a GH006 push it already answered: it is not skipped, and the card says why.
         var card = _state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.NextStepKind).ShouldHaveSingleItem();
         card.Title.ShouldContain("could not start its reviewer");
-        card.Title.ShouldContain("#63 is in the merge queue");
+        card.Detail.ShouldNotBeNull().ShouldContain("#63 is in the merge queue");
         card.Detail.ShouldNotBeNull().ShouldContain("could not be taken out (gh: not allowed)");
         Git(Origin, "rev-parse", $"refs/heads/{flight.Branch}").ShouldNotBe(Git(flight.Worktree, "rev-parse", "HEAD"));
     }

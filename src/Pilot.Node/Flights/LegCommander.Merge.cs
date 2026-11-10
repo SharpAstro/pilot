@@ -14,6 +14,9 @@ public sealed partial class LegCommander
     /// <summary>The last item of <see cref="FlightRow.MergeWhenGreen"/> when the node armed the merge itself, on autopilot.</summary>
     public const string ArmedByAutopilot = "autopilot";
 
+    /// <summary>The button that merges a flight's PR: two words at least, as every button says what it does (#797).</summary>
+    public const string MergeLabel = "Merge the PR";
+
     /// <summary>
     /// <c>merge &lt;head&gt; [method]</c>: merges the flight's PR, or joins its base's merge queue. While its checks still run,
     /// the merge waits on the flight (<see cref="FlightRow.MergeWhenGreen"/>) and the node takes it once they pass. Whether it
@@ -498,7 +501,7 @@ public sealed partial class LegCommander
             state.UpdateCard(card.Id,
                 way == MergeWays.Queued ? $"{code}'s PR #{flight?.PullRequest} is in the merge queue"
                     : byGitHub ? $"{code}'s PR #{flight?.PullRequest} merges when its checks pass" : $"{code}'s PR #{flight?.PullRequest} waits for its checks, then the node queues it",
-                line, [merge with { Label = "Merge", Status = way == MergeWays.Queued ? ChoiceStatus.Queued : ChoiceStatus.Armed, Note = note }], card.Link ?? flight?.PullRequestUrl, PrReady,
+                line, [merge with { Label = MergeLabel, Status = way == MergeWays.Queued ? ChoiceStatus.Queued : ChoiceStatus.Armed, Note = note }], card.Link ?? flight?.PullRequestUrl, PrReady,
                 way == MergeWays.Queued ? $"The merge of {code} is in GitHub's merge queue. GitHub merges it by itself, with the node up or not."
                     : byGitHub ? $"The merge of {code} is armed. GitHub merges it by itself once its checks pass, with the node up or not."
                     : Models.Autopilot ? $"On autopilot: the node waits for the checks of {code}'s PR, then queues or merges it. Nothing for you to do unless they fail."
@@ -602,8 +605,8 @@ public sealed partial class LegCommander
         }
         // A card turned to a go-around (conflicting, behind) has no Merge: it comes back with the state that allows one.
         var choices = hasMerge && !replaceWords
-            ? card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Label = "Merge", Status = status, Note = note } : c).ToList()
-            : [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = card.Subject, Args = [head, .. card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge)?.Args.Skip(1) ?? []], Status = status, Note = note }];
+            ? card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Label = MergeLabel, Status = status, Note = note } : c).ToList()
+            : [new CardChoice { Label = MergeLabel, Verb = Verbs.Merge, Target = card.Subject, Args = [head, .. card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge)?.Args.Skip(1) ?? []], Status = status, Note = note }];
         // The failed check's page is the link only where a failed check is what blocks it: the others keep the PR's.
         state.UpdateCard(card.Id, title, detail, choices, merge is { Kind: MergeKinds.Blocked, FailedName: not null } ? merge.FailedLink ?? link : link, PrReady, MergeSummary(code, merge),
             MergeCardBin(merge.Kind is MergeKinds.Blocked or MergeKinds.ChangesRequested || !own && merge.DroppedFromQueue is not null));
@@ -678,16 +681,16 @@ public sealed partial class LegCommander
         var choices = new List<CardChoice>();
         if (state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is { } last)
         {
-            choices.Add(new CardChoice { Label = Models.RedoLabel(last, rerun ? "left the PR's checks failing" : "left the PR unmergeable"), Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name), Args = [goAroundWhy] });
+            choices.Add(new CardChoice { Label = Verbs.FreshWorker, Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name), Args = [goAroundWhy] });
         }
         if (rerun)
         {
-            choices.Add(new CardChoice { Label = $"Re-run the checks of {code}'s PR", Verb = Verbs.RerunChecks, Target = target, Args = [head, method] });
+            choices.Add(new CardChoice { Label = "Run the checks again", Verb = Verbs.RerunChecks, Target = target, Args = [head, method] });
         }
         // A PR GitHub cannot merge as it is (conflicting, behind) is offered the go-around that merges its base in, and no Merge to refuse.
         if (mergeAgain)
         {
-            choices.Add(new CardChoice { Label = $"Merge {code}'s PR again as it is", Verb = Verbs.Merge, Target = target, Args = [head, method] });
+            choices.Add(new CardChoice { Label = "Try the merge again", Verb = Verbs.Merge, Target = target, Args = [head, method] });
         }
         // What each choice is for, in other words: the buttons show their whole labels, so the sentence must not repeat them.
         var offers = new List<string>();

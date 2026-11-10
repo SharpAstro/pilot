@@ -28,14 +28,39 @@ public abstract class JobTestsBase : IDisposable
     private protected readonly JobRunner _jobs;
     private protected string? _refuse;
 
+    // Told on every change of the state, so a wait for a job's row is a wait for the change, not a poll on the wall clock.
+    private readonly StateChanges _changes;
+    private readonly IDisposable _feed;
+
+    /// <summary>The in-memory launcher the jobs start on, or null when the test runs real shells.</summary>
+    private protected FakeJobLauncher? Fake { get; private set; }
+
+    /// <summary>The jobs of this test start on an in-memory launcher from here on (before its first job): no real shell, no wall clock.</summary>
+    private protected FakeJobLauncher UseFake()
+    {
+        Fake ??= new FakeJobLauncher(TimeProvider.System);
+        _jobs.Launcher = Fake;
+        return Fake;
+    }
+
+    /// <summary>The jobs of this test start real shells from here on (a test of a real path: the Windows job object, the Unix wrapper, a tree kill, a reattach).</summary>
+    private protected void RealLauncher()
+    {
+        Fake = null;
+        _jobs.Launcher = RealJobLauncher.Instance;
+    }
+
     // The machine's free memory as the runner reads it; null (unknown) holds nothing back.
     private protected long? _free;
 
-    protected JobTestsBase()
+    /// <param name="fakeLauncher">#933: the jobs start on an in-memory <see cref="FakeJobLauncher"/>, not a real shell; a test of a real path calls <see cref="RealLauncher"/> first and carries <c>Category=Slow</c>.</param>
+    protected JobTestsBase(bool fakeLauncher = false)
     {
         Directory.CreateDirectory(_root);
+        (_changes, _feed) = StateChanges.Watch(_state);
         _jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), TimeProvider.System)
         {
+            Launcher = fakeLauncher ? (Fake = new FakeJobLauncher(TimeProvider.System)) : RealJobLauncher.Instance,
             FreeMemory = () => _free,
             Say = (command, _) =>
             {
@@ -59,6 +84,7 @@ public abstract class JobTestsBase : IDisposable
     public void Dispose()
     {
         _jobs.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
+        _feed.Dispose();
         try
         {
             // Git's object files are read-only, and a test that made a repo here would fail the delete.
@@ -112,34 +138,47 @@ public abstract class JobTestsBase : IDisposable
     /// <summary>The longest a test waits on a condition: a ceiling a busy machine does not reach, not a time the code is held to.</summary>
     private protected static readonly TimeSpan WaitCeiling = TimeSpan.FromMinutes(2); // budget: real pwsh and git jobs at below-normal priority on a loaded machine; a ceiling, never a pace
 
-    /// <summary>The job once <paramref name="condition"/> holds: the dispatcher acts on its own loop, a moment after the call.</summary>
+    /// <summary>
+    /// The job once <paramref name="condition"/> holds: the dispatcher acts on its own loop, a moment after the call. Waits for the
+    /// state's next change, never on a timer: the change is looked at again, and only a ceiling bounds the wait.
+    /// </summary>
     private protected async Task<JobRow> Until(string id, Func<JobRow, bool> condition)
     {
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        while (clock.Elapsed < WaitCeiling)
-        {
-            if (_state.Jobs().Single(j => j.Id == id) is var job && condition(job))
-            {
-                return job;
-            }
-            await Task.Delay(20, Ct);
-        }
-        throw new TimeoutException($"job {id} never came to the state awaited within {WaitCeiling}");
+        JobRow? job = null;
+        await _changes.UntilAsync(() => condition(job = _state.Jobs().Single(j => j.Id == id)), WaitCeiling, Ct, $"job {id} never came to the state awaited");
+        return job!;
     }
 
-    private protected async Task<JobRow> Ended(string id)
+    /// <summary>Returns once <paramref name="condition"/> holds on the state, waiting for its next change in between, never on a timer.</summary>
+    private protected Task When(Func<bool> condition, string what) => _changes.UntilAsync(condition, WaitCeiling, Ct, what);
+
+    /// <summary>
+    /// Moves <paramref name="clock"/> on by <paramref name="step"/> until <paramref name="done"/> completes: each step wakes the watches
+    /// (<see cref="Clock.Advanced"/>), and the next change of the state (a watch that read more, or ended a job) is waited for before
+    /// the next step, so a step taken before a watch noted the time it was waiting from is taken again. No timer, only the ceiling.
+    /// </summary>
+    private protected async Task AdvanceUntil(Clock clock, Task done, TimeSpan step)
     {
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        while (clock.Elapsed < WaitCeiling)
+        using var ceiling = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        ceiling.CancelAfter(WaitCeiling);
+        try
         {
-            if (_state.Jobs().Single(j => j.Id == id) is { EndedAt: not null } job && (job.Owner is null || job.Told || _refuse is not null))
+            while (!done.IsCompleted)
             {
-                return job;
+                var next = _changes.Next;
+                clock.Advance(step);
+                await Task.WhenAny(done, next).WaitAsync(ceiling.Token);
             }
-            await Task.Delay(100, Ct);
         }
-        throw new TimeoutException($"job {id} did not end within {WaitCeiling}");
+        catch (OperationCanceledException) when (!Ct.IsCancellationRequested)
+        {
+            throw new TimeoutException($"the run did not end within {WaitCeiling} of moved clock");
+        }
     }
+
+    private protected Task<JobRow> Ended(string id) =>
+        Until(id, job => job is { EndedAt: not null } && (job.Owner is null || job.Told || _refuse is not null));
+
 
     private protected static bool IsAlive(int pid)
     {
@@ -173,7 +212,14 @@ public abstract class JobTestsBase : IDisposable
 
         public override DateTimeOffset GetUtcNow() => _now;
 
-        public void Advance(TimeSpan span) => _now += span;
+        /// <summary>Told after each advance: the runner's watches look again at once, where a real clock would wake them at their next look (#933).</summary>
+        public Action? Advanced { get; set; }
+
+        public void Advance(TimeSpan span)
+        {
+            _now += span;
+            Advanced?.Invoke();
+        }
     }
 
     // The runner is not started: the test is the dispatcher, so nothing else touches its queue, and the clock and the CPU are the test's.
@@ -183,6 +229,8 @@ public abstract class JobTestsBase : IDisposable
         var cpu = new Dictionary<string, TimeSpan>();
         var jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), clock)
         {
+            // The test's clock is the launcher's too: a fake process starts when the runner says it did.
+            Launcher = Fake is not null ? (Fake = new FakeJobLauncher(clock)) : RealJobLauncher.Instance,
             FreeMemory = () => null,
             IdleWindow = TimeSpan.FromMinutes(15),
             IdleCpu = TimeSpan.FromSeconds(5),
@@ -190,6 +238,7 @@ public abstract class JobTestsBase : IDisposable
             MachineCpu = machineCpu,
             MachineOutsideCpu = outsideCpu,
         };
+        clock.Advanced = jobs.NudgeWatches;
         return (jobs, clock, cpu, async id =>
         {
             jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
@@ -233,13 +282,17 @@ public abstract class JobTestsBase : IDisposable
     private protected sealed class Node : IDisposable
     {
         private readonly FileJournal _journal;
+        private readonly StateChanges _changes;
+        private readonly IDisposable _feed;
 
-        private Node(string root, Func<long?> freeMemory, Microsoft.Extensions.Hosting.IHostApplicationLifetime? lifetime)
+        private Node(string root, Func<long?> freeMemory, Microsoft.Extensions.Hosting.IHostApplicationLifetime? lifetime, IJobLauncher? launcher)
         {
             _journal = new FileJournal(Path.Combine(root, "journal"));
             State = new NodeState(_journal, TimeProvider.System);
+            (_changes, _feed) = StateChanges.Watch(State);
             Jobs = new JobRunner(State, new NodeOptions(Path.Combine(root, "n.sock"), Path.Combine(root, "data")), TimeProvider.System)
             {
+                Launcher = launcher ?? RealJobLauncher.Instance,
                 FreeMemory = freeMemory,
                 Lifetime = lifetime,
                 Say = (command, _) =>
@@ -256,9 +309,9 @@ public abstract class JobTestsBase : IDisposable
 
         public ConcurrentQueue<CommandRequest> Said { get; } = new();
 
-        public static async Task<Node> StartAsync(string root, Func<long?>? freeMemory = null, Microsoft.Extensions.Hosting.IHostApplicationLifetime? lifetime = null)
+        public static async Task<Node> StartAsync(string root, Func<long?>? freeMemory = null, Microsoft.Extensions.Hosting.IHostApplicationLifetime? lifetime = null, IJobLauncher? launcher = null)
         {
-            var node = new Node(root, freeMemory ?? (() => null), lifetime);
+            var node = new Node(root, freeMemory ?? (() => null), lifetime, launcher);
             if (node.State.Sessions().Length == 0)
             {
                 node.State.PutSession(new SessionRow
@@ -283,22 +336,31 @@ public abstract class JobTestsBase : IDisposable
 
         public async Task<JobRow> UntilAsync(string id, Func<JobRow, bool> condition, CancellationToken cancellationToken)
         {
-            // Bounded by the clock, not by a count of 50 ms waits: on a loaded machine each wait takes many times its length, so a
-            // count made the ceiling anything from 20 s to minutes (pilot #810, a check that failed after 1 m 47 s of them).
-            var clock = System.Diagnostics.Stopwatch.StartNew();
+            // Waits for the state's next change, never on a timer; only a ceiling bounds it (pilot #810: a count of 50 ms waits
+            // made the ceiling anything from 20 s to minutes on a loaded machine).
+            using var ceiling = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            ceiling.CancelAfter(WaitCeiling);
             JobRow job;
-            while (!condition(job = Job(id)))
+            while (true)
             {
-                if (clock.Elapsed >= WaitCeiling)
+                // Taken before the look, so a change between the look and the wait is not missed.
+                var next = _changes.Next;
+                if (condition(job = Job(id)))
+                {
+                    return job;
+                }
+                try
+                {
+                    await next.WaitAsync(ceiling.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
                     // The row the wait ended on says why: a job that already ended (a timeout, a start that failed) reads very
                     // differently from one that never left the queue.
                     throw new TimeoutException($"job {id} never came to the state awaited within {WaitCeiling}: it is {job.State}"
                         + $" (error: {job.Error ?? "none"}; step: {job.Step ?? "none"}; started {job.StartedAt:O}; ended {job.EndedAt?.ToString("O") ?? "never"}; told {job.Told})");
                 }
-                await Task.Delay(50, cancellationToken);
             }
-            return job;
         }
 
         /// <summary>The job once it has ended and its owner has been told.</summary>
@@ -308,10 +370,15 @@ public abstract class JobTestsBase : IDisposable
         public async Task StopAsync()
         {
             await Jobs.StopAsync(CancellationToken.None);
+            _feed.Dispose();
             _journal.Dispose();
         }
 
-        public void Dispose() => _journal.Dispose();
+        public void Dispose()
+        {
+            _feed.Dispose();
+            _journal.Dispose();
+        }
     }
 
     private protected sealed class RestartLifetime : Microsoft.Extensions.Hosting.IHostApplicationLifetime
@@ -511,6 +578,7 @@ public sealed class JobTests1 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AJobInheritsOnlyItsLogAndNulNotAnOtherInheritableHandleTheNodeHolds()
     {
         // PIL365: the node holds inheritable handles of its own (a pipe to a child, say). A job that inherited them would keep the
@@ -580,6 +648,7 @@ public sealed class JobTests1 : JobTestsBase
     [Fact]
     public async Task ARunningJobsRowHoldsItsPidBeforeItEnds()
     {
+        UseFake();
         var id = Run(Sleep(30)).Made!;
 
         var running = await Until(id, j => j.State == JobState.Running);
@@ -588,15 +657,13 @@ public sealed class JobTests1 : JobTestsBase
         running.ProcessStartedAt.ShouldNotBeNull();
         running.ExitPath.ShouldBe(running.LogPath + ".exit");
         File.Exists(running.ExitPath).ShouldBeFalse();
-        if (OperatingSystem.IsWindows())
-        {
-            File.Exists(running.ScriptPath).ShouldBeTrue();
-        }
+        Fake!.Job(id).Pid.ShouldBe(running.Pid!.Value);
         _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
         await Ended(id);
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task BothStdoutAndStderrReachTheLog()
     {
         var command = OperatingSystem.IsWindows()
@@ -613,6 +680,7 @@ public sealed class JobTests1 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ACancelKillsTheJobsChildProcessesToo()
     {
         var pidFile = Path.Combine(_root, "child.pid");
@@ -636,6 +704,7 @@ public sealed class JobTests1 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AForcedCancelEndsAJobWhoseChildOutlivedItsWrapperAndKillsTheChild()
     {
         // The watch looks once an hour, so the row still reads running when only the wrapper has been killed: the stuck state.
@@ -723,6 +792,7 @@ public sealed class JobTests1 : JobTestsBase
     [Fact]
     public async Task ACancelTakesNoArgumentButForce()
     {
+        UseFake();
         var id = Run(Sleep(30)).Made!;
         await Until(id, j => j.State == JobState.Running);
 
@@ -760,6 +830,7 @@ public sealed class JobTests1 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APwshCommandJobKeepsTheExitCodeOfItsLastNativeCommand()
     {
         if (!OperatingSystem.IsWindows())
@@ -775,6 +846,7 @@ public sealed class JobTests1 : JobTestsBase
     [Fact]
     public async Task ACancelledJobStopsAndItsOwnerIsTold()
     {
+        UseFake();
         var id = Run(Sleep(30)).Made!;
         await Until(id, j => j.State == JobState.Running);
 
@@ -807,6 +879,7 @@ public sealed class JobTests1 : JobTestsBase
     [Fact]
     public async Task AJobWaitsForFreeMemoryAndStartsOnceThereIsEnough()
     {
+        UseFake();
         // Two may run at once, so it is memory that holds the second back, not the slot.
         _jobs.MaxRunning = 2;
         var holder = Run(Sleep(30)).Made!;
@@ -826,6 +899,7 @@ public sealed class JobTests1 : JobTestsBase
     [Fact]
     public async Task TheHeadOfTheQueueWithNothingRunningStartsWhateverTheFreeMemory()
     {
+        UseFake();
         _free = 0;
 
         var id = Run(Echo("ran")).Made!;
@@ -934,6 +1008,7 @@ public sealed class JobTests2 : JobTestsBase
     [Fact]
     public async Task AQueuedJobBehindAnotherSaysWhatItNeedsAndTheMemoryFreeNow()
     {
+        UseFake();
         _free = 1L << 30;
         var holder = Run(Sleep(30)).Made!;
         await Until(holder, j => j.State == JobState.Running);
@@ -949,6 +1024,7 @@ public sealed class JobTests2 : JobTestsBase
     [Fact]
     public async Task AQueuedJobCancelledNeverRunsAndItsOwnerIsTold()
     {
+        UseFake();
         _free = 0;
         var holder = Run(Sleep(30)).Made!;
         await Until(holder, j => j.State == JobState.Running);
@@ -996,6 +1072,7 @@ public sealed class JobTests2 : JobTestsBase
     [Fact]
     public async Task ACancelThatSeesARunningJobFindsItsProcess()
     {
+        UseFake();
         // The moment the Running row is published, a cancel must find the process: the runner adds it first.
         string? answer = null;
         using var watch = _state.Subscribe(null, null, new OnJobRunning(id =>
@@ -1063,6 +1140,7 @@ public sealed class JobTests2 : JobTestsBase
     [Fact]
     public async Task ACheckQueuedBehindARunningJobIsNotStoppedForTheTimeItWaitedAndCarriesItsExitAndLastLines()
     {
+        UseFake();
         var (jobs, clock, _, gone) = Idle();
         var first = Hand(jobs, Sleep(60));
         var budget = TimeSpan.FromMinutes(30);
@@ -1092,6 +1170,7 @@ public sealed class JobTests2 : JobTestsBase
     [Fact]
     public async Task ACheckIsStoppedOnlyOnceItHasRunForItsBudget()
     {
+        UseFake();
         var (jobs, clock, _, _) = Idle();
         var check = jobs.RunCheckAsync("TIA1", "parser", Sleep(60), _root, TimeSpan.FromMinutes(30), Ct);
         jobs.Dispatch(new JobRunner.HandedOver(_state.Jobs().Single(j => j.Kind == JobKind.Check)));
@@ -1122,6 +1201,7 @@ public sealed class JobTests2 : JobTestsBase
     [Fact]
     public async Task EarlierSlowPassesOfTheSameCheckRaiseTheNextOnesTimeoutAndAStopNamesTheLimitAndItsBasis()
     {
+        UseFake();
         var (jobs, clock, _, _) = Idle();
         var command = Sleep(60);
         SeedPasses(command, 20, 35, 30);
@@ -1142,6 +1222,7 @@ public sealed class JobTests2 : JobTestsBase
     [Fact]
     public async Task ACheckQueuedLongerThanItsLimitIsStillGivenItsWholeLimitOnceItRuns()
     {
+        UseFake();
         var (jobs, clock, _, gone) = Idle();
         var command = Sleep(60);
         SeedPasses(command, 40);
@@ -1168,6 +1249,7 @@ public sealed class JobTests2 : JobTestsBase
     [InlineData(30, false)]
     public async Task ACheckStoppedByItsBudgetSaysWhetherTheMachinesCpuWasAbove90PercentForMostOfItsRun(int machine, bool saturated)
     {
+        UseFake();
         var (jobs, clock, _, _) = Idle(() => machine);
         var check = jobs.RunCheckAsync("TIA1", "parser", Sleep(60), _root, TimeSpan.FromMinutes(30), Ct);
         jobs.Dispatch(new JobRunner.HandedOver(_state.Jobs().Single(j => j.Kind == JobKind.Check)));
@@ -1194,6 +1276,7 @@ public sealed class JobTests2 : JobTestsBase
     [Fact]
     public async Task CancellingACheckWithdrawsItWhileItWaits()
     {
+        UseFake();
         var (jobs, _, _, gone) = Idle();
         var first = Hand(jobs, Sleep(60));
         using var cancel = new CancellationTokenSource();
@@ -1230,6 +1313,9 @@ public sealed class JobTests2 : JobTestsBase
         var card = IdleCards().ShouldHaveSingleItem();
         (card.Kind, card.Bin, card.Subject).ShouldBe((JobRunner.IdleKind, CardBin.ForYou, Verbs.JobTarget(first)));
         card.Title.ShouldContain(first);
+        // The golden card (#797): the first line says what to do, the one button does it.
+        card.Summary.ShouldNotBeNull().ShouldContain("cancel it if it is only waiting");
+        card.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe([("Cancel the job", Verbs.CancelJob, Verbs.JobTarget(first))]);
         (card.Detail ?? "").ShouldContain("se1-tia1-parser");
         (card.Detail ?? "").ShouldContain(second);
 
@@ -1242,6 +1328,7 @@ public sealed class JobTests2 : JobTestsBase
     [Fact]
     public async Task ANearIdleJobWithNothingQueuedBehindItRaisesNoCard()
     {
+        UseFake();
         var (jobs, clock, cpu, gone) = Idle();
         var first = Hand(jobs, Sleep(60));
         cpu[first] = TimeSpan.Zero;
@@ -1259,6 +1346,7 @@ public sealed class JobTests2 : JobTestsBase
     [Fact]
     public async Task AJobThatKeepsWorkingRaisesNoCardAndTheCardClosesWhenTheQueueEmpties()
     {
+        UseFake();
         var (jobs, clock, cpu, gone) = Idle();
         var first = Hand(jobs, Sleep(60));
         var second = Hand(jobs, Echo("later"));
@@ -1288,6 +1376,7 @@ public sealed class JobTests2 : JobTestsBase
     [Fact]
     public async Task AJobWhoseCpuReadingFallsWhenAChildEndsAndRisesAgainRaisesNoCard()
     {
+        UseFake();
         var (jobs, clock, cpu, gone) = Idle();
         var first = Hand(jobs, Sleep(60));
         Hand(jobs, Echo("later"));
@@ -1716,39 +1805,34 @@ public sealed class JobTests3 : JobTestsBase
     [Fact]
     public async Task StoppingTheNodeLeavesItsRunningJobRunningAndItsRowRunning()
     {
-        var first = await Node.StartAsync(_root);
+        // The fake launcher's process table is what outlives the first node: the second finds the job in it by pid and start, as a
+        // successor finds a real one (the real reattach is in the Slow tests of RestartTests).
+        var launcher = new FakeJobLauncher(TimeProvider.System);
+        var first = await Node.StartAsync(_root, launcher: launcher);
         var id = first.Run(_root, Sleep(60)).Made!;
         var running = await first.UntilAsync(id, j => j.State == JobState.Running, Ct);
 
         await first.StopAsync();
 
-        try
-        {
-            IsAlive(running.Pid!.Value).ShouldBeTrue();
-            File.Exists(running.ExitPath).ShouldBeFalse();
-            first.Said.ShouldBeEmpty();
-            using var second = await Node.StartAsync(_root);
-            second.Job(id).State.ShouldBe(JobState.Running);
-            second.Cancel(id).Ok.ShouldBeTrue();
-            (await second.EndedAsync(id, Ct)).State.ShouldBe(JobState.Cancelled);
-        }
-        finally
-        {
-            JobKiller.Kill(running);
-        }
+        launcher.Job(id).IsAlive.ShouldBeTrue();
+        File.Exists(running.ExitPath).ShouldBeFalse();
+        first.Said.ShouldBeEmpty();
+        using var second = await Node.StartAsync(_root, launcher: launcher);
+        second.Job(id).State.ShouldBe(JobState.Running);
+        second.Cancel(id).Ok.ShouldBeTrue();
+        (await second.EndedAsync(id, Ct)).State.ShouldBe(JobState.Cancelled);
+        launcher.Job(id).Killed.ShouldBeTrue();
     }
 
     [Fact]
     public async Task AnOwnerThatCannotBeToldRings()
     {
+        UseFake();
         _refuse = "the folder is gone";
 
         var job = await Ended(Run(Echo("done")).Made!);
         // The ring follows the refused tell, a moment after the job ends: waited for, as the end is (flaky under load).
-        for (var i = 0; i < 100 && _state.Cards(openOnly: true).Length == 0; i++)
-        {
-            await Task.Delay(50, Ct);
-        }
+        await When(() => _state.Cards(openOnly: true).Length > 0, "the ring for the refused tell");
 
         job.Told.ShouldBeFalse();
         var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
@@ -1835,6 +1919,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact(Timeout = 240_000)]
+    [Trait("Category", "Slow")]
     public async Task ACancelledCheckJobEndsTheProcessesItStarted()
     {
         var marker = Path.Combine(_root, "grandchild.pid");
@@ -2001,6 +2086,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact(Timeout = 240_000)]
+    [Trait("Category", "Slow")] // starts a real sleeping process (kill-on-close job object / process table)
     public async Task ADisposedKillOnCloseHoldWithoutTheReleaseStillEndsTheProcess()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "kill-on-close is a Windows job object");
@@ -2021,6 +2107,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact(Timeout = 240_000)]
+    [Trait("Category", "Slow")] // starts a real sleeping process (kill-on-close job object / process table)
     public async Task AReleasedKillOnCloseHoldLetsTheProcessOutliveItsDisposal()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "kill-on-close is a Windows job object");
@@ -2040,6 +2127,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact(Timeout = 240_000)]
+    [Trait("Category", "Slow")] // starts a real sleeping process (kill-on-close job object / process table)
     public async Task RecoveryFollowsACheckRowItFindsRunningLikeAJobEndsOneWithNoProcessKeepsAQueuedOneAndFollowsAnOrdinaryJob()
     {
         string[] program = OperatingSystem.IsWindows() ? ["pwsh", "-NoProfile", "-Command", "Start-Sleep 30"] : ["sleep", "30"];

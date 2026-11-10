@@ -47,7 +47,7 @@ public sealed class NodeCardTests : IDisposable
 
         var card = state.Cards(openOnly: true).Single(c => c.Kind == NodeLan.AskedKind);
         (card.Bin, card.Title).ShouldBe((CardBin.Ring, "laptop asks to fly flights on this node"));
-        card.Choices.Select(c => c.Label).ShouldBe(["Allow laptop to run commands here until revoked", "Refuse laptop"]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Allow laptop to run commands", "Refuse laptop"]);
     }
 
     [Fact]

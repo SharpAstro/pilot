@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Shouldly;
@@ -45,6 +44,7 @@ public abstract class IssueBoardFixture : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2r-" + Guid.NewGuid().ToString("N")[..8]);
     internal readonly NodeState State = new(new InMemoryJournal(), TimeProvider.System);
+    private readonly SeededRepos _repos;
     internal readonly FakeGitHub GitHub = new();
     internal readonly FakeIssueReadinessChecker Checker = new();
     internal readonly FakeMilestoneSuggester Suggester = new();
@@ -53,13 +53,9 @@ public abstract class IssueBoardFixture : IDisposable
 
     protected IssueBoardFixture()
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        File.WriteAllText(Path.Combine(Repo, ".git", "config"), "[remote \"origin\"]\n\turl = https://github.com/SharpAstro/pilot.git\n");
-        var planes = new Planes(new GitCli());
+        _repos = new SeededRepos(_root);
+        _repos.Seed("pilot", remoteUrl: "https://github.com/SharpAstro/pilot.git");
+        var planes = _repos.Planes();
         var flights = new FlightCommander(State, planes, TimeProvider.System, github: GitHub);
         var catalog = new RepoCatalog(State, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root]));
         Commander = new IdeaCommander(State, planes, catalog, GitHub, new FakeIdeaMerger(), new FakeIdeaTidier(), new FakeIdeaRepoChooser(), flights, TimeProvider.System, null, Checker, Suggester, Splitter);
@@ -79,33 +75,8 @@ public abstract class IssueBoardFixture : IDisposable
 
     public void Dispose()
     {
-        try
-        {
-            Git(Repo, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        TestDirs.DeleteTree(_root);
+        _repos.Dispose();
         GC.SuppressFinalize(this);
-    }
-
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
     }
 
     internal Task<CommandResult> Run(string verb, string target, params string[] args) =>

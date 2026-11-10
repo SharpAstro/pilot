@@ -53,6 +53,35 @@ public sealed partial class RoleModels
         _ => "opus by default as review is judgement; a deep review runs on the max, opus at high",
     };
 
+    /// <summary>The model the summary runs on unless the settings say otherwise (<see cref="NodeSettings.SummaryModelKey"/>).</summary>
+    public const string BuiltInSummaryModel = "sonnet";
+
+    /// <summary>Why the summary's built-in model is what it is, for the setting's detail.</summary>
+    public const string SummaryModelWhy = "sonnet by default: the summary is what the person reads first, and Haiku's summaries relayed stale cards and internal words";
+
+    /// <summary>Whether <paramref name="text"/> names a model Claude Code takes: an alias (sonnet, opus, haiku) or a full id (<c>claude-sonnet-5-5</c>, with an optional <c>[1m]</c>).</summary>
+    public static bool IsModelName(string text) =>
+        text is "sonnet" or "opus" or "haiku"
+        || (text.StartsWith("claude-", StringComparison.Ordinal) && text.Length > "claude-".Length
+            && text.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '.' or '[' or ']'));
+
+    /// <summary>The model the summary's call runs on: this node's own setting, else the fleet's, else <see cref="BuiltInSummaryModel"/>. Read at each call, so a set applies with no restart.</summary>
+    public string SummaryModel => SummaryModelWithSource().Model;
+
+    /// <summary>The summary's model and where it comes from (<see cref="SettingSources.ThisNode"/>, <see cref="SettingSources.Fleet"/> or <see cref="SettingSources.BuiltIn"/>).</summary>
+    public (string Model, string Source) SummaryModelWithSource()
+    {
+        if (Raw(NodeSettings.SummaryModelKey) is { } own && IsModelName(own))
+        {
+            return (own, SettingSources.ThisNode);
+        }
+        if (FleetRaw(NodeSettings.SummaryModelKey) is { } fleet && IsModelName(fleet))
+        {
+            return (fleet, SettingSources.Fleet);
+        }
+        return (BuiltInSummaryModel, SettingSources.BuiltIn);
+    }
+
     /// <summary>The role's range: this node's own, else the fleet's, else the built-in.</summary>
     public RoleRange Range(string role) => RangeWithSource(role).Range;
 
@@ -313,21 +342,15 @@ public sealed partial class RoleModels
     private static string Describe(ModelPair pair) => pair.Effort is null ? pair.Model : $"{pair.Model} at {pair.Effort}";
 
     /// <summary>
-    /// The choice that starts a fresh worker on <paramref name="leg"/>, naming why the last one is let go (<paramref name="why"/> completes
-    /// "the last one ...": <c>went idle</c>, <c>never showed up</c>); its next worker is attempt go-arounds + 2, numbered as the redo it
-    /// orders (go-arounds + 1) and naming that attempt's model once it is a second redo or later.
+    /// What the next worker of <paramref name="leg"/> will be, for a card's detail: its attempt is go-arounds + 2, numbered as the round it
+    /// orders (go-arounds + 1), with the model and effort it runs on, once it is a second round or later (<c>Next worker (round 3, on Opus at xhigh).</c>);
+    /// null before that. The buttons that start it say only what they do (<see cref="Verbs.FreshWorker"/>, #797), never the round or the model.
     /// </summary>
-    public string RedoLabel(LegRow leg, string why)
+    public string? NextWorkerNote(LegRow leg)
     {
         var (model, effort) = WorkerFor(leg.Model, leg.Effort, leg.GoArounds + 2);
-        return Verbs.FreshWorker(leg.Name, why, leg.GoArounds + 1, model, effort);
-    }
-
-    /// <summary>A send-back button for <paramref name="leg"/> in <paramref name="words"/>, naming the next worker's round and model as <see cref="RedoLabel"/> does.</summary>
-    public string SendBackLabel(LegRow leg, string words)
-    {
-        var (model, effort) = WorkerFor(leg.Model, leg.Effort, leg.GoArounds + 2);
-        return Verbs.SendBack(words, leg.GoArounds + 1, model, effort);
+        var note = Verbs.SendBack("Next worker", leg.GoArounds + 1, model, effort);
+        return note == "Next worker" ? null : $"{note}.";
     }
 
     private static string Step(string? effort, int by, string whenUnset) =>

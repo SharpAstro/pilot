@@ -209,12 +209,12 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             var what = one ? "1 commit" : $"{left.Commits.Count} commits";
             state.RaiseCard(CardBin.Ring, NotLandedKind, subject, $"{what} of {flight.Code} missed the merge of PR #{number}",
                 $"{ex.Message}. The rest of the flight is in main. Open a PR with {(one ? "it" : "them")}: the node pushes the branch with main merged in and opens the PR, and the flight lands when that PR merges.",
-                [new CardChoice { Label = $"Open a PR with the {(one ? "commit" : "commits")}", Verb = Verbs.OpenPr, Target = subject }],
+                [new CardChoice { Label = $"Open a PR for {(one ? "it" : "them")}", Verb = Verbs.OpenPr, Target = subject }],
                 summary: CardSummaries.LeftOut(flight.Code, number, left.Commits),
                 cause: $"left-out:{number}:{mergedHead}:{left.Commits.Count}");
             return;
         }
-        state.RaiseCard(CardBin.Ring, NotLandedKind, subject, $"{flight.Code}'s PR #{number} merged on GitHub, but the flight did not land: {LegCommander.OneLine(ex.Message)}",
+        state.RaiseCard(CardBin.Ring, NotLandedKind, subject, $"{flight.Code} merged on GitHub but did not land",
             $"{ex.Message}. The PR is merged, so its branch is in the base; the flight stays flying until it is landed.",
             [new CardChoice { Label = "Land it", Verb = Verbs.Land, Target = subject, Args = [mergedHead] }],
             summary: CardSummaries.NotLanded(flight.Code, number, ex.Message, flight.Worktree),
@@ -360,15 +360,19 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     }
                     else
                     {
-                        state.RaiseCard(CardBin.Handled, QueueDropped, subject, $"{flight.Code}'s PR #{number} left the merge queue on a conflict: brought up to date with its base and reviewed afresh");
+                        state.RaiseCard(CardBin.Handled, QueueDropped, subject, $"{flight.Code}'s PR #{number} left the merge queue on a conflict",
+                            "The node brought it up to date with its base and has it reviewed again; nothing to do.");
                     }
                 }
                 continue;
             }
             var why = queue.RemovedReason is { Length: > 0 } reason ? reason : "no reason given";
-            state.RaiseCard(CardBin.ForYou, QueueDropped, subject, $"{flight.Code}'s PR #{number} left the merge queue unmerged: {LegCommander.OneLine(why)}",
+            state.RaiseCard(CardBin.ForYou, QueueDropped, subject, $"{flight.Code}'s PR #{number} left the merge queue unmerged",
                 $"GitHub took it out of the queue ({why}) after the node queued it. The PR page says which check failed, or what the queue met.",
-                [new CardChoice { Label = $"Queue {flight.Code}'s PR #{number} for merging again", Verb = Verbs.Merge, Target = subject, Args = [queue.Head] }], link: flight.PullRequestUrl);
+                [new CardChoice { Label = "Queue the merge again", Verb = Verbs.Merge, Target = subject, Args = [queue.Head] }], link: flight.PullRequestUrl,
+                summary: $"GitHub took it out of the merge queue: {LegCommander.OneLine(why)}. Once that is dealt with, queue it again.",
+                // The reason is no longer in the title, so what a dismissal is remembered by is this removal itself (#853).
+                cause: $"queue-dropped:{number}:{removedAt:O}");
         }
     }
 
@@ -696,7 +700,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     _mergeTries.Remove(armedKey);
                     state.PutFlight(flight with { MergeWhenGreen = null });
                     legs.DropMerge(flight.Code, $"#{number}'s merge was refused {tries.Count} times: {LegCommander.OneLine(result.Error ?? "no reason given")}");
-                    RaiseMergeRefused(flight, new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [head, method] }, result, refusal, tries, armedKey, "armed");
+                    RaiseMergeRefused(flight, new CardChoice { Label = "Merge the PR", Verb = Verbs.Merge, Target = subject, Args = [head, method] }, result, refusal, tries, armedKey, "armed");
                     continue;
                 }
                 _mergeTries.Remove(armedKey);
@@ -712,7 +716,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 else if (result.Ok && result.Way == MergeWays.Updated)
                 {
                     // Behind its base: brought up to date and reviewed afresh, which offers the merge again; nothing was dropped.
-                    state.RaiseCard(CardBin.Handled, CardKinds.AutopilotRan, subject, $"{flight.Code}'s PR #{number} was brought up to date and is reviewed afresh", result.Made);
+                    state.RaiseCard(CardBin.Handled, CardKinds.AutopilotRan, subject, $"{flight.Code}'s PR #{number} was updated and is reviewed again", result.Made);
                     continue;
                 }
                 else if (result.Ok && result.Way == MergeWays.InProgress)
@@ -923,14 +927,14 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             _holdingRung[key] = now;
             var why = holder is not null ? $"its {holder.Name} leg was planned and never started in {(int)HoldingBound.TotalMinutes} minutes"
                 : live ? $"the watchtower has not cleared it in {(int)HoldingBound.TotalMinutes} minutes" : "there is no live watchtower to clear it";
-            var card = state.RaiseCard(CardBin.Ring, LegCommander.HoldingTimeoutKind, subject, $"{flight.Code}'s PR #{flight.PullRequest} is still holding: {why}",
-                $"{holding.Reason}. Merge as it is lands the PR at the reviewed head, notes and all; Wait keeps holding and asks again in {(int)HoldingBound.TotalMinutes} minutes.",
+            var card = state.RaiseCard(CardBin.Ring, LegCommander.HoldingTimeoutKind, subject, $"{flight.Code}'s PR #{flight.PullRequest} is still on hold",
+                $"{holding.Reason}. Merging lands the PR at the reviewed head, notes and all; waiting keeps it on hold and asks again in {(int)HoldingBound.TotalMinutes} minutes.",
                 link: flight.PullRequestUrl,
-                summary: $"{flight.Code} has circled in a holding pattern and {why}. Merge as it is clears the hold and merges at the reviewed head; Wait keeps it holding and asks again later.");
+                summary: $"{flight.Code} has been on hold for {(int)HoldingBound.TotalMinutes} minutes because {why}: merge it now with its notes, or hold off and be asked again.");
             state.UpdateChoices(card.Id,
             [
-                new CardChoice { Label = "Merge as it is", Verb = Verbs.Merge, Target = subject, Args = [head, legs?.Models.MergeMethod ?? "squash", LegCommander.MergeAsIs] },
-                new CardChoice { Label = "Wait", Verb = Verbs.Dismiss, Target = Verbs.CardTarget(card.Id), Args = ["waiting for the watchtower"] },
+                new CardChoice { Label = "Clear the hold and merge", Verb = Verbs.Merge, Target = subject, Args = [head, legs?.Models.MergeMethod ?? "squash", LegCommander.MergeAsIs] },
+                new CardChoice { Label = "Keep waiting", Verb = Verbs.Dismiss, Target = Verbs.CardTarget(card.Id), Args = ["waiting for the watchtower"] },
             ]);
         }
     }
@@ -1024,13 +1028,13 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 state.PutFlight(current with { Ci = counted });
                 state.CloseCardsAbout(subject, "the CI cap was set again", CiBudgets.CapKind);
                 state.RaiseCard(CardBin.ForYou, CiBudgets.CapKind, subject, $"{flight.Code}: CI stopped, {CiBudgets.Numbers(counted)}",
-                    $"{flight.Code}: {why}. The node pushes nothing more for this flight until you answer: continue (one more budget of {budget} runner-hours), land what is green, or split the flight.",
+                    $"{flight.Code}: {why}. Nothing more is pushed for this flight until you answer: let it spend {budget} more runner-hours, or have the controller merge only its passing legs, or break it into smaller flights.",
                     [
-                        new CardChoice { Label = "Continue", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiContinue] },
-                        new CardChoice { Label = "Land what is green", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiLandGreen] },
-                        new CardChoice { Label = "Split", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiSplit] },
+                        new CardChoice { Label = "Allow more CI time", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiContinue] },
+                        new CardChoice { Label = "Land the green legs", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiLandGreen] },
+                        new CardChoice { Label = "Break it up", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiSplit] },
                     ], link: flight.PullRequestUrl,
-                    summary: $"The CI of {flight.Code} (PR {flight.PullRequestUrl}) is past its budget: {why}. The node has stopped pushing for it. Continue raises the cap by one budget, land what is green and split are recorded for the controller.");
+                    summary: $"The CI of {flight.Code} (PR {flight.PullRequestUrl}) is past its budget: {why}. Pushes are stopped for it; you choose between more CI time, landing only the passing legs, or breaking the flight up.");
                 continue;
             }
             if (why is null && counted.CappedWhy is not null)
@@ -1335,7 +1339,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         {
             // Behind its base: brought up to date and reviewed afresh, which closed the card and offers the merge again. Handled, not refused.
             state.RaiseCard(CardBin.Handled, CardKinds.AutopilotRan, Verbs.FlightTarget(flight.Code),
-                $"{flight.Code}'s PR #{flight.PullRequest} was brought up to date on autopilot and is reviewed afresh", result.Made);
+                $"{flight.Code}'s PR #{flight.PullRequest} was updated and is reviewed again", result.Made);
             return;
         }
         if (result.Ok && result.Way == MergeWays.InProgress)
@@ -1374,24 +1378,36 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         // A passing refusal that is a conflict says so, not that GitHub did not answer.
         var conflicting = passing && refusal.Action == MergeAction.ResolveConflict;
         // The one action: its words for the body, its button, and whether pressing it only says "done" (it is done on GitHub or another card).
-        var (todo, label, verb, args, doneElsewhere) = refusal.Action switch
+        var todo = refusal.Action switch
         {
-            MergeAction.ApproveOnGitHub => ("Approve the PR on GitHub (branch protection needs an approving review), then press the button: the node asks again.", "Approve on GitHub", Verbs.Dismiss, new[] { "approved on GitHub; the node asks again" }, true),
-            MergeAction.ReadChanges => ("Read the changes a review on GitHub asks for and push them or answer them, then press the button: the node asks again.", "Read the requested changes", Verbs.Dismiss, new[] { "read on GitHub; the node asks again" }, true),
-            MergeAction.AnswerDesignQuestion => ("Answer the design question on its card, or dismiss it there, then press the button: the node asks again.", "Answer the design question", Verbs.Dismiss, new[] { "answered; the node asks again" }, true),
-            MergeAction.RerunFailedCheck => ("Re-run the failed check; if it fails again with no cause of its own, redo the leg.", "Re-run the failed check", Verbs.RerunChecks, merge.Args, false),
-            MergeAction.OpenPrAgain => ("Open the PR again so the commits the plane holds are pushed and reviewed before it lands.", "Open the PR again", Verbs.OpenPr, Array.Empty<string>(), false),
-            MergeAction.MarkReadyOnGitHub => ("The PR is a draft: mark it ready for review on GitHub, then press the button: the node asks again.", "Mark ready on GitHub", Verbs.Dismiss, new[] { "marked ready on GitHub; the node asks again" }, true),
-            MergeAction.ResolveConflict => ("The PR conflicts with its base and the node's update of the branch did not clear it, so this is no failure of GitHub's: resolve the conflict in the plane (merge the base in), push, and review it again. Merging again does not help while the conflict stands.", "", "", Array.Empty<string>(), false),
-            MergeAction.PrClosed => ("Nothing to merge: the PR is closed. Open a new PR from the plane if the work is still wanted.", "", "", Array.Empty<string>(), false),
-            _ when passing => ($"GitHub did not take it in {PassingTriesBeforeRing} tries: look at GitHub, and merge again once it answers.", $"Merge PR #{number} again", Verbs.Merge, merge.Args, false),
-            _ => ("Read what GitHub or the node said above; nothing the node can press fixes it.", "", "", Array.Empty<string>(), false),
+            MergeAction.ApproveOnGitHub => "Approve the PR on GitHub (branch protection needs an approving review); the node asks again once you say you did.",
+            MergeAction.ReadChanges => "Read the changes a review on GitHub asks for, then push them or answer them; the node asks again once you say you did.",
+            MergeAction.AnswerDesignQuestion => "Answer the design question on its own card, or dismiss it there; the node asks again once you say you did.",
+            MergeAction.RerunFailedCheck => "Run the failed check again; if it fails again with no cause of its own, redo the leg.",
+            MergeAction.OpenPrAgain => "Open the PR again so the commits the plane holds are pushed and reviewed before it lands.",
+            MergeAction.MarkReadyOnGitHub => "The PR is a draft: mark it ready for review on GitHub; the node asks again once you say you did.",
+            MergeAction.ResolveConflict => "The PR conflicts with its base and the node's update of the branch did not clear it, so this is no failure of GitHub's: resolve the conflict in the plane (merge the base in), push, and review it again. Merging again does not help while the conflict stands.",
+            MergeAction.PrClosed => "Nothing to merge: the PR is closed. Open a new PR from the plane if the work is still wanted.",
+            _ when passing => "Look at GitHub, and merge again once it answers.",
+            _ => "Read what GitHub or the node said below; nothing the node can press fixes it.",
+        };
+        var (label, verb, args, doneElsewhere) = refusal.Action switch
+        {
+            MergeAction.ApproveOnGitHub => ("I approved it", Verbs.Dismiss, new[] { "approved on GitHub; the node asks again" }, true),
+            MergeAction.ReadChanges => ("I read the changes", Verbs.Dismiss, new[] { "read on GitHub; the node asks again" }, true),
+            MergeAction.AnswerDesignQuestion => ("I answered it", Verbs.Dismiss, new[] { "answered; the node asks again" }, true),
+            MergeAction.RerunFailedCheck => ("Run the check again", Verbs.RerunChecks, merge.Args, false),
+            MergeAction.OpenPrAgain => ("Open the PR again", Verbs.OpenPr, Array.Empty<string>(), false),
+            MergeAction.MarkReadyOnGitHub => ("I marked it ready", Verbs.Dismiss, new[] { "marked ready on GitHub; the node asks again" }, true),
+            MergeAction.ResolveConflict => ((string?)null, string.Empty, Array.Empty<string>(), false),
+            MergeAction.PrClosed => ((string?)null, string.Empty, Array.Empty<string>(), false),
+            _ when passing => ($"Merge PR #{number} again", Verbs.Merge, merge.Args, false),
+            _ => ((string?)null, string.Empty, Array.Empty<string>(), false),
         };
         var detail = $"{error}\n\nWhat the node tried: {tried}.\nWhat to do: {todo}";
-        var title = passing ? $"{flight.Code}'s merge {how} was refused {asked.Count} times: {LegCommander.OneLine(error)}"
-            : $"{flight.Code}'s merge {how} was refused: {LegCommander.OneLine(error)}";
-        var summary = $"The node tried to merge {flight.Code}'s PR and {(conflicting ? $"it still conflicted with its base after {asked.Count} tries" : passing ? $"GitHub did not take it in {asked.Count} tries" : "was refused")}: {LegCommander.OneLine(error)} {todo}";
-        var choices = label.Length == 0 ? [] : new List<CardChoice> { new() { Label = label, Verb = verb, Target = verb == Verbs.Dismiss ? "" : subject, Args = args } };
+        var title = passing ? $"{flight.Code}'s merge {how} was refused {asked.Count} times" : $"{flight.Code}'s merge {how} was refused";
+        var summary = $"{todo} {(conflicting ? $"The PR still conflicted with its base after {asked.Count} tries" : passing ? $"GitHub did not take the merge in {asked.Count} tries" : "The merge was refused")}: {LegCommander.OneLine(error)}.";
+        var choices = label is null ? [] : new List<CardChoice> { new() { Label = label, Verb = verb, Target = verb == Verbs.Dismiss ? "" : subject, Args = args } };
         // A closed PR is a fact to read (For you); anything else a person must see rings, with a choice or without one.
         var raised = state.RaiseCard(refusal.Action == MergeAction.PrClosed ? CardBin.ForYou : CardBin.Ring, AutopilotMergeRefused, subject, title, detail, choices, link: flight.PullRequestUrl, summary: summary);
         if (choices.Count == 1 && verb == Verbs.Dismiss)

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Shouldly;
@@ -29,18 +28,16 @@ public sealed class IdeaMilestoneTests : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2m-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private readonly SeededRepos _repos;
     private readonly FakeGitHub _github = new();
     private readonly FakeIdeaMilestoner _milestoner = new();
     private readonly IdeaCommander _commander;
 
     public IdeaMilestoneTests()
     {
-        Directory.CreateDirectory(Repo);
-        Git(Repo, "init", "-q", "-b", "main");
-        File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        var planes = new Planes(new GitCli());
+        _repos = new SeededRepos(_root);
+        _repos.Seed("pilot");
+        var planes = _repos.Planes();
         var flights = new FlightCommander(_state, planes, TimeProvider.System, github: _github);
         var catalog = new RepoCatalog(_state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root]));
         _commander = new IdeaCommander(_state, planes, catalog, _github, new FakeIdeaMerger(), new FakeIdeaTidier(), new FakeIdeaRepoChooser(), flights, TimeProvider.System, _milestoner);
@@ -53,35 +50,7 @@ public sealed class IdeaMilestoneTests : IDisposable
 
     private string Repo => Path.Combine(_root, "pilot");
 
-    public void Dispose()
-    {
-        try
-        {
-            Git(Repo, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        TestDirs.DeleteTree(_root);
-    }
-
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
-    }
+    public void Dispose() => _repos.Dispose();
 
     private Task<CommandResult> Run(string verb, params string[] args) =>
         _commander.RunAsync(new CommandRequest { Verb = verb, Target = IdeaIds.Target(IdeaIds.DefaultRepo, 1), Args = args, Who = "tests" }, Ct);
@@ -145,7 +114,6 @@ public sealed class IdeaMilestoneTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task PlanningIntoANewMilestoneMakesItAfterTheChecksAndPlansIntoIt()
     {
         var planned = await Run(Verbs.PlanIdea, Verbs.NewMilestoneArg, "v3", "Rings", "and", "tilt");
@@ -158,7 +126,6 @@ public sealed class IdeaMilestoneTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task PlanningIntoAnExistingMilestoneMakesNoneEvenWhenAskedAsNew()
     {
         (await Run(Verbs.PlanIdea, Verbs.NewMilestoneArg, "V2")).Ok.ShouldBeTrue();

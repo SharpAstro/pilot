@@ -95,6 +95,37 @@ public sealed class StraySweepTests
     private CardRow[] Open(string kind) => [.. _state.Cards(openOnly: true).Where(c => c.Kind == kind)];
 
     [Fact]
+    public void TheCardsEndButtonEndsTheNamedStrayOnThePersonsWordAndNeverAPidReusedSince()
+    {
+        OverLimitJob();
+        _sweep.SweepOnce();
+        var cards = Open(StraySweep.Kind);
+        var host = cards.Single(c => c.Subject.StartsWith("process:501@", StringComparison.Ordinal));
+        var wrapper = cards.Single(c => c.Subject.StartsWith("process:500@", StringComparison.Ordinal));
+        var end = host.Choices.ShouldHaveSingleItem();
+
+        var result = _sweep.EndOnWord(new CommandRequest { Verb = end.Verb, Target = end.Target, Who = "gui" });
+
+        result.Error.ShouldBeNull();
+        _table.Killed.ShouldBe([501]);
+        Open(StraySweep.Kind).ShouldNotContain(c => c.Id == host.Id);
+        _state.Cards().Single(c => c.Kind == StraySweep.KilledKind).Title.ShouldContain("501");
+
+        // Pid 500 now starts at another time: another process has it, and it is never ended.
+        _table.Starts[500] = _table.Starts[500].AddMinutes(1);
+        var reused = _sweep.EndOnWord(new CommandRequest { Verb = Verbs.EndStray, Target = wrapper.Subject, Who = "gui" });
+        reused.Error.ShouldNotBeNull().ShouldContain("may be another by now");
+        _table.Killed.ShouldBe([501]);
+
+        // Nothing the sweep did not name on an open card is ended.
+        _sweep.EndOnWord(new CommandRequest { Verb = Verbs.EndStray, Target = "process:999@1", Who = "gui" }).Error.ShouldNotBeNull();
+        _table.Killed.ShouldBe([501]);
+    }
+
+    [Fact]
+    public void EndingAStrayIsThePersonsAlone() => Pilot.Node.Standing.YourOnlyVerbs.ShouldContain(Verbs.EndStray);
+
+    [Fact]
     public void OneCardPerStrayNamesTheProcessItsOwnerAndTheKillCommand()
     {
         OverLimitJob();
@@ -110,6 +141,10 @@ public sealed class StraySweepTests
         host.Title.ShouldContain("testhost.exe");
         host.Title.ShouldContain("501");
         host.Title.ShouldContain("job j7");
+        // The golden card (#797): the first line says what to do, and the one button ends the process on the person's word (end-stray);
+        // leaving it running is the panel's own Dismiss, not a second button.
+        host.Summary.ShouldNotBeNull().ShouldStartWith("Press the button if this process should not be running: ");
+        host.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe([("End process 501", Verbs.EndStray, host.Subject)]);
         host.Detail.ShouldNotBeNull();
         host.Detail.ShouldContain("Process 501 (testhost.exe) of job j7");
         host.Detail.ShouldContain("running 2 h 59 min");

@@ -148,7 +148,11 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await checks.LookAsync(Ct);
         var card = Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind);
         card.Bin.ShouldBe(CardBin.Ring);
-        card.Choices.Select(c => c.Label).ShouldBe(["Merge as it is", "Wait"]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Clear the hold and merge", "Keep waiting"]);
+        // The golden card (#797): on hold, not "circled in a holding pattern"; the first line says what to do and why.
+        card.Title.ShouldEndWith("is still on hold");
+        card.Summary.ShouldNotBeNull().ShouldContain("has been on hold for 30 minutes because ");
+        card.Summary.ShouldContain("merge it now with its notes, or hold off and be asked again");
         _github.Merged.ShouldBeEmpty();
 
         var merge = card.Choices[0];
@@ -172,7 +176,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await checks.LookAsync(Ct);
         var card = Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind);
 
-        var wait = card.Choices.Single(c => c.Label == "Wait");
+        var wait = card.Choices.Single(c => c.Label == "Keep waiting");
         // Dismiss is the node's own verb (NodeCommands), not the leg commander's: close the card as it does.
         wait.Verb.ShouldBe(Verbs.Dismiss);
         wait.Target.ShouldBe(Verbs.CardTarget(card.Id));
@@ -874,7 +878,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await checks.LookAsync(Ct);
         await checks.LookAsync(Ct);
         var ring = Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind);
-        ring.Title.ShouldContain($"{LegCommander.ReviewNotesLeg} leg was planned and never started");
+        ring.Summary.ShouldNotBeNull().ShouldContain($"{LegCommander.ReviewNotesLeg} leg was planned and never started");
         _github.Merged.ShouldBeEmpty();
     }
 

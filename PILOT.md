@@ -83,10 +83,11 @@ dotnet test Pilot.Gui.Tests -c Release --no-build
 ```
 
 - A `Pilot.Node.Tests` test over 5 s fails on CI (GITHUB_ACTIONS=true or PILOT_TEST_TIME_STRICT=1) unless tagged `[Trait("Category", "Slow")]`; elsewhere a `slow-test:` line on stderr reports it without failing, since a loaded machine inflates wall clock.
-- A git run costs 100 to 400 ms on Windows, so the git-backed `Pilot.Node.Tests` bases (`ReviewTestsBase`, `LegCommanderTestsBase`, `OverlapTestsBase`, `PrMarksTestsBase`, `LegHoldTestsBase`)
+- A git run costs 100 to 400 ms on Windows, so the git-backed `Pilot.Node.Tests` bases (`ReviewTestsBase`, `LegCommanderTestsBase`, `OverlapTestsBase`, `PrMarksTestsBase`, `LegHoldTestsBase`, `PrFixTestsBase`)
   run on `FakeRepoGit`, an in-memory git (`TestGit`), unless the test is about git itself: a test calls `RealGit()` first, or a class passes
   `realGit: true`. A command the model cannot answer throws, so the test says it needs real git; `PILOT_TEST_REAL_GIT=1` runs everything on real
   git, and `FakeRepoGitTests.TheModelAnswersAsGitDoes` holds the model to git's answers.
+- The process-start guard (#933): a `Pilot.Node.Tests` test outside `Category=Slow` or `Integration` that starts a real process (through `TestEnvironment`'s observer: git, gh, claude, a job shell) fails, naming the kind and the command. A unit test runs on fakes (`FakeRepoGit`, `FakeJobLauncher`); a test that needs a real process is tagged Slow with its reason. `PILOT_TEST_PROCESS_GUARD=report` keeps the old report-only mode, and a report that lists a test fails CI's Test job.
 - Repo-wide guard tests carry `[Trait("Category", "Invariant")]` and run in seconds (`--filter Category=Invariant`); a new repo-wide guard gets the trait too.
 - CI builds the whole solution and runs exactly two test projects, `Pilot.Node.Tests` and `Pilot.Gui.Tests`, on
   ubuntu and windows (win-x64). A check that matches CI runs both; a narrower one filters with

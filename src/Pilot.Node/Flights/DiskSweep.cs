@@ -88,14 +88,12 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
 
         if (scratch + probes + obj + artifacts > 0)
         {
-            var objTitle = obj > 0 ? $", {obj} obj folder{(obj == 1 ? "" : "s")} of finished legs" : "";
-            var artifactsTitle = artifacts > 0 ? $", {artifacts} artifacts folder{(artifacts == 1 ? "" : "s")} of finished legs" : "";
             var objDetail = obj > 0 ? $", {obj} obj folders in planes whose legs are done and idle (bin kept)" : "";
             var artifactsDetail = artifacts > 0
                 ? $", {artifacts} artifacts folders in planes whose legs are done and idle (artifacts/obj, and the artifacts/bin of sibling projects that do not live in the plane; the bin of the plane's own projects kept)"
                 : "";
             state.RaiseCard(CardBin.Handled, Kind, Verbs.NodeTarget,
-                $"Disk sweep freed {Size(bytes)}: {scratch} job scratch folder{(scratch == 1 ? "" : "s")}, {probes} probe folder{(probes == 1 ? "" : "s")}{objTitle}{artifactsTitle}",
+                $"The disk sweep freed {Size(bytes)}",
                 $"Deleted {scratch} job scratch folders (jobs/<id>/tmp of landed flights' ended sessions, or older than the scratch-days setting) and {probes} p2o-* probe folders older than a day{objDetail}{artifactsDetail}; {Size(bytes)} by unique bytes. state.json and the timeline of each job stay.");
         }
 
@@ -399,8 +397,16 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
         if (dirty)
         {
             reclaimable.Add(($"worktree {name} (holds changes)", entry.Path));
-            state.RaiseCard(CardBin.ForYou, WorktreeDirtyKind, entry.Path,
-                $"Worktree {name} has changes not committed and its PR #{pr.Number} is {pr.State.ToLowerInvariant()}",
+            // A Handled line, not For you: there is nothing to press (the review of #797), and the folder is kept, which is safe. The
+            // disk-low card lists it among the items to reclaim when space runs short. Said once per folder, not on every sweep; an
+            // older node's open For-you card about it is closed.
+            state.CloseCardsAbout(entry.Path, "kept worktrees are a Handled line now", WorktreeDirtyKind);
+            if (state.Cards().Any(c => c.Kind == WorktreeDirtyKind && c.Subject == entry.Path && c.Bin == CardBin.Handled))
+            {
+                return;
+            }
+            state.RaiseCard(CardBin.Handled, WorktreeDirtyKind, entry.Path,
+                $"Kept worktree {name}: it has changes not committed",
                 $"{entry.Path} on branch {branch}: PR #{pr.Number} is {pr.State.ToLowerInvariant()}, so the disk sweep would remove it, but it holds changes not committed ({Size(size)} by unique bytes). Commit or discard them by hand and the next sweep removes it.");
             return;
         }
@@ -460,6 +466,9 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
         return false;
     }
 
+    /// <summary>The size an item must reach to be named as reclaimable on the disk-low card: 1 GB unless a test says less.</summary>
+    public long BigItem { get; init; } = 1L << 30;
+
     private void RingDisk(List<(string Name, string Path)> items)
     {
         var probe = Repos().FirstOrDefault(Directory.Exists) ?? jobsFolder;
@@ -483,11 +492,18 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
                 reclaimable.Add(($"job scratch {Path.GetFileName(job)}", DiskUsage.UniqueBytes(tmp)));
             }
         }
-        var top = reclaimable.Where(r => r.Bytes > 0).OrderByDescending(r => r.Bytes).Take(5).ToList();
-        var list = top.Count == 0 ? "nothing the node can reclaim by itself" : string.Join("; ", top.Select(r => $"{r.Name} {Size(r.Bytes)}"));
-        state.RaiseCard(CardBin.ForYou, DiskLowKind, space.Name,
+        // Only what would free real space is a finding (#797 rule 8): a list of items of a few bytes is no answer.
+        var top = reclaimable.Where(r => r.Bytes >= BigItem).OrderByDescending(r => r.Bytes).Take(5).ToList();
+        var list = top.Count == 0
+            ? "Nothing big to reclaim here: the space is used outside pilot."
+            : $"Biggest items to reclaim, by unique bytes: {string.Join("; ", top.Select(r => $"{r.Name} {Size(r.Bytes)}"))}.";
+        var low = state.RaiseCard(CardBin.ForYou, DiskLowKind, space.Name,
             $"Drive {space.Name} has {Size(space.Free)} free, below the {Size(threshold)} alert",
-            $"{space.Name} has {Size(space.Free)} free of {Size(space.Total)}; the alert is {Size(threshold)} (setting disk-alert-gb). Biggest reclaimable items by unique bytes: {list}.");
+            $"{space.Name} has {Size(space.Free)} free of {Size(space.Total)}; the alert is {Size(threshold)} (setting disk-alert-gb). {list}",
+            // The one thing the node can do on the person's word: the alert itself. Freeing space is by hand, and the panel's Dismiss
+            // already says "I have seen it": no second button says it again (the review of #797).
+            [new CardChoice { Label = "Lower the disk alert", Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.DiskAlertGbKey], AsksFor = "The new alert, in GB" }],
+            summary: $"Free some space on {space.Name}, or lower the alert. {list}");
     }
 
     private static void Remove(string folder, ref int count, ref long bytes)

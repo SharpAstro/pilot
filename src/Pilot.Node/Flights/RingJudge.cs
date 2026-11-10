@@ -102,7 +102,7 @@ public sealed class RingJudge(NodeState state, Func<IBrain?> brain)
             }
             Ring(card, verdict is null ? null : verdict.Action);
             rang = true;
-            // A design card's words are the reviewer's question and the recommended option (PrReviews.DesignSummary), which is what the person
+            // A design card's words are the reviewer's questions and the options its buttons cannot say (PrReviews.DesignSummary), which is what the person
             // answers: a rewording "of what happened" would replace them, up to 600 characters where the panel draws 240.
             if (verdict is not null && card.Kind != PrReviews.DesignKind && brain() is { } b)
             {
