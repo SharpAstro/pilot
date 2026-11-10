@@ -290,7 +290,7 @@ public sealed class SummaryCliTests : IAsyncLifetime
         prompt.ShouldContain(PeerRecords);
         // A node that is not there, or says no, is said, not guessed at; one with nothing in play or no grant is left out.
         // (named by its endpoint, as its own prefix was never read.)
-        prompt.ShouldContain("=== Node xx1.local:47731 ===");
+        prompt.ShouldContain("=== Node XX1 ===");
         prompt.ShouldContain("could not be reached (connection refused)");
         prompt.ShouldContain("=== Node YY1 ===");
         prompt.ShouldContain("it refused (no grant here)");
