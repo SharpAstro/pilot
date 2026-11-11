@@ -30,6 +30,10 @@ public static partial class FailureSignature
     /// <c>[xUnit.net 00:00:12.34]     Ns.Class.Method [FAIL]</c> with the message on the lines after it, and as
     /// <c>  Failed Ns.Class.Method [10 s]</c> with <c>Error Message:</c> and the message under it; the second is the whole message and wins
     /// where both are there. GitHub's <c>--log-failed</c> puts <c>job&lt;TAB&gt;step&lt;TAB&gt;timestamp</c> in front of every line, which is stripped.
+    /// Microsoft.Testing.Platform's detailed output is read too: <c>failed Ns.Class.Method(row) (3m 00s 001ms)</c>, or
+    /// <c>failed (canceled) ...</c> when a timeout ended it, with the message under it; and <c>failed [Test Cleanup Failure (Ns.Class.Method(row))]</c>,
+    /// which is the same test's and gives way to its own result's message. Run 42905294654 printed only these, so no test was read
+    /// and an error line stood in for one (tianwen #2095).
     /// </summary>
     public static IReadOnlyList<TestFailure> Tests(string log)
     {
@@ -56,6 +60,22 @@ public static partial class FailureSignature
                 }
                 continue;
             }
+            var mtp = MtpFailed().Match(line);
+            var cleanup = mtp.Success ? Match.Empty : MtpCleanupFailed().Match(line);
+            if (mtp.Success || cleanup.Success)
+            {
+                name = (mtp.Success ? mtp : cleanup).Groups["name"].Value.Trim();
+                SeenIn(jobsOf, name, JobOf(raw));
+                if (!viaXunit.ContainsKey(name))
+                {
+                    order.Add(name);
+                    viaXunit[name] = [];
+                }
+                // The test's own result says why it failed; a cleanup failure's message stands only while there is no result's.
+                inBlock = mtp.Success || !viaBlock.ContainsKey(name);
+                into = inBlock ? viaBlock[name] = [] : null;
+                continue;
+            }
             var failed = FailedLine().Match(line);
             if (failed.Success)
             {
@@ -72,7 +92,7 @@ public static partial class FailureSignature
             }
             // A result line of any other outcome (a Passed or Skipped test) or an xunit [SKIP] line ends the report in hand: a skipped
             // test's block has its own "Error Message:" (its reason), which is not the failed test's before it (#931).
-            if (OtherResult().IsMatch(line) || XunitSkip().IsMatch(line))
+            if (OtherResult().IsMatch(line) || XunitSkip().IsMatch(line) || MtpOtherResult().IsMatch(line))
             {
                 (into, inBlock, name) = (null, false, null);
                 continue;
@@ -99,9 +119,10 @@ public static partial class FailureSignature
                 into = viaBlock[name] = [];
                 continue;
             }
-            if (into is not null && (inBlock || XunitPrefix().IsMatch(line)) && text.Length > 0 && !text.StartsWith("at ", StringComparison.Ordinal))
+            if (into is not null && (inBlock || XunitPrefix().IsMatch(line)) && text.Length > 0 && !text.StartsWith("at ", StringComparison.Ordinal)
+                && !MtpNoise().IsMatch(text))
             {
-                into.Add(text);
+                into.Add(MtpException().Replace(text, ""));
             }
         }
         return [.. order.Select(n => new TestFailure(n, Message(viaBlock.GetValueOrDefault(n) is { Count: > 0 } block ? block : viaXunit[n]), jobsOf.GetValueOrDefault(n) ?? []))];
@@ -186,7 +207,7 @@ public static partial class FailureSignature
     /// </summary>
     public static string? ForError(string log)
     {
-        var lines = log.Split('\n').Select(Clean).Where(l => l.Trim().Length > 0).ToList();
+        var lines = Reported(log);
         var line = lines.FirstOrDefault(l => ErrorLine().IsMatch(l)) ?? lines.FirstOrDefault();
         if (line is null)
         {
@@ -199,7 +220,7 @@ public static partial class FailureSignature
     /// <summary>The line <see cref="ForError"/> read, as it is in the log (cleaned, not normalised); null with none.</summary>
     public static string? ErrorText(string log)
     {
-        var lines = log.Split('\n').Select(Clean).Where(l => l.Trim().Length > 0).ToList();
+        var lines = Reported(log);
         var line = lines.FirstOrDefault(l => ErrorLine().IsMatch(l)) ?? lines.FirstOrDefault();
         if (line is null)
         {
@@ -207,6 +228,31 @@ public static partial class FailureSignature
         }
         var text = Space().Replace(line, " ").Trim();
         return text.Length <= 300 ? text : text[..297] + "...";
+    }
+
+    // The log's non-blank lines without GitHub's echo of each step: "##[group]Run <action or command>" opens its with: and env:
+    // lines, "##[endgroup]" closes them. An input's value is no error of the run: download-artifact's "digest-mismatch: error" is
+    // its setting for a checksum mismatch, and was filed as the failure (tianwen #2095).
+    private static List<string> Reported(string log)
+    {
+        var lines = new List<string>();
+        var echo = false;
+        foreach (var line in log.Split('\n').Select(Clean))
+        {
+            if (line.StartsWith("##[group]Run ", StringComparison.Ordinal))
+            {
+                echo = true;
+            }
+            else if (line.StartsWith("##[endgroup]", StringComparison.Ordinal))
+            {
+                echo = false;
+            }
+            else if (!echo && line.Trim().Length > 0)
+            {
+                lines.Add(line);
+            }
+        }
+        return lines;
     }
 
     /// <summary>Whether the log's error is the compiler's or MSBuild's: a build the PR itself breaks, never a failure to look into.</summary>
@@ -244,13 +290,35 @@ public static partial class FailureSignature
     [GeneratedRegex(@"^\s*(?:Passed|Skipped)\s+(?<name>\S.*?)\s+\[[^\]]*\]\s*$")]
     private static partial Regex OtherResult();
 
+    // Microsoft.Testing.Platform's duration: "(31ms)", "(1s 022ms)", "(3m 00s 001ms)".
+    private const string MtpDuration = @"\(\d+(?:ms|h|m|s)(?: \d+(?:ms|h|m|s))*\)";
+
+    // "failed Ns.Class.Method(dpi: 1) (3m 00s 001ms)", or "failed (canceled) ..." when a timeout ended it.
+    [GeneratedRegex(@"^\s*failed(?: \([a-z ]+\))? (?<name>[^\s\[(].*?) " + MtpDuration + @"\s*$")]
+    private static partial Regex MtpFailed();
+
+    // "failed [Test Cleanup Failure (Ns.Class.Method(dpi: 1))]": the cleanup of a test that failed or ran out of time.
+    [GeneratedRegex(@"^\s*failed \[Test (?:Class |Collection )?Cleanup Failure \((?<name>\S.*)\)\]\s*$")]
+    private static partial Regex MtpCleanupFailed();
+
+    // "passed Ns.Class.Method (13ms)" or "skipped Ns.Class.Method": a result that is no failure.
+    [GeneratedRegex(@"^\s*(?:passed|skipped) \S")]
+    private static partial Regex MtpOtherResult();
+
+    // A result's lines that are not its message: the assembly it came from, a stack's seam.
+    [GeneratedRegex(@"^(?:from \S.*\.dll \(|--- End of stack trace)")]
+    private static partial Regex MtpNoise();
+
+    [GeneratedRegex(@"^Xunit\.MicrosoftTestingPlatform\.XunitException:\s*")]
+    private static partial Regex MtpException();
+
     [GeneratedRegex(@"^\[xUnit\.net [\d:.]+\]\s+(?<name>\S.*?)\s+\[SKIP\]\s*$")]
     private static partial Regex XunitSkip();
 
     [GeneratedRegex(@"^\[xUnit\.net [\d:.]+\]\s?")]
     private static partial Regex XunitPrefix();
 
-    [GeneratedRegex(@"^\s*(?:(?:Failed|Passed)!\s+-|Test Run (?:Failed|Aborted)\.|Total tests:)")]
+    [GeneratedRegex(@"^\s*(?:(?:Failed|Passed)!\s+-|Test Run (?:Failed|Aborted)\.|Total tests:|Test run summary:|\S.*\.dll \(.*\) failed with )")]
     private static partial Regex Summary();
 
     // The prefix of gh run view --log-failed: "job<TAB>step<TAB>2026-11-05T10:00:00.1234567Z the line".

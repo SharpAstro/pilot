@@ -196,6 +196,74 @@ public sealed class FailureSignatureTests
         signature.ShouldNotContain("12345");
     }
 
+    private const string ShiftK = "TianWen.Lib.Tests.ViewerBestStackTests.ShiftKShowsTheWholeCaptureAsTheAutoViewAndWritesBothMasters(dpi: 1)";
+    private const string Dll = @"  from D:\a\tianwen\tianwen\src\TianWen.Lib.Tests\bin\Release\net10.0\TianWen.Lib.Tests.dll (net10.0|x64)";
+
+    // Run 42905294654's test-windows (unit 4/5), as Microsoft.Testing.Platform's detailed output prints it: a step's echo with
+    // download-artifact's "digest-mismatch: error" input, then a passed test, the cleanup failure and the timed-out test, the summary.
+    private static readonly string ShiftKTimeout = Gh("test-windows (unit 4/5)",
+        " ##[group]Run actions/download-artifact@v8",
+        " with:",
+        "   name: windows-unit-bin",
+        "   digest-mismatch: error",
+        " env:",
+        "   BUILD_CONF: Release",
+        " ##[endgroup]",
+        " passed TianWen.Lib.Tests.PlanetaryBestStackTests.ARunReportsItsProgressToTheEndAndSaysHowItWasSharpened (33ms)",
+        Dll,
+        $" failed [Test Cleanup Failure ({ShiftK})]",
+        Dll,
+        "   Xunit.MicrosoftTestingPlatform.XunitException: System.Threading.Tasks.TaskCanceledException : A task was canceled.",
+        "     at TianWen.Lib.Tests.ViewerE2E.PumpUntilAsync(Func`1 done, String what, CancellationToken ct, Boolean untilTimeout) in /_/src/TianWen.Lib.Tests/ViewerE2E.cs:226",
+        "     --- End of stack trace from previous location ---",
+        $" failed (canceled) {ShiftK} (3m 00s 001ms)",
+        Dll,
+        "   Xunit.MicrosoftTestingPlatform.XunitException: Test execution timed out after 180000 milliseconds",
+        "     --- End of stack trace from previous location ---",
+        " passed TianWen.Lib.Tests.ViewerBestStackTests.ACaptureWhoseNameGivesNoPlanetTakesThePlanetChosenInThePanel(dpi: 1) (943ms)",
+        Dll,
+        @" D:\a\tianwen\tianwen\src\TianWen.Lib.Tests\bin\Release\net10.0\TianWen.Lib.Tests.dll (net10.0|x64) failed with 2 error(s) (4m 41s 691ms)",
+        " Test run summary: Failed!",
+        " ##[error]Process completed with exit code 1.");
+
+    [Fact]
+    public void TheTestingPlatformsTimedOutTestIsOneFailureWithItsOwnResultsMessage()
+    {
+        var failure = FailureSignature.Tests(ShiftKTimeout).ShouldHaveSingleItem();
+
+        failure.Test.ShouldBe(ShiftK);
+        failure.Message.ShouldBe("Test execution timed out after 180000 milliseconds");
+        failure.Jobs.ShouldBe(["test-windows (unit 4/5)"]);
+    }
+
+    [Fact]
+    public void ACleanupFailureAloneIsItsTestsFailureWithTheCleanupsMessage()
+    {
+        var log = Gh("job", $" failed [Test Cleanup Failure ({ShiftK})]", Dll,
+            "   Xunit.MicrosoftTestingPlatform.XunitException: System.Threading.Tasks.TaskCanceledException : A task was canceled.",
+            "     at TianWen.Lib.Tests.ViewerE2E.PumpUntilAsync() in /_/src/TianWen.Lib.Tests/ViewerE2E.cs:226",
+            " passed Ns.FooTests.Fine (1ms)", Dll);
+
+        var failure = FailureSignature.Tests(log).ShouldHaveSingleItem();
+
+        failure.Test.ShouldBe(ShiftK);
+        failure.Message.ShouldBe("System.Threading.Tasks.TaskCanceledException : A task was canceled.");
+    }
+
+    [Fact]
+    public void AStepsEchoedInputIsNeverTheErrorLine()
+    {
+        var log = Gh("job",
+            " ##[group]Run actions/download-artifact@v8",
+            " with:",
+            "   digest-mismatch: error",
+            " ##[endgroup]",
+            " ##[error]Process completed with exit code 1.");
+
+        FailureSignature.ErrorText(log).ShouldBe("##[error]Process completed with exit code 1.");
+        FailureSignature.ForError(log).ShouldNotBeNull().ShouldNotContain("digest-mismatch");
+    }
+
     [Fact]
     public void ACompilerErrorIsABuildTheOnesOwnPrBreaksNotAFailureToLookInto()
     {
