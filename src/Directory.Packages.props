@@ -31,8 +31,8 @@
   <!-- Pilot.Gui: the SharpAstro stack. A local build compiles the sibling clones instead (the UseLocal* switches in
        Pilot.Gui.csproj); these are what CI restores. -->
   <ItemGroup>
-    <PackageVersion Include="DIR.Lib" Version="11.56.*" />
-    <PackageVersion Include="DIR.Lib.Debug" Version="11.56.*" />
+    <PackageVersion Include="DIR.Lib" Version="11.57.6011-pr210" />
+    <PackageVersion Include="DIR.Lib.Debug" Version="11.57.6011-pr210" />
     <PackageVersion Include="Console.Lib" Version="5.12.*" />
     <PackageVersion Include="Console.Lib.Debug" Version="5.12.*" />
     <PackageVersion Include="LAN.Lib" Version="2.4.*" />

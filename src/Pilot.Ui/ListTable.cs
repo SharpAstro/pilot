@@ -46,7 +46,8 @@ internal sealed record ListColumn(string Header, Layout.Sizing Width, float? Dro
 
     /// <summary>
     /// A column the page drops on a narrow window: its whole <paramref name="width"/> while there is room, gone once the
-    /// engine could give it less. It is a star capped at that width, so a drag leaves it as it is.
+    /// engine could give it less. It is a star capped at that width; a drag on the divider that stands on its edge moves the cap
+    /// (DIR.Lib's table), and <see cref="ListTable"/> drops it below the dragged width.
     /// </summary>
     public static ListColumn Optional(string header, float width) => new(header, Layout.Sizing.Star(1f, 0f, width), width);
 }
@@ -54,7 +55,7 @@ internal sealed record ListColumn(string Header, Layout.Sizing Width, float? Dro
 /// <summary>
 /// A list page's table: its header and its rows built over one set of columns and one <see cref="Layout.TableColumnWidths"/>
 /// (DIR.Lib's <c>TableHeader</c> and <c>TableRow</c>), so a title sits over its values and a drag on the divider between two
-/// titles resizes that column in both. The dragged widths are kept by column title, so a column the page adds or drops
+/// titles resizes the column whose edge it is, in both (DIR.Lib's rule: the divider follows the pointer). The dragged widths are kept by column title, so a column the page adds or drops
 /// (Node, which shows only with several nodes known) leaves the others' widths where they were, and
 /// <see cref="Saved"/>/<see cref="Restore"/> carry them to and from the GUI's settings file.
 /// </summary>
@@ -130,6 +131,7 @@ internal sealed class ListTable
     /// </summary>
     public IReadOnlyList<ListColumn> Fit(IReadOnlyList<ListColumn> columns)
     {
+        columns = Dragged(columns);
         if (PageWidth is not { } room)
         {
             return columns;
@@ -201,6 +203,7 @@ internal sealed class ListTable
     /// <summary>The header row: titles over the columns, a divider in each gap, the stripe's cell ahead of them.</summary>
     public Layout.Node Header(IReadOnlyList<ListColumn> columns, DesignScale scale, Palette? night = null, Layout.TableSort? sort = null, Action<Layout.TableSort>? onSort = null)
     {
+        columns = Dragged(columns);
         var specs = Lay(columns);
         var style = night is null ? Style : Style with { HeaderFill = night.Ground, HeaderText = night.Faint, HoverFill = night.Ground, SortIndicator = night.Dim };
         // A caller's own sort (the Ideas board) wins; otherwise the table's own, saved per page.
@@ -228,6 +231,7 @@ internal sealed class ListTable
     /// </summary>
     public Layout.Node Row(IReadOnlyList<ListColumn> columns, Layout.Node stripe, IReadOnlyList<Layout.Node> cells, float padY = 6f)
     {
+        columns = Dragged(columns);
         var specs = Lay(columns);
         var style = Style;
         var laid = ToArray(cells);
@@ -242,6 +246,42 @@ internal sealed class ListTable
         return Layout.Builder.HStack(stripe.WFixed(StripeWidth).HStar(), row.WStar().HStar())
             .WithGap(ColumnGap)
             .Pad(EndPad, padY);
+    }
+
+    /// <summary>
+    /// <paramref name="columns"/> with each column that drops (<see cref="ListColumn.DropBelow"/>) dropping below the width a
+    /// reader dragged it to: DIR.Lib's table makes that width the column's cap, and a column that shows at one width and drops
+    /// below another would be gone at once (a narrower drag) or squeezed (a wider one). The same list when nothing of it was
+    /// dragged, or it was given already.
+    /// </summary>
+    private IReadOnlyList<ListColumn> Dragged(IReadOnlyList<ListColumn> columns)
+    {
+        var byTitle = Volatile.Read(ref _byTitle);
+        if (byTitle.IsEmpty || !columns.Any(c => c.DropBelow is { } at && byTitle.TryGetValue(c.Header, out var w) && at != w))
+        {
+            return columns;
+        }
+        return [.. columns.Select(c => c.DropBelow is not null && byTitle.TryGetValue(c.Header, out var w) ? c with { DropBelow = w } : c)];
+    }
+
+    // The widest column moving can be with every other column at its width and the column that takes the slack at its least:
+    // dragged wider it could not have its width, would drop, and take the divider it is dragged by with it.
+    private float? Most(IReadOnlyList<ListColumn> columns, int moving)
+    {
+        if (PageWidth is not { } room)
+        {
+            return null;
+        }
+        var others = 0f;
+        for (var i = 0; i < columns.Count; i++)
+        {
+            if (i != moving)
+            {
+                var width = columns[i].Width;
+                others += width.IsFixed ? WidthOf(columns[i].Header, width.Value) : width.Max > 0f ? WidthOf(columns[i].Header, width.Max) : width.Min;
+            }
+        }
+        return room - ((2 * PageGutter) + (2 * EndPad) + StripeWidth + ColumnGap + others + (Math.Max(0, columns.Count - 1) * ColumnGap));
     }
 
     /// <summary>
@@ -347,6 +387,9 @@ internal sealed class ListTable
             {
                 Sortable = columns[i].Sortable && columns[i].Header.Length > 0,
                 DescendingFirst = columns[i].DescendingFirst,
+                // A column with no title (the action column) has the width its buttons need, and no name to keep a dragged one under.
+                Resizable = columns[i].Header.Length > 0,
+                MaxWidth = columns[i].DropBelow is null ? null : Most(columns, i),
             };
             titles[i] = columns[i].Header;
         }

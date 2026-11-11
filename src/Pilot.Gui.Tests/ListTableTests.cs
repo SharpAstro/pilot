@@ -478,18 +478,99 @@ public sealed class ListTableTests : IDisposable
         void Render() => view.Render(screen, new RectF32(0f, 0f, WideWidth, PageHeight));
         var before = Arranged(view.Tree(screen), WideWidth);
 
-        // The divider after the State column (State is fixed, Spend takes up to its width): State grows by what was dragged.
+        // The divider after the State column: State takes what Spend, the column on its other side, gives up.
         Drag(view, Render, "sessions:table:divider:4", 40f);
 
         var after = Arranged(view.Tree(screen), WideWidth);
         var first = screen.Lines[0];
         (after.HeaderX("Spend") - after.HeaderX("State") - ListTable.ColumnGap).ShouldBe(200f, 0.5f);
+        after.HeaderX("State").ShouldBe(before.HeaderX("State"), 0.5f, "State's far edge stands");
+        after.HeaderX("Age").ShouldBe(before.HeaderX("Age"), 0.5f, "and so does Spend's");
         foreach (var (title, value) in SessionColumns(first))
         {
             after.HeaderX(title).ShouldBe(after.RowX(value), $"{title} still sits over its values");
         }
         (before.HeaderX("Spend") - before.HeaderX("State") - ListTable.ColumnGap).ShouldBe(160f, 0.5f);
         view.Table.Saved.ShouldContainKeyAndValue("State", 200f);
+    }
+
+    [Theory]
+    [InlineData(1, 30f, 1700f)]
+    [InlineData(2, 30f, 1700f)]
+    [InlineData(3, 30f, 1700f)]
+    [InlineData(4, 30f, 1700f)]
+    [InlineData(5, 30f, 1700f)]
+    [InlineData(6, 30f, 1700f)]
+    [InlineData(3, -30f, 1700f)]
+    [InlineData(4, -30f, 1700f)]
+    // Wide enough that the Session column has room to spare, where the columns after it stand from the right.
+    [InlineData(3, 30f, 2200f)]
+    [InlineData(4, 30f, 2200f)]
+    [InlineData(3, -30f, 2200f)]
+    [InlineData(4, -30f, 2200f)]
+    public void EverySessionsDividerFollowsThePointerHeaderAndRowsTogether(int divider, float by, float wide)
+    {
+        // A divider beside State once moved State's far edge and stood still under the pointer (2026-11-11): the two columns
+        // beside a divider trade width (DIR.Lib's table), so it follows the pointer whatever kind each is.
+        var view = Sessions();
+        var screen = SessionsScreenOf();
+        void Render() => view.Render(screen, new RectF32(0f, 0f, wide, PageHeight));
+        var hit = $"sessions:table:divider:{divider}";
+        Render();
+        var before = Painted(view).Single(r => r.Result is HitResult.ButtonHit b && b.Action == hit).X;
+
+        Drag(view, Render, hit, by);
+
+        Painted(view).Single(r => r.Result is HitResult.ButtonHit b && b.Action == hit).X.ShouldBe(before + by, 0.5f, "the divider is where the pointer took it");
+        var after = Arranged(view.Tree(screen), wide);
+        foreach (var (title, value) in SessionColumns(screen.Lines[0]))
+        {
+            after.HeaderX(title).ShouldBe(after.RowX(value), $"{title} still sits over its values");
+        }
+    }
+
+    [Fact]
+    public void SpendNarrowedByADragDropsBelowItsDraggedWidthAndComesBackFromTheFile()
+    {
+        const float WideWidth = 1700f;
+        var view = Sessions();
+        var screen = SessionsScreenOf();
+        void Render() => view.Render(screen, new RectF32(0f, 0f, WideWidth, PageHeight));
+
+        Drag(view, Render, "sessions:table:divider:4", 40f);
+
+        var after = Arranged(view.Tree(screen), WideWidth);
+        (after.HeaderX("Age") - after.HeaderX("Spend") - ListTable.ColumnGap).ShouldBe(90f, 0.5f, "Spend gave up what was dragged");
+        view.Table.Saved.ShouldContainKeyAndValue("Spend", 90f);
+        view.Table.Saved.ShouldContainKeyAndValue("State", 200f);
+
+        // A new window given the saved widths shows Spend at 90, not gone: it drops below the dragged width, not the declared one.
+        var again = Sessions();
+        again.Table.Restore(view.Table.Saved);
+        var restored = Arranged(again.Tree(screen), WideWidth);
+        restored.HasHeader("Spend").ShouldBeTrue();
+        (restored.HeaderX("Age") - restored.HeaderX("Spend") - ListTable.ColumnGap).ShouldBe(90f, 0.5f);
+    }
+
+    [Fact]
+    public void TheActionColumnHasNoGripAndAnOptionalColumnIsNotDraggedWiderThanThePageHasRoomFor()
+    {
+        const float Width = 1400f;
+        var view = Sessions();
+        var screen = SessionsScreenOf();
+        void Render() => view.Render(screen, new RectF32(0f, 0f, Width, PageHeight));
+        Render();
+
+        // Eight titled columns and the action column: the divider before the action column (7) is a plain gap.
+        Painted(view).Any(r => r.Result is HitResult.ButtonHit b && b.Action == "sessions:table:divider:7").ShouldBeFalse();
+
+        // Model, beside the Session column that takes the slack, dragged as wide as the pointer goes: it stops where the
+        // Session column would have less than its least, and stays on the page with every column after it.
+        Drag(view, Render, "sessions:table:divider:0", -2000f);
+
+        var after = Arranged(view.Tree(screen), Width);
+        after.HasHeader("Model").ShouldBeTrue("the column is not dragged off the page");
+        after.HasHeader("Spend/min").ShouldBeTrue();
     }
 
     [Fact]
