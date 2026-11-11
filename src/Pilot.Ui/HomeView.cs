@@ -45,7 +45,8 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
         {
             // A stale flight (its node unreachable) is a last known row: it is not counted as flying.
             var flights = FlightCounts.Of(Flights.Lines.Where(l => l.Stale is null).Select(l => l.Row)).Flying;
-            var legs = Flights.Lines.Where(l => l.Stale is null).Sum(l => l.LegRows.Count(leg => leg.State == LegState.Flying));
+            // Only a flight not landed has a leg in the air: a row a node left flying on a landed flight is not one.
+            var legs = Flights.Lines.Where(l => l.Stale is null && l.Row.State != FlightState.Landed).Sum(l => l.LegRows.Count(leg => leg.State == LegState.Flying));
             var workers = Sessions.Lines.Count(l => l.IsLive && l.Row.Role == SessionRole.Worker);
             var jobs = Jobs.Lines.Count(l => l.Row.State == JobState.Running);
             return flights + legs + workers + jobs == 0

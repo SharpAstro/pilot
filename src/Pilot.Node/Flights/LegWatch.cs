@@ -206,6 +206,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             _seenWindow = ended;
             _redoWindow = ended;
         }
+        // A leg left flying on a landed flight (by a landing of an earlier version, or any path that lands without ending its legs) ends here.
+        state.EndFlyingLegsOfLanded();
         await LookAtReviewsAsync(sessions, now, cancellationToken);
         await LookAtValidatorsAsync(sessions, now, cancellationToken);
         LookAtStrays(sessions, now);
