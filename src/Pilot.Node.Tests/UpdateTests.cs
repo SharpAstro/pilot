@@ -126,6 +126,30 @@ public sealed class UpdateTests : IDisposable
     }
 
     [Fact]
+    public async Task AFailureWithAnEmptyMessageStillSaysWhereAndWhat()
+    {
+        // 2.1.1-beta.2147 failed three times on LE1 with "not installed: " and nothing after it: an IOException whose
+        // message was empty became the whole reason, on the card and in node.log.
+        var zipFeed = Feed("2.0.2", new() { ["pilot-node.exe"] = "new node" });
+        var release = (await zipFeed.LatestAsync(Ct)).ShouldNotBeNull();
+        var feed = new FailingFeed(release, new IOException("") { HResult = unchecked((int)0x80070020) });
+
+        var refused = await Should.ThrowAsync<ReleaseInstallException>(() => ReleaseInstall.StageAsync(feed, release, _install, "win-arm64", Layout, Ct));
+
+        refused.Message.ShouldStartWith("downloading ");
+        refused.Message.ShouldContain("IOException 0x80070020 with no message");
+    }
+
+    [Fact]
+    public void AReasonIsNeverBlank()
+    {
+        ReleaseInstall.Why(new IOException("disk full")).ShouldBe("disk full");
+        ReleaseInstall.Why(new IOException(" ", new UnauthorizedAccessException("denied"))).ShouldBe($"IOException 0x{new IOException().HResult:X8} with no message, from denied");
+        new ReleaseInstallException("").Message.ShouldBe("no reason was given");
+        new ReleaseInstallException("", new IOException("locked")).Message.ShouldBe("locked");
+    }
+
+    [Fact]
     public async Task AZipWithAPathOutsideItsFolderIsRefused()
     {
         var feed = Feed("2.0.2", new() { ["pilot-node.exe"] = "new node", ["../evil.dll"] = "evil" });
@@ -499,6 +523,13 @@ public sealed class UpdateTests : IDisposable
             File.Copy(zip, file, overwrite: true);
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class FailingFeed(Release release, Exception failure) : IReleaseFeed
+    {
+        public Task<Release?> LatestAsync(CancellationToken cancellationToken) => Task.FromResult<Release?>(release);
+
+        public Task DownloadAsync(Release release, ReleaseAsset asset, string file, CancellationToken cancellationToken) => Task.FromException(failure);
     }
 
     private sealed class FakeLifetime : IHostApplicationLifetime

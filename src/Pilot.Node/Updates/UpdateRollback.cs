@@ -158,7 +158,7 @@ public sealed class UpdateRollback(string install, string dataFolder, string ver
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             TryDeleteFolder(previous);
-            throw new ReleaseInstallException($"the release it replaces could not be kept in {previous} for a way back: {ex.Message}", ex);
+            throw new ReleaseInstallException($"the release it replaces could not be kept in {previous} for a way back: {ReleaseInstall.Why(ex)}", ex);
         }
     }
 
@@ -172,7 +172,7 @@ public sealed class UpdateRollback(string install, string dataFolder, string ver
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            throw new ReleaseInstallException($"the record of the update could not be written to {RecordPath}: {ex.Message}", ex);
+            throw new ReleaseInstallException($"the record of the update could not be written to {RecordPath}: {ReleaseInstall.Why(ex)}", ex);
         }
     }
 

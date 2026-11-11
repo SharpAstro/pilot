@@ -232,7 +232,8 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
         }
         catch (ReleaseInstallException ex)
         {
-            logger.LogWarning("update: {Version} not installed: {Why}", release.Version, ex.Message);
+            // The exception the reason came from goes to the log whole (type, HRESULT, stack); the card keeps the reason only.
+            logger.LogWarning(ex.InnerException, "update: {Version} not installed: {Why}", release.Version, ex.Message);
             if (_failed != release.Version)
             {
                 _failed = release.Version;
@@ -274,7 +275,7 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
-            return ex.Message;
+            return ReleaseInstall.Why(ex);
         }
     }
 }
