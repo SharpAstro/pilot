@@ -270,6 +270,40 @@ public sealed class FlightCommanderTests : IDisposable
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task LandingAFlightByHandEndsItsFlyingLegAndLeavesAPlannedOneAsItIs()
+    {
+        await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "61");
+        _state.PutLeg(new LegRow { Flight = "TIA61", Name = "first", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, Report = "half way" });
+        _state.PutLeg(new LegRow { Flight = "TIA61", Name = "second", Order = 2, Goal = "g", DoneWhen = "d", State = LegState.Planned });
+
+        (await Run(Verbs.Land, Verbs.FlightTarget("TIA61"))).Ok.ShouldBeTrue();
+
+        var legs = _state.Legs("TIA61");
+        legs[0].State.ShouldBe(LegState.Done);
+        legs[0].FinishedAt.ShouldBe(Flight("TIA61").LandedAt);
+        legs[0].Report.ShouldBe("ended with its flight, which landed while this leg was flying: no worker finished it\nhalf way");
+        legs[1].State.ShouldBe(LegState.Planned);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ALegAnEarlierNodeLeftFlyingOnALandedFlightIsEndedAndOneOfAFlyingFlightIsNot()
+    {
+        await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "62");
+        await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "63");
+        (await Run(Verbs.Land, Verbs.FlightTarget("TIA62"))).Ok.ShouldBeTrue();
+        _state.PutLeg(new LegRow { Flight = "TIA62", Name = "left", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying });
+        _state.PutLeg(new LegRow { Flight = "TIA63", Name = "live", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying });
+
+        _state.EndFlyingLegsOfLanded().Select(l => l.Name).ShouldBe(["left"]);
+
+        _state.Legs("TIA62").Single().State.ShouldBe(LegState.Done);
+        _state.Legs("TIA63").Single().State.ShouldBe(LegState.Flying);
+        _state.EndFlyingLegsOfLanded().ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheLabelStaysWhileASecondFlightOfThisNodeIsStillOnTheItem()
     {
         var (github, _) = Trackered();

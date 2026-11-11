@@ -301,6 +301,8 @@ public sealed partial class FlightCommander
             MoveFailure = null,
             MoveUnknown = null,
         }) ?? flight;
+        // No leg of a landed flight is left flying: a landing by hand, or a fold, does not go by the legs' states as a merge's does.
+        state.EndFlyingLegsOfLanded(flight.Code);
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code} landed", LegCommander.MoveFailedKind);
         // The 7-day card's Hold button for this flight was fixed when the card was raised: a landed flight has nothing to hold.
         state.DropHoldChoiceOfLanded(flight.Code);
