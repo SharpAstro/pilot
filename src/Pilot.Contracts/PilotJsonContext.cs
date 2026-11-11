@@ -74,6 +74,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(SummaryRow))]
 [JsonSerializable(typeof(PullRequestsRow))]
 [JsonSerializable(typeof(PullRequestRow))]
+[JsonSerializable(typeof(PullRequestRepoRead))]
 [JsonSerializable(typeof(ReposRow))]
 [JsonSerializable(typeof(NodeRow))]
 [JsonSerializable(typeof(GrantRequest))]

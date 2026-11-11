@@ -78,10 +78,20 @@ public static partial class PilotCommand
                         }
                     }
                     var onlyMine = p.GetValue(needsMe);
+                    string? thisNode = null;
+                    try
+                    {
+                        var info = await client.GetNodeAsync(ct);
+                        thisNode = info.MachinePrefix.Length > 0 ? info.MachinePrefix : info.MachineName;
+                    }
+                    catch (HttpRequestException)
+                    {
+                        // Without the node's name no repo is marked as a peer's.
+                    }
                     async Task PrintAsync(PullRequestsRow? shown)
                     {
                         var now = DateTimeOffset.UtcNow;
-                        await WriteAsync(p.GetValue(outputFormat), () => PullRequestsMarkdown.Plain(shown, onlyMine, now), () => PullRequestsMarkdown.Build(shown, onlyMine, now));
+                        await WriteAsync(p.GetValue(outputFormat), () => PullRequestsMarkdown.Plain(shown, onlyMine, now, thisNode), () => PullRequestsMarkdown.Build(shown, onlyMine, now, thisNode));
                     }
                     if (!p.GetValue(watchPrs))
                     {

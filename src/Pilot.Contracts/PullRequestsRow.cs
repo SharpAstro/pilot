@@ -185,6 +185,9 @@ public sealed record PullRequestsRow
     /// <summary>The GitHub login the node reads as (gh's): whose PRs are <see cref="PullRequestRow.Author"/>'s own, for Mine. Null when gh did not say.</summary>
     public string? Viewer { get; init; }
 
+    /// <summary>When each repo was last read and by which node; empty from a node that does not say (an older one). Optional on the wire.</summary>
+    public PullRequestRepoRead[] RepoReads { get; init => field = value ?? []; } = [];
+
     /// <summary>The counts above the list: <c>7 open · 3 ready · 2 checks running · 1 conflicts</c>, a state with none left out.</summary>
     public string Summary() => Counts(PullRequests);
 
@@ -219,6 +222,59 @@ public sealed record PullRequestsRow
             : span.TotalHours < 1 ? $"{(int)span.TotalMinutes}m ago"
             : span.TotalDays < 1 ? $"{(int)span.TotalHours}h ago"
             : $"{(int)span.TotalDays}d ago";
+    }
+
+    /// <summary>
+    /// The words for who read <paramref name="repo"/>: <c>read by DE1 2 min ago</c> when another node than <paramref name="thisNode"/> read it,
+    /// null when this node did, when it is not known, or when this node's name is not (nothing is claimed of a read it cannot place).
+    /// </summary>
+    public string? ReadStamp(string repo, string? thisNode, DateTimeOffset now) =>
+        thisNode is { Length: > 0 } me && RepoReads.FirstOrDefault(r => string.Equals(r.Repo, repo, StringComparison.OrdinalIgnoreCase)) is { } read
+            && !string.Equals(read.By, me, StringComparison.OrdinalIgnoreCase)
+            ? $"read by {read.By} {AgeWords(read.ReadAt, now)}"
+            : null;
+
+    /// <summary>The count of repos of <see cref="RepoReads"/> another node read than <paramref name="thisNode"/>, and those nodes' names.</summary>
+    public (int Repos, string[] Nodes) FromPeers(string? thisNode) =>
+        thisNode is { Length: > 0 } me && RepoReads.Where(r => !string.Equals(r.By, me, StringComparison.OrdinalIgnoreCase)).ToArray() is { Length: > 0 } peer
+            ? (peer.Length, [.. peer.Select(r => r.By).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase)])
+            : (0, []);
+
+    /// <summary>The header's words for <see cref="FromPeers"/>: <c>3 repos read by DE1</c>; empty when none came from a peer.</summary>
+    public string PeerCount(string? thisNode) =>
+        FromPeers(thisNode) is (> 0 and var n, var nodes) ? $"{n} {(n == 1 ? "repo" : "repos")} read by {string.Join(", ", nodes)}" : "";
+
+    /// <summary>
+    /// The one line on who read the repos: <c>PR read: 3 repos read here, 2 repos read by DE1 (2 min ago)</c>; null when no repo's read is stamped.
+    /// </summary>
+    public string? ReadLine(string? thisNode, DateTimeOffset now)
+    {
+        if (RepoReads.Length == 0)
+        {
+            return null;
+        }
+        string Repos(int n) => $"{n} {(n == 1 ? "repo" : "repos")}";
+        var parts = new List<string>();
+        var own = RepoReads.Where(r => thisNode is { Length: > 0 } me && string.Equals(r.By, me, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (own.Length > 0)
+        {
+            parts.Add($"{Repos(own.Length)} read here");
+        }
+        foreach (var by in RepoReads.Except(own).GroupBy(r => r.By, StringComparer.OrdinalIgnoreCase).OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            parts.Add($"{Repos(by.Count())} read by {by.Key} ({AgeWords(by.Min(r => r.ReadAt), now)})");
+        }
+        return "PR read: " + string.Join(", ", parts);
+    }
+
+    /// <summary>How long ago in words: <c>just now</c>, <c>2 min ago</c>, <c>3 h ago</c>, <c>2 d ago</c>.</summary>
+    public static string AgeWords(DateTimeOffset then, DateTimeOffset now)
+    {
+        var span = now - then;
+        return span.TotalMinutes < 1 ? "just now"
+            : span.TotalHours < 1 ? $"{(int)span.TotalMinutes} min ago"
+            : span.TotalDays < 1 ? $"{(int)span.TotalHours} h ago"
+            : $"{(int)span.TotalDays} d ago";
     }
 
     /// <summary>Whether <paramref name="pr"/> is the person's own: authored by <see cref="Viewer"/>, or, when the node could not say who that is, not a flight's.</summary>
@@ -312,9 +368,18 @@ public sealed record PullRequestsRow
             Note = string.Join(" ", read.Select(r => r.Note).OfType<string>().Distinct()) is { Length: > 0 } notes ? notes : null,
             ReadAt = read[^1].ReadAt,
             Viewer = read.Select(r => r.Viewer).FirstOrDefault(v => v is not null),
+            // The newest read of each repo wins.
+            RepoReads = [.. read.SelectMany(r => r.RepoReads).GroupBy(x => x.Repo, StringComparer.OrdinalIgnoreCase).Select(g => g.OrderByDescending(x => x.ReadAt).First())],
         };
     }
 }
+
+/// <summary>When one repo's PRs were last read, and by which node: what lets a peer take that read instead of searching GitHub again.</summary>
+/// <param name="Repo">The repo, <c>owner/name</c>, as GitHub spells it.</param>
+/// <param name="ReadAt">When the node asked GitHub for this repo's PRs.</param>
+/// <param name="By">The reading node's machine name.</param>
+/// <param name="Flying">Whether the node whose row carries this stamp flies a flight in the repo: on a repo this node took from a peer, <see cref="By"/> is the peer that read it and this is this node's own flag.</param>
+public sealed record PullRequestRepoRead(string Repo, DateTimeOffset ReadAt, string By, bool Flying = false);
 
 /// <summary>The pull requests were read again and differ from the last read, or the last read is a while old.</summary>
 public sealed record PullRequestsChangedEvent : NodeEvent

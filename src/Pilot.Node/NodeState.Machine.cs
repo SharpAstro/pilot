@@ -168,7 +168,9 @@ public sealed partial class NodeState
     /// <summary>
     /// Puts the PRs read, when they differ from those held, or when the held read is 2 minutes old: a read every minute that finds
     /// nothing new would fill the journal with a row of every PR, yet a client dates the row by its read and marks one over 5
-    /// minutes old stale, so the read time is renewed well within that.
+    /// minutes old stale, so the read time is renewed well within that. The per-repo read stamps are what a peer takes a read by (#834),
+    /// so a read that only renews them is kept in the state at once, which is what a peer asks for, and is put on the stream when a
+    /// client is attached to hear it (a peer following this node is one); with none, the journal gets no delta for it.
     /// </summary>
     public void PutPullRequests(PullRequestsRow read)
     {
@@ -177,11 +179,31 @@ public sealed partial class NodeState
             if (_pullRequests is { } held && held.Orgs.SequenceEqual(read.Orgs) && held.Errors.SequenceEqual(read.Errors) && held.Note == read.Note
                 && held.PullRequests.SequenceEqual(read.PullRequests) && read.ReadAt - held.ReadAt < TimeSpan.FromMinutes(2))
             {
+                if (StampsRenewed(held, read))
+                {
+                    if (_sinks.Count > 0)
+                    {
+                        Publish(new PullRequestsChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Row = read });
+                    }
+                    else
+                    {
+                        _pullRequests = read;
+                    }
+                }
                 return;
             }
             Publish(new PullRequestsChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Row = read });
         }
     }
+
+    // Some repo's read stamp is newer than the held one by more than a few seconds, or the stamps are other repos'.
+    private static bool StampsRenewed(PullRequestsRow held, PullRequestsRow read) =>
+        read.RepoReads.Length != held.RepoReads.Length
+        || read.RepoReads.Any(s => held.RepoReads.FirstOrDefault(h => string.Equals(h.Repo, s.Repo, StringComparison.OrdinalIgnoreCase)) is not { } was
+            || s.By != was.By || s.Flying != was.Flying || s.ReadAt - was.ReadAt > StampLag);
+
+    /// <summary>How far a peer may see a repo's read stamp behind the read.</summary>
+    public static readonly TimeSpan StampLag = TimeSpan.FromSeconds(5);
 
     /// <summary>Where every repo the node knows stands as last read, or marked not read yet; null before any.</summary>
     public ReposRow? Repos()

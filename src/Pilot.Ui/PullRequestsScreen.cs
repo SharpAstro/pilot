@@ -13,6 +13,9 @@ internal sealed record PullRequestsScreen(PullRequestsRow? Row, string Source, D
     /// <summary>The cards open now, whose choices a row's Merge and Go around press; the window's panel's, set when the page is drawn.</summary>
     public IReadOnlyList<CardRow> OpenCards { get; init; } = [];
 
+    /// <summary>This window's node as a repo's read stamp names it (its machine prefix): a repo it read itself is unmarked, another's says who read it. Null when not known.</summary>
+    public string? Node { get; init; }
+
     /// <summary>How old the read may be before the source line says so, in amber.</summary>
     public static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(5);
 
@@ -20,7 +23,7 @@ internal sealed record PullRequestsScreen(PullRequestsRow? Row, string Source, D
     public bool Stale => Row is { } row && AsOf - row.ReadAt > StaleAfter;
 
     /// <summary>The counts in the top bar: <c>7 open · 3 ready · 2 checks running · 1 conflicts</c>; empty before the first read.</summary>
-    public string Counts => Row?.Summary() ?? "";
+    public string Counts => Row is { } row ? row.Summary() + (row.PeerCount(Node) is { Length: > 0 } peers ? $" · {peers}" : "") : "";
 
     /// <summary>The orgs read, as the empty line names them: <c>SharpAstro, sebgod</c>.</summary>
     public string Orgs => Row is { Orgs.Length: > 0 } row ? string.Join(", ", row.Orgs) : "any repo pilot works in";

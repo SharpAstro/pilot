@@ -33,6 +33,18 @@ public interface IFleetPeer
 
     /// <summary>Sends <paramref name="command"/> to the peer, under the held grant: its result, or why it was refused.</summary>
     Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The peer's PR read as it changes (#834): the one it holds now, then each new one, until the stream ends or throws. By default the one
+    /// read <see cref="LoadAsync"/> gives and then the end, which is all a peer with no event stream can say.
+    /// </summary>
+    async IAsyncEnumerable<PullRequestsRow> PullRequestsAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        if ((await LoadAsync(cancellationToken).ConfigureAwait(false)).PullRequests is { } row)
+        {
+            yield return row;
+        }
+    }
 }
 
 /// <summary>What a node does to hand a flight to a peer (<see cref="Verbs.ReceiveFlight"/>, #376): the record it sends, and the send.</summary>
@@ -70,7 +82,8 @@ public static class FlightMoves
 /// <param name="PrReviews">Every PR review the peer has, closed ones included; none when it did not say.</param>
 /// <param name="Sessions">Every session the peer tracks, which is what says whether a flight of it holds its repo; none when it did not say.</param>
 /// <param name="Legs">Every leg of every flight the peer has; none when it did not say. What <see cref="FleetCopy"/> keeps, so a flight of a node that went down can still be read.</param>
-public sealed record FleetLoad(UsageRow? Usage, FlightRow[] Flights, PrReviewRow[]? PrReviews = null, SessionRow[]? Sessions = null, LegRow[]? Legs = null);
+/// <param name="PullRequests">The peer's PR read, with when and by whom each repo was read; none when it did not say.</param>
+public sealed record FleetLoad(UsageRow? Usage, FlightRow[] Flights, PrReviewRow[]? PrReviews = null, SessionRow[]? Sessions = null, LegRow[]? Legs = null, PullRequestsRow? PullRequests = null);
 
 /// <summary>Everything judging a peer takes, read of it; null where it could not be read.</summary>
 /// <param name="Name">The peer's machine prefix, or its endpoint when it was not reached.</param>
@@ -192,8 +205,28 @@ public sealed class HeldTokenFleet(string tokenFile, Func<IReadOnlyList<LanPeer>
             await using var events = await client.OpenEventsAsync(since: null, stream: null, ct).ConfigureAwait(false);
             var snapshot = await events.ReadAsync(ct).ConfigureAwait(false) as SnapshotEvent
                 ?? throw new IOException($"{Name}'s stream did not start with a snapshot");
-            return new FleetLoad(snapshot.Usage, snapshot.Flights, snapshot.PrReviews, snapshot.Sessions, snapshot.Legs);
+            return new FleetLoad(snapshot.Usage, snapshot.Flights, snapshot.PrReviews, snapshot.Sessions, snapshot.Legs, snapshot.PullRequests);
         }, cancellationToken);
+
+        public async IAsyncEnumerable<PullRequestsRow> PullRequestsAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            using var client = NodeClient.Remote(Endpoint, grant.Token, grant.Name);
+            await using var events = await client.OpenEventsAsync(since: null, stream: null, cancellationToken).ConfigureAwait(false);
+            KeepHint();
+            while (await events.ReadAsync(cancellationToken).ConfigureAwait(false) is { } next)
+            {
+                var row = next switch
+                {
+                    SnapshotEvent snapshot => snapshot.PullRequests,
+                    PullRequestsChangedEvent changed => changed.Row,
+                    _ => null,
+                };
+                if (row is not null)
+                {
+                    yield return row;
+                }
+            }
+        }
 
         public async Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken)
         {

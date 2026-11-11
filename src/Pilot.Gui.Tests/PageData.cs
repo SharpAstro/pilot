@@ -440,8 +440,10 @@ internal sealed class PageData
                 });
             }
         }
-        var row = new PullRequestsRow { Orgs = ["SharpAstro", "example-org"], ReadAt = Now.AddSeconds(-40), Viewer = "ada", PullRequests = [.. rows] };
-        return new PullRequestsScreen(row, "live from the node on node.sock", at ?? Now);
+        // The first repo was read here (SE1), the second by DE1 two minutes ago, the third by DE1 an hour ago: the page says so of the peer's.
+        var reads = rows.Select(p => p.Repo).Distinct().Select((repo, i) => new PullRequestRepoRead(repo, Now.AddMinutes(i % 3 == 1 ? -2 : i % 3 == 2 ? -65 : -1), i % 3 == 0 ? "SE1" : "DE1")).ToArray();
+        var row = new PullRequestsRow { Orgs = ["SharpAstro", "example-org"], ReadAt = Now.AddSeconds(-40), Viewer = "ada", PullRequests = [.. rows], RepoReads = reads };
+        return new PullRequestsScreen(row, "live from the node on node.sock", at ?? Now) { Node = "SE1" };
     }
 
     // A feed of n entries: replies, a person's messages, tool calls with their results, as the chat and a transcript show them.
