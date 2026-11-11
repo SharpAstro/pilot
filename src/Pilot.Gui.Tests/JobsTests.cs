@@ -254,6 +254,31 @@ public sealed class JobsTests
         TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// Owner's screenshot of LE1's j45, 2026-11-11: the panel stopped at 300 px over an all but empty table, so the facts scrolled by
+    /// half a line. On a page with the room, the panel grows to its facts: the last one ends above the buttons, with nothing to scroll.
+    /// </summary>
+    [Fact]
+    public async Task ARunningJobsPanelGrowsToItsFactsWhenThePageHasTheRoom()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1000);
+        var running = Job("j14", JobState.Running, Live.At.AddMinutes(-11), step: "Passed Parser.NestedGroups")
+            with { Pid = 4812, Shell = "pwsh", TestsFailed = 4, FirstTestFailed = "CS0108 in PilotWidgetBase.cs" };
+        var screen = new JobsScreen(JobLine.Build([running], Live.At), "live", Live.At);
+        JobProcessInfo[] tall = [new("conhost", 4800, 0), new("pwsh", 4812, 1), new("dotnet", 5120, 2), new("dotnet", 5130, 3),
+            new("VBCSCompiler", 5140, 3), new("MSBuild", 5150, 3), new("MSBuild", 5160, 3), new("testhost", 6044, 3), new("conhost", 6100, 4)];
+        var jobs = await Following(renderer, LogWith(tree: tall), screen);
+        jobs.OnCancel = _ => Task.FromResult<string?>(null);
+        jobs.OnPause = _ => Task.FromResult<string?>(null);
+
+        var arranged = Layout.Engine.Arrange(jobs.Tree(screen), new Rect<float>(0, 0, 1280, 1000), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+
+        var failures = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "failures" } }).Bounds;
+        var pause = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "Pause" } }).Bounds;
+        (failures.Y + failures.Height).ShouldBeLessThanOrEqualTo(pause.Y);
+        TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task ARunningJobsFactsListItsPidAndTheTreeUnderItByDepthAndNothingElseDoes()
     {

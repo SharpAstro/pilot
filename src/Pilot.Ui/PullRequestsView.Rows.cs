@@ -27,6 +27,7 @@ internal sealed partial class PullRequestsView<TSurface>
     {
         Palette.Use(Night);
         _now = screen.AsOf;
+        _screen = screen;
         _cards = screen.OpenCards;
         if (_reveal is { } want)
         {

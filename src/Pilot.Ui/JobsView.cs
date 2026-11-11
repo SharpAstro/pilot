@@ -176,8 +176,14 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     private const float IdMin = 44f;
     private const float StateMin = 70f;
     private const float NodeMin = 40f;
-    // Tall enough for the facts, the pid and a tree of TreeRows processes under it, so the panel does not grow when the tree arrives.
+    // The least the panel is given: the facts of a queued or ended job and the buttons. A running job's panel grows to what its facts
+    // need (pid, tree, failures), up to DetailMaxHeight, so they do not scroll by half a line under a page that has the room (owner's
+    // screenshot of LE1's j45, 2026-11-11: 300 px for facts that needed some 320, beside an empty table).
     private const float DetailHeight = 300f;
+    private const float DetailMaxHeight = 560f;
+    private const float FactRowHeight = 20f;
+    // The panel's padding, the gap above the buttons and one line of them.
+    private const float PanelChrome = 2 * 8f + 8f + 28f;
     // The panel keeps its height while the window has the room; with less to give it, it is not shown, and the table keeps
     // BodyMinHeight before the panel has any, so a header that wrapped onto many lines leaves the table, not a panel past the foot.
     private const float DetailMinHeight = DetailHeight;
@@ -824,6 +830,13 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>A confirm question beside its pills: padded as a pill is, so its text shares their middle.</summary>
     private static Layout.Node Question(string text) => WrappedProse.Of(text, 12f, Bright).Pad(0f, 4f).WAuto();
 
+    /// <summary>
+    /// The most the panel takes: what its facts need at a fact row each (a tree row is a little shorter, so it errs roomy) and its
+    /// chrome, never below <see cref="DetailHeight"/> nor above <see cref="DetailMaxHeight"/>. The star still gives the table the rest,
+    /// and past the cap the facts scroll inside the panel.
+    /// </summary>
+    internal static float PanelHeight(int facts) => Math.Clamp(facts * FactRowHeight + PanelChrome, DetailHeight, DetailMaxHeight);
+
     private Layout.Node Panel(List<Layout.Node> facts, JobLine line, List<Layout.Node> buttons)
     {
         return Layout.Builder.VStack(
@@ -841,7 +854,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             .Pad(Gutter, 8f)
             .Bg(PanelBg)
             .W(Layout.Sizing.Star())
-            .H(Layout.Sizing.Star(DetailWeight, 0f, DetailHeight))
+            .H(Layout.Sizing.Star(DetailWeight, 0f, PanelHeight(facts.Count)))
             .CollapseBelow(DetailMinHeight);
     }
 

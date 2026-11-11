@@ -274,7 +274,7 @@ public sealed partial class LegCommander(
                     }
                     break;
                 case Verbs.AllowRound:
-                    AllowRound(command);
+                    await AllowRoundAsync(command, cancellationToken);
                     break;
                 case Verbs.CiBudget:
                     made = AnswerCiBudget(command);

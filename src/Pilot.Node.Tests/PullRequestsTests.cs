@@ -378,6 +378,23 @@ public sealed class PullRequestsTests : IDisposable
     }
 
     [Fact]
+    public void MergeKeepsTheNewestReadStampOfEachRepoAndTheStampsSurviveTheWire()
+    {
+        var old = new PullRequestRepoRead("SharpAstro/pilot", Noon - TimeSpan.FromMinutes(5), "A", false);
+        var newer = new PullRequestRepoRead("sharpastro/pilot", Noon, "B", true);
+        var other = new PullRequestRepoRead("SharpAstro/other", Noon, "A");
+        var mine = new PullRequestsRow { ReadAt = Noon, RepoReads = [old, other] };
+        var theirs = new PullRequestsRow { ReadAt = Noon, RepoReads = [newer] };
+        var merged = PullRequestsRow.Merge([mine, theirs])!;
+        merged.RepoReads.Length.ShouldBe(2);
+        merged.RepoReads.Single(r => r.Repo.EndsWith("/pilot", StringComparison.OrdinalIgnoreCase)).By.ShouldBe("B");
+        // A row without the list (an older node) reads as none.
+        JsonSerializer.Deserialize("{\"readAt\":\"2026-10-28T12:00:00+00:00\"}", PilotJsonContext.Default.PullRequestsRow)!.RepoReads.ShouldBeEmpty();
+        var back = JsonSerializer.Deserialize(JsonSerializer.Serialize(mine, PilotJsonContext.Default.PullRequestsRow), PilotJsonContext.Default.PullRequestsRow)!;
+        back.RepoReads.ShouldBe(mine.RepoReads);
+    }
+
+    [Fact]
     public void RowsOfSeveralNodesMergeIntoOneWithTheNewestReadOfEachPullRequestAndTheFlightEitherKnew()
     {
         var mine = new PullRequestsRow
@@ -455,6 +472,40 @@ public sealed class PullRequestsTests : IDisposable
         state.Snapshot().PullRequests!.PullRequests.Single().Kind.ShouldBe(PullRequestKind.Behind);
     }
 
+    private sealed class CountingSink : INodeEventSink
+    {
+        public int Written;
+        public int Capacity => 1024;
+        public bool TryWrite(byte[] message) { Written++; return true; }
+        public void Overflowed() { }
+    }
+
+    [Fact]
+    public void ARenewedStampIsPutOnTheStreamForAnAttachedClientAndOnlyKeptInTheStateWithNone()
+    {
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var row = RowOf(Row("SharpAstro/a", 1, PullRequestKind.Ready)) with { RepoReads = [new PullRequestRepoRead("SharpAstro/a", Noon, "A1", false)] };
+        state.PutPullRequests(row);
+        var seq = state.Seq;
+        var renewed = row with { ReadAt = row.ReadAt.AddMinutes(1), RepoReads = [new PullRequestRepoRead("SharpAstro/a", Noon.AddMinutes(1), "A1", false)] };
+
+        // No client: the state holds the renewed stamps (a peer asks for them), and the journal gets nothing.
+        state.PutPullRequests(renewed);
+        state.Seq.ShouldBe(seq);
+        state.Snapshot().PullRequests!.RepoReads.Single().ReadAt.ShouldBe(Noon.AddMinutes(1));
+
+        // A client attached: the same renewal is a delta (by design: a peer following this node is a client, and takes a read by its stamps).
+        var sink = new CountingSink();
+        using var subscription = state.Subscribe(state.Seq, state.Stream, sink);
+        var before = sink.Written;
+        state.PutPullRequests(renewed with { ReadAt = row.ReadAt.AddMinutes(1), RepoReads = [new PullRequestRepoRead("SharpAstro/a", Noon.AddMinutes(1).AddSeconds(30), "A1", false)] });
+        state.Seq.ShouldBe(seq + 1);
+        sink.Written.ShouldBe(before + 1);
+        // Stamps within the lag are not renewed at all.
+        state.PutPullRequests(renewed with { RepoReads = [new PullRequestRepoRead("SharpAstro/a", Noon.AddMinutes(1).AddSeconds(31), "A1", false)] });
+        state.Seq.ShouldBe(seq + 1);
+    }
+
     // ---- the node's watch
 
     // A folder that looks like a clone: a .git folder, with an origin on GitHub.
@@ -465,7 +516,7 @@ public sealed class PullRequestsTests : IDisposable
         return Path.Combine(_root, name);
     }
 
-    private PullRequestWatch Watch(NodeState state, FakeGitHub github, TimeProvider? time = null, bool flown = true)
+    private PullRequestWatch Watch(NodeState state, FakeGitHub github, TimeProvider? time = null, bool flown = true, string machine = "")
     {
         // A repo is tracked once pilot has worked in it (#429's rule, narrowed 2026-10-29): each clone made so far has a landed flight,
         // unless the test is about a clone pilot never worked in.
@@ -492,7 +543,41 @@ public sealed class PullRequestsTests : IDisposable
                 }
             }
         }
-        return new(state, new RepoCatalog(state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root])), github, time ?? TimeProvider.System);
+        return new(state, new RepoCatalog(state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root])), github, time ?? TimeProvider.System) { Machine = machine };
+    }
+
+    [Fact]
+    public async Task EachReadStampsTheReposItReadWithThisNodeAndWhetherItFliesInThemAndARepoNotReadKeepsItsStampFromBefore()
+    {
+        var pilot = Clone("SharpAstro", "pilot");
+        Clone("sebgod", "mercury");
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        state.PutFlight(new FlightRow
+        {
+            Code = "PIL1", Repo = "pilot", RepoPath = pilot, Issue = 1, Branch = "flight/pil1", Worktree = Path.Combine(pilot, ".claude", "worktrees", "pil1"),
+            Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
+        });
+        var github = new FakeGitHub();
+        github.PutPullRequest(Row("SharpAstro/pilot", 1, PullRequestKind.Ready));
+        var time = new TimerTime(Noon);
+        var watch = Watch(state, github, time, machine: "LE1");
+
+        // Both repos read now, by this node; it flies a flight in pilot (mercury's flight has landed).
+        var row = (await watch.RefreshAsync(Ct))!;
+        row.RepoReads.ShouldBe([new PullRequestRepoRead("sebgod/mercury", Noon, "LE1", false), new PullRequestRepoRead("SharpAstro/pilot", Noon, "LE1", true)]);
+        state.Snapshot().PullRequests!.RepoReads.ShouldBe(row.RepoReads);
+
+        // A minute on the search fails: nothing is read, and each repo keeps the stamp of the read before.
+        time.Advance(TimeSpan.FromMinutes(1));
+        github.SearchFail.Add("SharpAstro/pilot");
+        var failed = (await watch.RefreshAsync(Ct))!;
+        failed.ReadAt.ShouldBe(Noon.AddMinutes(1));
+        failed.RepoReads.ShouldBe(row.RepoReads);
+
+        // Read again: stamped anew.
+        time.Advance(TimeSpan.FromMinutes(1));
+        github.SearchFail.Clear();
+        (await watch.RefreshAsync(Ct))!.RepoReads.Select(r => (r.Repo, r.ReadAt)).ShouldBe([("sebgod/mercury", Noon.AddMinutes(2)), ("SharpAstro/pilot", Noon.AddMinutes(2))]);
     }
 
     [Fact]
@@ -862,7 +947,7 @@ public sealed class PullRequestsTests : IDisposable
 
         // One search of both repos: its cost, and the points GitHub says are left.
         (row.Cost, row.RateRemaining, row.Note).ShouldBe((4, 4321, null));
-        log.ToString().ShouldContain("1 open PRs of 2 repos in 1 searches, 4 GraphQL points, 4321 left");
+        log.ToString().ShouldContain("2 read here in 1 search, 4 GraphQL points, 4321 left");
         // The cost of several searches is summed.
         github.SearchCost = 5;
         foreach (var i in Enumerable.Range(0, 20))

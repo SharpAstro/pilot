@@ -12,7 +12,7 @@ internal static class StatusMarkdown
 {
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
 
-    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyDictionary<string, string>? copies = null, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null)
+    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyDictionary<string, string>? copies = null, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null, string? thisNode = null)
     {
         var text = new StringBuilder();
         text.AppendLine("# pilot status").AppendLine();
@@ -38,6 +38,10 @@ internal static class StatusMarkdown
         if (commandTimings is not null)
         {
             facts.Add($"**commands** {Text(CommandTimingRow.Summary(commandTimings))}");
+        }
+        if (snapshot.PullRequests?.ReadLine(thisNode, DateTimeOffset.UtcNow) is { } prRead)
+        {
+            facts.Add($"**pr read** {Text(prRead.Replace("PR read: ", ""))}");
         }
         if (heap is not null)
         {
