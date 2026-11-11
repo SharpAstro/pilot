@@ -100,6 +100,9 @@ public static class ReleaseInstall
             throw new ReleaseInstallException($"GitHub lists no SHA-256 for {asset.Name}");
         }
         var staging = Path.Combine(install, StagingName);
+        var zip = Path.Combine(staging, asset.Name);
+        // The step under way, so a failure says where it happened as well as why.
+        var step = $"clearing {staging}";
         try
         {
             // What an earlier attempt left goes first.
@@ -108,20 +111,37 @@ public static class ReleaseInstall
                 Directory.Delete(staging, recursive: true);
             }
             Directory.CreateDirectory(staging);
-            var zip = Path.Combine(staging, asset.Name);
+            step = $"downloading {asset.Name}";
             await feed.DownloadAsync(release, asset, zip, cancellationToken).ConfigureAwait(false);
+            step = $"checking {zip}";
             if (Sha256Of(zip) != asset.Sha256)
             {
                 throw new ReleaseInstallException($"{asset.Name} is not the file GitHub lists (its SHA-256 differs)");
             }
+            step = $"unpacking {zip} into {staging}";
             var build = Unpack(zip, staging, release.Version, rid, layout);
+            step = $"deleting {zip}";
             File.Delete(zip);
             return (staging, build);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
-            throw new ReleaseInstallException(ex.Message, ex);
+            throw new ReleaseInstallException($"{step}: {Why(ex)}", ex);
         }
+    }
+
+    /// <summary>
+    /// What went wrong, for a person: the exception's message, or, when it has none (an I/O failure can come back with an
+    /// empty one), its type and HRESULT, with the inner exception's reason after it. Never blank.
+    /// </summary>
+    public static string Why(Exception ex)
+    {
+        if (!string.IsNullOrWhiteSpace(ex.Message))
+        {
+            return ex.Message.Trim();
+        }
+        var what = $"{ex.GetType().Name} 0x{ex.HResult:X8} with no message";
+        return ex.InnerException is { } inner ? $"{what}, from {Why(inner)}" : what;
     }
 
     /// <summary>Unpacks a release zip into <paramref name="staging"/>: files inside it only, the layout's required ones and
@@ -356,5 +376,6 @@ public static class ReleaseInstall
            && parts.All(p => p.Length > 0 && p is not ("." or "..") && p.IndexOfAny(Path.GetInvalidFileNameChars()) < 0);
 }
 
-/// <summary>Why a release was not staged: a message for a person, never a stack.</summary>
-public sealed class ReleaseInstallException(string message, Exception? inner = null) : Exception(message, inner);
+/// <summary>Why a release was not staged: a message for a person, never a stack, and never blank.</summary>
+public sealed class ReleaseInstallException(string message, Exception? inner = null)
+    : Exception(string.IsNullOrWhiteSpace(message) ? inner is null ? "no reason was given" : ReleaseInstall.Why(inner) : message, inner);
