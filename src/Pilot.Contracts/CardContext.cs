@@ -2,8 +2,11 @@ using System.Text;
 
 namespace Pilot.Contracts;
 
-/// <summary>What a client shows of a card-chat message: the card it is about, a short quote, and the person's words.</summary>
-public sealed record CardChat(string CardId, string Title, string Quote, string Words);
+/// <summary>
+/// What a client shows of a card-chat message: the card it is about, a short quote, and the person's words. <see cref="Cut"/> is true
+/// when the node cut the card's block (<see cref="CardContext.Clip"/>); the quote then leaves the cut's own line out.
+/// </summary>
+public sealed record CardChat(string CardId, string Title, string Quote, string Words, bool Cut = false);
 
 /// <summary>
 /// The message that opens a chat about a card: the card's whole context in a marked block, so the watchtower can act without
@@ -102,8 +105,14 @@ public static class CardContext
         string? title = null;
         var detail = new List<string>();
         var inDetail = false;
+        var cut = false;
         foreach (var line in lines[1..end])
         {
+            if (line == Cut)
+            {
+                cut = true;
+                continue;
+            }
             if (inDetail && line.StartsWith(Indent, StringComparison.Ordinal))
             {
                 detail.Add(line[Indent.Length..]);
@@ -116,7 +125,7 @@ public static class CardContext
             }
         }
         var quoted = detail.Count > 0 ? string.Join(' ', detail) : title ?? "";
-        chat = new CardChat(id, title ?? "", Shorten(quoted), string.Join('\n', lines[(end + 1)..]).Trim('\n'));
+        chat = new CardChat(id, title ?? "", Shorten(quoted), string.Join('\n', lines[(end + 1)..]).Trim('\n'), cut);
         return true;
     }
 

@@ -398,4 +398,77 @@ public sealed class ChatQueueTests
         arranged.Count(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "you · failed" } }).ShouldBe(2);
         TextOverlap.Faults(arranged).Where(f => f.Bounds.Y > 70f).Select(f => f.Line).ShouldBeEmpty();
     }
+
+    // PIL1010: the first waiting line's Answer now shows only once it has waited the shared delay, on a clock the test moves.
+    private static async Task<(ChatView<RgbaImage> Chat, FakeClock Clock)> WaitingAsync(RgbaImageRenderer renderer)
+    {
+        var clock = new FakeClock();
+        var chat = new ChatView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Time = clock };
+        chat.Load = (_, _) => Task.FromResult(new ChatPage
+        {
+            Entries = [new TranscriptEntry { Index = 0, Kind = TranscriptKind.User, At = At, Text = "go" }], Total = 1, Working = true, Doing = "running pilot status",
+            Queued = ["first words that wait for the watchtower", "second words that wait behind them"],
+            QueuedIds = ["s1", "s2"],
+            QueuedBehind = ["queued behind running pilot status", "queued behind the message before it"],
+        });
+        chat.OnSend = _ => Task.FromResult<string?>(null);
+        chat.OnAnswerNow = _ => Task.FromResult<string?>(null);
+        chat.Open();
+        for (var i = 0; i < 200 && chat.Entries.Count == 0; i++)
+        {
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+        chat.Close();
+        return (chat, clock);
+    }
+
+    // The distance from the first waiting row's label to the second's: the first row's height.
+    private static float FirstRowHeight(ChatView<RgbaImage> chat, RgbaImageRenderer renderer)
+    {
+        var ys = Layout.Engine.Arrange(chat.Tree(), new Rect<float>(0, 0, 1280, 800), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f))
+            .Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "queued" } }).Select(a => a.Bounds.Y).Order().ToList();
+        return ys[1] - ys[0];
+    }
+
+    [Fact]
+    public async Task AnswerNowShowsOnlyOnceTheFirstWaitingLineHasWaitedAndTheRowDoesNotGrowWhenItDoes()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var (chat, clock) = await WaitingAsync(renderer);
+
+        Actions(chat).ShouldNotContain("chat:now:s1");
+        Described(chat).ShouldNotContain("Answer now");
+        var before = FirstRowHeight(chat, renderer);
+        clock.Armed.ShouldBe(1, "one timer, for the moment the pill comes due");
+
+        clock.Advance(ChatView<RgbaImage>.AnswerNowDelay - TimeSpan.FromMilliseconds(1));
+        Actions(chat).ShouldNotContain("chat:now:s1");
+
+        var redraws = 0;
+        chat.Changed = () => redraws++;
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        redraws.ShouldBe(1, "the timer asks for a redraw when the delay ends");
+        Actions(chat).Where(a => a.StartsWith("chat:now:", StringComparison.Ordinal)).ShouldBe(["chat:now:s1"]);
+        Described(chat).ShouldContain("Answer now");
+        FirstRowHeight(chat, renderer).ShouldBe(before, 0.01f);
+        clock.Armed.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task APillTimerThatFiresEarlyIsArmedAgainAndThePillStillComes()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var (chat, clock) = await WaitingAsync(renderer);
+        Actions(chat).ShouldNotContain("chat:now:s1");
+
+        clock.Advance(ChatView<RgbaImage>.AnswerNowDelay - TimeSpan.FromMilliseconds(1));
+        clock.Armed.ShouldBe(1);
+        clock.FireNextEarly();
+        clock.Armed.ShouldBe(0);
+        Actions(chat).ShouldNotContain("chat:now:s1");
+        clock.Armed.ShouldBe(1, "the draw that still found it early armed the timer again");
+
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        Actions(chat).ShouldContain("chat:now:s1");
+    }
 }

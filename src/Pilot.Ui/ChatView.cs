@@ -202,6 +202,31 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     /// <summary>Cancels the turn another node's watchtower is on for a queued message, given that node and the send id; as <see cref="OnAnswerNow"/>.</summary>
     public Func<NodeMark, string, Task<string?>>? OnAnswerNowOn { get; set; }
 
+    /// <summary>How long a queued line has to wait before its Answer now pill shows (PIL1010): a line the watchtower takes at once never flashes one.</summary>
+    public static readonly TimeSpan AnswerNowDelay = TimeSpan.FromSeconds(3);
+
+    /// <summary>The clock the Answer now delay is judged by, and the timer that redraws when it ends: the system's, a fake in a test. The page reads no other clock for it.</summary>
+    public TimeProvider Time { get; set; } = TimeProvider.System;
+
+    // When the page first saw each queued send id; an id that left the queue is dropped. Read and written on the draw only.
+    private readonly Dictionary<string, DateTimeOffset> _firstSeen = new(StringComparer.Ordinal);
+    private ITimer? _pillTimer;
+    private DateTimeOffset _pillTimerDue;
+    private volatile bool _pillTimerFired; // set off the draw thread: a fired timer counts as gone, so an early fire re-arms
+
+    // Raises Changed once, when the pill of the first waiting line comes due: a timer of the Time provider, never a sleep or a poll.
+    private void RedrawAt(DateTimeOffset due, DateTimeOffset now)
+    {
+        if (_pillTimer is not null && !_pillTimerFired && _pillTimerDue == due)
+        {
+            return;
+        }
+        _pillTimer?.Dispose();
+        _pillTimerDue = due;
+        _pillTimerFired = false;
+        _pillTimer = Time.CreateTimer(_ => { _pillTimerFired = true; Changed?.Invoke(); }, null, due - now, Timeout.InfiniteTimeSpan);
+    }
+
     // The node the conversation is with; null is this window's own. Swapped whole.
     private NodeMark? _node;
 
@@ -416,6 +441,8 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         _following?.Cancel();
         _following?.Dispose();
         _following = null;
+        _pillTimer?.Dispose();
+        _pillTimer = null;
     }
 
     /// <summary>Asks the follow to read now rather than at its next look: after a message went.</summary>
@@ -871,6 +898,15 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             rows.Add(_entries.Streaming(writing).WStar());
         }
         var answerNow = CurrentAnswerNow();
+        var seenNow = Time.GetUtcNow();
+        foreach (var gone in _firstSeen.Keys.Where(k => !queuedIds.Contains(k)).ToList())
+        {
+            _firstSeen.Remove(gone);
+        }
+        foreach (var id in queuedIds.OfType<string>())
+        {
+            _firstSeen.TryAdd(id, seenNow);
+        }
         for (var i = 0; i < held.Queued.Length; i++)
         {
             if (queuedIds[i] is { } stale && entryIds.Contains(stale))
@@ -888,9 +924,19 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
                 refusal = Presses.RefusalLine(key, 12f, Failed, 3);
                 if (i == 0 && held.Working && behind is not null && answerNow is not null)
                 {
-                    pill = Presses.Button(key, key,
-                        () => CardsView<TSurface>.Pill("Answer now", key, () => AnswerNow(sendId, answerNow)),
-                        pressed => CardsView<TSurface>.Dead(pressed ? "Answering…" : "Answer now"));
+                    var due = _firstSeen[sendId] + AnswerNowDelay;
+                    if (seenNow >= due || Presses.PendingOf(key) is not null)
+                    {
+                        pill = Presses.Button(key, key,
+                            () => CardsView<TSurface>.Pill("Answer now", key, () => AnswerNow(sendId, answerNow)),
+                            pressed => CardsView<TSurface>.Dead(pressed ? "Answering…" : "Answer now"));
+                    }
+                    else
+                    {
+                        // Its room is kept from the start (a blank of the pill's size) so the row and the words' wrap do not move when it appears.
+                        pill = Layout.Builder.Text(" ", 12f, Palette.Current.Dim, TextAlign.Center).Pad(10f, 4f).WAuto();
+                        RedrawAt(due, seenNow);
+                    }
                 }
             }
             rows.Add(Waiting(held.Queued[i], behind, pill, refusal).WStar());
@@ -998,6 +1044,11 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             return entry;
         }
         var quote = chat.Quote.Length > 0 && chat.Quote != chat.Title ? $"\n> {chat.Quote}" : "";
+        if (chat.Cut)
+        {
+            // The node kept the card's start only (its text limit): say so, so the quote is not read as the whole card.
+            quote += quote.Length > 0 ? " (card cut)" : "\n> (card cut)";
+        }
         return entry with { Text = $"> card {chat.CardId}: {chat.Title}{quote}\n{chat.Words}" };
     }
 

@@ -153,6 +153,46 @@ public sealed partial class ChatFrameTests
         many.ShouldBeLessThan(few * Multiple + Floor);
     }
 
+    // PIL1010: a transcript of long card messages (cut to the transcript's limit) and long replies, with lines waiting behind a running turn.
+    // The first waiting line is the one whose Answer now pill shows once it has waited; the frame is the same either way.
+    [Fact]
+    public async Task AFrameOfManyLongCardMessagesAndRepliesWithWaitingLinesIsWithinTheBudget()
+    {
+        var card = new CardRow
+        {
+            Id = "c7", Bin = CardBin.Ring, Kind = "k", Subject = "flight/X", Title = "A long card", At = At, State = CardState.Open,
+            Detail = string.Join('\n', Enumerable.Range(1, 300).Select(i => $"line {i} of a long detail about why the flight landed: {LongLine}")),
+        };
+        var feed = new List<TranscriptEntry>();
+        for (var i = 0; i < 150; i++)
+        {
+            var words = $"why did flight {i} land, and what would you change? {LongLine}";
+            feed.Add(new TranscriptEntry { Index = feed.Count, Kind = TranscriptKind.User, At = At, SendId = $"sent-{i}", Text = CardContext.Clip(CardContext.Compose(card, "DE1", null, words), TranscriptPage.TextLimit)! });
+            feed.Add(new TranscriptEntry { Index = feed.Count, Kind = TranscriptKind.Assistant, At = At, Text = string.Join("\n\n", Enumerable.Range(0, 8).Select(p => $"Paragraph {p} of the long reply {i}: the build is green and the tests pass. {LongLine}")) });
+        }
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        using var held = new Held(renderer, feed)
+        {
+            Tail = new ChatPage
+            {
+                Entries = [], Total = 0, Working = true, Doing = "running pilot status",
+                Queued = [.. Enumerable.Range(0, 4).Select(i => $"waiting line {i}: {LongLine}")],
+                QueuedIds = ["w0", "w1", "w2", "w3"],
+                QueuedBehind = [.. Enumerable.Repeat("queued behind running pilot status", 4)],
+            },
+        };
+        await held.OpenAsync();
+
+        var ms = BestFrameMs(held.Chat);
+        var line = $"chat frame at 1600x900: {feed.Count} entries (150 long card messages, 150 long replies), 4 waiting lines {ms:F1} ms";
+        TestContext.Current.SendDiagnosticMessage(line);
+        if (Environment.GetEnvironmentVariable("PILOT_FRAME_TIMES") is { Length: > 0 } file)
+        {
+            File.AppendAllLines(file, [line]);
+        }
+        ms.ShouldBeLessThan(FrameBudgetMs);
+    }
+
     // Chosen from the measured frames (see the commit): well above what a loaded CI runner adds to the two frames, far below the 100x of laying every row out.
     private const double Multiple = 4;
     private const double Floor = 25;
