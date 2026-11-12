@@ -864,10 +864,20 @@ public sealed class SessionTracker : BackgroundService
             // The ledger's account of a session the node launched: what started it, and once it ended, why, when and at what wall time.
             row = Launched.Stamp(row, _endedAt.TryGetValue(row.Id, out var endedAt) ? endedAt : null);
         }
-        if (row.Role == SessionRole.Fixer
-            && _state.PrReviews().FirstOrDefault(r => string.Equals(r.Fixer, row.Name, StringComparison.Ordinal)) is { FixRound: { } round })
+        if (row.Role == SessionRole.Fixer && row.FixRound is null)
         {
-            row = row with { FixRound = round };
+            // A round is fixed at the first sight: the row keeps its own once it has one, so a round that ended is not renumbered by the
+            // PR's current round (every round's session has the same name, <machine>-fix-<repo>-<n>). A row first seen already ended has
+            // no way to know its round and stays without one.
+            if (_rows.TryGetValue(row.Id, out var known) && known.FixRound is { } kept)
+            {
+                row = row with { FixRound = kept };
+            }
+            else if (row.State is not (SessionState.Ended or SessionState.Failed)
+                && _state.PrReviews().FirstOrDefault(r => string.Equals(r.Fixer, row.Name, StringComparison.Ordinal)) is { FixRound: { } round })
+            {
+                row = row with { FixRound = round };
+            }
         }
         var wasEnded = _rows.TryGetValue(row.Id, out var before) && before.State is SessionState.Ended or SessionState.Failed;
         _rows[row.Id] = row;

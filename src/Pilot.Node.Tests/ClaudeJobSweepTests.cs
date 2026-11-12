@@ -106,6 +106,17 @@ public sealed class ClaudeJobSweepTests : IDisposable
         _jobs.Calls.ShouldBe(["rm bbbb2222"]);
     }
 
+    /// <summary>PIL1008: a PR fixer's name resolves to the Fixer role, so its old blocked job is pilot's to sweep even with no ledger entry.</summary>
+    [Fact]
+    public async Task A_fixers_job_with_a_pilot_name_and_no_ledger_entry_is_pilots_to_sweep()
+    {
+        Job("bbbb4444", "blocked", "se1-fix-pilot-900", Old);
+
+        await Sweep().SweepAsync(Ct);
+
+        _jobs.Calls.ShouldBe(["rm bbbb4444"]);
+    }
+
     /// <summary>
     /// #893 with #891: a session that ended after its finished turn while it owns a running pilot job is resumed by that job's end, so its
     /// Claude Code job is not swept until then (PIL855's review).

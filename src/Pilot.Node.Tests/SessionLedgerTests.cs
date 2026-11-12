@@ -88,6 +88,27 @@ public sealed class SessionLedgerTests : IDisposable
         (reviewer.Role, reviewer.Pr, reviewer.FixRound).ShouldBe((SessionRole.Reviewer, 7, null));
     }
 
+    /// <summary>PIL1008's review note: every round's fixer has the same name, so a row keeps the round it was first seen in; the PR's later round must not renumber it.</summary>
+    [Fact]
+    public async Task AFixersRowKeepsItsRoundWhenThePrMovesToTheNext()
+    {
+        Launch(AgentRows.SessionA, "de1-fix-pilot-7", SessionStartReasons.PrFix, pr: 7);
+        var review = new PrReviewRow
+        {
+            Repo = "SharpAstro/pilot", Number = 7, Url = "u", Base = "main", Head = "h", ClonePath = _folder, Worktree = _folder, Reviewer = "de1-review-pilot-7",
+            State = default, StartedAt = Start, Fixer = "de1-fix-pilot-7", FixRound = 2,
+        };
+        _state.PutPrReview(review);
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionA, "de1-fix-pilot-7", "working", pid: 1, status: "busy"));
+        await _tracker.PollAsync(Ct);
+
+        _state.PutPrReview(review with { FixRound = 3 });
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionA, "de1-fix-pilot-7", "working", pid: 1, status: "idle"));
+        await _tracker.PollAsync(Ct);
+
+        Row("a1b2c3d4").FixRound.ShouldBe(2);
+    }
+
     [Fact]
     public async Task ASessionTheNodeStoppedCarriesTheEndReasonAndTimeGiven()
     {
