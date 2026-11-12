@@ -124,6 +124,14 @@ public sealed class CardChatTests
         cut.ShouldNotContain("detail line 199");
         CardContext.TryParse(cut, out var chat).ShouldBeTrue();
         (chat.CardId, chat.Title, chat.Words).ShouldBe(("c9", "a long one", "what now?"));
+        chat.Cut.ShouldBeTrue();
+        chat.Quote.ShouldNotContain("[...]");
+        chat.Quote.ShouldStartWith("detail line 0");
+
+        // Not cut: the flag is off and the quote is as before.
+        CardContext.TryParse(message, out var whole).ShouldBeTrue();
+        whole.Cut.ShouldBeFalse();
+        whole.Words.ShouldBe("what now?");
 
         // Not a card's message, or words that alone are over the limit: the caller's own cut.
         CardContext.Clip(new string('x', 2000), 1000).ShouldBeNull();

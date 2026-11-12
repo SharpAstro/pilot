@@ -292,8 +292,12 @@ public sealed class ChatAboutCardTests
         text.ShouldNotContain("[pilot card");
         text.ShouldNotContain("[end of card]");
         text.ShouldNotContain("[...]");
-        text.ShouldNotContain("you ");
+        // One row for the send: the feed's, with no echo of the outbox beside it.
+        Occurrences(text, "why did it land?").ShouldBe(1);
+        Occurrences(text, "> card c7").ShouldBe(1);
     }
+
+    private static int Occurrences(string text, string part) => text.Split(part).Length - 1;
 
     [Fact]
     public async Task CapturesOfAMessageAboutALongCardAtNarrowAndWideWindowsInBothPalettes()

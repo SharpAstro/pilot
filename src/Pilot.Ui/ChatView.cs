@@ -998,6 +998,11 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             return entry;
         }
         var quote = chat.Quote.Length > 0 && chat.Quote != chat.Title ? $"\n> {chat.Quote}" : "";
+        if (chat.Cut)
+        {
+            // The node kept the card's start only (its text limit): say so, so the quote is not read as the whole card.
+            quote += quote.Length > 0 ? " (card cut)" : "\n> (card cut)";
+        }
         return entry with { Text = $"> card {chat.CardId}: {chat.Title}{quote}\n{chat.Words}" };
     }
 
