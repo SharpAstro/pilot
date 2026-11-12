@@ -6,8 +6,9 @@ namespace Pilot.Node.Flights;
 /// <summary>
 /// Each granted peer's latest PR read, kept as it changes (#834): one event stream per peer, its snapshot's row and then each
 /// <see cref="PullRequestsChangedEvent"/>'s, so <see cref="PullRequestWatch"/> takes it without asking the peer at read time. A stream that
-/// drops is opened again after a backoff; a peer whose stream has been down past one pace is forgotten, so the watch asks it, and when it
-/// does not answer reads the repos itself.
+/// drops is opened again after a backoff that doubles while the peer stays away (a laptop that is off was tried every 30 s all day,
+/// 2026-11-12); a peer whose stream has been down past one pace is forgotten and not asked at read time either (<see cref="IsDown"/>):
+/// the watch reads its repos itself until the stream is up again.
 /// </summary>
 /// <param name="fleet">The fleet, looked at each <see cref="Rescan"/> so a grant added later is followed.</param>
 /// <param name="time">The clock: backoffs, rescans and ageing run on it.</param>
@@ -25,7 +26,8 @@ public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Fun
     /// <summary>The first wait before a dropped stream is opened again; it doubles up to <see cref="MaxBackoff"/> and starts over once a row arrives.</summary>
     public TimeSpan Backoff { get; init; } = TimeSpan.FromSeconds(1);
 
-    public TimeSpan MaxBackoff { get; init; } = TimeSpan.FromSeconds(30);
+    /// <summary>The longest wait between two tries of a peer that stays away: a node that is switched off is not a thing to poll.</summary>
+    public TimeSpan MaxBackoff { get; init; } = TimeSpan.FromMinutes(10);
 
     /// <summary>Raised after a peer's row is kept or its stream is found down.</summary>
     public event Action? Changed;
@@ -58,6 +60,18 @@ public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Fun
                 return null;
             }
             return kept.Row;
+        }
+    }
+
+    /// <summary>
+    /// Whether the peer's stream has been down past one pace: this cache is already trying it, on its backoff, so nothing else
+    /// asks it meanwhile. False for a peer not followed, and while its stream is up or only just dropped.
+    /// </summary>
+    public bool IsDown(string name)
+    {
+        lock (_gate)
+        {
+            return _peers.TryGetValue(name, out var kept) && kept.DownSince is { } since && time.GetUtcNow() - since > (pace?.Invoke() ?? Fallback);
         }
     }
 
@@ -168,7 +182,7 @@ public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Fun
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
-                await Error.WriteLineAsync($"peer pull requests: {peer.Name}'s stream failed, opening it again in {wait.TotalSeconds:0} s: {ex.Message}").ConfigureAwait(false);
+                await Error.WriteLineAsync($"peer pull requests: {peer.Name}'s stream failed, opening it again in {(wait.TotalSeconds < 120 ? $"{wait.TotalSeconds:0} s" : $"{wait.TotalMinutes:0} min")}: {ex.Message}").ConfigureAwait(false);
             }
             lock (_gate)
             {

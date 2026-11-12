@@ -194,7 +194,7 @@ public sealed class PeerPullRequestsTests : IDisposable
         peer.Loads.ShouldBe(0);
         taken.PullRequests.Select(p => p.Number).ShouldBe([7]);
 
-        // B goes away and stays away longer than one pace: its read is gone, the ask at read time fails, and A searches GitHub.
+        // B goes away and stays away longer than one pace: its read is gone, it is not asked at read time (the cache is trying it), and A searches GitHub.
         peer.Drop();
         await Backing(cache);
         _clock.Advance(cache.Backoff);
@@ -205,6 +205,35 @@ public sealed class PeerPullRequestsTests : IDisposable
         github.Searches.Count.ShouldBe(1);
         read.PullRequests.Select(p => p.Number).ShouldBe([7]);
         read.RepoReads.Single().By.ShouldBe("A1");
+        cache.IsDown("B1").ShouldBeTrue();
+        peer.Loads.ShouldBe(0);
+        log.ToString().ShouldNotContain("did not answer");
         await cache.StopAsync(Ct);
+    }
+
+    [Fact]
+    public async Task APeerThatStaysAwayIsTriedLessAndLessOftenUpToTheLongestWait()
+    {
+        var peer = new StreamPeer();
+        using var cache = Cache(peer);
+        var log = new StringWriter();
+        cache.Error = TextWriter.Synchronized(log);
+        await cache.StartAsync(Ct);
+        peer.Push(RowOf(Noon, 7));
+        await Until(cache, () => cache.RowOf("B1") is not null);
+        cache.IsDown("B1").ShouldBeFalse();
+
+        // Each try of a peer that is still away waits twice as long as the last, and no longer than MaxBackoff (1, 2, 4, 4 s here).
+        peer.Drop();
+        foreach (var (wait, opened) in new[] { (1, 2), (2, 3), (4, 4), (4, 5) })
+        {
+            await Backing(cache);
+            _clock.Advance(TimeSpan.FromSeconds(wait) - TimeSpan.FromMilliseconds(1));
+            peer.Opened.ShouldBe(opened - 1, $"not tried before {wait} s are over");
+            _clock.Advance(TimeSpan.FromMilliseconds(1));
+            await Until(cache, () => peer.Opened >= opened);
+        }
+        await cache.StopAsync(Ct);
+        new PeerPullRequests(() => null, _clock).MaxBackoff.ShouldBe(TimeSpan.FromMinutes(10));
     }
 }
