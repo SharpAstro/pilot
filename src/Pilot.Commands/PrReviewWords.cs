@@ -21,13 +21,13 @@ internal static class PrReviewWords
     {
         var fixer = review.Fixer!;
         var round = review.FixRound ?? 1;
-        var session = sessions.FirstOrDefault(s => s.Name == fixer);
+        var session = SessionPick.ByName(sessions, fixer);
         if (session is null)
         {
             return $"fix ended, {fixer}, round {round}, session gone";
         }
         var state = session.State.ToString().ToLowerInvariant();
-        return session.State is SessionState.Working or SessionState.Waiting or SessionState.Idle
+        return SessionPick.IsLive(session)
             ? $"fixing, {fixer}, round {round}, {state}"
             : $"fix ended, {fixer}, round {round}, {state}";
     }

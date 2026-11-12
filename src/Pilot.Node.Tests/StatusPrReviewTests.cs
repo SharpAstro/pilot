@@ -67,4 +67,32 @@ public class StatusPrReviewTests
     {
         PilotCommand.Status(Snapshot(Review())).ShouldContain("fix ended, de1-fix-pilot-1000, round 4");
     }
+
+    private static SessionRow Round(string id, SessionState state, int day) =>
+        Session(state) with { Id = id, SessionId = id, StartedAt = DateTimeOffset.UnixEpoch.AddDays(day) };
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ALiveRound4IsFixingWhateverTheOrderOfTheEndedRoundsBeforeIt(bool newestFirst)
+    {
+        SessionRow[] rows = [Round("r1", SessionState.Ended, 1), Round("r2", SessionState.Ended, 2), Round("r3", SessionState.Ended, 3), Round("r4", SessionState.Working, 4)];
+        if (newestFirst)
+        {
+            Array.Reverse(rows);
+        }
+        var snapshot = Snapshot(Review(), rows);
+
+        PilotCommand.Status(snapshot).ShouldContain("fixing, de1-fix-pilot-1000, round 4, working");
+        StatusMarkdown.Build(snapshot).ShouldContain("fixing, de1-fix-pilot-1000, round 4, working");
+    }
+
+    [Fact]
+    public void WhenEveryRoundOfTheNameEndedTheFixIsSaidToHaveEnded()
+    {
+        var snapshot = Snapshot(Review(), Round("r1", SessionState.Ended, 1), Round("r4", SessionState.Ended, 4));
+
+        PilotCommand.Status(snapshot).ShouldContain("fix ended, de1-fix-pilot-1000, round 4, ended");
+        PilotCommand.Status(snapshot).ShouldNotContain("fixing,");
+    }
 }

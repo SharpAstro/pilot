@@ -35,7 +35,7 @@ internal sealed record PrRoundLine
     /// <summary>The line's text on one row, the tooltip's whole.</summary>
     public string Whole => $"{Pr} {Title} · {Round} · {Session} · {State}";
 
-    private static bool Live(SessionRow? s) => s is { State: SessionState.Working or SessionState.Waiting or SessionState.Idle };
+    private static bool Live(SessionRow? s) => SessionPick.IsLive(s);
 
     private static string Word(SessionState state) => state switch
     {
@@ -49,15 +49,11 @@ internal sealed record PrRoundLine
     /// <summary>One line for each review that is running (reviewing), or whose fixer's session is live; a closed one whose fixer ended has none.</summary>
     public static IReadOnlyList<PrRoundLine> Build(IEnumerable<PrReviewRow> reviews, IEnumerable<SessionRow> sessions)
     {
-        var byName = new Dictionary<string, SessionRow>(StringComparer.Ordinal);
-        foreach (var session in sessions)
-        {
-            byName[session.Name] = session;
-        }
+        var all = sessions as IReadOnlyList<SessionRow> ?? [.. sessions];
         var lines = new List<PrRoundLine>();
         foreach (var review in reviews)
         {
-            var fixer = review.Fixer is { Length: > 0 } name ? byName.GetValueOrDefault(name) : null;
+            var fixer = SessionPick.ByName(all, review.Fixer);
             bool fixing;
             if (review.State == PrReviewState.Reviewing && review.ClosedAt is null)
             {
@@ -71,7 +67,7 @@ internal sealed record PrRoundLine
             {
                 continue;
             }
-            var session = fixing ? fixer : byName.GetValueOrDefault(review.Reviewer);
+            var session = fixing ? fixer : SessionPick.ByName(all, review.Reviewer);
             var sessionName = fixing ? review.Fixer! : review.Reviewer;
             var state = fixing ? "fixing" : "reviewing";
             lines.Add(new PrRoundLine

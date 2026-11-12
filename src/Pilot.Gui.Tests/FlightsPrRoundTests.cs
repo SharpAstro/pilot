@@ -112,4 +112,47 @@ public sealed class FlightsPrRoundTests
         line.Session.ShouldBe("de1-review-pilot-1000");
         line.State.ShouldBe("reviewing · working");
     }
+
+    private static SessionRow[] Rounds(bool newestFirst, SessionState last)
+    {
+        SessionRow[] rows =
+        [
+            Live.Row("r1", Fixer, SessionState.Ended) with { StartedAt = Live.At.AddHours(-4) },
+            Live.Row("r2", Fixer, SessionState.Ended) with { StartedAt = Live.At.AddHours(-3) },
+            Live.Row("r3", Fixer, SessionState.Ended) with { StartedAt = Live.At.AddHours(-2) },
+            Live.Row("r4", Fixer, last) with { StartedAt = Live.At.AddHours(-1) },
+        ];
+        if (newestFirst)
+        {
+            Array.Reverse(rows);
+        }
+        return rows;
+    }
+
+    [Theory]
+    [InlineData(nameof(FlightsViewMode.List), false)]
+    [InlineData(nameof(FlightsViewMode.List), true)]
+    [InlineData(nameof(FlightsViewMode.Grid), false)]
+    [InlineData(nameof(FlightsViewMode.Grid), true)]
+    [InlineData(nameof(FlightsViewMode.Canvas), false)]
+    [InlineData(nameof(FlightsViewMode.Canvas), true)]
+    public void ALiveRound4ShowsAFixingRowWhateverTheOrderOfTheEndedRoundsOfItsName(string modeName, bool newestFirst)
+    {
+        var screen = Screen([Review()], Rounds(newestFirst, SessionState.Working));
+
+        var (text, _) = Render(Enum.Parse<FlightsViewMode>(modeName), screen, 1280f);
+
+        screen.Rounds.Single().State.ShouldBe("fixing · working");
+        text.ShouldContain("fixing · working");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WhenEveryRoundOfTheNameEndedThereIsNoRow(bool newestFirst)
+    {
+        var screen = Screen([Review(PrReviewState.Closed, closed: Live.At)], Rounds(newestFirst, SessionState.Ended));
+
+        screen.Rounds.ShouldBeEmpty();
+    }
 }
