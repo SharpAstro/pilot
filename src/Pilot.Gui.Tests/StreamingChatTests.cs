@@ -82,6 +82,7 @@ public sealed class StreamingChatTests
         };
         chat.OnSend = _ => Task.FromResult<string?>(null);
         chat.OnAnswerNow = answerNow;
+        chat.Time = new FakeClock();
         if (night)
         {
             chat.Night = new NightSwitch { On = true };
@@ -103,6 +104,13 @@ public sealed class StreamingChatTests
     {
         chat.Open();
         await Until(() => chat.Entries.Count >= entries);
+    }
+
+    /// <summary>Has the chat see its queued lines, then lets them wait past the Answer now delay on its fake clock (no wall-clock wait).</summary>
+    private static void Waited(ChatView<RgbaImage> chat)
+    {
+        chat.Tree();
+        ((FakeClock)chat.Time).Advance(ChatView<RgbaImage>.AnswerNowDelay);
     }
 
     private static string Described(ChatView<RgbaImage> chat, int rows = 120) =>
@@ -231,6 +239,7 @@ public sealed class StreamingChatTests
         });
         await Open(chat, 5);
         chat.Close();
+        Waited(chat);
 
         var text = Described(chat);
         text.ShouldContain("queued behind running pilot status");
@@ -251,6 +260,7 @@ public sealed class StreamingChatTests
         var chat = Chat(renderer, () => Whole(Tail(false) with { QueuedBehind = [ChatPage.ReadAtNextStep, ChatPage.ReadAtNextStep] }), _ => Task.FromResult<string?>(null));
         await Open(chat, 5);
         chat.Close();
+        Waited(chat);
 
         var text = Described(chat);
         text.ShouldContain("read at its next step");
@@ -278,6 +288,7 @@ public sealed class StreamingChatTests
         chat.Presses.DoneFor = TimeSpan.Zero;
         await Open(chat, 5);
         chat.Close();
+        Waited(chat);
         Click(chat, "chat:now:s1");
 
         // The state is the node's: working until it answers, no second press.
@@ -414,6 +425,7 @@ public sealed class StreamingChatTests
         var chat = Chat(renderer, () => Whole(Tail(lengthen), Many(lengthen ? 30 : 4, lengthen)), _ => Task.FromResult<string?>(null), night);
         await Open(chat, lengthen ? 30 : 4);
         chat.Close();
+        Waited(chat);
 
         var arranged = Pixels(chat, renderer, width, 800);
         TextOverlap.Faults(arranged).ShouldBeEmpty();

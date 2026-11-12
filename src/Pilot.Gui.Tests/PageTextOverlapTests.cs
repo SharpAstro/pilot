@@ -412,6 +412,7 @@ public sealed class PageTextOverlapTests
     private static async Task<Layout.Node> OpenChat(PilotChrome<RgbaImage> chrome, PageData data)
     {
         var chat = chrome.Chat;
+        chat.Time = new FakeClock();
         var feed = data.Chat;
         // A watchtower mid-turn when the feed has anything to show: the reply so far, two lines waiting behind it with the first one's Answer
         // now, and the last twenty turns' timings under the box, so the sweep and the frame time cover what PIL855 added.
@@ -429,6 +430,9 @@ public sealed class PageTextOverlapTests
         }
         chat.Close();
         chat.Entries.Count.ShouldBe(feed.Length);
+        // The first waiting line's Answer now shows once it has waited: look at the page with it, on a clock the test moves.
+        chat.Tree();
+        ((FakeClock)chat.Time).Advance(ChatView<RgbaImage>.AnswerNowDelay);
         return chat.Tree();
     }
 
