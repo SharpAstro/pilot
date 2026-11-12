@@ -404,6 +404,12 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
                 {
                     return new PrReadPeer(peer.Name, kept, [.. kept.RepoReads.Where(s => s.Flying).Select(s => s.Repo)]);
                 }
+                // A peer whose stream has been down past one pace is being tried by the cache, on its backoff: it is not asked
+                // again at every read, and its repos are read here until its stream is up.
+                if (Held?.IsDown(peer.Name) == true)
+                {
+                    return null;
+                }
                 using var budget = new CancellationTokenSource(HeldTokenFleet.ReadBudget, time);
                 var row = (await peer.LoadAsync(budget.Token).WaitAsync(budget.Token)).PullRequests;
                 return new PrReadPeer(peer.Name, row, [.. (row?.RepoReads ?? []).Where(s => s.Flying).Select(s => s.Repo)]);
