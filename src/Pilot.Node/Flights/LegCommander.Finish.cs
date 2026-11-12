@@ -585,8 +585,7 @@ public sealed partial class LegCommander
                     // The test host never answered its launch (#861): one more try, as a fresh job, and at most one per recheck.
                     var again = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken, flight.Code, leg.Name));
                     run = again.TestHostNeverLaunched
-                        ? again with { Tail = $"the test host never answered its launch, twice; the check was retried once
-{again.Tail}" }
+                        ? again with { Tail = $"the test host never answered its launch, twice; the check was retried once\n{again.Tail}" }
                         : again;
                 }
             }
