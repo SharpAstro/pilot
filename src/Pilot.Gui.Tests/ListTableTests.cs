@@ -532,6 +532,43 @@ public sealed class ListTableTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(1280f)]
+    [InlineData(1200f)]
+    public void EveryGripOnANarrowSessionsPageFollowsThePointerBothWays(float wide)
+    {
+        // Where columns drop, DIR.Lib holds a trade to each side's MaxWidth and draws grips only on drawn columns, so no drag
+        // widens a column to where it would drop (it left Spend/min at 120 and gone at 1280, 2026-11-12).
+        var screen = SessionsScreenOf();
+        var grips = DividerActions(wide);
+        grips.ShouldContain("sessions:table:divider:6", "the grip between Age and Spend/min is drawn, the ones beside a hidden column are not: " + string.Join(", ", grips));
+        foreach (var hit in grips)
+        {
+            foreach (var by in new[] { 30f, -30f })
+            {
+                var view = Sessions();
+                void Render() { view.Render(screen, new RectF32(0f, 0f, wide, PageHeight)); view.Render(screen, new RectF32(0f, 0f, wide, PageHeight)); }
+                Render();
+                var before = Painted(view).Single(r => r.Result is HitResult.ButtonHit b && b.Action == hit).X;
+
+                Drag(view, Render, hit, by);
+
+                // The grip stays drawn (Single throws otherwise): the drag never widens a column to where it drops.
+                // The grip may stand still where the trade is held, but never moves against the pointer.
+                var after = Painted(view).Single(r => r.Result is HitResult.ButtonHit b && b.Action == hit).X;
+                (by < 0f ? after <= before + 0.5f : after >= before - 0.5f).ShouldBeTrue($"{hit} by {by} at {wide} moved against the pointer ({before} to {after})");
+            }
+        }
+    }
+
+    private List<string> DividerActions(float wide)
+    {
+        var view = Sessions();
+        view.Render(SessionsScreenOf(), new RectF32(0f, 0f, wide, PageHeight));
+        view.Render(SessionsScreenOf(), new RectF32(0f, 0f, wide, PageHeight));
+        return Painted(view).Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.StartsWith("sessions:table:divider:", StringComparison.Ordinal)).Distinct().ToList();
+    }
+
     [Fact]
     public void AColumnDraggedWiderDropsWhenTheWindowNarrowsAfterwardsAsARestoredOneDoes()
     {
