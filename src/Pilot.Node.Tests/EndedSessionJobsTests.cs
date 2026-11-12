@@ -154,10 +154,11 @@ public sealed class EndedSessionJobsTests : IDisposable
             AgentRows.Background(AgentRows.SessionB, "worker-a", "working", pid: 4343, status: "busy", startedAt: 1792000099000));
         _state.Sessions().Single(s => s.Id == worker).State.ShouldBeOneOf(SessionState.Ended, SessionState.Failed);
 
-        // Nothing to wait out: the tracker drops (or keeps) the jobs inside the poll that ends the session, so the row is already final.
-        _state.Jobs().Single(j => j.Id == queued).State.ShouldBe(JobState.Queued);
-
+        // The drop is only a signal to the dispatcher, handled off the poll's thread: the row cannot be read yet. Release waits on
+        // the change feed until every job has left Queued and Running, so a kept job has run and a dropped one ends Cancelled.
         await Release(holder);
+        var kept = _state.Jobs().Single(j => j.Id == queued);
+        kept.State.ShouldBe(JobState.Succeeded, kept.Error);
     }
 
     [Fact]
@@ -175,12 +176,14 @@ public sealed class EndedSessionJobsTests : IDisposable
         // Ended and nothing listed in its place yet: the replacement is still starting, so its jobs stay.
         await Poll(AgentRows.Background(AgentRows.SessionA, "worker-a", "done"));
         await Poll(AgentRows.Background(AgentRows.SessionA, "worker-a", "done"));
-        // Nothing to wait out: the drop decision is made inside the poll, so the row is already final.
-        _state.Jobs().Single(j => j.Id == queued).State.ShouldBe(JobState.Queued);
         _tracker.IsEndedForGood(worker).ShouldBeFalse();
 
+        // The drop is only a signal to the dispatcher, handled off the poll's thread: the row cannot be read yet. Release waits
+        // on the change feed until every job has left Queued and Running, so a kept job has run and a dropped one ends Cancelled.
         replacing = false;
         await Release(holder);
+        var kept = _state.Jobs().Single(j => j.Id == queued);
+        kept.State.ShouldBe(JobState.Succeeded, kept.Error);
     }
 
     [Fact]
