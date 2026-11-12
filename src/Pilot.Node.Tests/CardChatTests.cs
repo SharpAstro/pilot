@@ -106,4 +106,27 @@ public sealed class CardChatTests
         chat.Words.ShouldBe("why did it fail?\nand when?");
         CardContext.TryParse("just a plain message", out _).ShouldBeFalse();
     }
+
+    [Fact]
+    public void ALongCardMessageIsCutInsideItsBlockAndOnlyWhenItsWordsFit()
+    {
+        var card = new CardRow
+        {
+            Id = "c9", Bin = CardBin.ForYou, Kind = "note", Subject = "node", Title = "a long one", At = DateTimeOffset.UnixEpoch, State = CardState.Open,
+            Detail = string.Join('\n', Enumerable.Range(0, 200).Select(i => $"detail line {i}")),
+        };
+        var message = CardContext.Compose(card, "DU1", null, "what now?");
+
+        CardContext.Clip(message, message.Length).ShouldBe(message);
+        var cut = CardContext.Clip(message, 1000).ShouldNotBeNull();
+        cut.Length.ShouldBeLessThanOrEqualTo(1000);
+        cut.ShouldContain("detail line 0");
+        cut.ShouldNotContain("detail line 199");
+        CardContext.TryParse(cut, out var chat).ShouldBeTrue();
+        (chat.CardId, chat.Title, chat.Words).ShouldBe(("c9", "a long one", "what now?"));
+
+        // Not a card's message, or words that alone are over the limit: the caller's own cut.
+        CardContext.Clip(new string('x', 2000), 1000).ShouldBeNull();
+        CardContext.Clip(CardContext.Compose(card, "DU1", null, new string('w', 2000)), 1000).ShouldBeNull();
+    }
 }
