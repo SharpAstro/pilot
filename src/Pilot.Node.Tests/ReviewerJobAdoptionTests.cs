@@ -14,7 +14,7 @@ namespace Pilot.Node.Tests;
 public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
 {
     // A ceiling a busy machine does not reach, never a pace.
-    private static readonly TimeSpan Ceiling = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(20);
 
     // Told on every change of the state; the subscription lives as long as the state, which this test owns.
     private readonly StateChanges _changes;

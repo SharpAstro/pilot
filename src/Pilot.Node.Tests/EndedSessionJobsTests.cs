@@ -29,7 +29,7 @@ public sealed class EndedSessionJobsTests : IDisposable
     private readonly IDisposable _feed;
 
     // A ceiling a busy machine does not reach, never a pace: every wait below is on the state's next change.
-    private static readonly TimeSpan Ceiling = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(20);
 
     public EndedSessionJobsTests()
     {
