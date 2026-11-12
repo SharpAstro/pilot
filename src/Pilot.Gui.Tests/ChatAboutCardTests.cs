@@ -264,6 +264,7 @@ public sealed class ChatAboutCardTests
         };
         chat.Open();
         chat.Tree();
+        chat.Ui.Focus.Focus(chat.Input);
         var tracker = new BackgroundTaskTracker();
         TextInputInteraction.HandleText(chat.Input, words);
         TextInputInteraction.HandleKey(InputKey.Enter, InputModifier.None, new TextInputInteraction.KeyContext(tracker, chat.Ui.Focus, () => { }));
