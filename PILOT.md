@@ -102,7 +102,7 @@ dotnet test Pilot.Gui.Tests -c Release --no-build
 - Repo-wide guard tests carry `[Trait("Category", "Invariant")]` and run in seconds (`--filter Category=Invariant`); a new repo-wide guard gets the trait too.
 - CI builds the whole solution and runs exactly two test projects, `Pilot.Node.Tests` and `Pilot.Gui.Tests`, on
   ubuntu and windows (win-x64). A check that matches CI runs both; a narrower one filters with
-  `--filter FullyQualifiedName~<Name>`.
+  `--filter FullyQualifiedName~<Name>`. A leg's check filters by `FullyQualifiedName`, so it runs the Slow tests of the classes its filter names (the Slow trait is a `Category`, which that filter does not exclude): they prove the leg's change. A check whose test host never answered its launch (#861) is retried once as a fresh job.
 - Tests are xunit.v3 with Shouldly. Code targets `net10.0`; there is no `global.json`.
 - No AOT publish runs on a push to main. Native AOT is only in `release.yml`, on a `v<major>.<minor>.<patch>` tag, so
   trim and AOT analyzer warnings do not show in an ordinary build.

@@ -17,6 +17,33 @@ public sealed record CheckRun(int ExitCode, string Tail)
 
     /// <summary>Stopped by its budget while the machine was saturated for most of the run: worth one more try.</summary>
     public bool StoppedSaturated => StoppedByBudget && Saturation > JobRunner.SaturatedShare;
+
+    /// <summary>
+    /// The lines xunit.v3 and vstest / Microsoft.Testing.Platform write when the test host did not answer its launch within the
+    /// launch limit (#861). 'dotnet test' then often ends in 'No test matches the given testcase filter', which reads like a
+    /// filter mistake; that line alone, from a host that ran, is no such sign. Only "Test process did not respond within" is a wording
+    /// seen in a real run (#861); the others are the wordings of vstest and Microsoft.Testing.Platform for the same failure, matched
+    /// case-insensitively, and a new wording is added here with a case in CheckRunnerTests when one is seen.
+    /// </summary>
+    private static readonly string[] LaunchTimeoutLines =
+    [
+        "Test process did not respond within",
+        "Test host process did not respond within",
+        "testhost did not connect",
+        "test host did not connect",
+        "Test host process exited before connecting",
+        "Failed to connect to test host",
+        "did not connect to the test host",
+    ];
+
+    /// <summary>
+    /// Failed because the test host never launched (its launch limit passed, #861): worth one more try as a fresh job. False for a
+    /// run that reached a test result, and for a bare 'No test matches' from a host that ran (a wrong filter).
+    /// </summary>
+    public bool TestHostNeverLaunched =>
+        !Passed && !StoppedByBudget
+        && LaunchTimeoutLines.Any(l => Tail.Contains(l, StringComparison.OrdinalIgnoreCase))
+        && !Tail.Contains("Passed!", StringComparison.Ordinal) && !Tail.Contains("Failed!", StringComparison.Ordinal);
 }
 
 /// <summary>Running a leg's check command in its plane, so a test decides what it says.</summary>

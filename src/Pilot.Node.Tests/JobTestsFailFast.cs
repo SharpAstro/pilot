@@ -76,6 +76,8 @@ public sealed class JobTestsFailFast : JobTestsBase
     public async Task ACheckStoppedAtItsFirstFailureWaitsForWhyItFailedBeforeTheKill()
     {
         var fake = UseFake();
+        // The grace is the test's own ceiling, so a loaded machine that prints the report late still proves the report arrives, not that it arrives within 3 s.
+        _jobs.FailFastGrace = WaitCeiling;
         // xunit's [FAIL] line comes first; the block that says why comes later, once the test says so.
         var check = _jobs.RunCheckAsync("TIA1", "parser", $"echo '[xUnit.net 00:00:01.62]     {Test} [FAIL]'; sleep 60", _root, TimeSpan.FromMinutes(30), Ct);
         var row = _state.Jobs().Single(j => j.Kind == JobKind.Check);
@@ -87,7 +89,7 @@ public sealed class JobTestsFailFast : JobTestsBase
         {
             process.Print(line);
         }
-        var run = await check.WaitAsync(CheckWait, Ct);
+        var run = await check.WaitAsync(WaitCeiling, Ct);
 
         run.Tail.ShouldContain($"stopped at its first failure: {Short}");
         run.Tail.ShouldContain(Assertion);

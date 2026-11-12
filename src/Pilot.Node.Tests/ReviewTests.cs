@@ -110,13 +110,8 @@ public abstract class ReviewTestsBase : IDisposable
     /// </summary>
     private protected static async Task Started(LegCommander legs, string code)
     {
-        var clock = Stopwatch.StartNew();
-        while (legs.Starting(code))
-        {
-            // Git and the plane's setup run inside the start; below-normal jobs on a saturated machine took over 20 s for it.
-            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(90), $"{code}'s session was not recorded"); // budget: git and the plane's setup on a saturated machine took over 20 s (#856)
-            await Task.Delay(10, Ct);
-        }
+        // Git and the plane's setup run inside the start; the commander says when the reservation is gone, so a saturated machine only makes it later.
+        await legs.WhenNotStartingAsync(code, TimeSpan.FromMinutes(5), Ct);
     }
 
     private protected void MainMoves()

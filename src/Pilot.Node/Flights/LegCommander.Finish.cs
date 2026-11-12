@@ -580,6 +580,14 @@ public sealed partial class LegCommander
                         ? again with { Tail = $"stopped by its budget twice; the machine was saturated the first time, so it was retried once\n{again.Tail}" }
                         : again;
                 }
+                else if (run.TestHostNeverLaunched)
+                {
+                    // The test host never answered its launch (#861): one more try, as a fresh job, and at most one per recheck.
+                    var again = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken, flight.Code, leg.Name));
+                    run = again.TestHostNeverLaunched
+                        ? again with { Tail = $"the test host never answered its launch, twice; the check was retried once\n{again.Tail}" }
+                        : again;
+                }
             }
             catch (OperationCanceledException) when (checks.NodeStopping)
             {

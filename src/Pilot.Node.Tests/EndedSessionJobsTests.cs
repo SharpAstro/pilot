@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
@@ -14,7 +13,7 @@ namespace Pilot.Node.Tests;
 /// A session that ends without the node stopping it (finished or crashed, as the tracker sees it) has its queued jobs dropped
 /// ("dropped: its worker ended", nobody woken), and a running job of an ended session nothing replaced wakes nobody (#327).
 /// </summary>
-[Trait("Category", "Slow")]
+// The jobs run on FakeJobLauncher and every wait is on the state's change feed: no shell, no poll, no wall-clock pace.
 public sealed class EndedSessionJobsTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -26,12 +25,19 @@ public sealed class EndedSessionJobsTests : IDisposable
     private readonly ConcurrentQueue<CommandRequest> _said = new();
     private readonly SessionTracker _tracker;
     private readonly JobRunner _jobs;
+    private readonly StateChanges _changes;
+    private readonly IDisposable _feed;
+
+    // A ceiling a busy machine does not reach, never a pace: every wait below is on the state's next change.
+    private static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(20);
 
     public EndedSessionJobsTests()
     {
+        (_changes, _feed) = StateChanges.Watch(_state);
         _tracker = new SessionTracker(_state, _agents, _profile.Options(), () => false, TimeProvider.System, NullLogger<SessionTracker>.Instance);
         _jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), TimeProvider.System)
         {
+            Launcher = new FakeJobLauncher(TimeProvider.System),
             Say = (command, _) =>
             {
                 _said.Enqueue(command);
@@ -41,11 +47,12 @@ public sealed class EndedSessionJobsTests : IDisposable
         _tracker.DropJobs = (owners, why) => _jobs.DropQueuedOf(owners, why);
         _jobs.EndedForGood = _tracker.IsEndedForGood;
         _jobs.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
-        _jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct).GetAwaiter().GetResult(); // budget: a saturated machine starts git, pwsh and the launch late; only a failing test waits it out (#743)
+        _jobs.Recovered.WaitAsync(Ceiling, Ct).GetAwaiter().GetResult();
     }
 
     public void Dispose()
     {
+        _feed.Dispose();
         _jobs.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
         _profile.Dispose();
         try
@@ -75,18 +82,11 @@ public sealed class EndedSessionJobsTests : IDisposable
     private string Queue(string target, string command) =>
         _jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = target, Args = [Path.GetTempPath(), "0", command], Who = "test" }).Made.ShouldNotBeNull();
 
-    private async Task<JobRow> Until(string id, Func<JobRow, bool> condition, int seconds = 120)
+    private async Task<JobRow> Until(string id, Func<JobRow, bool> condition)
     {
-        var clock = Stopwatch.StartNew();
-        while (true)
-        {
-            if (_state.Jobs().Single(j => j.Id == id) is var job && condition(job))
-            {
-                return job;
-            }
-            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(seconds), $"job {id} did not reach the state");
-            await Task.Delay(20, Ct);
-        }
+        JobRow? job = null;
+        await _changes.UntilAsync(() => condition(job = _state.Jobs().Single(j => j.Id == id)), Ceiling, Ct, $"job {id} did not reach the state");
+        return job!;
     }
 
     private async Task Release(string holder)
@@ -111,6 +111,10 @@ public sealed class EndedSessionJobsTests : IDisposable
 
         // One listing that omits it is a blip; the end counts once the next poll agrees.
         await Poll(endedListing, Live(AgentRows.SessionB, "worker-b", 4343));
+        // A drop, were the blip to cause one, is handled by the dispatcher after the poll returns. A job queued behind it for the
+        // other session is handled in the same pass, so once that one is placed behind the other two the first read cannot be a read too early.
+        var probe = Queue(Verbs.SessionTarget(AgentRows.SessionB[..8]), "echo probe");
+        await Until(probe, j => j.Step?.Contains("queued, 2 ahead") == true);
         _state.Jobs().Single(j => j.Id == first).State.ShouldBe(JobState.Queued);
         await Poll(endedListing, Live(AgentRows.SessionB, "worker-b", 4343));
         _state.Sessions().Single(s => s.Id == worker).State.ShouldBeOneOf(SessionState.Ended, SessionState.Failed);
@@ -123,8 +127,8 @@ public sealed class EndedSessionJobsTests : IDisposable
             row.Told.ShouldBeTrue();
         }
         _said.ShouldBeEmpty();
-        var live = Queue(Verbs.SessionTarget(AgentRows.SessionB[..8]), "echo three");
-        (await Until(live, j => j.Step?.StartsWith("next in line") == true)).State.ShouldBe(JobState.Queued);
+        // The live session's job, queued before the drop, is untouched by it.
+        (await Until(probe, j => j.Step?.StartsWith("next in line") == true)).State.ShouldBe(JobState.Queued);
 
         await Release(holder);
     }
@@ -154,10 +158,11 @@ public sealed class EndedSessionJobsTests : IDisposable
             AgentRows.Background(AgentRows.SessionB, "worker-a", "working", pid: 4343, status: "busy", startedAt: 1792000099000));
         _state.Sessions().Single(s => s.Id == worker).State.ShouldBeOneOf(SessionState.Ended, SessionState.Failed);
 
-        await Task.Delay(200, Ct);
-        _state.Jobs().Single(j => j.Id == queued).State.ShouldBe(JobState.Queued);
-
+        // The drop is only a signal to the dispatcher, handled off the poll's thread: the row cannot be read yet. Release waits on
+        // the change feed until every job has left Queued and Running, so a kept job has run and a dropped one ends Cancelled.
         await Release(holder);
+        var kept = _state.Jobs().Single(j => j.Id == queued);
+        kept.State.ShouldBe(JobState.Succeeded, kept.Error);
     }
 
     [Fact]
@@ -175,12 +180,14 @@ public sealed class EndedSessionJobsTests : IDisposable
         // Ended and nothing listed in its place yet: the replacement is still starting, so its jobs stay.
         await Poll(AgentRows.Background(AgentRows.SessionA, "worker-a", "done"));
         await Poll(AgentRows.Background(AgentRows.SessionA, "worker-a", "done"));
-        await Task.Delay(200, Ct);
-        _state.Jobs().Single(j => j.Id == queued).State.ShouldBe(JobState.Queued);
         _tracker.IsEndedForGood(worker).ShouldBeFalse();
 
+        // The drop is only a signal to the dispatcher, handled off the poll's thread: the row cannot be read yet. Release waits
+        // on the change feed until every job has left Queued and Running, so a kept job has run and a dropped one ends Cancelled.
         replacing = false;
         await Release(holder);
+        var kept = _state.Jobs().Single(j => j.Id == queued);
+        kept.State.ShouldBe(JobState.Succeeded, kept.Error);
     }
 
     [Fact]

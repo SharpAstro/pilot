@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Shouldly;
@@ -11,17 +10,26 @@ namespace Pilot.Node.Tests;
 /// reviewer's queued jobs stay queued, and a run of the same command in the same folder by the replacement adopts the
 /// predecessor's job instead of queueing another.
 /// </summary>
-[Trait("Category", "Slow")]
+// The jobs run on FakeJobLauncher (no shell is what these tests prove) and every wait is on the state's change feed.
 public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
 {
+    // A ceiling a busy machine does not reach, never a pace.
+    private static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(20);
+
+    // Told on every change of the state; the subscription lives as long as the state, which this test owns.
+    private readonly StateChanges _changes;
+
+    public ReviewerJobAdoptionTests() => (_changes, _) = StateChanges.Watch(_state);
+
     private JobRunner StartJobs()
     {
         var jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), TimeProvider.System)
         {
+            Launcher = new FakeJobLauncher(TimeProvider.System),
             Say = (command, _) => Task.FromResult(_state.Complete(command, null)),
         };
         jobs.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
-        jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct).GetAwaiter().GetResult();
+        jobs.Recovered.WaitAsync(Ceiling, Ct).GetAwaiter().GetResult();
         _legs.DropJobs = jobs.DropQueuedOf;
         return jobs;
     }
@@ -43,28 +51,21 @@ public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
     private static CommandRequest RunAs(SessionRow session, string cwd, string command) =>
         new() { Verb = Verbs.Run, Target = Verbs.SessionTarget(session.Id), Args = [cwd, "0", command], Who = "test" };
 
-    private async Task<JobRow> Until(string id, Func<JobRow, bool> condition, int seconds = 4)
+    private async Task<JobRow> Until(string id, Func<JobRow, bool> condition)
     {
-        var clock = Stopwatch.StartNew();
-        while (true)
-        {
-            if (_state.Jobs().Single(j => j.Id == id) is var job && condition(job))
-            {
-                return job;
-            }
-            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(seconds), $"job {id} did not reach the state");
-            await Task.Delay(20, Ct);
-        }
+        JobRow? job = null;
+        await _changes.UntilAsync(() => condition(job = _state.Jobs().Single(j => j.Id == id)), Ceiling, Ct, $"job {id} did not reach the state");
+        return job!;
     }
 
     private async Task Release(JobRunner jobs, string holder)
     {
         jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(holder), Who = "test" });
-        await Until(holder, j => j.State is not (JobState.Queued or JobState.Running), seconds: 60);
+        await Until(holder, j => j.State is not (JobState.Queued or JobState.Running));
         foreach (var left in _state.Jobs().Where(j => j.State is JobState.Queued or JobState.Running))
         {
             jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(left.Id), Who = "test" });
-            await Until(left.Id, j => j.State is not (JobState.Queued or JobState.Running), seconds: 60);
+            await Until(left.Id, j => j.State is not (JobState.Queued or JobState.Running));
         }
         await jobs.StopAsync(CancellationToken.None);
     }
@@ -143,13 +144,13 @@ public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
         await Until(queued, j => j.Owner == replacement.Id);
         jobs.Pump();
         jobs.Pump();
-        await Task.Delay(200, Ct);
+        // The holder still runs, so no pass can start the queued job: its row is as the passes left it, and the ended row below proves the owner held.
         _state.Jobs().Single(j => j.Id == queued).ShouldSatisfyAllConditions(
             j => j.State.ShouldBe(JobState.Queued), j => j.Step.ShouldNotBeNull(), j => j.Owner.ShouldBe(replacement.Id), j => j.OwnerName.ShouldBe(replacement.Name));
 
         // The start puts the row from that copy too: the ended row, built from the running one, still names the replacement.
         jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(holder), Who = "test" });
-        var ended = await Until(queued, j => j.State is not (JobState.Queued or JobState.Running), seconds: 30);
+        var ended = await Until(queued, j => j.State is not (JobState.Queued or JobState.Running));
         ended.ShouldSatisfyAllConditions(j => j.State.ShouldBe(JobState.Succeeded), j => j.Owner.ShouldBe(replacement.Id), j => j.OwnerName.ShouldBe(replacement.Name));
         await Release(jobs, holder);
     }
@@ -161,6 +162,7 @@ public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
         var idle = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n2.sock"), Path.Combine(_root, "data2")), TimeProvider.System)
         {
             FreeMemory = () => null,
+            Launcher = new FakeJobLauncher(TimeProvider.System),
             Say = (command, _) => Task.FromResult(_state.Complete(command, null)),
         };
         var late = new JobRow
@@ -173,7 +175,7 @@ public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
         idle.Dispatch(new JobRunner.Adopted("late1", "new", "new-name", null, null));
         idle.Dispatch(new JobRunner.HandedOver(late));
 
-        var ended = await Until("late1", j => j.State is not (JobState.Queued or JobState.Running), seconds: 30);
+        var ended = await Until("late1", j => j.State is not (JobState.Queued or JobState.Running));
         ended.ShouldSatisfyAllConditions(j => j.Owner.ShouldBe("new"), j => j.OwnerName.ShouldBe("new-name"));
     }
 
@@ -191,7 +193,7 @@ public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
         result.Made.ShouldBe(running);
         _state.Jobs().Single(j => j.Id == running).Owner.ShouldBe(after.Id);
         jobs.Pump();
-        await Task.Delay(200, Ct);
+        // The fake job holds until the test ends it, so a pass cannot end it: the row is as the pass left it.
         _state.Jobs().Single(j => j.Id == running).ShouldSatisfyAllConditions(j => j.State.ShouldBe(JobState.Running), j => j.Owner.ShouldBe(after.Id));
         await Release(jobs, running);
     }
