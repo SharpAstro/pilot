@@ -82,7 +82,7 @@ public static partial class PilotCommand
             var sayAllAll = new Option<bool>("--all") { Description = "Idle sessions too; never ended, failed or archived ones" };
             var sayAllRole = new Option<string[]>("--role")
             {
-                Description = "worker, planner, reviewer, pilot, adHoc, watchtower or validator; once per role. The watchtower and validators are told only when named",
+                Description = "worker, planner, reviewer, fixer, pilot, adHoc, watchtower or validator; once per role. The watchtower and validators are told only when named",
                 AllowMultipleArgumentsPerToken = false,
             };
             var sayAllFlight = new Option<string[]>("--flight") { Description = "A flight's code; once per flight", AllowMultipleArgumentsPerToken = false };

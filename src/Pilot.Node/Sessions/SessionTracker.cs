@@ -546,7 +546,7 @@ public sealed class SessionTracker : BackgroundService
                 {
                     // A background session listed under a new session id, though nobody here resumed it: it continues an
                     // older row of the same name and folder, which has no process now. A session the node's own flights start
-                    // (a watchtower, a leg worker) is always started fresh under the same name, so it is never a resume; nor is a
+                    // (a watchtower, a leg worker, a PR fixer or reviewer) is always started fresh under the same name, so it is never a resume; nor is a
                     // row that already says why it ended.
                     foreach (var older in _rows.Values.Where(r => r.Id != id && r.Kind == SessionKind.Background && r.Name == added.Name
                         && r.Role == SessionRole.AdHoc && added.Role == SessionRole.AdHoc && r.EndedBecause is null
