@@ -231,12 +231,12 @@ public sealed partial class NodeState
     /// The node saw <paramref name="repo"/>#<paramref name="number"/> merge: it leaves the held PR row at once (published), and for
     /// <see cref="MergedForgetWindow"/> every PR row put is cleared of it, so a lagging read never brings it back. In memory only.
     /// </summary>
-    public void ForgetPullRequest(string repo, int number, DateTimeOffset at)
+    public void ForgetPullRequest(string repo, int number)
     {
         lock (_gate)
         {
             _forgotten.RemoveAll(f => f.Number == number && SameRepo(f.Repo, repo));
-            _forgotten.Add((repo, number, at));
+            _forgotten.Add((repo, number, _time.GetUtcNow()));
             if (_pullRequests is { } held)
             {
                 var row = WithoutForgotten(held);

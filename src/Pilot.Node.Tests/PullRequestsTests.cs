@@ -1091,6 +1091,12 @@ public sealed class PullRequestsTests : IDisposable
 
         (page.Cost, page.Remaining, page.ResetAt).ShouldBe((3, 4990, new DateTimeOffset(2026, 10, 28, 13, 0, 0, TimeSpan.Zero)));
         PullRequestSearch.Query.ShouldContain("rateLimit{cost remaining resetAt}");
+        // The cost of reading each PR's own state: GitHub prices a query by its connections' requests, and `state` is a scalar beside
+        // `number`, so it adds no connection. The query's connections are exactly the ones it had before the field, so a page costs
+        // what it cost (the live number is the controller's to read from rateLimit; this holds the shape that sets it).
+        PullRequestSearch.Query.ShouldContain("number state title");
+        System.Text.RegularExpressions.Regex.Matches(PullRequestSearch.Query, @"(\w+)\([^)]*?(?:first|last):(\d+)").Select(m => $"{m.Groups[1].Value}:{m.Groups[2].Value}")
+            .ShouldBe(["search:30", "labels:20", "commits:1", "contexts:100"]);
         // An answer with none says nothing of it.
         PullRequestSearch.Parse(Recorded("empty-node")).Cost.ShouldBe(0);
         Should.Throw<RateLimitedException>(() => PullRequestSearch.Parse(Recorded("errors"))).Message.ShouldContain("API rate limit exceeded");

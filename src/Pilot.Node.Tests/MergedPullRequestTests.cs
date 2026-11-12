@@ -56,7 +56,7 @@ public sealed class MergedPullRequestTests : LegCommanderTestsBase
         var state = new NodeState(new InMemoryJournal(), clock);
         state.PutPullRequests(Row(Noon, Pr("acme/widget", 7), Pr("acme/widget", 8)));
 
-        state.ForgetPullRequest("acme/widget", 7, Noon);
+        state.ForgetPullRequest("acme/widget", 7);
         Numbers(state).ShouldBe([8]);
 
         clock.Advance(NodeState.MergedForgetWindow - TimeSpan.FromSeconds(1));
@@ -71,7 +71,7 @@ public sealed class MergedPullRequestTests : LegCommanderTestsBase
         var clock = new Clock(Noon);
         var state = new NodeState(new InMemoryJournal(), clock);
         state.PutPullRequests(Row(Noon, Pr("acme/widget", 7)));
-        state.ForgetPullRequest("acme/widget", 7, Noon);
+        state.ForgetPullRequest("acme/widget", 7);
         Numbers(state).ShouldBeEmpty();
 
         clock.Advance(NodeState.MergedForgetWindow + TimeSpan.FromSeconds(1));
@@ -81,7 +81,7 @@ public sealed class MergedPullRequestTests : LegCommanderTestsBase
 }
 
 /// <summary>A PR review merged on autopilot drops its row from the Pull requests page at once.</summary>
-public sealed class MergedPullRequestReviewTests : PrReviewTestsBase
+public sealed class AutopilotMergedPullRequestTests : PrReviewTestsBase
 {
     [Fact]
     public async Task APrReviewMergedOnAutopilotDropsItsRow()

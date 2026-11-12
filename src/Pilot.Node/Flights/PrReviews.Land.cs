@@ -32,7 +32,7 @@ public sealed partial class PrReviews
                 state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });
                 if (outcome.Kind == LandKind.Merged)
                 {
-                    state.ForgetPullRequest(review.Repo, review.Number, time.GetUtcNow());
+                    state.ForgetPullRequest(review.Repo, review.Number);
                 }
                 var title = outcome.Kind switch
                 {
