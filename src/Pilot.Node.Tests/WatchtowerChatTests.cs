@@ -272,6 +272,54 @@ public sealed partial class WatchtowerChatTests : IDisposable
         new WatchtowerChat(_tower, _book, sends).Page(-1).Entries.Select(e => e.SendId).ShouldBe(["relay1", "card1"]);
     }
 
+    /// <summary>
+    /// A send over the entry's text limit is cut by the transcript, and is still the send it was: its entry carries its id, and a card's
+    /// keeps the person's words under the cut block. DE1's c20738 had a detail of several thousand characters: "wdwd", typed about it,
+    /// was cut off its entry, which then matched no send, so the chat showed the card's block without the words and kept their echo.
+    /// </summary>
+    [Fact]
+    public async Task ASendTheTranscriptCutStillCarriesItsIdAndACardsKeepsThePersonsWords()
+    {
+        await OneWatchtowerAsync();
+        var sends = new SendLog(_time);
+        var card = new CardRow
+        {
+            Id = "c7", Bin = CardBin.Ring, Kind = "pr-fix-capped", Subject = "pr/acme/widgets#7", Title = "three rounds used", At = Start, State = CardState.Open,
+            Detail = string.Join('\n', Enumerable.Range(0, 400).Select(i => $"line {i} of the review's findings")),
+            Choices = [new CardChoice { Label = "Retry", Verb = Verbs.Answer, Target = "card/c7", Args = ["Retry"] }],
+        };
+        var about = CardContext.Compose(card, "DU1", null, "wdwd");
+        var plain = string.Join(' ', Enumerable.Range(0, 1200).Select(i => $"word{i}"));
+        about.Length.ShouldBeGreaterThan(TranscriptPage.TextLimit);
+        plain.Length.ShouldBeGreaterThan(TranscriptPage.TextLimit);
+        sends.Record("card1", about, Start);
+        sends.Record("plain1", plain, Start);
+        _profile.Append(_profile.TranscriptPath(First),
+            $$$"""{"type":"user","message":{"role":"user","content":{{{System.Text.Json.JsonSerializer.Serialize(about)}}}}}""",
+            $$$"""{"type":"user","message":{"role":"user","content":{{{System.Text.Json.JsonSerializer.Serialize(plain)}}}}}""");
+
+        var entries = new WatchtowerChat(_tower, _book, sends).Page(-1).Entries;
+
+        entries.Select(e => e.SendId).ShouldBe(["card1", "plain1"]);
+        entries.ShouldAllBe(e => e.Text.Length <= TranscriptPage.TextLimit + 1);
+        CardContext.TryParse(entries[0].Text, out var chat).ShouldBeTrue();
+        (chat.CardId, chat.Title, chat.Words).ShouldBe(("c7", "three rounds used", "wdwd"));
+        entries[0].Text.ShouldContain(CardContext.Cut);
+        entries[1].Text.ShouldEndWith("…");
+    }
+
+    [Fact]
+    public void ACutEntryIsItsSendOnlyByTheSameHeadAndTail()
+    {
+        WatchtowerChat.IsSend("a b c", "a b c").ShouldBeTrue();
+        WatchtowerChat.IsSend("a b c d e", "a b c…").ShouldBeTrue();
+        WatchtowerChat.IsSend("a b x d e", "a b c…").ShouldBeFalse();
+        WatchtowerChat.IsSend("[pilot card c7] one two three [end of card] why?", "[pilot card c7] one [...] [end of card] why?").ShouldBeTrue();
+        // The same card, other words: another send.
+        WatchtowerChat.IsSend("[pilot card c7] one two three [end of card] no", "[pilot card c7] one [...] [end of card] why?").ShouldBeFalse();
+        WatchtowerChat.IsSend("a b", "a b c").ShouldBeFalse();
+    }
+
     [Fact]
     public async Task ASayRelayedToALiveWatchtowerIsStampedOnceBetweenTurnsAndMidTurn()
     {
