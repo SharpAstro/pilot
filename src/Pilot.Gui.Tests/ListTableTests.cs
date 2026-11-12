@@ -495,6 +495,9 @@ public sealed class ListTableTests : IDisposable
     }
 
     [Theory]
+    // Divider 0 (the left edge of the first column) is not in the 1700 rows: with no room to spare it has nothing to trade,
+    // so it follows the pointer only where the Session column has room, as the 2200 row shows.
+    [InlineData(0, 30f, 2200f)]
     [InlineData(1, 30f, 1700f)]
     [InlineData(2, 30f, 1700f)]
     [InlineData(3, 30f, 1700f)]
@@ -508,7 +511,7 @@ public sealed class ListTableTests : IDisposable
     [InlineData(4, 30f, 2200f)]
     [InlineData(3, -30f, 2200f)]
     [InlineData(4, -30f, 2200f)]
-    public void EverySessionsDividerFollowsThePointerHeaderAndRowsTogether(int divider, float by, float wide)
+    public void SessionsDividersOneToSixFollowThePointerHeaderAndRowsTogether(int divider, float by, float wide)
     {
         // A divider beside State once moved State's far edge and stood still under the pointer (2026-11-11): the two columns
         // beside a divider trade width (DIR.Lib's table), so it follows the pointer whatever kind each is.
@@ -527,6 +530,43 @@ public sealed class ListTableTests : IDisposable
         {
             after.HeaderX(title).ShouldBe(after.RowX(value), $"{title} still sits over its values");
         }
+    }
+
+    [Fact]
+    public void AColumnDraggedWiderDropsWhenTheWindowNarrowsAfterwardsAsARestoredOneDoes()
+    {
+        var view = Sessions();
+        var screen = SessionsScreenOf();
+        void Render() => view.Render(screen, new RectF32(0f, 0f, 1700f, PageHeight));
+
+        // The divider after State dragged left widens Spend, the column on its other side, past its declared 130.
+        Drag(view, Render, "sessions:table:divider:4", -60f);
+        view.Table.Saved["Spend"].ShouldBeGreaterThan(160f);
+
+        // Narrowing the window, the view that dragged Spend is laid out as one given the saved widths is (which Unpin does:
+        // DIR.Lib pins a column dragged wider, so without it Spend would keep its dragged width and never drop).
+        var gone = 0;
+        foreach (var width in new[] { 1700f, 1500f, 1400f, 1300f, 1200f, 1100f, 1000f, 900f, 800f })
+        {
+            var again = Sessions();
+            again.Table.Restore(view.Table.Saved);
+            // Rendering gives each view the page width its columns' room is measured against.
+            again.Render(screen, new RectF32(0f, 0f, width, PageHeight));
+            view.Render(screen, new RectF32(0f, 0f, width, PageHeight));
+            var restored = Arranged(again.Tree(screen), width);
+            var dragged = Arranged(view.Tree(screen), width);
+            dragged.HasHeader("Spend").ShouldBe(restored.HasHeader("Spend"), $"Spend at {width}");
+            if (restored.HasHeader("Spend"))
+            {
+                dragged.HeaderX("Age").ShouldBe(restored.HeaderX("Age"), 0.5f, $"Age at {width}");
+                dragged.HeaderX("Spend").ShouldBe(restored.HeaderX("Spend"), 0.5f, $"Spend at {width}");
+            }
+            else
+            {
+                gone++;
+            }
+        }
+        gone.ShouldBeGreaterThan(0, "Spend drops once the window is narrow enough");
     }
 
     [Fact]
