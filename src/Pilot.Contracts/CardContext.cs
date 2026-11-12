@@ -56,6 +56,34 @@ public static class CardContext
         return text.ToString();
     }
 
+    /// <summary>The line that stands for what <see cref="Clip"/> left out of a card's block.</summary>
+    public const string Cut = Indent + "[...]";
+
+    /// <summary>
+    /// A message <see cref="Compose"/> made, cut to <paramref name="limit"/> characters inside the card's block: the block's close and
+    /// the person's words after it are kept whole, and a <see cref="Cut"/> line stands for what was left out, so the message still
+    /// reads back with <see cref="TryParse"/>. Null for a message that is not a card's, or whose words alone are over the limit: the
+    /// caller cuts those as it cuts any text. A long card cut at its end lost the words the person typed under it, so the chat
+    /// showed the block without them and kept their echo beside it (DE1, c20738 and "wdwd", 2026-11-12).
+    /// </summary>
+    public static string? Clip(string message, int limit)
+    {
+        if (message.Length <= limit)
+        {
+            return message;
+        }
+        var close = message.StartsWith(Open, StringComparison.Ordinal) ? message.IndexOf("\n" + Close, StringComparison.Ordinal) : -1;
+        if (close < 0)
+        {
+            return null;
+        }
+        var tail = message[(close + 1)..];
+        var room = limit - tail.Length - Cut.Length - 1;
+        // The head ends on a whole line, the card's first line at the least.
+        var head = room > 0 ? message.LastIndexOf('\n', Math.Min(room, close) - 1) : -1;
+        return head < 0 ? null : string.Concat(message.AsSpan(0, head + 1), Cut, "\n", tail);
+    }
+
     /// <summary>Reads a message <see cref="Compose"/> made; false for any other message.</summary>
     public static bool TryParse(string message, out CardChat chat)
     {

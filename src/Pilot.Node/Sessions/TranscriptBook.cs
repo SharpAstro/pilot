@@ -414,7 +414,12 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
             return WhiteSpace().Replace(text, " ").Trim();
         }
 
-        private static string Clip(string text) => text.Length > TranscriptPage.TextLimit ? text[..TranscriptPage.TextLimit] + "…" : text;
+        /// <summary>The mark at the end of a text <see cref="Clip"/> cut.</summary>
+        internal const string Clipped = "…";
+
+        // A card's chat message is cut inside its block, so the person's words under it are kept (CardContext.Clip); any other text at its end.
+        internal static string Clip(string text) => text.Length <= TranscriptPage.TextLimit ? text
+            : CardContext.Clip(text, TranscriptPage.TextLimit) ?? text[..TranscriptPage.TextLimit] + Clipped;
     }
 
     /// <summary>
