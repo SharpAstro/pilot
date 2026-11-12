@@ -546,7 +546,7 @@ public sealed class SessionTracker : BackgroundService
                 {
                     // A background session listed under a new session id, though nobody here resumed it: it continues an
                     // older row of the same name and folder, which has no process now. A session the node's own flights start
-                    // (a watchtower, a leg worker) is always started fresh under the same name, so it is never a resume; nor is a
+                    // (a watchtower, a leg worker, a PR fixer or reviewer) is always started fresh under the same name, so it is never a resume; nor is a
                     // row that already says why it ended.
                     foreach (var older in _rows.Values.Where(r => r.Id != id && r.Kind == SessionKind.Background && r.Name == added.Name
                         && r.Role == SessionRole.AdHoc && added.Role == SessionRole.AdHoc && r.EndedBecause is null
@@ -863,6 +863,21 @@ public sealed class SessionTracker : BackgroundService
         {
             // The ledger's account of a session the node launched: what started it, and once it ended, why, when and at what wall time.
             row = Launched.Stamp(row, _endedAt.TryGetValue(row.Id, out var endedAt) ? endedAt : null);
+        }
+        if (row.Role == SessionRole.Fixer && row.FixRound is null)
+        {
+            // A round is fixed at the first sight: the row keeps its own once it has one, so a round that ended is not renumbered by the
+            // PR's current round (every round's session has the same name, <machine>-fix-<repo>-<n>). A row first seen already ended has
+            // no way to know its round and stays without one.
+            if (_rows.TryGetValue(row.Id, out var known) && known.FixRound is { } kept)
+            {
+                row = row with { FixRound = kept };
+            }
+            else if (row.State is not (SessionState.Ended or SessionState.Failed)
+                && _state.PrReviews().FirstOrDefault(r => string.Equals(r.Fixer, row.Name, StringComparison.Ordinal)) is { FixRound: { } round })
+            {
+                row = row with { FixRound = round };
+            }
         }
         var wasEnded = _rows.TryGetValue(row.Id, out var before) && before.State is SessionState.Ended or SessionState.Failed;
         _rows[row.Id] = row;

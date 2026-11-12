@@ -73,6 +73,13 @@ public static partial class SessionRoles
     [GeneratedRegex(@"^([a-z]{2}[0-9]+)-", RegexOptions.CultureInvariant)]
     private static partial Regex MachinePrefix();
 
+    /// <summary>A PR's fixer as the node names it, <c>&lt;machine&gt;-fix-&lt;repo&gt;-&lt;n&gt;</c> (<c>du1-fix-pilot-515</c>).</summary>
+    [GeneratedRegex(@"^[a-z]{2}[0-9]+-fix-[a-z0-9._-]+-[0-9]+$", RegexOptions.CultureInvariant)]
+    private static partial Regex PrFixerName();
+
+    /// <summary>Whether a session name is a PR fixer's.</summary>
+    public static bool IsFixerName(string? name) => name is { Length: > 0 } && PrFixerName().IsMatch(name);
+
     /// <summary>The machine code a session name starts with (<c>du1</c> of <c>du1-watchtower</c>), or null for a name with none.</summary>
     internal static string? MachinePrefixOf(string? name) =>
         name is { Length: > 0 } && MachinePrefix().Match(name) is { Success: true } m ? m.Groups[1].Value : null;
@@ -106,6 +113,12 @@ public static partial class SessionRoles
         if (name is { Length: > 0 } && PrReviewerName().IsMatch(name))
         {
             return new SessionRoleInfo(SessionRole.Reviewer, null, null, null);
+        }
+
+        // <machine>-fix-<repo>-<n> makes a PR review's changes, and flies no flight.
+        if (IsFixerName(name))
+        {
+            return new SessionRoleInfo(SessionRole.Fixer, null, null, null);
         }
 
         if (name is { Length: > 0 } && MachineWorkerName().Match(name) is { Success: true } named)
