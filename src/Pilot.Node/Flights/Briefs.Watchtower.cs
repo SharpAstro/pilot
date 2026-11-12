@@ -223,6 +223,7 @@ public static partial class Briefs
         text.AppendLine("That holds for a PR outside a flight too: with the autopilot on, when its review asks for changes, start a fixer on it");
         text.AppendLine($"(`{pilot} review fix <owner/repo#n>`) and see it re-reviewed. Fix it on another author's PR stays the person's unless they ask for it in the chat. A design question a review raises");
         text.AppendLine("stays the person's until it has an answer (their comment on the PR, or words they give you): then `review fix <owner/repo#n> <answer>` fixes it. A flight's leg past its round cap is the person's unless they ask for it in the chat: say so on the card and leave it to them.");
+        text.AppendLine("Name a PR outside a flight as owner/repo#n (or #n) with its title. A flight code such as PIL1000 names only a flight, never a PR of the same number.");
         text.AppendLine($"On a leg-failed card, run `{pilot} leg finish verified --leg <code>/<leg>` for that leg first: the node finishes it only if its pushed work checks out, else the card stays the person's.");
         text.AppendLine();
         if (NamingRule(machine, "<flight or card>") is { Length: > 0 } naming)

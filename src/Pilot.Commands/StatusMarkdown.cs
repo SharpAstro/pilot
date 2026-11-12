@@ -157,16 +157,11 @@ internal static class StatusMarkdown
             text.AppendLine("## PR reviews").AppendLine();
             foreach (var review in reviews)
             {
-                var how = review.State switch
-                {
-                    PrReviewState.Reviewing => $"reviewing, {review.Reviewer}",
-                    PrReviewState.Closed => $"{review.Verdict}, closed",
-                    _ => $"{review.Verdict}, on card {review.Card}",
-                };
+                var how = PrReviewWords.Review(review);
                 text.AppendLine($"- [{Text($"{review.Repo}#{review.Number}")}]({review.Url}) {Text(review.Title ?? "")} ({Text(how)}, at `{review.Head[..Math.Min(9, review.Head.Length)]}`)");
-                if (review.Fixer is { } fixer)
+                if (review.Fixer is not null)
                 {
-                    text.AppendLine($"  - {Text($"fixing, {fixer}, round {review.FixRound ?? 1}")}");
+                    text.AppendLine($"  - {Text(PrReviewWords.Fix(review, snapshot.Sessions))}");
                 }
             }
             text.AppendLine();
