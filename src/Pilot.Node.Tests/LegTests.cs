@@ -201,6 +201,12 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>Takes a PR off GitHub, as a merge or a close does.</summary>
     public void RemovePullRequest(string repo, int number) => PullRequestsOnGitHub.TryRemove((repo, number), out _);
 
+    /// <summary>PRs the search index still lists though GitHub's own state for them is the one given (MERGED or CLOSED): a lagging index.</summary>
+    public ConcurrentDictionary<(string Repo, int Number), string> StaleIndex { get; } = [];
+
+    /// <summary>Merges a PR on GitHub while the search index lags: the search still lists it, and answers it as Gone.</summary>
+    public void MergeWithLaggingIndex(string repo, int number) => StaleIndex[(repo, number)] = "MERGED";
+
     /// <summary>Repos whose search fails, as a gh that could not reach GitHub: the whole batch that names one fails.</summary>
     public HashSet<string> SearchFail { get; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -236,8 +242,11 @@ internal sealed class FakeGitHub : IGitHub
         {
             throw new FlightException($"gh could not search the PRs of {repos.Length} repos: offline");
         }
-        PullRequestRow[] found = [.. PullRequestsOnGitHub.Values.Where(p => repos.Contains(p.Repo, StringComparer.OrdinalIgnoreCase)).OrderBy(p => p.Repo, StringComparer.Ordinal).ThenBy(p => p.Number)];
-        return new PullRequestSearch.Read(found, SearchCost, SearchRemaining, null);
+        PullRequestRow[] listed = [.. PullRequestsOnGitHub.Values.Where(p => repos.Contains(p.Repo, StringComparer.OrdinalIgnoreCase)).OrderBy(p => p.Repo, StringComparer.Ordinal).ThenBy(p => p.Number)];
+        // A listed PR whose own state is not OPEN is answered as the real Parse answers it: no row, named in Gone.
+        PullRequestRow[] found = [.. listed.Where(p => !StaleIndex.ContainsKey((p.Repo, p.Number)))];
+        PullRequestSearch.GonePullRequest[] gone = [.. listed.Where(p => StaleIndex.ContainsKey((p.Repo, p.Number))).Select(p => new PullRequestSearch.GonePullRequest(p.Repo, p.Number, StaleIndex[(p.Repo, p.Number)]))];
+        return new PullRequestSearch.Read(found, SearchCost, SearchRemaining, null, gone);
     }
 
     /// <summary>Every issue created, as (repo path, title, body).</summary>

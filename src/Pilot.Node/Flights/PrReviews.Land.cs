@@ -30,6 +30,10 @@ public sealed partial class PrReviews
                 return true;
             case LandKind.Merged or LandKind.Queued or LandKind.Armed:
                 state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });
+                if (outcome.Kind == LandKind.Merged)
+                {
+                    state.ForgetPullRequest(review.Repo, review.Number);
+                }
                 var title = outcome.Kind switch
                 {
                     LandKind.Queued => $"Queued {review.Repo}#{review.Number} in {read.Base}'s merge queue at {at} on autopilot",

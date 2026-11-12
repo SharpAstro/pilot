@@ -283,6 +283,7 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
             var prs = new List<PullRequestRow>();
             var read = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var errors = new List<PullRequestsError>();
+            var gone = new HashSet<(string Repo, int Number)>(GoneComparer.Instance);
             var cost = 0;
             int? remaining = null;
             DateTimeOffset? limitedUntil = null;
@@ -305,6 +306,7 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
                 {
                     var answer = await github.OpenPullRequestsInAsync(batch, CancellationToken.None);
                     prs.AddRange(answer.PullRequests);
+                    gone.UnionWith(answer.Gone.Select(g => (g.Repo, g.Number)));
                     read.UnionWith(batch);
                     cost += answer.Cost;
                     remaining = answer.Remaining ?? remaining;
@@ -331,9 +333,16 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
                 prs.AddRange(share.PullRequests);
                 read.Add(share.Repo);
             }
+            // A PR the search listed but whose own state is merged or closed is not open: out of this read, out of a peer's taken row
+            // (which may predate the merge), and out of what is held for a repo not read.
+            // The search itself never returns a row for such a PR (its parse names it in Gone), so the count is what it named, plus any
+            // row a peer's share or the held row still carried.
+            var dropped = gone.Count;
+            prs.RemoveAll(p => gone.Contains((p.Repo, p.Number)));
             var fresh = prs.ToArray();
             // Not read this time (its batch failed, or the limit stopped it): what was read of it before stands, under the error or note.
-            prs.AddRange(heldPrs.Where(p => !read.Contains(p.Repo)));
+            var kept = heldPrs.Where(p => !read.Contains(p.Repo)).ToArray();
+            prs.AddRange(kept.Where(p => !gone.Contains((p.Repo, p.Number))));
 
             // Each repo read now is stamped by this node; one kept from before keeps its old stamp.
             var flying = FlyingRepos(flights);
@@ -356,6 +365,7 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
             };
             await Error.WriteLineAsync($"pull request watch: {(taken.Length > 0 ? $"{taken.Length} {(taken.Length == 1 ? "repo" : "repos")} from peers, " : "")}{readHere.Length} read here in "
                 + $"{searches.Length} {(searches.Length == 1 ? "search" : "searches")}, {cost} GraphQL {(cost == 1 ? "point" : "points")}"
+                + $"{(dropped > 0 ? $", {dropped} merged or closed dropped" : "")}"
                 + $"{(remaining is { } left ? $", {left} left" : "")} ({why})");
             state.PutPullRequests(row);
             try
@@ -395,6 +405,12 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
                 if (Held?.RowOf(peer.Name) is { } kept)
                 {
                     return new PrReadPeer(peer.Name, kept, [.. kept.RepoReads.Where(s => s.Flying).Select(s => s.Repo)]);
+                }
+                // A peer whose stream has been down past one pace is being tried by the cache, on its backoff: it is not asked
+                // again at every read, and its repos are read here until its stream is up.
+                if (Held?.IsDown(peer.Name) == true)
+                {
+                    return null;
                 }
                 using var budget = new CancellationTokenSource(HeldTokenFleet.ReadBudget, time);
                 var row = (await peer.LoadAsync(budget.Token).WaitAsync(budget.Token)).PullRequests;
@@ -443,6 +459,15 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
             return null;
         }
         return flights.FirstOrDefault(f => f.Branch == head && SamePath(f.RepoPath, repo.Path))?.Code;
+    }
+
+    private sealed class GoneComparer : IEqualityComparer<(string Repo, int Number)>
+    {
+        public static readonly GoneComparer Instance = new();
+
+        public bool Equals((string Repo, int Number) a, (string Repo, int Number) b) => a.Number == b.Number && string.Equals(a.Repo, b.Repo, StringComparison.OrdinalIgnoreCase);
+
+        public int GetHashCode((string Repo, int Number) key) => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(key.Repo), key.Number);
     }
 
     private static string? OwnerOf(string? repo) => repo?.IndexOf('/') is > 0 and var slash ? repo[..slash] : null;
