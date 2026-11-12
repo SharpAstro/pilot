@@ -106,6 +106,16 @@ public sealed class LanTests
         node.State.Snapshot().Notes.ShouldHaveSingleItem().Who.ShouldBe("se2-gui/tests");
         (await granted.SendAsync(new CommandRequest { Verb = Verbs.Land, Target = "flight/TIA1", Who = $"{node.Options.Machine.ToLowerInvariant()}-watchtower" }, Ct))
             .Response!.Who.ShouldBe($"se2-gui/{node.Options.Machine.ToLowerInvariant()}-watchtower");
+        // The person at the other node's GUI answers what this node's watchtower asks (no watchtower runs here, so there is nothing to
+        // answer: what is pinned is that the verb is reached); a session there does not, by the verb or by the ask's card.
+        var ask = node.State.RaiseCard(CardBin.ForYou, CardKinds.WatchtowerAsk, "watchtower/ask/p1", "The watchtower asks you: which one?", null,
+            [new CardChoice { Label = "Allow", Verb = Verbs.AnswerAsk, Target = Verbs.WatchtowerTarget, Args = ["p1", "allow"] }]);
+        (await granted.SendAsync(new CommandRequest { Verb = Verbs.AnswerAsk, Target = Verbs.WatchtowerTarget, Args = ["p1", "allow"], Who = "gui" }, Ct))
+            .Error.ShouldNotBeNull().ShouldContain("no running process");
+        (await granted.SendAsync(new CommandRequest { Verb = Verbs.AnswerAsk, Target = Verbs.WatchtowerTarget, Args = ["p1", "allow"], Who = "se2-watchtower", Agent = true }, Ct))
+            .Error.ShouldBe(Standing.AskIsThePersons);
+        (await granted.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(ask.Id), Args = ["Allow"], Who = "se2-watchtower", Agent = true }, Ct))
+            .Error.ShouldBe(Standing.AskIsThePersons);
         // Nor does it hand out grants.
         (await granted.SendAsync(new CommandRequest { Verb = Verbs.AnswerGrant, Target = Verbs.NodeTarget, Args = ["x", "allow"], Who = "tests" }, Ct))
             .Error.ShouldBe("answer-grant is for this machine only");

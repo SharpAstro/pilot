@@ -156,6 +156,17 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     public static bool IsAsk(CommandRequest command, NodeState state) =>
         command.Verb is Verbs.Answer or Verbs.Dismiss && CardOf(command, state) is { State: CardState.Open, Kind: CardKinds.AssistantAsk };
 
+    /// <summary>What a session is told when it sends <see cref="Verbs.AnswerAsk"/>, by the verb or by the ask's card.</summary>
+    public const string AskIsThePersons = $"{Verbs.AnswerAsk} is the person's: the watchtower's permission prompts and questions are theirs to answer, from the chat or its card";
+
+    /// <summary>
+    /// Whether <paramref name="command"/> answers what the watchtower waits on: <see cref="Verbs.AnswerAsk"/> itself, or the
+    /// <c>answer</c> of the ask's open card (<see cref="CardKinds.WatchtowerAsk"/>), whose button runs it. The LAN route asks
+    /// this of an agent's command before the grant takes its agent mark away, so another node's session cannot answer for the person.
+    /// </summary>
+    public static bool AnswersWatchtowerAsk(CommandRequest command, NodeState state) =>
+        command.Verb == Verbs.AnswerAsk || command.Verb == Verbs.Answer && CardOf(command, state) is { State: CardState.Open, Kind: CardKinds.WatchtowerAsk };
+
     private static CardRow? CardOf(CommandRequest command, NodeState state) =>
         command.Target.StartsWith(Verbs.CardTargetPrefix, StringComparison.Ordinal)
             ? state.Cards().FirstOrDefault(c => c.Id == command.Target[Verbs.CardTargetPrefix.Length..])
@@ -173,8 +184,11 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
         switch (Kind)
         {
             // What the watchtower asks leave for is the person's to give: a session that could answer its own prompt would have none.
-            case not StandingKind.Person when command.Verb == Verbs.AnswerAsk:
-                return $"{Verbs.AnswerAsk} is the person's: the watchtower's permission prompts and questions are theirs to answer, from the chat or its card";
+            // The person at another node's GUI is still the person: their click comes in under that node's grant, and was refused as
+            // if a session had sent it (DE1's question answered from SE1's chat, 2026-11-12). A session's under a grant is refused
+            // at the route (NodeApp, AnswersWatchtowerAsk), where the wire still says an agent sent it.
+            case not (StandingKind.Person or StandingKind.Grant) when command.Verb == Verbs.AnswerAsk:
+                return AskIsThePersons;
             // The lookout may answer a ring card (a stall's Resume, Nudge or Go around): the chosen button's command is run again
             // under its own standing, so one that is the person's (Merge, Fold, Post) is refused there and the card stays open.
             // Dropping an overlap's connection (--anyway) undoes the person's answer, as ConnectOverlap gave it: not the lookout's,
