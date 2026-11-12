@@ -50,6 +50,32 @@ public sealed class SessionsViewTests
     }
 
     [Fact]
+    public void AFixerAPrReviewerAndAnAdHocRowAreToldApart()
+    {
+        var snapshot = SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath);
+        var template = snapshot.Sessions.First(s => s.Role == SessionRole.AdHoc);
+        var rows = new[]
+        {
+            template with { Id = "fix-1", Name = "de1-fix-pilot-1000", Role = SessionRole.Fixer, Flight = null, Leg = null, Pr = 1000, FixRound = 4 },
+            template with { Id = "rev-1", Name = "de1-review-pilot-1000", Role = SessionRole.Reviewer, Flight = null, Leg = null, Pr = 1000, FixRound = null },
+            template with { Id = "adhoc-1", Name = "mine", Role = SessionRole.AdHoc, Flight = null, Leg = null, Pr = null, FixRound = null, Repo = "pilot" },
+        };
+        var screen = SessionsCapture.ScreenFor(snapshot with { Sessions = rows }, "sample");
+
+        var text = SessionsCapture.RowsText(screen);
+        text.ShouldContain("PR fix · #1000 round 4 | ");
+        text.ShouldContain("PR review · #1000 | ");
+        text.ShouldContain("ad hoc · pilot | ");
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var view = SessionsCapture.Render(renderer, screen);
+        PaintedRows(view).Count.ShouldBe(3);
+
+        var ctx = new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f);
+        var arranged = Layout.Engine.Arrange(view.Tree(screen), new Rect<float>(0, 0, 1280, 800), ctx);
+        TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
+    }
+
+    [Fact]
     public void AnEndedRowShowsWhyItEnded()
     {
         var snapshot = SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath);
