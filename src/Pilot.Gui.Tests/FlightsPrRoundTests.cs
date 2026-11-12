@@ -42,15 +42,16 @@ public sealed class FlightsPrRoundTests
     }
 
     [Theory]
-    [InlineData(FlightsViewMode.List, 1280f)]
-    [InlineData(FlightsViewMode.Grid, 1280f)]
-    [InlineData(FlightsViewMode.Canvas, 1280f)]
-    [InlineData(FlightsViewMode.List, 700f)]
-    [InlineData(FlightsViewMode.Canvas, 700f)]
-    public void ARoundWithNoFlightShowsItsPrItsRoundItsSessionAndItsState(FlightsViewMode mode, float width)
+    [InlineData(nameof(FlightsViewMode.List), 1280f)]
+    [InlineData(nameof(FlightsViewMode.Grid), 1280f)]
+    [InlineData(nameof(FlightsViewMode.Canvas), 1280f)]
+    [InlineData(nameof(FlightsViewMode.List), 700f)]
+    [InlineData(nameof(FlightsViewMode.Canvas), 700f)]
+    public void ARoundWithNoFlightShowsItsPrItsRoundItsSessionAndItsState(string modeName, float width)
     {
         var screen = Screen([Review()], Live.Row("s1", Fixer, SessionState.Working));
 
+        var mode = Enum.Parse<FlightsViewMode>(modeName);
         var (text, faults) = Render(mode, screen, width);
 
         text.ShouldContain("pilot#1000");
