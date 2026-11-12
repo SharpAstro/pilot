@@ -44,6 +44,15 @@ public class WatchtowerBriefTests
     }
 
     [Fact]
+    public void ThePrOutsideAFlightIsNamedByOwnerRepoAndNumberNeverByAFlightCode()
+    {
+        var rules = Brief();
+
+        rules.ShouldContain("Name a PR outside a flight as owner/repo#n (or #n) with its title");
+        rules.ShouldContain("A flight code such as PIL1000 names only a flight, never a PR of the same number");
+    }
+
+    [Fact]
     public void TheRulesAreInTheFileTheBriefNamesAndNotInTheBrief()
     {
         var rules = Briefs.WatchtowerRules("wt", "pilot", "DU1");

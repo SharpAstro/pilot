@@ -13,6 +13,9 @@ internal sealed record FlightsScreen(IReadOnlyList<FlightLine> Lines, string Sou
     /// <summary>What the node said of its Opus count and cap (the line Home and the page show); null from a node that says none, and for a snapshot written before it did.</summary>
     public AdmissionRow? Admission { get; init; }
 
+    /// <summary>The PR review and review-fix rounds the node runs outside a flight (pilot #1007); empty when none.</summary>
+    public IReadOnlyList<PrRoundLine> Rounds { get; init => field = value ?? []; } = [];
+
     /// <summary>What In play left out, named (<c>29 landed hidden</c>); null while nothing is hidden.</summary>
     public string? Hidden { get; init; }
 
@@ -33,7 +36,11 @@ internal sealed record FlightsScreen(IReadOnlyList<FlightLine> Lines, string Sou
             {
                 summary += $" · {held} held";
             }
-            return onHold > 0 ? $"{summary} · {onHold} on hold" : summary;
+            if (onHold > 0)
+            {
+                summary += $" · {onHold} on hold";
+            }
+            return Rounds.Count > 0 ? $"{summary} · {Rounds.Count} fix {(Rounds.Count == 1 ? "round" : "rounds")}" : summary;
         }
     }
 

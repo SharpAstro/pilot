@@ -40,7 +40,19 @@ internal sealed partial class FlightsView<TSurface>
         }, new TopBarParts(Nodes, Play, Autopilot, About, Night));
     }
 
+    // The flights' body, and under it the rounds the node runs outside any flight; with no flight, the rounds alone are the page.
     private Layout.Node Main(FlightsScreen screen)
+    {
+        if (RoundsBand(screen) is not { } rounds)
+        {
+            return FlightsBody(screen);
+        }
+        return screen.Lines.Count == 0
+            ? Layout.Builder.VStack(rounds).WithScroll(_scroll).Stretch()
+            : Layout.Builder.VStack(FlightsBody(screen).HStar(1f, BodyMinHeight), rounds).Stretch();
+    }
+
+    private Layout.Node FlightsBody(FlightsScreen screen)
     {
         if (screen.Lines.Count == 0)
         {

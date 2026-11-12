@@ -289,6 +289,8 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
         // A flight on a node the window cannot reach is its last known row, marked stale with that node's name: it may be long
         // out of date and its commands cannot go anywhere (pilot #325).
         var flights = FlightLine.Order(reach.SelectMany(f => f.Feed.Flights(now).Lines.Select(l => l with { Node = Mark(f.Mark), Stale = Unreachable(f.Reach) ? f.Mark.Name : null })));
+        // A node the window cannot reach shows no rounds: a session's state there may be long out of date.
+        var rounds = PrRoundLine.Order(reach.Where(f => !Unreachable(f.Reach)).SelectMany(f => f.Feed.Flights(now).Rounds.Select(r => r with { Node = Mark(f.Mark) })));
         var jobs = JobLine.Order(shown.SelectMany(f => f.Feed.JobsPage(now).Lines.Select(l => l with { Node = Mark(f.Mark) })));
         // A node the window cannot reach gives the panel none of its cards, which may be long answered and cannot be commanded
         // now (DE1, 2026-10-26: its stale copy stood on the panel and in its counts for hours). One line each says how many it
@@ -308,7 +310,7 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
         var source = several ? $"{hereSessions.Source} · {filter.Choices.Count} nodes{(filter.All ? "" : $", showing {string.Join(", ", filter.Choices.Where(c => filter.Shows(c)).Select(c => c.Name))}")}" : hereSessions.Source;
         return new FleetPages(
             hereSessions with { Lines = sessions, Source = source },
-            new FlightsScreen(flights, several ? source : here.Flights(now).Source, now) { Admission = here.Flights(now).Admission },
+            new FlightsScreen(flights, several ? source : here.Flights(now).Source, now) { Admission = here.Flights(now).Admission, Rounds = rounds },
             new JobsScreen(jobs, several ? source : here.JobsPage(now).Source, now),
             [.. shown.SelectMany(f => f.Feed.Jobs())],
             cards,

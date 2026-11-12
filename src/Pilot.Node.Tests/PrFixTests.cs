@@ -347,8 +347,9 @@ public sealed class PrFixTests2 : PrFixTestsBase
         Fixers.Length.ShouldBe(2);
         Fixers[1].Brief.ShouldContain("README.md:1 still wrong");
         (Row.Fixer, Row.FixRound).ShouldBe(("du1-fix-widget-7", 2));
+        _state.PutSession(Session("du1-fix-widget-7", SessionState.Working));
         var lines = StatusMarkdown.Build(_state.Snapshot()).Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
-        lines[Array.FindIndex(lines, l => l.Contains("acme/widget#7")) + 1].ShouldContain("fixing, du1-fix-widget-7, round 2");
+        lines[Array.FindIndex(lines, l => l.Contains("acme/widget#7")) + 1].ShouldContain("fixing, du1-fix-widget-7, round 2, working");
     }
 }
 
@@ -437,10 +438,11 @@ public sealed class PrFixTests3 : PrFixTestsBase
         await _reviews.SweepAsync(Ct);
         _reviews.Of(new PrRef("acme", "widget", 7))!.State.ShouldBe(PrReviewState.Closed);
 
+        _state.PutSession(Session("du1-fix-widget-7", SessionState.Working));
         var lines = StatusMarkdown.Build(_state.Snapshot()).Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
         var at = Array.FindIndex(lines, l => l.Contains("acme/widget#7"));
         at.ShouldBeGreaterThanOrEqualTo(0);
-        lines[at + 1].ShouldContain("fixing, du1-fix-widget-7, round 1");
+        lines[at + 1].ShouldContain("fixing, du1-fix-widget-7, round 1, working");
     }
 
     [Fact]
