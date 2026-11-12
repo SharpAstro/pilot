@@ -10,6 +10,23 @@ public sealed class CheckRunnerTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    [Theory]
+    [InlineData("Catastrophic failure: Test process did not respond within 60 seconds
+No test matches the given testcase filter `X`", true)]
+    [InlineData("The test host did not connect within the launch timeout
+No test matches the given testcase filter `X`", true)]
+    [InlineData("No test matches the given testcase filter `FullyQualifiedName~Nope`", false)]
+    [InlineData("Passed! - Failed: 0, Passed: 3
+No test matches the given testcase filter `X`", false)]
+    [InlineData("Failed! - Failed: 1, Passed: 2
+Test process did not respond within 60 seconds", false)]
+    public void ATailWithALaunchTimeoutLineIsATestHostThatNeverLaunched(string tail, bool expected) =>
+        new CheckRun(1, tail).TestHostNeverLaunched.ShouldBe(expected);
+
+    [Fact]
+    public void APassingRunIsNeverATestHostThatNeverLaunched() =>
+        new CheckRun(0, "Test process did not respond within 60 seconds").TestHostNeverLaunched.ShouldBeFalse();
+
     /// <summary>
     /// A quoted | is an argument, not a pipe: a test filter such as <c>--filter "A|B"</c> went to cmd with its quotes
     /// escaped the .NET way (\"), which cmd does not read, so it piped on it and every such check failed (2026-10-24).
