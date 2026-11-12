@@ -176,6 +176,7 @@ public sealed partial class NodeState
     {
         lock (_gate)
         {
+            read = WithoutForgotten(read);
             if (_pullRequests is { } held && held.Orgs.SequenceEqual(read.Orgs) && held.Errors.SequenceEqual(read.Errors) && held.Note == read.Note
                 && held.PullRequests.SequenceEqual(read.PullRequests) && read.ReadAt - held.ReadAt < TimeSpan.FromMinutes(2))
             {
@@ -193,6 +194,57 @@ public sealed partial class NodeState
                 return;
             }
             Publish(new PullRequestsChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Row = read });
+        }
+    }
+
+    /// <summary>How long a PR the node saw merge stays out of every PR row put (a lagging search or a peer's older row may still list it).</summary>
+    public static readonly TimeSpan MergedForgetWindow = TimeSpan.FromMinutes(10);
+
+    private readonly List<(string Repo, int Number, DateTimeOffset At)> _forgotten = [];
+
+    private static bool SameRepo(string a, string b)
+    {
+        if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        // A flight names its repo by folder (tianwen), a PR row as owner/name.
+        var an = a.Contains('/') ? a[(a.LastIndexOf('/') + 1)..] : a;
+        var bn = b.Contains('/') ? b[(b.LastIndexOf('/') + 1)..] : b;
+        return (!a.Contains('/') || !b.Contains('/')) && string.Equals(an, bn, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Caller holds the gate. Drops the aged, then the listed PRs the node saw merge.
+    private PullRequestsRow WithoutForgotten(PullRequestsRow read)
+    {
+        var now = _time.GetUtcNow();
+        _forgotten.RemoveAll(f => now - f.At >= MergedForgetWindow);
+        if (_forgotten.Count == 0)
+        {
+            return read;
+        }
+        var kept = read.PullRequests.Where(p => !_forgotten.Any(f => f.Number == p.Number && SameRepo(f.Repo, p.Repo))).ToArray();
+        return kept.Length == read.PullRequests.Length ? read : read with { PullRequests = kept };
+    }
+
+    /// <summary>
+    /// The node saw <paramref name="repo"/>#<paramref name="number"/> merge: it leaves the held PR row at once (published), and for
+    /// <see cref="MergedForgetWindow"/> every PR row put is cleared of it, so a lagging read never brings it back. In memory only.
+    /// </summary>
+    public void ForgetPullRequest(string repo, int number)
+    {
+        lock (_gate)
+        {
+            _forgotten.RemoveAll(f => f.Number == number && SameRepo(f.Repo, repo));
+            _forgotten.Add((repo, number, _time.GetUtcNow()));
+            if (_pullRequests is { } held)
+            {
+                var row = WithoutForgotten(held);
+                if (!ReferenceEquals(row, held))
+                {
+                    Publish(new PullRequestsChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Row = row });
+                }
+            }
         }
     }
 

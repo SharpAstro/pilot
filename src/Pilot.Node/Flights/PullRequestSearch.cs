@@ -55,7 +55,7 @@ public static class PullRequestSearch
     // prices a query by its connections' requests divided by 100, so the 30 PRs of a page add 30 requests to the many thousands the
     // checks make and the cost stays at its rounded point per page (a page's cost is read back from rateLimit, never assumed).
     public const string Query = "query($q:String!,$after:String){rateLimit{cost remaining resetAt} search(query:$q,type:ISSUE,first:30,after:$after){issueCount pageInfo{hasNextPage endCursor} "
-        + "nodes{... on PullRequest{number title url repository{nameWithOwner} author{login} isDraft createdAt updatedAt headRefName baseRefName labels(first:20){nodes{name}} "
+        + "nodes{... on PullRequest{number state title url repository{nameWithOwner} author{login} isDraft createdAt updatedAt headRefName baseRefName labels(first:20){nodes{name}} "
         + "mergeable mergeStateStatus reviewDecision isInMergeQueue mergeQueueEntry{position} autoMergeRequest{enabledAt} "
         + "commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(first:100){nodes{__typename "
         + "... on CheckRun{name status conclusion detailsUrl startedAt completedAt checkSuite{workflowRun{workflow{name}}}} ... on StatusContext{context state targetUrl createdAt}}}}}}}}}}}";
@@ -64,10 +64,21 @@ public static class PullRequestSearch
     /// A page of the answer: its PRs, the cursor of the next page when there is one, and GitHub's <c>rateLimit</c> for it: what the
     /// page cost, how many points are left of the hour's and when they come back (null for an answer with no <c>rateLimit</c>).
     /// </summary>
-    public sealed record Page(PullRequestRow[] PullRequests, string? Next, int Cost = 0, int? Remaining = null, DateTimeOffset? ResetAt = null);
+    public sealed record Page(PullRequestRow[] PullRequests, string? Next, int Cost = 0, int? Remaining = null, DateTimeOffset? ResetAt = null, GonePullRequest[]? Gone = null)
+    {
+        /// <summary>The PRs the search listed whose own state is not OPEN (the index lags a merge): never rows, named here so the watch drops them too.</summary>
+        public GonePullRequest[] Gone { get; init; } = Gone ?? [];
+    }
+
+    /// <summary>A PR the search index still lists as open while GitHub's own state for it is <paramref name="State"/> (MERGED or CLOSED).</summary>
+    public sealed record GonePullRequest(string Repo, int Number, string State);
 
     /// <summary>What one batch's search read, over all its pages: the PRs, what it cost in GraphQL points, and the rate limit as its last page left it.</summary>
-    public sealed record Read(PullRequestRow[] PullRequests, int Cost, int? Remaining, DateTimeOffset? ResetAt);
+    public sealed record Read(PullRequestRow[] PullRequests, int Cost, int? Remaining, DateTimeOffset? ResetAt, GonePullRequest[]? Gone = null)
+    {
+        /// <summary>The PRs the search listed that are no longer open, over all its pages.</summary>
+        public GonePullRequest[] Gone { get; init; } = Gone ?? [];
+    }
 
     /// <summary>Reads one page of the search's answer.</summary>
     /// <exception cref="RateLimitedException">GitHub's error is its rate limit.</exception>
@@ -87,10 +98,24 @@ public static class PullRequestSearch
                 throw list?.Any(e => Text(e, "type") == "RATE_LIMITED") == true ? new RateLimitedException(message, null) : new FlightException(message);
             }
             var prs = new List<PullRequestRow>();
+            var gone = new List<GonePullRequest>();
             if (search.TryGetProperty("nodes", out var nodes) && nodes.ValueKind == JsonValueKind.Array)
             {
-                // A node that is no PR (an issue, or one GitHub would not show) is an empty object.
-                prs.AddRange(nodes.EnumerateArray().Select(Row).OfType<PullRequestRow>());
+                // A node that is no PR (an issue, or one GitHub would not show) is an empty object. A PR node whose own state is not OPEN
+                // (read live, while the search index lags a merge) is no row: it is named in Gone.
+                foreach (var node in nodes.EnumerateArray())
+                {
+                    if (Text(node, "state") is { } nodeState && nodeState != "OPEN"
+                        && node.TryGetProperty("repository", out var goneRepo) && Text(goneRepo, "nameWithOwner") is { } repoName
+                        && node.TryGetProperty("number", out var goneNumber) && goneNumber.TryGetInt32(out var number))
+                    {
+                        gone.Add(new GonePullRequest(repoName, number, nodeState));
+                    }
+                    else if (Row(node) is { } row)
+                    {
+                        prs.Add(row);
+                    }
+                }
             }
             var more = search.TryGetProperty("pageInfo", out var info) && info.ValueKind == JsonValueKind.Object
                 && info.TryGetProperty("hasNextPage", out var has) && has.ValueKind == JsonValueKind.True;
@@ -103,7 +128,7 @@ public static class PullRequestSearch
                 remaining = limit.TryGetProperty("remaining", out var r) && r.TryGetInt32(out var left) ? left : null;
                 resetAt = Time(limit, "resetAt");
             }
-            return new Page([.. prs], more ? Text(info, "endCursor") : null, cost, remaining, resetAt);
+            return new Page([.. prs], more ? Text(info, "endCursor") : null, cost, remaining, resetAt, [.. gone]);
         }
         catch (JsonException ex)
         {

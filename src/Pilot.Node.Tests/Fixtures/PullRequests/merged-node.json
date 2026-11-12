@@ -1,0 +1,70 @@
+{
+ "data": {
+  "rateLimit": {
+   "cost": 1,
+   "remaining": 4990,
+   "resetAt": "2026-11-12T14:00:00Z"
+  },
+  "search": {
+   "issueCount": 2,
+   "pageInfo": {
+    "hasNextPage": false,
+    "endCursor": null
+   },
+   "nodes": [
+    {
+     "number": 210,
+     "state": "OPEN",
+     "title": "Still open",
+     "url": "https://github.com/SharpAstro/demo/pull/210",
+     "repository": {
+      "nameWithOwner": "SharpAstro/demo"
+     },
+     "author": {
+      "login": "sebgod"
+     },
+     "isDraft": false,
+     "createdAt": "2026-11-12T08:00:00Z",
+     "updatedAt": "2026-11-12T08:30:00Z",
+     "headRefName": "feature-210",
+     "baseRefName": "main",
+     "mergeable": "MERGEABLE",
+     "mergeStateStatus": "CLEAN",
+     "reviewDecision": null,
+     "isInMergeQueue": false,
+     "mergeQueueEntry": null,
+     "autoMergeRequest": null,
+     "commits": {
+      "nodes": []
+     }
+    },
+    {
+     "number": 211,
+     "state": "MERGED",
+     "title": "Merged, search index lagging",
+     "url": "https://github.com/SharpAstro/demo/pull/211",
+     "repository": {
+      "nameWithOwner": "SharpAstro/demo"
+     },
+     "author": {
+      "login": "sebgod"
+     },
+     "isDraft": false,
+     "createdAt": "2026-11-12T07:00:00Z",
+     "updatedAt": "2026-11-12T09:00:00Z",
+     "headRefName": "feature-211",
+     "baseRefName": "main",
+     "mergeable": "UNKNOWN",
+     "mergeStateStatus": "UNKNOWN",
+     "reviewDecision": null,
+     "isInMergeQueue": false,
+     "mergeQueueEntry": null,
+     "autoMergeRequest": null,
+     "commits": {
+      "nodes": []
+     }
+    }
+   ]
+  }
+ }
+}

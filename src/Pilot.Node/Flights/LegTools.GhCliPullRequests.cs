@@ -49,6 +49,7 @@ public sealed partial class GhCli
     public async Task<PullRequestSearch.Read> OpenPullRequestsInAsync(string[] repos, CancellationToken cancellationToken)
     {
         var prs = new List<PullRequestRow>();
+        var gone = new List<PullRequestSearch.GonePullRequest>();
         var cost = 0;
         int? remaining = null;
         DateTimeOffset? resetAt = null;
@@ -80,6 +81,7 @@ public sealed partial class GhCli
                 throw new RateLimitedException(ex.Message, await ResetOfAsync(ex.Message, cancellationToken));
             }
             prs.AddRange(read.PullRequests);
+            gone.AddRange(read.Gone);
             cost += read.Cost;
             remaining = read.Remaining ?? remaining;
             resetAt = read.ResetAt ?? resetAt;
@@ -89,7 +91,7 @@ public sealed partial class GhCli
             }
             after = next;
         }
-        return new PullRequestSearch.Read([.. prs], cost, remaining, resetAt);
+        return new PullRequestSearch.Read([.. prs], cost, remaining, resetAt, [.. gone]);
     }
 
     // A secondary limit is a short pause that has nothing to do with the hourly points, so its reset is unknown (the watch then waits

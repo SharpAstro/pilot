@@ -97,6 +97,8 @@ public sealed partial class FlightCommander
             return flight;
         }
         // Its merge entry ends merged too: with the PR let go, no look of the queues sees the flight again to end it.
+        // The PR merged all the same: its row leaves the Pull requests page now, as a landing's does.
+        state.ForgetPullRequest(flight.Repo, number);
         state.EndMergeAsMerged(flight.Code, $"#{number} merged without the new leg, whose work goes to a new PR");
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"#{number} merged on GitHub without the new leg", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, "not-landed");
         state.RaiseCard(CardBin.ForYou, MergedUnderLegKind, Verbs.FlightTarget(flight.Code),
@@ -158,6 +160,11 @@ public sealed partial class FlightCommander
                 MarkMergedUnderLeg(flight, mergedHead, said);
                 throw new FlightException($"{flight.Code}'s PR merged, but {said}: their work goes to a new PR, and the flight is not landed");
             }
+        }
+        // The node saw its PR merge: the row leaves the Pull requests page now, not at the next read.
+        if (mergedHead is not null && flight.PullRequest is { } mergedNumber)
+        {
+            state.ForgetPullRequest(flight.Repo, mergedNumber);
         }
         // What it releases is read before its plane goes, and before anything is changed: a land that cannot say what its
         // consumers wait for is refused, never half done. A folded flight released nothing.

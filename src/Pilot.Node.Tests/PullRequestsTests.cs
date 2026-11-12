@@ -131,6 +131,16 @@ public sealed class PullRequestsTests : IDisposable
     }
 
     [Fact]
+    public void ANodeWhoseOwnStateIsMergedIsNoRowAndIsNamedAsGone()
+    {
+        var page = PullRequestSearch.Parse(Recorded("merged-node"));
+
+        page.PullRequests.Select(p => p.Number).ShouldBe([210]);
+        page.Gone.ShouldBe([new PullRequestSearch.GonePullRequest("SharpAstro/demo", 211, "MERGED")]);
+        PullRequestSearch.Parse(Recorded("page-1")).Gone.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void ANodeThatIsNoPullRequestIsSkippedAndAnAnswerThatIsNoSearchIsRefusedInGitHubsWords()
     {
         PullRequestSearch.Parse(Recorded("empty-node")).PullRequests.Select(p => p.Number).ShouldBe([112]);
@@ -708,6 +718,30 @@ public sealed class PullRequestsTests : IDisposable
     }
 
     [Fact]
+    public async Task APullRequestMergedWhileTheSearchIndexLagsLeavesTheRowAtTheVeryNextReadAndIsNotBroughtBackByTheHeldRow()
+    {
+        Clone("SharpAstro", "pilot");
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var github = new FakeGitHub();
+        github.PutPullRequests([Row("SharpAstro/pilot", 1, PullRequestKind.Ready), Row("SharpAstro/pilot", 2, PullRequestKind.Ready)]);
+        var watch = Watch(state, github);
+        (await watch.RefreshAsync(Ct))!.PullRequests.Select(p => p.Number).Order().ShouldBe([1, 2]);
+
+        // PR 2 merges, but the search still lists it: GitHub's own state for it says MERGED, which the search answers as Gone.
+        github.MergeWithLaggingIndex("SharpAstro/pilot", 2);
+        var paced = (await watch.ReadOnPaceAsync(Ct))!;
+        paced.PullRequests.Select(p => p.Number).ShouldBe([1]);
+        paced.ReadAt.ShouldBe(state.PullRequests()!.ReadAt);
+
+        var refreshed = (await watch.RefreshAsync(Ct))!;
+        refreshed.PullRequests.Select(p => p.Number).ShouldBe([1]);
+        state.PullRequests()!.PullRequests.Select(p => p.Number).ShouldBe([1]);
+
+        // Not brought back by the row held from the first read: another pace read still leaves it out.
+        (await watch.ReadOnPaceAsync(Ct))!.PullRequests.Select(p => p.Number).ShouldBe([1]);
+    }
+
+    [Fact]
     public async Task ANodeWhoseClonesAreNotOnGitHubSaysNothing()
     {
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
@@ -1057,6 +1091,12 @@ public sealed class PullRequestsTests : IDisposable
 
         (page.Cost, page.Remaining, page.ResetAt).ShouldBe((3, 4990, new DateTimeOffset(2026, 10, 28, 13, 0, 0, TimeSpan.Zero)));
         PullRequestSearch.Query.ShouldContain("rateLimit{cost remaining resetAt}");
+        // The cost of reading each PR's own state: GitHub prices a query by its connections' requests, and `state` is a scalar beside
+        // `number`, so it adds no connection. The query's connections are exactly the ones it had before the field, so a page costs
+        // what it cost (the live number is the controller's to read from rateLimit; this holds the shape that sets it).
+        PullRequestSearch.Query.ShouldContain("number state title");
+        System.Text.RegularExpressions.Regex.Matches(PullRequestSearch.Query, @"(\w+)\([^)]*?(?:first|last):(\d+)").Select(m => $"{m.Groups[1].Value}:{m.Groups[2].Value}")
+            .ShouldBe(["search:30", "labels:20", "commits:1", "contexts:100"]);
         // An answer with none says nothing of it.
         PullRequestSearch.Parse(Recorded("empty-node")).Cost.ShouldBe(0);
         Should.Throw<RateLimitedException>(() => PullRequestSearch.Parse(Recorded("errors"))).Message.ShouldContain("API rate limit exceeded");
