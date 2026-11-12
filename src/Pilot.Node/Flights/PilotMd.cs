@@ -22,6 +22,12 @@ public static class PilotMd
         public static Read None { get; } = new(null, null);
     }
 
+    /// <summary>
+    /// How many lines the node counts in a PILOT.md: trailing whitespace is dropped, then the text is split on <c>\n</c> (a CRLF
+    /// line still counts once). The limit and its guard test both use it, so they count the same way (#1013).
+    /// </summary>
+    public static int LineCount(string text) => text.TrimEnd().Split('\n').Length;
+
     public static async Task<Read> ReadAsync(IGit git, FlightRow flight, CancellationToken cancellationToken)
     {
         GitRun run;
@@ -38,7 +44,7 @@ public static class PilotMd
         {
             return Read.None;
         }
-        var lines = run.Output.TrimEnd().Split('\n').Length;
+        var lines = LineCount(run.Output);
         return lines > MaxLines ? new Read(null, lines) : new Read(run.Output.TrimEnd(), null);
     }
 }
