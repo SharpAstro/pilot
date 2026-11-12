@@ -67,6 +67,28 @@ public sealed class SessionLedgerTests : IDisposable
     }
 
     [Fact]
+    public async Task AFixerAndAPrReviewerCarryTheirPrAndTheFixerItsRound()
+    {
+        Launch(AgentRows.SessionA, "de1-fix-pilot-7", SessionStartReasons.PrFix, pr: 7);
+        Launch(AgentRows.SessionB, "de1-review-pilot-7", SessionStartReasons.PrReview, pr: 7);
+        _state.PutPrReview(new PrReviewRow
+        {
+            Repo = "SharpAstro/pilot", Number = 7, Url = "u", Base = "main", Head = "h", ClonePath = _folder, Worktree = _folder, Reviewer = "de1-review-pilot-7",
+            State = default, StartedAt = Start, Fixer = "de1-fix-pilot-7", FixRound = 2,
+        });
+        _agents.Json = AgentRows.List(
+            AgentRows.Background(AgentRows.SessionA, "de1-fix-pilot-7", "working", pid: 1, status: "busy"),
+            AgentRows.Background(AgentRows.SessionB, "de1-review-pilot-7", "working", pid: 2, status: "busy"));
+
+        await _tracker.PollAsync(Ct);
+
+        var fixer = Row("a1b2c3d4");
+        (fixer.Role, fixer.Flight, fixer.Leg, fixer.Pr, fixer.FixRound).ShouldBe((SessionRole.Fixer, null, null, 7, 2));
+        var reviewer = Row("b2c3d4e5");
+        (reviewer.Role, reviewer.Pr, reviewer.FixRound).ShouldBe((SessionRole.Reviewer, 7, null));
+    }
+
+    [Fact]
     public async Task ASessionTheNodeStoppedCarriesTheEndReasonAndTimeGiven()
     {
         Launch(AgentRows.SessionA, "PIL5 node", SessionStartReasons.LegLaunch);

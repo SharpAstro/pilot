@@ -864,6 +864,11 @@ public sealed class SessionTracker : BackgroundService
             // The ledger's account of a session the node launched: what started it, and once it ended, why, when and at what wall time.
             row = Launched.Stamp(row, _endedAt.TryGetValue(row.Id, out var endedAt) ? endedAt : null);
         }
+        if (row.Role == SessionRole.Fixer
+            && _state.PrReviews().FirstOrDefault(r => string.Equals(r.Fixer, row.Name, StringComparison.Ordinal)) is { FixRound: { } round })
+        {
+            row = row with { FixRound = round };
+        }
         var wasEnded = _rows.TryGetValue(row.Id, out var before) && before.State is SessionState.Ended or SessionState.Failed;
         _rows[row.Id] = row;
         _state.PutSession(row);

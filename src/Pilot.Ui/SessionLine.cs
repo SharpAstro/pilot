@@ -221,6 +221,7 @@ internal sealed partial record SessionLine
         SessionRole.Worker => "worker",
         SessionRole.Reviewer => "reviewer",
         SessionRole.Planner => "planner",
+        SessionRole.Fixer => "fixer",
         SessionRole.Watchtower => "watchtower",
         _ => "ad hoc",
     };
