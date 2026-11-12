@@ -53,7 +53,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     private sealed record View(
         SessionRow[] Sessions, FlightRow[] Flights, LegRow[] Legs, CardRow[] Cards, JobRow[] Jobs, UsageRow? Usage, string? Stream,
         string Status, bool Connected, NodeInfo? Node, string? NodeVersion, ReposRow? Repos, SummaryRow[] Summaries, DateTimeOffset? DownSince = null, MachineRow? Machine = null, PullRequestsRow? PullRequests = null,
-        IdeaRow[]? Ideas = null, IdeaMoveRow[]? IdeaMoves = null, MilestoneRow[]? Milestones = null, IssueRow[]? Issues = null, NodeRow? Said = null, AdmissionRow? Admission = null);
+        IdeaRow[]? Ideas = null, IdeaMoveRow[]? IdeaMoves = null, MilestoneRow[]? Milestones = null, IssueRow[]? Issues = null, NodeRow? Said = null, AdmissionRow? Admission = null, PrReviewRow[]? PrReviews = null);
 
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(
@@ -227,7 +227,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     public FlightsScreen Flights(DateTimeOffset now)
     {
         var view = Volatile.Read(ref _view);
-        return new FlightsScreen(FlightLine.Build(view.Flights, view.Sessions, now, view.Legs, view.Admission), view.Status + UpdateNoteOf(view), now) { Admission = view.Admission };
+        return new FlightsScreen(FlightLine.Build(view.Flights, view.Sessions, now, view.Legs, view.Admission), view.Status + UpdateNoteOf(view), now) { Admission = view.Admission, Rounds = PrRoundLine.Build(view.PrReviews ?? [], view.Sessions) };
     }
 
     /// <summary>
@@ -464,6 +464,7 @@ internal sealed class NodeFeed : IAsyncDisposable
         var ideaMoves = _mirror.IdeaMoves.ToArray();
         var milestones = _mirror.Milestones.ToArray();
         var issues = _mirror.Issues.ToArray();
+        PrReviewRow[] prReviews = [.. _mirror.PrReviews.Values];
         ImmutableInterlocked.Update(ref _view, view => view with
         {
             PullRequests = pullRequests,
@@ -473,6 +474,7 @@ internal sealed class NodeFeed : IAsyncDisposable
             IdeaMoves = ideaMoves,
             Milestones = milestones,
             Issues = issues,
+            PrReviews = prReviews,
             Sessions = sessions,
             Flights = flights,
             Legs = legs,
