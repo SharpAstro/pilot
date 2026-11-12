@@ -194,7 +194,8 @@ public sealed partial class LegCommander
 
     // What the node writes about a flight's PR by itself, from its looks and its marks, comes and goes whatever a command does. So does what
     // the stale watch writes from its own reads (the last move and the stale summary, on its 20 s tick): a tick landing while a command's
-    // git was out made the command find the flight "changed" and refuse (pilot #871: open-pr under a loaded run).
+    // git was out made the command find the flight "changed" and refuse (pilot #871: open-pr under a loaded run). The admission's queue note,
+    // the merge queue position and the CI spend are the node's own reads too (pilot #873: a candidate for the writer found on a loaded run).
     private static FlightRow Unmarked(FlightRow flight) =>
         flight with
         {
@@ -207,6 +208,9 @@ public sealed partial class LegCommander
             GitHubDraft = null,
             GitHubLabel = null,
             GitHubDisagrees = null,
+            Queued = null,
+            MergeQueue = null,
+            Ci = null,
             Review = flight.Review is { } review
                 ? review with { ReviewedHead = null, StatusState = null, Label = null, LabelOverride = null, ReviewUrl = null, MarksWhy = null }
                 : null,
