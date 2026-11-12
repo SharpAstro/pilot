@@ -175,13 +175,13 @@ internal sealed class ListTable
             : grouped.ThenBy(key, compare)];
     }
 
-    /// <summary>Takes widths read from the settings file; they apply to the columns of that title the next time the table is built.</summary>
+    /// <summary>Takes widths read from the settings file; they apply to the columns of that title the next time the table is built. A width saved under no title (the action column, which has no grip now) is dropped.</summary>
     public void Restore(IReadOnlyDictionary<string, float>? saved)
     {
         var restored = System.Collections.Immutable.ImmutableDictionary.Create<string, float>(StringComparer.Ordinal);
         if (saved is not null)
         {
-            restored = restored.SetItems(saved.Where(s => float.IsFinite(s.Value) && s.Value > 0f));
+            restored = restored.SetItems(saved.Where(s => s.Key.Length > 0 && float.IsFinite(s.Value) && s.Value > 0f));
         }
         Volatile.Write(ref _byTitle, restored);
         // Laid out again from them whatever the columns were: the next build sees the titles as new.
@@ -217,7 +217,7 @@ internal sealed class ListTable
                 sorted = new Layout.TableSort(at, own.Descending);
             }
         }
-        var header = Dropping(Layout.Builder.TableHeader(specs, sorted, handler, in style, Widths, scale, TitleSize, _hitPrefix), columns);
+        var header = Dropping(Inert(Layout.Builder.TableHeader(specs, sorted, handler, in style, Widths, scale, TitleSize, _hitPrefix), columns), columns);
         return Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(StripeWidth), header.WStar())
             .WithGap(ColumnGap)
             .PadX(EndPad)
@@ -293,6 +293,35 @@ internal sealed class ListTable
     /// second row what they are in the first, so the grips stay under the gaps at any width. A divider no star carries
     /// (one between two fixed columns) stands alone.
     /// </summary>
+    /// <summary>
+    /// The header without the grip of a divider between the slack star that drops (<see cref="ListColumn.DropBelow"/>) and a
+    /// column beside it. Dragged, that grip resizes only the column beside it and the star takes the difference; the star
+    /// drops below its own width, which no bound on that column can mirror, so the drag would jump or take the star away. The
+    /// divider stays a gap, as it is where DIR.Lib offers no grip, and the column stays resizable from its other grip.
+    /// </summary>
+    private static Layout.Node Inert(Layout.Node header, IReadOnlyList<ListColumn> columns)
+    {
+        if (header is not Layout.Node.Overlay { Top: Layout.Node.Stack grips } overlay)
+        {
+            return header;
+        }
+        var children = grips.Children.ToArray();
+        var changed = false;
+        for (var i = 0; i + 1 < columns.Count && 2 * i + 1 < children.Length; i++)
+        {
+            if (BesideDroppingSlack(columns[i], columns[i + 1]) || BesideDroppingSlack(columns[i + 1], columns[i]))
+            {
+                children[2 * i + 1] = Layout.Builder.Spacer().WFixed(ColumnGap).HStar();
+                changed = true;
+            }
+        }
+        return changed ? overlay with { Top = grips with { Children = [.. children] } } : header;
+    }
+
+    // slack: the star that takes what is left and drops below a width of its own; other: the column on its side, not a slack star.
+    private static bool BesideDroppingSlack(ListColumn slack, ListColumn other) =>
+        slack.DropBelow is not null && slack.Width.IsStar && slack.Width.Max <= 0f && !(other.Width.IsStar && other.Width.Max <= 0f);
+
     private static Layout.Node Dropping(Layout.Node header, IReadOnlyList<ListColumn> columns)
     {
         if (columns.All(c => c.DropBelow is null) || header is not Layout.Node.Overlay { Base: Layout.Node.Stack titles, Top: Layout.Node.Stack grips })

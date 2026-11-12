@@ -535,7 +535,7 @@ public sealed class ListTableTests : IDisposable
     [Theory]
     [InlineData(1280f)]
     [InlineData(1200f)]
-    public void EveryGripOnANarrowSessionsPageFollowsThePointerBothWays(float wide)
+    public void ANarrowSessionsPageDrawsNoGripBesideAHiddenColumnAndNoDragMovesOneAgainstThePointer(float wide)
     {
         // Where columns drop, DIR.Lib holds a trade to each side's MaxWidth and draws grips only on drawn columns, so no drag
         // widens a column to where it would drop (it left Spend/min at 120 and gone at 1280, 2026-11-12).
@@ -559,6 +559,54 @@ public sealed class ListTableTests : IDisposable
                 (by < 0f ? after <= before + 0.5f : after >= before - 0.5f).ShouldBeTrue($"{hit} by {by} at {wide} moved against the pointer ({before} to {after})");
             }
         }
+    }
+
+    [Theory]
+    [InlineData(1280f)]
+    [InlineData(1500f)]
+    public void FlightsWhatRepoGripIsNotDrawnAndNoOtherGripMovesAgainstThePointerOrTakesWhatAway(float wide)
+    {
+        // What takes the slack and drops below its own width: a drag of the grip beside it jumped to the wrong side (154 right
+        // of a 30 left drag at 1280) and, at 1500, took What away. That grip is a gap, as it was before DIR.Lib made it live.
+        var screen = FlightsScreenOf();
+        FlightsView<RgbaImage> Fresh() => new(_renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.List };
+        List<string> Grips(FlightsView<RgbaImage> v)
+        {
+            v.Render(screen, new RectF32(0f, 0f, wide, PageHeight));
+            v.Render(screen, new RectF32(0f, 0f, wide, PageHeight));
+            return [.. Painted(v).Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.StartsWith("flights:table:divider:", StringComparison.Ordinal)).Distinct()];
+        }
+        var grips = Grips(Fresh());
+        grips.ShouldNotContain("flights:table:divider:1", "the grip between What and Repo has no drag");
+        grips.ShouldNotBeEmpty();
+        foreach (var hit in grips)
+        {
+            foreach (var by in new[] { 30f, -30f, 2000f, -2000f })
+            {
+                var view = Fresh();
+                void Render() { view.Render(screen, new RectF32(0f, 0f, wide, PageHeight)); view.Render(screen, new RectF32(0f, 0f, wide, PageHeight)); }
+                Render();
+                var before = Painted(view).Single(r => r.Result is HitResult.ButtonHit b && b.Action == hit).X;
+
+                Drag(view, Render, hit, by);
+
+                Arranged(view.Tree(screen), wide, headerTitle: "Flight").HasHeader("What").ShouldBeTrue($"{hit} by {by} at {wide} took What away");
+                var after = Painted(view).Where(r => r.Result is HitResult.ButtonHit b && b.Action == hit).Select(r => r.X).ToList();
+                if (after.Count == 1)
+                {
+                    (by < 0f ? after[0] <= before + 0.5f : after[0] >= before - 0.5f).ShouldBeTrue($"{hit} by {by} at {wide} moved against the pointer ({before} to {after[0]})");
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void AWidthSavedUnderNoTitleIsNotAppliedBecauseTheActionColumnHasNoGrip()
+    {
+        var table = new ListTable("sessions");
+        table.Restore(new Dictionary<string, float> { [""] = 300f, ["Spend"] = 200f });
+        table.Saved.ShouldNotContainKey("");
+        table.Saved.ShouldContainKeyAndValue("Spend", 200f);
     }
 
     private List<string> DividerActions(float wide)
