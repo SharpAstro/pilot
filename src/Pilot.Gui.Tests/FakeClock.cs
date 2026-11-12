@@ -31,6 +31,16 @@ internal sealed class FakeClock : TimeProvider
         _now = to;
     }
 
+    /// <summary>Fires the earliest armed timer now, without moving the clock: a real timer that fires a little before its due time.</summary>
+    public void FireNextEarly()
+    {
+        if (_timers.Where(t => t.Due is not null).OrderBy(t => t.Due).FirstOrDefault() is { } next)
+        {
+            next.Due = null;
+            next.Fire();
+        }
+    }
+
     private sealed class FakeTimer(TimerCallback callback, object? state) : ITimer
     {
         public DateTimeOffset? Due { get; set; }

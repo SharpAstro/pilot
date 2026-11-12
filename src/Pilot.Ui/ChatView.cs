@@ -212,17 +212,19 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     private readonly Dictionary<string, DateTimeOffset> _firstSeen = new(StringComparer.Ordinal);
     private ITimer? _pillTimer;
     private DateTimeOffset _pillTimerDue;
+    private volatile bool _pillTimerFired; // set off the draw thread: a fired timer counts as gone, so an early fire re-arms
 
     // Raises Changed once, when the pill of the first waiting line comes due: a timer of the Time provider, never a sleep or a poll.
     private void RedrawAt(DateTimeOffset due, DateTimeOffset now)
     {
-        if (_pillTimer is not null && _pillTimerDue == due)
+        if (_pillTimer is not null && !_pillTimerFired && _pillTimerDue == due)
         {
             return;
         }
         _pillTimer?.Dispose();
         _pillTimerDue = due;
-        _pillTimer = Time.CreateTimer(_ => Changed?.Invoke(), null, due - now, Timeout.InfiniteTimeSpan);
+        _pillTimerFired = false;
+        _pillTimer = Time.CreateTimer(_ => { _pillTimerFired = true; Changed?.Invoke(); }, null, due - now, Timeout.InfiniteTimeSpan);
     }
 
     // The node the conversation is with; null is this window's own. Swapped whole.

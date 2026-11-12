@@ -453,4 +453,22 @@ public sealed class ChatQueueTests
         FirstRowHeight(chat, renderer).ShouldBe(before, 0.01f);
         clock.Armed.ShouldBe(0);
     }
+
+    [Fact]
+    public async Task APillTimerThatFiresEarlyIsArmedAgainAndThePillStillComes()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var (chat, clock) = await WaitingAsync(renderer);
+        Actions(chat).ShouldNotContain("chat:now:s1");
+
+        clock.Advance(ChatView<RgbaImage>.AnswerNowDelay - TimeSpan.FromMilliseconds(1));
+        clock.Armed.ShouldBe(1);
+        clock.FireNextEarly();
+        clock.Armed.ShouldBe(0);
+        Actions(chat).ShouldNotContain("chat:now:s1");
+        clock.Armed.ShouldBe(1, "the draw that still found it early armed the timer again");
+
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        Actions(chat).ShouldContain("chat:now:s1");
+    }
 }
