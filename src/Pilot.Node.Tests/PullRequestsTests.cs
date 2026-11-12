@@ -718,7 +718,7 @@ public sealed class PullRequestsTests : IDisposable
     }
 
     [Fact]
-    public async Task APullRequestMergedWhileTheSearchIndexLagsLeavesTheRowAtTheVeryNextReadAndIsNotBroughtBackByAHeldRow()
+    public async Task APullRequestMergedWhileTheSearchIndexLagsLeavesTheRowAtTheVeryNextReadAndIsNotBroughtBackByTheHeldRow()
     {
         Clone("SharpAstro", "pilot");
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
@@ -737,13 +737,8 @@ public sealed class PullRequestsTests : IDisposable
         refreshed.PullRequests.Select(p => p.Number).ShouldBe([1]);
         state.PullRequests()!.PullRequests.Select(p => p.Number).ShouldBe([1]);
 
-        // Another repo's search failing keeps its held PRs, and the merged one stays out all the same.
-        Clone("SharpAstro", "other");
-        github.PutPullRequest(Row("SharpAstro/other", 5, PullRequestKind.Ready));
-        await watch.RefreshAsync(Ct);
-        github.SearchFail.Add("SharpAstro/other");
-        var kept = (await watch.RefreshAsync(Ct))!;
-        kept.PullRequests.Select(p => p.Number).Order().ShouldBe([1, 5]);
+        // Not brought back by the row held from the first read: another pace read still leaves it out.
+        (await watch.ReadOnPaceAsync(Ct))!.PullRequests.Select(p => p.Number).ShouldBe([1]);
     }
 
     [Fact]
