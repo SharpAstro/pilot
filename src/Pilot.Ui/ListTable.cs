@@ -408,7 +408,43 @@ internal sealed class ListTable
                 _syncing = false;
             }
         }
+        else
+        {
+            Unpin(columns);
+        }
         return specs;
+    }
+
+    // DIR.Lib pins a column dragged wider (its floor is its width), so the engine never gives it less and its DropBelow cannot
+    // fire. Once the page has less room for it than it was dragged to, hand the widths back without the pins: the column is then
+    // what a restored one is (capped at its dragged width, free to be given less), and drops as the page narrows, in the
+    // session that dragged it as after a restart.
+    private void Unpin(IReadOnlyList<ListColumn> columns)
+    {
+        var saved = Widths.Save();
+        if (saved.Pinned is not { Length: > 0 } pinned)
+        {
+            return;
+        }
+        var byTitle = Volatile.Read(ref _byTitle);
+        var over = false;
+        for (var i = 0; i < columns.Count && i < pinned.Length && !over; i++)
+        {
+            over = pinned[i] && columns[i].DropBelow is not null && byTitle.TryGetValue(columns[i].Header, out var w) && Most(columns, i) is { } most && w > most + 0.5f;
+        }
+        if (!over)
+        {
+            return;
+        }
+        _syncing = true;
+        try
+        {
+            Widths.Restore(new Layout.TableColumnWidths.Saved(saved.Widths));
+        }
+        finally
+        {
+            _syncing = false;
+        }
     }
 
     // A click on a title: the next sort, kept by that column's title. Null (a display header, no hover) while no column sorts.
