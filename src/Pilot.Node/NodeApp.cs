@@ -361,6 +361,12 @@ public static partial class NodeApp
                 {
                     return Refuse($"{command.Verb} is for this machine only");
                 }
+                // What the watchtower asks is the person's to answer, from any node's GUI: a session on another node is told so here,
+                // while the wire still says an agent sent it (the grant's command below carries no agent mark).
+                if (command.Agent && Standing.AnswersWatchtowerAsk(command, state))
+                {
+                    return Refuse(Standing.AskIsThePersons);
+                }
                 command = command with { Who = $"{grant}/{command.Who}", Grant = grant, Agent = false };
             }
 
