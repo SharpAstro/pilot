@@ -159,6 +159,11 @@ public sealed partial class FlightCommander
                 throw new FlightException($"{flight.Code}'s PR merged, but {said}: their work goes to a new PR, and the flight is not landed");
             }
         }
+        // The node saw its PR merge: the row leaves the Pull requests page now, not at the next read.
+        if (mergedHead is not null && flight.PullRequest is { } mergedNumber)
+        {
+            state.ForgetPullRequest(flight.Repo, mergedNumber, time.GetUtcNow());
+        }
         // What it releases is read before its plane goes, and before anything is changed: a land that cannot say what its
         // consumers wait for is refused, never half done. A folded flight released nothing.
         var consumers = state.Flights().Where(f => f.State != FlightState.Landed && f.Connections.Contains(flight.Code, StringComparer.Ordinal)).ToList();
