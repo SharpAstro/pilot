@@ -193,7 +193,7 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
                     continue;
                 }
                 var key = TranscriptBook.Reader.Same(entry.Text);
-                var match = free.FirstOrDefault(f => !used.Contains(f.Send.Id) && f.Key == key && (entry.At is not { } at || at >= f.Send.At - Slack));
+                var match = free.FirstOrDefault(f => !used.Contains(f.Send.Id) && IsSend(f.Key, key) && (entry.At is not { } at || at >= f.Send.At - Slack));
                 if (match.Send is { } send)
                 {
                     used.Add(send.Id);
@@ -223,6 +223,33 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
         }
         return (taken, queued);
     }
+
+    /// <summary>
+    /// Whether an entry with the key <paramref name="entry"/> is the send with the key <paramref name="send"/>: the same words, or the
+    /// send's words as the transcript cut them (<see cref="TranscriptBook.Reader.Clip"/>): its head when the cut is at the end, its
+    /// head and its tail when the cut is inside a card's block. A cut entry matched no send, so it carried no id and the chat kept the
+    /// person's echo of it for good.
+    /// </summary>
+    internal static bool IsSend(string send, string entry)
+    {
+        if (send == entry)
+        {
+            return true;
+        }
+        if (send.Length <= entry.Length)
+        {
+            return false;
+        }
+        if (entry.EndsWith(TranscriptBook.Reader.Clipped, StringComparison.Ordinal))
+        {
+            return send.StartsWith(entry[..^TranscriptBook.Reader.Clipped.Length].TrimEnd(), StringComparison.Ordinal);
+        }
+        var cut = entry.IndexOf(CutKey, StringComparison.Ordinal);
+        return cut >= 0 && send.StartsWith(entry[..cut], StringComparison.Ordinal) && send.EndsWith(entry[(cut + CutKey.Length)..], StringComparison.Ordinal);
+    }
+
+    // A card block's cut line as a key holds it: between single spaces, as Same leaves every run of white space.
+    private static readonly string CutKey = $" {CardContext.Cut.Trim()} ";
 
     private static TranscriptEntry DividerOf(Watchtower.Generation generation, string session, int index) => new()
     {
