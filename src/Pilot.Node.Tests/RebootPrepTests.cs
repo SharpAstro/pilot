@@ -51,6 +51,18 @@ public sealed class RebootPrepTests
         Session("e1", "se1-old", SessionRole.Worker, "PIL1", SessionStartReasons.LegLaunch, state: SessionState.Ended);
     }
 
+    /// <summary>PIL1008: a PR fixer is its own role, so it is a node session by role whether or not its row carries a start reason (it was ad hoc, counted by the reason).</summary>
+    [Fact]
+    public async Task AFixerRowIsToldToSaveByItsRoleAloneAndAPersonsAdHocBackgroundSessionIsNot()
+    {
+        Session("f2", "se1-fix-pilot-900", SessionRole.Fixer, null, null);
+        Session("a1", "a-persons-own", SessionRole.AdHoc, null, null);
+
+        await Prep().RequestAsync("seb", "kernel update", Ct);
+
+        _said.Select(s => s.Id).ShouldBe(["f2"]);
+    }
+
     [Fact]
     public async Task ARequestTurnsMaintenanceOnAndTellsEachLiveNodeSessionOnce()
     {

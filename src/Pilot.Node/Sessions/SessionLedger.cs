@@ -238,6 +238,7 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
         return row with
         {
             StartReason = entry.StartReason,
+            Pr = entry.Pr ?? row.Pr,
             EndReason = entry.EndReason,
             EndedAt = ended ? entry.EndedAt : null,
             WallSeconds = ended ? entry.WallSeconds : null,

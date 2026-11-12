@@ -17,12 +17,13 @@ public sealed record ClaudeJobSweepResult(int Looked, int Removed, int Stopped, 
 /// </summary>
 /// <remarks>
 /// A job is pilot's when the ledger has it (its job id, or the first eight characters of any of its session ids) or, failing that,
-/// when the name in its <c>state.json</c> resolves to a pilot role for this machine's prefix. A job is swept when
+/// when the name in its <c>state.json</c> resolves to a pilot role for this machine's prefix (a PR fixer, <c>de1-fix-&lt;repo&gt;-&lt;n&gt;</c>,
+/// is one: it resolves to <see cref="SessionRole.Fixer"/>, no longer ad hoc). A job is swept when
 /// <list type="bullet">
 /// <item>its session row is ended or failed, or the ledger has an end reason for it, and it is not the current watchtower's; or</item>
 /// <item>it is blocked, has no process in <c>claude agents</c>, has a pilot role's name and was last updated over a day ago.</item>
 /// </list>
-/// Never swept: a job pilot did not start (an interactive session, <c>se1-fix-sdlvulkan-renderer-153</c>), a job with a live row
+/// Never swept: a job pilot did not start (an interactive session), a job with a live row
 /// under any id it has had, the current watchtower's, and a blocked job under a day old. Only the job goes; the transcript under
 /// <c>&lt;profile&gt;/projects</c> is never touched.
 /// </remarks>

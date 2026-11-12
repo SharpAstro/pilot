@@ -69,6 +69,14 @@ public sealed record SessionRow
     /// <summary>The leg the session flies (<c>node</c>), or null when it flies none.</summary>
     public string? Leg { get; init; }
 
+    /// <summary>The PR a session the node started for it (a fixer or a PR reviewer) is about; null for any other session.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Pr { get; init; }
+
+    /// <summary>The fix round a fixer is making (from the PR review that names it as its fixer); null for any other session.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? FixRound { get; init; }
+
     /// <summary>The model of its last response: the transcript's last assistant line, <c>message.model</c>. Null before its first response.</summary>
     public string? Model { get; init; }
 
@@ -237,6 +245,10 @@ public enum SessionRole
     /// <summary>Any other session: shown under its repo and folder, and one click from joining a flight.</summary>
     [JsonStringEnumMemberName("adHoc")]
     AdHoc,
+
+    /// <summary>The session the node starts to make a PR review's changes: <c>&lt;machine&gt;-fix-&lt;repo&gt;-&lt;n&gt;</c>.</summary>
+    [JsonStringEnumMemberName("fixer")]
+    Fixer,
 }
 
 /// <summary>A subagent a session started (Claude Code's <c>Agent</c> tool): its own transcript beside the session's.</summary>

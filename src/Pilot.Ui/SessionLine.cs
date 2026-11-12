@@ -211,9 +211,13 @@ internal sealed partial record SessionLine
         {
             SessionRole.Watchtower => "watchtower",
             SessionRole.AdHoc => row.Repo is { } repo ? $"ad hoc · {repo}" : "ad hoc",
+            SessionRole.Fixer => PrText("PR fix", row.Pr) + (row.FixRound is { } round ? $" round {round}" : ""),
+            SessionRole.Reviewer when flight is null && row.Pr is not null => PrText("PR review", row.Pr),
             var role => flight is null ? RoleName(role) : $"{RoleName(role)} · {flight}",
         };
     }
+
+    private static string PrText(string what, int? pr) => pr is { } n ? $"{what} · #{n}" : what;
 
     private static string RoleName(SessionRole role) => role switch
     {
@@ -221,6 +225,7 @@ internal sealed partial record SessionLine
         SessionRole.Worker => "worker",
         SessionRole.Reviewer => "reviewer",
         SessionRole.Planner => "planner",
+        SessionRole.Fixer => "PR fix",
         SessionRole.Watchtower => "watchtower",
         _ => "ad hoc",
     };

@@ -177,8 +177,9 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
 
     private static AdmissionRole RoleOf(SessionRow row) => IsFixer(row) ? AdmissionRole.Fixer : RoleOf(row.Role);
 
-    // A PR fixer: the ad-hoc session the node starts to make a review's changes.
-    private static bool IsFixer(SessionRow row) => row.Role == SessionRole.AdHoc && row.StartReason == SessionStartReasons.PrFix;
+    // A PR fixer: the session the node starts to make a review's changes. A row stored before the Fixer role is ad hoc with a PR fix start.
+    private static bool IsFixer(SessionRow row) =>
+        row.Role == SessionRole.Fixer || row.Role == SessionRole.AdHoc && row.StartReason == SessionStartReasons.PrFix;
 
     /// <summary>The free memory a session start needs (#912): a claude session and its build take 0.5 to 1 GB, so under 1.5 GB nothing starts.</summary>
     public long SessionMemoryFloor { get; set; } = 1536L * 1024 * 1024;

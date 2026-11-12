@@ -66,13 +66,9 @@ public static class SpendWindows
 /// <summary>Which role of the ledger a session is: the node's fixers carry no role of their own.</summary>
 public static partial class SpendRoles
 {
-    /// <summary>A PR's fixer as the node names it, <c>&lt;machine&gt;-fix-&lt;repo&gt;-&lt;n&gt;</c> (<c>du1-fix-pilot-515</c>).</summary>
-    [GeneratedRegex(@"^[a-z]{2}[0-9]+-fix-[a-z0-9._-]+-[0-9]+$", RegexOptions.CultureInvariant)]
-    private static partial Regex FixerName();
-
     /// <summary>planner, worker, reviewer, fixer, watchtower, pilot or adhoc.</summary>
     public static string Of(string? sessionName, SessionRole role) =>
-        sessionName is { Length: > 0 } && FixerName().IsMatch(sessionName)
+        role == SessionRole.Fixer || SessionRoles.IsFixerName(sessionName)
             ? "fixer"
             : role switch
             {
