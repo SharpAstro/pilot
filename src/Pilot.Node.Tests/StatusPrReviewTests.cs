@@ -18,6 +18,7 @@ public class StatusPrReviewTests
     private static SessionRow Session(SessionState state) => new()
     {
         Id = "s1", SessionId = "s1", Name = "de1-fix-pilot-1000", Kind = SessionKind.Background, Cwd = "/w", Role = SessionRole.Fixer, State = state,
+        ContextTokens = 0, ContextWindow = 200_000, SpendWeighted = 0, StartedAt = DateTimeOffset.UnixEpoch,
     };
 
     private static SnapshotEvent Snapshot(PrReviewRow review, params SessionRow[] sessions) => new()
