@@ -896,14 +896,14 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             rows.Add(_entries.Streaming(writing).WStar());
         }
         var answerNow = CurrentAnswerNow();
-        var asked = Time.GetUtcNow();
+        var seenNow = Time.GetUtcNow();
         foreach (var gone in _firstSeen.Keys.Where(k => !queuedIds.Contains(k)).ToList())
         {
             _firstSeen.Remove(gone);
         }
         foreach (var id in queuedIds.OfType<string>())
         {
-            _firstSeen.TryAdd(id, asked);
+            _firstSeen.TryAdd(id, seenNow);
         }
         for (var i = 0; i < held.Queued.Length; i++)
         {
@@ -923,7 +923,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
                 if (i == 0 && held.Working && behind is not null && answerNow is not null)
                 {
                     var due = _firstSeen[sendId] + AnswerNowDelay;
-                    if (asked >= due || Presses.PendingOf(key) is not null)
+                    if (seenNow >= due || Presses.PendingOf(key) is not null)
                     {
                         pill = Presses.Button(key, key,
                             () => CardsView<TSurface>.Pill("Answer now", key, () => AnswerNow(sendId, answerNow)),
@@ -933,7 +933,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
                     {
                         // Its room is kept from the start (a blank of the pill's size) so the row and the words' wrap do not move when it appears.
                         pill = Layout.Builder.Text(" ", 12f, Palette.Current.Dim, TextAlign.Center).Pad(10f, 4f).WAuto();
-                        RedrawAt(due, asked);
+                        RedrawAt(due, seenNow);
                     }
                 }
             }
