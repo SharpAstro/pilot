@@ -1908,8 +1908,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         L("parser").Report.ShouldNotBeNull().ShouldContain("retried once");
     }
 
-    private const string HostNeverLaunched = "Catastrophic failure: Test process did not respond within 60 seconds
-No test matches the given testcase filter `FullyQualifiedName~LegTests`";
+    private const string HostNeverLaunched = "Catastrophic failure: Test process did not respond within 60 seconds\nNo test matches the given testcase filter `FullyQualifiedName~LegTests`";
 
     [Fact]
     public async Task ACheckWhoseTestHostNeverLaunchedIsRunOnceMoreAndAPassFinishesTheLeg()
@@ -1941,8 +1940,7 @@ No test matches the given testcase filter `FullyQualifiedName~LegTests`";
     public async Task ANoTestMatchesFromAHostThatRanIsAWrongFilterAndIsNotRunAgain()
     {
         await TickedLegs();
-        _checks.Next = new CheckRun(1, "Passed! - Failed: 0, Passed: 3
-No test matches the given testcase filter `FullyQualifiedName~Nope`");
+        _checks.Next = new CheckRun(1, "Passed! - Failed: 0, Passed: 3\nNo test matches the given testcase filter `FullyQualifiedName~Nope`");
 
         var failed = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
 
