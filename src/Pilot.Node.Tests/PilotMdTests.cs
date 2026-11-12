@@ -169,7 +169,7 @@ public sealed class PilotMdTests : IDisposable
 
         read.TooLongBy.ShouldBeNull();
         read.Text.ShouldBe(text.TrimEnd());
-        read.Text.ShouldNotBeNull().Split('\n').Length.ShouldBeLessThanOrEqualTo(PilotMd.MaxLines);
+        PilotMd.LineCount(read.Text.ShouldNotBeNull()).ShouldBeLessThanOrEqualTo(PilotMd.MaxLines);
     }
 
     /// <summary>The repo's PILOT.md, found by walking up from the test's directory to the one holding src/Pilot.slnx.</summary>
