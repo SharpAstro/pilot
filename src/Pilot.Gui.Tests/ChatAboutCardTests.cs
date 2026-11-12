@@ -239,6 +239,93 @@ public sealed class ChatAboutCardTests
         text.ShouldNotContain("[end of card]");
     }
 
+    private static CardRow LongCard() => Card("c7") with
+    {
+        Detail = string.Join('\n', Enumerable.Range(1, 300).Select(i => $"line {i} of a long detail about why the flight landed")),
+    };
+
+    // The message as the node keeps it: composed, then cut to the transcript's limit with the words kept whole.
+    private static TranscriptEntry SentClipped(string words, CardRow card, string? sendId) => new()
+    {
+        Index = 0, Kind = TranscriptKind.User, At = Now, SendId = sendId,
+        Text = CardContext.Clip(CardContext.Compose(card, "DE1", null, words), TranscriptPage.TextLimit)!,
+    };
+
+    private static async Task<(ChatView<RgbaImage> Chat, string Drawn, string[] Ids)> ClippedSendAsync(RgbaImageRenderer renderer, string words)
+    {
+        var chat = new ChatView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        var ids = new List<string>();
+        TranscriptEntry? entry = null;
+        chat.Load = (after, _) => Task.FromResult(new ChatPage { Entries = after < 0 && entry is not null ? [entry] : [], Total = entry is null ? 0 : 1 });
+        chat.OnSend = _ =>
+        {
+            ids.Add(ChatCommands.SendId.Value!);
+            return Task.FromResult<string?>(null);
+        };
+        chat.Open();
+        chat.Tree();
+        var tracker = new BackgroundTaskTracker();
+        TextInputInteraction.HandleText(chat.Input, words);
+        TextInputInteraction.HandleKey(InputKey.Enter, InputModifier.None, new TextInputInteraction.KeyContext(tracker, chat.Ui.Focus, () => { }));
+        await tracker.DrainAsync();
+        await WaitForAsync(() => ids.Count > 0);
+        entry = SentClipped(words, LongCard(), ids.Single());
+        entry.Text.Length.ShouldBeLessThanOrEqualTo(TranscriptPage.TextLimit);
+        chat.Close();
+        chat.Open();
+        await WaitForAsync(() => chat.Entries.Count > 0);
+        chat.Close();
+        return (chat, Described(chat), [.. ids]);
+    }
+
+    [Fact]
+    public async Task AMessageAboutALongCardCutByTheNodeDrawsAsTheQuoteWithTheWordsAndSaysItWasCutAndLeavesNoEcho()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (_, text, _) = await ClippedSendAsync(renderer, "why did it land?");
+
+        text.ShouldContain("> card c7: card c7");
+        text.ShouldContain("> line 1 of a long detail");
+        text.ShouldContain("why did it land?");
+        text.ShouldContain("(card cut)");
+        text.ShouldNotContain("[pilot card");
+        text.ShouldNotContain("[end of card]");
+        text.ShouldNotContain("[...]");
+        text.ShouldNotContain("you ");
+    }
+
+    [Fact]
+    public async Task CapturesOfAMessageAboutALongCardAtNarrowAndWideWindowsInBothPalettes()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var dir = Path.GetDirectoryName(capture) ?? ".";
+        var was = Palette.Current;
+        try
+        {
+            foreach (var width in new[] { 900, 1800 })
+            {
+                foreach (var (name, palette) in new[] { ("standard", Palette.Standard), ("night", Palette.Night) })
+                {
+                    Palette.Current = palette;
+                    using var renderer = new RgbaImageRenderer((uint)width, 700);
+                    var (chat, _, _) = await ClippedSendAsync(renderer, "why did it land before its review finished?");
+                    chat.Open();
+                    await WaitForAsync(() => chat.Entries.Count > 0);
+                    chat.Render(new RectF32(0, 0, width, 700));
+                    chat.Close();
+                    File.WriteAllBytes(Path.Combine(dir, $"chat-long-card-{name}-{width}.png"), SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, 700));
+                }
+            }
+        }
+        finally
+        {
+            Palette.Current = was;
+        }
+    }
+
     [Fact]
     public void AnEntryThatIsNotACardMessageIsDrawnAsItIs()
     {
