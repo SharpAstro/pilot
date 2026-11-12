@@ -1908,6 +1908,48 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         L("parser").Report.ShouldNotBeNull().ShouldContain("retried once");
     }
 
+    private const string HostNeverLaunched = "Catastrophic failure: Test process did not respond within 60 seconds
+No test matches the given testcase filter `FullyQualifiedName~LegTests`";
+
+    [Fact]
+    public async Task ACheckWhoseTestHostNeverLaunchedIsRunOnceMoreAndAPassFinishesTheLeg()
+    {
+        await TickedLegs();
+        _checks.Script.Enqueue(new CheckRun(1, HostNeverLaunched));
+        _checks.Next = new CheckRun(0, "Passed: 42");
+
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in")).Ok.ShouldBeTrue();
+
+        _checks.Runs.Count.ShouldBe(2);
+        L("parser").State.ShouldBe(LegState.Done);
+    }
+
+    [Fact]
+    public async Task ASecondTestHostThatNeverLaunchedFailsTheLegWithAPlainLine()
+    {
+        await TickedLegs();
+        _checks.Next = new CheckRun(1, HostNeverLaunched);
+
+        var failed = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+
+        _checks.Runs.Count.ShouldBe(2);
+        failed.Error.ShouldNotBeNull().ShouldContain("the test host never answered its launch, twice; the check was retried once");
+        L("parser").State.ShouldBe(LegState.Flying);
+    }
+
+    [Fact]
+    public async Task ANoTestMatchesFromAHostThatRanIsAWrongFilterAndIsNotRunAgain()
+    {
+        await TickedLegs();
+        _checks.Next = new CheckRun(1, "Passed! - Failed: 0, Passed: 3
+No test matches the given testcase filter `FullyQualifiedName~Nope`");
+
+        var failed = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+
+        _checks.Runs.Count.ShouldBe(1);
+        failed.Error.ShouldNotBeNull().ShouldNotContain("never answered");
+    }
+
     [Fact]
     public async Task ACheckStoppedByItsBudgetOnAQuietMachineIsNotRunAgain()
     {
