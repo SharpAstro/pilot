@@ -34,7 +34,7 @@ public sealed class MergedPullRequestTests : LegCommanderTestsBase
     [Fact]
     public async Task AFlightLandingAfterItsMergeDropsItsPrRowWithNoReadRun()
     {
-        (await _flights.RunAsync(new Pilot.Commands.CommandRequest { Verb = Pilot.Commands.Verbs.CreateFlight, Target = Pilot.Commands.Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
         _state.PutFlight(_state.Flights().Single() with { PullRequest = 63, PullRequestUrl = "https://github.com/SharpAstro/tianwen/pull/63" });
         _state.PutPullRequests(Row(DateTimeOffset.UtcNow, Pr("SharpAstro/tianwen", 63), Pr("SharpAstro/tianwen", 64)));
         Numbers(_state).ShouldBe([63, 64]);
