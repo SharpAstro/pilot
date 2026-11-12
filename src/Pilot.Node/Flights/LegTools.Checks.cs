@@ -21,7 +21,9 @@ public sealed record CheckRun(int ExitCode, string Tail)
     /// <summary>
     /// The lines xunit.v3 and vstest / Microsoft.Testing.Platform write when the test host did not answer its launch within the
     /// launch limit (#861). 'dotnet test' then often ends in 'No test matches the given testcase filter', which reads like a
-    /// filter mistake; that line alone, from a host that ran, is no such sign.
+    /// filter mistake; that line alone, from a host that ran, is no such sign. Only "Test process did not respond within" is a wording
+    /// seen in a real run (#861); the others are the wordings of vstest and Microsoft.Testing.Platform for the same failure, matched
+    /// case-insensitively, and a new wording is added here with a case in CheckRunnerTests when one is seen.
     /// </summary>
     private static readonly string[] LaunchTimeoutLines =
     [

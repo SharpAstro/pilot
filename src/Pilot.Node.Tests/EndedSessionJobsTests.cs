@@ -111,6 +111,10 @@ public sealed class EndedSessionJobsTests : IDisposable
 
         // One listing that omits it is a blip; the end counts once the next poll agrees.
         await Poll(endedListing, Live(AgentRows.SessionB, "worker-b", 4343));
+        // A drop, were the blip to cause one, is handled by the dispatcher after the poll returns. A job queued behind it for the
+        // other session is handled in the same pass, so once that one is next in line the first read cannot be a read too early.
+        var probe = Queue(Verbs.SessionTarget(AgentRows.SessionB[..8]), "echo probe");
+        await Until(probe, j => j.Step?.StartsWith("next in line") == true);
         _state.Jobs().Single(j => j.Id == first).State.ShouldBe(JobState.Queued);
         await Poll(endedListing, Live(AgentRows.SessionB, "worker-b", 4343));
         _state.Sessions().Single(s => s.Id == worker).State.ShouldBeOneOf(SessionState.Ended, SessionState.Failed);
@@ -123,8 +127,8 @@ public sealed class EndedSessionJobsTests : IDisposable
             row.Told.ShouldBeTrue();
         }
         _said.ShouldBeEmpty();
-        var live = Queue(Verbs.SessionTarget(AgentRows.SessionB[..8]), "echo three");
-        (await Until(live, j => j.Step?.StartsWith("next in line") == true)).State.ShouldBe(JobState.Queued);
+        // The live session's job, queued before the drop, is untouched by it.
+        _state.Jobs().Single(j => j.Id == probe).State.ShouldBe(JobState.Queued);
 
         await Release(holder);
     }
