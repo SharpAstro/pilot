@@ -731,7 +731,7 @@ public sealed class PullRequestsTests : IDisposable
         github.MergeWithLaggingIndex("SharpAstro/pilot", 2);
         var paced = (await watch.ReadOnPaceAsync(Ct))!;
         paced.PullRequests.Select(p => p.Number).ShouldBe([1]);
-        paced.ReadAt.ShouldNotBeNull();
+        paced.ReadAt.HasValue.ShouldBeTrue();
 
         var refreshed = (await watch.RefreshAsync(Ct))!;
         refreshed.PullRequests.Select(p => p.Number).ShouldBe([1]);
