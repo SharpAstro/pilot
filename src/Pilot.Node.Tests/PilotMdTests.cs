@@ -169,7 +169,7 @@ public sealed class PilotMdTests : IDisposable
 
         read.TooLongBy.ShouldBeNull();
         read.Text.ShouldBe(text.TrimEnd());
-        read.Text.ShouldNotBeNull().Split('\n').Length.ShouldBeLessThanOrEqualTo(PilotMd.MaxLines);
+        PilotMd.LineCount(read.Text.ShouldNotBeNull()).ShouldBeLessThanOrEqualTo(PilotMd.MaxLines);
     }
 
     /// <summary>The repo's PILOT.md, found by walking up from the test's directory to the one holding src/Pilot.slnx.</summary>
@@ -182,6 +182,25 @@ public sealed class PilotMdTests : IDisposable
         }
         dir.ShouldNotBeNull("no src/Pilot.slnx above the test's directory");
         return File.ReadAllText(Path.Combine(dir.FullName, PilotMd.FileName));
+    }
+
+    [Fact]
+    [Trait("Category", "Invariant")]
+    public void TheReposOwnPilotMdIsWithinTheLineLimit()
+    {
+        var lines = PilotMd.LineCount(RepoPilotMd());
+
+        lines.ShouldBeLessThanOrEqualTo(PilotMd.MaxLines,
+            $"PILOT.md is {lines} lines, over the {PilotMd.MaxLines} limit: shorten PILOT.md, do not raise MaxLines (#1013). The node refuses to quote a longer page into its briefs.");
+    }
+
+    [Fact]
+    public void LineCountCountsAsReadAsyncDoes()
+    {
+        PilotMd.LineCount(Lines(PilotMd.MaxLines + 1)).ShouldBe(PilotMd.MaxLines + 1);
+        PilotMd.LineCount(Lines(3) + "\n\n\n").ShouldBe(3);
+        PilotMd.LineCount(Lines(3).Replace("\n", "\r\n") + "\r\n").ShouldBe(3);
+        PilotMd.LineCount("one").ShouldBe(1);
     }
 
     [Fact]
