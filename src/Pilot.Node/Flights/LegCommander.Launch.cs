@@ -61,7 +61,7 @@ public sealed partial class LegCommander
         {
             return true;
         }
-        if (_starting.TryRemove(KeyValuePair.Create(key, held)))
+        if (EndStart(key, held))
         {
             state.RaiseCard(CardBin.Ring, StartFailedKind, held.Subject, $"{held.What} was stuck starting for {(int)outFor.TotalSeconds} s and was given up",
                 $"Its start did not answer within {(int)StartBound.TotalSeconds} s, so it no longer holds its place: the next start is accepted.", held.Again is null ? null : [held.Again]);
@@ -77,6 +77,38 @@ public sealed partial class LegCommander
     private static string LegsKey(string code) => $"legs:{code}";
 
     private static string ReviewKey(string code) => $"review:{code}";
+
+    // Completed, and replaced by a fresh one, each time a start reservation is removed: what a test awaits instead of polling Starting.
+    private volatile TaskCompletionSource _startEnded = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private bool EndStart(string key, Reservation held)
+    {
+        var removed = _starting.TryRemove(KeyValuePair.Create(key, held));
+        if (removed)
+        {
+            Interlocked.Exchange(ref _startEnded, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
+        }
+        return removed;
+    }
+
+    /// <summary>
+    /// Completes once no leg session or reviewer start is out for the flight (visible to tests). It waits on the removal of the
+    /// reservation, never on a timer; <paramref name="ceiling"/> only bounds a start that never ends.
+    /// </summary>
+    internal async Task WhenNotStartingAsync(string code, TimeSpan ceiling, CancellationToken ct = default)
+    {
+        using var bound = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        bound.CancelAfter(ceiling);
+        while (true)
+        {
+            var ended = _startEnded.Task;
+            if (!Starting(code))
+            {
+                return;
+            }
+            await ended.WaitAsync(bound.Token);
+        }
+    }
 
     /// <summary>A leg session or a reviewer of the flight is being started: the sweep leaves its next step until it is up.</summary>
     internal bool Starting(string code) => IsStarting(LegsKey(code)) || IsStarting(ReviewKey(code));
@@ -158,7 +190,7 @@ public sealed partial class LegCommander
                 }
                 finally
                 {
-                    _starting.TryRemove(KeyValuePair.Create(key, token));
+                    EndStart(key, token);
                     Slots.End(key, token);
                     _one.Release();
                 }
@@ -175,7 +207,7 @@ public sealed partial class LegCommander
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _starting.TryRemove(KeyValuePair.Create(key, token));
+                EndStart(key, token);
                 Slots.End(key, token);
                 failure = ex.Message;
                 if (job is not null)
