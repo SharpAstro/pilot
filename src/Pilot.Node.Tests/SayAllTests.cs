@@ -122,6 +122,14 @@ public sealed class SayAllPickerTests
     }
 
     [Fact]
+    public void RoleFixerReachesAPrFixerAndRoleAdHocDoesNot()
+    {
+        SessionRow[] rows = [Row("x1", "du1-fix-pilot-900", SessionRole.Fixer, repo: "pilot"), Row("h1", "my-own", SessionRole.AdHoc, repo: "pilot")];
+        Ids(rows, new SayAllFilter(Roles: ["fixer"])).ShouldBe(["x1"]);
+        Ids(rows, new SayAllFilter(Roles: ["adHoc"])).ShouldBe(["h1"]);
+    }
+
+    [Fact]
     public void ARoleValueMustNameARole()
     {
         SayAllFilter.NormalizeRole("VALIDATOR").ShouldBe("validator");

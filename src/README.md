@@ -757,7 +757,7 @@ pilot review approve|changes|comment <report…> [--finding "<path:line> <body>"
 pilot check <step number or text> [--undo]
 pilot artifact <path or URL> [title…]
 pilot say <session> <text…>
-pilot say-all <text…> [--all] [--role worker|planner|reviewer|pilot|adHoc|watchtower|validator]… [--flight <code>]… [--repo <name or checkout>]… [--dry-run]
+pilot say-all <text…> [--all] [--role worker|planner|reviewer|fixer|pilot|adHoc|watchtower|validator]… [--flight <code>]… [--repo <name or checkout>]… [--dry-run]
                                                # the same say to each session the filters pick (see Say to all)
 pilot compact <session> [focus…]               # an idle background session's /compact, as its next turn (see Compaction)
 pilot note <text…>
@@ -827,7 +827,7 @@ and the source for rich.
 mid-turn), and prints a line per session: `ok session/7734b775 (relayed)  <name>  <role>  <state>`, or `refused
 session/<id> …` and why. It exits 1 if any say failed, else 0; no session picked says so. By default it picks the
 active sessions, working or waiting; `--all` adds idle ones; ended, failed and archived sessions are never picked.
-`--role` (once per role: `worker`, `planner`, `reviewer`, `pilot`, `adHoc`, `watchtower`, `validator`), `--flight` (a
+`--role` (once per role: `worker`, `planner`, `reviewer`, `fixer`, `pilot`, `adHoc`, `watchtower`, `validator`), `--flight` (a
 code, once per flight) and `--repo` (a repo's folder name, or a checkout's path, which takes the sessions in or under it)
 combine, each narrowing the others; within one, any value matches. Two kinds are kept safe: a validator (a session named
 `…-validator`: it checks a commit as it stands) is picked only when `--role validator` names it, and the watchtower only

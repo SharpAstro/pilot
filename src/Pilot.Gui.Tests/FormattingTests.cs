@@ -92,6 +92,13 @@ public sealed class FormattingTests
         SessionLine.RoleText(row with { Role = SessionRole.AdHoc, Repo = "tianwen" }).ShouldBe("ad hoc · tianwen");
         SessionLine.RoleText(row with { Role = SessionRole.AdHoc, Flight = null, Leg = null }).ShouldBe("ad hoc");
 
+        var fixer = row with { Role = SessionRole.Fixer, Flight = null, Leg = null, Pr = 1000, FixRound = 4 };
+        SessionLine.RoleText(fixer).ShouldBe("PR fix · #1000 round 4");
+        SessionLine.RoleText(fixer with { FixRound = null }).ShouldBe("PR fix · #1000");
+        SessionLine.RoleText(fixer with { Pr = null }).ShouldBe("PR fix round 4");
+        SessionLine.RoleText(row with { Role = SessionRole.Reviewer, Flight = null, Leg = null, Pr = 1000 }).ShouldBe("PR review · #1000");
+        SessionLine.RoleText(row with { Role = SessionRole.Reviewer, Leg = null, Pr = 1000 }).ShouldBe("reviewer · TIA1611");
+
         // Over budget: the figure says so, the fraction goes past 1, and a zero window leaves the context bar empty.
         var line = SessionLine.From(row, DateTimeOffset.UnixEpoch);
         line.Spend.ShouldBe("5M / 4M · 125%");

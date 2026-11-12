@@ -1,4 +1,5 @@
 using DIR.Lib;
+using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Pilot.Ui;
 using Shouldly;
@@ -47,6 +48,32 @@ public sealed class SessionsViewTests
         SessionsCapture.RowsText(screen).ShouldBe(string.Join('\n', ExpectedRows) + "\n");
         PaintedRows(view).Select(h => h.Index).Order().ShouldBe([0, 1, 2, 3, 4, 5, 6]);
         screen.Summary.ShouldBe("7 sessions · 4 live · 1 waiting on you");
+    }
+
+    [Fact]
+    public void AFixerAPrReviewerAndAnAdHocRowAreToldApart()
+    {
+        var snapshot = SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath);
+        var template = snapshot.Sessions.First(s => s.Role == SessionRole.AdHoc);
+        var rows = new[]
+        {
+            template with { Id = "fix-1", Name = "de1-fix-pilot-1000", Role = SessionRole.Fixer, Flight = null, Leg = null, Pr = 1000, FixRound = 4 },
+            template with { Id = "rev-1", Name = "de1-review-pilot-1000", Role = SessionRole.Reviewer, Flight = null, Leg = null, Pr = 1000, FixRound = null },
+            template with { Id = "adhoc-1", Name = "mine", Role = SessionRole.AdHoc, Flight = null, Leg = null, Pr = null, FixRound = null, Repo = "pilot" },
+        };
+        var screen = SessionsCapture.ScreenFor(snapshot with { Sessions = rows }, "sample");
+
+        var text = SessionsCapture.RowsText(screen);
+        text.ShouldContain("PR fix · #1000 round 4 | ");
+        text.ShouldContain("PR review · #1000 | ");
+        text.ShouldContain("ad hoc · pilot | ");
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var view = SessionsCapture.Render(renderer, screen);
+        PaintedRows(view).Count.ShouldBe(3);
+
+        var ctx = new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f);
+        var arranged = Layout.Engine.Arrange(view.Tree(screen), new Rect<float>(0, 0, 1280, 800), ctx);
+        TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
     }
 
     [Fact]

@@ -106,6 +106,17 @@ public sealed class ClaudeJobSweepTests : IDisposable
         _jobs.Calls.ShouldBe(["rm bbbb2222"]);
     }
 
+    /// <summary>PIL1008: a PR fixer's name resolves to the Fixer role, so its old blocked job is pilot's to sweep even with no ledger entry.</summary>
+    [Fact]
+    public async Task A_fixers_job_with_a_pilot_name_and_no_ledger_entry_is_pilots_to_sweep()
+    {
+        Job("bbbb4444", "blocked", "se1-fix-pilot-900", Old);
+
+        await Sweep().SweepAsync(Ct);
+
+        _jobs.Calls.ShouldBe(["rm bbbb4444"]);
+    }
+
     /// <summary>
     /// #893 with #891: a session that ended after its finished turn while it owns a running pilot job is resumed by that job's end, so its
     /// Claude Code job is not swept until then (PIL855's review).
@@ -215,7 +226,6 @@ public sealed class ClaudeJobSweepTests : IDisposable
     }
 
     [Theory]
-    [InlineData("se1-fix-sdlvulkan-renderer-153")]
     [InlineData("de1-aaa123-leg")]
     [InlineData("a person's own session")]
     public async Task A_job_pilot_did_not_start_is_left(string name)
@@ -227,6 +237,19 @@ public sealed class ClaudeJobSweepTests : IDisposable
         await Sweep().SweepAsync(Ct);
 
         _jobs.Calls.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_fixers_old_blocked_job_with_an_ended_row_is_removed_like_any_pilot_session()
+    {
+        // A PR fixer is pilot's own role now (PIL1008), so the sweep treats its job as it does a reviewer's.
+        const string name = "se1-fix-sdlvulkan-renderer-153";
+        Job("77770000", "blocked", name, Old);
+        Row("77770000", name, SessionState.Ended);
+
+        await Sweep().SweepAsync(Ct);
+
+        _jobs.Calls.ShouldBe(["rm 77770000"]);
     }
 
     [Fact]

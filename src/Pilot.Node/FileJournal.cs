@@ -71,8 +71,10 @@ public sealed class FileJournal : INodeJournal, IDisposable
     /// <remarks>
     /// 2: <c>decisions.jsonl</c> and the <c>decision</c> event in the journal (#583). An older node would fail on that kind
     /// in <c>journal.jsonl</c> and would not know the file, so it must leave the store alone.
+    /// 3: a session row with the role <c>fixer</c> and the optional <c>pr</c> and <c>fixRound</c> (PIL1008). An older node cannot read
+    /// the role, and would drop the two fields when it compacts the snapshot.
     /// </remarks>
-    public const int StoreContract = 2;
+    public const int StoreContract = 3;
 
     private static readonly byte[] NewLine = "\n"u8.ToArray();
 

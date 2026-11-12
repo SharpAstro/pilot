@@ -278,6 +278,7 @@ public sealed class TestGuardTests : IDisposable
     [InlineData("se1-pil909-plan", "planner")]
     [InlineData("se1-pil909-review", "reviewer")]
     [InlineData("se1-review-pilot-900", "reviewer")]
+    [InlineData("se1-fix-pilot-900", "fixer")]
     [InlineData("se1-watchtower", "watchtower")]
     public void TheNodesCallsMarkTheSessionWithItsRole(string name, string role)
     {
