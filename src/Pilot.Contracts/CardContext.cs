@@ -125,7 +125,7 @@ public static class CardContext
             }
         }
         var quoted = detail.Count > 0 ? string.Join(' ', detail) : title ?? "";
-        chat = new CardChat(id, title ?? "", Shorten(quoted), string.Join('\n', lines[(end + 1)..]).Trim('\n'));
+        chat = new CardChat(id, title ?? "", Shorten(quoted), string.Join('\n', lines[(end + 1)..]).Trim('\n'), cut);
         return true;
     }
 
