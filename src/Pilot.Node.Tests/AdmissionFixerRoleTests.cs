@@ -21,7 +21,7 @@ public sealed class AdmissionFixerRoleTests
         state.PutSession(Row("aaaa1111", "de1-fix-pilot-1", SessionRole.Fixer, SessionStartReasons.PrFix));
         state.PutSession(Row("bbbb2222", "de1-fix-pilot-2", SessionRole.AdHoc, SessionStartReasons.PrFix));
         state.PutSession(Row("cccc3333", "a person's own", SessionRole.AdHoc, null));
-        var models = new RoleModels(new NodeSettings().Settings ?? NodeSettings.With(new NodeSettings(), "opus-cap", ["5"]).Settings!);
+        var models = new RoleModels(NodeSettings.With(new NodeSettings(), "opus-cap", ["5"]).Settings!);
         var gate = new AdmissionGate(state, () => models, "DE1");
 
         gate.OwnSessions().Select(s => (s.Label, s.Role)).OrderBy(s => s.Label)
