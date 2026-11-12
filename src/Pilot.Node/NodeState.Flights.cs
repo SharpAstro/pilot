@@ -149,6 +149,39 @@ public sealed partial class NodeState
         }
     }
 
+    /// <summary>
+    /// Ends every leg still flying on a landed flight (<paramref name="flight"/>'s, or any flight's when null) as done, its report saying
+    /// that it ended with its flight and was not finished by a worker. A flight landed by hand, or folded into another, kept its flying
+    /// leg flying for ever: Home counted 15 legs flying with no flight in the air (2026-11-11). Returns the legs it ended.
+    /// </summary>
+    public LegRow[] EndFlyingLegsOfLanded(string? flight = null)
+    {
+        lock (_gate)
+        {
+            var ended = new List<LegRow>();
+            foreach (var leg in _legs.Values.Where(l => l.State == LegState.Flying && (flight is null || string.Equals(l.Flight, flight, StringComparison.Ordinal))).ToList())
+            {
+                if (!_flights.TryGetValue(leg.Flight, out var landed) || landed.State != FlightState.Landed)
+                {
+                    continue;
+                }
+                var how = landed.FoldedInto is { } into ? $"was folded into {into}" : landed.MovedTo is { } moved ? $"moved to {moved.To}" : "landed";
+                var report = $"ended with its flight, which {how} while this leg was flying: no worker finished it";
+                var done = leg with
+                {
+                    State = LegState.Done,
+                    FinishedAt = landed.LandedAt ?? _time.GetUtcNow(),
+                    Wait = null,
+                    Recheck = null,
+                    Report = leg.Report is { Length: > 0 } was ? $"{report}\n{was}" : report,
+                };
+                PutLeg(done);
+                ended.Add(done);
+            }
+            return [.. ended];
+        }
+    }
+
     /// <summary>Takes a leg out of its flight; nothing happens when there is none.</summary>
     public void RemoveLeg(string flight, string name)
     {

@@ -81,6 +81,17 @@ public sealed class HomeTests
     }
 
     [Fact]
+    public void ALegLeftFlyingOnALandedFlightIsNotCountedAsFlying()
+    {
+        // What a node left behind (15 such legs on 2026-11-11, with every flight landed): the headline said "15 legs flying" over "no flight is flying or held".
+        FlightRow[] flights = [Flight("ORB205", FlightState.Landed)];
+        var home = new HomeScreen(new FlightsScreen(FlightLine.Build(flights, [], At, [Leg("ORB205", "parser", 1, LegState.Flying)]), "sample", At), NoSessions, NoJobs, CardsScreen.Empty);
+
+        home.Flying.ShouldBe("Nothing is flying");
+        home.FlightChips.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void FlyingWithNothingWaitingCountsFlightsLegsWorkersAndJobs()
     {
         var sessions = Sessions();
