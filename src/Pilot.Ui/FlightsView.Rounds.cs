@@ -13,6 +13,9 @@ internal sealed partial class FlightsView<TSurface>
     private const float RoundStateWidth = 150f;
     private const float RoundNodeWidth = 64f;
 
+    /// <summary>The most rounds the band draws under the flights, so a long list cannot push the flights off the page.</summary>
+    internal const int MaxRoundRows = 6;
+
     /// <summary>One row for each round, under a label naming them; null when there are none.</summary>
     private Layout.Node? RoundsBand(FlightsScreen screen)
     {
@@ -24,9 +27,15 @@ internal sealed partial class FlightsView<TSurface>
         {
             Layout.Builder.Text($"PR rounds the node runs · {screen.Rounds.Count}", 12f, Faint).RowH(22f),
         };
-        for (var i = 0; i < screen.Rounds.Count; i++)
+        var marked = screen.Rounds.Any(r => r.Node is not null);
+        var shown = Math.Min(screen.Rounds.Count, MaxRoundRows);
+        for (var i = 0; i < shown; i++)
         {
-            rows.Add(RoundRow(screen.Rounds[i], i, screen.Rounds.Any(r => r.Node is not null)));
+            rows.Add(RoundRow(screen.Rounds[i], i, marked));
+        }
+        if (shown < screen.Rounds.Count)
+        {
+            rows.Add(Layout.Builder.Text($"and {screen.Rounds.Count - shown} more rounds, in pilot status", 12f, Faint).RowH(22f));
         }
         return Layout.Builder.VStack([.. rows]).Pad(Gutter, 6f).WStar().HAuto();
     }

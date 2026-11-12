@@ -155,4 +155,40 @@ public sealed class FlightsPrRoundTests
 
         screen.Rounds.ShouldBeEmpty();
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AReviewUnderwayTakesTheLiveRowOfItsReviewersNameWhateverTheOrder(bool newestFirst)
+    {
+        const string Reviewer = "de1-review-pilot-1000";
+        SessionRow[] rows =
+        [
+            Live.Row("a1", Reviewer, SessionState.Idle) with { StartedAt = Live.At.AddHours(-3) },
+            Live.Row("a2", Reviewer, SessionState.Ended) with { StartedAt = Live.At.AddHours(-1) },
+        ];
+        if (newestFirst)
+        {
+            Array.Reverse(rows);
+        }
+        var screen = Screen([Review(PrReviewState.Reviewing, fixer: null, round: null)], rows);
+
+        screen.Rounds.Single().State.ShouldBe("reviewing · idle");
+    }
+
+    [Fact]
+    public void ManyRoundsAreCappedUnderTheFlightsWithAMoreLine()
+    {
+        var reviews = Enumerable.Range(1, FlightsView<RgbaImage>.MaxRoundRows + 3)
+            .Select(n => Review(PrReviewState.Reviewing, fixer: null, round: null) with { Number = 2000 + n })
+            .ToArray();
+        var screen = Screen(reviews, Live.Row("s2", "de1-review-pilot-1000", SessionState.Working));
+
+        var (text, faults) = Render(FlightsViewMode.List, screen, 1280f);
+
+        text.ShouldContain("pilot#2006");
+        text.ShouldNotContain("pilot#2007");
+        text.ShouldContain("and 3 more rounds");
+        faults.ShouldBe(0);
+    }
 }

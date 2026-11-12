@@ -95,4 +95,32 @@ public class StatusPrReviewTests
         PilotCommand.Status(snapshot).ShouldContain("fix ended, de1-fix-pilot-1000, round 4, ended");
         PilotCommand.Status(snapshot).ShouldNotContain("fixing,");
     }
+
+    [Fact]
+    public void SessionPickTakesTheLiveRowOverALaterEndedOne()
+    {
+        SessionRow[] rows = [Round("old", SessionState.Idle, 1), Round("new", SessionState.Ended, 5)];
+
+        SessionPick.ByName(rows, "de1-fix-pilot-1000")!.Id.ShouldBe("old");
+        SessionPick.ByName(rows.Reverse(), "de1-fix-pilot-1000")!.Id.ShouldBe("old");
+    }
+
+    [Fact]
+    public void SessionPickTakesTheLatestStartedWhenNoneIsLiveOrAllAre()
+    {
+        SessionPick.ByName([Round("a", SessionState.Ended, 1), Round("b", SessionState.Failed, 2)], "de1-fix-pilot-1000")!.Id.ShouldBe("b");
+        SessionPick.ByName([Round("b", SessionState.Working, 2), Round("a", SessionState.Waiting, 1)], "de1-fix-pilot-1000")!.Id.ShouldBe("b");
+    }
+
+    [Fact]
+    public void SessionPickFindsNothingForAnEmptyUnknownOrMissingName()
+    {
+        SessionRow[] rows = [Round("a", SessionState.Working, 1)];
+
+        SessionPick.ByName(rows, null).ShouldBeNull();
+        SessionPick.ByName(rows, "").ShouldBeNull();
+        SessionPick.ByName(rows, "other").ShouldBeNull();
+        SessionPick.ByName([], "de1-fix-pilot-1000").ShouldBeNull();
+        SessionPick.IsLive(null).ShouldBeFalse();
+    }
 }
