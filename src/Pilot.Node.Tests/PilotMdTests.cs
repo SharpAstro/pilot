@@ -186,6 +186,25 @@ public sealed class PilotMdTests : IDisposable
 
     [Fact]
     [Trait("Category", "Invariant")]
+    public void TheReposOwnPilotMdIsWithinTheLineLimit()
+    {
+        var lines = PilotMd.LineCount(RepoPilotMd());
+
+        lines.ShouldBeLessThanOrEqualTo(PilotMd.MaxLines,
+            $"PILOT.md is {lines} lines, over the {PilotMd.MaxLines} limit: shorten PILOT.md, do not raise MaxLines (#1013). The node refuses to quote a longer page into its briefs.");
+    }
+
+    [Fact]
+    public void LineCountCountsAsReadAsyncDoes()
+    {
+        PilotMd.LineCount(Lines(PilotMd.MaxLines + 1)).ShouldBe(PilotMd.MaxLines + 1);
+        PilotMd.LineCount(Lines(3) + "\n\n\n").ShouldBe(3);
+        PilotMd.LineCount(Lines(3).Replace("\n", "\r\n") + "\r\n").ShouldBe(3);
+        PilotMd.LineCount("one").ShouldBe(1);
+    }
+
+    [Fact]
+    [Trait("Category", "Invariant")]
     public void ThePilotMdHasAHumanVerificationSectionNamingTheMilestoneAndTheLabelWithoutEmDashes()
     {
         var text = RepoPilotMd();
