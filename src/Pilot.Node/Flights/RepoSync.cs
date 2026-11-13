@@ -52,9 +52,9 @@ public sealed class RepoSync(IGit git, Planes planes, RepoWatch watch)
                 }
             }
             var outcomes = new List<RepoSyncOutcome>();
-            foreach (var repo in tracked)
+            foreach (var row in tracked)
             {
-                outcomes.Add(await SyncOneAsync(repo.Name, repo.Path, cancellationToken));
+                outcomes.Add(await SyncOneAsync(row.Name, row.Path, cancellationToken));
             }
             await watch.RefreshAsync(cancellationToken);
             return [.. outcomes];
