@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace Pilot.Node.Flights;
 
 /// <summary>
@@ -6,13 +8,82 @@ namespace Pilot.Node.Flights;
 /// make, each item kept whole with its detail lines; they never block). A report with none of these headings is the older, plain
 /// kind, and every finding in it is taken as blocking.
 /// </summary>
-public sealed record ReviewFindings(bool Structured, IReadOnlyList<string> Blocking, IReadOnlyList<string> NotBlocking, IReadOnlyList<string> HumanVerification)
+public sealed partial record ReviewFindings(bool Structured, IReadOnlyList<string> Blocking, IReadOnlyList<string> NotBlocking, IReadOnlyList<string> HumanVerification)
 {
     /// <summary>Whether a <c>changes</c> report names a finding that blocks: a plain report does, a structured one only if its Blocking part has one.</summary>
     public bool HasBlocking => !Structured || Blocking.Count > 0;
 
+    /// <summary>
+    /// The files the Blocking findings name, repo-relative with forward slashes, once each (ignoring case): every path-like token with a
+    /// file extension in the Blocking section (items and their indented detail lines), or in the whole report when it is plain. A type
+    /// or method name with no extension is not a file. What is named only under Not blocking or Human verification is not here.
+    /// </summary>
+    public IReadOnlyList<string> BlockingFiles { get; init; } = [];
+
+    /// <summary>
+    /// Whether a changed path (repo-relative) is one a blocking finding names: it equals a named path (ignoring case), or a named bare
+    /// file name (no <c>/</c>) is its last segment. The caller checks <see cref="BlockingFiles"/>.Count first: a round whose findings
+    /// name no file is never gated.
+    /// </summary>
+    public bool Touches(IEnumerable<string> changed)
+    {
+        foreach (var raw in changed)
+        {
+            var path = raw.Trim().Replace('\\', '/');
+            var last = path[(path.LastIndexOf('/') + 1)..];
+            foreach (var named in BlockingFiles)
+            {
+                if (!IsRepoRelative(named))
+                {
+                    continue;
+                }
+                if (string.Equals(named, path, StringComparison.OrdinalIgnoreCase)
+                    || (!named.Contains('/') && string.Equals(named, last, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // A rooted path ("/x.cs", "C:/x.cs") or one that climbs out ("../x.cs") is not in the repo, so it names no changed path.
+    private static bool IsRepoRelative(string named)
+        => !named.StartsWith('/') && !(named.Length > 1 && named[1] == ':') && !named.Split('/').Contains("..");
+
+    [GeneratedRegex(@"[\w.\-/\\]+\.(?:csproj|slnx|targets|props|yaml|json|ps1|yml|sln|txt|xml|toml|html|css|cs|md|sh|py|js|ts)(?!\w)(?::\d+(?::\d+)?)?")]
+    private static partial Regex FileToken();
+
+    private static IReadOnlyList<string> FilesIn(IEnumerable<string> lines)
+    {
+        var files = new List<string>();
+        foreach (var line in lines)
+        {
+            foreach (Match m in FileToken().Matches(line))
+            {
+                var token = m.Value;
+                var colon = token.IndexOf(':');
+                if (colon > 0)
+                {
+                    token = token[..colon];
+                }
+                token = token.Replace('\\', '/');
+                while (token.StartsWith("./", StringComparison.Ordinal))
+                {
+                    token = token[2..];
+                }
+                if (token.Length > 0 && !files.Contains(token, StringComparer.OrdinalIgnoreCase))
+                {
+                    files.Add(token);
+                }
+            }
+        }
+        return files;
+    }
+
     public static ReviewFindings Read(string report)
     {
+        var blockingLines = new List<string>();
         var blocking = new List<string>();
         var notBlocking = new List<string>();
         var human = new List<string>();
@@ -45,6 +116,10 @@ public sealed record ReviewFindings(bool Structured, IReadOnlyList<string> Block
                 }
                 continue;
             }
+            if (ReferenceEquals(into, blocking))
+            {
+                blockingLines.Add(line);
+            }
             if (into is not null && IsItem(line))
             {
                 into.Add(line.Trim());
@@ -55,7 +130,7 @@ public sealed record ReviewFindings(bool Structured, IReadOnlyList<string> Block
                 human[^1] += "\n" + line.Trim();
             }
         }
-        return new ReviewFindings(structured, blocking, notBlocking, human);
+        return new ReviewFindings(structured, blocking, notBlocking, human) { BlockingFiles = FilesIn(structured ? blockingLines : report.Split('\n')) };
     }
 
     // "## Blocking", "**Not blocking**" or "Not blocking:" on a line of its own.

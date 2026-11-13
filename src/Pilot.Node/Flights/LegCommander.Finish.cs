@@ -105,6 +105,7 @@ public sealed partial class LegCommander
                 {
                     throw new FlightException($"{flight.Code}/{leg.Name} has steps not ticked: {string.Join("; ", open)}");
                 }
+                if (await UntouchedRefusalAsync(flight, leg, report, cancellationToken) is { } untouchedWhy) { throw new FlightException(untouchedWhy); }
                 // A conflict worker that says it is done while a test merge of the base still conflicts has not resolved it: that counts as
                 // failed and the next rung starts (PIL846), where the bring-up below would only refuse it and leave the same worker flying.
                 if (await ConflictStillAsync(flight, leg, cancellationToken)
@@ -715,10 +716,7 @@ public sealed partial class LegCommander
     /// </summary>
     private async Task<(bool Finished, string? Why, bool IsCheck)> FinishFromPushedAsync(FlightRow flight, LegRow leg, string report, string? who, CancellationToken cancellationToken)
     {
-        if (leg.Check is not { Length: > 0 })
-        {
-            return (false, "it has no check to rerun", false);
-        }
+        if (leg.Check is not { Length: > 0 }) { return (false, "it has no check to rerun", false); }
         if (leg.Checklist.Any(i => !i.Done))
         {
             return (false, $"steps not ticked: {string.Join("; ", leg.Checklist.Where(i => !i.Done).Select(i => i.Text))}", false);
@@ -727,6 +725,7 @@ public sealed partial class LegCommander
         {
             return (false, "its plane's folder does not exist", false);
         }
+        if (await UntouchedRefusalAsync(flight, leg, report, cancellationToken) is { } untouchedWhy) { return (false, untouchedWhy, false); }
         string? notWhy = null;
         var head = await OffLockAsync(null, async Task<string?> () =>
         {

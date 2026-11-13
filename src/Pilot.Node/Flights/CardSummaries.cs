@@ -102,6 +102,7 @@ public static partial class CardSummaries
             "not-landed" => $"The PR of {what} merged on GitHub, but landing the flight was refused. The branch is in the base; the detail says what stood in the way, and the flight lands once that is dealt with.",
             "worker-nudged" => $"The worker of {what} went idle with its leg unfinished and the node nudged it. Nothing to do unless it goes idle again.",
             "worker-waiting-job" => $"The worker of {what} is idle or waiting because it waits on a job of its own, which wakes it. Nothing to do.",
+            LegCommander.UntouchedFindingsKind => $"The review asked {what} for changes to files it names, and the worker changed none of them. The finish went through on the worker's report saying no change is needed. Nothing to do.",
             "worker-compacted" => $"The worker of {what} went idle with its context nearly full, so the node compacted it instead of nudging it. Nothing to do.",
             "worker-replaced" => $"The worker of {what} was still nearly full after its compaction, so the node sent the leg round with a fresh worker. Nothing to do.",
             "worker-resumed" => $"The worker of {what} was resumed after its usage limit reset. Nothing to do.",
