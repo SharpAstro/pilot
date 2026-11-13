@@ -648,6 +648,27 @@ public sealed class ListTableTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(1400f)]
+    [InlineData(1800f)]
+    public void TheSessionsTableFillsThePageAndTheSessionColumnTakesWhatTheCappedColumnsLeave(float wide)
+    {
+        // DIR.Lib froze the Session column at its floor in the same pass that capped the optional columns, and what the caps
+        // gave back reached no one: at 1800 Session was held at 200 with about 400 empty after the last column (2026-11-13).
+        // At 2400 the even split was over Session's floor, so the table filled the page; the room after Spend/min there is
+        // the page's margin plus Spend/min and the action column, and it is the same at any width the table fills.
+        float RoomAfterSpendPerMin(float width)
+        {
+            var view = Sessions();
+            var screen = SessionsScreenOf(several: true);
+            view.Render(screen, new RectF32(0f, 0f, width, PageHeight));
+            view.Render(screen, new RectF32(0f, 0f, width, PageHeight));
+            return width - Arranged(view.Tree(screen), width).HeaderX("Spend/min");
+        }
+
+        RoomAfterSpendPerMin(wide).ShouldBe(RoomAfterSpendPerMin(2400f), 1f, $"the table fills the page at {wide} as at 2400");
+    }
+
     [Fact]
     public void AWidthSavedUnderNoTitleIsNotAppliedBecauseTheActionColumnHasNoGrip()
     {
