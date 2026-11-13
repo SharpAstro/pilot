@@ -276,6 +276,23 @@ public sealed class ListTableTests : IDisposable
     }
 
     [Fact]
+    public void FleetsButtonsColumnHasNoGripAndTheDividerBeforeRingsKeepsItsOwn()
+    {
+        // ListTable gives a grip to a titled column only, on every page: on Fleet the divider between Rings and the untitled
+        // buttons column (4) is a plain gap, as it is before Sessions' action column.
+        var chrome = Chrome();
+        chrome.Fleet.OnConnect = _ => Task.FromResult<string?>(null);
+        var screen = FleetScreenOf();
+        chrome.Fleet.Render(screen, new RectF32(0f, 0f, PageWidth, PageHeight));
+        chrome.Fleet.Render(screen, new RectF32(0f, 0f, PageWidth, PageHeight));
+        var grips = Painted(chrome.Fleet).Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action)
+            .Where(a => a.StartsWith("fleet:table:divider:", StringComparison.Ordinal)).Distinct().ToList();
+
+        grips.ShouldContain("fleet:table:divider:3", "the grip between Flights and jobs and Rings is drawn: " + string.Join(", ", grips));
+        grips.ShouldNotContain("fleet:table:divider:4", "the divider before the buttons column has no grip");
+    }
+
+    [Fact]
     public void ADragOnAFleetDividerResizesTheColumnInTheHeaderAndInEveryRowAndKeepsTheButtonsWhereTheyClick()
     {
         var chrome = Chrome();
@@ -478,18 +495,276 @@ public sealed class ListTableTests : IDisposable
         void Render() => view.Render(screen, new RectF32(0f, 0f, WideWidth, PageHeight));
         var before = Arranged(view.Tree(screen), WideWidth);
 
-        // The divider after the State column (State is fixed, Spend takes up to its width): State grows by what was dragged.
+        // The divider after the State column: State takes what Spend, the column on its other side, gives up.
         Drag(view, Render, "sessions:table:divider:4", 40f);
 
         var after = Arranged(view.Tree(screen), WideWidth);
         var first = screen.Lines[0];
         (after.HeaderX("Spend") - after.HeaderX("State") - ListTable.ColumnGap).ShouldBe(200f, 0.5f);
+        after.HeaderX("State").ShouldBe(before.HeaderX("State"), 0.5f, "State's far edge stands");
+        after.HeaderX("Age").ShouldBe(before.HeaderX("Age"), 0.5f, "and so does Spend's");
         foreach (var (title, value) in SessionColumns(first))
         {
             after.HeaderX(title).ShouldBe(after.RowX(value), $"{title} still sits over its values");
         }
         (before.HeaderX("Spend") - before.HeaderX("State") - ListTable.ColumnGap).ShouldBe(160f, 0.5f);
         view.Table.Saved.ShouldContainKeyAndValue("State", 200f);
+    }
+
+    [Theory]
+    // Divider 0 (the left edge of the first column) is not in the 1700 rows: with no room to spare it has nothing to trade,
+    // so it follows the pointer only where the Session column has room, as the 2200 row shows.
+    [InlineData(0, 30f, 2200f)]
+    [InlineData(1, 30f, 1700f)]
+    [InlineData(2, 30f, 1700f)]
+    [InlineData(3, 30f, 1700f)]
+    [InlineData(4, 30f, 1700f)]
+    [InlineData(5, 30f, 1700f)]
+    [InlineData(6, 30f, 1700f)]
+    [InlineData(3, -30f, 1700f)]
+    [InlineData(4, -30f, 1700f)]
+    // Wide enough that the Session column has room to spare, where the columns after it stand from the right.
+    [InlineData(3, 30f, 2200f)]
+    [InlineData(4, 30f, 2200f)]
+    [InlineData(3, -30f, 2200f)]
+    [InlineData(4, -30f, 2200f)]
+    // A trade is held to the room the page has, so a drag of N units follows from about 1342 + N wide: 1400 is the narrowest
+    // width where all of 1 to 6 follow 30 both ways (at 1342 they stand still, at 1360 they move 18).
+    [InlineData(1, 30f, 1400f)]
+    [InlineData(2, 30f, 1400f)]
+    [InlineData(3, 30f, 1400f)]
+    [InlineData(4, 30f, 1400f)]
+    [InlineData(5, 30f, 1400f)]
+    [InlineData(6, 30f, 1400f)]
+    [InlineData(1, -30f, 1400f)]
+    [InlineData(2, -30f, 1400f)]
+    [InlineData(3, -30f, 1400f)]
+    [InlineData(4, -30f, 1400f)]
+    [InlineData(5, -30f, 1400f)]
+    [InlineData(6, -30f, 1400f)]
+    public void SessionsDividersOneToSixFollowThePointerHeaderAndRowsTogether(int divider, float by, float wide)
+    {
+        // A divider beside State once moved State's far edge and stood still under the pointer (2026-11-11): the two columns
+        // beside a divider trade width (DIR.Lib's table), so it follows the pointer whatever kind each is.
+        var view = Sessions();
+        var screen = SessionsScreenOf();
+        void Render() => view.Render(screen, new RectF32(0f, 0f, wide, PageHeight));
+        var hit = $"sessions:table:divider:{divider}";
+        Render();
+        var before = Painted(view).Single(r => r.Result is HitResult.ButtonHit b && b.Action == hit).X;
+
+        Drag(view, Render, hit, by);
+
+        Painted(view).Single(r => r.Result is HitResult.ButtonHit b && b.Action == hit).X.ShouldBe(before + by, 0.5f, "the divider is where the pointer took it");
+        var after = Arranged(view.Tree(screen), wide);
+        foreach (var (title, value) in SessionColumns(screen.Lines[0]))
+        {
+            after.HeaderX(title).ShouldBe(after.RowX(value), $"{title} still sits over its values");
+        }
+    }
+
+    [Theory]
+    [InlineData(1280f)]
+    [InlineData(1200f)]
+    public void ANarrowSessionsPageDrawsOnlyTheAgeSpendGripAndNoDragMovesItAgainstThePointer(float wide)
+    {
+        // Where columns drop, DIR.Lib holds a trade to each side's MaxWidth and draws grips only on drawn columns, so no drag
+        // widens a column to where it would drop (it left Spend/min at 120 and gone at 1280, 2026-11-12). With no slack the
+        // one grip drawn may stand still under a drag; it never moves against it.
+        var screen = SessionsScreenOf();
+        var grips = DividerActions(wide);
+        grips.ShouldBe(["sessions:table:divider:6"], "only the grip between Age and Spend/min is drawn; the ones beside a hidden column are not");
+        foreach (var hit in grips)
+        {
+            foreach (var by in new[] { 30f, -30f })
+            {
+                var view = Sessions();
+                void Render() { view.Render(screen, new RectF32(0f, 0f, wide, PageHeight)); view.Render(screen, new RectF32(0f, 0f, wide, PageHeight)); }
+                Render();
+                var before = Painted(view).Single(r => r.Result is HitResult.ButtonHit b && b.Action == hit).X;
+
+                Drag(view, Render, hit, by);
+
+                // The grip stays drawn (Single throws otherwise): the drag never widens a column to where it drops.
+                // The grip may stand still where the trade is held, but never moves against the pointer.
+                var after = Painted(view).Single(r => r.Result is HitResult.ButtonHit b && b.Action == hit).X;
+                (by < 0f ? after <= before + 0.5f : after >= before - 0.5f).ShouldBeTrue($"{hit} by {by} at {wide} moved against the pointer ({before} to {after})");
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(1000f)]
+    [InlineData(1280f)]
+    [InlineData(1500f)]
+    [InlineData(1920f)]
+    public void FlightsKeepsTheFlightWhatGripDrawsNoWhatRepoGripAndNoGripMovesAgainstThePointerOrTakesWhatAway(float wide)
+    {
+        // What takes the slack and drops below its own width: a drag of the grip between it and Repo (a capped star) jumped to
+        // the wrong side (154 right of a 30 left drag at 1280) and, at 1500, took What away. That grip is a gap, as it was
+        // before DIR.Lib made it live. The grip between Flight (fixed) and What is not that case: it followed the pointer on
+        // main at every width, and with the Node column hidden it is the only way to resize Flight, so it stays.
+        var screen = FlightsScreenOf();
+        FlightsView<RgbaImage> Fresh() => new(_renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.List };
+        List<string> Grips(FlightsView<RgbaImage> v)
+        {
+            v.Render(screen, new RectF32(0f, 0f, wide, PageHeight));
+            v.Render(screen, new RectF32(0f, 0f, wide, PageHeight));
+            return [.. Painted(v).Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.StartsWith("flights:table:divider:", StringComparison.Ordinal)).Distinct()];
+        }
+        var grips = Grips(Fresh());
+        grips.ShouldNotContain("flights:table:divider:1", "the grip between What and Repo has no drag");
+        grips.ShouldContain("flights:table:divider:0", "the grip between Flight and What is drawn: " + string.Join(", ", grips));
+        foreach (var by in new[] { 30f, -30f })
+        {
+            var view = Fresh();
+            void Render() { view.Render(screen, new RectF32(0f, 0f, wide, PageHeight)); view.Render(screen, new RectF32(0f, 0f, wide, PageHeight)); }
+            Render();
+            var before = Painted(view).Single(r => r.Result is HitResult.ButtonHit b && b.Action == "flights:table:divider:0").X;
+
+            Drag(view, Render, "flights:table:divider:0", by);
+
+            Painted(view).Single(r => r.Result is HitResult.ButtonHit b && b.Action == "flights:table:divider:0").X
+                .ShouldBe(before + by, 0.5f, $"the Flight|What grip follows a drag of {by} at {wide}");
+        }
+        foreach (var hit in grips)
+        {
+            foreach (var by in new[] { 30f, -30f, 2000f, -2000f })
+            {
+                var view = Fresh();
+                void Render() { view.Render(screen, new RectF32(0f, 0f, wide, PageHeight)); view.Render(screen, new RectF32(0f, 0f, wide, PageHeight)); }
+                Render();
+                var before = Painted(view).Single(r => r.Result is HitResult.ButtonHit b && b.Action == hit).X;
+
+                Drag(view, Render, hit, by);
+
+                Arranged(view.Tree(screen), wide, headerTitle: "Flight").HasHeader("What").ShouldBeTrue($"{hit} by {by} at {wide} took What away");
+                var after = Painted(view).Where(r => r.Result is HitResult.ButtonHit b && b.Action == hit).Select(r => r.X).ToList();
+                if (after.Count == 1)
+                {
+                    (by < 0f ? after[0] <= before + 0.5f : after[0] >= before - 0.5f).ShouldBeTrue($"{hit} by {by} at {wide} moved against the pointer ({before} to {after[0]})");
+                }
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(1400f)]
+    [InlineData(1800f)]
+    public void TheSessionsTableFillsThePageAndTheSessionColumnTakesWhatTheCappedColumnsLeave(float wide)
+    {
+        // DIR.Lib froze the Session column at its floor in the same pass that capped the optional columns, and what the caps
+        // gave back reached no one: at 1800 Session was held at 200 with about 400 empty after the last column (2026-11-13).
+        // At 2400 the even split was over Session's floor, so the table filled the page; the room after Spend/min there is
+        // the page's margin plus Spend/min and the action column, and it is the same at any width the table fills.
+        float RoomAfterSpendPerMin(float width)
+        {
+            var view = Sessions();
+            var screen = SessionsScreenOf(several: true);
+            view.Render(screen, new RectF32(0f, 0f, width, PageHeight));
+            view.Render(screen, new RectF32(0f, 0f, width, PageHeight));
+            return width - Arranged(view.Tree(screen), width).HeaderX("Spend/min");
+        }
+
+        RoomAfterSpendPerMin(wide).ShouldBe(RoomAfterSpendPerMin(2400f), 1f, $"the table fills the page at {wide} as at 2400");
+    }
+
+    [Fact]
+    public void AWidthSavedUnderNoTitleIsNotAppliedBecauseTheActionColumnHasNoGrip()
+    {
+        var table = new ListTable("sessions");
+        table.Restore(new Dictionary<string, float> { [""] = 300f, ["Spend"] = 200f });
+        table.Saved.ShouldNotContainKey("");
+        table.Saved.ShouldContainKeyAndValue("Spend", 200f);
+    }
+
+    private List<string> DividerActions(float wide)
+    {
+        var view = Sessions();
+        view.Render(SessionsScreenOf(), new RectF32(0f, 0f, wide, PageHeight));
+        view.Render(SessionsScreenOf(), new RectF32(0f, 0f, wide, PageHeight));
+        return Painted(view).Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.StartsWith("sessions:table:divider:", StringComparison.Ordinal)).Distinct().ToList();
+    }
+
+    [Fact]
+    public void AColumnDraggedWiderDropsWhenTheWindowNarrowsAfterwardsAsARestoredOneDoes()
+    {
+        var view = Sessions();
+        var screen = SessionsScreenOf();
+        void Render() => view.Render(screen, new RectF32(0f, 0f, 1700f, PageHeight));
+
+        // The divider after State dragged left widens Spend, the column on its other side, past its declared 130.
+        Drag(view, Render, "sessions:table:divider:4", -60f);
+        view.Table.Saved["Spend"].ShouldBeGreaterThan(160f);
+
+        // Narrowing the window, the view that dragged Spend is laid out as one given the saved widths is (which Unpin does:
+        // DIR.Lib pins a column dragged wider, so without it Spend would keep its dragged width and never drop).
+        var gone = 0;
+        foreach (var width in new[] { 1700f, 1500f, 1400f, 1300f, 1200f, 1100f, 1000f, 900f, 800f })
+        {
+            var again = Sessions();
+            again.Table.Restore(view.Table.Saved);
+            // Rendering gives each view the page width its columns' room is measured against.
+            again.Render(screen, new RectF32(0f, 0f, width, PageHeight));
+            view.Render(screen, new RectF32(0f, 0f, width, PageHeight));
+            var restored = Arranged(again.Tree(screen), width);
+            var dragged = Arranged(view.Tree(screen), width);
+            dragged.HasHeader("Spend").ShouldBe(restored.HasHeader("Spend"), $"Spend at {width}");
+            if (restored.HasHeader("Spend"))
+            {
+                dragged.HeaderX("Age").ShouldBe(restored.HeaderX("Age"), 0.5f, $"Age at {width}");
+                dragged.HeaderX("Spend").ShouldBe(restored.HeaderX("Spend"), 0.5f, $"Spend at {width}");
+            }
+            else
+            {
+                gone++;
+            }
+        }
+        gone.ShouldBeGreaterThan(0, "Spend drops once the window is narrow enough");
+    }
+
+    [Fact]
+    public void SpendNarrowedByADragDropsBelowItsDraggedWidthAndComesBackFromTheFile()
+    {
+        const float WideWidth = 1700f;
+        var view = Sessions();
+        var screen = SessionsScreenOf();
+        void Render() => view.Render(screen, new RectF32(0f, 0f, WideWidth, PageHeight));
+
+        Drag(view, Render, "sessions:table:divider:4", 40f);
+
+        var after = Arranged(view.Tree(screen), WideWidth);
+        (after.HeaderX("Age") - after.HeaderX("Spend") - ListTable.ColumnGap).ShouldBe(90f, 0.5f, "Spend gave up what was dragged");
+        view.Table.Saved.ShouldContainKeyAndValue("Spend", 90f);
+        view.Table.Saved.ShouldContainKeyAndValue("State", 200f);
+
+        // A new window given the saved widths shows Spend at 90, not gone: it drops below the dragged width, not the declared one.
+        var again = Sessions();
+        again.Table.Restore(view.Table.Saved);
+        var restored = Arranged(again.Tree(screen), WideWidth);
+        restored.HasHeader("Spend").ShouldBeTrue();
+        (restored.HeaderX("Age") - restored.HeaderX("Spend") - ListTable.ColumnGap).ShouldBe(90f, 0.5f);
+    }
+
+    [Fact]
+    public void TheActionColumnHasNoGripAndAnOptionalColumnIsNotDraggedWiderThanThePageHasRoomFor()
+    {
+        const float Width = 1400f;
+        var view = Sessions();
+        var screen = SessionsScreenOf();
+        void Render() => view.Render(screen, new RectF32(0f, 0f, Width, PageHeight));
+        Render();
+
+        // Eight titled columns and the action column: the divider before the action column (7) is a plain gap.
+        Painted(view).Any(r => r.Result is HitResult.ButtonHit b && b.Action == "sessions:table:divider:7").ShouldBeFalse();
+
+        // Model, beside the Session column that takes the slack, dragged as wide as the pointer goes: it stops where the
+        // Session column would have less than its least, and stays on the page with every column after it.
+        Drag(view, Render, "sessions:table:divider:0", -2000f);
+
+        var after = Arranged(view.Tree(screen), Width);
+        after.HasHeader("Model").ShouldBeTrue("the column is not dragged off the page");
+        after.HasHeader("Spend/min").ShouldBeTrue();
     }
 
     [Fact]

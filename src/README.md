@@ -682,10 +682,16 @@ come through gh, and the TUI has the same wizard.
 The **Sessions** page drops Spend, Last response, the archive button and Model as the window narrows (in pilot-tui too), so
 the Session column keeps room for the role and the session name.
 
-The **Sessions** and **Jobs** pages build their header and rows over one set of columns (`ListTable`, on DIR.Lib's
-`TableHeader`/`TableRow`), so a drag on the divider between two titles resizes that column in the header and in every
-row. The fixed columns resize; the one that takes the slack and the optional ones that drop on a narrow window (stars
-capped at their width) stay as the layout gives them. The dragged widths are kept by column title, per page, in
+The **Sessions**, **Jobs**, **Flights**, **Fleet**, **Pull requests** and **Ideas** pages build their header and rows
+over one set of columns (`ListTable`, on DIR.Lib's `TableHeader`/`TableRow`), so a drag on the divider between two titles
+resizes that column in the header and in every row, and the divider follows the pointer. The fixed columns and the
+optional ones (stars capped at their width, which drop on a narrow window) resize; the one that takes the slack takes the
+difference. An optional column drops below the width it was dragged to as the window narrows, as a restored one does,
+and a drag never widens one past the room the page has, so a drag of N units follows from about N units of slack
+(on Sessions, every divider follows 30 from about 1400 wide). Grips are drawn on drawn columns only. The divider between
+the slack column that drops (What, on Flights) and an optional one has no grip, and a fixed column beside it is held to
+leave every star its width, so no drag takes it away. The untitled action column has no grip, and a width saved under
+no title is ignored. The dragged widths are kept by column title, per page, in
 `gui-settings.json` beside the node's data folder (`%LOCALAPPDATA%\pilot2`), written a moment after the drag settles and
 when the window closes; a missing or unreadable file means the defaults. pilot-tui does not keep them.
 

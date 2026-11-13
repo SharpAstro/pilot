@@ -46,7 +46,8 @@ internal sealed record ListColumn(string Header, Layout.Sizing Width, float? Dro
 
     /// <summary>
     /// A column the page drops on a narrow window: its whole <paramref name="width"/> while there is room, gone once the
-    /// engine could give it less. It is a star capped at that width, so a drag leaves it as it is.
+    /// engine could give it less. It is a star capped at that width; a drag on the divider that stands on its edge moves the cap
+    /// (DIR.Lib's table), and <see cref="ListTable"/> drops it below the dragged width.
     /// </summary>
     public static ListColumn Optional(string header, float width) => new(header, Layout.Sizing.Star(1f, 0f, width), width);
 }
@@ -54,7 +55,7 @@ internal sealed record ListColumn(string Header, Layout.Sizing Width, float? Dro
 /// <summary>
 /// A list page's table: its header and its rows built over one set of columns and one <see cref="Layout.TableColumnWidths"/>
 /// (DIR.Lib's <c>TableHeader</c> and <c>TableRow</c>), so a title sits over its values and a drag on the divider between two
-/// titles resizes that column in both. The dragged widths are kept by column title, so a column the page adds or drops
+/// titles resizes the column whose edge it is, in both (DIR.Lib's rule: the divider follows the pointer). The dragged widths are kept by column title, so a column the page adds or drops
 /// (Node, which shows only with several nodes known) leaves the others' widths where they were, and
 /// <see cref="Saved"/>/<see cref="Restore"/> carry them to and from the GUI's settings file.
 /// </summary>
@@ -130,6 +131,7 @@ internal sealed class ListTable
     /// </summary>
     public IReadOnlyList<ListColumn> Fit(IReadOnlyList<ListColumn> columns)
     {
+        columns = Dragged(columns);
         if (PageWidth is not { } room)
         {
             return columns;
@@ -173,13 +175,13 @@ internal sealed class ListTable
             : grouped.ThenBy(key, compare)];
     }
 
-    /// <summary>Takes widths read from the settings file; they apply to the columns of that title the next time the table is built.</summary>
+    /// <summary>Takes widths read from the settings file; they apply to the columns of that title the next time the table is built. A width saved under no title (the action column, which has no grip now) is dropped.</summary>
     public void Restore(IReadOnlyDictionary<string, float>? saved)
     {
         var restored = System.Collections.Immutable.ImmutableDictionary.Create<string, float>(StringComparer.Ordinal);
         if (saved is not null)
         {
-            restored = restored.SetItems(saved.Where(s => float.IsFinite(s.Value) && s.Value > 0f));
+            restored = restored.SetItems(saved.Where(s => s.Key.Length > 0 && float.IsFinite(s.Value) && s.Value > 0f));
         }
         Volatile.Write(ref _byTitle, restored);
         // Laid out again from them whatever the columns were: the next build sees the titles as new.
@@ -201,6 +203,7 @@ internal sealed class ListTable
     /// <summary>The header row: titles over the columns, a divider in each gap, the stripe's cell ahead of them.</summary>
     public Layout.Node Header(IReadOnlyList<ListColumn> columns, DesignScale scale, Palette? night = null, Layout.TableSort? sort = null, Action<Layout.TableSort>? onSort = null)
     {
+        columns = Dragged(columns);
         var specs = Lay(columns);
         var style = night is null ? Style : Style with { HeaderFill = night.Ground, HeaderText = night.Faint, HoverFill = night.Ground, SortIndicator = night.Dim };
         // A caller's own sort (the Ideas board) wins; otherwise the table's own, saved per page.
@@ -214,7 +217,7 @@ internal sealed class ListTable
                 sorted = new Layout.TableSort(at, own.Descending);
             }
         }
-        var header = Dropping(Layout.Builder.TableHeader(specs, sorted, handler, in style, Widths, scale, TitleSize, _hitPrefix), columns);
+        var header = Dropping(Inert(Layout.Builder.TableHeader(specs, sorted, handler, in style, Widths, scale, TitleSize, _hitPrefix), columns), columns);
         return Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(StripeWidth), header.WStar())
             .WithGap(ColumnGap)
             .PadX(EndPad)
@@ -228,6 +231,7 @@ internal sealed class ListTable
     /// </summary>
     public Layout.Node Row(IReadOnlyList<ListColumn> columns, Layout.Node stripe, IReadOnlyList<Layout.Node> cells, float padY = 6f)
     {
+        columns = Dragged(columns);
         var specs = Lay(columns);
         var style = Style;
         var laid = ToArray(cells);
@@ -243,6 +247,99 @@ internal sealed class ListTable
             .WithGap(ColumnGap)
             .Pad(EndPad, padY);
     }
+
+    /// <summary>
+    /// <paramref name="columns"/> with each column that drops (<see cref="ListColumn.DropBelow"/>) dropping below the width a
+    /// reader dragged it to: DIR.Lib's table makes that width the column's cap, and a column that shows at one width and drops
+    /// below another would be gone at once (a narrower drag) or squeezed (a wider one). The same list when nothing of it was
+    /// dragged, or it was given already.
+    /// </summary>
+    private IReadOnlyList<ListColumn> Dragged(IReadOnlyList<ListColumn> columns)
+    {
+        var byTitle = Volatile.Read(ref _byTitle);
+        if (byTitle.IsEmpty || !columns.Any(c => c.DropBelow is { } at && byTitle.TryGetValue(c.Header, out var w) && at != w))
+        {
+            return columns;
+        }
+        return [.. columns.Select(c => c.DropBelow is not null && byTitle.TryGetValue(c.Header, out var w) ? c with { DropBelow = w } : c)];
+    }
+
+    // The widest column moving can be with every other column at its width and the column that takes the slack at its least:
+    // dragged wider it could not have its width, would drop, and take the divider it is dragged by with it.
+    private float? Most(IReadOnlyList<ListColumn> columns, int moving)
+    {
+        if (PageWidth is not { } room)
+        {
+            return null;
+        }
+        var others = 0f;
+        for (var i = 0; i < columns.Count; i++)
+        {
+            if (i != moving)
+            {
+                var width = columns[i].Width;
+                others += width.IsFixed ? WidthOf(columns[i].Header, width.Value) : width.Max > 0f ? WidthOf(columns[i].Header, width.Max) : width.Min;
+            }
+        }
+        return room - ((2 * PageGutter) + (2 * EndPad) + StripeWidth + ColumnGap + others + (Math.Max(0, columns.Count - 1) * ColumnGap));
+    }
+
+    // The widest a fixed column beside the slack star that drops can be dragged. The stars (the slack one and the optional ones)
+    // share what the fixed columns leave equally and each drops below its own width, so with less than the slack star's width
+    // each, they all drop at once, the slack star with them (Flight by 2000 on Flights took What, Repo, Branch and Sessions in
+    // one frame). Leaving every star that much keeps the slack star while the optional ones drop. Null for a column with no
+    // such star beside it, which keeps its unbounded drag.
+    private float? BesideSlackMost(IReadOnlyList<ListColumn> columns, int moving)
+    {
+        bool DroppingSlack(int j) => j >= 0 && j < columns.Count && columns[j] is { DropBelow: not null, Width: { IsStar: true, Max: <= 0f } };
+        var slack = DroppingSlack(moving - 1) ? moving - 1 : DroppingSlack(moving + 1) ? moving + 1 : -1;
+        if (PageWidth is not { } room || slack < 0)
+        {
+            return null;
+        }
+        var least = columns[slack].DropBelow!.Value;
+        var others = 0f;
+        for (var i = 0; i < columns.Count; i++)
+        {
+            if (i != moving)
+            {
+                var width = columns[i].Width;
+                others += width.IsFixed ? WidthOf(columns[i].Header, width.Value) : width.IsStar ? least : 0f;
+            }
+        }
+        return room - ((2 * PageGutter) + (2 * EndPad) + StripeWidth + ColumnGap + others + (Math.Max(0, columns.Count - 1) * ColumnGap));
+    }
+
+    /// <summary>
+    /// The header without the grip of a divider between the slack star that drops (<see cref="ListColumn.DropBelow"/>) and a
+    /// capped star beside it (an optional column, the kind DIR.Lib 11.57 pins once dragged). Dragged, that grip resizes only
+    /// the capped star and the slack star takes the difference; the slack star drops below its own width, which the capped
+    /// star's bound cannot mirror, so the drag would jump or take the slack star away. The divider stays a gap, as it is where
+    /// DIR.Lib offers no grip, and the capped star stays resizable from its other grip. A fixed column beside the slack star
+    /// keeps its grip, as it had before 11.57: on Flights, the grip between Flight and What.
+    /// </summary>
+    private static Layout.Node Inert(Layout.Node header, IReadOnlyList<ListColumn> columns)
+    {
+        if (header is not Layout.Node.Overlay { Top: Layout.Node.Stack grips } overlay)
+        {
+            return header;
+        }
+        var children = grips.Children.ToArray();
+        var changed = false;
+        for (var i = 0; i + 1 < columns.Count && 2 * i + 1 < children.Length; i++)
+        {
+            if (BesideDroppingSlack(columns[i], columns[i + 1]) || BesideDroppingSlack(columns[i + 1], columns[i]))
+            {
+                children[2 * i + 1] = Layout.Builder.Spacer().WFixed(ColumnGap).HStar();
+                changed = true;
+            }
+        }
+        return changed ? overlay with { Top = grips with { Children = [.. children] } } : header;
+    }
+
+    // slack: the star that takes what is left and drops below a width of its own; other: the capped star on its side.
+    private static bool BesideDroppingSlack(ListColumn slack, ListColumn other) =>
+        slack.DropBelow is not null && slack.Width.IsStar && slack.Width.Max <= 0f && other.Width.IsStar && other.Width.Max > 0f;
 
     /// <summary>
     /// Makes the header's optional columns drop as the rows' do. DIR.Lib's header is two rows over each other: the titles
@@ -347,6 +444,9 @@ internal sealed class ListTable
             {
                 Sortable = columns[i].Sortable && columns[i].Header.Length > 0,
                 DescendingFirst = columns[i].DescendingFirst,
+                // A column with no title (the action column) has the width its buttons need, and no name to keep a dragged one under.
+                Resizable = columns[i].Header.Length > 0,
+                MaxWidth = columns[i].DropBelow is not null ? Most(columns, i) : columns[i].Width.IsFixed ? BesideSlackMost(columns, i) : null,
             };
             titles[i] = columns[i].Header;
         }
@@ -365,7 +465,43 @@ internal sealed class ListTable
                 _syncing = false;
             }
         }
+        else
+        {
+            Unpin(columns);
+        }
         return specs;
+    }
+
+    // DIR.Lib pins a column dragged wider (its floor is its width), so the engine never gives it less and its DropBelow cannot
+    // fire. Once the page has less room for it than it was dragged to, hand the widths back without the pins: the column is then
+    // what a restored one is (capped at its dragged width, free to be given less), and drops as the page narrows, in the
+    // session that dragged it as after a restart.
+    private void Unpin(IReadOnlyList<ListColumn> columns)
+    {
+        var saved = Widths.Save();
+        if (saved.Pinned is not { Length: > 0 } pinned)
+        {
+            return;
+        }
+        var byTitle = Volatile.Read(ref _byTitle);
+        var over = false;
+        for (var i = 0; i < columns.Count && i < pinned.Length && !over; i++)
+        {
+            over = pinned[i] && columns[i].DropBelow is not null && byTitle.TryGetValue(columns[i].Header, out var w) && Most(columns, i) is { } most && w > most + 0.5f;
+        }
+        if (!over)
+        {
+            return;
+        }
+        _syncing = true;
+        try
+        {
+            Widths.Restore(new Layout.TableColumnWidths.Saved(saved.Widths));
+        }
+        finally
+        {
+            _syncing = false;
+        }
     }
 
     // A click on a title: the next sort, kept by that column's title. Null (a display header, no hover) while no column sorts.
