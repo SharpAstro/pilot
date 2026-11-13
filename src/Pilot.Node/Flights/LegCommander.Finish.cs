@@ -105,6 +105,11 @@ public sealed partial class LegCommander
                 {
                     throw new FlightException($"{flight.Code}/{leg.Name} has steps not ticked: {string.Join("; ", open)}");
                 }
+                // A go-around that changed none of the files its review's blocking findings name would cost the loop a round for nothing (#1024).
+                if (await UntouchedRefusalAsync(flight, leg, report, cancellationToken) is { } untouchedWhy)
+                {
+                    throw new FlightException(untouchedWhy);
+                }
                 // A conflict worker that says it is done while a test merge of the base still conflicts has not resolved it: that counts as
                 // failed and the next rung starts (PIL846), where the bring-up below would only refuse it and leave the same worker flying.
                 if (await ConflictStillAsync(flight, leg, cancellationToken)
@@ -726,6 +731,10 @@ public sealed partial class LegCommander
         if (!Directory.Exists(flight.Worktree))
         {
             return (false, "its plane's folder does not exist", false);
+        }
+        if (await UntouchedRefusalAsync(flight, leg, report, cancellationToken) is { } untouchedWhy)
+        {
+            return (false, untouchedWhy, false);
         }
         string? notWhy = null;
         var head = await OffLockAsync(null, async Task<string?> () =>

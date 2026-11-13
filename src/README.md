@@ -315,6 +315,8 @@ and **Accept** (the leg as it stands: a failed leg is marked done anyway, a flyi
 that only the person may press. A person's own go-around passes the cap. The review's own cap (`MaxReviewGoArounds`, 3 rounds
 on its findings) stays as it is.
 
+**A go-around that touches none of the files its findings name is not pushed.** A review round with changes costs the loop one of its rounds (the third is held for the watchtower). When the last leg finishes a go-around on that round's findings, the node lists the files the leg's own commits changed since the round's head (first-parent, no merges, so a base merge does not count). If the Blocking findings name files and none was changed, the finish is refused before any base merge, check rerun or push: the leg stays flying, no reviewer starts and the round count is unchanged. The refusal names the files and quotes the Blocking items. Finishing again at the same head with a report saying why no named file needs a change goes through, and a Handled card quotes that report. A round whose findings name no file, a first review and a leg that is not a review go-around are never gated, and a failed leg's self-finish applies the same rule.
+
 **A stale sibling is said before the leg starts.** A repo's `UseLocal*` properties compile against the sibling clones
 beside it (`../DIR.Lib`) whatever state they are in, so a clone behind its origin fails a leg's check with errors that
 look like the leg's own. Before `start-leg` the node reads the plane's `Directory.Build.props`, `.targets` and `.csproj`

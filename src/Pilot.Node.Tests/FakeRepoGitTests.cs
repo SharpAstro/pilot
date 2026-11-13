@@ -548,6 +548,7 @@ public sealed class FakeRepoGitTests : IDisposable
         Ask("plane", "diff", "--stat", "origin/main...HEAD"),
         Ask("plane", "diff", "--name-only", "origin/main...HEAD"),
         Ask("plane", "log", "--oneline", "origin/main..HEAD"),
+        Ask("plane", "log", "--first-parent", "--no-merges", "--name-only", "--format=", "origin/main..HEAD"),
         Ask("plane", "rev-list", "--count", "origin/main..HEAD"),
         Ask("plane", "rev-list", "--left-right", "--count", "origin/main...HEAD"),
         Ask("plane", "merge-base", "--is-ancestor", "origin/main", "HEAD"),

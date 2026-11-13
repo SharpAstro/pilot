@@ -1335,6 +1335,9 @@ internal sealed class FakeRepoGit : IGit
     {
         var reverse = a.Remove("--reverse");
         var oneline = a.Remove("--oneline");
+        var firstParent = a.Remove("--first-parent");
+        var noMerges = a.Remove("--no-merges");
+        var nameOnly = a.Remove("--name-only");
         var format = a.FirstOrDefault(x => x.StartsWith("--format=", StringComparison.Ordinal));
         a.Remove(format ?? "");
         var limit = a.FirstOrDefault(x => x.Length > 1 && x[0] == '-' && x[1..].All(char.IsDigit));
@@ -1355,7 +1358,17 @@ internal sealed class FakeRepoGit : IGit
         }
         try
         {
-            var commits = Select(a, wt, firstParent: false).Commits;
+            var commits = Select(a, wt, firstParent).Commits;
+            if (noMerges)
+            {
+                commits = [.. commits.Where(c => c.Parents.Count < 2)];
+            }
+            if (nameOnly)
+            {
+                // --name-only --format=: each commit's paths against its first parent, one a line, no blank separators (a merge shows none).
+                return Ok(string.Concat(commits.Where(c => c.Parents.Count < 2).SelectMany(c => Changes(c.Parents.Count == 1 ? _commits[c.Parents[0]].Tree : new Dictionary<string, string>(), c.Tree).Select(ch => ch.Path + "
+"))));
+            }
             if (pathspec.Count > 0)
             {
                 // Git's default history simplification: a commit shows when its files under the pathspec differ from every parent's (a root's: when it has any).
