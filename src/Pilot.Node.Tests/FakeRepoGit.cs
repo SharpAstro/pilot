@@ -1366,8 +1366,7 @@ internal sealed class FakeRepoGit : IGit
             if (nameOnly)
             {
                 // --name-only --format=: each commit's paths against its first parent, one a line, no blank separators (a merge shows none).
-                return Ok(string.Concat(commits.Where(c => c.Parents.Count < 2).SelectMany(c => Changes(c.Parents.Count == 1 ? _commits[c.Parents[0]].Tree : new Dictionary<string, string>(), c.Tree).Select(ch => ch.Path + "
-"))));
+                return Ok(string.Concat(commits.Where(c => c.Parents.Count < 2).SelectMany(c => Changes(c.Parents.Count == 1 ? _commits[c.Parents[0]].Tree : new Dictionary<string, string>(), c.Tree).Select(ch => ch.Path + "\n"))));
             }
             if (pathspec.Count > 0)
             {
