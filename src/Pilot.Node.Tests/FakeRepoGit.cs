@@ -1352,7 +1352,11 @@ internal sealed class FakeRepoGit : IGit
         {
             a.RemoveRange(dash, a.Count - dash);
         }
-        if (!oneline && format is not ("--format=%h %s" or "--format=%P\t%s" or "--format=%s") || a.Any(x => x.StartsWith('-') && x != "--not"))
+        if (nameOnly && format != "--format=")
+        {
+            throw new NotSupportedException("log form");
+        }
+        if (!oneline && !nameOnly && format is not ("--format=%h %s" or "--format=%P\t%s" or "--format=%s") || a.Any(x => x.StartsWith('-') && x != "--not"))
         {
             throw new NotSupportedException("log form");
         }
