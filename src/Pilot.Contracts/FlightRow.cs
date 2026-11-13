@@ -371,7 +371,7 @@ public sealed record FlightCi
     /// <summary>Set while the node has stopped pushing for the flight: why, in numbers (<c>4.3 runner-hours of 4, 31 runs, 9 failed</c>). Null while it may push.</summary>
     public string? CappedWhy { get; init; }
 
-    /// <summary>When the owner last said <c>continue</c>: a red stop counts from the later of this and <see cref="RedSince"/>.</summary>
+    /// <summary>When the owner last said <c>continue</c>: a red stop counts from the latest of this, <see cref="RedSince"/> and the end of the flight's last wait on a person (PIL1023).</summary>
     public DateTimeOffset? RedAcknowledgedAt { get; init; }
 
     /// <summary>When it was capped.</summary>

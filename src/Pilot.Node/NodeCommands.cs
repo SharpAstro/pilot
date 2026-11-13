@@ -681,6 +681,12 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             {
                 await Get<Autopilot>().TellAsync(card, allowed: false, AnsweredBy(command), cancellationToken);
             }
+            // PIL1023: a dismissed CI stop card keeps the stop (the budget guards Actions spend); the answer says so plainly.
+            if (card.Kind == CiBudgets.CapKind && Verbs.FlightCodeOf(card.Subject) is { } cappedCode
+                && state.Flights().FirstOrDefault(f => f.Code == cappedCode)?.Ci is { CappedWhy: not null })
+            {
+                return state.Complete(command, null, made: CiBudgets.DismissedStays(cappedCode));
+            }
             return state.Complete(command, null);
         }
 

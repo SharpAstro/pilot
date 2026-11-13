@@ -991,7 +991,9 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// PIL795: counts each flying flight's PR's CI from GitHub Actions (<see cref="CiBudgets"/>) and puts it on the flight. Past the
     /// <c>flight-ci-budget</c> or red for more than three hours the flight is capped: its pushes are refused with the numbers, and one
     /// For-you card rings the owner with continue, land what is green, or split. The card is raised once for a cap; the owner's
-    /// <c>continue</c> lifts the cap for one more budget, and a budget raised in the settings lifts it by itself.
+    /// <c>continue</c> lifts the cap for one more budget, and a budget raised in the settings lifts it by itself. PIL1023: the red
+    /// bound does not run while the flight waits on a person and restarts when that wait ends (<see cref="CiBudgets.WaitOnPerson"/>); a cap
+    /// already set stays until answered, only a new red cap is held back.
     /// </summary>
     internal async Task LookAtCiAsync(CancellationToken cancellationToken)
     {
@@ -1020,7 +1022,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             var counted = CiBudgets.Count(runs, current.Ci, now);
-            var why = CiBudgets.Why(counted, budget, now);
+            // PIL1023: a flight waiting on a person (a review loop card, another card for the owner) does not run its red clock.
+            // A cap already set is judged as before: only a new red cap is held back, so a card opening later never lifts a stop nobody answered.
+            var wait = counted.CappedWhy is null ? CiBudgets.WaitOnPerson(state.Cards(), flight.Code, counted.RedSince) : default;
+            var why = CiBudgets.Why(counted, budget, now, wait);
             var subject = Verbs.FlightTarget(flight.Code);
             if (why is not null && counted.CappedWhy is null)
             {
@@ -1028,7 +1033,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 state.PutFlight(current with { Ci = counted });
                 state.CloseCardsAbout(subject, "the CI cap was set again", CiBudgets.CapKind);
                 state.RaiseCard(CardBin.ForYou, CiBudgets.CapKind, subject, $"{flight.Code}: CI stopped, {CiBudgets.Numbers(counted)}",
-                    $"{flight.Code}: {why}. Nothing more is pushed for this flight until you answer: let it spend {budget} more runner-hours, or have the controller merge only its passing legs, or break it into smaller flights.",
+                    $"{flight.Code}: {why}. Nothing more is pushed for this flight until you answer: let it spend {budget} more runner-hours, or have the controller merge only its passing legs, or break it into smaller flights. {CiBudgets.DismissKeepsStop(flight.Code)}",
                     [
                         new CardChoice { Label = "Allow more CI time", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiContinue] },
                         new CardChoice { Label = "Land the green legs", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiLandGreen] },

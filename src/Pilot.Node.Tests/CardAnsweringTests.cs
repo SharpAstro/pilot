@@ -245,6 +245,57 @@ public sealed class CardAnsweringTests
         closed.Answering.ShouldBeNull();
     }
 
+    private static CardRow CappedFlightCard(NodeHarness node, string kind)
+    {
+        node.State.PutFlight(new FlightRow
+        {
+            Code = "TIA1", Repo = "tianwen", RepoPath = "r", Issue = 1, Branch = "flight/tia1", Worktree = "w", Base = "main",
+            State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow, PullRequest = 63, PullRequestUrl = PrUrl,
+            Ci = new FlightCi { CappedWhy = "past it", CappedAt = DateTimeOffset.UtcNow },
+        });
+        return node.State.RaiseCard(CardBin.ForYou, kind, Subject, "TIA1: CI stopped", "d",
+            [new CardChoice { Label = "Allow more CI time", Verb = Verbs.CiBudget, Target = Subject, Args = [Verbs.CiContinue] }]);
+    }
+
+    [Fact]
+    public async Task DismissingTheCiCapCardClosesItKeepsTheStopAndSaysPushesStayStoppedUntilTheCiBudgetCommand()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var card = CappedFlightCard(node, CiBudgets.CapKind);
+
+        var result = await node.App.Services.GetRequiredService<NodeCommands>().RunAsync(
+            new CommandRequest { Verb = Verbs.Dismiss, Target = Verbs.CardTarget(card.Id), Who = "gui" }, Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        result.Made.ShouldNotBeNull().ShouldSatisfyAllConditions(
+            m => m.ShouldContain("TIA1"),
+            m => m.ShouldContain("pushes stay stopped"),
+            m => m.ShouldContain("pilot flight ci-budget TIA1 continue"));
+        node.State.Cards().Single(c => c.Id == card.Id).State.ShouldBe(CardState.Closed);
+        node.State.Flights().Single(f => f.Code == "TIA1").Ci.ShouldNotBeNull().CappedWhy.ShouldBe("past it");
+    }
+
+    [Fact]
+    public async Task DismissingAnyOtherKindOfCardAnswersAsBefore()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var card = CappedFlightCard(node, "some-other-kind");
+
+        var result = await node.App.Services.GetRequiredService<NodeCommands>().RunAsync(
+            new CommandRequest { Verb = Verbs.Dismiss, Target = Verbs.CardTarget(card.Id), Who = "gui" }, Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        result.Made.ShouldBeNull();
+    }
+
+    [Fact]
+    public void TheCiCapCardsWordingSaysDismissingItKeepsPushesStopped()
+    {
+        CardSummaries.For(CiBudgets.CapKind, Subject, "t", []).ShouldContain("does not lift the stop");
+        CardSummaries.For(CiBudgets.CapKind, Subject, "t", []).ShouldContain("pilot flight ci-budget TIA1 continue");
+        CiBudgets.DismissKeepsStop("TIA1").ShouldContain("pilot flight ci-budget TIA1 continue");
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task ADifferentChoiceMeanwhileIsRefusedSayingWhichAnswerIsUnderwayAndADismissWaitsForIt()
