@@ -6,20 +6,31 @@ using Pilot.Commands;
 using Pilot.Contracts;
 
 // pilot-tui: the dashboard in a terminal. The GUI's own pages and panels (Pilot.Ui), their trees arranged in cells by
-// Console.Lib rather than painted on pixels: the Sessions page (1), the Flights page (2) with its
-// buttons, the Background tasks page (3), the Fleet page (4), and the watchtower's panel with its cards, all live from
-// this machine's node or one on the LAN.
+// Console.Lib rather than painted on pixels: every page of the bar, and the watchtower's panel with its cards, all live from
+// this machine's node or one on the LAN. A bar of pages runs along the top, each with its key: the GUI's Ctrl+digit order as
+// plain digits, 1 Home, 2 Chat, 3 Sessions, 4 Flights, 5 Repos, 6 Background tasks, 7 Fleet, 8 Settings, 9 Pull requests,
+// 0 Ideas, and $ Spend.
 var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN: host:port, or its name (SE1) or host; else PILOT_NODE, else this machine's" };
 var socketOption = new Option<string?>("--node-socket") { Description = "This machine's node's socket; else PILOT_NODE_SOCKET, else this user's default" };
-var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 sessions, 3 flights, 4 jobs, 5 fleet, 6 settings, 7 repos, 8 chat, 9 pull requests, Alt+Left or Backspace back and Alt+Right forward, Ctrl+T the chat with the watchtower, q quits")
+var glyphsOption = new Option<string?>("--glyphs") { Description = $"The bar's glyphs: auto (emoji where the terminal draws them two cells wide), emoji or initials; else {TerminalRail.GlyphsVariable}, else auto" };
+var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 chat, 3 sessions, 4 flights, 5 repos, 6 background tasks, 7 fleet, 8 settings, 9 pull requests, 0 ideas, $ spend, Alt+Left or Backspace back and Alt+Right forward, Ctrl+T the chat with the watchtower, q quits")
 {
-    Options = { nodeOption, socketOption },
+    Options = { nodeOption, socketOption, glyphsOption },
 };
 var parsed = root.Parse(args);
 if (parsed.Errors.Count > 0 || parsed.Action is System.CommandLine.Help.HelpAction)
 {
     return parsed.Invoke();
 }
+
+var glyphsText = parsed.GetValue(glyphsOption) ?? Environment.GetEnvironmentVariable(TerminalRail.GlyphsVariable);
+var parsedGlyphs = TerminalRail.Parse(glyphsText);
+if (glyphsText is { Length: > 0 } && parsedGlyphs is null)
+{
+    System.Console.Error.WriteLine($"pilot-tui: --glyphs is auto, emoji or initials, not '{glyphsText}'");
+    return 2;
+}
+var glyphMode = TerminalRail.Resolve(parsedGlyphs ?? GlyphMode.Auto, name => Environment.GetEnvironmentVariable(name));
 
 var nodeTarget = parsed.GetValue(nodeOption) ?? (Environment.GetEnvironmentVariable(NodeTargets.EnvironmentVariable) is { Length: > 0 } env ? env : null);
 // A name (DE1) is found on the LAN as the CLI finds it; one no node announces is refused, not taken for this machine.
@@ -476,12 +487,15 @@ while (!stop.IsCancellationRequested)
             PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };
+        var railTree = TerminalRail.Tree(page, glyphMode, pages.Jobs, pages.Ideas, now, chrome.Show);
         var cardsScreen = pages.Cards;
         flights.Jobs = pages.JobRows;
         // The panel takes 38 columns (the GUI's 300 units) when there is room beside a usable page, and something to show.
-        var tree = columns >= 120 && (cardsScreen.HasAny || cards.CanTell)
+        var beside = columns >= 120 && (cardsScreen.HasAny || cards.CanTell)
             ? Layout.Builder.HStack(pageTree.WStar(), cards.Tree(cardsScreen).WFixed(CardsView<RgbaImage>.Width)).Stretch()
             : pageTree;
+        // The bar takes the row above the page, as the page needs the width.
+        var tree = Layout.Builder.VStack(railTree, beside.HStar()).Stretch();
         arranged = Layout.Engine.Arrange(tree, new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
         // No clear: the cell buffer diffs each frame against the last, and the tree's backgrounds cover every cell.
         CellLayout.Paint(terminal, arranged);
