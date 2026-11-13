@@ -238,7 +238,12 @@ public sealed class CiBudgetTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ACiRedForMoreThanThreeHoursStopsTheFlightEvenWithinTheBudget()
     {
-        var flight = await Flying("65", CiOf(1, 20, "failure", completed: DateTimeOffset.UtcNow.AddHours(-3.5)));
+        // Opened but not reviewed: a passed review's ready card is a wait on the owner (PIL1023) and would hold the red clock.
+        var flight = await NewFlight("65", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        flight = F(flight.Code);
+        _github.CiRuns[flight.Branch] = [CiOf(1, 20, "failure", completed: DateTimeOffset.UtcNow.AddHours(-3.5))];
 
         await Checks().LookAtCiAsync(Ct);
 
@@ -323,7 +328,11 @@ public sealed class CiBudgetTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ARedCiDoesNotCapAFlightWhileAReviewLoopCardIsOpenAndCountsFromItsCloseAfter()
     {
-        var flight = await Flying("68", CiOf(1, 20, "failure", completed: DateTimeOffset.UtcNow.AddHours(-30)));
+        var flight = await NewFlight("68", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        flight = F(flight.Code);
+        _github.CiRuns[flight.Branch] = [CiOf(1, 20, "failure", completed: DateTimeOffset.UtcNow.AddHours(-30))];
         var card = _state.RaiseCard(CardBin.ForYou, "review-loop", Verbs.FlightTarget(flight.Code), "review loop held", "waiting");
 
         await Checks().LookAtCiAsync(Ct);
