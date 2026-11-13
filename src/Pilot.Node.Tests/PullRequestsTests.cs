@@ -814,7 +814,7 @@ public sealed class PullRequestsTests : IDisposable
     public async Task ThePullRequestsRefreshCommandReadsThroughARealNodeAndPilotPrsPrintsTheRowGroupedByRepo()
     {
         var pilot = Clone("SharpAstro", "pilot");
-        // An in-memory git: the node's loops would otherwise run real git on the fake clone (#1022).
+        // An in-memory git: the node's RepoWatch first read can run after the flight is put and then reads git in every .git folder under the flight's parent (#1022).
         await using var node = await NodeHarness.StartAsync(Ct, git: FakeRepoGit.Empty(_root));
         node.State.PutFlight(new FlightRow
         {
