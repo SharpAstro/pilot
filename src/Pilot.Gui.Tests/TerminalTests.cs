@@ -472,6 +472,7 @@ public sealed class TerminalTests
         var screen = new IdeasScreen([idea], [], ["pilot"], "test", Live.At);
 
         var arranged = Layout.Engine.Arrange(chrome.Ideas.Tree(screen), new Rect<int>(0, 0, 120, 40), CellMeasureContext.PixelAuthored);
+        File.WriteAllText(@"C:\Users\SebastianGodelet\.claude\jobs\3656ff12\tmp\desc.txt", CellLayout.Describe(arranged));
         CellLayout.Describe(arranged).ShouldContain("A page rail for the terminal");
 
         var row = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: { } action } && action.StartsWith("ideas:row:", StringComparison.Ordinal));
