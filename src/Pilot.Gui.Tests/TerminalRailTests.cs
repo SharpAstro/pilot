@@ -50,10 +50,11 @@ public sealed class TerminalRailTests
     }
 
     [Theory]
-    [InlineData(GlyphMode.Emoji)]
-    [InlineData(GlyphMode.Initials)]
-    public void EveryPagesEntryShowsInCellsWithItsKeyAtAFixedWidth(GlyphMode mode)
+    [InlineData("emoji")]
+    [InlineData("initials")]
+    public void EveryPagesEntryShowsInCellsWithItsKeyAtAFixedWidth(string modeName)
     {
+        var mode = TerminalRail.Parse(modeName)!.Value;
         var arranged = Arrange(TerminalRail.Tree(PilotPage.Home, mode, null, null, Now, _ => { }));
 
         foreach (var (page, key) in Expected)
