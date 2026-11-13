@@ -1223,6 +1223,9 @@ GUI's night rail draws as the plane and the cog). `--glyphs auto|emoji|initials`
 chooses emoji under Windows Terminal (`WT_SESSION`), VS Code, WezTerm, iTerm2 and kitty, and initials elsewhere. An entry whose emoji
 changes is drawn blank for one frame, because Console.Lib's cell buffer would flush only the changed half of two emoji sharing
 a high surrogate (SharpAstro/Console.Lib#47).
+In a terminal under 88 columns, which 11 full entries need, every entry is 7 cells wide instead (the glyph's area one cell
+shorter, so a long glyph such as the ideas count is cut), which keeps all 11 on screen and clickable down to 77 columns; the
+width is fixed for a given terminal width, so the bar does not shift.
 
 The views moved into `Pilot.Ui` (DIR.Lib only, no SDL) for it: the GUI paints `Render`, the TUI arranges `Tree`, and the
 selected row states itself as a background as well as a focus, since a terminal paints no focus of its own.

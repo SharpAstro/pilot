@@ -55,6 +55,56 @@ public sealed class TerminalRailTests
         TerminalRail.PageFor(new InputEvent.KeyDown(InputKey.D2, InputModifier.Ctrl)).ShouldBeNull();
     }
 
+    [Fact]
+    public void HandleTakesEveryPageKeyAndFocusesChatOnTwoAndNothingElse()
+    {
+        foreach (var (page, _, key) in TerminalRail.Keys.Where(k => k.Key != TerminalRail.SpendKey))
+        {
+            var shown = new List<PilotPage>();
+            TerminalRail.Handle(new InputEvent.KeyDown((InputKey)((int)InputKey.D0 + (key - '0')), InputModifier.None), null, shown.Add, () => { }).ShouldBeTrue();
+            shown.ShouldBe([page]);
+        }
+        var spend = new List<PilotPage>();
+        TerminalRail.Handle(new InputEvent.KeyDown(InputKey.D4, InputModifier.Shift), null, spend.Add, () => { }).ShouldBeTrue();
+        TerminalRail.Handle(null, new System.Text.Rune('$'), spend.Add, () => { }).ShouldBeTrue();
+        spend.ShouldBe([PilotPage.Spend, PilotPage.Spend]);
+
+        var focused = 0;
+        TerminalRail.Handle(new InputEvent.KeyDown(InputKey.D2, InputModifier.None), null, _ => { }, () => focused++).ShouldBeTrue();
+        focused.ShouldBe(1);
+        TerminalRail.Handle(new InputEvent.KeyDown(InputKey.D3, InputModifier.None), null, _ => { }, () => focused++).ShouldBeTrue();
+        focused.ShouldBe(1);
+
+        var reached = new List<PilotPage>();
+        TerminalRail.Handle(new InputEvent.KeyDown(InputKey.D2, InputModifier.Ctrl), null, reached.Add, () => focused++).ShouldBeFalse();
+        TerminalRail.Handle(null, new System.Text.Rune('x'), reached.Add, () => focused++).ShouldBeFalse();
+        reached.ShouldBeEmpty();
+        focused.ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData("emoji", 80)]
+    [InlineData("initials", 80)]
+    [InlineData("initials", 77)]
+    public void ANarrowTerminalKeepsAllElevenEntriesOnScreenAndClickable(string modeName, int columns)
+    {
+        var mode = TerminalRail.Parse(modeName)!.Value;
+        var shown = new List<PilotPage>();
+        var tree = TerminalRail.Tree(PilotPage.Home, mode, null, IdeasOf(120), Now, shown.Add, null, columns);
+        var arranged = Layout.Engine.Arrange(tree, new Rect<int>(0, 0, columns, 1), CellMeasureContext.PixelAuthored);
+
+        foreach (var (page, key) in Expected)
+        {
+            var entry = EntryOf(arranged, page);
+            (entry.Bounds.X + entry.Bounds.Width).ShouldBeLessThanOrEqualTo(columns);
+            entry.Bounds.Width.ShouldBe(TerminalRail.NarrowEntryCells);
+            TerminalRail.EntryText(page, mode, null, IdeasOf(120), Now, narrow: true).TrimEnd().ShouldEndWith(key.ToString());
+        }
+        var last = EntryOf(arranged, PilotPage.Spend);
+        CellLayout.HitTest(arranged, last.Bounds.X + 2, last.Bounds.Y);
+        shown.ShouldBe([PilotPage.Spend]);
+    }
+
     [Theory]
     [InlineData("emoji")]
     [InlineData("initials")]

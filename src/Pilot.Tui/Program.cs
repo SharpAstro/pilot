@@ -254,6 +254,7 @@ chrome.Ideas.Changed = Redraw;
 // The Spend page and a flight's spend: read from the node's spend routes, again once 30 s old (see SpendReads).
 var spendReads = new SpendReads(client, Redraw);
 chrome.Spend.OnWindow = window => spendReads.Ask(window, feed.Screen(DateTimeOffset.UtcNow).Source, force: true);
+chrome.Flights.OnSpend = code => spendReads.AskFlight(code, force: true);
 chat.OnAnswerNow = async sendId =>
 {
     var refused = await ChatCommands.AnswerNowAsync(client, sendId, Who, stop.Token);
@@ -468,7 +469,20 @@ while (!stop.IsCancellationRequested)
         {
             spendReads.Ask(chrome.Spend.Window, pages.Sessions.Source);
         }
+        if (page == PilotPage.Flights && chrome.Flights.OpenCode is { } openCode)
+        {
+            spendReads.AskFlight(openCode);
+        }
         chrome.Flights.Spend = spendReads.Flights;
+        // The rows' tokens come from the snapshot at connect; a read repeated every 30 s keeps them current.
+        if (page is PilotPage.Flights or PilotPage.Home)
+        {
+            spendReads.AskTokens();
+        }
+        if (spendReads.Tokens is { } tokensNow)
+        {
+            pages = pages with { Flights = pages.Flights.WithTokens(tokensNow) };
+        }
         if (page == PilotPage.Home)
         {
             spendReads.AskToday();
@@ -488,7 +502,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };
-        var railTree = TerminalRail.Tree(page, glyphMode, pages.Jobs, pages.Ideas, now, chrome.Show, railMemory);
+        var railTree = TerminalRail.Tree(page, glyphMode, pages.Jobs, pages.Ideas, now, chrome.Show, railMemory, columns);
         // A glyph that changed was drawn blank for this frame (see TerminalRail.Memory): draw the next at once.
         if (railMemory.Settling)
         {
@@ -569,12 +583,7 @@ void Handle(ConsoleInputEvent raw)
         case InputEvent.KeyDown navKey when chrome.HandleInput(navKey):
             break;
         // The page keys are moves the history records; the show callback of the Link calls keeps `page` in step.
-        case var _ when ((evt is null ? null : TerminalRail.PageFor(evt)) ?? (raw.KeyChar is { } dollar && dollar.Value == TerminalRail.SpendKey ? PilotPage.Spend : null)) is { } railPage:
-            chrome.Show(railPage);
-            if (railPage == PilotPage.Chat)
-            {
-                focus.Focus(chat.Input);
-            }
+        case var _ when TerminalRail.Handle(evt, raw.KeyChar, chrome.Show, () => focus.Focus(chat.Input)):
             break;
         case InputEvent.KeyDown(InputKey.S, InputModifier.Ctrl):
             chrome.Show(PilotPage.Sessions);

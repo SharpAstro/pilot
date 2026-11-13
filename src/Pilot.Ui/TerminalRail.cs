@@ -1,3 +1,4 @@
+using System.Text;
 using DIR.Lib;
 
 namespace Pilot.Ui;
@@ -22,8 +23,41 @@ internal static class TerminalRail
     /// <summary>The cells one entry takes: a space, the glyph's area, its key and a space.</summary>
     public const int EntryCells = 8;
 
+    /// <summary>The cells one entry takes in a narrow terminal: the glyph's area is one cell less, so 11 entries fit 80 columns.</summary>
+    public const int NarrowEntryCells = 7;
+
+    /// <summary>The columns the 11 full entries need; a terminal with fewer gets narrow entries.</summary>
+    public const int FullColumns = 88;
+
     /// <summary>An entry's width in the layout's units, where one terminal cell is 8 wide: declared once, so the tree holds no sum.</summary>
     private const float EntryWidth = EntryCells * 8f;
+
+    private const float NarrowEntryWidth = NarrowEntryCells * 8f;
+
+    /// <summary>The glyph's cells in a narrow entry.</summary>
+    private const int NarrowGlyphCells = 4;
+
+    /// <summary>Whether a terminal this many columns wide gets narrow entries.</summary>
+    public static bool IsNarrow(int columns) => columns < FullColumns;
+
+    /// <summary>
+    /// Handles a page key: a digit, Shift+4, or a bare '$' (<paramref name="keyChar"/>, for terminals that do not report Shift+4).
+    /// Calls <paramref name="show"/> with the page, and <paramref name="focusChat"/> when it is Chat. Returns whether it took the key.
+    /// </summary>
+    public static bool Handle(InputEvent? evt, Rune? keyChar, Action<PilotPage> show, Action focusChat)
+    {
+        var page = (evt is null ? null : PageFor(evt)) ?? (keyChar is { } c && c.Value == SpendKey ? PilotPage.Spend : null);
+        if (page is not { } reached)
+        {
+            return false;
+        }
+        show(reached);
+        if (reached == PilotPage.Chat)
+        {
+            focusChat();
+        }
+        return true;
+    }
 
     /// <summary>The cells the glyph has: a light bulb and "99+" is the longest.</summary>
     private const int GlyphCells = 5;
@@ -111,8 +145,16 @@ internal static class TerminalRail
     }
 
     /// <summary>An entry's text, <see cref="EntryCells"/> chars (one cell each, as a cell holds one UTF-16 char).</summary>
-    public static string EntryText(PilotPage page, GlyphMode mode, JobsScreen? jobs, IdeasScreen? ideas, DateTimeOffset now) =>
-        $" {Glyph(page, mode, jobs, ideas, now).PadRight(GlyphCells)}{KeyFor(page)} ";
+    public static string EntryText(PilotPage page, GlyphMode mode, JobsScreen? jobs, IdeasScreen? ideas, DateTimeOffset now, bool narrow = false)
+    {
+        var glyph = Glyph(page, mode, jobs, ideas, now);
+        var cells = narrow ? NarrowGlyphCells : GlyphCells;
+        if (glyph.Length > cells)
+        {
+            glyph = glyph[..cells];
+        }
+        return $" {glyph.PadRight(cells)}{KeyFor(page)} ";
+    }
 
     /// <summary>
     /// What the bar remembers between frames to work round Console.Lib's CellBuffer, which diffs one UTF-16 char per cell: an
@@ -140,25 +182,26 @@ internal static class TerminalRail
             _shown[page] = text;
             _blank.Add(page);
             Settling = true;
-            return $" {new string(' ', GlyphCells)}{KeyFor(page)} ";
+            return $" {new string(' ', text.Length - 3)}{KeyFor(page)} ";
         }
     }
 
     private static string Remember(Memory? memory, PilotPage page, string text) => memory?.Entry(page, text) ?? text;
 
     /// <summary>The bar's tree: one row of entries, the active page marked with a background, each a button that shows its page.</summary>
-    public static Layout.Node Tree(PilotPage active, GlyphMode mode, JobsScreen? jobs, IdeasScreen? ideas, DateTimeOffset now, Action<PilotPage> show, Memory? memory = null)
+    public static Layout.Node Tree(PilotPage active, GlyphMode mode, JobsScreen? jobs, IdeasScreen? ideas, DateTimeOffset now, Action<PilotPage> show, Memory? memory = null, int columns = FullColumns)
     {
         if (memory is not null)
         {
             memory.Settling = false;
         }
         var palette = Palette.Current;
+        var narrow = IsNarrow(columns);
         var entries = Keys.Select(k =>
         {
             var on = k.Page == active;
-            return Layout.Builder.Text(Remember(memory, k.Page, EntryText(k.Page, mode, jobs, ideas, now)), 12f, on ? palette.Bright : palette.Dim, TextAlign.Near, TextAlign.Center)
-                .WFixed(EntryWidth)
+            return Layout.Builder.Text(Remember(memory, k.Page, EntryText(k.Page, mode, jobs, ideas, now, narrow)), 12f, on ? palette.Bright : palette.Dim, TextAlign.Near, TextAlign.Center)
+                .WFixed(narrow ? NarrowEntryWidth : EntryWidth)
                 .HFixed(16f)
                 .Bg(on ? palette.RowFocusBg : palette.RowAltBg)
                 .BgHover(palette.RowHoverBg)
