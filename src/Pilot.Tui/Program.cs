@@ -569,33 +569,12 @@ void Handle(ConsoleInputEvent raw)
         case InputEvent.KeyDown navKey when chrome.HandleInput(navKey):
             break;
         // The page keys are moves the history records; the show callback of the Link calls keeps `page` in step.
-        case InputEvent.KeyDown(InputKey.D1, _):
-            chrome.Show(PilotPage.Home);
-            break;
-        case InputEvent.KeyDown(InputKey.D2, _):
-            chrome.Show(PilotPage.Sessions);
-            break;
-        case InputEvent.KeyDown(InputKey.D3, _):
-            chrome.Show(PilotPage.Flights);
-            break;
-        case InputEvent.KeyDown(InputKey.D4, _):
-            chrome.Show(PilotPage.Jobs);
-            break;
-        case InputEvent.KeyDown(InputKey.D5, _):
-            chrome.Show(PilotPage.Fleet);
-            break;
-        case InputEvent.KeyDown(InputKey.D6, _):
-            chrome.Show(PilotPage.Settings);
-            break;
-        case InputEvent.KeyDown(InputKey.D7, _):
-            chrome.Show(PilotPage.Repos);
-            break;
-        case InputEvent.KeyDown(InputKey.D9, _):
-            chrome.Show(PilotPage.PullRequests);
-            break;
-        case InputEvent.KeyDown(InputKey.D8, _):
-            chrome.Show(PilotPage.Chat);
-            focus.Focus(chat.Input);
+        case var _ when (TerminalRail.PageFor(evt) ?? (raw.KeyChar == TerminalRail.SpendKey ? PilotPage.Spend : null)) is { } railPage:
+            chrome.Show(railPage);
+            if (railPage == PilotPage.Chat)
+            {
+                focus.Focus(chat.Input);
+            }
             break;
         case InputEvent.KeyDown(InputKey.S, InputModifier.Ctrl):
             chrome.Show(PilotPage.Sessions);

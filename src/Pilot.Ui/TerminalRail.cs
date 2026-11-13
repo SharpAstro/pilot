@@ -53,6 +53,10 @@ internal static class TerminalRail
             ? ((modifiers & InputModifier.Shift) != 0 && key == InputKey.D4 ? PilotPage.Spend : PageFor((char)('0' + (key - InputKey.D0))))
             : null;
 
+    /// <summary>The page an input event reaches by the table: a plain key-down of a digit, or Shift+4; null for any other event.</summary>
+    public static PilotPage? PageFor(InputEvent evt) =>
+        evt is InputEvent.KeyDown(var key, var modifiers) && (modifiers & ~InputModifier.Shift) == 0 ? PageFor(key, modifiers) : null;
+
     /// <summary>
     /// The mode a terminal gets from its environment: emoji where it is known to draw them two cells wide (Windows Terminal,
     /// VS Code's, WezTerm, iTerm2, kitty), else initials.

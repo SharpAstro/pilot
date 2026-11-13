@@ -47,6 +47,12 @@ public sealed class TerminalRailTests
         TerminalRail.PageFor('x').ShouldBeNull();
         TerminalRail.PageFor(InputKey.D6, InputModifier.None).ShouldBe(PilotPage.Jobs);
         TerminalRail.PageFor(InputKey.D4, InputModifier.Shift).ShouldBe(PilotPage.Spend);
+        foreach (var (page, _, key) in TerminalRail.Keys.Where(k => k.Key != TerminalRail.SpendKey))
+        {
+            TerminalRail.PageFor(new InputEvent.KeyDown((InputKey)((int)InputKey.D0 + (key - '0')), InputModifier.None)).ShouldBe(page);
+        }
+        TerminalRail.PageFor(new InputEvent.KeyDown(InputKey.D4, InputModifier.Shift)).ShouldBe(PilotPage.Spend);
+        TerminalRail.PageFor(new InputEvent.KeyDown(InputKey.D2, InputModifier.Ctrl)).ShouldBeNull();
     }
 
     [Theory]
