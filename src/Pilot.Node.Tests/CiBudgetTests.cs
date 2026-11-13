@@ -156,6 +156,8 @@ public sealed class CiBudgetTests : ReviewTestsBase
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Title.ShouldContain("4.8 runner-hours");
         card.Title.ShouldContain("2 runs, 1 failed");
+        card.Detail.ShouldContain("does not lift the stop");
+        card.Detail.ShouldContain($"pilot flight ci-budget {flight.Code} continue");
         card.Choices.Select(c => (c.Label, c.Verb, c.Args.Single())).ShouldBe(
         [
             ("Allow more CI time", Verbs.CiBudget, Verbs.CiContinue),
@@ -346,5 +348,30 @@ public sealed class CiBudgetTests : ReviewTestsBase
         // Just closed: the clock restarted, so no cap yet.
         F(flight.Code).Ci!.CappedWhy.ShouldBeNull();
         CapCards().ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "Slow")]
+    public async Task ACapAlreadySetStaysWhenACardForThePersonOpensLater(bool dismissed)
+    {
+        var flight = await NewFlight(dismissed ? "69" : "70", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        flight = F(flight.Code);
+        _github.CiRuns[flight.Branch] = [CiOf(1, 20, "failure", completed: DateTimeOffset.UtcNow.AddHours(-30))];
+        await Checks().LookAtCiAsync(Ct);
+        F(flight.Code).Ci!.CappedWhy.ShouldNotBeNull();
+        if (dismissed)
+        {
+            _state.CloseCard(CapCards().ShouldHaveSingleItem().Id, "dismissed", "controller");
+        }
+
+        _state.RaiseCard(CardBin.ForYou, "review-loop", Verbs.FlightTarget(flight.Code), "review loop held", "waiting");
+        await Checks().LookAtCiAsync(Ct);
+
+        F(flight.Code).Ci!.CappedWhy.ShouldNotBeNull();
+        CapCards().Single().State.ShouldBe(dismissed ? CardState.Closed : CardState.Open);
     }
 }

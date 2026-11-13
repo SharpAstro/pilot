@@ -12,15 +12,17 @@ namespace Pilot.Node.Flights;
 public static class CiBudgets
 {
     /// <summary>The ring of a flight whose CI spend passed its budget (or stayed red too long): the numbers, and continue, land what is green, or split.</summary>
+    public const string CapKind = "ci-cap";
+
     /// <summary>PIL1023: what a dismissed CI stop card says, and what the card itself says before anyone presses dismiss.</summary>
     public static string DismissedStays(string code) =>
-        $"{code}'s CI stop stays; pushes stay stopped until you answer 'pilot flight ci-budget {code} {Verbs.CiContinue}' (or {Verbs.CiLandGreen}, {Verbs.CiSplit}).";
+        $"{code}'s CI stop stays; pushes stay stopped until you answer {Answers(code)}";
 
     /// <summary>The sentence on the cap card that says dismissing it does not lift the stop.</summary>
     public static string DismissKeepsStop(string code) =>
-        $"Dismissing this card does not lift the stop: pushes stay stopped until 'pilot flight ci-budget {code} {Verbs.CiContinue}' (or {Verbs.CiLandGreen}, {Verbs.CiSplit}).";
+        $"Dismissing this card does not lift the stop: pushes stay stopped until you answer {Answers(code)}";
 
-    public const string CapKind = "ci-cap";
+    private static string Answers(string code) => $"'pilot flight ci-budget {code} {Verbs.CiContinue}' (or {Verbs.CiLandGreen}, {Verbs.CiSplit}).";
 
     /// <summary>The Handled line a non-<c>continue</c> answer leaves, so the controller finds it.</summary>
     public const string AnsweredKind = "ci-cap-answered";

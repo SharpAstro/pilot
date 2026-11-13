@@ -1023,7 +1023,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             var counted = CiBudgets.Count(runs, current.Ci, now);
             // PIL1023: a flight waiting on a person (a review loop card, another card for the owner) does not run its red clock.
-            var wait = CiBudgets.WaitOnPerson(state.Cards(), flight.Code, counted.RedSince);
+            // A cap already set is judged as before: only a new red cap is held back, so a card opening later never lifts a stop nobody answered.
+            var wait = counted.CappedWhy is null ? CiBudgets.WaitOnPerson(state.Cards(), flight.Code, counted.RedSince) : default;
             var why = CiBudgets.Why(counted, budget, now, wait);
             var subject = Verbs.FlightTarget(flight.Code);
             if (why is not null && counted.CappedWhy is null)
