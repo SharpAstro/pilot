@@ -17,6 +17,14 @@ public sealed class UngroundWhileRecheckTests : LegCommanderTestsBase
 
     private const string Check = "echo 'checked'; exit 0";
 
+    public UngroundWhileRecheckTests()
+    {
+        // The flight's issue exists and the tracker is the fake, so the ground labels the issue and the unground takes the label off under
+        // the flight's call slot: the path pilot #1020's refusal came from ("hold could not be taken off issue ... is rerunning").
+        _github.Issues[1] = "Planets";
+        _flights.Trackers = new Trackers([new GitHubTracker(_github)]);
+    }
+
     [Fact(Timeout = 120_000)]
     public async Task AFlightUngroundedWhileItsCheckIsQueuedBehindTheHoldIsReleasedAndTheCheckThenFinishesTheLeg()
     {
@@ -42,7 +50,8 @@ public sealed class UngroundWhileRecheckTests : LegCommanderTestsBase
             var legs = new LegCommander(_state, _workers, new JobCheckRunner(jobs), _github, _git, new Planes(_git), _flights, options, TimeProvider.System);
 
             (await legs.RunAsync(new CommandRequest { Verb = Verbs.Ground, Target = "flight/TIA1", Args = ["waiting", "for", "the", "owner"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
-            _state.Flights().Single().OnHold.ShouldNotBeNull();
+            _state.Flights().Single().OnHold.ShouldNotBeNull().Labelled.ShouldBe(true);
+            _github.IssueLabels[1].Keys.ShouldContain(PilotMarks.Hold);
 
             var finishing = legs.RunAsync(new CommandRequest { Verb = Verbs.FinishLeg, Target = "flight/TIA1/parser", Args = ["done", "parser in"], Who = "tests" }, Ct);
             var (changes, subscription) = StateChanges.Watch(_state);
@@ -56,14 +65,33 @@ public sealed class UngroundWhileRecheckTests : LegCommanderTestsBase
                     () => _state.Jobs().Single(j => j.Kind == JobKind.Check).Step?.Contains("on hold") == true,
                     Ceiling, Ct, "the check's job naming the hold");
 
+                // The runner's note on the leg (JobRunner.NoteRecheckQueued): the check is queued, by which job and on what.
+                var job = _state.Jobs().Single(j => j.Kind == JobKind.Check);
+                await changes.UntilAsync(() => L("parser").Recheck?.Queued?.Contains("on hold") == true, Ceiling, Ct, "the leg noting its queued check");
+                L("parser").Recheck.ShouldNotBeNull().Queued.ShouldNotBeNull().ShouldContain(job.Id);
+                FlightWaiting.LegState(L("parser")).ShouldStartWith("recheck queued");
+
+                // A second finish meanwhile is refused with the queued words, never "rerunning".
+                var again = await legs.RunAsync(new CommandRequest { Verb = Verbs.FinishLeg, Target = "flight/TIA1/parser", Args = ["done", "parser in"], Who = "tests" }, Ct);
+                again.Ok.ShouldBeFalse();
+                again.Error.ShouldNotBeNull().ShouldContain("queued, not yet running");
+                again.Error.ShouldNotContain("rerunning");
+
                 var released = await legs.RunAsync(new CommandRequest { Verb = Verbs.Unground, Target = "flight/TIA1", Who = "tests" }, Ct);
                 released.Ok.ShouldBeTrue(released.Error);
+                _github.IssueLabels[1].Keys.ShouldNotContain(PilotMarks.Hold);
+
+                // The release lets the job start, and the runner takes the queued note off the leg.
+                await changes.UntilAsync(
+                    () => _state.Jobs().Single(j => j.Kind == JobKind.Check).State != JobState.Queued,
+                    Ceiling, Ct, "the check's job started");
 
                 var finished = await finishing.WaitAsync(Ceiling, Ct);
                 finished.Ok.ShouldBeTrue(finished.Error);
                 await changes.UntilAsync(() => L("parser").State == LegState.Done, Ceiling, Ct, "the leg done");
             }
 
+            L("parser").Recheck?.Queued.ShouldBeNull();
             var flight = _state.Flights().Single();
             flight.OnHold.ShouldBeNull();
             flight.State.ShouldBe(FlightState.Flying);
