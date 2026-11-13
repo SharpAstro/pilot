@@ -1032,7 +1032,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 state.PutFlight(current with { Ci = counted });
                 state.CloseCardsAbout(subject, "the CI cap was set again", CiBudgets.CapKind);
                 state.RaiseCard(CardBin.ForYou, CiBudgets.CapKind, subject, $"{flight.Code}: CI stopped, {CiBudgets.Numbers(counted)}",
-                    $"{flight.Code}: {why}. Nothing more is pushed for this flight until you answer: let it spend {budget} more runner-hours, or have the controller merge only its passing legs, or break it into smaller flights.",
+                    $"{flight.Code}: {why}. Nothing more is pushed for this flight until you answer: let it spend {budget} more runner-hours, or have the controller merge only its passing legs, or break it into smaller flights. {CiBudgets.DismissKeepsStop(flight.Code)}",
                     [
                         new CardChoice { Label = "Allow more CI time", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiContinue] },
                         new CardChoice { Label = "Land the green legs", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiLandGreen] },
