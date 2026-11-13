@@ -100,7 +100,7 @@ public sealed partial class LegCommander
         {
             try
             {
-                using var call = Calling(flight.Code, "putting its hold on its issue");
+                using var call = CallingForHold(flight.Code, "putting its hold on its issue");
                 await OffLockAsync(null, async () =>
                 {
                     await tracker.AddLabelAsync(flight.RepoPath, flight.Issue, PilotMarks.Hold, cancellationToken);
@@ -133,7 +133,7 @@ public sealed partial class LegCommander
         string? problem = null;
         if (flight.PullRequest is not null)
         {
-            using var call = Calling(flight.Code, "being put on hold");
+            using var call = CallingForHold(flight.Code, "being put on hold");
             var kept = flight;
             (took, problem) = await OffLockAsync(null, () => LabelHold.LetGoOfMergeAsync(github, kept, cancellationToken));
         }
@@ -242,7 +242,7 @@ public sealed partial class LegCommander
         {
             try
             {
-                using var call = Calling(flight.Code, "taking its hold off its issue");
+                using var call = CallingForHold(flight.Code, "taking its hold off its issue");
                 await OffLockAsync(null, async () =>
                 {
                     await tracker.RemoveLabelAsync(flight.RepoPath, flight.Issue, PilotMarks.Hold, cancellationToken);
@@ -262,6 +262,8 @@ public sealed partial class LegCommander
             }
         }
         Record(flight.Code, f => f with { OnHold = null });
+        // The release lifts JobRunner.FlightHold: its queued jobs (a leg's check) look again at once.
+        flights.PumpJobs?.Invoke();
         var said = $"released by {by}{(why.Length > 0 ? $": {why}" : "")}";
         state.CloseCardsAbout(target, $"{flight.Code} {said}", OnHoldKind);
         state.LiftHoldFromCards(flight.Code);

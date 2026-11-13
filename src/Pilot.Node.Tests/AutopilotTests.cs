@@ -356,7 +356,7 @@ public sealed class AutopilotTests
 
         foreach (var agent in new[] { false, true })
         {
-            (await Send(node, Command(Verbs.Merge, "flight/TIA1", worker, agent, Why, Head))).Error.ShouldBe("merge is the controller's, not a flight session's: leave it to them");
+            (await Send(node, Command(Verbs.Merge, "flight/TIA1", worker, agent, Why, Head))).Error.ShouldStartWith("merge is the controller's, not a flight session's: ");
         }
 
         node.GitHub.Merged.ShouldBeEmpty();

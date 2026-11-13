@@ -728,7 +728,7 @@ pilot sessions
 pilot session wait <session> [--until blocked|idle|ended] [--timeout <span>]   # holds on the node's event stream until the session is blocked (waiting, or idle after an API error) or idle, then prints its state and last words; replaces polling `pilot sessions`
 # Ended always ends the wait, and a resumed copy is followed. The default timeout is 10m (30s, 10m, 2h); at it the command exits 4 and names the state it last saw.
 pilot repos [--all] [--refresh] [--output-format markdown]   # each tracked repo: branch, worktrees (flight, diff stat) and open PRs; --all adds untracked ones
-pilot repos sync                               # fetch -p --all, then fast-forward each tracked repo's default branch; prints each repo's outcome
+pilot repos sync [repo]                        # fetch -p --all, then fast-forward each tracked repo's default branch; prints each repo's outcome. With [repo] (its name or path) only that tracked repo is synced and every other main checkout is left as it is; an unknown repo is refused listing the tracked ones
 pilot issue create <title> [--body <text>] [--repo <path>]   # a new issue through gh; prints its number
 pilot issue priority <issue> <urgent|high|medium|low|none> [--repo <path>]   # the Priority issue field of an open issue, as the Ideas board sets it
 pilot flight create <issue> [title…] [--repo <path>] [--anyway]   # labels the issue (or story) `pilot node: <this node>`; refused when it carries another node's, unless --anyway (which comments why)

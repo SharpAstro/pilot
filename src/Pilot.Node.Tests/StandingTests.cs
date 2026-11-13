@@ -305,7 +305,9 @@ public sealed class StandingTests
         // Nothing that reaches outside the flight, whatever it targets.
         foreach (var (verb, target) in new[] { (Verbs.CreateIssue, "repo/tianwen"), (Verbs.CreateFlight, Verbs.NodeTarget), (Verbs.SyncRepos, Verbs.NodeTarget) })
         {
-            (await Error(node, Command(verb, target, worker, true, "x"))).ShouldBe($"{verb} is the controller's, not a flight session's: leave it to them");
+            (await Error(node, Command(verb, target, worker, true, "x"))).ShouldStartWith($"{verb} is the controller's, not a flight session's: ");
+            // It says why the sender counts as a flight session (its plane, its name) and where the command works (pilot #1020).
+            (await Error(node, Command(verb, target, worker, true, "x"))).ShouldNotBeNull().ShouldContain($"it runs in TIA1's plane and its name ({worker}) says so; run it from the repo's main checkout or the GUI");
         }
         // The person is not fenced by who they are.
         ((await Error(node, Command(Verbs.Stop, "session/b1b2b3b4", "gui"))) ?? "").ShouldNotContain("not TIA1's session");
@@ -324,7 +326,7 @@ public sealed class StandingTests
         {
             // The watchtower on its own and a flight's session are refused, and nothing is held.
             (await Error(node, Command(verb, "flight/TIA1", lookout, true, "the owner is away"))).ShouldBe($"{verb} is the controller's, not the watchtower's: leave its card open for them");
-            (await Error(node, Command(verb, "flight/TIA1", worker, true, "the owner is away"))).ShouldBe($"{verb} is the controller's, not a flight session's: leave it to them");
+            (await Error(node, Command(verb, "flight/TIA1", worker, true, "the owner is away"))).ShouldStartWith($"{verb} is the controller's, not a flight session's: ");
         }
         node.State.Flights().Single().OnHold.ShouldBeNull();
 
@@ -367,7 +369,7 @@ public sealed class StandingTests
                 // From the CLI of its plane, the flag is set too: the session is known by its name, not by the flag.
                 foreach (var agent in new[] { false, true })
                 {
-                    (await Error(node, Command(Verbs.Merge, "flight/TIA1", who, agent, "cafe0000"))).ShouldBe($"merge is the controller's, not a flight session's: leave it to them");
+                    (await Error(node, Command(Verbs.Merge, "flight/TIA1", who, agent, "cafe0000"))).ShouldStartWith("merge is the controller's, not a flight session's: ");
                     (await Error(node, Command(Verbs.Land, "flight/TIA1", who, agent))).ShouldNotBeNull().ShouldContain("land is the controller's");
                 }
                 (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, who, true, "maintenance", "on"))).ShouldNotBeNull().ShouldContain("set is the controller's");
@@ -578,18 +580,18 @@ public sealed class StandingTests
         foreach (var target in new[] { "TIA1", "TIA2" })
         {
             (await CliIn(node, agent: true, "ffffffff-0000-4000-8000-000000000000", plane, "flight", "merge", target, "cafe0000"))
-                .ShouldContain("merge is the controller's, not a flight session's: leave it to them");
+                .ShouldContain("merge is the controller's, not a flight session's: ");
         }
         (await CliIn(node, agent: true, null, plane, "flight", "land", "TIA2")).ShouldContain("land is the controller's, not a flight session's");
 
         // The node reads the planner's name as the flight's whether or not the CLI named it: refused with no session row and autopilot on.
         var machine = (await node.Client.GetNodeAsync(Ct)).MachinePrefix.ToLowerInvariant();
-        (await Error(node, Command(Verbs.Merge, "flight/TIA2", $"{machine}-tia1-plan", true, "cafe0000"))).ShouldBe("merge is the controller's, not a flight session's: leave it to them");
+        (await Error(node, Command(Verbs.Merge, "flight/TIA2", $"{machine}-tia1-plan", true, "cafe0000"))).ShouldStartWith("merge is the controller's, not a flight session's: ");
         (await Error(node, Command(Verbs.Check, "flight/TIA2/parser", $"{machine}-tia1-plan", true, "1"))).ShouldBe("flight/TIA2/parser is not TIA1's: a flight's session acts on its own flight only");
         node.State.Cards().ShouldBeEmpty();
 
         // An assistant elsewhere is not fenced by that: its merge of the same flight runs at once, recorded.
-        (await Error(node, Command(Verbs.Merge, "flight/TIA2", "pilot-33", true, "cafe0000"))).ShouldNotBe("merge is the controller's, not a flight session's: leave it to them");
+        (await Error(node, Command(Verbs.Merge, "flight/TIA2", "pilot-33", true, "cafe0000"))).ShouldNotStartWith("merge is the controller's, not a flight session's: ");
     }
 
     private static Task<string> Cli(NodeHarness node, params string[] args) => Cli(node, agent: false, args);

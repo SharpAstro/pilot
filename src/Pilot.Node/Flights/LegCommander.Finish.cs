@@ -561,7 +561,7 @@ public sealed partial class LegCommander
         LegRow seen;
         bool late;
         using (var call = Calling(flight.Code, $"rerunning {leg.Name}'s check since {since.ToLocalTime():HH:mm}",
-            "pilot status shows it; end your turn: the node tells you the outcome"))
+            "pilot status shows it; end your turn: the node tells you the outcome", recheck: true))
         {
             // A finish a worker asked for keeps what it was asked (its report and who asked), so a node that restarts while this runs
             // can run that same finish itself and leave its worker with nothing to repeat (pilot #819).

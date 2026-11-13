@@ -2012,6 +2012,40 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         L("parser").Recheck.ShouldBeNull();
     }
 
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARefusalForALegWhoseCheckJobIsQueuedSaysQueuedAndWhatItWaitsOnAndRerunningOnlyOnceItRuns()
+    {
+        await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+        var gate = new TaskCompletionSource();
+        _checks.OnRun = () => gate.Task;
+        var finishing = Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+        for (var i = 0; i < 100 && L("parser").Recheck is null; i++)
+        {
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+
+        // The job runner's note on the leg while the check's job is queued behind the flight's hold.
+        var why = "job j7, next in line: its flight TIA1 is on hold (the owner's hold)";
+        _state.PutLeg(L("parser") with { Recheck = L("parser").Recheck! with { Queued = why } });
+        var queued = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+        queued.Error.ShouldNotBeNull().ShouldContain("TIA1 has parser's check queued, not yet running (job j7, next in line: its flight TIA1 is on hold");
+        queued.Error.ShouldNotContain("rerunning");
+        FlightWaiting.LegState(L("parser")).ShouldBe($"recheck queued ({why})");
+
+        // Once the job runs the note is gone and the words say rerunning since.
+        _state.PutLeg(L("parser") with { Recheck = L("parser").Recheck! with { Queued = null } });
+        var running = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+        running.Error.ShouldNotBeNull().ShouldContain("rerunning parser's check since ");
+        FlightWaiting.LegState(L("parser")).ShouldStartWith("rechecking since ");
+
+        gate.SetResult();
+        (await finishing).Ok.ShouldBeTrue();
+    }
+
     private void HoldFlight() => _state.PutFlight(_state.Flights().Single() with { State = FlightState.Held });
 
     [Fact]
