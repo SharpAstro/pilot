@@ -122,8 +122,7 @@ public sealed partial record ReviewFindings(bool Structured, IReadOnlyList<strin
                 human[^1] += "\n" + line.Trim();
             }
         }
-        return new ReviewFindings(structured, blocking, notBlocking, human) { BlockingFiles = FilesIn(structured ? blockingLines : report.Split('
-')) };
+        return new ReviewFindings(structured, blocking, notBlocking, human) { BlockingFiles = FilesIn(structured ? blockingLines : report.Split('\n')) };
     }
 
     // "## Blocking", "**Not blocking**" or "Not blocking:" on a line of its own.
