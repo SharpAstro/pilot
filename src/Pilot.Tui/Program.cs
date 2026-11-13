@@ -569,7 +569,7 @@ void Handle(ConsoleInputEvent raw)
         case InputEvent.KeyDown navKey when chrome.HandleInput(navKey):
             break;
         // The page keys are moves the history records; the show callback of the Link calls keeps `page` in step.
-        case var _ when (TerminalRail.PageFor(evt) ?? (raw.KeyChar == TerminalRail.SpendKey ? PilotPage.Spend : null)) is { } railPage:
+        case var _ when ((evt is null ? null : TerminalRail.PageFor(evt)) ?? (raw.KeyChar is { } dollar && dollar.Value == TerminalRail.SpendKey ? PilotPage.Spend : null)) is { } railPage:
             chrome.Show(railPage);
             if (railPage == PilotPage.Chat)
             {
