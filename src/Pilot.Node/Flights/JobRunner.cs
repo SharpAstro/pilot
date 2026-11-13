@@ -977,6 +977,24 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
 
     private readonly object _checkEndLock = new();
 
+    /// <summary>
+    /// Says on the leg whose open recheck this check job serves whether the job is still queued (and what it waits on) or runs, so the
+    /// busy refusals and pilot status word it as it is (pilot #1020). <paramref name="waiting"/> null means it runs.
+    /// </summary>
+    private void NoteRecheckQueued(JobRow job, string? waiting)
+    {
+        if (job is not { Kind: JobKind.Check, Flight: { } code, Leg: { } name }
+            || state.Legs(code).FirstOrDefault(l => l.Name == name) is not { Recheck: { Outcome: null } recheck } leg)
+        {
+            return;
+        }
+        var text = waiting is null ? null : $"job {job.Id}, {waiting}";
+        if (recheck.Queued != text)
+        {
+            state.PutLeg(leg with { Recheck = recheck with { Queued = text } });
+        }
+    }
+
     // The jobs whose process has gone and whose ended row is being put: still in _running (their slot is not free until the row says
     // they ended), but no longer running, so a cancel finds nothing to stop.
     private readonly ConcurrentDictionary<string, byte> _ending = new(StringComparer.Ordinal);
@@ -1287,6 +1305,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 HoldIdleSince = idleSince,
             };
             state.PutJob(_queue[i]);
+            NoteRecheckQueued(_queue[i], _queue[i].Step ?? "queued");
         }
 
         CheckIdle();
@@ -1485,6 +1504,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             var step = passed.Count == 0
                 ? null
                 : $"started ahead of {passed.Count} held job{(passed.Count == 1 ? "" : "s")} ({string.Join(", ", passed.Select(j => j.Id))}) because it shares no sibling clone, build or session order with them";
+            NoteRecheckQueued(next, null);
             if (Start(next with { State = JobState.Running, Step = step, StartedAt = time.GetUtcNow(), HoldIdleSince = null }) is { } failed)
             {
                 var ended = next with { State = JobState.Failed, Error = $"it did not start: {failed}", EndedAt = time.GetUtcNow() };

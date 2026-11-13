@@ -99,10 +99,20 @@ public sealed partial class LegCommander
                 throw new InProgressException($"{code} is {what}");
             }
             busy.Refused = true;
-            throw new FlightBusyException(BusyRefusal(code, busy.What, busy.Advice));
+            throw new FlightBusyException(busy.Recheck && QueuedRecheck(code) is { } queued
+                ? $"{code} has {queued.Leg}'s check queued, not yet running ({queued.Why}): {busy.Advice}"
+                : BusyRefusal(code, busy.What, busy.Advice));
         }
         return call;
     }
+
+    /// <summary>
+    /// The leg of <paramref name="code"/> whose rerun check is still a queued job, and what it waits on (the job and its runner's
+    /// reason, as the job runner keeps it on the leg), so a refusal says queued while it is and rerunning only once it runs (pilot #1020).
+    /// </summary>
+    private (string Leg, string Why)? QueuedRecheck(string code) =>
+        state.Legs(code).FirstOrDefault(l => l.Recheck is { Outcome: null, Queued: { Length: > 0 } }) is { } leg
+            ? (leg.Name, leg.Recheck!.Queued!) : null;
 
     /// <summary>The words of a command refused because the flight has calls out.</summary>
     internal static string BusyRefusal(string code, string what, string advice) => $"{code} is {what} already: {advice}";
