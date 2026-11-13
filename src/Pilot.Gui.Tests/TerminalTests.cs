@@ -470,6 +470,8 @@ public sealed class TerminalTests
             UpdatedAt = Live.At, Age = "3h", Origin = "ada", Url = "https://github.com/SharpAstro/pilot/issues/381", Images = IdeaImages.In("Tabs for every page."),
         };
         var screen = new IdeasScreen([idea], [], ["pilot"], "test", Live.At);
+        var chatted = new List<string>();
+        chrome.Ideas.OnChatAbout = chatted.Add;
 
         var arranged = Layout.Engine.Arrange(chrome.Ideas.Tree(screen), new Rect<int>(0, 0, 120, 40), CellMeasureContext.PixelAuthored);
         // The title wraps word by word in cells, so each word is a leaf of its own.
@@ -478,10 +480,11 @@ public sealed class TerminalTests
         described.ShouldContain("rail");
         described.ShouldContain("terminal");
 
-        var row = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: { } action } && action.StartsWith("ideas:row:", StringComparison.Ordinal));
-        chrome.Ideas.Selected.ShouldBeNull();
-        CellLayout.HitTest(arranged, row.Bounds.X + 1, row.Bounds.Y);
-        chrome.Ideas.Selected.ShouldNotBeNull();
+        // The noted idea's own buttons are in the cells; one runs as a click on its pixels would.
+        described.ShouldContain("Chat about this");
+        var button = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "Chat about this" } });
+        CellLayout.HitTest(arranged, button.Bounds.X + 1, button.Bounds.Y);
+        chatted.ShouldHaveSingleItem().ShouldContain("A page rail for the terminal");
     }
 
     [Fact]
