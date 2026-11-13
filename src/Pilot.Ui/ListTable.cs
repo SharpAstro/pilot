@@ -284,20 +284,39 @@ internal sealed class ListTable
         return room - ((2 * PageGutter) + (2 * EndPad) + StripeWidth + ColumnGap + others + (Math.Max(0, columns.Count - 1) * ColumnGap));
     }
 
-    /// <summary>
-    /// Makes the header's optional columns drop as the rows' do. DIR.Lib's header is two rows over each other: the titles
-    /// (a stack with the table's gap) and the grips (a stack with no gap, a divider as wide as the gap between every two
-    /// columns). A column that collapses takes its gap away in the first, but its divider would stay in the second and push
-    /// every grip after it a gap to the right; so each star column carries one divider with it, as a group sized as the
-    /// column plus the divider, which collapses together. Every star carrying one divider keeps the stars' shares in the
-    /// second row what they are in the first, so the grips stay under the gaps at any width. A divider no star carries
-    /// (one between two fixed columns) stands alone.
-    /// </summary>
+    // The widest a fixed column beside the slack star that drops can be dragged. The stars (the slack one and the optional ones)
+    // share what the fixed columns leave equally and each drops below its own width, so with less than the slack star's width
+    // each, they all drop at once, the slack star with them (Flight by 2000 on Flights took What, Repo, Branch and Sessions in
+    // one frame). Leaving every star that much keeps the slack star while the optional ones drop. Null for a column with no
+    // such star beside it, which keeps its unbounded drag.
+    private float? BesideSlackMost(IReadOnlyList<ListColumn> columns, int moving)
+    {
+        bool DroppingSlack(int j) => j >= 0 && j < columns.Count && columns[j] is { DropBelow: not null, Width: { IsStar: true, Max: <= 0f } };
+        var slack = DroppingSlack(moving - 1) ? moving - 1 : DroppingSlack(moving + 1) ? moving + 1 : -1;
+        if (PageWidth is not { } room || slack < 0)
+        {
+            return null;
+        }
+        var least = columns[slack].DropBelow!.Value;
+        var others = 0f;
+        for (var i = 0; i < columns.Count; i++)
+        {
+            if (i != moving)
+            {
+                var width = columns[i].Width;
+                others += width.IsFixed ? WidthOf(columns[i].Header, width.Value) : width.IsStar ? least : 0f;
+            }
+        }
+        return room - ((2 * PageGutter) + (2 * EndPad) + StripeWidth + ColumnGap + others + (Math.Max(0, columns.Count - 1) * ColumnGap));
+    }
+
     /// <summary>
     /// The header without the grip of a divider between the slack star that drops (<see cref="ListColumn.DropBelow"/>) and a
-    /// column beside it. Dragged, that grip resizes only the column beside it and the star takes the difference; the star
-    /// drops below its own width, which no bound on that column can mirror, so the drag would jump or take the star away. The
-    /// divider stays a gap, as it is where DIR.Lib offers no grip, and the column stays resizable from its other grip.
+    /// capped star beside it (an optional column, the kind DIR.Lib 11.57 pins once dragged). Dragged, that grip resizes only
+    /// the capped star and the slack star takes the difference; the slack star drops below its own width, which the capped
+    /// star's bound cannot mirror, so the drag would jump or take the slack star away. The divider stays a gap, as it is where
+    /// DIR.Lib offers no grip, and the capped star stays resizable from its other grip. A fixed column beside the slack star
+    /// keeps its grip, as it had before 11.57: on Flights, the grip between Flight and What.
     /// </summary>
     private static Layout.Node Inert(Layout.Node header, IReadOnlyList<ListColumn> columns)
     {
@@ -318,10 +337,19 @@ internal sealed class ListTable
         return changed ? overlay with { Top = grips with { Children = [.. children] } } : header;
     }
 
-    // slack: the star that takes what is left and drops below a width of its own; other: the column on its side, not a slack star.
+    // slack: the star that takes what is left and drops below a width of its own; other: the capped star on its side.
     private static bool BesideDroppingSlack(ListColumn slack, ListColumn other) =>
-        slack.DropBelow is not null && slack.Width.IsStar && slack.Width.Max <= 0f && !(other.Width.IsStar && other.Width.Max <= 0f);
+        slack.DropBelow is not null && slack.Width.IsStar && slack.Width.Max <= 0f && other.Width.IsStar && other.Width.Max > 0f;
 
+    /// <summary>
+    /// Makes the header's optional columns drop as the rows' do. DIR.Lib's header is two rows over each other: the titles
+    /// (a stack with the table's gap) and the grips (a stack with no gap, a divider as wide as the gap between every two
+    /// columns). A column that collapses takes its gap away in the first, but its divider would stay in the second and push
+    /// every grip after it a gap to the right; so each star column carries one divider with it, as a group sized as the
+    /// column plus the divider, which collapses together. Every star carrying one divider keeps the stars' shares in the
+    /// second row what they are in the first, so the grips stay under the gaps at any width. A divider no star carries
+    /// (one between two fixed columns) stands alone.
+    /// </summary>
     private static Layout.Node Dropping(Layout.Node header, IReadOnlyList<ListColumn> columns)
     {
         if (columns.All(c => c.DropBelow is null) || header is not Layout.Node.Overlay { Base: Layout.Node.Stack titles, Top: Layout.Node.Stack grips })
@@ -418,7 +446,7 @@ internal sealed class ListTable
                 DescendingFirst = columns[i].DescendingFirst,
                 // A column with no title (the action column) has the width its buttons need, and no name to keep a dragged one under.
                 Resizable = columns[i].Header.Length > 0,
-                MaxWidth = columns[i].DropBelow is null ? null : Most(columns, i),
+                MaxWidth = columns[i].DropBelow is not null ? Most(columns, i) : columns[i].Width.IsFixed ? BesideSlackMost(columns, i) : null,
             };
             titles[i] = columns[i].Header;
         }

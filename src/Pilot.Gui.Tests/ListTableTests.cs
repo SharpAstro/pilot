@@ -276,6 +276,23 @@ public sealed class ListTableTests : IDisposable
     }
 
     [Fact]
+    public void FleetsButtonsColumnHasNoGripAndTheDividerBeforeRingsKeepsItsOwn()
+    {
+        // ListTable gives a grip to a titled column only, on every page: on Fleet the divider between Rings and the untitled
+        // buttons column (4) is a plain gap, as it is before Sessions' action column.
+        var chrome = Chrome();
+        chrome.Fleet.OnConnect = _ => Task.FromResult<string?>(null);
+        var screen = FleetScreenOf();
+        chrome.Fleet.Render(screen, new RectF32(0f, 0f, PageWidth, PageHeight));
+        chrome.Fleet.Render(screen, new RectF32(0f, 0f, PageWidth, PageHeight));
+        var grips = Painted(chrome.Fleet).Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action)
+            .Where(a => a.StartsWith("fleet:table:divider:", StringComparison.Ordinal)).Distinct().ToList();
+
+        grips.ShouldContain("fleet:table:divider:3", "the grip between Flights and jobs and Rings is drawn: " + string.Join(", ", grips));
+        grips.ShouldNotContain("fleet:table:divider:4", "the divider before the buttons column has no grip");
+    }
+
+    [Fact]
     public void ADragOnAFleetDividerResizesTheColumnInTheHeaderAndInEveryRowAndKeepsTheButtonsWhereTheyClick()
     {
         var chrome = Chrome();
@@ -511,6 +528,20 @@ public sealed class ListTableTests : IDisposable
     [InlineData(4, 30f, 2200f)]
     [InlineData(3, -30f, 2200f)]
     [InlineData(4, -30f, 2200f)]
+    // A trade is held to the room the page has, so a drag of N units follows from about 1342 + N wide: 1400 is the narrowest
+    // width where all of 1 to 6 follow 30 both ways (at 1342 they stand still, at 1360 they move 18).
+    [InlineData(1, 30f, 1400f)]
+    [InlineData(2, 30f, 1400f)]
+    [InlineData(3, 30f, 1400f)]
+    [InlineData(4, 30f, 1400f)]
+    [InlineData(5, 30f, 1400f)]
+    [InlineData(6, 30f, 1400f)]
+    [InlineData(1, -30f, 1400f)]
+    [InlineData(2, -30f, 1400f)]
+    [InlineData(3, -30f, 1400f)]
+    [InlineData(4, -30f, 1400f)]
+    [InlineData(5, -30f, 1400f)]
+    [InlineData(6, -30f, 1400f)]
     public void SessionsDividersOneToSixFollowThePointerHeaderAndRowsTogether(int divider, float by, float wide)
     {
         // A divider beside State once moved State's far edge and stood still under the pointer (2026-11-11): the two columns
@@ -535,13 +566,14 @@ public sealed class ListTableTests : IDisposable
     [Theory]
     [InlineData(1280f)]
     [InlineData(1200f)]
-    public void ANarrowSessionsPageDrawsNoGripBesideAHiddenColumnAndNoDragMovesOneAgainstThePointer(float wide)
+    public void ANarrowSessionsPageDrawsOnlyTheAgeSpendGripAndNoDragMovesItAgainstThePointer(float wide)
     {
         // Where columns drop, DIR.Lib holds a trade to each side's MaxWidth and draws grips only on drawn columns, so no drag
-        // widens a column to where it would drop (it left Spend/min at 120 and gone at 1280, 2026-11-12).
+        // widens a column to where it would drop (it left Spend/min at 120 and gone at 1280, 2026-11-12). With no slack the
+        // one grip drawn may stand still under a drag; it never moves against it.
         var screen = SessionsScreenOf();
         var grips = DividerActions(wide);
-        grips.ShouldContain("sessions:table:divider:6", "the grip between Age and Spend/min is drawn, the ones beside a hidden column are not: " + string.Join(", ", grips));
+        grips.ShouldBe(["sessions:table:divider:6"], "only the grip between Age and Spend/min is drawn; the ones beside a hidden column are not");
         foreach (var hit in grips)
         {
             foreach (var by in new[] { 30f, -30f })
@@ -562,12 +594,16 @@ public sealed class ListTableTests : IDisposable
     }
 
     [Theory]
+    [InlineData(1000f)]
     [InlineData(1280f)]
     [InlineData(1500f)]
-    public void FlightsWhatRepoGripIsNotDrawnAndNoOtherGripMovesAgainstThePointerOrTakesWhatAway(float wide)
+    [InlineData(1920f)]
+    public void FlightsKeepsTheFlightWhatGripDrawsNoWhatRepoGripAndNoGripMovesAgainstThePointerOrTakesWhatAway(float wide)
     {
-        // What takes the slack and drops below its own width: a drag of the grip beside it jumped to the wrong side (154 right
-        // of a 30 left drag at 1280) and, at 1500, took What away. That grip is a gap, as it was before DIR.Lib made it live.
+        // What takes the slack and drops below its own width: a drag of the grip between it and Repo (a capped star) jumped to
+        // the wrong side (154 right of a 30 left drag at 1280) and, at 1500, took What away. That grip is a gap, as it was
+        // before DIR.Lib made it live. The grip between Flight (fixed) and What is not that case: it followed the pointer on
+        // main at every width, and with the Node column hidden it is the only way to resize Flight, so it stays.
         var screen = FlightsScreenOf();
         FlightsView<RgbaImage> Fresh() => new(_renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.List };
         List<string> Grips(FlightsView<RgbaImage> v)
@@ -578,7 +614,19 @@ public sealed class ListTableTests : IDisposable
         }
         var grips = Grips(Fresh());
         grips.ShouldNotContain("flights:table:divider:1", "the grip between What and Repo has no drag");
-        grips.ShouldNotBeEmpty();
+        grips.ShouldContain("flights:table:divider:0", "the grip between Flight and What is drawn: " + string.Join(", ", grips));
+        foreach (var by in new[] { 30f, -30f })
+        {
+            var view = Fresh();
+            void Render() { view.Render(screen, new RectF32(0f, 0f, wide, PageHeight)); view.Render(screen, new RectF32(0f, 0f, wide, PageHeight)); }
+            Render();
+            var before = Painted(view).Single(r => r.Result is HitResult.ButtonHit b && b.Action == "flights:table:divider:0").X;
+
+            Drag(view, Render, "flights:table:divider:0", by);
+
+            Painted(view).Single(r => r.Result is HitResult.ButtonHit b && b.Action == "flights:table:divider:0").X
+                .ShouldBe(before + by, 0.5f, $"the Flight|What grip follows a drag of {by} at {wide}");
+        }
         foreach (var hit in grips)
         {
             foreach (var by in new[] { 30f, -30f, 2000f, -2000f })
