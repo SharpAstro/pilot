@@ -114,7 +114,7 @@ internal static class TerminalRail
         var entries = Keys.Select(k =>
         {
             var on = k.Page == active;
-            return Layout.Builder.Text(EntryText(k.Page, mode, jobs, ideas, now), 12f, on ? palette.Bright : palette.Dim, TextAlign.Left, TextAlign.Center)
+            return Layout.Builder.Text(EntryText(k.Page, mode, jobs, ideas, now), 12f, on ? palette.Bright : palette.Dim, TextAlign.Near, TextAlign.Center)
                 .WFixed(EntryCells * 8f)
                 .HFixed(16f)
                 .Bg(on ? palette.RowFocusBg : palette.RowAltBg)
