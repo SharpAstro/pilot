@@ -259,7 +259,7 @@ public sealed class IdeaImageTests : IDisposable
     [Fact]
     public async Task AnImageOnlyOnTheBranchIsFetchedOnceAndKept()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, git: FakeRepoGit.Empty(_root));
         var tianwen = Path.Combine(_root, "tianwen");
         Directory.CreateDirectory(Path.Combine(tianwen, ".git"));
         node.State.PutFlight(new FlightRow
