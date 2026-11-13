@@ -123,7 +123,9 @@ internal static class TerminalRail
 
         internal string Entry(PilotPage page, string text)
         {
-            if (!_shown.TryGetValue(page, out var before) || before == text || _blank.Remove(page))
+            // The blank frame is over whatever follows it: forget it first, so an unchanged entry does not leave it standing.
+            var wasBlank = _blank.Remove(page);
+            if (!_shown.TryGetValue(page, out var before) || before == text || wasBlank)
             {
                 _shown[page] = text;
                 return text;
