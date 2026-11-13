@@ -124,10 +124,7 @@ public class ReviewFindingsTests
     [InlineData("../src/A/Foo.cs")]
     public void ANamedPathThatIsNotRepoRelativeNeverMatches(string named)
     {
-        var f = ReviewFindings.Read($"## Blocking
-
-- Fix `{named}`.
-");
+        var f = ReviewFindings.Read($"## Blocking\n\n- Fix `{named}`.\n");
 
         f.BlockingFiles.ShouldNotBeEmpty();
         f.Touches(["src/A/Foo.cs", "Foo.cs", named.TrimStart('/')]).ShouldBeFalse();
