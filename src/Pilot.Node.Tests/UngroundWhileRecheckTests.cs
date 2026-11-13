@@ -15,7 +15,9 @@ public sealed class UngroundWhileRecheckTests : LegCommanderTestsBase
 {
     private static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(25);
 
-    private const string Check = "echo 'checked'; exit 0";
+    // The fake launcher holds a job at its sleep until the test finishes it, so the check runs (and the leg stays flying) while the test
+    // reads the leg, and the runner's clear of the queued note is seen on a leg that still has its recheck.
+    private const string Check = "sleep 1; echo 'checked'; exit 0";
 
     public UngroundWhileRecheckTests()
     {
@@ -81,17 +83,23 @@ public sealed class UngroundWhileRecheckTests : LegCommanderTestsBase
                 released.Ok.ShouldBeTrue(released.Error);
                 _github.IssueLabels[1].Keys.ShouldNotContain(PilotMarks.Hold);
 
-                // The release lets the job start, and the runner takes the queued note off the leg.
+                // The release lets the job start, and the runner takes the queued note off the leg before it puts the running row
+                // (JobRunner.NoteRecheckQueued(next, null)). The job is held at its sleep, so the leg is still flying with its recheck
+                // open: the note must be off, or a refusal would say "queued, not yet running" for a check that runs.
                 await changes.UntilAsync(
-                    () => _state.Jobs().Single(j => j.Kind == JobKind.Check).State != JobState.Queued,
+                    () => _state.Jobs().Single(j => j.Kind == JobKind.Check).State == JobState.Running,
                     Ceiling, Ct, "the check's job started");
+                var running = L("parser");
+                running.State.ShouldBe(LegState.Flying);
+                running.Recheck.ShouldNotBeNull().Queued.ShouldBeNull();
+                FlightWaiting.LegState(running).ShouldStartWith("rechecking since");
 
+                launcher.Finish(job.Id);
                 var finished = await finishing.WaitAsync(Ceiling, Ct);
                 finished.Ok.ShouldBeTrue(finished.Error);
                 await changes.UntilAsync(() => L("parser").State == LegState.Done, Ceiling, Ct, "the leg done");
             }
 
-            L("parser").Recheck?.Queued.ShouldBeNull();
             var flight = _state.Flights().Single();
             flight.OnHold.ShouldBeNull();
             flight.State.ShouldBe(FlightState.Flying);
