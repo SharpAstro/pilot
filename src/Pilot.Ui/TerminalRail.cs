@@ -107,14 +107,48 @@ internal static class TerminalRail
     public static string EntryText(PilotPage page, GlyphMode mode, JobsScreen? jobs, IdeasScreen? ideas, DateTimeOffset now) =>
         $" {Glyph(page, mode, jobs, ideas, now).PadRight(GlyphCells)}{KeyFor(page)} ";
 
-    /// <summary>The bar's tree: one row of entries, the active page marked with a background, each a button that shows its page.</summary>
-    public static Layout.Node Tree(PilotPage active, GlyphMode mode, JobsScreen? jobs, IdeasScreen? ideas, DateTimeOffset now, Action<PilotPage> show)
+    /// <summary>
+    /// What the bar remembers between frames to work round Console.Lib's CellBuffer, which diffs one UTF-16 char per cell: an
+    /// emoji that changes to another sharing its high surrogate (the clipboard to the red dot) would flush only the low half, which
+    /// the terminal draws as a replacement character. An entry whose glyph changes is drawn with its glyph blank for one frame,
+    /// so the next frame writes the new glyph whole. <see cref="Settling"/> says a frame did so and the caller draws again at once.
+    /// </summary>
+    public sealed class Memory
     {
+        private readonly Dictionary<PilotPage, string> _shown = [];
+        private readonly HashSet<PilotPage> _blank = [];
+
+        /// <summary>Whether the last <see cref="Tree"/> blanked an entry, so another frame is due.</summary>
+        public bool Settling { get; internal set; }
+
+        internal string Entry(PilotPage page, string text)
+        {
+            if (!_shown.TryGetValue(page, out var before) || before == text || _blank.Remove(page))
+            {
+                _shown[page] = text;
+                return text;
+            }
+            _shown[page] = text;
+            _blank.Add(page);
+            Settling = true;
+            return $" {new string(' ', GlyphCells)}{KeyFor(page)} ";
+        }
+    }
+
+    private static string Remember(Memory? memory, PilotPage page, string text) => memory?.Entry(page, text) ?? text;
+
+    /// <summary>The bar's tree: one row of entries, the active page marked with a background, each a button that shows its page.</summary>
+    public static Layout.Node Tree(PilotPage active, GlyphMode mode, JobsScreen? jobs, IdeasScreen? ideas, DateTimeOffset now, Action<PilotPage> show, Memory? memory = null)
+    {
+        if (memory is not null)
+        {
+            memory.Settling = false;
+        }
         var palette = Palette.Current;
         var entries = Keys.Select(k =>
         {
             var on = k.Page == active;
-            return Layout.Builder.Text(EntryText(k.Page, mode, jobs, ideas, now), 12f, on ? palette.Bright : palette.Dim, TextAlign.Near, TextAlign.Center)
+            return Layout.Builder.Text(Remember(memory, k.Page, EntryText(k.Page, mode, jobs, ideas, now)), 12f, on ? palette.Bright : palette.Dim, TextAlign.Near, TextAlign.Center)
                 .WFixed(EntryCells * 8f)
                 .HFixed(16f)
                 .Bg(on ? palette.RowFocusBg : palette.RowAltBg)

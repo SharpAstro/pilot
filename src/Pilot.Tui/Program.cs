@@ -431,6 +431,7 @@ repos.OnNewFlight = line =>
     chrome.Show(PilotPage.Flights);
     flights.Wizard.Open(line.Status.Path, atIssues: true);
 };
+var railMemory = new TerminalRail.Memory();
 var arranged = System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>>.Empty;
 var drawnVersion = -1L;
 var drawnAt = DateTimeOffset.MinValue;
@@ -487,7 +488,12 @@ while (!stop.IsCancellationRequested)
             PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };
-        var railTree = TerminalRail.Tree(page, glyphMode, pages.Jobs, pages.Ideas, now, chrome.Show);
+        var railTree = TerminalRail.Tree(page, glyphMode, pages.Jobs, pages.Ideas, now, chrome.Show, railMemory);
+        // A glyph that changed was drawn blank for this frame (see TerminalRail.Memory): draw the next at once.
+        if (railMemory.Settling)
+        {
+            Redraw();
+        }
         var cardsScreen = pages.Cards;
         flights.Jobs = pages.JobRows;
         // The panel takes 38 columns (the GUI's 300 units) when there is room beside a usable page, and something to show.

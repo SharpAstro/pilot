@@ -19,7 +19,7 @@ public sealed class TerminalRailTests
     private static readonly (PilotPage Page, char Key)[] Expected =
     [
         (PilotPage.Home, '1'), (PilotPage.Chat, '2'), (PilotPage.Sessions, '3'), (PilotPage.Flights, '4'), (PilotPage.Repos, '5'),
-        (PilotPage.Jobs, '6'), (PilotPage.Fleet, '7'), (PilotPage.Settings, '8'), (PilotPage.PullRequests, '9'), (PilotPage.Ideas, '0'),
+        (PilotPage.PullRequests, '9'), (PilotPage.Jobs, '6'), (PilotPage.Fleet, '7'), (PilotPage.Settings, '8'), (PilotPage.Ideas, '0'),
         (PilotPage.Spend, '$'),
     ];
 
@@ -39,7 +39,7 @@ public sealed class TerminalRailTests
         arranged.First(a => a.Node.Hit is HitResult.ButtonHit hit && hit.Action == TerminalRail.Action(page));
 
     [Fact]
-    public void TheKeysFollowTheGuisCtrlDigitOrderAndSpendHasADollar()
+    public void TheBarFollowsTheGuisRailOrderWithItsCtrlDigitsAsKeysAndSpendHasADollar()
     {
         TerminalRail.Keys.Select(k => (k.Page, k.Key)).ShouldBe(Expected);
         TerminalRail.PageFor('0').ShouldBe(PilotPage.Ideas);
@@ -152,20 +152,46 @@ public sealed class TerminalRailTests
         var sink = new Recording();
 
         // Background tasks: 📋 (D83D DCCB), 🔴 (D83D DD34), 🔄 (D83D DD04): the high half is the same, only the low half differs.
+        // Console.Lib's buffer emits only the changed low half for such a change (filed as SharpAstro/Console.Lib), so the bar blanks
+        // an entry's glyph for one frame when it changes: TerminalRail.Memory, which pilot-tui draws through.
+        var memory = new TerminalRail.Memory();
+        var surrogates = 0;
         foreach (var jobs in new[] { null, JobsOf(JobState.Failed), JobsOf(JobState.Running), null })
         {
-            var row = TerminalRail.EntryText(PilotPage.Jobs, GlyphMode.Emoji, jobs, null, Now);
-            buffer.MoveTo(0, 0);
-            buffer.Write(row);
-            sink.Runs.Clear();
-            buffer.Flush(sink);
             var glyph = TerminalRail.Glyph(PilotPage.Jobs, GlyphMode.Emoji, jobs, null, Now);
-            // Whatever was emitted holds the glyph whole, or none of its chars.
-            if (string.Concat(sink.Runs).Any(char.IsSurrogate))
+            var row = TerminalRail.EntryText(PilotPage.Jobs, GlyphMode.Emoji, jobs, null, Now);
+            var frames = 0;
+            do
             {
-                sink.Runs.ShouldContain(r => r.Contains(glyph), $"the runs {string.Join("|", sink.Runs)} split {glyph}");
+                memory.Settling = false;
+                buffer.MoveTo(0, 0);
+                buffer.Write(memory.Entry(PilotPage.Jobs, row));
+                sink.Runs.Clear();
+                buffer.Flush(sink);
+                // Whatever was emitted holds each surrogate pair whole: a lone half is a replacement character on screen.
+                foreach (var run in sink.Runs)
+                {
+                    for (var i = 0; i < run.Length; i++)
+                    {
+                        if (char.IsHighSurrogate(run[i]))
+                        {
+                            (i + 1 < run.Length && char.IsLowSurrogate(run[i + 1])).ShouldBeTrue($"run '{run}' splits a pair");
+                            i++;
+                            surrogates++;
+                        }
+                        else
+                        {
+                            char.IsLowSurrogate(run[i]).ShouldBeFalse($"run '{run}' holds a lone low surrogate");
+                        }
+                    }
+                }
+                frames++;
             }
+            while (memory.Settling && frames < 3);
+            frames.ShouldBeLessThan(3);
             buffer.FrontRowText(0).ShouldStartWith(row);
+            glyph.ShouldNotBeEmpty();
         }
+        surrogates.ShouldBeGreaterThan(0);
     }
 }
