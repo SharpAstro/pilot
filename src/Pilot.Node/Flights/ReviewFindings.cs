@@ -33,6 +33,10 @@ public sealed partial record ReviewFindings(bool Structured, IReadOnlyList<strin
             var last = path[(path.LastIndexOf('/') + 1)..];
             foreach (var named in BlockingFiles)
             {
+                if (!IsRepoRelative(named))
+                {
+                    continue;
+                }
                 if (string.Equals(named, path, StringComparison.OrdinalIgnoreCase)
                     || (!named.Contains('/') && string.Equals(named, last, StringComparison.OrdinalIgnoreCase)))
                 {
@@ -42,6 +46,10 @@ public sealed partial record ReviewFindings(bool Structured, IReadOnlyList<strin
         }
         return false;
     }
+
+    // A rooted path ("/x.cs", "C:/x.cs") or one that climbs out ("../x.cs") is not in the repo, so it names no changed path.
+    private static bool IsRepoRelative(string named)
+        => !named.StartsWith('/') && !(named.Length > 1 && named[1] == ':') && !named.Split('/').Contains("..");
 
     [GeneratedRegex(@"[\w.\-/\\]+\.(?:csproj|slnx|targets|props|yaml|json|ps1|yml|sln|txt|xml|toml|html|css|cs|md|sh|py|js|ts)(?!\w)(?::\d+(?::\d+)?)?")]
     private static partial Regex FileToken();

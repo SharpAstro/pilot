@@ -14,6 +14,9 @@ public sealed partial class LegCommander
     // The (flight, leg, go-around, plane head) already refused once: a second finish there with a report is the worker's answer.
     private readonly ConcurrentDictionary<string, byte> _untouchedRefused = new(StringComparer.Ordinal);
 
+    // The go-arounds (flight, leg, count) the node sent for a conflict with the base: no answer to the review, so never gated.
+    private readonly ConcurrentDictionary<string, byte> _conflictGoArounds = new(StringComparer.Ordinal);
+
     private sealed record UntouchedRound(string Head, IReadOnlyList<string> Named, IReadOnlyList<string> Blocking);
 
     /// <summary>
@@ -24,6 +27,7 @@ public sealed partial class LegCommander
     private async Task<UntouchedRound?> UntouchedFindingsAsync(FlightRow flight, LegRow leg, CancellationToken cancellationToken)
     {
         if (leg.ReviewGoArounds <= 0
+            || _conflictGoArounds.ContainsKey(RoundKey(flight, leg))
             || flight.Review is not { State: ReviewState.Changes }
             || flight.ReviewRounds?.LastOrDefault() is not { Verdict: ReviewState.Changes, Head: { Length: > 0 } roundHead } round
             || !Directory.Exists(flight.Worktree))

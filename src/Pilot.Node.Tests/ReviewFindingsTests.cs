@@ -117,4 +117,19 @@ public class ReviewFindingsTests
 
         f.Touches(["src/B/Foo.cs"]).ShouldBeFalse();
     }
+
+    [Theory]
+    [InlineData("/src/A/Foo.cs")]
+    [InlineData("C:/src/A/Foo.cs")]
+    [InlineData("../src/A/Foo.cs")]
+    public void ANamedPathThatIsNotRepoRelativeNeverMatches(string named)
+    {
+        var f = ReviewFindings.Read($"## Blocking
+
+- Fix `{named}`.
+");
+
+        f.BlockingFiles.ShouldNotBeEmpty();
+        f.Touches(["src/A/Foo.cs", "Foo.cs", named.TrimStart('/')]).ShouldBeFalse();
+    }
 }

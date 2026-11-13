@@ -155,6 +155,10 @@ public sealed partial class LegCommander
         // Counted apart when it answers the review, as that is the count the watchtower is capped by.
         var by = command.PersonsWord is not null ? "the person" : command.Who ?? "unknown";
         var next = leg with { GoArounds = leg.GoArounds + 1, GoAroundReasons = [.. leg.GoAroundReasons, new GoAroundReason { Why = why, By = by, At = time.GetUtcNow() }], ReviewGoArounds = leg.ReviewGoArounds + (leg.State == LegState.Done && !forConflict ? 1 : 0) };
+        if (forConflict)
+        {
+            _conflictGoArounds[RoundKey(flight, next)] = 0;
+        }
         // What the waste rules need: the new worker flies this round, for this reason.
         Ledger?.Mark(new WasteMark(WasteKinds.Round, flight.Code, leg.Name, null, null, next.GoArounds, WasteReasons.OfGoAround(why), time.GetUtcNow()));
         RingSpendAlert(flight, leg, next.GoArounds);
