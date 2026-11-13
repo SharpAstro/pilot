@@ -22,6 +22,9 @@ internal static class TerminalRail
     /// <summary>The cells one entry takes: a space, the glyph's area, its key and a space.</summary>
     public const int EntryCells = 8;
 
+    /// <summary>An entry's width in the layout's units, where one terminal cell is 8 wide: declared once, so the tree holds no sum.</summary>
+    private const float EntryWidth = EntryCells * 8f;
+
     /// <summary>The cells the glyph has: a light bulb and "99+" is the longest.</summary>
     private const int GlyphCells = 5;
 
@@ -155,7 +158,7 @@ internal static class TerminalRail
         {
             var on = k.Page == active;
             return Layout.Builder.Text(Remember(memory, k.Page, EntryText(k.Page, mode, jobs, ideas, now)), 12f, on ? palette.Bright : palette.Dim, TextAlign.Near, TextAlign.Center)
-                .WFixed(EntryCells * 8f)
+                .WFixed(EntryWidth)
                 .HFixed(16f)
                 .Bg(on ? palette.RowFocusBg : palette.RowAltBg)
                 .BgHover(palette.RowHoverBg)
