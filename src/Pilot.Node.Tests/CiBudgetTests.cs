@@ -156,6 +156,8 @@ public sealed class CiBudgetTests : ReviewTestsBase
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Title.ShouldContain("4.8 runner-hours");
         card.Title.ShouldContain("2 runs, 1 failed");
+        card.Detail.ShouldNotBeNull().ShouldContain("does not lift the stop");
+        card.Detail.ShouldNotBeNull().ShouldContain($"pilot flight ci-budget {flight.Code} continue");
         card.Choices.Select(c => (c.Label, c.Verb, c.Args.Single())).ShouldBe(
         [
             ("Allow more CI time", Verbs.CiBudget, Verbs.CiContinue),
@@ -238,7 +240,12 @@ public sealed class CiBudgetTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ACiRedForMoreThanThreeHoursStopsTheFlightEvenWithinTheBudget()
     {
-        var flight = await Flying("65", CiOf(1, 20, "failure", completed: DateTimeOffset.UtcNow.AddHours(-3.5)));
+        // Opened but not reviewed: a passed review's ready card is a wait on the owner (PIL1023) and would hold the red clock.
+        var flight = await NewFlight("65", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        flight = F(flight.Code);
+        _github.CiRuns[flight.Branch] = [CiOf(1, 20, "failure", completed: DateTimeOffset.UtcNow.AddHours(-3.5))];
 
         await Checks().LookAtCiAsync(Ct);
 
@@ -282,5 +289,89 @@ public sealed class CiBudgetTests : ReviewTestsBase
         var failing = Checks();
         await failing.LookAtCiAsync(Ct);
         F(flight.Code).Ci!.RunnerMinutes.ShouldBe(60);
+    }
+
+    [Fact]
+    public void TheRedClockDoesNotRunWhileTheFlightWaitsOnAPersonAndRestartsWhenTheWaitEnds()
+    {
+        var red = CiBudgets.Count([CiOf(1, 10, "failure", completed: Now.AddHours(-30))], null, Now);
+        CiBudgets.Why(red, 4, Now).ShouldNotBeNull();
+
+        // Waiting now: no red reason however long it has been red.
+        CiBudgets.Why(red, 4, Now, new CiBudgets.PersonWait(true, null)).ShouldBeNull();
+
+        // The wait ended 2 hours ago: the clock counts from then.
+        CiBudgets.Why(red, 4, Now, new CiBudgets.PersonWait(false, Now.AddHours(-2))).ShouldBeNull();
+        CiBudgets.Why(red, 4, Now, new CiBudgets.PersonWait(false, Now.AddHours(-3.5))).ShouldNotBeNull().ShouldContain("red for 3.5 hours");
+
+        // The runner-hours budget still fires while waiting.
+        var spent = CiBudgets.Count([CiOf(1, 5 * 60, "failure", completed: Now.AddHours(-30))], null, Now);
+        CiBudgets.Why(spent, 4, Now, new CiBudgets.PersonWait(true, null)).ShouldNotBeNull().ShouldContain("runner-hours");
+    }
+
+    private static CardRow Card(CardBin bin, string kind, string subject, CardState state = CardState.Open, DateTimeOffset? closed = null) =>
+        new() { Id = "x", Bin = bin, Kind = kind, Subject = subject, Title = "t", At = Now, State = state, ClosedAt = closed };
+
+    [Fact]
+    public void AnOpenForYouOrRingCardOnTheFlightOrItsLegsIsAWaitButNeitherTheCapCardNorTheChecksCardNorAHandledOneNorAnotherFlights()
+    {
+        var flight = Verbs.FlightTarget("PIL9");
+        CiBudgets.WaitOnPerson([Card(CardBin.ForYou, "review-loop", flight)], "PIL9", null).Waiting.ShouldBeTrue();
+        CiBudgets.WaitOnPerson([Card(CardBin.Ring, "x", Verbs.LegTarget("PIL9", "a"))], "PIL9", null).Waiting.ShouldBeTrue();
+        CiBudgets.WaitOnPerson(
+            [Card(CardBin.ForYou, CiBudgets.CapKind, flight), Card(CardBin.ForYou, CiBudgets.AnsweredKind, flight), Card(CardBin.Ring, CiBudgets.ChecksFailedKind, flight),
+             Card(CardBin.Handled, "x", flight), Card(CardBin.ForYou, "x", Verbs.FlightTarget("PIL90"))], "PIL9", null).Waiting.ShouldBeFalse();
+
+        var ended = CiBudgets.WaitOnPerson([Card(CardBin.ForYou, "x", flight, CardState.Closed, Now.AddHours(-1)), Card(CardBin.ForYou, "y", flight, CardState.Closed, Now.AddHours(-5))], "PIL9", Now.AddHours(-3));
+        (ended.Waiting, ended.LastEnded).ShouldBe((false, Now.AddHours(-1)));
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARedCiDoesNotCapAFlightWhileAReviewLoopCardIsOpenAndCountsFromItsCloseAfter()
+    {
+        var flight = await NewFlight("68", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        flight = F(flight.Code);
+        _github.CiRuns[flight.Branch] = [CiOf(1, 20, "failure", completed: DateTimeOffset.UtcNow.AddHours(-30))];
+        var card = _state.RaiseCard(CardBin.ForYou, "review-loop", Verbs.FlightTarget(flight.Code), "review loop held", "waiting");
+
+        await Checks().LookAtCiAsync(Ct);
+
+        F(flight.Code).Ci!.CappedWhy.ShouldBeNull();
+        CapCards().ShouldBeEmpty();
+
+        _state.CloseCard(card.Id, "answered", "controller");
+        await Checks().LookAtCiAsync(Ct);
+
+        // Just closed: the clock restarted, so no cap yet.
+        F(flight.Code).Ci!.CappedWhy.ShouldBeNull();
+        CapCards().ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "Slow")]
+    public async Task ACapAlreadySetStaysWhenACardForThePersonOpensLater(bool dismissed)
+    {
+        var flight = await NewFlight(dismissed ? "69" : "70", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        flight = F(flight.Code);
+        _github.CiRuns[flight.Branch] = [CiOf(1, 20, "failure", completed: DateTimeOffset.UtcNow.AddHours(-30))];
+        await Checks().LookAtCiAsync(Ct);
+        F(flight.Code).Ci!.CappedWhy.ShouldNotBeNull();
+        if (dismissed)
+        {
+            _state.CloseCard(CapCards().ShouldHaveSingleItem().Id, "dismissed", "controller");
+        }
+
+        _state.RaiseCard(CardBin.ForYou, "review-loop", Verbs.FlightTarget(flight.Code), "review loop held", "waiting");
+        await Checks().LookAtCiAsync(Ct);
+
+        F(flight.Code).Ci!.CappedWhy.ShouldNotBeNull();
+        CapCards().Single().State.ShouldBe(dismissed ? CardState.Closed : CardState.Open);
     }
 }
