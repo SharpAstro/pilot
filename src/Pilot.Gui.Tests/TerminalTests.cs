@@ -472,8 +472,11 @@ public sealed class TerminalTests
         var screen = new IdeasScreen([idea], [], ["pilot"], "test", Live.At);
 
         var arranged = Layout.Engine.Arrange(chrome.Ideas.Tree(screen), new Rect<int>(0, 0, 120, 40), CellMeasureContext.PixelAuthored);
-        File.WriteAllText(@"C:\Users\SebastianGodelet\.claude\jobs\3656ff12\tmp\desc.txt", CellLayout.Describe(arranged));
-        CellLayout.Describe(arranged).ShouldContain("A page rail for the terminal");
+        // The title wraps word by word in cells, so each word is a leaf of its own.
+        var described = CellLayout.Describe(arranged);
+        described.ShouldContain("I381");
+        described.ShouldContain("rail");
+        described.ShouldContain("terminal");
 
         var row = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: { } action } && action.StartsWith("ideas:row:", StringComparison.Ordinal));
         chrome.Ideas.Selected.ShouldBeNull();
