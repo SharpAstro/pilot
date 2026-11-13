@@ -303,7 +303,7 @@ public sealed class CiBudgetTests : ReviewTestsBase
     }
 
     private static CardRow Card(CardBin bin, string kind, string subject, CardState state = CardState.Open, DateTimeOffset? closed = null) =>
-        new() { Id = "x", Bin = bin, Kind = kind, Subject = subject, Title = "t", State = state, ClosedAt = closed };
+        new() { Id = "x", Bin = bin, Kind = kind, Subject = subject, Title = "t", At = Now, State = state, ClosedAt = closed };
 
     [Fact]
     public void AnOpenForYouOrRingCardOnTheFlightOrItsLegsIsAWaitButNeitherTheCapCardNorTheChecksCardNorAHandledOneNorAnotherFlights()
