@@ -596,7 +596,7 @@ public static class Verbs
     /// </summary>
     public const string Setup = "setup";
 
-    /// <summary><c>sync-repos node</c>: <c>git fetch -p --all</c> and a fast-forward-only pull of each tracked repo's default branch; the result's <see cref="CommandResult.Made"/> is one <see cref="RepoSyncOutcome"/> line per repo.</summary>
+    /// <summary><c>sync-repos node [repo]</c>: with a repo (a tracked repo's name or path) as the one argument only that repo, otherwise every tracked one; <c>git fetch -p --all</c> and a fast-forward-only pull of each tracked repo's default branch; the result's <see cref="CommandResult.Made"/> is one <see cref="RepoSyncOutcome"/> line per repo.</summary>
     public const string SyncRepos = "sync-repos";
 
     /// <summary><c>refresh-prs node</c>: reads the open PRs of the repos pilot works in again now, rather than at the next minute; the result's <see cref="CommandResult.Made"/> is how many it found.</summary>

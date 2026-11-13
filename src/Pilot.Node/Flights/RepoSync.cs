@@ -26,12 +26,31 @@ public sealed class RepoSync(IGit git, Planes planes, RepoWatch watch)
     public TimeSpan Timeout { get; init; } = TimeSpan.FromMinutes(2);
 
     /// <summary>Syncs every tracked repo, one at a time, then has <see cref="RepoWatch"/> read them afresh; one outcome per repo.</summary>
-    public async Task<RepoSyncOutcome[]> SyncAsync(CancellationToken cancellationToken)
+    public Task<RepoSyncOutcome[]> SyncAsync(CancellationToken cancellationToken) => SyncAsync(null, cancellationToken);
+
+    /// <summary>
+    /// Syncs the tracked repo named <paramref name="repo"/> (by name or path) alone and leaves every other main checkout as it is,
+    /// then has <see cref="RepoWatch"/> read afresh; every tracked repo when <paramref name="repo"/> is null or blank. A name that
+    /// is no tracked repo is refused (a <see cref="FlightException"/>) listing the tracked ones.
+    /// </summary>
+    public async Task<RepoSyncOutcome[]> SyncAsync(string? repo, CancellationToken cancellationToken)
     {
         await _one.WaitAsync(cancellationToken);
         try
         {
             var tracked = (await watch.StatusAsync(refresh: true, cancellationToken)).Where(r => r.Tracked).ToArray();
+            if (!string.IsNullOrWhiteSpace(repo))
+            {
+                var wanted = repo.Trim();
+                var same = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                tracked = [.. tracked.Where(r => string.Equals(r.Name, wanted, same)
+                    || string.Equals(Path.TrimEndingDirectorySeparator(r.Path), Path.TrimEndingDirectorySeparator(wanted), same))];
+                if (tracked.Length == 0)
+                {
+                    var names = (await watch.StatusAsync(refresh: false, cancellationToken)).Where(r => r.Tracked).Select(r => r.Name).ToArray();
+                    throw new FlightException($"{wanted} is not a tracked repo; the tracked repos are {(names.Length == 0 ? "none" : string.Join(", ", names))}");
+                }
+            }
             var outcomes = new List<RepoSyncOutcome>();
             foreach (var repo in tracked)
             {
@@ -186,7 +205,7 @@ public sealed class RepoCommander(NodeState state, RepoSync sync, Planes planes,
         try
         {
             return command.Verb == Verbs.SyncRepos
-                ? state.Complete(command, null, made: string.Join('\n', (await sync.SyncAsync(cancellationToken)).Select(o => o.Line())))
+                ? state.Complete(command, null, made: string.Join('\n', (await sync.SyncAsync(command.Args is { Length: > 0 } a ? a[0] : null, cancellationToken)).Select(o => o.Line())))
                 : await CreateIssueAsync(command, cancellationToken);
         }
         catch (FlightException ex)
