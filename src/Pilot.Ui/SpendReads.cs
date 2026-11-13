@@ -1,8 +1,7 @@
 using System.Collections.Concurrent;
 using Pilot.Contracts;
-using Pilot.Ui;
 
-namespace Pilot.Gui;
+namespace Pilot.Ui;
 
 /// <summary>
 /// What the Spend page and a flight's page read from the node's spend routes: the window's report and waste, and a flight's spend so

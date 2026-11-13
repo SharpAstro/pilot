@@ -6,20 +6,31 @@ using Pilot.Commands;
 using Pilot.Contracts;
 
 // pilot-tui: the dashboard in a terminal. The GUI's own pages and panels (Pilot.Ui), their trees arranged in cells by
-// Console.Lib rather than painted on pixels: the Sessions page (1), the Flights page (2) with its
-// buttons, the Background tasks page (3), the Fleet page (4), and the watchtower's panel with its cards, all live from
-// this machine's node or one on the LAN.
+// Console.Lib rather than painted on pixels: every page of the bar, and the watchtower's panel with its cards, all live from
+// this machine's node or one on the LAN. A bar of pages runs along the top, each with its key: the GUI's Ctrl+digit order as
+// plain digits, 1 Home, 2 Chat, 3 Sessions, 4 Flights, 5 Repos, 6 Background tasks, 7 Fleet, 8 Settings, 9 Pull requests,
+// 0 Ideas, and $ Spend.
 var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN: host:port, or its name (SE1) or host; else PILOT_NODE, else this machine's" };
 var socketOption = new Option<string?>("--node-socket") { Description = "This machine's node's socket; else PILOT_NODE_SOCKET, else this user's default" };
-var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 sessions, 3 flights, 4 jobs, 5 fleet, 6 settings, 7 repos, 8 chat, 9 pull requests, Alt+Left or Backspace back and Alt+Right forward, Ctrl+T the chat with the watchtower, q quits")
+var glyphsOption = new Option<string?>("--glyphs") { Description = $"The bar's glyphs: auto (emoji where the terminal draws them two cells wide), emoji or initials; else {TerminalRail.GlyphsVariable}, else auto" };
+var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 chat, 3 sessions, 4 flights, 5 repos, 6 background tasks, 7 fleet, 8 settings, 9 pull requests, 0 ideas, $ spend, Alt+Left or Backspace back and Alt+Right forward, Ctrl+T the chat with the watchtower, q quits")
 {
-    Options = { nodeOption, socketOption },
+    Options = { nodeOption, socketOption, glyphsOption },
 };
 var parsed = root.Parse(args);
 if (parsed.Errors.Count > 0 || parsed.Action is System.CommandLine.Help.HelpAction)
 {
     return parsed.Invoke();
 }
+
+var glyphsText = parsed.GetValue(glyphsOption) ?? Environment.GetEnvironmentVariable(TerminalRail.GlyphsVariable);
+var parsedGlyphs = TerminalRail.Parse(glyphsText);
+if (glyphsText is { Length: > 0 } && parsedGlyphs is null)
+{
+    System.Console.Error.WriteLine($"pilot-tui: --glyphs is auto, emoji or initials, not '{glyphsText}'");
+    return 2;
+}
+var glyphMode = TerminalRail.Resolve(parsedGlyphs ?? GlyphMode.Auto, name => Environment.GetEnvironmentVariable(name));
 
 var nodeTarget = parsed.GetValue(nodeOption) ?? (Environment.GetEnvironmentVariable(NodeTargets.EnvironmentVariable) is { Length: > 0 } env ? env : null);
 // A name (DE1) is found on the LAN as the CLI finds it; one no node announces is refused, not taken for this machine.
@@ -231,6 +242,19 @@ chrome.Ideas.OnChatAbout = text =>
     chat.SwitchTo(null);
     chat.Prefill(text);
 };
+// The Ideas page: every button is an idea verb on this terminal's node; no clipboard or image upload in a terminal.
+chrome.Ideas.Send = async (verb, target, args, ct) => await IdeaCommands.SendAsync(client, verb, target, args, Who, ct);
+chrome.Ideas.LoadRepos = async ct => (await client.GetReposAsync(ct)) is { Success: true, Response: { } ideaRepos }
+    ? ideaRepos
+    : throw new InvalidOperationException("the node did not list its repos");
+chrome.Ideas.OnAnswer = cards.OnAnswer;
+chrome.Ideas.OnOpen = url => DashboardCommands.Open(url);
+chrome.Ideas.Track = (run, what) => tracker.Run(run, what);
+chrome.Ideas.Changed = Redraw;
+// The Spend page and a flight's spend: read from the node's spend routes, again once 30 s old (see SpendReads).
+var spendReads = new SpendReads(client, Redraw);
+chrome.Spend.OnWindow = window => spendReads.Ask(window, feed.Screen(DateTimeOffset.UtcNow).Source, force: true);
+chrome.Flights.OnSpend = code => spendReads.AskFlight(code, force: true);
 chat.OnAnswerNow = async sendId =>
 {
     var refused = await ChatCommands.AnswerNowAsync(client, sendId, Who, stop.Token);
@@ -408,6 +432,7 @@ repos.OnNewFlight = line =>
     chrome.Show(PilotPage.Flights);
     flights.Wizard.Open(line.Status.Path, atIssues: true);
 };
+var railMemory = new TerminalRail.Memory();
 var arranged = System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>>.Empty;
 var drawnVersion = -1L;
 var drawnAt = DateTimeOffset.MinValue;
@@ -440,6 +465,29 @@ while (!stop.IsCancellationRequested)
         var pages = merged = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now);
         // This node in maintenance: Home and Flights say so.
         home.Maintenance = flights.Maintenance = feed.Summary(now) is { Connected: true, Node.Maintenance: true };
+        if (page == PilotPage.Spend)
+        {
+            spendReads.Ask(chrome.Spend.Window, pages.Sessions.Source);
+        }
+        if (page == PilotPage.Flights && chrome.Flights.OpenCode is { } openCode)
+        {
+            spendReads.AskFlight(openCode);
+        }
+        chrome.Flights.Spend = spendReads.Flights;
+        // The rows' tokens come from the snapshot at connect; a read repeated every 30 s keeps them current.
+        if (page is PilotPage.Flights or PilotPage.Home)
+        {
+            spendReads.AskTokens();
+        }
+        if (spendReads.Tokens is { } tokensNow)
+        {
+            pages = pages with { Flights = pages.Flights.WithTokens(tokensNow) };
+        }
+        if (page == PilotPage.Home)
+        {
+            spendReads.AskToday();
+        }
+        chrome.Home.Today = spendReads.Today;
         var pageTree = page switch
         {
             PilotPage.Chat => chat.Tree(),
@@ -449,15 +497,25 @@ while (!stop.IsCancellationRequested)
             PilotPage.PullRequests => pullRequests.Tree(pages.PullRequests ?? new PullRequestsScreen(null, pages.Sessions.Source, now), width),
             PilotPage.Jobs => jobs.Tree(pages.Jobs),
             PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, held.Entries, now)),
+            PilotPage.Ideas => chrome.Ideas.Tree(pages.Ideas ?? new IdeasScreen([], [], [], pages.Sessions.Source, now)),
+            PilotPage.Spend => chrome.Spend.Tree(spendReads.Screen ?? new SpendScreen(chrome.Spend.Window, null, null, pages.Sessions.Source, now)),
             PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };
+        var railTree = TerminalRail.Tree(page, glyphMode, pages.Jobs, pages.Ideas, now, chrome.Show, railMemory, columns);
+        // A glyph that changed was drawn blank for this frame (see TerminalRail.Memory): draw the next at once.
+        if (railMemory.Settling)
+        {
+            Redraw();
+        }
         var cardsScreen = pages.Cards;
         flights.Jobs = pages.JobRows;
         // The panel takes 38 columns (the GUI's 300 units) when there is room beside a usable page, and something to show.
-        var tree = columns >= 120 && (cardsScreen.HasAny || cards.CanTell)
+        var beside = columns >= 120 && (cardsScreen.HasAny || cards.CanTell)
             ? Layout.Builder.HStack(pageTree.WStar(), cards.Tree(cardsScreen).WFixed(CardsView<RgbaImage>.Width)).Stretch()
             : pageTree;
+        // The bar takes the row above the page, as the page needs the width.
+        var tree = Layout.Builder.VStack(railTree, beside.HStar()).Stretch();
         arranged = Layout.Engine.Arrange(tree, new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
         // No clear: the cell buffer diffs each frame against the last, and the tree's backgrounds cover every cell.
         CellLayout.Paint(terminal, arranged);
@@ -525,33 +583,7 @@ void Handle(ConsoleInputEvent raw)
         case InputEvent.KeyDown navKey when chrome.HandleInput(navKey):
             break;
         // The page keys are moves the history records; the show callback of the Link calls keeps `page` in step.
-        case InputEvent.KeyDown(InputKey.D1, _):
-            chrome.Show(PilotPage.Home);
-            break;
-        case InputEvent.KeyDown(InputKey.D2, _):
-            chrome.Show(PilotPage.Sessions);
-            break;
-        case InputEvent.KeyDown(InputKey.D3, _):
-            chrome.Show(PilotPage.Flights);
-            break;
-        case InputEvent.KeyDown(InputKey.D4, _):
-            chrome.Show(PilotPage.Jobs);
-            break;
-        case InputEvent.KeyDown(InputKey.D5, _):
-            chrome.Show(PilotPage.Fleet);
-            break;
-        case InputEvent.KeyDown(InputKey.D6, _):
-            chrome.Show(PilotPage.Settings);
-            break;
-        case InputEvent.KeyDown(InputKey.D7, _):
-            chrome.Show(PilotPage.Repos);
-            break;
-        case InputEvent.KeyDown(InputKey.D9, _):
-            chrome.Show(PilotPage.PullRequests);
-            break;
-        case InputEvent.KeyDown(InputKey.D8, _):
-            chrome.Show(PilotPage.Chat);
-            focus.Focus(chat.Input);
+        case var _ when TerminalRail.Handle(evt, raw.KeyChar, chrome.Show, () => focus.Focus(chat.Input)):
             break;
         case InputEvent.KeyDown(InputKey.S, InputModifier.Ctrl):
             chrome.Show(PilotPage.Sessions);
