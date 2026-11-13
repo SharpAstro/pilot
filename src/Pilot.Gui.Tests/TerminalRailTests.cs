@@ -144,6 +144,9 @@ public sealed class TerminalRailTests
         public void Write(ReadOnlySpan<char> text) => Runs.Add(text.ToString());
     }
 
+    private static string Describe(string glyph, int frame, List<string> runs) =>
+        $"frame {frame} for {string.Concat(glyph.Select(c => $"U+{(int)c:X4} "))}sent runs [{string.Join(" | ", runs.Select(r => string.Concat(r.Select(c => $"{(int)c:X4} "))))}]";
+
     [Fact]
     public void AFlushSendsEachEmojisWholeUtf16SequenceInOneRunEvenWhenTwoShareAHighSurrogate()
     {
@@ -175,13 +178,13 @@ public sealed class TerminalRailTests
                     {
                         if (char.IsHighSurrogate(run[i]))
                         {
-                            (i + 1 < run.Length && char.IsLowSurrogate(run[i + 1])).ShouldBeTrue($"run '{run}' splits a pair");
+                            (i + 1 < run.Length && char.IsLowSurrogate(run[i + 1])).ShouldBeTrue($"{Describe(glyph, frames, sink.Runs)} splits a pair");
                             i++;
                             surrogates++;
                         }
                         else
                         {
-                            char.IsLowSurrogate(run[i]).ShouldBeFalse($"run '{run}' holds a lone low surrogate");
+                            char.IsLowSurrogate(run[i]).ShouldBeFalse($"{Describe(glyph, frames, sink.Runs)} holds a lone low surrogate");
                         }
                     }
                 }
