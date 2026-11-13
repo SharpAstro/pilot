@@ -156,8 +156,8 @@ public sealed class CiBudgetTests : ReviewTestsBase
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Title.ShouldContain("4.8 runner-hours");
         card.Title.ShouldContain("2 runs, 1 failed");
-        card.Detail.ShouldContain("does not lift the stop");
-        card.Detail.ShouldContain($"pilot flight ci-budget {flight.Code} continue");
+        card.Detail.ShouldNotBeNull().ShouldContain("does not lift the stop");
+        card.Detail.ShouldNotBeNull().ShouldContain($"pilot flight ci-budget {flight.Code} continue");
         card.Choices.Select(c => (c.Label, c.Verb, c.Args.Single())).ShouldBe(
         [
             ("Allow more CI time", Verbs.CiBudget, Verbs.CiContinue),
