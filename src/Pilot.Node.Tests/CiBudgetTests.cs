@@ -283,4 +283,59 @@ public sealed class CiBudgetTests : ReviewTestsBase
         await failing.LookAtCiAsync(Ct);
         F(flight.Code).Ci!.RunnerMinutes.ShouldBe(60);
     }
+
+    [Fact]
+    public void TheRedClockDoesNotRunWhileTheFlightWaitsOnAPersonAndRestartsWhenTheWaitEnds()
+    {
+        var red = CiBudgets.Count([CiOf(1, 10, "failure", completed: Now.AddHours(-30))], null, Now);
+        CiBudgets.Why(red, 4, Now).ShouldNotBeNull();
+
+        // Waiting now: no red reason however long it has been red.
+        CiBudgets.Why(red, 4, Now, new CiBudgets.PersonWait(true, null)).ShouldBeNull();
+
+        // The wait ended 2 hours ago: the clock counts from then.
+        CiBudgets.Why(red, 4, Now, new CiBudgets.PersonWait(false, Now.AddHours(-2))).ShouldBeNull();
+        CiBudgets.Why(red, 4, Now, new CiBudgets.PersonWait(false, Now.AddHours(-3.5))).ShouldNotBeNull().ShouldContain("red for 3.5 hours");
+
+        // The runner-hours budget still fires while waiting.
+        var spent = CiBudgets.Count([CiOf(1, 5 * 60, "failure", completed: Now.AddHours(-30))], null, Now);
+        CiBudgets.Why(spent, 4, Now, new CiBudgets.PersonWait(true, null)).ShouldNotBeNull().ShouldContain("runner-hours");
+    }
+
+    private static CardRow Card(CardBin bin, string kind, string subject, CardState state = CardState.Open, DateTimeOffset? closed = null) =>
+        new() { Id = "x", Bin = bin, Kind = kind, Subject = subject, Title = "t", State = state, ClosedAt = closed };
+
+    [Fact]
+    public void AnOpenForYouOrRingCardOnTheFlightOrItsLegsIsAWaitButNeitherTheCapCardNorTheChecksCardNorAHandledOneNorAnotherFlights()
+    {
+        var flight = Verbs.FlightTarget("PIL9");
+        CiBudgets.WaitOnPerson([Card(CardBin.ForYou, "review-loop", flight)], "PIL9", null).Waiting.ShouldBeTrue();
+        CiBudgets.WaitOnPerson([Card(CardBin.Ring, "x", Verbs.LegTarget("PIL9", "a"))], "PIL9", null).Waiting.ShouldBeTrue();
+        CiBudgets.WaitOnPerson(
+            [Card(CardBin.ForYou, CiBudgets.CapKind, flight), Card(CardBin.ForYou, CiBudgets.AnsweredKind, flight), Card(CardBin.Ring, CiBudgets.ChecksFailedKind, flight),
+             Card(CardBin.Handled, "x", flight), Card(CardBin.ForYou, "x", Verbs.FlightTarget("PIL90"))], "PIL9", null).Waiting.ShouldBeFalse();
+
+        var ended = CiBudgets.WaitOnPerson([Card(CardBin.ForYou, "x", flight, CardState.Closed, Now.AddHours(-1)), Card(CardBin.ForYou, "y", flight, CardState.Closed, Now.AddHours(-5))], "PIL9", Now.AddHours(-3));
+        (ended.Waiting, ended.LastEnded).ShouldBe((false, Now.AddHours(-1)));
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARedCiDoesNotCapAFlightWhileAReviewLoopCardIsOpenAndCountsFromItsCloseAfter()
+    {
+        var flight = await Flying("68", CiOf(1, 20, "failure", completed: DateTimeOffset.UtcNow.AddHours(-30)));
+        var card = _state.RaiseCard(CardBin.ForYou, "review-loop", Verbs.FlightTarget(flight.Code), "review loop held", "waiting");
+
+        await Checks().LookAtCiAsync(Ct);
+
+        F(flight.Code).Ci!.CappedWhy.ShouldBeNull();
+        CapCards().ShouldBeEmpty();
+
+        _state.CloseCard(card.Id, "answered", "controller");
+        await Checks().LookAtCiAsync(Ct);
+
+        // Just closed: the clock restarted, so no cap yet.
+        F(flight.Code).Ci!.CappedWhy.ShouldBeNull();
+        CapCards().ShouldBeEmpty();
+    }
 }

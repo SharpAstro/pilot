@@ -991,7 +991,9 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// PIL795: counts each flying flight's PR's CI from GitHub Actions (<see cref="CiBudgets"/>) and puts it on the flight. Past the
     /// <c>flight-ci-budget</c> or red for more than three hours the flight is capped: its pushes are refused with the numbers, and one
     /// For-you card rings the owner with continue, land what is green, or split. The card is raised once for a cap; the owner's
-    /// <c>continue</c> lifts the cap for one more budget, and a budget raised in the settings lifts it by itself.
+    /// <c>continue</c> lifts the cap for one more budget, and a budget raised in the settings lifts it by itself. PIL1023: the red
+    /// bound does not run while the flight waits on a person and restarts when that wait ends (<see cref="CiBudgets.WaitOnPerson"/>); a cap
+    /// already set stays until answered, only a new red cap is held back.
     /// </summary>
     internal async Task LookAtCiAsync(CancellationToken cancellationToken)
     {
@@ -1020,7 +1022,9 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             var counted = CiBudgets.Count(runs, current.Ci, now);
-            var why = CiBudgets.Why(counted, budget, now);
+            // PIL1023: a flight waiting on a person (a review loop card, another card for the owner) does not run its red clock.
+            var wait = CiBudgets.WaitOnPerson(state.Cards(), flight.Code, counted.RedSince);
+            var why = CiBudgets.Why(counted, budget, now, wait);
             var subject = Verbs.FlightTarget(flight.Code);
             if (why is not null && counted.CappedWhy is null)
             {

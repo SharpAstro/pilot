@@ -57,21 +57,65 @@ public static class CiBudgets
         return since;
     }
 
+    /// <summary>The kind of the node's own card about a flight's CI going red (PrChecks). It is about the CI, not a wait on a person, so it never holds the red clock.</summary>
+    public const string ChecksFailedKind = "pr-checks-failed";
+
+    /// <summary>
+    /// PIL1023: whether the flight waits on a person, from its cards. A card in For you or Ring about the flight or one of its legs is a
+    /// wait while open, except the cap card itself and the CI's own card (<see cref="ChecksFailedKind"/>), which the node raises about the
+    /// CI and which would otherwise hold the clock that raises them. Handled-bin cards are the node's record, never a wait.
+    /// </summary>
+    public static PersonWait WaitOnPerson(IEnumerable<CardRow> cards, string code, DateTimeOffset? since)
+    {
+        var flight = Verbs.FlightTarget(code);
+        var open = false;
+        DateTimeOffset? ended = null;
+        foreach (var card in cards)
+        {
+            if (card.Bin is not (CardBin.ForYou or CardBin.Ring) || card.Kind is CapKind or AnsweredKind or ChecksFailedKind
+                || !(card.Subject == flight || card.Subject.StartsWith(flight + "/", StringComparison.Ordinal)))
+            {
+                continue;
+            }
+            if (card.State == CardState.Open)
+            {
+                open = true;
+            }
+            else if (card.ClosedAt is { } closed && (since is null || closed > since) && (ended is null || closed > ended))
+            {
+                ended = closed;
+            }
+        }
+        return new PersonWait(open, ended);
+    }
+
+    /// <summary>Whether a flight waits on a person now, and when the latest such wait ended (null if none did).</summary>
+    public readonly record struct PersonWait(bool Waiting, DateTimeOffset? LastEnded);
+
     /// <summary>
     /// Why the flight's pushes should stop, in numbers, or null while it is within its budget: its runner-hours past
-    /// <paramref name="budgetHours"/> times (1 + the extra budgets granted), or its CI red for more than <see cref="RedBound"/> since the
-    /// later of when it went red and when the owner last said continue.
+    /// <paramref name="budgetHours"/> times (1 + the extra budgets granted), or its CI red for more than <see cref="RedBound"/>. The red
+    /// clock counts from the latest of when it went red, when the owner last said continue, and when the flight's last wait on a person
+    /// ended (<paramref name="wait"/>, PIL1023); while a wait is open it does not run, so no red reason. Runner-hours ignore the wait.
     /// </summary>
-    public static string? Why(FlightCi ci, int budgetHours, DateTimeOffset now)
+    public static string? Why(FlightCi ci, int budgetHours, DateTimeOffset now, PersonWait wait = default)
     {
         var cap = budgetHours * (1 + ci.Extra);
         if (ci.RunnerHours > cap)
         {
             return $"its PR's CI has used {Hours(ci.RunnerHours)} runner-hours, past the budget of {cap} ({Numbers(ci)})";
         }
-        if (ci.RedSince is { } red)
+        if (ci.RedSince is { } red && !wait.Waiting)
         {
-            var since = ci.RedAcknowledgedAt is { } acknowledged && acknowledged > red ? acknowledged : red;
+            var since = red;
+            if (ci.RedAcknowledgedAt is { } acknowledged && acknowledged > since)
+            {
+                since = acknowledged;
+            }
+            if (wait.LastEnded is { } ended && ended > since)
+            {
+                since = ended;
+            }
             if (now - since > RedBound)
             {
                 return $"its PR's CI has been red for {Hours((now - since).TotalHours)} hours, past the bound of {NodeSettings.FlightCiRedHours} ({Numbers(ci)})";
