@@ -178,6 +178,7 @@ public static partial class NodeApp
                 (await services.GetRequiredService<NodeCommands>().RunAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = LegWatch.Who }, ct)).Ok;
             flights.CancelJobs = (flight, owners, who) => services.GetRequiredService<JobRunner>().CancelFor(flight, owners, who);
             flights.CancelHeldJobs = (flight, who) => services.GetRequiredService<JobRunner>().CancelRunningFor(flight, who);
+            flights.PumpJobs = () => services.GetRequiredService<JobRunner>().Pump();
             var models = services.GetRequiredService<RoleModels>();
             var trackers = new List<ITracker> { new ShortcutTracker(new HttpClient(new CountingHandler(NodeTraffic.Shared) { InnerHandler = new HttpClientHandler() }) { Timeout = TimeSpan.FromSeconds(30) }, () => ShortcutTracker.TokenFrom(models.ShortcutToken)) };
             if (services.GetService<IGitHub>() is { } gitHub)

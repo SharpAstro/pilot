@@ -201,7 +201,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
             case StandingKind.FlightSession or StandingKind.Assistant when command.Verb == Verbs.ReportState && !ReportsOwn(command, state):
                 return "a session reports its own state only: run report-state from the session it is about";
             case StandingKind.FlightSession when yourOnly || FlightSessionNever.Contains(command.Verb):
-                return $"{command.Verb} is the controller's, not a flight session's: leave it to them";
+                return $"{command.Verb} is the controller's, not a flight session's: this command counts as {(Flight is { } own ? $"{own}'s flight session" : $"a flight session (the review of PR {Pr})")} because {(Flight is { } plane ? $"it runs in {plane}'s plane" : "it runs in that review's plane")} and its name ({command.Who}) says so; run it from the repo's main checkout or the GUI";
             case StandingKind.FlightSession when OutsideItsFlight(command.Target):
                 return Flight is { } code
                     ? $"{command.Target} is not {code}'s: a flight's session acts on its own flight only"

@@ -15,6 +15,33 @@ public sealed partial class LegCommander
     // What each flight has calls out for, by code; the value says what, and is freed when its command is done.
     private readonly ConcurrentDictionary<string, FlightCall> _calling = new(StringComparer.Ordinal);
 
+    // The hold's own calls (ground, unground) while a leg's check rerun has the flight's slot: the rerun never touches the hold, so
+    // the two do not contend (pilot #1020), but a second ground or unground is still refused by this slot.
+    private readonly ConcurrentDictionary<string, string> _holdCalling = new(StringComparer.Ordinal);
+
+    private sealed class HoldSlot(LegCommander owner, string code) : IDisposable
+    {
+        public void Dispose() => owner._holdCalling.TryRemove(code, out _);
+    }
+
+    /// <summary>
+    /// The slot for the hold's calls: <see cref="Calling"/> as always, unless what holds the flight's slot is its leg check rerun, which
+    /// never touches the hold; then a slot of the hold's own, so an unground is not refused behind a check that is itself queued behind
+    /// the hold (pilot #1020).
+    /// </summary>
+    private IDisposable CallingForHold(string code, string what)
+    {
+        if (_calling.TryGetValue(code, out var busy) && busy.Recheck)
+        {
+            if (!_holdCalling.TryAdd(code, what))
+            {
+                throw new FlightBusyException(BusyRefusal(code, _holdCalling.TryGetValue(code, out var other) ? other : "being changed", "wait for its answer, then ask again"));
+            }
+            return new HoldSlot(this, code);
+        }
+        return Calling(code, what);
+    }
+
     /// <summary>
     /// How long a step (a merge, a PR open, a reviewer start) may be in progress without moving before a repeat of it is refused again
     /// instead of coalesced (PIL575): a repeat of a live step answers ok "already in progress"; a stuck one is refused, so it rings.
@@ -27,8 +54,11 @@ public sealed partial class LegCommander
     /// <summary>A repeat of a step that is live: not a refusal, the command's answer is ok with this text.</summary>
     private sealed class InProgressException(string what) : FlightException($"{AlreadyInProgress}: {what}");
 
-    private sealed class FlightCall(LegCommander owner, string code, string what, string advice, DateTimeOffset at) : IDisposable
+    private sealed class FlightCall(LegCommander owner, string code, string what, string advice, DateTimeOffset at, bool recheck) : IDisposable
     {
+        /// <summary>True for a leg's check rerun, which never touches the flight's hold.</summary>
+        public bool Recheck { get; } = recheck;
+
         /// <summary>When the calls began: a call out longer than <see cref="StuckAfter"/> is stuck.</summary>
         public DateTimeOffset At { get; } = at;
 
@@ -54,9 +84,9 @@ public sealed partial class LegCommander
     /// Takes the flight for the calls a command is about to make, to be called under the lock: refused, saying what has it, while
     /// another command has calls out for the flight. Disposed when the command is done with them, under the lock.
     /// </summary>
-    private FlightCall Calling(string code, string what, string advice = "wait for its answer, then ask again", bool coalesce = false)
+    private FlightCall Calling(string code, string what, string advice = "wait for its answer, then ask again", bool coalesce = false, bool recheck = false)
     {
-        var call = new FlightCall(this, code, what, advice, time.GetUtcNow());
+        var call = new FlightCall(this, code, what, advice, time.GetUtcNow(), recheck);
         if (!_calling.TryAdd(code, call))
         {
             if (!_calling.TryGetValue(code, out var busy))
@@ -69,10 +99,20 @@ public sealed partial class LegCommander
                 throw new InProgressException($"{code} is {what}");
             }
             busy.Refused = true;
-            throw new FlightBusyException(BusyRefusal(code, busy.What, busy.Advice));
+            throw new FlightBusyException(busy.Recheck && QueuedRecheck(code) is { } queued
+                ? $"{code} has {queued.Leg}'s check queued, not yet running ({queued.Why}): {busy.Advice}"
+                : BusyRefusal(code, busy.What, busy.Advice));
         }
         return call;
     }
+
+    /// <summary>
+    /// The leg of <paramref name="code"/> whose rerun check is still a queued job, and what it waits on (the job and its runner's
+    /// reason, as the job runner keeps it on the leg), so a refusal says queued while it is and rerunning only once it runs (pilot #1020).
+    /// </summary>
+    private (string Leg, string Why)? QueuedRecheck(string code) =>
+        state.Legs(code).FirstOrDefault(l => l.Recheck is { Outcome: null, Queued: { Length: > 0 } }) is { } leg
+            ? (leg.Name, leg.Recheck!.Queued!) : null;
 
     /// <summary>The words of a command refused because the flight has calls out.</summary>
     internal static string BusyRefusal(string code, string what, string advice) => $"{code} is {what} already: {advice}";

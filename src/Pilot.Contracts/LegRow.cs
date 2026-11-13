@@ -182,6 +182,14 @@ public sealed record LegRecheck
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Resume { get; init; }
 
+    /// <summary>
+    /// While the rerun's check job is still queued: which job, and what it waits on (<c>job j5, next in line: its flight X is on hold
+    /// (...)</c>), kept current by the job runner and cleared once the job runs. Null while it runs and on a row from before this
+    /// (pilot #1020: a queued check was worded as rerunning since it was asked for).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Queued { get; init; }
+
     /// <summary>What the worker is told when the node, after a restart, finished its leg itself by waiting on or rerunning the check.</summary>
     public static string NodeFinishedOutcome(string check) =>
         $"The node restarted while it was rerunning your leg's check `{check}`. It waited on that check (or ran it again, if its job did not survive), it passed, and the node finished the leg with your report. You do not need to run `leg finish done`; end your turn.";

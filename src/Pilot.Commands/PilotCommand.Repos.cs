@@ -58,8 +58,9 @@ public static partial class PilotCommand
                     return 0;
                 });
 
-            reposCommand.Subcommands.Add(Action(new Command("sync", "git fetch -p --all in each tracked repo, then fast-forward its default branch; a dirty, off-branch or diverged checkout is left alone and said so"),
-                (p, client, ct) => Send(client, Verbs.SyncRepos, Verbs.NodeTarget, [], who, ct)));
+            var syncRepo = new Argument<string?>("repo") { Description = "Only this tracked repo (its name or path); every other main checkout is left as it is. All tracked repos when left out", Arity = ArgumentArity.ZeroOrOne };
+            reposCommand.Subcommands.Add(Action(new Command("sync", "git fetch -p --all in each tracked repo (or only the one named), then fast-forward its default branch; a dirty, off-branch or diverged checkout is left alone and said so") { Arguments = { syncRepo } },
+                (p, client, ct) => Send(client, Verbs.SyncRepos, Verbs.NodeTarget, p.GetValue(syncRepo) is { Length: > 0 } one ? [one] : [], who, ct)));
 
             // prs
             var needsMe = new Option<bool>("--needs-me") { Description = "Only the PRs that wait on you: ready, changes requested or conflicts" };

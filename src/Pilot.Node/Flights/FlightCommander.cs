@@ -35,6 +35,9 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     /// <summary>Cancels a held flight's running jobs other than its leg's check (a cancelled check reads as a failed one); returns how many.</summary>
     public Func<string, string, int>? CancelHeldJobs { get; set; }
 
+    /// <summary>Has the job runner look at its queue again (a hold lifted is a reason: its queued jobs may start); null where there is no runner.</summary>
+    public Action? PumpJobs { get; set; }
+
     /// <summary>The node's ledger of launched sessions, whose live entries of a flight are wound down with it; null in a test with none.</summary>
     public Sessions.SessionLedger? Ledger { get; set; }
 

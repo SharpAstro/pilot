@@ -148,6 +148,83 @@ public sealed class RepoSyncTests : IDisposable
     }
 
     [Fact]
+    public async Task ASyncNamedForOneTrackedRepoTakesOnlyThatOneAndLeavesTheOthersCheckoutUnmoved()
+    {
+        var git = new ScriptedGit();
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var first = Clone("first");
+        var second = Clone("second");
+        state.PutFlight(Flight("F1", "first", first));
+        state.PutFlight(Flight("F2", "second", second));
+        git.Repo(first, behind: 2);
+        git.Repo(second, behind: 5);
+        var github = new FakeGitHub();
+        var (sync, _) = Sync(git, github, state, _root);
+
+        var byName = await sync.SyncAsync("first", Ct);
+        var byPath = await sync.SyncAsync(first, Ct);
+
+        byName.ShouldHaveSingleItem().Name.ShouldBe("first");
+        byName[0].Status.ShouldBe(RepoSyncStatus.Updated);
+        byPath.ShouldHaveSingleItem().Name.ShouldBe("first");
+        git.Calls.ShouldNotContain(c => Path.GetFileName(c.Cwd) == "second" && (c.Command.StartsWith("fetch", StringComparison.Ordinal) || c.Command.StartsWith("merge", StringComparison.Ordinal)));
+        github.OpenPrCalls.ShouldBeGreaterThan(0); // the watch was read afterwards
+    }
+
+    [Fact]
+    public async Task ASyncNamedForAnUnknownRepoIsRefusedListingTheTrackedOnesAndTouchesNothing()
+    {
+        var git = new ScriptedGit();
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var first = Clone("first");
+        var second = Clone("second");
+        state.PutFlight(Flight("F1", "first", first));
+        state.PutFlight(Flight("F2", "second", second));
+        git.Repo(first, behind: 1);
+        git.Repo(second, behind: 1);
+        var (sync, _) = Sync(git, new FakeGitHub(), state, _root);
+
+        var refused = await Should.ThrowAsync<FlightException>(() => sync.SyncAsync("nope", Ct));
+
+        refused.Message.ShouldContain("nope is not a tracked repo");
+        refused.Message.ShouldContain("first");
+        refused.Message.ShouldContain("second");
+        git.Calls.ShouldNotContain(c => c.Command.StartsWith("fetch", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ASyncWithNoRepoStillTakesEveryTrackedOne()
+    {
+        var git = new ScriptedGit();
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var first = Clone("first");
+        var second = Clone("second");
+        state.PutFlight(Flight("F1", "first", first));
+        state.PutFlight(Flight("F2", "second", second));
+        git.Repo(first, behind: 1);
+        git.Repo(second, behind: 1);
+        var (sync, _) = Sync(git, new FakeGitHub(), state, _root);
+
+        (await sync.SyncAsync(null, Ct)).Select(o => o.Name).ShouldBe(["first", "second"], ignoreOrder: true);
+        (await sync.SyncAsync(Ct)).Length.ShouldBe(2);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")] // Starts the node, whose repo watch reads git.
+    public async Task ThePilotReposSyncCommandSendsTheRepoItIsGivenAndTheNodeRefusesAnUnknownOne()
+    {
+        var repo = Clone("tianwen");
+        await using var node = await NodeHarness.StartAsync(Ct, watchtower: false);
+        node.State.PutFlight(Flight("TIA1", "tianwen", repo));
+
+        var output = new StringWriter();
+        var error = new StringWriter();
+        (await PilotCommand.RunAsync(["--node-socket", node.SocketPath, "repos", "sync", "nope"], _root, output, error, Ct)).ShouldNotBe(0);
+
+        (output.ToString() + error.ToString()).ShouldContain("nope is not a tracked repo");
+    }
+
+    [Fact]
     public async Task AGitThatHangsIsCutOffWithItsOwnOutcomeAndTheOtherReposStillSync()
     {
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);

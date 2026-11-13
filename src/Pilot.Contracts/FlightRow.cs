@@ -615,7 +615,8 @@ public static class FlightWaiting
         : leg.State.ToString().ToLowerInvariant();
 
     /// <summary>What a leg whose finish reruns its check says: <c>rechecking since 14:30</c>.</summary>
-    public static string RecheckText(LegRecheck recheck) => $"rechecking since {recheck.Since.ToLocalTime():HH:mm}";
+    public static string RecheckText(LegRecheck recheck) =>
+        recheck.Queued is { Length: > 0 } queued ? $"recheck queued ({queued})" : $"rechecking since {recheck.Since.ToLocalTime():HH:mm}";
 
     /// <summary>What a leg's worker waits on: <c>waiting for C:\x\done.txt</c>, or <c>waiting until 14:30</c> for a time alone.</summary>
     public static string WaitText(LegWait wait) =>
