@@ -1207,10 +1207,25 @@ node's. pilot-tui shows the same merged pages.
 
 `pilot-tui` is the same dashboard in a terminal, over SSH as well as locally: the GUI's own pages and panels
 (`Pilot.Ui`), their DIR.Lib trees arranged in terminal cells by Console.Lib (`CellMeasureContext.PixelAuthored`)
-instead of painted on pixels, so a row, a button or a why field is the same node on both. **1** Home, **2** Sessions,
-**3** Flights, **4** Background tasks, **5** Fleet, **6** Settings, **7** Repos, **8** Chat, **Ctrl+S** the say bar, **Ctrl+T** the chat with the watchtower (the box focused), Up/Down to select, a
-click on a cell runs what a click on the pixels would, **q** quits. The watchtower and cards panel shows beside the page
-from 120 columns. `--node host:port` flies a node on the LAN, as everywhere.
+instead of painted on pixels, so a row, a button or a why field is the same node on both. The keys are the GUI rail's
+Ctrl+digit order as plain digits: **1** Home, **2** Chat (its box focused), **3** Sessions, **4** Flights, **5** Repos, **6**
+Background tasks, **7** Fleet, **8** Settings, **9** Pull requests, **0** Ideas, and **$** Spend (Ctrl+Shift+S is not told
+apart from Ctrl+S in most terminals). **Ctrl+S** is the say bar, **Ctrl+T** the chat with the watchtower (the box
+focused), Alt+Left, Alt+Right and Backspace walk the history, Up/Down select, a click on a cell runs what a click on
+the pixels would, **q** quits. The watchtower and cards panel shows beside the page from 120 columns. `--node host:port`
+flies a node on the LAN, as everywhere.
+
+A **page bar** (`TerminalRail`, built from `PilotChrome.Pages`, so a page added there shows here with no second list) runs
+along the top: one entry per page, each 8 cells wide, its glyph and its key, the open page on the selected-row background, and a
+click on an entry shows the page. The glyph is the page's emoji where the terminal draws it two cells wide, and the page's
+initials otherwise (**B!** for a failed job, **I3** for three noted ideas, **Fl** and **Se** for Flights and Settings, which the
+GUI's night rail draws as the plane and the cog). `--glyphs auto|emoji|initials`, or `PILOT_TUI_GLYPHS`, picks the mode; auto
+chooses emoji under Windows Terminal (`WT_SESSION`), VS Code, WezTerm, iTerm2 and kitty, and initials elsewhere. An entry whose emoji
+changes is drawn blank for one frame, because Console.Lib's cell buffer would flush only the changed half of two emoji sharing
+a high surrogate (SharpAstro/Console.Lib#47).
+In a terminal under 88 columns, which 11 full entries need, every entry is 7 cells wide instead (the glyph's area one cell
+shorter, so a long glyph such as the ideas count is cut), which keeps all 11 on screen and clickable down to 77 columns; the
+width is fixed for a given terminal width, so the bar does not shift.
 
 The views moved into `Pilot.Ui` (DIR.Lib only, no SDL) for it: the GUI paints `Render`, the TUI arranges `Tree`, and the
 selected row states itself as a background as well as a focus, since a terminal paints no focus of its own.
@@ -1425,7 +1440,7 @@ sessions, flights and jobs, and never speaks for another. To bring a second mach
    `pilot connect <host>:47731`) rings an Allow/Deny card on it, to be allowed there; its rows are then steered from the
    merged lists.
 
-**The Fleet page** (Ctrl+7 in the GUI, 5 in the TUI) is every node at once: this window's first, then every node heard
+**The Fleet page** (Ctrl+7 in the GUI, 7 in the TUI) is every node at once: this window's first, then every node heard
 on the LAN or granted to this user, each on a feed of its own (its event stream, watched without a grant as anyone on
 the LAN may). A row says the node's machine and where it is reached, whose account it runs on and its usage, its live
 sessions and how many wait on you, its flights and jobs, and its rings; a node not reached says what its connection is
@@ -1463,7 +1478,7 @@ Sonnet with no `reviewer-deep-*` keys now runs its deep reviews on the built-in 
 the mismatch of a Sonnet reviewer whose deep reviews had run on Opus only by a missing key. The watchtower's brief says its model, so a lighter one rings for a judgement rather than makes it. The command line wins over the
 file (an autostart entry made before the file existed still pins what it names), and a key the file leaves out takes
 the default; a value it cannot read is passed over, never fatal. `pilot-node setup` writes it, and so does the
-**Settings** page (Ctrl+8 in the GUI, 6 in the TUI), or `pilot settings set <key> [value…]`.
+**Settings** page (Ctrl+8 in the GUI, 8 in the TUI), or `pilot settings set <key> [value…]`.
 
 The node answers the settings and the setup checks apart (#331). `GET /api/v1/settings` reads `settings.json` and the
 node's own state alone, so it answers at once: the settings rows, `Restart` and `File`, and no process runs. The setup

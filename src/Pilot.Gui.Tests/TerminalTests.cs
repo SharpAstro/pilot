@@ -458,4 +458,52 @@ public sealed class TerminalTests
         wide.ShouldContain("Spend");
         wide.ShouldContain("Session");
     }
+
+    [Fact]
+    public void TheIdeasPageLandsInCellsWithANotedIdeaAndItsRowSelects()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        var idea = new IdeaRow
+        {
+            Id = IdeaIds.Id(381), Repo = "pilot", Title = "A page rail for the terminal", Body = "Tabs for every page.", State = IdeaState.Noted,
+            UpdatedAt = Live.At, Age = "3h", Origin = "ada", Url = "https://github.com/SharpAstro/pilot/issues/381", Images = IdeaImages.In("Tabs for every page."),
+        };
+        var screen = new IdeasScreen([idea], [], ["pilot"], "test", Live.At);
+        var chatted = new List<string>();
+        chrome.Ideas.OnChatAbout = chatted.Add;
+
+        var arranged = Layout.Engine.Arrange(chrome.Ideas.Tree(screen), new Rect<int>(0, 0, 120, 40), CellMeasureContext.PixelAuthored);
+        // The title wraps word by word in cells, so each word is a leaf of its own.
+        var described = CellLayout.Describe(arranged);
+        described.ShouldContain("I381");
+        described.ShouldContain("rail");
+        described.ShouldContain("terminal");
+
+        // The noted idea's own buttons are in the cells; one runs as a click on its pixels would.
+        described.ShouldContain("Chat about this");
+        var button = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "Chat about this" } });
+        CellLayout.HitTest(arranged, button.Bounds.X + 1, button.Bounds.Y);
+        chatted.ShouldHaveSingleItem().ShouldContain("A page rail for the terminal");
+    }
+
+    [Fact]
+    public void TheSpendPageLandsInCellsFromAReportAndItsWindowButtonAsksForTheWeek()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        var data = SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath).Spend ?? throw new InvalidDataException("the sample snapshot holds no spend");
+        var screen = SpendScreen.From(data, "today", "test", Live.At);
+        var asked = new List<string>();
+        chrome.Spend.OnWindow = asked.Add;
+
+        var arranged = Layout.Engine.Arrange(chrome.Spend.Tree(screen), new Rect<int>(0, 0, 120, 40), CellMeasureContext.PixelAuthored);
+        var described = CellLayout.Describe(arranged);
+        described.ShouldContain("today");
+        described.ShouldContain("week");
+
+        var week = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "spend:window:week" });
+        CellLayout.HitTest(arranged, week.Bounds.X + 1, week.Bounds.Y);
+        asked.ShouldBe(["week"]);
+    }
 }
