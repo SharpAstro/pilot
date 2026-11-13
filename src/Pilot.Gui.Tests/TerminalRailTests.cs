@@ -26,7 +26,7 @@ public sealed class TerminalRailTests
     private static JobsScreen JobsOf(params JobState[] states) =>
         new(JobLine.Build(states.Select((s, i) => new JobRow
         {
-            Id = $"j{i}", Command = "dotnet build", Cwd = "/r", State = s, StartedAt = Now, EndedAt = s == JobState.Failed ? Now : null,
+            Id = $"j{i}", Command = "dotnet build", Cwd = "/r", Timeout = TimeSpan.FromMinutes(5), State = s, StartedAt = Now, EndedAt = s == JobState.Failed ? Now : null,
         }), Now), "t", Now);
 
     private static IdeasScreen IdeasOf(int noted) =>
