@@ -231,6 +231,18 @@ chrome.Ideas.OnChatAbout = text =>
     chat.SwitchTo(null);
     chat.Prefill(text);
 };
+// The Ideas page: every button is an idea verb on this terminal's node; no clipboard or image upload in a terminal.
+chrome.Ideas.Send = async (verb, target, args, ct) => await IdeaCommands.SendAsync(client, verb, target, args, Who, ct);
+chrome.Ideas.LoadRepos = async ct => (await client.GetReposAsync(ct)) is { Success: true, Response: { } ideaRepos }
+    ? ideaRepos
+    : throw new InvalidOperationException("the node did not list its repos");
+chrome.Ideas.OnAnswer = cards.OnAnswer;
+chrome.Ideas.OnOpen = url => DashboardCommands.Open(url);
+chrome.Ideas.Track = (run, what) => tracker.Run(run, what);
+chrome.Ideas.Changed = Redraw;
+// The Spend page and a flight's spend: read from the node's spend routes, again once 30 s old (see SpendReads).
+var spendReads = new SpendReads(client, Redraw);
+chrome.Spend.OnWindow = window => spendReads.Ask(window, feed.Screen(DateTimeOffset.UtcNow).Source, force: true);
 chat.OnAnswerNow = async sendId =>
 {
     var refused = await ChatCommands.AnswerNowAsync(client, sendId, Who, stop.Token);
@@ -440,6 +452,16 @@ while (!stop.IsCancellationRequested)
         var pages = merged = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now);
         // This node in maintenance: Home and Flights say so.
         home.Maintenance = flights.Maintenance = feed.Summary(now) is { Connected: true, Node.Maintenance: true };
+        if (page == PilotPage.Spend)
+        {
+            spendReads.Ask(chrome.Spend.Window, pages.Sessions.Source);
+        }
+        chrome.Flights.Spend = spendReads.Flights;
+        if (page == PilotPage.Home)
+        {
+            spendReads.AskToday();
+        }
+        chrome.Home.Today = spendReads.Today;
         var pageTree = page switch
         {
             PilotPage.Chat => chat.Tree(),
@@ -449,6 +471,8 @@ while (!stop.IsCancellationRequested)
             PilotPage.PullRequests => pullRequests.Tree(pages.PullRequests ?? new PullRequestsScreen(null, pages.Sessions.Source, now), width),
             PilotPage.Jobs => jobs.Tree(pages.Jobs),
             PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, held.Entries, now)),
+            PilotPage.Ideas => chrome.Ideas.Tree(pages.Ideas ?? new IdeasScreen([], [], [], pages.Sessions.Source, now)),
+            PilotPage.Spend => chrome.Spend.Tree(spendReads.Screen ?? new SpendScreen(chrome.Spend.Window, null, null, pages.Sessions.Source, now)),
             PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };
