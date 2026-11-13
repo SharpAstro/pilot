@@ -716,10 +716,7 @@ public sealed partial class LegCommander
     /// </summary>
     private async Task<(bool Finished, string? Why, bool IsCheck)> FinishFromPushedAsync(FlightRow flight, LegRow leg, string report, string? who, CancellationToken cancellationToken)
     {
-        if (leg.Check is not { Length: > 0 })
-        {
-            return (false, "it has no check to rerun", false);
-        }
+        if (leg.Check is not { Length: > 0 }) { return (false, "it has no check to rerun", false); }
         if (leg.Checklist.Any(i => !i.Done))
         {
             return (false, $"steps not ticked: {string.Join("; ", leg.Checklist.Where(i => !i.Done).Select(i => i.Text))}", false);
