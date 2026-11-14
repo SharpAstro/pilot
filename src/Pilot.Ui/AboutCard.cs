@@ -44,7 +44,7 @@ internal sealed class AboutCard
     public static IReadOnlyList<(string Keys, string What)> TerminalPageKeys { get; } = PageRows();
 
     /// <summary>
-    /// The keys pilot-tui handles (Program.cs's Handle, TerminalRail.Handle, the chrome's Alt+Left, Alt+Right and Escape): no Ctrl+digit,
+    /// The keys pilot-tui handles (TerminalInput's router and its declared chords, the chrome's Alt+Left, Alt+Right and Escape): no Ctrl+digit,
     /// rail, right-click or mouse buttons. The page keys come first, from <see cref="TerminalPageKeys"/>.
     /// </summary>
     public static IReadOnlyList<(string Keys, string What)> TerminalKeys { get; } =
