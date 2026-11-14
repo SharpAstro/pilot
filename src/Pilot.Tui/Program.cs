@@ -518,6 +518,8 @@ while (!stop.IsCancellationRequested)
             columns >= TerminalFrame.CardsPanelColumns && (cardsScreen.HasAny || cards.CanTell) ? cards.Tree(cardsScreen) : null);
         arranged = Layout.Engine.Arrange(tree, new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
         // No clear: the cell buffer diffs each frame against the last, and the tree's backgrounds cover every cell.
+        // Cropped to each scroll container and page rect first (Console.Lib's painter has no clip); the hit test reads the same tree.
+        arranged = TerminalFrame.Clip(arranged);
         CellLayout.Paint(terminal, arranged);
         if (focus.Current is null)
         {

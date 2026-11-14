@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Console.Lib;
 using DIR.Lib;
 using Layout = DIR.Lib.Layout;
@@ -61,6 +62,123 @@ public sealed class TerminalFrameTests
         buffer.Resize(columns, rows);
         CellLayout.Paint(new BufferedViewport(buffer, columns, rows), arranged);
         return (buffer, pageTree, arranged);
+    }
+
+    // The Chat page as pilot-tui builds it (chrome.Chat's own Tree), holding `count` long entries, read through the page's own follow.
+    private static async Task<(CellBuffer Buffer, System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> Painted, System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> Raw)> PaintChatAsync(
+        int count, bool scrolledUp, int columns, int rows)
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        var at = new DateTimeOffset(2026, 11, 14, 12, 0, 0, TimeSpan.Zero);
+        var feed = Enumerable.Range(0, count).Select(i => new TranscriptEntry
+        {
+            Index = i,
+            Kind = i % 2 == 0 ? TranscriptKind.User : TranscriptKind.Assistant,
+            At = at.AddSeconds(i),
+            Text = $"Entry {i}: " + string.Join(' ', Enumerable.Repeat("a long line of the transcript that wraps past the width of the list", 6)),
+        }).ToList();
+        var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        chrome.Chat.Load = (after, _) => Task.FromResult(new ChatPage { Entries = [.. feed.Where(e => e.Index > after)], Total = feed.Count });
+        chrome.Chat.OnSend = _ => Task.FromResult<string?>(null);
+        chrome.Chat.Changed = () =>
+        {
+            if (chrome.Chat.Entries.Count >= count)
+            {
+                opened.TrySetResult();
+            }
+        };
+        try
+        {
+            if (count > 0)
+            {
+                chrome.Chat.Open();
+                await opened.Task.WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
+            }
+            var cards = Cards();
+            var rail = TerminalRail.Tree(PilotPage.Chat, GlyphMode.Emoji, null, null, Live.At, _ => { }, null, columns);
+            var panel = columns >= TerminalFrame.CardsPanelColumns ? chrome.Cards.Tree(cards) : null;
+            var arranged = Layout.Engine.Arrange(TerminalFrame.Tree(rail, chrome.Chat.Tree(), panel), new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
+            if (scrolledUp)
+            {
+                // The list is anchored to its end; a person who scrolled up reads from further up, and the frame is arranged again.
+                var list = arranged.Select(a => a.Node.Scroll).First(s => s is { Mode: ScrollBarMode.Interactive })!;
+                list.AtomOffset = Math.Max(0, list.AtomOffset - 7);
+                arranged = Layout.Engine.Arrange(TerminalFrame.Tree(rail, chrome.Chat.Tree(), panel), new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
+            }
+            var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
+            buffer.Resize(columns, rows);
+            var painted = TerminalFrame.Clip(arranged);
+            CellLayout.Paint(new BufferedViewport(buffer, columns, rows), painted);
+            return (buffer, painted, arranged);
+        }
+        finally
+        {
+            chrome.Chat.Close();
+        }
+    }
+
+    [Theory]
+    [InlineData(false, 160, 44)]
+    [InlineData(true, 160, 44)]
+    [InlineData(false, 100, 24)]
+    [InlineData(true, 100, 24)]
+    public async Task ATranscriptTallerThanItsListLeavesTheBarTheHeaderAndTheCardsPanelIntact(bool scrolledUp, int columns, int rows)
+    {
+        var size = $"Chat {columns}x{rows}{(scrolledUp ? " scrolled up" : "")}";
+        var (full, painted, raw) = await PaintChatAsync(120, scrolledUp, columns, rows);
+
+        var list = raw.First(a => a.Node.Scroll is { Mode: ScrollBarMode.Interactive });
+        var listIndex = raw.IndexOf(list);
+        var listTop = list.Bounds.Y;
+        listTop.ShouldBeGreaterThan(1, $"{size}: the chat has header rows above its list");
+        var panelLeft = columns >= TerminalFrame.CardsPanelColumns ? raw.Where(a => a.Depth == 2).Last().Bounds.X : columns;
+
+        // The same frame painted without the transcript: the arranged tree with the list's descendants taken out (the list's own fill stays).
+        var without = raw.Where((a, i) => !(i > listIndex && IsUnder(raw, a, list))).ToImmutableArray();
+        var empty = new CellBuffer { ColorMode = ColorMode.TrueColor };
+        empty.Resize(columns, rows);
+        CellLayout.Paint(new BufferedViewport(empty, columns, rows), without);
+
+        // The bar row, the header rows above the list, and the cards panel's columns hold what that frame paints.
+        var differ = new List<string>();
+        for (var y = 0; y < rows; y++)
+        {
+            for (var x = 0; x < columns; x++)
+            {
+                var guarded = y == 0 || y < listTop || x >= panelLeft;
+                if (guarded && full.BackAt(x, y) != empty.BackAt(x, y))
+                {
+                    differ.Add($"({x},{y})");
+                }
+            }
+        }
+        differ.ShouldBeEmpty($"{size}: {differ.Count} cells outside the list changed with a transcript, first: {string.Join(' ', differ.Take(8))}");
+
+        // What a click reads is what was painted: no node under the list reaches outside the list's rect (the bar, the header, the panel).
+        var pl = painted.First(a => a.Node.Scroll is { Mode: ScrollBarMode.Interactive });
+        painted.Where(a => IsUnder(painted, a, pl) && (a.Bounds.Y < pl.Bounds.Y || a.Bounds.X < pl.Bounds.X
+                || a.Bounds.Y + a.Bounds.Height > pl.Bounds.Y + pl.Bounds.Height || a.Bounds.X + a.Bounds.Width > pl.Bounds.X + pl.Bounds.Width))
+            .ShouldBeEmpty($"{size}: a node under the list reaches outside the list's rect");
+    }
+
+    // A node is under the list when it follows it in pre-order at a deeper depth, before the next node at the list's depth or above.
+    private static bool IsUnder(System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> arranged, Layout.ArrangedNode<int> node, Layout.ArrangedNode<int> list)
+    {
+        var from = arranged.IndexOf(list);
+        var to = arranged.IndexOf(node);
+        if (to <= from)
+        {
+            return false;
+        }
+        for (var i = from + 1; i <= to; i++)
+        {
+            if (arranged[i].Depth <= list.Depth)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     [Theory]
