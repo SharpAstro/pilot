@@ -273,7 +273,10 @@ public sealed class TerminalFrameTests
             }
         };
         chrome.Settings.Tree(DateTimeOffset.UtcNow, columns * 8f);
-        await loaded.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        if (chrome.Settings.Page is null)
+        {
+            await loaded.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        }
         return chrome.Settings.Tree(DateTimeOffset.UtcNow, columns * 8f);
     }
 
