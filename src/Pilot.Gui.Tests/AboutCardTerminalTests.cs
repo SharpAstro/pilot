@@ -430,7 +430,7 @@ public sealed class AboutCardTerminalTests
         // Read against TerminalInput: q and Ctrl+C quit, Backspace goes back, Ctrl+S and Ctrl+T are declared chords, Up and Down (and Enter)
         // are the router's list keys, a left click goes through the router; and the chrome's own Alt+Left, Alt+Right and Escape.
         AboutCard.TerminalKeys.Skip(AboutCard.TerminalPageKeys.Count).Select(k => k.Keys).ShouldBe(
-            ["Ctrl+S", "Ctrl+T", "Enter", "Up, Down", "Escape", "Backspace", "q, Ctrl+C", "Left click"]);
+            ["Ctrl+S", "Ctrl+T", "Up, Down, Enter", "Escape", "Backspace", "Ctrl+1 to 0", "q, Ctrl+C", "Left click"]);
         AboutCard.TerminalKeys.Single(k => k.Keys == "Backspace").What.ShouldContain("Alt+Right");
         AboutCard.TerminalKeys.ShouldAllBe(k => k.What.Length <= AboutCard.TerminalLineChars);
         // The away mark's row is the card's too: it fits the terminal's narrowest card and keeps the words CursorAndLinksTests reads.

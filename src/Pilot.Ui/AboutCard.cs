@@ -52,8 +52,7 @@ internal sealed class AboutCard
         .. TerminalPageKeys,
         ("Ctrl+S", "the say bar, to the selected session"),
         ("Ctrl+T", "the chat with the watchtower"),
-        ("Enter", "a session's transcript"),
-        ("Up, Down", "the selection, or a wizard's highlight"),
+        ("Up, Down, Enter", "select a row, open it; or a wizard's highlight"),
         ("Escape", "up a level, or out of a wizard step or a menu"),
         // Not "Backspace, Alt+Left" as the GUI writes its pair: the key column is 18 cells, and a longer key is cut. One row, not two:
         // a 24-row terminal has room for this list and nothing more.
