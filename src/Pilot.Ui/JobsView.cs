@@ -173,6 +173,9 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     // What a page too narrow for the table leaves the columns that cannot be dropped: their words end in an ellipsis; and the command, which
     // then takes most of the room, by its weight.
     private const float CommandSqueezedWeight = 3f;
+    // The least the Command column keeps: its title (about 62 wide at 12 pt) and a cell that is more than an ellipsis. With less, the
+    // title ran under the divider that stands on its edge and a cell shrank to a bare "…" under the row's own hit area (PIL1053).
+    private const float CommandMin = 70f;
     private const float IdMin = 44f;
     private const float StateMin = 70f;
     private const float NodeMin = 40f;
@@ -618,7 +621,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var columns = new List<ListColumn>
         {
             Sorted(ListColumn.Fixed("Job", IdWidth, IdMin)),
-            Sorted(ListColumn.Star("Command", 0f, 0f, CommandSqueezedWeight)),
+            Sorted(ListColumn.Star("Command", CommandMin, CommandMin, CommandSqueezedWeight)),
             Sorted(ListColumn.Fixed("For", ForWidth)),
             Sorted(ListColumn.Fixed("State", StateWidth, StateMin)),
             Sorted(ListColumn.Optional("Started", StartedWidth), descendingFirst: true),
@@ -855,7 +858,9 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             .Bg(PanelBg)
             .W(Layout.Sizing.Star())
             .H(Layout.Sizing.Star(DetailWeight, 0f, PanelHeight(facts.Count)))
-            .CollapseBelow(DetailMinHeight);
+            // The panel and the table share what is left 3 to 1, and the table never has less than BodyMinHeight: the panel is hidden where its
+            // share is too small to leave the table that, else the table keeps its minimum and the panel is laid out past the window's foot.
+            .CollapseBelow(Math.Max(DetailMinHeight, BodyMinHeight * DetailWeight));
     }
 
     /// <summary>The end of the job's output, read from the node and followed while it is selected; its last line at the bottom.</summary>

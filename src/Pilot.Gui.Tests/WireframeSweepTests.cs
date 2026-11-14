@@ -45,15 +45,34 @@ public static class WireframeSweepTests
     internal static string Key(string page, string state, int width, float dpi, int height) =>
         $"{page} | {state} | {width} wide | DPI {dpi.ToString(System.Globalization.CultureInfo.InvariantCulture)} | {height} high";
 
+    private const string ZoomAction = "map:zoom";
+    private const string PalettePanelAction = "FlightMapLayerPaletteGrip:Panel";
+
     /// <summary>
-    /// What the check leaves alone: the regions the flight map places by its data (a row, a destination or a leg of a flight: <c>map:&lt;code&gt;:...</c>),
-    /// which lie where the flights' positions put them, under the map's own overlays (the zoom control, the LAYERS menu) by design. The map's body
-    /// (<c>map:</c>), the overlays themselves and every text stay judged, so an overlay that sticks out of the map or text under it is still found.
+    /// What the check leaves alone, all of it placed by the flight map's data and nothing else:
+    /// <list type="bullet">
+    /// <item>the regions a flight's position puts down (a continent's header <c>map:&lt;node&gt;</c>, a row, a destination, a leg or a plane:
+    /// <c>map:...</c>), which lie wherever the flights are, under the map's own overlays by design; the zoom pill (<c>map:zoom</c>) is the one
+    /// <c>map:</c> region still judged, and the LAYERS palette and every other control are judged as ever;</item>
+    /// <item>on the flights canvas, a label the map drew (a flight code, a leg's name, a state) that lies under the zoom pill or the LAYERS panel,
+    /// both painted over the map after it: a label sits where its flight is, and the overlay floats over whatever the pan put there. The overlays'
+    /// own text, and a label on any other page, stay judged.</item>
+    /// </list>
     /// </summary>
-    internal static WireframeOptions OptionsFor(string page) => new()
+    internal static WireframeOptions OptionsFor(string page, WireframeFrame frame)
     {
-        IgnoreRegion = r => r.Result is HitResult.ButtonHit { Action: var a } && a.StartsWith("map:", StringComparison.Ordinal) && a.IndexOf(':', 4) > 0,
-    };
+        var overlays = page == "flights canvas"
+            ? frame.Regions.Where(r => r.Result is HitResult.ButtonHit { Action: ZoomAction or PalettePanelAction }).ToArray()
+            : [];
+        return new()
+        {
+            IgnoreRegion = r => r.Result is HitResult.ButtonHit { Action: var a } && a.StartsWith("map:", StringComparison.Ordinal) && a != ZoomAction,
+            IgnoreText = t => overlays.Any(o => o.Order > t.Order && Overlaps(o.Visible, t.Visible)),
+        };
+    }
+
+    private static bool Overlaps(RectF32 a, RectF32 b) =>
+        a.X < b.X + b.Width && b.X < a.X + a.Width && a.Y < b.Y + b.Height && b.Y < a.Y + a.Height;
 
     /// <summary>One case: the findings of the page drawn at the size, minus the known ones, fail it.</summary>
     internal static async Task Run(string page, string state, int width, float dpi, int height)
@@ -88,7 +107,7 @@ public static class WireframeSweepTests
         renderer.Begin();
         prepared.Chrome.Render(data.Sessions, data.Flights, PageTextOverlapTests.CardsOf(data, page), data.Jobs, data.Fleet, data.Repos, data.PullRequests,
             new RectF32(0, 0, width, height), data.Machines, null, data.Spend);
-        return Wireframe.Check(renderer.Frame, OptionsFor(page));
+        return Wireframe.Check(renderer.Frame, OptionsFor(page, renderer.Frame));
     }
 }
 
