@@ -158,5 +158,30 @@ public sealed class TerminalHeaderTests
             .Select(a => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value).FirstOrDefault() ?? "";
         TextAt(input.Y - 1, '╭').ShouldContain("╮");
         TextAt(input.Y + 1, '╰').ShouldContain("╯");
+        // The toolbar is its content tall: the table's header stands on the row right under the box's bottom edge.
+        var header = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == "Pull request").ToList();
+        header.Count.ShouldBe(1);
+        header[0].Bounds.Y.ShouldBe(input.Y + 2);
+    }
+
+    [Fact]
+    public void ThePullRequestsSearchBoxFollowsANarrowPage()
+    {
+        using var terminal = HeaderMetrics.Use(TerminalMode);
+        using var renderer = new RgbaImageRenderer(1, 1);
+        var chrome = NewChrome(renderer);
+        var pr = new PullRequestRow
+        {
+            Repo = "SharpAstro/pilot", Number = 1, Title = "t", Url = "https://github.com/SharpAstro/pilot/pull/1", Author = "a", Kind = PullRequestKind.Ready, Label = "Ready",
+            UpdatedAt = Live.At, CreatedAt = Live.At, Head = "feature/x", Base = "main",
+        };
+        var row = new PullRequestsRow { Orgs = ["SharpAstro"], ReadAt = Live.At, Viewer = "a", PullRequests = [pr] };
+        var page = chrome.PullRequests.Tree(new PullRequestsScreen(row, "test", Live.At), 50 * 8f);
+        var arranged = Layout.Engine.Arrange(page, new Rect<int>(0, 0, 50, 40), CellMeasureContext.PixelAuthored);
+        var input = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).Bounds;
+        (input.X + input.Width).ShouldBeLessThanOrEqualTo(50);
+        var top = arranged.Single(a => a.Bounds.Y == input.Y - 1 && a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.StartsWith('╭'));
+        (top.Bounds.X + top.Bounds.Width).ShouldBeLessThanOrEqualTo(50);
+        top.Bounds.Height.ShouldBe(1);
     }
 }

@@ -42,4 +42,7 @@ public static class HeaderMetrics
 
     /// <summary>The padding above and below the bar's rows: 6 in a window, none in the terminal.</summary>
     public static float BarPadY => Terminal ? 0f : 6f;
+
+    /// <summary>The bottom of the bar's one row of buttons: where a card hung from it starts.</summary>
+    public static float ButtonsBottom => BarPadY + BarRow;
 }

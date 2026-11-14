@@ -219,7 +219,7 @@ internal sealed class AboutCard
     /// </summary>
     public Layout.Node Over(Layout.Node page, Palette? night = null) => IsOpen
         ? Layout.Builder.Overlay(page, Layout.Builder.VStack(
-            Layout.Builder.Spacer().WStar().HFixed(HeaderMetrics.BarPadY + HeaderMetrics.BarRow),
+            Layout.Builder.Spacer().WStar().HFixed(HeaderMetrics.ButtonsBottom),
             Layout.Builder.Anchored(Card(night), Layout.DockSide.Right, margin: 12f).WStar().HStar()).Stretch()).Stretch()
         : page;
 
