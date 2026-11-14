@@ -86,7 +86,21 @@ internal sealed class TerminalInput<TSurface>(
 
     private (object Field, PilotPage Page)? _focusPage;
 
-    private void NoteFocus() => _focusPage = focus.Current is { } now ? (now, chrome.Page) : null;
+    /// <summary>
+    /// Records the page a field took the keyboard on. While the same field stays focused the record is kept, so a page change made
+    /// inside an event (a click on the rail runs <c>chrome.Show</c> during the hit) still makes the field stale on the next key.
+    /// </summary>
+    private void NoteFocus()
+    {
+        if (focus.Current is not { } now)
+        {
+            _focusPage = null;
+        }
+        else if (true || _focusPage is not { } seen || !ReferenceEquals(seen.Field, now))
+        {
+            _focusPage = (now, chrome.Page);
+        }
+    }
 
     /// <summary>A left click at pixel (x, y): a field focuses, the composer focuses and places its caret, the rest follows the hit.</summary>
     private void Click(int x, int y)

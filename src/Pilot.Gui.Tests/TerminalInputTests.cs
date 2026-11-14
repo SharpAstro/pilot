@@ -25,6 +25,12 @@ public sealed class TerminalInputTests
         public TextInputFocus Focus { get; }
         public TerminalInput<RgbaImage> Input { get; }
 
+        /// <summary>What the routing's quit does.</summary>
+        public Action Quit { get; set; } = () => { };
+
+        /// <summary>A stand-in page drawn for one page in place of the plain text, e.g. a page holding a field.</summary>
+        public (PilotPage Page, Func<Layout.Node> Tree)? StandIn { get; set; }
+
         public Rig()
         {
             var sessions = new SessionsView<RgbaImage>(Vessel);
@@ -34,7 +40,7 @@ public sealed class TerminalInputTests
             Chrome.Chat.Cells = true;
             Chrome.Chat.CellColumns = TerminalFrame.PageColumns(Columns, false);
             Focus = sessions.Ui.Focus;
-            Input = new TerminalInput<RgbaImage>(Chrome, sessions, Focus, new BackgroundTaskTracker(), () => { }, () => { })
+            Input = new TerminalInput<RgbaImage>(Chrome, sessions, Focus, new BackgroundTaskTracker(), () => { }, () => Quit())
             {
                 HitTest = (tree, column, row) => CellLayout.HitTest(tree, column, row),
                 TextInputs = tree => CellLayout.TextInputs(tree),
@@ -46,7 +52,9 @@ public sealed class TerminalInputTests
         public ImmutableArray<Layout.ArrangedNode<int>> Frame()
         {
             var rail = TerminalRail.Tree(Chrome.Page, GlyphMode.Emoji, null, null, Live.At, Input.Show, null, Columns);
-            var page = Chrome.Page == PilotPage.Chat ? Chrome.Chat.Tree() : Layout.Builder.Text("elsewhere", 14f, Palette.Current.Bright).WStar().RowH(16f);
+            var page = Chrome.Page == PilotPage.Chat ? Chrome.Chat.Tree()
+                : StandIn is { } standIn && standIn.Page == Chrome.Page ? standIn.Tree()
+                : Layout.Builder.Text("elsewhere", 14f, Palette.Current.Bright).WStar().RowH(16f);
             var arranged = TerminalFrame.Clip(Layout.Engine.Arrange(TerminalFrame.Tree(rail, page, null), new Rect<int>(0, 0, Columns, Rows), CellMeasureContext.PixelAuthored));
             Input.Arranged = arranged;
             return arranged;
@@ -153,6 +161,55 @@ public sealed class TerminalInputTests
         rig.Input.Handle(new InputEvent.KeyDown(InputKey.S, InputModifier.Ctrl), null);
         rig.Key(InputKey.Q, 'q');
         rig.Chrome.Page.ShouldBe(PilotPage.Sessions);
-        rig.Focus.Current.ShouldNotBeNull();
+        rig.Focus.Current.ShouldBeSameAs(rig.Chrome.Sessions.SayInput);
+        rig.Chrome.Sessions.SayInput.Text.ShouldBe("q");
+    }
+
+    private static Layout.ArrangedNode<int> RailEntry(ImmutableArray<Layout.ArrangedNode<int>> arranged, PilotPage page)
+        => arranged.First(a => a.Node.Hit is HitResult.ButtonHit hit && hit.Action == TerminalRail.Action(page));
+
+    [Fact]
+    public void TheChatBoxLeftBehindByARailClickOntoHomeDoesNotTakeTheNextKey()
+    {
+        using var rig = new Rig();
+        rig.Key(InputKey.D2, '2');
+        rig.Focus.Current.ShouldBeSameAs(rig.Chrome.Chat.Input);
+        var arranged = rig.Frame();
+        var home = RailEntry(arranged, PilotPage.Home);
+        rig.Click(home.Bounds.X + 2, home.Bounds.Y);
+        rig.Chrome.Page.ShouldBe(PilotPage.Home);
+        rig.Frame();
+
+        var quit = 0;
+        rig.Quit = () => quit++;
+        rig.Key(InputKey.Q, 'q');
+
+        quit.ShouldBe(1, "the q went into the hidden chat box instead of quitting");
+        rig.Focus.Current.ShouldBeNull();
+        rig.Chrome.Chat.Input.Text.ShouldBe("");
+    }
+
+    [Fact]
+    public void AFieldFocusedByAClickThenLeftByARailClickDoesNotEatTheChatKey()
+    {
+        using var rig = new Rig();
+        var why = rig.Chrome.Flights.WhyInput;
+        // A stand-in Flights page holding the why-field, focused by a click on it.
+        rig.StandIn = (PilotPage.Flights, () => Layout.Builder.TextInput(why, 14f, Palette.Input).RowH(28f).WStar());
+        rig.Chrome.Show(PilotPage.Flights);
+        var arranged = rig.Frame();
+        var field = arranged.First(a => a.Node.Hit is HitResult.TextInputHit hit && ReferenceEquals(hit.Input, why));
+        rig.Click(field.Bounds.X + 1, field.Bounds.Y);
+        rig.Focus.Current.ShouldBeSameAs(why);
+
+        var home = RailEntry(rig.Frame(), PilotPage.Home);
+        rig.Click(home.Bounds.X + 2, home.Bounds.Y);
+        rig.Chrome.Page.ShouldBe(PilotPage.Home);
+        rig.Frame();
+        rig.Key(InputKey.D2, '2');
+
+        why.Text.ShouldBe("", "the digit went into the why-field left behind by the rail click");
+        EndsOnChatWithTheCaretParked(rig);
+        rig.Chrome.Chat.Input.Text.ShouldBe("");
     }
 }
