@@ -480,6 +480,8 @@ internal sealed class TranscriptEntryView
         var (label, labelColor, textColor, lines) = entry switch
         {
             { Kind: TranscriptKind.User, From: { } from } => (from, Tool, Body, 12),
+            // A card notice (ChatView.AsQuoted made its quotes) shows whole: a header, up to five lines a card, the instruction.
+            { Kind: TranscriptKind.User, Note: true } when entry.Text.Contains("\n> card ", StringComparison.Ordinal) => ("", Faint, Faint, 64),
             { Kind: TranscriptKind.User, Note: true } => ("", Faint, Faint, 2),
             { Kind: TranscriptKind.User } => (PromptLabel, Prompt, Bright, 12),
             { Kind: TranscriptKind.Assistant } => (AssistantLabel, Bright, Bright, AssistantLines),

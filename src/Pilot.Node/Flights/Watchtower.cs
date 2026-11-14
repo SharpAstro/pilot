@@ -1489,8 +1489,7 @@ public sealed partial class Watchtower(
             return false;
         }
 
-        var text = (fresh.Count == 1 ? "A card opened:" : $"{fresh.Count} cards opened:") + "\n" + string.Join("\n", fresh.Select(Briefs.CardLine))
-            + "\nThese are yours to see through: act on each (resolve a conflict, make a review's small fixes, redo a leg only for real work).";
+        var text = CardNotice.Compose(fresh);
         int retells;
         lock (_tellsLock)
         {

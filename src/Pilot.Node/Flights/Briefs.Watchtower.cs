@@ -436,11 +436,5 @@ public static partial class Briefs
     }
 
     /// <summary>One card as the watchtower reads it: id, bin, title, detail and its numbered choices.</summary>
-    public static string CardLine(CardRow card)
-    {
-        var bin = card.Bin switch { CardBin.Ring => "ring", CardBin.ForYou => "for you", _ => "handled" };
-        var detail = card.Detail is { Length: > 0 } d ? $" ({d.ReplaceLineEndings(" ")})" : "";
-        var choices = card.Choices.Length == 0 ? "" : $" Choices: {string.Join(", ", card.Choices.Select((c, i) => $"{i + 1} {c.Label}"))}.";
-        return $"- {card.Id} [{bin}] about {card.Subject}: {card.Title}{detail}.{choices}";
-    }
+    public static string CardLine(CardRow card) => CardNotice.Line(card);
 }

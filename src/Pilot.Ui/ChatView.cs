@@ -1050,6 +1050,10 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     /// </summary>
     internal static TranscriptEntry AsQuoted(TranscriptEntry entry)
     {
+        if (entry is { Kind: TranscriptKind.User, From: null, Note: true } && CardNotice.TryParse(entry.Text, out var notice))
+        {
+            return entry with { Text = QuotedNotice(notice) };
+        }
         if (entry.Kind != TranscriptKind.User || entry.From is not null || !CardContext.TryParse(entry.Text, out var chat))
         {
             return entry;
@@ -1061,6 +1065,55 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             quote += quote.Length > 0 ? " (card cut)" : "\n> (card cut)";
         }
         return entry with { Text = $"> card {chat.CardId}: {chat.Title}{quote}\n{chat.Words}" };
+    }
+
+    private const int NoticeDetailLines = 3;
+    private const int NoticeDetailWidth = 100;
+
+    // The node's message about opened cards as one quote per card (the id and title, a few lines of detail, the choices), then its
+    // instruction dim; the header line stays so the row still says what it is.
+    internal static string QuotedNotice(CardNoticeMessage notice)
+    {
+        var text = new System.Text.StringBuilder(notice.Header);
+        foreach (var card in notice.Cards)
+        {
+            text.Append("\n> card ").Append(card.Id).Append(": ").Append(card.Title);
+            if (card.Detail is { Length: > 0 } detail)
+            {
+                foreach (var line in DetailLines(detail))
+                {
+                    text.Append("\n> ").Append(line);
+                }
+            }
+            if (card.Choices.Length > 0)
+            {
+                text.Append("\n> ").Append(string.Join(", ", card.Choices.Select((c, i) => $"{i + 1} {c}")));
+            }
+        }
+        return notice.Instruction is { Length: > 0 } instruction ? text.Append('\n').Append(instruction).ToString() : text.ToString();
+    }
+
+    // The detail in at most a few lines cut at word breaks, the last ending in an ellipsis when it was cut.
+    private static IEnumerable<string> DetailLines(string detail)
+    {
+        var rest = detail.Trim();
+        for (var n = 1; n <= NoticeDetailLines && rest.Length > 0; n++)
+        {
+            if (rest.Length <= NoticeDetailWidth)
+            {
+                yield return rest;
+                yield break;
+            }
+            var at = rest.LastIndexOf(' ', NoticeDetailWidth);
+            at = at <= 0 ? NoticeDetailWidth : at;
+            if (n == NoticeDetailLines)
+            {
+                yield return rest[..Math.Min(at, NoticeDetailWidth - 3)].TrimEnd() + "...";
+                yield break;
+            }
+            yield return rest[..at];
+            rest = rest[at..].TrimStart();
+        }
     }
 
     // A typed message that did not go: its words, the node's reason, and Retry and Edit.
