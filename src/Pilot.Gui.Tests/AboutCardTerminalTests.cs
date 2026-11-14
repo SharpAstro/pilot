@@ -62,10 +62,17 @@ public sealed class AboutCardTerminalTests
             && a.Bounds.X <= keys.Bounds.X && a.Bounds.Y <= keys.Bounds.Y
             && a.Bounds.X + a.Bounds.Width >= keys.Bounds.X + keys.Bounds.Width && a.Bounds.Y + a.Bounds.Height >= keys.Bounds.Y + keys.Bounds.Height)
             .OrderByDescending(a => a.Depth).First().Bounds;
-        var cardText = string.Concat(arranged
-            .Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text } && a.Bounds.X >= card.X && a.Bounds.Y >= card.Y
-                && a.Bounds.X + a.Bounds.Width <= card.X + card.Width && a.Bounds.Y + a.Bounds.Height <= card.Y + card.Height)
-            .Select(a => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value));
+        // What may stand in a cell: the text of the leaf covering it (a trimmed one ends in an ellipsis), an icon's own mark, or a blank.
+        var leaves = arranged.Where(a => a.Node is Layout.Node.Leaf && a.Bounds.X >= card.X && a.Bounds.Y >= card.Y
+            && a.Bounds.X + a.Bounds.Width <= card.X + card.Width && a.Bounds.Y + a.Bounds.Height <= card.Y + card.Height).ToList();
+        bool Allowed(int x, int y, char glyph) => glyph == ' ' || leaves.Any(l => x >= l.Bounds.X && x < l.Bounds.X + l.Bounds.Width
+            && y >= l.Bounds.Y && y < l.Bounds.Y + l.Bounds.Height
+            && ((Layout.Node.Leaf)l.Node).Content switch
+            {
+                Layout.Content.Text t => glyph == '…' || t.Value.Contains(glyph),
+                Layout.Content.Icon => true,
+                _ => false,
+            });
 
         var faults = new List<string>();
         for (var y = card.Y; y < card.Y + card.Height; y++)
@@ -77,7 +84,7 @@ public sealed class AboutCardTerminalTests
                 {
                     faults.Add($"({x},{y}) is on another background");
                 }
-                else if (cell.Glyph != ' ' && !cardText.Contains(cell.Glyph))
+                else if (!Allowed(x, y, cell.Glyph))
                 {
                     faults.Add($"({x},{y}) holds '{cell.Glyph}', which is no glyph of the card");
                 }
