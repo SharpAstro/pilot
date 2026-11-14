@@ -173,6 +173,9 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     // What a page too narrow for the table leaves the columns that cannot be dropped: their words end in an ellipsis; and the command, which
     // then takes most of the room, by its weight.
     private const float CommandSqueezedWeight = 3f;
+    // The least the Command column keeps: its title (about 62 wide at 12 pt) and a cell that is more than an ellipsis. With less, the
+    // title ran under the divider that stands on its edge and a cell shrank to a bare "…" under the row's own hit area (PIL1053).
+    private const float CommandMin = 70f;
     private const float IdMin = 44f;
     private const float StateMin = 70f;
     private const float NodeMin = 40f;
@@ -187,7 +190,10 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     // The panel keeps its height while the window has the room; with less to give it, it is not shown, and the table keeps
     // BodyMinHeight before the panel has any, so a header that wrapped onto many lines leaves the table, not a panel past the foot.
     private const float DetailMinHeight = DetailHeight;
-    private const float BodyMinHeight = 140f;
+    // The table keeps this much; the panel and the table share what is left 3 to 1, so the table's share is clamped up to this where the window is
+    // short (a header that wrapped onto many lines) and the panel then stood past the window's foot by what the clamp added. At 3 to 1 the clamp
+    // starts below a panel of 3 x this, so a panel at its 300 least is never pushed out of a 600 high window by more than a header's own overflow.
+    private const float BodyMinHeight = 110f;
     private const float DetailWeight = 3f;
     private const float FactsColumn = 420f;
     private const float FactLabel = 70f;
@@ -618,7 +624,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var columns = new List<ListColumn>
         {
             Sorted(ListColumn.Fixed("Job", IdWidth, IdMin)),
-            Sorted(ListColumn.Star("Command", 0f, 0f, CommandSqueezedWeight)),
+            Sorted(ListColumn.Star("Command", CommandMin, CommandMin, CommandSqueezedWeight)),
             Sorted(ListColumn.Fixed("For", ForWidth)),
             Sorted(ListColumn.Fixed("State", StateWidth, StateMin)),
             Sorted(ListColumn.Optional("Started", StartedWidth), descendingFirst: true),

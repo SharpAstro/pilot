@@ -153,7 +153,7 @@ internal sealed partial class PullRequestsView<TSurface>
     private static float TerminalSearchBoxWidth(int columns) => columns * 8f;
 
     private const float RefusalFloor = 100f;
-    private const float SearchFloor = 60f;
+    private const float SearchFloor = 110f;
 
     private Layout.Node Main(PullRequestsScreen screen, IReadOnlyList<PullRequestOrgGroup> orgs, float width)
     {
