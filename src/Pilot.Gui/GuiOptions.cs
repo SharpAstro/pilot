@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.Globalization;
+using DIR.Lib;
 
 namespace Pilot.Gui;
 
@@ -56,6 +57,9 @@ internal sealed record GuiOptions
 
     /// <summary>With <c>--capture</c>: paint the window red on black, as the header's Night switch does.</summary>
     public bool Night { get; init; }
+    /// <summary>With <c>--capture</c>: the desktop accent the Standard palette is built for, as the window builds it from the system's; null keeps the built-in blue.</summary>
+    public RGBAColor32? Accent { get; init; }
+
     /// <summary>With <c>--page prs</c>: the orgs (<c>SharpAstro</c>) and repos (<c>SharpAstro/pilot</c>) to fold, comma-separated, so the capture shows them folded.</summary>
     public string? Fold { get; init; }
 
@@ -92,6 +96,7 @@ internal sealed record GuiOptions
         var hereName = new Option<string?>("--here-name") { Description = "With --peer and --snapshot: what this node is called on the page" };
         var layers = new Option<string?>("--layers") { Description = "With --page flights: the map's layers, a comma list: no-landed, arcs, no-held, no-pr, node=<key>, closed" };
         var night = new Option<bool>("--night") { Description = "With --capture: paint the window with the Night palette" };
+        var accent = new Option<string?>("--accent") { Description = "With --capture: paint the Standard palette built for this desktop accent, #RRGGBB" };
         var fold = new Option<string?>("--fold") { Description = "With --page prs: fold these orgs (SharpAstro) or repos (SharpAstro/pilot), comma-separated, so the capture shows them folded" };
         var exitAfter = new Option<string?>("--exit-after") { Description = "Close the window by itself after this long: 5s, 500ms, 2m" };
         var say = new Option<string[]>("--say")
@@ -103,7 +108,7 @@ internal sealed record GuiOptions
 
         var root = new RootCommand("pilot v2's GUI: every Claude session on the machine, live from the node")
         {
-            Options = { snapshot, socket, node, capture, size, page, flight, hover, view, select, peer, hereName, layers, night, fold, exitAfter, say },
+            Options = { snapshot, socket, node, capture, size, page, flight, hover, view, select, peer, hereName, layers, night, accent, fold, exitAfter, say },
         };
         var parsed = root.Parse([.. args]);
 
@@ -139,6 +144,20 @@ internal sealed record GuiOptions
             Fold = parsed.GetValue(fold),
             Page = parsed.GetValue(page) switch { "flights" => PilotPage.Flights, "repos" => PilotPage.Repos, "prs" => PilotPage.PullRequests, "jobs" => PilotPage.Jobs, "sessions" => PilotPage.Sessions, "chat" => PilotPage.Chat, "spend" => PilotPage.Spend, _ => PilotPage.Home },
         };
+        if (parsed.GetValue(accent) is { } accentText)
+        {
+            if (!TryParseAccent(accentText, out var color))
+            {
+                error = $"--accent takes #RRGGBB, as in #1f2a6b, not '{accentText}'.";
+                return null;
+            }
+            if (options.Capture is null)
+            {
+                error = "--accent paints a capture, so it needs --capture <out.png>.";
+                return null;
+            }
+            options = options with { Accent = color };
+        }
         if (parsed.GetValue(size) is { } sizeText)
         {
             if (!TryParseSize(sizeText, out var width, out var height))
@@ -170,6 +189,19 @@ internal sealed record GuiOptions
 
         error = null;
         return options;
+    }
+
+    private static bool TryParseAccent(string value, out RGBAColor32 color)
+    {
+        color = default;
+        var hex = value.StartsWith('#') ? value[1..] : value;
+        if (hex.Length != 6 || !int.TryParse(hex, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out var rgb))
+        {
+            return false;
+        }
+
+        color = new RGBAColor32((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb, 0xff);
+        return true;
     }
 
     private static bool TryParseSize(string value, out int width, out int height)

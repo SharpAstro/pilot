@@ -141,7 +141,28 @@ internal sealed record Palette(
     /// The standard palette: today's colours until <see cref="UseStartupAccent"/> sets it once at startup, then built from the
     /// desktop accent. Tests and pilot-tui never set it, so they keep the built-in colours.
     /// </summary>
-    public static Palette Standard => _standard ?? BuiltIn;
+    public static Palette Standard => _captureStandard.Value ?? _standard ?? BuiltIn;
+
+    private static readonly AsyncLocal<Palette?> _captureStandard = new();
+
+    /// <summary>
+    /// For a capture or a test: until the returned scope is disposed, <see cref="Standard"/> in this async flow is built for
+    /// <paramref name="accent"/>, as the window's startup accent would build it. Null changes nothing.
+    /// </summary>
+    public static IDisposable StandardForCapture(RGBAColor32? accent)
+    {
+        var was = _captureStandard.Value;
+        if (accent is { } a)
+        {
+            _captureStandard.Value = StandardFor(a);
+        }
+        return new Restore(() => _captureStandard.Value = was);
+    }
+
+    private sealed class Restore(Action undo) : IDisposable
+    {
+        public void Dispose() => undo();
+    }
 
     /// <summary>Builds the standard palette from the desktop accent, once, before the first frame; null keeps the built-in colours. Throws when set twice.</summary>
     public static void UseStartupAccent(RGBAColor32? accent)
