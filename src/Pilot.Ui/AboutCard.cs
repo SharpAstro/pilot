@@ -45,12 +45,26 @@ internal sealed class AboutCard
         ("Left click", "a row, a button or a page on the bar"),
     ];
 
+    /// <summary>
+    /// The bar's keys as a set, not in the bar's order (Pull requests is 9, sixth): the digits 1 to 9 in runs, then 0, then the others.
+    /// </summary>
     private static string PageKeys()
     {
         var keys = TerminalRail.Keys.Select(k => k.Key).ToList();
-        var digits = keys.Where(char.IsDigit).ToList();
-        var others = keys.Where(k => !char.IsDigit(k));
-        return $"{digits[0]} to {digits[^1]}" + string.Concat(others.Select(k => $", {k}"));
+        var digits = keys.Where(k => k is >= '1' and <= '9').Order().ToList();
+        var parts = new List<string>();
+        for (var i = 0; i < digits.Count;)
+        {
+            var end = i;
+            while (end + 1 < digits.Count && digits[end + 1] == digits[end] + 1)
+            {
+                end++;
+            }
+            parts.Add(end - i >= 2 ? $"{digits[i]} to {digits[end]}" : string.Join(", ", digits.GetRange(i, end - i + 1)));
+            i = end + 1;
+        }
+        parts.AddRange(keys.Where(k => !(k is >= '1' and <= '9')).OrderBy(k => k == '0' ? 0 : 1).Select(k => k.ToString()));
+        return string.Join(", ", parts);
     }
 
     /// <summary>The keys this host's card lists: the GUI's by default, pilot-tui sets <see cref="TerminalKeys"/>.</summary>

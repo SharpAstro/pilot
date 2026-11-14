@@ -511,12 +511,9 @@ while (!stop.IsCancellationRequested)
         }
         var cardsScreen = pages.Cards;
         flights.Jobs = pages.JobRows;
-        // The panel takes 38 columns (the GUI's 300 units) when there is room beside a usable page, and something to show.
-        var beside = columns >= 120 && (cardsScreen.HasAny || cards.CanTell)
-            ? Layout.Builder.HStack(pageTree.WStar(), cards.Tree(cardsScreen).WFixed(CardsView<RgbaImage>.Width)).Stretch()
-            : pageTree;
-        // The bar takes the row above the page, as the page needs the width.
-        var tree = Layout.Builder.VStack(railTree, beside.HStar()).Stretch();
+        // The cards panel stands beside the page when there is room beside a usable page, and something to show.
+        var tree = TerminalFrame.Tree(railTree, pageTree,
+            columns >= TerminalFrame.CardsPanelColumns && (cardsScreen.HasAny || cards.CanTell) ? cards.Tree(cardsScreen) : null);
         arranged = Layout.Engine.Arrange(tree, new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
         // No clear: the cell buffer diffs each frame against the last, and the tree's backgrounds cover every cell.
         CellLayout.Paint(terminal, arranged);
