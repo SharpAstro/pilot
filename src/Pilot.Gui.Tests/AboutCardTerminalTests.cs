@@ -304,11 +304,11 @@ public sealed class AboutCardTerminalTests
         card.Node.Bounds.Y.ShouldBeLessThan(10, "the card hangs under the page's top bar, not halfway down the terminal");
     }
 
-    /// <summary>Every row a terminal's card lists, its key and what it does, must read whole in the terminal's cells inside the card.</summary>
-    private static void EveryKeyRowReadsWhole(Card card, TerminalScreen screen, string size)
+    /// <summary>Every row of <paramref name="list"/>, its key and what it does, must read whole in the terminal's cells inside the card.</summary>
+    private static void EveryKeyRowReadsWhole(Card card, TerminalScreen screen, string size, IEnumerable<(string Keys, string What)> list)
     {
         var rows = RowsIn(screen, card.Drawn);
-        foreach (var (keys, what) in AboutCard.TerminalKeys.Append(AboutCard.AwayMark))
+        foreach (var (keys, what) in list)
         {
             rows.Any(r => r.Contains(keys, StringComparison.Ordinal) && r.Contains(what, StringComparison.Ordinal))
                 .ShouldBeTrue($"at {size} the card shows no whole row '{keys}' '{what}'; its rows:\n{string.Join('\n', rows)}");
@@ -321,12 +321,13 @@ public sealed class AboutCardTerminalTests
     [InlineData(190, 44)]
     [InlineData(160, 50)]
     [InlineData(130, 40)]
+    [InlineData(120, 40)] // the cards panel's first width: the narrowest card
     [InlineData(110, 40)]
     public void TheCardKeepsEveryRowInTheFrame(int columns, int rows)
     {
         var size = $"{columns}x{rows}";
         var (card, screen) = OpenCard(columns, rows);
-        EveryKeyRowReadsWhole(card, screen, size);
+        EveryKeyRowReadsWhole(card, screen, size, AboutCard.TerminalKeys.Append(AboutCard.AwayMark));
         foreach (var heading in new[] { AboutCard.IconButtonsHeading, AboutCard.FactsHeading, "pilot-tui", "node data" })
         {
             card.Kept.Any(l => l.Text == heading && Inside(l.Bounds, card.Drawn)).ShouldBeTrue($"at {size} the card dropped '{heading}'");
@@ -342,10 +343,10 @@ public sealed class AboutCardTerminalTests
     public void AShortTerminalKeepsEveryKeyAndDropsTheCardsLastRows(int columns, int rows)
     {
         // The terminal's card lists the keys first: a terminal too short for the whole card keeps them and gives up its last rows,
-        // the facts and the icon list, never one in the middle.
+        // the away mark, the facts and the icon list, never one in the middle. 24 rows hold the header and the keys and no more.
         var size = $"{columns}x{rows}";
         var (card, screen) = OpenCard(columns, rows);
-        EveryKeyRowReadsWhole(card, screen, size);
+        EveryKeyRowReadsWhole(card, screen, size, AboutCard.TerminalKeys);
         var texts = card.Subtree.Select(a => (a.Node as Layout.Node.Leaf)?.Content).OfType<Layout.Content.Text>().ToList();
         var kept = card.Subtree.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text }).Select(a => a.Bounds.Width > 0 && a.Bounds.Height > 0).ToList();
         var firstDropped = kept.IndexOf(false);
@@ -410,7 +411,7 @@ public sealed class AboutCardTerminalTests
             var expanded = keys.Split(", ").SelectMany(part => part.Split(" to ") is [var from, var to]
                 ? Enumerable.Range(from[0], to[0] - from[0] + 1).Select(c => (char)c)
                 : new[] { part.Single() });
-            expanded.Order().ShouldBe(named.Select(e => e[0]).Order(), $"row '{keys}'");
+            expanded.ShouldBe(named.Select(e => e[0]), $"row '{keys}'");
         }
         AboutCard.TerminalPageKeys[0].What.ShouldStartWith("pages: ");
         entries.ShouldBe(TerminalRail.Keys.Select(k => $"{k.Key} {k.Label}"));
@@ -429,7 +430,8 @@ public sealed class AboutCardTerminalTests
         // Read against Program.cs's Handle: q and Ctrl+C quit, Backspace goes back, Ctrl+S and Ctrl+T, Up and Down (and Enter) on the
         // page's own HandleInput, a left click through CellLayout.HitTest; and the chrome's own Alt+Left, Alt+Right and Escape.
         AboutCard.TerminalKeys.Skip(AboutCard.TerminalPageKeys.Count).Select(k => k.Keys).ShouldBe(
-            ["Ctrl+S", "Ctrl+T", "Enter", "Up, Down", "Escape", "Backspace", "Alt+Right", "q, Ctrl+C", "Left click"]);
+            ["Ctrl+S", "Ctrl+T", "Enter", "Up, Down", "Escape", "Backspace", "q, Ctrl+C", "Left click"]);
+        AboutCard.TerminalKeys.Single(k => k.Keys == "Backspace").What.ShouldContain("Alt+Right");
         AboutCard.TerminalKeys.ShouldAllBe(k => k.What.Length <= AboutCard.TerminalLineChars);
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));

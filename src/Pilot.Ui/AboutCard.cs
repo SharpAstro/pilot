@@ -29,11 +29,12 @@ internal sealed class AboutCard
     ];
 
     /// <summary>
-    /// The most text a row of <see cref="TerminalKeys"/> holds: a terminal sets every glyph one cell wide, so the card's value column is
-    /// about 75 cells at 100 columns (its 840 units less the padding and the key column of 140 units, 18 cells) and 82 at full width, and
-    /// a longer row is cut at its start, losing what it begins with. No row of the terminal's list is cut from 100 columns up.
+    /// The most text a row of <see cref="TerminalKeys"/> holds: a terminal sets every glyph one cell wide, and a longer row is cut at its
+    /// start, losing what it begins with. The card's value column is narrowest at 120 columns, where the cards panel first stands beside
+    /// the page: the page is 82 cells, the card 78, and less its padding and the key column (140 units, 18 cells) the value gets 55. So
+    /// no row of the terminal's list is cut at any width the cards panel shows at, nor without it from 100 columns up.
     /// </summary>
-    public const int TerminalLineChars = 72;
+    public const int TerminalLineChars = 55;
 
     /// <summary>
     /// The page keys as the terminal's card lists them: every key of <see cref="TerminalRail.Keys"/> with its page, in the bar's order,
@@ -53,10 +54,10 @@ internal sealed class AboutCard
         ("Ctrl+T", "the chat with the watchtower"),
         ("Enter", "a session's transcript"),
         ("Up, Down", "the selection, or a wizard's highlight"),
-        ("Escape", "up a level: back to the list; out of a wizard step or a menu"),
-        // Two rows, where the GUI's one reads "Alt+Left, Alt+Right": the key column is 18 cells, and a longer key is cut.
-        ("Backspace", "back through the places the window has been, as Alt+Left"),
-        ("Alt+Right", "forward again"),
+        ("Escape", "up a level, or out of a wizard step or a menu"),
+        // Not "Backspace, Alt+Left" as the GUI writes its pair: the key column is 18 cells, and a longer key is cut. One row, not two:
+        // a 24-row terminal has room for this list and nothing more.
+        ("Backspace", "back, as Alt+Left; Alt+Right goes forward"),
         ("q, Ctrl+C", "quit"),
         ("Left click", "a row, a button or a page on the bar"),
     ];
@@ -83,23 +84,22 @@ internal sealed class AboutCard
     }
 
     /// <summary>
-    /// A row's page keys as a set, not in the bar's order (Pull requests is 9, sixth): the digits 1 to 9 in runs, then 0, then the others.
+    /// A row's page keys in the bar's order, as its text names them (Pull requests is 9, sixth), with a run of three or more digits
+    /// counting up written as one range: "1 to 5", then "9, 6, 7".
     /// </summary>
     private static string PageKeys(IReadOnlyList<char> keys)
     {
-        var digits = keys.Where(k => k is >= '1' and <= '9').Order().ToList();
         var parts = new List<string>();
-        for (var i = 0; i < digits.Count;)
+        for (var i = 0; i < keys.Count;)
         {
             var end = i;
-            while (end + 1 < digits.Count && digits[end + 1] == digits[end] + 1)
+            while (end + 1 < keys.Count && char.IsAsciiDigit(keys[end]) && keys[end + 1] == keys[end] + 1)
             {
                 end++;
             }
-            parts.Add(end - i >= 2 ? $"{digits[i]} to {digits[end]}" : string.Join(", ", digits.GetRange(i, end - i + 1)));
+            parts.Add(end - i >= 2 ? $"{keys[i]} to {keys[end]}" : string.Join(", ", Enumerable.Range(i, end - i + 1).Select(k => keys[k])));
             i = end + 1;
         }
-        parts.AddRange(keys.Where(k => !(k is >= '1' and <= '9')).OrderBy(k => k == '0' ? 0 : 1).Select(k => k.ToString()));
         return string.Join(", ", parts);
     }
 
@@ -131,7 +131,7 @@ internal sealed class AboutCard
     public const string IconButtonsHeading = "Icon buttons (point at one for its word)";
 
     /// <summary>What the mark after a link's text means, as the card says it beside the keys.</summary>
-    public static readonly (string Mark, string What) AwayMark = (Followable.Away.Trim(), "a link that opens elsewhere (the browser, a folder), not an action here");
+    public static readonly (string Mark, string What) AwayMark = (Followable.Away.Trim(), "a link out (the browser, a folder), not an action here");
 
     /// <summary>Whether the card shows, over the page.</summary>
     public bool IsOpen { get; private set; }
