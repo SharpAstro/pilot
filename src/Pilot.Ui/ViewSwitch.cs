@@ -46,6 +46,6 @@ internal static class ViewSwitch
         var group = Layout.Builder.ButtonGroup<T>(options, current, select, style, 12f);
         return (group is Layout.Node.Stack stack ? stack with { Children = [.. stack.Children.Select(c => c.WithCursor(CursorKind.Pointer))] } : group)
             .WFixed(WidthOf(choices.Count))
-            .HFixed(AboutCard.HeaderButton);
+            .HFixed(HeaderMetrics.Button);
     }
 }

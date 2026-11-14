@@ -101,7 +101,7 @@ internal static class TopBar
         var palette = night ?? Palette.Standard;
         var items = new List<Layout.Node>
         {
-            Layout.Builder.Text("pilot v2", 20f, palette.Bright, TextAlign.Near, TextAlign.Far).WAuto(),
+            Layout.Builder.Text("pilot v2", HeaderMetrics.Terminal ? 12f : 20f, palette.Bright, TextAlign.Near, TextAlign.Far).WAuto(),
             Title(page.Title, palette.Dim),
         };
         items.AddRange(parts.NodePills ?? parts.Nodes?.Pills(night) ?? []);
@@ -130,8 +130,8 @@ internal static class TopBar
         // buttons and words of any size share one middle. A row of one HStack ran past a narrow page, drawing Autopilot and ? out
         // of it (PIL380). What every page shares stands at the bar's right corner, the same place on every page, and the flow
         // leaves it room on its first line.
-        var flow = FlowRow.Of(RowHeight, 12f, shared.Count > 0 ? SharedReserve : 0f, items);
-        var corner = Layout.Builder.HStack([.. shared.Select(item => FlowRow.Cell(item, RowHeight))]).WithGap(12f).WAuto().HFixed(RowHeight);
+        var flow = FlowRow.Of(HeaderMetrics.BarRow, HeaderMetrics.Terminal ? 8f : 12f, shared.Count > 0 ? SharedReserve : 0f, items);
+        var corner = Layout.Builder.HStack([.. shared.Select(item => FlowRow.Cell(item, HeaderMetrics.BarRow))]).WithGap(HeaderMetrics.Terminal ? 8f : 12f).WAuto().HFixed(HeaderMetrics.BarRow);
         var rows = new List<Layout.Node> { shared.Count > 0 ? Layout.Builder.Overlay(flow, Layout.Builder.Anchored(corner, Layout.DockSide.Right).WStar().HStar()).WStar().HAuto() : flow };
         if (page.CountsFit && !string.IsNullOrEmpty(page.Counts))
         {
@@ -144,6 +144,6 @@ internal static class TopBar
             rows.Add(Layout.Builder.Text(source, 12f, page.SourceColor ?? palette.Dim).RowH(SourceHeight));
         }
         rows.AddRange(page.Lines);
-        return Layout.Builder.VStack([.. rows]).Pad(PadX, PadY).Bg(palette.HeaderBg).WStar().HAuto();
+        return Layout.Builder.VStack([.. rows]).Pad(PadX, HeaderMetrics.BarPadY).Bg(palette.HeaderBg).WStar().HAuto();
     }
 }
