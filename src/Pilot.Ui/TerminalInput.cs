@@ -96,7 +96,7 @@ internal sealed class TerminalInput<TSurface>(
         {
             _focusPage = null;
         }
-        else if (true || _focusPage is not { } seen || !ReferenceEquals(seen.Field, now))
+        else if (_focusPage is not { } seen || !ReferenceEquals(seen.Field, now))
         {
             _focusPage = (now, chrome.Page);
         }
