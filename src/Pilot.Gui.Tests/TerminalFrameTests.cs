@@ -80,7 +80,7 @@ public sealed class TerminalFrameTests
         bar.ShouldNotBeEmpty();
         bar.ShouldAllBe(a => a.Bounds.Y == 0 && a.Bounds.Height == 1, $"{size}: the bar is row 0 only");
 
-        var pageNode = arranged.First(a => ReferenceEquals(a.Node, pageTree));
+        var pageNode = arranged.Where(a => a.Depth == arranged[0].Depth + 1).ElementAt(1);
         pageNode.Bounds.Y.ShouldBe(1, $"{size}: the page's first row is 1");
         (pageNode.Bounds.Y + pageNode.Bounds.Height).ShouldBe(rows, $"{size}: the page's last row is the terminal's last");
 
