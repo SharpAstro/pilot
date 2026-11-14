@@ -181,7 +181,7 @@ public sealed class TerminalListKeysTests
         var (rig, selected) = Shown("Sessions");
         using (rig)
         {
-            rig.Chrome.Sessions.Transcript.Load = (_, _, _, _) => Task.FromResult(new TranscriptPage());
+            rig.Chrome.Sessions.Transcript.Load = (_, _, _, _) => Task.FromResult(new TranscriptPage { Entries = [], Total = 0 });
             rig.Key(InputKey.Down);
             rig.Frame();
             rig.Key(InputKey.Down);
