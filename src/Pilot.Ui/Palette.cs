@@ -135,7 +135,46 @@ internal sealed record Palette(
         Selection = Night.RowFocusBg,
     };
 
-    public static Palette Standard { get; } = new(
+    private static Palette? _standard;
+
+    /// <summary>
+    /// The standard palette: today's colours until <see cref="UseStartupAccent"/> sets it once at startup, then built from the
+    /// desktop accent. Tests and pilot-tui never set it, so they keep the built-in colours.
+    /// </summary>
+    public static Palette Standard => _captureStandard.Value ?? _standard ?? BuiltIn;
+
+    private static readonly AsyncLocal<Palette?> _captureStandard = new();
+
+    /// <summary>
+    /// For a capture or a test: until the returned scope is disposed, <see cref="Standard"/> in this async flow is built for
+    /// <paramref name="accent"/>, as the window's startup accent would build it. Null changes nothing.
+    /// </summary>
+    public static IDisposable StandardForCapture(RGBAColor32? accent)
+    {
+        var was = _captureStandard.Value;
+        if (accent is { } a)
+        {
+            _captureStandard.Value = StandardFor(a);
+        }
+        return new Restore(() => _captureStandard.Value = was);
+    }
+
+    private sealed class Restore(Action undo) : IDisposable
+    {
+        public void Dispose() => undo();
+    }
+
+    /// <summary>Builds the standard palette from the desktop accent, once, before the first frame; null keeps the built-in colours. Throws when set twice.</summary>
+    public static void UseStartupAccent(RGBAColor32? accent)
+    {
+        if (Interlocked.CompareExchange(ref _standard, StandardFor(accent), null) is not null)
+        {
+            throw new InvalidOperationException("The standard palette is set once, at startup.");
+        }
+    }
+
+    /// <summary>Today's Standard colours, with the blue accent literals.</summary>
+    internal static Palette BuiltIn { get; } = new(
         Ground: new(0x12, 0x12, 0x18, 0xff),
         HeaderBg: new(0x1b, 0x1c, 0x24, 0xff),
         RowAltBg: new(0x16, 0x17, 0x1e, 0xff),
@@ -227,6 +266,87 @@ internal sealed record Palette(
         RetryBg: new(0xf3, 0xd9, 0xd9, 0xff),
         RetryHover: new(0xff, 0xff, 0xff, 0xff),
         RetryText: new(0x12, 0x12, 0x18, 0xff));
+
+    private const double MarkRatio = 3.0;
+    private const double TextRatio = 4.5;
+
+    // How near (degrees of hue) an accent may sit to Held or Failed before a selected row would read as that state.
+    private const double StateHueGap = 30.0;
+
+    /// <summary>
+    /// The Standard palette with the accent roles taken from <paramref name="accent"/> (a colour that reads on dark chrome); null is exactly
+    /// <see cref="BuiltIn"/>. Which roles follow the desktop and which are meaning:
+    /// ACCENT (follow it): RailAccent (a mark), Link and LinkSoft (text), RowFocusBg and SelectionBg (tints mixed from the accent and the
+    /// ground), LitBg/LitHover, Chosen, PillLit/PillLitHover and Button/ButtonHover (fills mixed from the accent and the ground, hover mixed
+    /// toward Bright). MEANING (always literal): Flying, Held, Landed (a state colour, not an accent), Failed and its tints, Ok, Running,
+    /// severities, lights, Armed, Go, Danger, Retry. Night is another record and never takes an accent.
+    /// Each accent role is measured (WCAG) against what it is drawn on and falls back to the built-in blue for that role when it misses
+    /// 3:1 as a mark or 4.5:1 as text; SelectionBg and RowFocusBg also fall back when the accent's hue is near Held or Failed, so a selected row
+    /// never reads as a held or failed one.
+    /// </summary>
+    internal static Palette StandardFor(RGBAColor32? accent)
+    {
+        var b = BuiltIn;
+        if (accent is not { } a)
+        {
+            return b;
+        }
+        var surfaces = new[] { b.Ground, b.PanelBg, b.MenuBg, b.HeaderBg };
+        bool Reads(RGBAColor32 c, double ratio) => surfaces.All(s => Contrast.Ratio(c, s) >= ratio);
+        var stateLike = Contrast.HueNear(a, b.Held, StateHueGap) || Contrast.HueNear(a, b.Failed, StateHueGap);
+
+        var rail = Reads(a, MarkRatio) ? a : b.RailAccent;
+        var link = Reads(a, TextRatio) ? a : b.Link;
+        var linkSoft = Contrast.Mix(link, b.Bright, 0.1);
+        if (!Reads(linkSoft, TextRatio))
+        {
+            linkSoft = b.LinkSoft;
+        }
+
+        // A fill is the accent mixed into the ground; its words must read on it, and it must stand off the ground as a mark.
+        RGBAColor32 Fill(double t, RGBAColor32 words, RGBAColor32 fallback, bool mark = true)
+        {
+            var c = Contrast.Mix(b.Ground, a, t);
+            return Contrast.Ratio(c, words) >= TextRatio && (!mark || Contrast.Ratio(c, b.Ground) >= MarkRatio) ? c : fallback;
+        }
+        (RGBAColor32 Fill, RGBAColor32 Hover) Pair(double t, RGBAColor32 words, RGBAColor32 fill, RGBAColor32 hover)
+        {
+            var c = Fill(t, words, fill);
+            if (c == fill)
+            {
+                return (fill, hover);
+            }
+            var h = Contrast.Mix(c, b.Bright, 0.12);
+            return Contrast.Ratio(h, words) >= TextRatio ? (c, h) : (fill, hover);
+        }
+
+        var focus = Contrast.Mix(b.RowAltBg, a, 0.22);
+        if (stateLike || Contrast.Ratio(focus, b.Bright) < TextRatio || Contrast.Ratio(focus, b.Body) < TextRatio)
+        {
+            focus = b.RowFocusBg;
+        }
+        var selection = stateLike ? b.SelectionBg : Fill(0.5, b.SelectionText, b.SelectionBg, mark: false);
+        var lit = Pair(0.55, b.Strong, b.LitBg, b.LitHover);
+        var pill = Pair(0.45, b.Strong, b.PillLit, b.PillLitHover);
+        var button = Pair(0.3, b.Bright, b.Button, b.ButtonHover);
+        var chosen = Fill(0.45, b.Strong, b.Chosen);
+
+        return b with
+        {
+            RailAccent = rail,
+            Link = link,
+            LinkSoft = linkSoft,
+            RowFocusBg = focus,
+            SelectionBg = selection,
+            LitBg = lit.Fill,
+            LitHover = lit.Hover,
+            PillLit = pill.Fill,
+            PillLitHover = pill.Hover,
+            Button = button.Fill,
+            ButtonHover = button.Hover,
+            Chosen = chosen,
+        };
+    }
 
     /// <summary>Dim reds on black and nothing else: no green or blue in any channel, so the eye stays dark-adapted.</summary>
     public static Palette Night { get; } = new(

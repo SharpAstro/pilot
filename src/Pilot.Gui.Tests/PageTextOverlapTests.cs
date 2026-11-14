@@ -453,7 +453,7 @@ public sealed class PageTextOverlapTests
         return view.Tree(data.Sessions);
     }
 
-    private static async Task<Layout.Node> OpenWizard(PilotChrome<RgbaImage> chrome, PageData data, bool toIssues)
+    internal static async Task<Layout.Node> OpenWizard(PilotChrome<RgbaImage> chrome, PageData data, bool toIssues)
     {
         var wizard = chrome.Flights.Wizard;
         wizard.LoadRepos = _ => Task.FromResult(data.WizardRepos);

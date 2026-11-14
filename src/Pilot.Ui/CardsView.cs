@@ -257,7 +257,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     private static RGBAColor32 Body => Palette.Current.Body;
     private static RGBAColor32 Dim => Palette.Current.Dim;
     private static RGBAColor32 Ring => Palette.Current.Held;
-    private static RGBAColor32 ForYou => Palette.Current.Landed;
+    private static RGBAColor32 ForYou => Palette.Current.Link;
     private static RGBAColor32 Link => Palette.Current.Link;
     private static RGBAColor32 CardHover => Palette.Current.CardHover;
     private static RGBAColor32 Button => Palette.Current.Action;
