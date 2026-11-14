@@ -23,12 +23,11 @@ internal static class WrappedProse
 
     /// <summary>
     /// One line of <paramref name="text"/> that ends in an ellipsis where the column is narrower than it (a plain text leaf is cut by the
-    /// clip with nothing to say so): a one-child wrap capped at one line, whole on hover. For a line that keeps its own line (a
+    /// clip with nothing to say so): its words in a wrap capped at one line (the engine ends a capped wrap in an ellipsis only when it drops a child, so one leaf is never cut so), whole on hover. For a line that keeps its own line (a
     /// command's or its output's, a message typed as lines) where <see cref="Of"/>'s words would reflow it.
     /// </summary>
     public static Layout.Node OneLine(string text, float size, RGBAColor32 color) =>
-        Layout.Builder.WrapH(Layout.Builder.Text(text, size, color).WAuto().Selectable())
-            .WithMaxLines(1, ellipsis: true).WStar().WithTooltip(text);
+        Of(text, size, color, maxLines: 1).WithTooltip(text);
 
     /// <summary>
     /// A link that wraps: every word of <paramref name="text"/> is a leaf run through <paramref name="decorate"/>, which gives it the link's
