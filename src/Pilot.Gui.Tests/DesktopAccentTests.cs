@@ -70,6 +70,6 @@ public sealed class DesktopAccentTests
     {
         var (accent, reason) = SystemAccent.Resolve(new FakeSource(null, throws: true));
         accent.ShouldBeNull();
-        reason.ShouldContain("locked hive");
+        reason.ShouldNotBeNull().ShouldContain("locked hive");
     }
 }
