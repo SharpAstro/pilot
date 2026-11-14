@@ -202,7 +202,11 @@ internal sealed class AboutCard
         {
             rows.Add(IconLine(marks, what, night));
         }
-        return Layout.Builder.VStack([.. rows]).WithGap(2f).Pad(14f, 10f).Bg(night?.MenuBg ?? CardBg).WFixed(CardWidth).HAuto();
+        // One column that drops the rows it has no room for, where a stack would draw them on past its own height: a terminal of 40 to
+        // 50 rows is shorter than the card, whose fill is cut to the room it has, and its last rows hung below that fill over the page
+        // with nothing behind them (pilot #1027). Each row stretches across the card, no wider than its inside.
+        return Layout.Builder.WrapV([.. rows.Select(r => r.W(Layout.Sizing.Star(max: CardWidth - 28f)))]).WithGap(2f).WithMaxLines(1)
+            .Pad(14f, 10f).Bg(night?.MenuBg ?? CardBg).WFixed(CardWidth).HAuto();
     }
 
     private static Layout.Node IconLine(Layout.IconKind[] marks, string value, Palette? night) =>
