@@ -20,7 +20,7 @@ internal static class TerminalFrame
         var beside = cards is not null
             ? Layout.Builder.HStack(page.WStar(), cards.WFixed(CardsView<RgbaImage>.Width)).Stretch()
             : page;
-        // The bar takes the row above the page, as the page needs the width.
+        // The bar takes the row above the page, as the page needs the width: one row (its RowH), and the page the rest.
         return Layout.Builder.VStack(rail, beside.HStar()).Stretch();
     }
 }
