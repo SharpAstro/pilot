@@ -138,7 +138,10 @@ internal sealed class ListTable
         }
         var shown = columns.Where(c => c.DropBelow is null).ToList();
         var needs = 2 * PageGutter + 2 * EndPad + StripeWidth + ColumnGap + shown.Sum(c => c.Width.IsFixed ? c.Width.Value : c.Width.Min) + Math.Max(0, shown.Count - 1) * ColumnGap;
-        return needs <= room ? columns : [.. columns.Select(c => c.Squeezed ?? c)];
+        // Squeezed, the columns a narrow page drops are left out here, not left to collapse in the engine: a collapsed column's weight leaves the
+        // header's star shares but not the divider row's, so a star column was wider under the dividers than in the header and a divider
+        // landed on the next title (jobs at 1000 wide, 1.5 scale; PIL1053).
+        return needs <= room ? columns : [.. columns.Select(c => c.Squeezed ?? c).Where(c => c.DropBelow is null)];
     }
 
     /// <summary>The widths a reader has dragged, which header and rows both read.</summary>
