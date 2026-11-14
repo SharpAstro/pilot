@@ -39,8 +39,102 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     /// <summary>How a message another node's watchtower passed on begins, its node's name following.</summary>
     public const string FromWatchtowerPrefix = "[From the watchtower of node ";
 
+    /// <summary>
+    /// The account's limit (PIL1035). A say or compact refused with the limit's own text opens it; while it is on, the node's own says are held
+    /// and delivered once when it ends (a person's or a session's say goes as before). Null: no limit is known.
+    /// </summary>
+    public Flights.TurnOutage? Outage
+    {
+        get;
+        init
+        {
+            field = value;
+            if (value is not null)
+            {
+                value.LimitEnded += OnLimitEnded;
+            }
+        }
+    }
+
+    /// <summary>The clock the limit's reset is read against.</summary>
+    public TimeProvider Clock { get; init; } = TimeProvider.System;
+
+    private readonly Lock _heldLock = new();
+    private readonly List<CommandRequest> _held = [];
+    private Task _heldDelivery = Task.CompletedTask;
+
+    /// <summary>The delivery of the says held by the last limit, for a test to await.</summary>
+    internal Task HeldDelivery
+    {
+        get { lock (_heldLock) { return _heldDelivery; } }
+    }
+
+    private void OnLimitEnded()
+    {
+        lock (_heldLock)
+        {
+            var batch = _held.ToArray();
+            _held.Clear();
+            if (batch.Length == 0)
+            {
+                return;
+            }
+            var previous = _heldDelivery;
+            _heldDelivery = Task.Run(async () =>
+            {
+                await previous;
+                foreach (var held in batch)
+                {
+                    try
+                    {
+                        // Through the normal path, so each is a say line in the log; its first result went out as held.
+                        await DoAsync(held with { RequestId = null }, compact: false, CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        await log.WriteLineAsync($"say: who={held.Who} target={held.Target} held say failed: {ex.GetType().Name}: {ex.Message}");
+                    }
+                }
+            });
+        }
+    }
+
+    private bool TryHold(CommandRequest command, bool compact, out CommandResult? result)
+    {
+        result = null;
+        if (compact || SenderKind(command.Who) != "node" || Outage?.LimitUntil is not { } until || Clock.GetUtcNow() >= until)
+        {
+            return false;
+        }
+        lock (_heldLock)
+        {
+            var text = string.Join(' ', command.Args).Trim();
+            if (!_held.Any(h => h.Target == command.Target && string.Join(' ', h.Args).Trim() == text))
+            {
+                _held.Add(command);
+            }
+        }
+        var line = $"held until {until.ToLocalTime():HH:mm}: the account is on its usage limit, so the node's say is delivered then";
+        result = state.Complete(command, null, waiting: line);
+        _ = log.WriteLineAsync($"say: who={command.Who} from=node target={command.Target} way=none {line}");
+        return true;
+    }
+
+    private void OpenLimitFrom(string error)
+    {
+        var now = Clock.GetUtcNow();
+        if (Outage is { } outage && Flights.AccountLimit.ParseText(error, now) is { } until)
+        {
+            outage.OpenLimit(until, error, now);
+        }
+    }
+
     private async Task<CommandResult> DoAsync(CommandRequest command, bool compact, CancellationToken cancellationToken)
     {
+        if (TryHold(command, compact, out var heldResult))
+        {
+            return heldResult!;
+        }
         var clock = Stopwatch.StartNew();
         var parts = new SayParts();
         string? way = null;
@@ -71,6 +165,10 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             throw;
         }
 
+        if (error is not null)
+        {
+            OpenLimitFrom(error);
+        }
         var result = state.Complete(command, error, way, sessionId);
         var outcome = duplicate ? $"skipped: request id {command.RequestId} was already sent{(sessionId is null ? "" : $" as {sessionId}")}"
             : error is null ? "delivered" +(sessionId is null ? "" : $" as {sessionId}") : $"refused: {error}";

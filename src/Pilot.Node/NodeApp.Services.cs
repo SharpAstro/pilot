@@ -463,6 +463,7 @@ public static partial class NodeApp
         // The node's thinking (summaries, the verdict before a ring, the plain wording of a card) is asked of the watchtower's own stream (PIL855).
         builder.Services.AddSingleton<IBrain>(services => new BrainClient(() => services.GetRequiredService<Watchtower>().CurrentStream(), services.GetRequiredService<TimeProvider>())
         {
+            Outage = services.GetRequiredService<TurnOutage>(),
             Log = line => logWriter.WriteLine(line),
         });
         builder.Services.AddSingleton<SendLog>();
@@ -743,6 +744,8 @@ public static partial class NodeApp
             services.GetRequiredService<StartOptionsBook>(),
             services.GetRequiredService<SessionLedger>())
         {
+            Outage = services.GetRequiredService<TurnOutage>(),
+            Clock = services.GetRequiredService<TimeProvider>(),
             // Ending a session cancels the jobs it owns.
             CancelJobs = (owners, who) => services.GetRequiredService<JobRunner>().CancelOwnedBy(owners, who),
             Sends = services.GetRequiredService<SendLog>(),
