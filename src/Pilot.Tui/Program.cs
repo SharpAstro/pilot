@@ -494,7 +494,9 @@ while (!stop.IsCancellationRequested)
             spendReads.AskToday();
         }
         chrome.Home.Today = spendReads.Today;
-        var cardsBeside = columns >= TerminalFrame.CardsPanelColumns && (pages.Cards.HasAny || cards.CanTell);
+        // On the Chat page the panel drops its "Chat with the watchtower" foot, as the window's does: the page is that chat.
+        cards.OnChatPage = page == PilotPage.Chat;
+        var cardsBeside = columns >= TerminalFrame.CardsPanelColumns && (pages.Cards.HasAny || cards.CanTell && !cards.OnChatPage);
         chat.CellColumns = TerminalFrame.PageColumns(columns, cardsBeside);
         var pageTree = page switch
         {
