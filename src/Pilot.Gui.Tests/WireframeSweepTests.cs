@@ -8,7 +8,7 @@ namespace Pilot.Gui.Tests;
 /// <summary>
 /// Every page, the cards panel and an open card, drawn by the chrome (rail, page and cards panel) into DIR.Lib's <see cref="WireframeRenderer"/>
 /// at five widths, two heights and two scales: <see cref="Wireframe.Check"/> fails a case on text over text, text half on a control, controls over
-/// controls, anything off the surface and text a clip cut with no ellipsis, .
+/// controls, anything off the surface and text a clip cut with no ellipsis.
 /// <para>States: <b>long</b> carries the long titles, repo and branch names, paths and reports (eight sessions, four repos); <b>many</b> carries
 /// the many rows (sixty sessions, fifty jobs, forty flights and repos) and twelve fleet nodes, a quarter of them down ("waiting for the node on ...").</para>
 /// </summary>
@@ -74,7 +74,7 @@ public static class WireframeSweepTests
     private static bool Overlaps(RectF32 a, RectF32 b) =>
         a.X < b.X + b.Width && b.X < a.X + a.Width && a.Y < b.Y + b.Height && b.Y < a.Y + a.Height;
 
-    /// <summary>One case: the findings of the page drawn at the size, minus the known ones, fail it.</summary>
+    /// <summary>One case: the findings of the page drawn at the size, fail it.</summary>
     internal static async Task Run(string page, string state, int width, float dpi, int height)
     {
         var key = Key(page, state, width, dpi, height);

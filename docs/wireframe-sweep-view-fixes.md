@@ -1,6 +1,6 @@
 # Wireframe sweep: the view fixes (PIL1053, leg view-fixes)
 
-The sweep (`WireframeSweepTests`, DIR.Lib 11.60 `Wireframe.Check`) drew 16 pages at 12 sizes (the "many" state at 8), 324 cases.
+The sweep (`WireframeSweepTests`, DIR.Lib 11.60 `Wireframe.Check`) drew 16 pages at 12 sizes (the "many" state at 8), 320 cases.
 The known-findings list that leg wireframe-sweep left is gone (`WireframeKnownFindings` and its stale-entry test are deleted):
 every finding is now fixed in a view or sits in a commented exemption.
 
@@ -27,7 +27,7 @@ every finding is now fixed in a view or sits in a commented exemption.
 
 ## The sweep's time
 
-`dotnet test --filter FullyQualifiedName~WireframeSweep` runs 324 cases in 26 to 29 s (test host time, two threads), under the 30 s the class has.
+`dotnet test --filter FullyQualifiedName~WireframeSweep` runs 320 cases in 26 to 29 s (test host time, two threads), under the 30 s the class has.
 The whole `Pilot.Gui.Tests` in Release with `GITHUB_ACTIONS=true`: 3779 passed, 0 failed, 3 m 43 s.
 
 ## The revert proof (scratch copy under the job tmp folder, not committed, removed)
@@ -44,3 +44,10 @@ The issue's PIL1027 was pilot-tui's help overlay, which Console.Lib paints, so t
 3. Not caught: PIL770's range-row captions (#887). Forcing `RangeCaptions.Span` to a whole line, and then to one column, left the sweep green. The Settings
    sample's range rows are not on screen in the sizes drawn, or their captions sit where the sweep does not look. So PIL770 is not proven by the sweep, and
    `RangeCaptions`' own tests remain its guard.
+
+## Go-around 1: squeezed rows keep their own cells
+
+`ListTable.Fit` leaves out the columns a narrow page drops, but rows still passed a cell per declared column, so cells shifted under the
+wrong titles (Jobs' For cell under State; Sessions' Model cell under State). Each fitted column now carries its declared `Slot`, and
+`ListTable.Row` keeps the cell of each column that stayed. `SqueezedTableCellsTests` asserts Jobs' `running` and a Sessions state word
+sit under `State` at 1000 wide, scale 1.5. The wireframe check cannot see this (nothing overlaps).
