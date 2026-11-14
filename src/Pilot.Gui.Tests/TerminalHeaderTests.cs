@@ -71,6 +71,7 @@ public sealed class TerminalHeaderTests
                 continue;
             }
             var from = arranged.IndexOf(header);
+            bad.Add($"{name} hits: " + string.Join(' ', arranged.Skip(from + 1).TakeWhile(a => a.Depth > header.Depth).Where(a => a.Node.Hit is HitResult.ButtonHit).Select(a => $"{((HitResult.ButtonHit)a.Node.Hit!).Action}@{a.Bounds.X}w{a.Bounds.Width}")));
             bad.Add($"{name} layout: " + string.Join(' ', arranged.Skip(from + 1).TakeWhile(a => a.Depth > header.Depth).Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text }).Select(a => $"[{(a.Node as Layout.Node.Leaf)!.Content switch { Layout.Content.Text t => t.Value, _ => "" }}@{a.Bounds.X},{a.Bounds.Y}w{a.Bounds.Width}]")));
             var buttons = 0;
             for (var i = from + 1; i < arranged.Length && arranged[i].Depth > header.Depth; i++)
