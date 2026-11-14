@@ -479,6 +479,10 @@ public sealed partial class LegCommander(
                 var mergedAt = landed.Review?.ReviewedHead is { Length: > 0 } pinned && !pinned.StartsWith(asked, StringComparison.OrdinalIgnoreCase) ? pinned : asked;
                 await flights.LandAfterMergeAsync(landed.Code, mergedAt, cancellationToken);
             }
+            catch (AlreadyLandingException)
+            {
+                // Merged, and the flight is being landed already: not an error (pilot #1055).
+            }
             catch (FlightException ex)
             {
                 error = $"merged, but the flight did not land: {ex.Message}";
