@@ -175,12 +175,13 @@ public sealed class TerminalRailTests
     }
 
     [Theory]
-    [InlineData(GlyphMode.Emoji, false)]
-    [InlineData(GlyphMode.Emoji, true)]
-    [InlineData(GlyphMode.Initials, false)]
-    [InlineData(GlyphMode.Initials, true)]
-    public void TheIdeasCountIsToldApartFromItsKeyAndTheEntryKeepsItsWidth(GlyphMode mode, bool narrow)
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public void TheIdeasCountIsToldApartFromItsKeyAndTheEntryKeepsItsWidth(bool emoji, bool narrow)
     {
+        var mode = emoji ? GlyphMode.Emoji : GlyphMode.Initials;
         var width = narrow ? TerminalRail.NarrowEntryCells : TerminalRail.EntryCells;
         foreach (var noted in new[] { 3, 10, 120 })
         {
