@@ -91,8 +91,8 @@ internal static class TopBar
 
     // The page's name: one leaf where it is short, words that wrap within the bar where it is long (a title 436 px wide cut at the edge of a 422 px page).
     private static Layout.Node Title(string title, RGBAColor32 color) => title.Length > WrappedTitleChars
-        ? WrappedProse.Of(title, 20f, color, selectable: true).WAuto()
-        : Layout.Builder.Text(title, 20f, color, TextAlign.Near, TextAlign.Far).WAuto();
+        ? WrappedProse.Of(title, HeaderMetrics.Terminal ? 12f : 20f, color, selectable: true).WAuto()
+        : Layout.Builder.Text(title, HeaderMetrics.Terminal ? 12f : 20f, color, TextAlign.Near, TextAlign.Far).WAuto();
 
     /// <summary>The bar as one tree, <paramref name="page"/> laid out among <paramref name="parts"/>.</summary>
     public static Layout.Node Build(PageHeader page, TopBarParts parts)
