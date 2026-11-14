@@ -177,7 +177,7 @@ internal sealed class TranscriptEntryView
             // With something to act on the message wraps whole (a long one is read in full, not cut at the edge); the plain line keeps its lines.
             .. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => acting && l.Length > 0
                 ? WrappedProse.Of(l, 13f, Dim)
-                : Layout.Builder.Text(l, 13f, Dim).Selectable()),
+                : Layout.Builder.Text(l, 13f, Dim).Selectable().WStar()),
         ];
         // The pill sits under the words, not beside them: beside them it took width from the body, so a line with a pill and one without
         // started their words at different places.
@@ -457,9 +457,11 @@ internal sealed class TranscriptEntryView
 
     // A line of a command or its output. One helper for all of it, so a monospace face for a text leaf lands here once:
     // DIR.Lib has none yet (SharpAstro/DIR.Lib#152). An empty line keeps its height as a space.
-    // Wrapped at its column: a line wider than it ran under the scrollbar's region with a clip cutting it.
+    // Stretched across its column so a line wider than it ends in an ellipsis (whole on hover) instead of a clip cutting it.
     private static Layout.Node Mono(string line, RGBAColor32 color) =>
-        line.Length == 0 ? Layout.Builder.Text(" ", 13f, color).Selectable() : WrappedProse.Of(line, 13f, color);
+        line.Length == 0
+            ? Layout.Builder.Text(" ", 13f, color).Selectable()
+            : Layout.Builder.Text(line, 13f, color).Selectable().WStar().WithTooltip(line);
 
     private Layout.Node Row(TranscriptEntry entry)
     {

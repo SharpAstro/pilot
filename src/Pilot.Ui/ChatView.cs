@@ -1122,7 +1122,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         var parts = new List<Layout.Node>
         {
             Layout.Builder.Text(label, 12f, Dim).Selectable().WFixed(96f),
-            Layout.Builder.VStack([.. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => (l.Length == 0 ? Layout.Builder.Text(" ", 13f, Dim).Selectable() : WrappedProse.Of(l, 13f, Dim)))]).WStar(),
+            Layout.Builder.VStack([.. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim).Selectable())]).WStar(),
         };
         if (aside is not null)
         {
@@ -1135,7 +1135,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     private static Layout.Node FailedLine(string text, string reason, Layout.Node retry, Layout.Node edit)
     {
         var body = Layout.Builder.VStack(
-            [.. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => (l.Length == 0 ? Layout.Builder.Text(" ", 13f, Dim).Selectable() : WrappedProse.Of(l, 13f, Dim))),
+            [.. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim).Selectable()),
                 WrappedProse.Of(reason, 12f, Failed, 3)]).WStar();
         return Layout.Builder.HStack(
                 Layout.Builder.Text("you · failed", 12f, Failed).Selectable().WFixed(96f),
