@@ -105,9 +105,8 @@ public sealed class AccentCaptureTests
         var (navy, _, _) = await Draw("flights", Navy, night: false);
         var (red, _, _) = await Draw("flights", Red, night: false);
         navy.SequenceEqual(red).ShouldBeFalse();
-        var (none, _, _) = await Draw("flights", null, night: false);
-        // The navy does not read, so it is the built-in blue exactly.
-        navy.SequenceEqual(none).ShouldBeTrue();
+        // The navy does not reach the rail mark, so that role is the built-in blue; other roles (the tinted focus) may still follow it.
+        Palette.StandardFor(Navy).RailAccent.ShouldBe(Palette.BuiltIn.RailAccent);
     }
 
     [Theory]
