@@ -104,22 +104,22 @@ public sealed class ZzProbeTests(ITestOutputHelper output)
             && t.a.Bounds.X <= keys.Bounds.X && t.a.Bounds.Y <= keys.Bounds.Y).OrderByDescending(t => t.a.Depth).First();
         var rect = cardIdx.a.Bounds;
         output.WriteLine($"{columns}x{rows}: card {rect} index {cardIdx.i} of {open.Length}");
-        foreach (var (a, i) in open.Select((a, i) => (a, i)).Where(t => t.i > cardIdx.i && t.a.Depth <= cardIdx.a.Depth))
+        for (var i = cardIdx.i - 4; i < open.Length && i < cardIdx.i + 14; i++)
         {
-            output.WriteLine($"  after the card, not inside it: #{i} depth {a.Depth} {a.Bounds} {a.Node.GetType().Name} {(a.Node as Layout.Node.Leaf)?.Content}");
+            var a = open[i];
+            output.WriteLine($"  #{i} depth {a.Depth} {a.Bounds.X},{a.Bounds.Y} {a.Bounds.Width}x{a.Bounds.Height} {a.Node.GetType().Name} bg={a.Node.Background?.ToString()?[..20]} {((a.Node as Layout.Node.Leaf)?.Content as Layout.Content.Text)?.Value}");
         }
-        for (var y = rect.Y; y < rect.Y + rect.Height; y++)
+        for (var y = Math.Max(0, keys.Bounds.Y - 10); y < Math.Min(rows, keys.Bounds.Y + 16); y++)
         {
             var sb = new StringBuilder();
-            var sbBuf = new StringBuilder();
+            var flag = new StringBuilder();
             for (var x = rect.X; x < rect.X + rect.Width; x++)
             {
-                sb.Append(screen.Bg[x, y] == menuBg ? screen.Cells[x, y] : "#");
-                var b = buffer.BackAt(x, y);
-                sbBuf.Append(b.Style.Background == menuBg ? b.Glyph : '#');
+                sb.Append(screen.Cells[x, y]);
+                flag.Append(screen.Bg[x, y] == menuBg ? 'm' : '.');
             }
             output.WriteLine($"{y,3} S|{sb}|");
-            output.WriteLine($"{y,3} B|{sbBuf}|");
+            output.WriteLine($"{y,3} F|{flag}|");
         }
     }
 }
