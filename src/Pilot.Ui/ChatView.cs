@@ -1374,8 +1374,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
                 continue;
             }
             var input = _composer.Input;
-            var lines = input.Text.Split('
-');
+            var lines = input.Text.Split('\n');
             var shown = Math.Min(lines.Length, ChatComposer.MaxLines);
             var y = row - a.Bounds.Y - 1;
             if (y < 0 || y >= shown)
