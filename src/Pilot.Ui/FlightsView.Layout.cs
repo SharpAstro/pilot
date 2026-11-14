@@ -34,7 +34,7 @@ internal sealed partial class FlightsView<TSurface>
             : null;
         // Qualified: this method is named PullRequestLink too.
         return Pilot.Ui.PullRequestLink.Of(_links, action, $"PR #{flight.PullRequest}", pr?.ToString() ?? url, url, OnOpen, route, "the Pull requests page",
-                Landed, RowHoverBg, mayBeCut: false, fill: false)
+                P.Link, RowHoverBg, mayBeCut: false, fill: false)
             // HFixed, not RowH: RowH makes the width a star, which a flow's cell measures as nothing.
             .HFixed(20f);
     }
