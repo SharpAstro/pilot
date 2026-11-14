@@ -101,7 +101,8 @@ public static partial class CardNotice
         if (ChoicesTail().Match(rest) is { Success: true } tail)
         {
             choices = [.. ChoiceSplit().Split(tail.Groups["list"].Value).Select(c => c[(c.IndexOf(' ') + 1)..])];
-            rest = rest[..tail.Index] + ".";
+            // The line's own full stop comes before " Choices:", so it stays.
+            rest = rest[..tail.Index];
         }
         if (!rest.EndsWith('.'))
         {
