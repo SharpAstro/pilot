@@ -1,4 +1,6 @@
 using DIR.Lib;
+using Layout = DIR.Lib.Layout;
+using Pilot.Contracts;
 using Pilot.Ui;
 using SharpAstro.Png;
 using Shouldly;
@@ -100,34 +102,76 @@ public sealed class AccentCaptureTests
     }
 
     [Fact]
-    public async Task AFlightPageTakesTheAccentForItsLinksWhereItReadsAsText()
+    public void AFlightPageDrawsItsPullRequestSubTaskAndArtifactLinksInTheAccent()
     {
         // A red reads for the rail mark but not as 4.5:1 text on the dark chrome, so its link keeps the blue; a light green reads, so the links follow it.
         var green = new RGBAColor32(0x5f, 0xd0, 0xa0, 0xff);
         var palette = Palette.StandardFor(green);
+        palette.Link.ShouldBe(green, "a light green reads as text, so it is the link colour");
         palette.Link.ShouldNotBe(palette.Landed, "the link follows the accent, the state colour stays fixed");
 
-        async Task<byte[]> Page(RGBAColor32? accent)
+        // A flight that has every kind of link its page draws: a PR (the head's "PR #n"), a leg's sub-task and an artifact.
+        var at = Live.At;
+        var flight = new FlightRow
         {
-            using var scope = Palette.StandardForCapture(accent);
-            using var renderer = new RgbaImageRenderer(1280, 800);
-            var data = PageData.For("long");
-            var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-            chrome.Play.ShowEverything();
-            chrome.Show(PilotPage.Flights);
-            chrome.Flights.Spend = data.FlightSpend;
-            chrome.Flights.OpenDetail(data.Flights.Lines.Count > 0 ? data.Flights.Lines[0].Code : "NONE1");
-            chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, 1280, 800), data.Machines, null, data.Spend);
-            await Task.CompletedTask;
-            return [.. renderer.Surface.Pixels];
-        }
+            Code = "PIL777", Repo = "pilot", RepoPath = "/r/pilot", Issue = 777, Title = "Accent links", Branch = "flight/pil777",
+            Worktree = "/r/pilot/.claude/worktrees/pil777", Base = "origin/main", State = FlightState.Flying, CreatedAt = at,
+            PullRequest = 7, PullRequestUrl = "https://github.com/x/pilot/pull/7",
+        };
+        var leg = new LegRow
+        {
+            Flight = "PIL777", Name = "render", Order = 1, Goal = "Draw it.", DoneWhen = "It is drawn.", State = LegState.Flying,
+            Checklist = [new CheckItem { Text = "draw", Done = true }, new CheckItem { Text = "capture" }],
+            SubTask = new SubTask { Id = "1", Url = "https://github.com/x/pilot/issues/1" },
+            Artifacts = [new Artifact { Title = "Preview", Location = "https://example.org/preview", At = at.AddMinutes(5) }],
+        };
+        var line = FlightLine.Build([flight], [], at.AddHours(1), [leg]).Single();
+        line.Row.PullRequest.ShouldBe(7);
+        line.LegRows.Single().SubTask.ShouldNotBeNull().Url.ShouldNotBeNull();
+        line.LegRows.Single().Artifacts.ShouldNotBeEmpty();
 
-        var accented = await Page(green);
-        var none = await Page(null);
-        Save("flight-page-green", accented, 1280, 800);
-        Count(accented, palette.Link).ShouldBeGreaterThan(0, "link text drawn in the accent's link colour");
-        Count(none, Palette.BuiltIn.Link).ShouldBeGreaterThan(0, "link text drawn in the fallback link colour");
-        Count(none, palette.Link).ShouldBe(0, "the fallback page has no pixel in the green");
+        const int width = 1280, height = 1200;
+        using var scope = Palette.StandardForCapture(green);
+        using var renderer = new RgbaImageRenderer(width, height);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        var flights = chrome.Flights;
+        var screen = new FlightsScreen([line], "test", at.AddHours(1));
+        var bounds = new RectF32(0, 0, width, height);
+        flights.Render(screen, bounds);
+        flights.OpenDetail("PIL777");
+        flights.Render(screen, bounds);
+        byte[] pixels = [.. renderer.Surface.Pixels];
+        var path = Save("flight-page-green", pixels, width, height);
+        global::System.Console.WriteLine($"accent capture: {path}");
+
+        // Count inside each link's own text, not over the page: the rail mark is the same colour and is on every page.
+        var texts = Layout.Engine.Arrange(flights.Tree(screen), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f))
+            .Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text })
+            .Select(a => (Text: ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value, a.Bounds))
+            .ToList();
+        foreach (var name in new[] { "PR #7", "sub-task" + Followable.Away, "Preview" + Followable.Away })
+        {
+            var found = texts.Where(t => t.Text == name).ToList();
+            found.ShouldNotBeEmpty($"the page draws the link \"{name}\"");
+            found.Sum(t => CountIn(pixels, width, height, t.Bounds, palette.Link)).ShouldBeGreaterThan(0, $"\"{name}\" is drawn in the accent");
+        }
+    }
+
+    private static int CountIn(byte[] pixels, int width, int height, Rect<float> r, RGBAColor32 color)
+    {
+        var n = 0;
+        for (var y = Math.Max(0, (int)r.Y); y < Math.Min(height, (int)Math.Ceiling(r.Y + r.Height)); y++)
+        {
+            for (var x = Math.Max(0, (int)r.X); x < Math.Min(width, (int)Math.Ceiling(r.X + r.Width)); x++)
+            {
+                var i = (y * width + x) * 4;
+                if (pixels[i] == color.Red && pixels[i + 1] == color.Green && pixels[i + 2] == color.Blue)
+                {
+                    n++;
+                }
+            }
+        }
+        return n;
     }
 
     [Theory]
