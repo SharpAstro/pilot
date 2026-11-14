@@ -518,7 +518,7 @@ while (!stop.IsCancellationRequested)
             columns >= TerminalFrame.CardsPanelColumns && (cardsScreen.HasAny || cards.CanTell) ? cards.Tree(cardsScreen) : null);
         arranged = Layout.Engine.Arrange(tree, new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
         // No clear: the cell buffer diffs each frame against the last, and the tree's backgrounds cover every cell.
-        CellLayout.Paint(terminal, arranged);
+        arranged = TerminalFrame.Paint(terminal, arranged);
         if (focus.Current is null)
         {
             terminal.HideCaret();
