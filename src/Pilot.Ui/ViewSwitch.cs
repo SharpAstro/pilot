@@ -15,7 +15,7 @@ internal readonly record struct ViewChoice<T>(T Mode, string Action, string Name
 internal static class ViewSwitch
 {
     /// <summary>One segment's width, so the switches of two pages are the same width for the same number of views.</summary>
-    public const float Segment = 60f;
+    public static float Segment => HeaderMetrics.Terminal ? 48f : 60f;
 
     private const float Gap = 2f;
 
@@ -46,6 +46,6 @@ internal static class ViewSwitch
         var group = Layout.Builder.ButtonGroup<T>(options, current, select, style, 12f);
         return (group is Layout.Node.Stack stack ? stack with { Children = [.. stack.Children.Select(c => c.WithCursor(CursorKind.Pointer))] } : group)
             .WFixed(WidthOf(choices.Count))
-            .HFixed(AboutCard.HeaderButton);
+            .HFixed(HeaderMetrics.Button);
     }
 }
