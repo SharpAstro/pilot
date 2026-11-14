@@ -60,7 +60,7 @@ public sealed class AccentCaptureTests
         var n = 0;
         for (var i = 0; i + 3 < pixels.Length; i += 4)
         {
-            if (pixels[i] == color.R && pixels[i + 1] == color.G && pixels[i + 2] == color.B)
+            if (pixels[i] == color.Red && pixels[i + 1] == color.Green && pixels[i + 2] == color.Blue)
             {
                 n++;
             }
@@ -84,7 +84,7 @@ public sealed class AccentCaptureTests
         var palette = Palette.StandardFor(accent);
         var (pixels, width, height) = await Draw(page, accent, night: false);
         var path = Save($"{page}-{accentName}", pixels, width, height);
-        Console.WriteLine($"accent capture: {path}");
+        global::System.Console.WriteLine($"accent capture: {path}");
 
         // The roles are the accent where it reads, today's blue where it does not.
         palette.RailAccent.ShouldBe(accentName == "navy" ? Palette.BuiltIn.RailAccent : accent);
