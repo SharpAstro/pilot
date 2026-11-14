@@ -420,6 +420,21 @@ internal sealed class PilotChrome<TSurface>
         _ => null,
     };
 
+    /// <summary>
+    /// The list the shown page's rows declare (<see cref="HitResult.ListItemHit"/>) and the page that owns it, or null when the shown page has
+    /// none, or has its transcript open over it. What pilot-tui's cell list cursor is kept on.
+    /// </summary>
+    internal (string ListId, PilotWidgetBase<TSurface> View)? ShownList => Page switch
+    {
+        PilotPage.Sessions when !Sessions.Transcript.IsOpen => (SessionsView<TSurface>.ListId, Sessions),
+        PilotPage.Flights => (FlightsView<TSurface>.ListId, Flights),
+        PilotPage.Jobs => (JobsView<TSurface>.ListId, Jobs),
+        PilotPage.Fleet => (FleetView<TSurface>.ListId, Fleet),
+        PilotPage.Repos => (ReposView<TSurface>.ListId, Repos),
+        PilotPage.PullRequests => (PullRequestsView<TSurface>.ListId, PullRequests),
+        _ => null,
+    };
+
     /// <summary>The page shown beside the rail.</summary>
     public PilotPage Page { get; private set; } = PilotPage.Home;
 

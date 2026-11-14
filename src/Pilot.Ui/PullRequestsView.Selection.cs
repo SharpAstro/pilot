@@ -8,6 +8,8 @@ namespace Pilot.Ui;
 internal sealed partial class PullRequestsView<TSurface>
 {
     /// <summary>Puts the cursor on the row <paramref name="index"/> of <see cref="Rows"/>: a PR's or a header's.</summary>
+    internal override void CellListMoved(int index) => Select(index);
+
     public void Select(int index)
     {
         if (index >= 0 && index < _rows.Count)

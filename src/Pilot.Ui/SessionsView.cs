@@ -507,6 +507,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     public void SelectFirst(Func<SessionLine, bool> match) => _pendingFirst = match;
 
     /// <summary>Moves the selection to the row <paramref name="index"/>, and the session it follows with it.</summary>
+    internal override void CellListMoved(int index) => Select(index);
+
     public void Select(int index)
     {
         if (index >= 0 && index < _lines.Count)
@@ -918,6 +920,15 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index))
+            // Enter, from the list cursor of either surface, opens the transcript as a double-click does.
+            .Activatable(_ =>
+            {
+                Select(index);
+                if (Transcript.Load is not null)
+                {
+                    Transcript.Open(line);
+                }
+            })
             .WithContextMenu(at => OpenMenu(line, index, at))
             // The same brief as the Home chip (#258), under the session's whole name: the Session column may cut it with an ellipsis.
             .WithTooltip(ChipBrief.SessionRow(line))

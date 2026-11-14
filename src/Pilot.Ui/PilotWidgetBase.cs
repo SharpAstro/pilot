@@ -26,6 +26,13 @@ internal abstract class PilotWidgetBase<TSurface>(Renderer<TSurface> renderer) :
         return arranged;
     }
 
+    /// <summary>
+    /// The cell surface's list cursor stepped onto row <paramref name="index"/> of this page's list (pilot-tui: the pages' own
+    /// <c>HandleListKey</c> steps over rows a pixel paint registered, and a terminal paints none). The page moves its own cursor and
+    /// whatever it remembers by, as a click on the row would.
+    /// </summary>
+    internal virtual void CellListMoved(int index) => ListCursor.MoveTo(index);
+
     // The hit under the pointer as the last paint found it, which the next frame is built with.
     private HitResult? _hoveredHit;
 

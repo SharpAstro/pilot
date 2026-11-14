@@ -49,7 +49,10 @@ public sealed class TerminalListKeysTests
             {
                 Router = CellInputRouter.Create(Surface, new BackgroundTaskTracker(), () => { }),
                 HitTest = (tree, column, row) => CellLayout.HitTest(tree, column, row),
+                SurfaceCursor = Surface.ListCursor,
             };
+            // As Program.cs: the terminal keeps the Flights list (cells cannot draw the map).
+            Chrome.Flights.CanvasAvailable = false;
         }
 
         public ImmutableArray<Layout.ArrangedNode<int>> Frame()
@@ -57,7 +60,7 @@ public sealed class TerminalListKeysTests
             var rail = TerminalRail.Tree(Chrome.Page, GlyphMode.Emoji, null, null, Live.At, Input.Show, null, Columns, Input.Chords());
             var arranged = TerminalFrame.Clip(Layout.Engine.Arrange(TerminalFrame.Tree(rail, PageTree(), null), new Rect<int>(0, 0, Columns, Rows), CellMeasureContext.PixelAuthored));
             CellLayout.Paint(new NullViewport(Columns, Rows), arranged, Surface);
-            Input.Router.AfterPaint();
+            Input.Painted();
             Input.Arranged = arranged;
             return arranged;
         }
@@ -136,7 +139,10 @@ public sealed class TerminalListKeysTests
             }
             default:
             {
-                var screen = new ReposScreen(RepoLine.Build(SessionsCapture.LoadRepos(SessionsCapture.ReposSamplePath), [], [], [], [], Live.At), "live", Live.At);
+                var sample = SessionsCapture.LoadRepos(SessionsCapture.ReposSamplePath);
+                // The sample holds two repos; a third, the first's copy under another path, makes three rows.
+                RepoStatus[] repos = [.. sample, sample[0] with { Path = sample[0].Path + "-copy", Name = sample[0].Name + "-copy" }];
+                var screen = new ReposScreen(RepoLine.Build(repos, [], [], [], [], Live.At), "live", Live.At);
                 return (PilotPage.Repos, () => chrome.Repos.Selected, () => chrome.Repos.Tree(screen));
             }
         }

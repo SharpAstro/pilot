@@ -417,7 +417,16 @@ internal sealed partial class PullRequestsView<TSurface>
     private Layout.Node AsRow(Layout.Node header, int index, float height) =>
         Layout.Builder.HStack(header.WStar())
             .RowH(height)
-            .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index));
+            .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index))
+            // Enter folds or unfolds the header.
+            .Activatable(_ =>
+            {
+                Select(index);
+                if (index < _rows.Count && _rows[index].HasChildren)
+                {
+                    _tree.Toggle(_rows[index].Item);
+                }
+            });
 
     // A line in an org's group, under its header: that it has no open PR, or why its read failed. Cut with an ellipsis, whole on hover.
     private Layout.Node OrgNote(string text, RGBAColor32 color, string whole) =>
@@ -480,6 +489,11 @@ internal sealed partial class PullRequestsView<TSurface>
             .BgHover(P.RowHoverBg)
             .BgFocus(P.RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index))
+            .Activatable(_ =>
+            {
+                Select(index);
+                OpenRow(pr);
+            })
             .DoubleClickable(_ =>
             {
                 Select(index);

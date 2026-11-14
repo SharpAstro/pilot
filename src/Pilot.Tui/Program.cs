@@ -97,6 +97,7 @@ var input = new TerminalInput<RgbaImage>(chrome, sessions, focus, Redraw, stop.C
 {
     Router = CellInputRouter.Create(surface, tracker, Redraw),
     HitTest = (tree, column, row) => CellLayout.HitTest(tree, column, row),
+    SurfaceCursor = surface.ListCursor,
 };
 
 // The same wiring as the window's: a verb on the node for each button, and Plan a leg said in the chat.
@@ -535,7 +536,7 @@ while (!stop.IsCancellationRequested)
         // Cropped to each scroll container and page rect first (Console.Lib's painter has no clip); the hit test reads the same tree.
         arranged = TerminalFrame.Clip(arranged);
         TerminalFrame.Paint(terminal.HideCaret, () => CellLayout.Paint(terminal, arranged, surface));
-        input.Router.AfterPaint();
+        input.Painted();
         if (chat.ParkedCaret(page, focus, arranged) is var (caretColumn, caretRow))
         {
             // The composer is drawn from the editor's lines (CellLayout paints no text editor), so its caret is placed here.
