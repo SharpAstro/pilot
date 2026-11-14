@@ -22,6 +22,8 @@ public sealed class TerminalFrameTests
         public TermCell CellSize => new(10, 20);
         public ColorMode ColorMode => ColorMode.TrueColor;
 
+        public (int Column, int Row)? Caret { get; private set; }
+        public void SetCaret(int column, int row, CaretStyle style) => Caret = (column, row);
         public void SetCursorPosition(int left, int top) => buffer.MoveTo(left, top);
         public void Write(string text) => buffer.Write(text);
         public void WriteLine(string? text = null) { }
@@ -68,6 +70,13 @@ public sealed class TerminalFrameTests
     private static async Task<(CellBuffer Buffer, System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> Painted, System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> Raw)> PaintChatAsync(
         int count, bool scrolledUp, int columns, int rows)
     {
+        var r = await PaintChatCaretAsync(count, scrolledUp, columns, rows);
+        return (r.Buffer, r.Painted, r.Raw);
+    }
+
+    private static async Task<(CellBuffer Buffer, System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> Painted, System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> Raw, (int Column, int Row)? Caret)> PaintChatCaretAsync(
+        int count, bool scrolledUp, int columns, int rows)
+    {
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
         var at = new DateTimeOffset(2026, 11, 14, 12, 0, 0, TimeSpan.Zero);
@@ -109,8 +118,9 @@ public sealed class TerminalFrameTests
             var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
             buffer.Resize(columns, rows);
             var painted = TerminalFrame.Clip(arranged);
-            CellLayout.Paint(new BufferedViewport(buffer, columns, rows), painted);
-            return (buffer, painted, arranged);
+            var viewport = new BufferedViewport(buffer, columns, rows);
+            CellLayout.Paint(viewport, painted);
+            return (buffer, painted, arranged, viewport.Caret);
         }
         finally
         {
@@ -160,6 +170,40 @@ public sealed class TerminalFrameTests
         painted.Where(a => IsUnder(painted, a, pl) && (a.Bounds.Y < pl.Bounds.Y || a.Bounds.X < pl.Bounds.X
                 || a.Bounds.Y + a.Bounds.Height > pl.Bounds.Y + pl.Bounds.Height || a.Bounds.X + a.Bounds.Width > pl.Bounds.X + pl.Bounds.Width))
             .ShouldBeEmpty($"{size}: a node under the list reaches outside the list's rect");
+    }
+
+    // PIL1043: the composer (the editor's placeholder and the 'Enter sends' hint) is always on the page, whatever the transcript.
+    [Theory]
+    [InlineData(120, false, 160, 44)]
+    [InlineData(120, true, 160, 44)]
+    [InlineData(0, false, 160, 44)]
+    [InlineData(120, false, 100, 24)]
+    [InlineData(120, true, 100, 24)]
+    [InlineData(0, false, 100, 24)]
+    public async Task TheComposerIsPaintedBelowTheListWhateverTheTranscript(int count, bool scrolledUp, int columns, int rows)
+    {
+        var size = $"Chat {columns}x{rows} with {count} entries{(scrolledUp ? " scrolled up" : "")}";
+        var (buffer, painted, _, _) = await PaintChatCaretAsync(count, scrolledUp, columns, rows);
+        buffer.Flush(new NullSink());
+        var text = Enumerable.Range(0, rows).Select(buffer.FrontRowText).ToList();
+        var placeholder = text.FindIndex(r => r.Contains("Message the fleet chat", StringComparison.Ordinal));
+        var hint = text.FindIndex(r => r.Contains("Enter sends", StringComparison.Ordinal));
+        var dump = string.Join('\n', text);
+        placeholder.ShouldBeGreaterThan(0, $"{size}: the placeholder is not painted\n{dump}");
+        hint.ShouldBeGreaterThanOrEqualTo(placeholder, $"{size}: the 'Enter sends' line is not painted at or below the box\n{dump}");
+        if (count > 0)
+        {
+            var list = painted.First(a => a.Node.Scroll is { Mode: ScrollBarMode.Interactive });
+            placeholder.ShouldBeGreaterThanOrEqualTo(list.Bounds.Y + list.Bounds.Height, $"{size}: the box is not below the list");
+        }
+    }
+
+    private sealed class NullSink : ICellSink
+    {
+        public void MoveTo(int row, int column) { }
+        public void SetPen(VtStyle style, bool opaque) { }
+        public void SetLink(string? uri) { }
+        public void Write(ReadOnlySpan<char> text) { }
     }
 
     // A node is under the list when it follows it in pre-order at a deeper depth, before the next node at the list's depth or above.
