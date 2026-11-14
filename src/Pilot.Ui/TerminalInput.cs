@@ -58,17 +58,35 @@ internal sealed class TerminalInput<TSurface>(
     {
         if (focus.Current is not { } current)
         {
+            _focusPage = null;
             return;
         }
         if (chrome.Page == PilotPage.Chat && ReferenceEquals(current, chrome.Chat.Input))
         {
             return;
         }
-        if (!TextInputs(Arranged).Any(f => ReferenceEquals(f, current)))
+        // A field this router saw take the keyboard is stale only when the page changed since; the last drawn frame cannot say,
+        // as a whole batch of events runs before the next draw (Ctrl+S then typing focuses the say box on a frame still Home's).
+        if (_focusPage is { } seen && ReferenceEquals(seen.Field, current))
+        {
+            if (seen.Page != chrome.Page)
+            {
+                focus.Blur();
+            }
+            return;
+        }
+        // A field focus was left on without this router (a test, a page's own action): the frame's fields, one-line and multi-line.
+        var onFrame = TextInputs(Arranged).Any(f => ReferenceEquals(f, current))
+            || Arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextEditor editor } && ReferenceEquals(editor.State, current));
+        if (!onFrame)
         {
             focus.Blur();
         }
     }
+
+    private (object Field, PilotPage Page)? _focusPage;
+
+    private void NoteFocus() => _focusPage = focus.Current is { } now ? (now, chrome.Page) : null;
 
     /// <summary>A left click at pixel (x, y): a field focuses, the composer focuses and places its caret, the rest follows the hit.</summary>
     private void Click(int x, int y)
@@ -95,6 +113,18 @@ internal sealed class TerminalInput<TSurface>(
     public void Handle(InputEvent? evt, Rune? keyChar, ConsoleModifiers modifiers = 0)
     {
         redraw();
+        try
+        {
+            Route(evt, keyChar, modifiers);
+        }
+        finally
+        {
+            NoteFocus();
+        }
+    }
+
+    private void Route(InputEvent? evt, Rune? keyChar, ConsoleModifiers modifiers)
+    {
         if (evt is InputEvent.MouseUp(var x, var y, MouseButton.Left))
         {
             Click((int)x, (int)y);
@@ -137,7 +167,7 @@ internal sealed class TerminalInput<TSurface>(
                 break;
             case InputEvent.KeyDown navKey when chrome.HandleInput(navKey):
                 break;
-            case var _ when TerminalRail.Handle(evt, keyChar, chrome.Show, () => focus.Focus(chrome.Chat.Input)):
+            case var _ when TerminalRail.Handle(evt, keyChar, Show, () => { }):
                 break;
             case InputEvent.KeyDown(InputKey.S, InputModifier.Ctrl):
                 chrome.Show(PilotPage.Sessions);

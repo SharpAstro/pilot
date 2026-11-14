@@ -125,4 +125,34 @@ public sealed class TerminalInputTests
         rig.Chrome.Chat.Input.Text.ShouldBe("2");
         EndsOnChatWithTheCaretParked(rig);
     }
+
+    [Fact]
+    public void AFocusedMultiLineEditorOnTheFrameKeepsTheKeyboardAndATypedQIsText()
+    {
+        using var rig = new Rig();
+        rig.Chrome.Show(PilotPage.Home);
+        var editor = new TextEditorState { MinLines = 3, MaxLines = 14 };
+        var page = Layout.Builder.TextEditor(editor, 14f, colors: Palette.Input, focusOnOpen: true).WStar();
+        var rail = TerminalRail.Tree(rig.Chrome.Page, GlyphMode.Emoji, null, null, Live.At, rig.Input.Show, null, Columns);
+        rig.Input.Arranged = TerminalFrame.Clip(Layout.Engine.Arrange(TerminalFrame.Tree(rail, page, null), new Rect<int>(0, 0, Columns, Rows), CellMeasureContext.PixelAuthored));
+        rig.Focus.Focus(editor);
+
+        rig.Key(InputKey.Q, 'q');
+
+        editor.Text.ShouldBe("q");
+        rig.Focus.Current.ShouldBeSameAs(editor);
+    }
+
+    [Fact]
+    public void AFieldFocusedByAnEarlierEventOfTheSameBatchIsNotStale()
+    {
+        using var rig = new Rig();
+        rig.Chrome.Show(PilotPage.Home);
+        rig.Frame();
+        // Ctrl+S focuses the say box on Sessions while the drawn frame is still Home's; the next key is its text.
+        rig.Input.Handle(new InputEvent.KeyDown(InputKey.S, InputModifier.Ctrl), null);
+        rig.Key(InputKey.Q, 'q');
+        rig.Chrome.Page.ShouldBe(PilotPage.Sessions);
+        rig.Focus.Current.ShouldNotBeNull();
+    }
 }

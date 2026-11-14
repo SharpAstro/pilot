@@ -420,7 +420,6 @@ await terminal.InitAsync();
 terminal.EnterAlternateScreen();
 terminal.EnableCellBuffer();
 input.CellSize = () => (terminal.CellSize.Width, terminal.CellSize.Height);
-input.CellSize = () => (terminal.CellSize.Width, terminal.CellSize.Height);
 
 var page = PilotPage.Home;
 // A card about a leg opens its worker's transcript from the moment the card was raised.
