@@ -44,6 +44,10 @@ public sealed class StartGate(NodeState state, TimeProvider time)
             ? new StartHeld($"sessions are not taking turns since {since.ToLocalTime():HH:mm}, so it waits until they take turns again", since)
             : null;
 
+    /// <summary>Why a known account limit (<see cref="TurnOutage.OpenLimit"/>) holds every start until its reset, keyed on that reset so it is said once; null when none is open.</summary>
+    public StartHeld? CheckLimit() =>
+        Outage is { LimitUntil: { } until, LimitSay: { } say } ? new StartHeld(say, until) : null;
+
     /// <summary>Why the 5-hour window holds a start at <paramref name="limit"/> percent, and until when; null when it does not.</summary>
     public StartHeld? Check(double limit)
     {
@@ -92,7 +96,7 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     {
         RingWeek(weekLimit);
         // The windows first: they say a time they end; the outage is asked last so its probe is only used up by a start nothing else holds.
-        if ((Check(limit) ?? CheckPace(paceMargin) ?? CheckOutage(key)) is not { } held)
+        if ((CheckLimit() ?? Check(limit) ?? CheckPace(paceMargin) ?? CheckOutage(key)) is not { } held)
         {
             _said.TryRemove(key, out _);
             return false;

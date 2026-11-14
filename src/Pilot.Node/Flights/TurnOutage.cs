@@ -65,6 +65,11 @@ public sealed class TurnOutage(NodeState state)
             {
                 return true;
             }
+            if (_limitUntil is not null)
+            {
+                // The node knows when turns come back: nothing is let through to find out.
+                return false;
+            }
             if (_probeKey == key && now - _probedAt < ProbeEvery)
             {
                 return true;
@@ -128,6 +133,15 @@ public sealed class TurnOutage(NodeState state)
             {
                 return;
             }
+            if (_limitUntil is { } until)
+            {
+                // A stray turn before the reset does not end a limit; the first look at or after the reset does.
+                if (now >= until)
+                {
+                    Close(since, now, $"the usage limit ended at {until.ToLocalTime():HH:mm}");
+                }
+                return;
+            }
             var first = _baseline is null;
             _baseline ??= sessions.ToDictionary(s => s.Id, s => (long)s.ContextTokens, StringComparer.Ordinal);
             var turned = sessions.Any(s => s.LastResponseAt is { } at && at > since)
@@ -136,18 +150,91 @@ public sealed class TurnOutage(NodeState state)
             {
                 return;
             }
-            _last = (since, now);
-            _since = null;
+            Close(since, now, $"sessions take turns again since {now.ToLocalTime():HH:mm}");
+        }
+    }
+
+    private void Close(DateTimeOffset since, DateTimeOffset now, string why)
+    {
+        _last = (since, now);
+        _since = null;
+        _baseline = null;
+        _limitUntil = null;
+        _stalled.Clear();
+        _waiting.Clear();
+        _probeKey = null;
+        if (_cardId is { } id)
+        {
+            state.CloseCard(id, why, LegWatch.Who);
+            _cardId = null;
+        }
+    }
+
+    /// <summary>The kind of the one card an account limit raises.</summary>
+    public const string LimitCardKind = "account-limit";
+
+    private DateTimeOffset? _limitUntil;
+
+    /// <summary>When the open account limit resets, or null when none is open.</summary>
+    public DateTimeOffset? LimitUntil
+    {
+        get { lock (_gate) { return _limitUntil; } }
+    }
+
+    /// <summary>Why a start waits under the open limit, with the reset; null when no limit is open.</summary>
+    public string? LimitSay
+    {
+        get { lock (_gate) { return _limitUntil is { } u ? $"the account is on its usage limit until {u.ToLocalTime():HH:mm}, so it waits until then" : null; } }
+    }
+
+    /// <summary>
+    /// The account is on a usage or spend limit until <paramref name="until"/>, seen at <paramref name="at"/>. Opens the outage with a known end
+    /// (or extends an open limit to a later end); an open plain outage is turned into the limit. A reset not after <paramref name="at"/> opens nothing.
+    /// </summary>
+    public void OpenLimit(DateTimeOffset until, string why, DateTimeOffset at)
+    {
+        lock (_gate)
+        {
+            if (until <= at)
+            {
+                return;
+            }
+            if (_limitUntil is { } current)
+            {
+                if (until > current)
+                {
+                    _limitUntil = until;
+                    RaiseLimitCard(at, until, why);
+                }
+                return;
+            }
+            var since = _since ?? at;
+            if (_cardId is { } old)
+            {
+                state.CloseCard(old, "it is the usage limit", LegWatch.Who);
+                _cardId = null;
+            }
+            _since = since;
+            _limitUntil = until;
             _baseline = null;
             _stalled.Clear();
             _waiting.Clear();
             _probeKey = null;
-            if (_cardId is { } id)
-            {
-                state.CloseCard(id, $"sessions take turns again since {now.ToLocalTime():HH:mm}", LegWatch.Who);
-                _cardId = null;
-            }
+            RaiseLimitCard(at, until, why);
         }
+    }
+
+    private void RaiseLimitCard(DateTimeOffset at, DateTimeOffset until, string why)
+    {
+        if (_cardId is { } prior)
+        {
+            state.CloseCard(prior, $"the limit now lasts until {until.ToLocalTime():HH:mm}", LegWatch.Who);
+        }
+        var card = state.RaiseCard(CardBin.ForYou, LimitCardKind, Verbs.NodeTarget, $"On the usage limit until {until.ToLocalTime():HH:mm}",
+            $"limit seen at {at:O}: {why}; resets {until:O}; the node starts no session of its own and rings nothing for a session that took no turn until then",
+            [new CardChoice { Label = "Mark it read", Verb = Verbs.Dismiss, Target = "" }],
+            summary: $"The account is on its usage limit until {until.ToLocalTime():HH:mm} ({why}). The node starts nothing and rings nothing for a session that took no turn; what waited starts then, and this card closes by itself.");
+        _cardId = card.Id;
     }
 
     private void Open(DateTimeOffset at, string why)
