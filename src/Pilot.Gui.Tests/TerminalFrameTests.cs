@@ -12,7 +12,7 @@ namespace Pilot.Gui.Tests;
 /// background (the bar's cells past its last entry and any gap of a page or the cards panel included), so no terminal-black cell or
 /// stale glyph is left on any page at the terminal's real size.
 /// </summary>
-internal sealed class TerminalFrameTests
+public sealed class TerminalFrameTests
 {
     private sealed class BufferedViewport(CellBuffer buffer, int width, int height) : ITerminalViewport
     {
@@ -64,14 +64,15 @@ internal sealed class TerminalFrameTests
     }
 
     [Theory]
-    [InlineData(PilotPage.Home, 160, 44)]
-    [InlineData(PilotPage.Spend, 160, 44)]
-    [InlineData(PilotPage.Ideas, 160, 44)]
-    [InlineData(PilotPage.Home, 100, 24)]
-    [InlineData(PilotPage.Spend, 100, 24)]
-    [InlineData(PilotPage.Ideas, 100, 24)]
-    public void TheBarIsRowZeroAndThePageTakesTheRestEveryCellPainted(PilotPage page, int columns, int rows)
+    [InlineData("Home", 160, 44)]
+    [InlineData("Spend", 160, 44)]
+    [InlineData("Ideas", 160, 44)]
+    [InlineData("Home", 100, 24)]
+    [InlineData("Spend", 100, 24)]
+    [InlineData("Ideas", 100, 24)]
+    public void TheBarIsRowZeroAndThePageTakesTheRestEveryCellPainted(string pageName, int columns, int rows)
     {
+        var page = Enum.Parse<PilotPage>(pageName);
         var (buffer, pageTree, arranged) = Paint(page, columns, rows);
         var size = $"{page} {columns}x{rows}";
 
