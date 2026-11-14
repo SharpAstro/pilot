@@ -232,6 +232,69 @@ public sealed class TerminalFrameTests
         buffer.BackAt(2, row + 1).ShouldBe(buffer.BackAt(2, row - 1), $"{size}: the rule is not directly under the typed row\n{dump}");
     }
 
+    // PIL1049: the composer's rules are lines of U+2500 on the page's own background (no fill), the prompt row '❯ ' and the placeholder.
+    [Fact]
+    public async Task TheComposersRulesAreThinLinesOnThePageBackgroundAndThePromptRowHoldsThePlaceholder()
+    {
+        var (buffer, painted, _, caret) = await PaintChatCaretAsync(0, false, 160, 44, 0);
+        buffer.Flush(new NullSink());
+        var text = Enumerable.Range(0, 44).Select(buffer.FrontRowText).ToList();
+        var dump = string.Join('\n', text);
+        var prompt = text.FindIndex(r => r.Contains("❯ Message the fleet chat", StringComparison.Ordinal));
+        prompt.ShouldBeGreaterThan(1, $"the prompt row with the placeholder is not painted\n{dump}");
+        foreach (var rule in new[] { prompt - 1, prompt + 1 })
+        {
+            var from = text[rule].IndexOf('─');
+            from.ShouldBeGreaterThanOrEqualTo(0, $"row {rule} holds no U+2500\n{dump}");
+            var width = text[rule].Skip(from).TakeWhile(c => c == '─').Count();
+            width.ShouldBeGreaterThan(60, $"row {rule}: the rule is not a long run of U+2500\n{dump}");
+            // No fill of its own: the rule's node has the background the prompt row's node has (none).
+            var node = painted.Last(a => a.Bounds.Y == rule && a.Bounds.Height == 1 && a.Bounds.Width > 60);
+            var promptNode = painted.Last(a => a.Bounds.Y == prompt && a.Bounds.Height == 1 && a.Bounds.Width > 60);
+            node.Node.Background.ShouldBe(promptNode.Node.Background, $"row {rule}: the rule has a fill that the prompt row lacks\n{dump}");
+        }
+        caret.ShouldNotBeNull();
+    }
+
+    // PIL1049: a left click on the composer's rows (resolved on the arranged tree, as the app does) focuses the box and puts the caret on the clicked column.
+    [Fact]
+    public async Task AClickOnTheComposersPromptRowFocusesTheBoxAndPutsTheCaretWhereClicked()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        chrome.Chat.OnSend = _ => Task.FromResult<string?>(null);
+        chrome.Chat.Cells = true;
+        const int columns = 160, rows = 44;
+        chrome.Chat.CellColumns = TerminalFrame.PageColumns(columns, true);
+        chrome.Chat.Input.InsertText("hello world\nsecond line");
+        chrome.Chat.Ui.Focus.Blur();
+        var rail = TerminalRail.Tree(PilotPage.Chat, GlyphMode.Emoji, null, null, Live.At, _ => { }, null, columns);
+        var panel = chrome.Cards.Tree(Cards());
+        var arranged = TerminalFrame.Clip(Layout.Engine.Arrange(TerminalFrame.Tree(rail, chrome.Chat.Tree(), panel), new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored));
+        var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
+        buffer.Resize(columns, rows);
+        CellLayout.Paint(new BufferedViewport(buffer, columns, rows), arranged);
+        buffer.Flush(new NullSink());
+        var text = Enumerable.Range(0, rows).Select(buffer.FrontRowText).ToList();
+        var first = text.FindIndex(r => r.Contains("❯ hello world", StringComparison.Ordinal));
+        first.ShouldBeGreaterThan(0, string.Join('\n', text));
+        var left = text[first].IndexOf('❯');
+
+        chrome.Chat.Ui.Focus.Current.ShouldNotBe(chrome.Chat.Input);
+        // On the second line, column 4: "seco|nd line".
+        var x = left + 2 + 4;
+        CellLayout.HitTest(arranged, x, first + 1).ShouldBeOfType<HitResult.ButtonHit>();
+        chrome.Chat.Ui.Focus.Current.ShouldBe(chrome.Chat.Input);
+        chrome.Chat.PlaceComposerCaret(arranged, x, first + 1);
+        chrome.Chat.Input.Line.ShouldBe(1);
+        chrome.Chat.Input.Column.ShouldBe(4);
+        chrome.Chat.CaretCell(arranged).ShouldNotBeNull();
+        // A click on the top rule focuses the box too.
+        chrome.Chat.Ui.Focus.Blur();
+        CellLayout.HitTest(arranged, left + 5, first - 1).ShouldBeOfType<HitResult.ButtonHit>();
+        chrome.Chat.Ui.Focus.Current.ShouldBe(chrome.Chat.Input);
+    }
+
     // A viewport whose caret is sticky as VirtualTerminal's is: SetCaret keeps the request until HideCaret.
     private sealed class StickyCaretViewport(int width, int height) : ITerminalViewport
     {

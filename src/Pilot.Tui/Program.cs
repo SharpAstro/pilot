@@ -91,6 +91,11 @@ var tracker = new BackgroundTaskTracker();
 using var stop = new CancellationTokenSource();
 var dirty = true;
 void Redraw() => dirty = true;
+var input = new TerminalInput<RgbaImage>(chrome, sessions, focus, tracker, Redraw, stop.Cancel)
+{
+    HitTest = (tree, column, row) => CellLayout.HitTest(tree, column, row),
+    TextInputs = tree => CellLayout.TextInputs(tree),
+};
 
 // The same wiring as the window's: a verb on the node for each button, and Plan a leg said in the chat.
 flights.CanCommand = true;
@@ -414,6 +419,7 @@ if (terminal.IsInputRedirected || terminal.IsOutputRedirected)
 await terminal.InitAsync();
 terminal.EnterAlternateScreen();
 terminal.EnableCellBuffer();
+input.CellSize = () => (terminal.CellSize.Width, terminal.CellSize.Height);
 
 var page = PilotPage.Home;
 // A card about a leg opens its worker's transcript from the moment the card was raised.
@@ -512,7 +518,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };
-        var railTree = TerminalRail.Tree(page, glyphMode, pages.Jobs, pages.Ideas, now, chrome.Show, railMemory, columns);
+        var railTree = TerminalRail.Tree(page, glyphMode, pages.Jobs, pages.Ideas, now, input.Show, railMemory, columns);
         // A glyph that changed was drawn blank for this frame (see TerminalRail.Memory): draw the next at once.
         if (railMemory.Settling)
         {
@@ -528,7 +534,7 @@ while (!stop.IsCancellationRequested)
         // Cropped to each scroll container and page rect first (Console.Lib's painter has no clip); the hit test reads the same tree.
         arranged = TerminalFrame.Clip(arranged);
         TerminalFrame.Paint(terminal.HideCaret, () => CellLayout.Paint(terminal, arranged));
-        if (page == PilotPage.Chat && ReferenceEquals(focus.Current, chat.Input) && chat.CaretCell(arranged) is var (caretColumn, caretRow))
+        if (chat.ParkedCaret(page, focus, arranged) is var (caretColumn, caretRow))
         {
             // The composer is drawn from the editor's lines (CellLayout paints no text editor), so its caret is placed here.
             terminal.SetCaret(caretColumn, caretRow, CaretStyle.BlinkingBar);
@@ -542,73 +548,6 @@ return 0;
 
 void Handle(ConsoleInputEvent raw)
 {
-    var evt = raw.ToInputEvent;
-    var fields = () => (IReadOnlyList<TextInputState>)CellLayout.TextInputs(arranged);
-    var context = new TextInputInteraction.KeyContext(tracker, focus, Redraw,
-        ActiveSearch: page == PilotPage.Flights ? flights.Wizard.ActiveSearch : null, TabFields: fields);
-    Redraw();
-
-    // A click: the arranged tree answers, as the window's regions do; a field's click focuses it.
-    if (evt is InputEvent.MouseUp(var x, var y, MouseButton.Left))
-    {
-        var cell = terminal.CellSize;
-        if (cell.Width > 0 && cell.Height > 0 && CellLayout.HitTest(arranged, (int)x / cell.Width, (int)y / cell.Height) is HitResult.TextInputHit field)
-        {
-            focus.Focus(field.Input);
-        }
-        return;
-    }
-
-    // Shift+Enter (Alt+Enter, where a terminal cannot tell Shift) in the chat's box is a new line, not a send.
-    if (evt is InputEvent.KeyDown && chat.HandleNewLine(evt))
-    {
-        return;
-    }
-
-    // Typing into a focused field: a printable key is text; everything else is the field's (Enter commits, Escape leaves).
-    if (focus.Current is { } current)
-    {
-        if (raw.KeyChar is { } rune && !Rune.IsControl(rune) && (raw.Modifiers & ~ConsoleModifiers.Shift) == 0)
-        {
-            TextInputInteraction.HandleText(current, rune.ToString());
-            return;
-        }
-        if (evt is InputEvent.KeyDown(var fieldKey, var fieldModifiers))
-        {
-            TextInputInteraction.HandleKey(fieldKey, fieldModifiers, context);
-        }
-        return;
-    }
-
-    switch (evt)
-    {
-        case InputEvent.KeyDown(InputKey.Q, InputModifier.None) or InputEvent.KeyDown(InputKey.C, InputModifier.Ctrl):
-            stop.Cancel();
-            break;
-        // Back and Forward through the window's history: Alt+Left and Alt+Right (PilotChrome's own keys), and Backspace for Back
-        // here, where no field has the keyboard (a focused field took its keys above, so Backspace there still edits text).
-        case InputEvent.KeyDown(InputKey.Backspace, InputModifier.None):
-            chrome.Back();
-            break;
-        case InputEvent.KeyDown navKey when chrome.HandleInput(navKey):
-            break;
-        // The page keys are moves the history records; the show callback of the Link calls keeps `page` in step.
-        case var _ when TerminalRail.Handle(evt, raw.KeyChar, chrome.Show, () => focus.Focus(chat.Input)):
-            break;
-        case InputEvent.KeyDown(InputKey.S, InputModifier.Ctrl):
-            chrome.Show(PilotPage.Sessions);
-            focus.Focus(sessions.SayInput);
-            break;
-        case InputEvent.KeyDown(InputKey.T, InputModifier.Ctrl):
-            chrome.Show(PilotPage.Chat);
-            focus.Focus(chat.Input);
-            break;
-        case InputEvent.KeyDown(InputKey.Enter, InputModifier.Ctrl) when page == PilotPage.Flights && flights.Wizard.IsOpen:
-            flights.Wizard.GoOn();
-            break;
-        case InputEvent.KeyDown key:
-            // Up and Down move the page's selection, as in the window.
-            _ = chrome.PageWidget.HandleInput(key);
-            break;
-    }
+    input.Arranged = arranged;
+    input.Handle(raw.ToInputEvent, raw.KeyChar, raw.Modifiers);
 }

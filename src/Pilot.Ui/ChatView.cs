@@ -1305,7 +1305,9 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         _composerFirst = Math.Clamp(line - shown + 1, 0, lines.Length - shown);
         var width = Math.Max(8, CellColumns - 12 - ComposerPrompt.Length);
         _composerStart = Math.Max(0, input.Column - (width - 1));
-        Layout.Node Rule() => Layout.Builder.Spacer().Bg(Palette.Current.Faint).WStar().RowH(16f);
+        var click = new HitResult.ButtonHit("chat:composer");
+        Layout.Node Rule() => Layout.Builder.Text(new string('─', Math.Max(8, CellColumns - 12)), 14f, Palette.Current.Faint)
+            .WStar().RowH(16f).Follows(click, _ => FocusComposer());
         var rows = new List<Layout.Node> { Rule() };
         for (var i = 0; i < shown; i++)
         {
@@ -1325,7 +1327,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
                 text = text.Length > width ? text[..width] : text;
                 color = Palette.Current.Bright;
             }
-            rows.Add(Layout.Builder.Text(prefix + text, 14f, color).WStar().RowH(16f));
+            rows.Add(Layout.Builder.Text(prefix + text, 14f, color).WStar().RowH(16f).Follows(click, _ => FocusComposer()));
         }
         rows.Add(Rule());
         return _composerNode = Layout.Builder.VStack([.. rows]).WStar().HAuto();
@@ -1354,6 +1356,49 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             return b.Height > row + 1 && b.Width > column ? (b.X + column, b.Y + row) : null;
         }
         return null;
+    }
+
+    /// <summary>
+    /// Where the terminal's caret is parked this frame: the page is Chat, the box has the keyboard and the arranged frame gives
+    /// it a cell; null otherwise. Program.cs's draw loop and the tests ask this one method.
+    /// </summary>
+    public (int Column, int Row)? ParkedCaret(PilotPage page, TextInputFocus focus, System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> arranged)
+        => page == PilotPage.Chat && ReferenceEquals(focus.Current, Input) ? CaretCell(arranged) : null;
+
+    private void FocusComposer() => Ui.Focus.Focus(_composer.Input);
+
+    /// <summary>
+    /// A click on the composer's cell (column, row): the box has the keyboard, and when the cell is on a prompt row the caret goes
+    /// to the clicked line and column, undoing the prompt's width and the window the box shows (clamped to the line's end).
+    /// </summary>
+    public void PlaceComposerCaret(System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> arranged, int column, int row)
+    {
+        FocusComposer();
+        foreach (var a in arranged)
+        {
+            if (!ReferenceEquals(a.Node, _composerNode))
+            {
+                continue;
+            }
+            var input = _composer.Input;
+            var lines = input.Text.Split('\n');
+            var shown = Math.Min(lines.Length, ChatComposer.MaxLines);
+            var y = row - a.Bounds.Y - 1;
+            if (y < 0 || y >= shown)
+            {
+                return;
+            }
+            var n = _composerFirst + y;
+            var col = Math.Max(0, column - a.Bounds.X - ComposerPrompt.Length) + (n == Math.Clamp(input.Line, 0, lines.Length - 1) ? _composerStart : 0);
+            col = Math.Min(col, lines[n].Length);
+            var offset = 0;
+            for (var i = 0; i < n; i++)
+            {
+                offset += lines[i].Length + 1;
+            }
+            input.MoveCaretTo(offset + col, false);
+            return;
+        }
     }
 
     // The box: DIR.Lib's multi-line editor, and a line saying how it sends.
