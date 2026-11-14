@@ -40,7 +40,14 @@ internal sealed class TerminalInput<TSurface>(
     /// <summary>The page bar's show: Chat takes the keyboard, any other page is just shown.</summary>
     public void Show(PilotPage page)
     {
-        chrome.Show(page); // BASE-TEMP
+        if (page == PilotPage.Chat)
+        {
+            OntoChat();
+        }
+        else
+        {
+            chrome.Show(page);
+        }
     }
 
     /// <summary>
@@ -49,7 +56,7 @@ internal sealed class TerminalInput<TSurface>(
     /// </summary>
     public void DropStaleFocus()
     {
-        if (focus.Current is not { } current || true) // BASE-TEMP
+        if (focus.Current is not { } current)
         {
             return;
         }
