@@ -210,6 +210,6 @@ internal static class TerminalRail
         }).ToArray();
         // One row across: Stretch() would set the height to Star as well and overwrite the HFixed, and in the frame's VStack the bar
         // and the page then shared the height equally, the page and its ? card getting only the lower half (pilot #1027).
-        return Layout.Builder.HStack(entries).RowH(16f);
+        return Layout.Builder.HStack(entries).RowH(16f).Bg(palette.Ground);
     }
 }
