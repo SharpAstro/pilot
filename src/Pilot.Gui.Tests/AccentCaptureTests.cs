@@ -149,9 +149,10 @@ public sealed class AccentCaptureTests
             .Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text })
             .Select(a => (Text: ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value, a.Bounds))
             .ToList();
-        foreach (var name in new[] { "PR #7", "sub-task" + Followable.Away, "Preview" + Followable.Away })
+        // A link that leaves the app ends in the away mark; the PR's title drops it when the Pull requests page can open the PR instead.
+        foreach (var name in new[] { "PR #7", "sub-task", "Preview" })
         {
-            var found = texts.Where(t => t.Text == name).ToList();
+            var found = texts.Where(t => t.Text == name || t.Text == name + Followable.Away).ToList();
             found.ShouldNotBeEmpty($"the page draws the link \"{name}\"");
             found.Sum(t => CountIn(pixels, width, height, t.Bounds, palette.Link)).ShouldBeGreaterThan(0, $"\"{name}\" is drawn in the accent");
         }
