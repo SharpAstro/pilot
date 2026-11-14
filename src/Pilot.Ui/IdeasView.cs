@@ -169,7 +169,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     private Palette? NightOrNull => IsNight ? P : null;
 
     // Links and ids: the palette's blue, and in night the body red, since its Landed is too dark to read on a button.
-    private RGBAColor32 Link => IsNight ? P.Body : P.Landed;
+    private RGBAColor32 Link => IsNight ? P.Body : P.Link;
 
     private (RGBAColor32 Bg, RGBAColor32 Hover) Tint => (P.Button, P.ButtonHover);
 

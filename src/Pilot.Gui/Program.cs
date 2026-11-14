@@ -269,6 +269,8 @@ var tracker = new BackgroundTaskTracker();
 LogLine($"pilot-gui: start, version {NodeFeed.ClientVersion}, args [{string.Join(' ', args)}], node {nodeWhere}");
 // The desktop accent is read once (SystemAccent's static initialiser); say here why there is none.
 SystemAccent.LogOnce(LogLine);
+// The Standard palette is built from it once, before the first frame (null keeps the built-in blue).
+Pilot.Ui.Palette.UseStartupAccent(SystemAccent.Current?.Pick(dark: true));
 string WhatRendered()
 {
     var what = chrome.Page.ToString();

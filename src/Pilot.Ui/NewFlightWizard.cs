@@ -36,7 +36,7 @@ internal sealed class NewFlightWizard
     private static RGBAColor32 Bright => Palette.Current.Bright;
     private static RGBAColor32 Body => Palette.Current.Body;
     private static RGBAColor32 Dim => Palette.Current.Dim;
-    private static RGBAColor32 Accent => Palette.Current.Landed;
+    private static RGBAColor32 Accent => Palette.Current.Link;
     private static RGBAColor32 Warn => Palette.Current.Failed;
     private static RGBAColor32 RowHoverBg => Palette.Current.RowHoverBg;
     private static RGBAColor32 ChosenBg => Palette.Current.RowFocusBg;
