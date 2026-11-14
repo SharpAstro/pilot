@@ -12,7 +12,7 @@ namespace Pilot.Gui.Tests;
 /// <para>States: <b>long</b> carries the long titles, repo and branch names, paths and reports (eight sessions, four repos); <b>many</b> carries
 /// the many rows (sixty sessions, fifty jobs, forty flights and repos) and twelve fleet nodes, a quarter of them down ("waiting for the node on ...").</para>
 /// </summary>
-public sealed class WireframeSweepTests
+public static class WireframeSweepTests
 {
     private static readonly int[] Widths = [1000, 1280, 1400, 1920, 2560];
     private static readonly int[] Heights = [900, 1440];
@@ -26,31 +26,35 @@ public sealed class WireframeSweepTests
     ];
 
     internal static IEnumerable<(string Page, string State, int Width, float Dpi, int Height)> CaseTuples() =>
-        from page in Pages from state in States from width in Widths from height in Heights from dpi in Dpis select (page, state, width, dpi, height);
+        from state in States from height in Heights from page in Pages from width in Widths from dpi in Dpis select (page, state, width, dpi, height);
 
-    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() =>
-        CaseTuples().Select(c => new TheoryDataRow<string, string, int, float, int>(c.Page, c.State, c.Width, c.Dpi, c.Height) { TestDisplayName = Key(c.Page, c.State, c.Width, c.Dpi, c.Height) });
+    internal static IEnumerable<TheoryDataRow<string, string, int, float, int>> RowsOf(string state, int height) =>
+        CaseTuples().Where(c => c.State == state && c.Height == height)
+            .Select(c => new TheoryDataRow<string, string, int, float, int>(c.Page, c.State, c.Width, c.Dpi, c.Height) { TestDisplayName = Key(c.Page, c.State, c.Width, c.Dpi, c.Height) });
 
     internal static string Key(string page, string state, int width, float dpi, int height) =>
         $"{page} | {state} | {width} wide | DPI {dpi.ToString(System.Globalization.CultureInfo.InvariantCulture)} | {height} high";
 
     /// <summary>
-    /// What the check leaves alone, by page: labels placed by data (the flight map's and the Spend chart's), where a rule about text over text does
-    /// not apply. Every other text of those pages is judged.
+    /// What the check leaves alone: the regions the flight map places by its data (a row, a destination or a leg of a flight: <c>map:&lt;code&gt;:...</c>),
+    /// which lie where the flights' positions put them, under the map's own overlays (the zoom control, the LAYERS menu) by design. The map's body
+    /// (<c>map:</c>), the overlays themselves and every text stay judged, so an overlay that sticks out of the map or text under it is still found.
     /// </summary>
-    internal static WireframeOptions OptionsFor(string page) => new();
+    internal static WireframeOptions OptionsFor(string page) => new()
+    {
+        IgnoreRegion = r => r.Result is HitResult.ButtonHit { Action: var a } && a.StartsWith("map:", StringComparison.Ordinal) && a.IndexOf(':', 4) > 0,
+    };
 
-    [Theory]
-    [MemberData(nameof(Cases))]
-    public async Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height)
+    /// <summary>One case: the findings of the page drawn at the size, minus the known ones, fail it.</summary>
+    internal static async Task Run(string page, string state, int width, float dpi, int height)
     {
         var key = Key(page, state, width, dpi, height);
         var findings = await FindingsOf(page, state, width, dpi, height);
-        if ((Environment.GetEnvironmentVariable("PILOT_WIREFRAME_DUMP") ?? @"C:\Users\SebastianGodelet\.claude\jobs\9f734a48\tmp\wf.tsv") is { Length: > 0 } dump)
+        if ((Environment.GetEnvironmentVariable("PILOT_WIREFRAME_DUMP") ?? @"C:\Users\SebastianGodelet\.claude\jobs\9f734a48\tmp\wf2.tsv") is { Length: > 0 } dump)
         {
             lock (DumpLock)
             {
-                File.AppendAllLines(dump, findings.Select(f => $"{key}\t{f.Rule}\t{f.Message}"));
+                File.AppendAllLines(dump, findings.Select(f => $"{key}	{f.Rule}	{f.Message}"));
             }
         }
         var unknown = Unknown(key, findings);
@@ -79,7 +83,7 @@ public sealed class WireframeSweepTests
 }
 
 /// <summary>The known list holds only findings that still happen.</summary>
-public sealed class WireframeKnownFindingsTests
+public sealed class WireframeSweepKnownFindingsTests
 {
     [Fact]
     public void EveryEntryHasAReason()
@@ -191,4 +195,42 @@ public sealed class WireframeSweepSelfTests
         findings.Where(x => entry.Covers(FixtureKey, x.Message)).ShouldNotBeEmpty();
         entry.Covers("other | sample | 200 wide | DPI 1 | 100 high", findings[0].Message).ShouldBeFalse();
     }
+}
+
+// The sweep runs as four classes, one a state and height, so xunit's own class-level parallelism shares the 640 cases (serial they take about a minute).
+
+/// <summary>The "long" state at 900 high.</summary>
+public sealed class WireframeSweepLong900Tests
+{
+    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("long", 900);
+
+    [Theory, MemberData(nameof(Cases))]
+    public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
+}
+
+/// <summary>The "long" state at 1440 high.</summary>
+public sealed class WireframeSweepLong1440Tests
+{
+    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("long", 1440);
+
+    [Theory, MemberData(nameof(Cases))]
+    public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
+}
+
+/// <summary>The "many" state at 900 high.</summary>
+public sealed class WireframeSweepMany900Tests
+{
+    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("many", 900);
+
+    [Theory, MemberData(nameof(Cases))]
+    public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
+}
+
+/// <summary>The "many" state at 1440 high.</summary>
+public sealed class WireframeSweepMany1440Tests
+{
+    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("many", 1440);
+
+    [Theory, MemberData(nameof(Cases))]
+    public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
 }
