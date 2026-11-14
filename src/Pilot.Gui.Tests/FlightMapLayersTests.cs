@@ -371,18 +371,73 @@ public sealed class FlightMapLayersTests
     }
 
     [Fact]
-    public void WhileThePaletteFadesTheViewAsksForFrames()
+    public void JustOpenedThePaletteWaitsOutItsDelayOnOneWake()
     {
         var (renderer, view) = Map();
         using var _ = renderer;
+        var clock = new FakeClock();
+        view.Time = clock;
         var asked = 0;
         view.Changed = () => asked++;
 
-        // Just opened, the panel is wholly there and starts to fade: each frame asks for the next.
+        // Just opened, the panel is wholly there and waits out its idle delay before it fades (DIR.Lib 11.59): no frame per refresh,
+        // one wake armed for when the delay ends, and a second frame inside the delay arms no second one.
         Render(view);
+        view.MapLayers.Palette.IsFading.ShouldBeFalse();
+        asked.ShouldBe(0);
+        clock.Armed.ShouldBe(1);
+        Render(view);
+        asked.ShouldBe(0);
+        clock.Armed.ShouldBe(1);
 
-        view.MapLayers.Palette.IsFading.ShouldBeTrue();
-        asked.ShouldBeGreaterThan(0);
+        // The delay ends: the wake asks for the frame that starts the fade, once.
+        clock.Advance(TimeSpan.FromSeconds(FloatingPalette.IdleDelaySeconds));
+        asked.ShouldBe(1);
+        clock.Armed.ShouldBe(0);
+    }
+
+    [Fact]
+    public void WhileTheAlphaMovesEachFrameAsksForTheNextAndAtRestNone()
+    {
+        var (renderer, view) = Map();
+        using var _ = renderer;
+        var clock = new FakeClock();
+        view.Time = clock;
+        var asked = 0;
+        view.Changed = () => asked++;
+
+        // Zero is the fade ramp: every frame asks for the next, and no timer is armed for it.
+        view.AskForLayersFrame(TimeSpan.Zero);
+        view.AskForLayersFrame(TimeSpan.Zero);
+        asked.ShouldBe(2);
+        clock.Armed.ShouldBe(0);
+
+        // Null is a palette hovered, dragged or at rest: nothing changes by itself, so nothing is asked for.
+        view.AskForLayersFrame(null);
+        asked.ShouldBe(2);
+        clock.Armed.ShouldBe(0);
+    }
+
+    [Fact]
+    public void AWakeThatFiresEarlyIsArmedAgain()
+    {
+        var (renderer, view) = Map();
+        using var _ = renderer;
+        var clock = new FakeClock();
+        view.Time = clock;
+        var asked = 0;
+        view.Changed = () => asked++;
+
+        view.AskForLayersFrame(TimeSpan.FromSeconds(1));
+        clock.Armed.ShouldBe(1);
+
+        // A real timer can fire a little before its due time: the frame it asked for finds the delay not yet over and arms again.
+        clock.FireNextEarly();
+        asked.ShouldBe(1);
+        view.AskForLayersFrame(TimeSpan.FromMilliseconds(20));
+        clock.Armed.ShouldBe(1);
+        clock.Advance(TimeSpan.FromMilliseconds(20));
+        asked.ShouldBe(2);
     }
 
     [Fact]

@@ -180,7 +180,7 @@ public sealed class PageTextOverlapTests
     }
 
     /// <summary>A page set up in a state: its chrome, the page's tree and the room the chrome leaves it.</summary>
-    private sealed record Prepared(RgbaImageRenderer Renderer, PilotChrome<RgbaImage> Chrome, PageData Data, Layout.Node Tree, Rect<float> Rect) : IDisposable
+    internal sealed record Prepared(RgbaImageRenderer Renderer, PilotChrome<RgbaImage> Chrome, PageData Data, Layout.Node Tree, Rect<float> Rect) : IDisposable
     {
         public void Dispose() => Renderer.Dispose();
     }
@@ -231,11 +231,11 @@ public sealed class PageTextOverlapTests
     }
 
     /// <summary>The cards the page is drawn from: those with a long detail folded under a summary for "card detail", the plain ones otherwise.</summary>
-    private static CardsScreen CardsOf(PageData data, string page) => page == CardDetailPage ? data.CardsWithDetail : data.Cards;
+    internal static CardsScreen CardsOf(PageData data, string page) => page == CardDetailPage ? data.CardsWithDetail : data.Cards;
 
-    private static async Task<Prepared> Prepare(string page, string state, int width, float dpi, Action<PilotChrome<RgbaImage>>? setup = null, int height = Height)
+    internal static async Task<Prepared> Prepare(string page, string state, int width, float dpi, Action<PilotChrome<RgbaImage>>? setup = null, int height = Height, Func<uint, uint, RgbaImageRenderer>? renderers = null)
     {
-        var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+        var renderer = renderers is null ? new RgbaImageRenderer((uint)width, (uint)height) : renderers((uint)width, (uint)height);
         var data = PageData.For(state);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = dpi };
         chrome.Play.ShowEverything();

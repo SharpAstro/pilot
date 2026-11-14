@@ -18,6 +18,13 @@ internal sealed record ListColumn(string Header, Layout.Sizing Width, float? Dro
     /// </summary>
     public ListColumn? Squeezed { get; init; }
 
+    /// <summary>
+    /// Where this column sits among the columns as declared, set by <see cref="ListTable.Fit"/> once it left some out, so a row built with
+    /// a cell for each declared column keeps the cells of the columns that stayed (a cell under another column's title otherwise; PIL1053).
+    /// Negative while the table shows every column.
+    /// </summary>
+    public int Slot { get; init; } = -1;
+
     /// <summary>Whether a click on the title sorts by this column; a column with no title (the action column) never does.</summary>
     public bool Sortable { get; init; }
 
@@ -138,7 +145,10 @@ internal sealed class ListTable
         }
         var shown = columns.Where(c => c.DropBelow is null).ToList();
         var needs = 2 * PageGutter + 2 * EndPad + StripeWidth + ColumnGap + shown.Sum(c => c.Width.IsFixed ? c.Width.Value : c.Width.Min) + Math.Max(0, shown.Count - 1) * ColumnGap;
-        return needs <= room ? columns : [.. columns.Select(c => c.Squeezed ?? c)];
+        // Squeezed, the columns a narrow page drops are left out here, not left to collapse in the engine: a collapsed column's weight leaves the
+        // header's star shares but not the divider row's, so a star column was wider under the dividers than in the header and a divider
+        // landed on the next title (jobs at 1000 wide, 1.5 scale; PIL1053).
+        return needs <= room ? columns : [.. columns.Select((c, i) => (Column: c.Squeezed ?? c, Slot: i)).Where(c => c.Column.DropBelow is null).Select(c => c.Column with { Slot = c.Slot })];
     }
 
     /// <summary>The widths a reader has dragged, which header and rows both read.</summary>
@@ -234,7 +244,9 @@ internal sealed class ListTable
         columns = Dragged(columns);
         var specs = Lay(columns);
         var style = Style;
-        var laid = ToArray(cells);
+        // A squeezed table left columns out (Fit): the row keeps the cells of the columns that stayed, each under its own title.
+        IReadOnlyList<Layout.Node> kept = columns.Any(c => c.Slot >= 0) ? [.. columns.Select(c => c.Slot < cells.Count ? cells[c.Slot] : Layout.Builder.Spacer())] : cells;
+        var laid = ToArray(kept);
         for (var i = 0; i < laid.Length && i < columns.Count; i++)
         {
             if (columns[i].DropBelow is { } dropAt)
