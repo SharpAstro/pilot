@@ -1290,7 +1290,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     /// <summary>The columns the cell page has, so a long line is windowed to the caret rather than wrapped past its row.</summary>
     public int CellColumns { get; set; } = 80;
 
-    private const string Prompt = "❯ ";
+    private const string ComposerPrompt = "❯ ";
     private Layout.Node? _composerNode;
     private int _composerFirst, _composerStart;
 
@@ -1303,14 +1303,14 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         var shown = Math.Min(lines.Length, ChatComposer.MaxLines);
         var line = Math.Clamp(input.Line, 0, lines.Length - 1);
         _composerFirst = Math.Clamp(line - shown + 1, 0, lines.Length - shown);
-        var width = Math.Max(8, CellColumns - 12 - Prompt.Length);
+        var width = Math.Max(8, CellColumns - 12 - ComposerPrompt.Length);
         _composerStart = Math.Max(0, input.Column - (width - 1));
         var rule = Layout.Builder.Spacer().Bg(Palette.Current.Faint).WStar().RowH(16f);
         var rows = new List<Layout.Node> { rule };
         for (var i = 0; i < shown; i++)
         {
             var n = _composerFirst + i;
-            var prefix = n == 0 ? Prompt : new string(' ', Prompt.Length);
+            var prefix = n == 0 ? ComposerPrompt : new string(' ', ComposerPrompt.Length);
             string text;
             RGBAColor32 color;
             if (lines.Length == 1 && lines[0].Length == 0)
@@ -1349,7 +1349,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             }
             var input = _composer.Input;
             var row = 1 + Math.Clamp(input.Line - _composerFirst, 0, ChatComposer.MaxLines - 1);
-            var column = Prompt.Length + Math.Max(0, input.Column - _composerStart);
+            var column = ComposerPrompt.Length + Math.Max(0, input.Column - _composerStart);
             var b = a.Bounds;
             return b.Height > row + 1 && b.Width > column ? (b.X + column, b.Y + row) : null;
         }
