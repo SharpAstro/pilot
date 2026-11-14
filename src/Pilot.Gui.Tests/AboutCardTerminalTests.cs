@@ -33,14 +33,15 @@ public sealed class AboutCardTerminalTests
         Worktree = $"/r/orbit/w{i}", Base = "main", State = FlightState.Flying, CreatedAt = Live.At.AddHours(-2),
     };
 
-    [Fact]
-    public void NoPageGlyphShowsInsideTheCardsRectInCells()
+    private static (System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> Arranged, CellBuffer Buffer) PaintHome(bool open, int columns, int rows)
     {
-        const int columns = 160, rows = 50;
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
         chrome.About.Facts = () => AboutFacts.For("pilot-tui", null, "node.sock");
-        chrome.About.Toggle();
+        if (open)
+        {
+            chrome.About.Toggle();
+        }
 
         var sessions = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample");
         var snapshot = SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath);
@@ -48,12 +49,21 @@ public sealed class AboutCardTerminalTests
         var legs = flightRows.Select(f => new LegRow { Flight = f.Code, Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying });
         var flights = new FlightsScreen(FlightLine.Build(flightRows, [], Live.At, legs), "sample", Live.At);
         var jobs = new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), sessions.Source, snapshot.At);
-        var home = new HomeScreen(flights, sessions, jobs, CardsScreen.Empty);
+        var machine = new MachineRow { SampledAt = Live.At, CpuPercent = 42, Cores = 16, MemoryUsed = 8L << 30, MemoryTotal = 32L << 30, DiskFree = 100L << 30, DiskTotal = 500L << 30, DiskName = "C:" };
+        var home = new HomeScreen(flights, sessions, jobs, CardsScreen.Empty, [new MachineLine(null, machine)]);
 
         var arranged = Layout.Engine.Arrange(chrome.About.Over(chrome.Home.Tree(home)), new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
         var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
         buffer.Resize(columns, rows);
         CellLayout.Paint(new BufferedViewport(buffer, columns, rows), arranged);
+        return (arranged, buffer);
+    }
+
+    [Fact]
+    public void NoPageGlyphShowsInsideTheCardsRectInCells()
+    {
+        const int columns = 160, rows = 50;
+        var (arranged, buffer) = PaintHome(true, columns, rows);
 
         var menuBg = Palette.Current.MenuBg;
         // The card is the node on the menu's background that holds its "Keys" heading.
@@ -90,6 +100,17 @@ public sealed class AboutCardTerminalTests
                 }
             }
         }
+        // The control: the same page with the card closed has page glyphs in that rect, so a pass above means the card hid them.
+        var (_, closed) = PaintHome(false, columns, rows);
+        var underneath = 0;
+        for (var y = card.Y; y < card.Y + card.Height; y++)
+        {
+            for (var x = card.X; x < card.X + card.Width; x++)
+            {
+                underneath += closed.BackAt(x, y).Glyph != ' ' ? 1 : 0;
+            }
+        }
+        underneath.ShouldBeGreaterThan(20, "the page behind the card must carry glyphs in its rect");
         card.Width.ShouldBeGreaterThan(40);
         faults.ShouldBeEmpty(string.Join("; ", faults.Take(10)));
     }
