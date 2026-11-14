@@ -107,7 +107,8 @@ public sealed class TerminalFrameTests
             }
             var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
             buffer.Resize(columns, rows);
-            var painted = TerminalFrame.Paint(new BufferedViewport(buffer, columns, rows), arranged);
+            var painted = TerminalFrame.Clip(arranged);
+            CellLayout.Paint(new BufferedViewport(buffer, columns, rows), painted);
             return (buffer, painted);
         }
         finally

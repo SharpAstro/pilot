@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using Console.Lib;
 using DIR.Lib;
 
 namespace Pilot.Ui;
@@ -77,13 +76,5 @@ internal static class TerminalFrame
             }
         }
         return result.ToImmutable();
-    }
-
-    /// <summary>Paints the frame as <see cref="Clip"/> cuts it and returns what was painted, for the hit test to read.</summary>
-    public static ImmutableArray<Layout.ArrangedNode<int>> Paint(ITerminalViewport viewport, ImmutableArray<Layout.ArrangedNode<int>> arranged)
-    {
-        var clipped = Clip(arranged);
-        CellLayout.Paint(viewport, clipped);
-        return clipped;
     }
 }
