@@ -433,6 +433,9 @@ public sealed class AboutCardTerminalTests
             ["Ctrl+S", "Ctrl+T", "Enter", "Up, Down", "Escape", "Backspace", "q, Ctrl+C", "Left click"]);
         AboutCard.TerminalKeys.Single(k => k.Keys == "Backspace").What.ShouldContain("Alt+Right");
         AboutCard.TerminalKeys.ShouldAllBe(k => k.What.Length <= AboutCard.TerminalLineChars);
+        // The away mark's row is the card's too: it fits the terminal's narrowest card and keeps the words CursorAndLinksTests reads.
+        AboutCard.AwayMark.What.Length.ShouldBeLessThanOrEqualTo(AboutCard.TerminalLineChars, AboutCard.AwayMark.What);
+        AboutCard.AwayMark.What.ShouldContain("opens elsewhere");
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
         chrome.Show(PilotPage.Sessions);

@@ -130,8 +130,11 @@ internal sealed class AboutCard
     /// <summary>The heading over <see cref="IconButtons"/>.</summary>
     public const string IconButtonsHeading = "Icon buttons (point at one for its word)";
 
-    /// <summary>What the mark after a link's text means, as the card says it beside the keys.</summary>
-    public static readonly (string Mark, string What) AwayMark = (Followable.Away.Trim(), "a link out (the browser, a folder), not an action here");
+    /// <summary>
+    /// What the mark after a link's text means, as the card says it beside the keys: "opens elsewhere" is the card's word for it, which
+    /// CursorAndLinksTests reads, and the row holds <see cref="TerminalLineChars"/> or fewer, so the terminal's card shows it whole too.
+    /// </summary>
+    public static readonly (string Mark, string What) AwayMark = (Followable.Away.Trim(), "a link that opens elsewhere (the browser, a folder)");
 
     /// <summary>Whether the card shows, over the page.</summary>
     public bool IsOpen { get; private set; }
