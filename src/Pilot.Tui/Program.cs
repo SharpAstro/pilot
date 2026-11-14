@@ -152,6 +152,8 @@ sessions.OnOpen = folder => DashboardCommands.Open(folder);
 NodeInfo? nodeInfo = null;
 chrome.About.Facts = () => AboutFacts.For("pilot-tui", nodeInfo, client.SocketPath);
 chrome.About.KeyList = AboutCard.TerminalKeys;
+// One row a header button: the trees are the GUI's, laid out at 16 design units a row (#1044).
+HeaderMetrics.Terminal = true;
 // A terminal can be shorter than the card, which drops its last rows: the keys come first, so a short one keeps them.
 chrome.About.KeysFirst = true;
 chrome.About.Opening = () => _ = Task.Run(async () =>

@@ -82,7 +82,7 @@ internal sealed partial class PullRequestsView<TSurface>
         NightOrNull is { } night ? ((night.RowFocusBg, night.ButtonHover), (night.Button, night.ButtonHover)) : (NodeFilter.Lit, null);
 
     // The row above the list: the pills that narrow it (a segmented choice: one lit), the repo search and how much of the list is shown.
-    private Layout.Node Toolbar(int shown, int total)
+    private Layout.Node Toolbar(int shown, int total, float width)
     {
         var (lit, plain) = Tints();
         var items = new List<Layout.Node>();
@@ -94,7 +94,10 @@ internal sealed partial class PullRequestsView<TSurface>
             items.Add(CardsView<TSurface>.HeaderPill(FilterName(filter), FilterAction(filter), () => Filter = isLit ? null : chosen, isLit ? lit : plain, NightOrNull?.Bright)
                 .WithTooltip(FilterTip(filter, isLit)));
         }
-        items.Add(Layout.Builder.TextInput(Search, TextSize, Palette.Input).WStar(1f, SearchFloor, SearchWidth).HFixed(AboutCard.HeaderButton));
+        if (!HeaderMetrics.Terminal)
+        {
+            items.Add(Layout.Builder.TextInput(Search, TextSize, Palette.Input).WStar(1f, SearchFloor, SearchWidth).HFixed(AboutCard.HeaderButton));
+        }
         // What the node refused of the last button pressed on a row, in its words, where the count of the list is: a place that is
         // always there, so a refusal moves nothing. Drawn from the slot's left edge, never far-aligned: a run wider than its slot would grow
         // leftwards over the pills. Cut to the room it has with an ellipsis, whole on hover.
@@ -113,8 +116,41 @@ internal sealed partial class PullRequestsView<TSurface>
             items.Add(Layout.Builder.Spacer().WStar(1f, RefusalFloor));
             items.Add(Layout.Builder.Text(shown == total ? "" : $"showing {shown} of {total}", 12f, BodyText, TextAlign.Far).WAuto());
         }
+        if (HeaderMetrics.Terminal)
+        {
+            // A cell grid: the pills and counts take one row, the search box stands under them as Claude Code's settings search box is,
+            // a rounded one-cell border round its one input row (DIR.Lib's layout has no border, so it is drawn as text).
+            return Layout.Builder.VStack(Layout.Builder.HStack([.. items]).WithGap(8f).RowH(HeaderMetrics.BarRow), TerminalSearchBox(width)).WStar().HAuto();
+        }
         return Layout.Builder.HStack([.. items]).WithGap(8f).RowH(ToolbarHeight);
     }
+
+    /// <summary>
+    /// The terminal's search box: a top edge, the input row between two side edges, a bottom edge; each of them one row. It is
+    /// <see cref="TerminalSearchColumns"/> wide, or the page's width when that is less, and its edges are as many dashes as it has room for.
+    /// </summary>
+    private Layout.Node TerminalSearchBox(float width)
+    {
+        var edge = P.Dim;
+        var row = HeaderMetrics.BarRow;
+        var columns = TerminalSearchBoxColumns(width);
+        var boxWidth = TerminalSearchBoxWidth(columns);
+        var dashes = new string('─', Math.Max(0, columns - 2));
+        var top = Layout.Builder.Text("╭" + dashes + "╮", TextSize, edge).RowH(row);
+        var bottom = Layout.Builder.Text("╰" + dashes + "╯", TextSize, edge).RowH(row);
+        var middle = Layout.Builder.HStack(
+            Layout.Builder.Text("│", TextSize, edge).WAuto(),
+            Layout.Builder.TextInput(Search, TextSize, Palette.Input).WStar().HFixed(row),
+            Layout.Builder.Text("│", TextSize, edge).WAuto()).RowH(row);
+        return Layout.Builder.VStack(top, middle, bottom).WFixed(boxWidth).HAuto();
+    }
+
+    private const int TerminalSearchColumns = 62;
+
+    // The columns the box takes: its usual width, less when the page (a cell is 8 units) minus its gutters is narrower.
+    private static int TerminalSearchBoxColumns(float width) => Math.Clamp((int)((width - 2f * Gutter) / 8f), 4, TerminalSearchColumns);
+
+    private static float TerminalSearchBoxWidth(int columns) => columns * 8f;
 
     private const float RefusalFloor = 100f;
     private const float SearchFloor = 60f;
@@ -131,7 +167,7 @@ internal sealed partial class PullRequestsView<TSurface>
             return Message($"No open pull requests in {screen.Orgs}.");
         }
         var shown = orgs.Sum(o => o.Repos.Sum(g => g.PullRequests.Length));
-        var toolbar = Toolbar(shown, screen.Row.PullRequests.Length);
+        var toolbar = Toolbar(shown, screen.Row.PullRequests.Length, width);
         if (orgs.Count == 0)
         {
             var why = Search.Text.Trim() is { Length: > 0 } query ? $"No pull requests match \"{query}\"" : "No pull requests";
