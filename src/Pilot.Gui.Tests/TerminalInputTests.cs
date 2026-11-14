@@ -404,7 +404,7 @@ public sealed class TerminalInputTests
     }
 
     [Fact]
-    public void QAndCtrlCQuitWithNoFieldAndAreTextOrFieldKeysInTheChatBox()
+    public void QAndCtrlCQuitWithNoFieldAndCtrlCStillQuitsWhileQIsTextInTheChatBox()
     {
         using var rig = new Rig();
         var quit = 0;
@@ -418,5 +418,19 @@ public sealed class TerminalInputTests
         rig.Key(InputKey.Q, 'q');
         quit.ShouldBe(2);
         rig.Chrome.Chat.Input.Text.ShouldBe("q");
+
+        rig.Chord(InputKey.C, InputModifier.Ctrl);
+        quit.ShouldBe(3, "Ctrl+C quits even while the chat box has the keyboard");
+    }
+
+    [Fact]
+    public void ATypedCharacterAfterALeaveOfTheChatPageInTheSameBatchIsNotTextInTheOldBox()
+    {
+        using var rig = new Rig();
+        rig.Key(InputKey.D2, '2');
+        rig.Frame();
+        rig.Chord(InputKey.D1, InputModifier.Ctrl);
+        rig.Key(InputKey.X, 'x');
+        rig.Chrome.Chat.Input.Text.ShouldBe("");
     }
 }

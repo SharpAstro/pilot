@@ -24,7 +24,7 @@ public sealed class TuiKeyDeclarationTests
 
     // A case label on a key type, or a switch or if over a key, a key-down or a console key.
     private static readonly Regex Offence = new(
-        @"\bcase\s+(InputKey|ConsoleKey|InputEvent\.KeyDown)\b|\b(if|switch)\b[^\n]*(\bInputKey\.|\bConsoleKey\b|\bConsoleKeyInfo\b|InputEvent\.KeyDown)",
+        @"\bcase\s+(InputKey|ConsoleKey|InputEvent\.KeyDown|InputEvent\.KeyDown\s*\(|KeyDown\b)|\bcase\s+\w+\.(Key|KeyChar)\b|\bis\s+InputEvent\.KeyDown\s*\{[^}]*Key\s*:|\b(if|switch|when|while)\b[^\n]*(\bInputKey\.|\bConsoleKey\b|\bConsoleKeyInfo\b|InputEvent\.KeyDown|\.Key\s*(==|!=|is\b))|=>\s*[^\n]*\bInputKey\.\w+\s*=>",
         RegexOptions.Compiled);
 
     [Fact]

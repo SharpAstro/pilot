@@ -506,9 +506,10 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// </summary>
     public void SelectFirst(Func<SessionLine, bool> match) => _pendingFirst = match;
 
-    /// <summary>Moves the selection to the row <paramref name="index"/>, and the session it follows with it.</summary>
+    /// <summary>The cell surface's list cursor stepped onto a row: the selection moves, as a click would.</summary>
     internal override void CellListMoved(int index) => Select(index);
 
+    /// <summary>Moves the selection to the row <paramref name="index"/>, and the session it follows with it.</summary>
     public void Select(int index)
     {
         if (index >= 0 && index < _lines.Count)

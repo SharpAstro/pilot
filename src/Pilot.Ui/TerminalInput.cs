@@ -173,6 +173,17 @@ internal sealed class TerminalInput<TSurface>(
             return;
         }
 
+        // A page change earlier in the same batch of input (a chord, Back, a rail click) leaves the old page's box holding the keyboard
+        // until the next paint; settle that now so a typed character does not go into a box that is no longer shown.
+        if (chrome.Page != PilotPage.Chat)
+        {
+            focus.BlurIfFocused(chrome.Chat.Input);
+        }
+        if (chrome.Page != PilotPage.Sessions)
+        {
+            focus.BlurIfFocused(sessions.SayInput);
+        }
+
         // A printable key is text while a field has the keyboard; with none it is a key like any other, so a plain digit, q and '$' reach
         // their declared chords.
         Rune? typed = keyChar is { } rune && !Rune.IsControl(rune) && (modifiers & ~ConsoleModifiers.Shift) == 0 ? rune : null;
