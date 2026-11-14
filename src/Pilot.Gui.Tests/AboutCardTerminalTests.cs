@@ -93,4 +93,53 @@ public sealed class AboutCardTerminalTests
         card.Width.ShouldBeGreaterThan(40);
         faults.ShouldBeEmpty(string.Join("; ", faults.Take(10)));
     }
+
+    private static List<string> CardWords(AboutCard about)
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        chrome.About.KeyList = about.KeyList;
+        chrome.About.Toggle();
+        var arranged = Layout.Engine.Arrange(chrome.About.Over(Layout.Builder.Spacer().WStar().HStar(), null), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
+        return [.. arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value)];
+    }
+
+    [Fact]
+    public void TheTerminalCardListsItsOwnKeysAndNoneOfTheGuis()
+    {
+        var about = new AboutCard { KeyList = AboutCard.TerminalKeys };
+        var words = CardWords(about);
+        foreach (var (_, _, key) in TerminalRail.Keys)
+        {
+            AboutCard.TerminalKeys[0].Keys.ShouldContain(key.ToString());
+        }
+        words.ShouldContain(AboutCard.TerminalKeys[0].Keys);
+        foreach (var banned in new[] { "Ctrl+1", "rail", "Right-click", "back and forward buttons" })
+        {
+            words.Any(w => w.Contains(banned, StringComparison.OrdinalIgnoreCase)).ShouldBeFalse(banned);
+        }
+    }
+
+    [Fact]
+    public void TheGuiCardKeepsItsOwnList()
+    {
+        var about = new AboutCard();
+        about.KeyList.ShouldBeSameAs(AboutCard.Keys);
+        CardWords(about).ShouldContain("Ctrl+1 to Ctrl+9");
+    }
+
+    [Fact]
+    public void EveryKeyTheTerminalListNamesIsOneProgramHandles()
+    {
+        // Read against Program.cs's Handle (q, Ctrl+C, Backspace, Ctrl+S, Ctrl+T), the chrome's Alt+Left, Alt+Right and Escape,
+        // TerminalRail.Handle's page keys, Enter and Up/Down on the pages, and a left click.
+        var named = AboutCard.TerminalKeys.Select(k => k.Keys).ToList();
+        named.ShouldBe(
+            [named[0], "Ctrl+S", "Ctrl+T", "Enter", "Up, Down", "Escape", "Backspace, Alt+Left", "q, Ctrl+C", "Left click"]);
+        named[0].ShouldBe("1 to 0, $");
+        foreach (var (_, _, key) in TerminalRail.Keys)
+        {
+            TerminalRail.PageFor(key).ShouldNotBeNull();
+        }
+    }
 }

@@ -29,6 +29,34 @@ internal sealed class AboutCard
     ];
 
     /// <summary>
+    /// The keys pilot-tui handles (Program.cs's Handle, TerminalRail.Handle, the chrome's Alt+Left, Alt+Right and Escape): no Ctrl+digit,
+    /// rail, right-click or mouse buttons. The page keys line is built from <see cref="TerminalRail.Keys"/>, so it cannot drift from the bar.
+    /// </summary>
+    public static IReadOnlyList<(string Keys, string What)> TerminalKeys { get; } =
+    [
+        (PageKeys(), "pages, in the bar's order: " + string.Join(", ", TerminalRail.Keys.Select(k => $"{k.Key} {k.Label}"))),
+        ("Ctrl+S", "the say bar, to the selected session"),
+        ("Ctrl+T", "the chat with the watchtower"),
+        ("Enter", "a session's transcript"),
+        ("Up, Down", "the selection, or a wizard's highlight"),
+        ("Escape", "up a level: from a transcript or a flight's page to its list; also out of a wizard step or a menu"),
+        ("Backspace, Alt+Left", "back through the places the window has been; Alt+Right goes forward"),
+        ("q, Ctrl+C", "quit"),
+        ("Left click", "a row, a button or a page on the bar"),
+    ];
+
+    private static string PageKeys()
+    {
+        var keys = TerminalRail.Keys.Select(k => k.Key).ToList();
+        var digits = keys.Where(char.IsDigit).ToList();
+        var others = keys.Where(k => !char.IsDigit(k));
+        return $"{digits[0]} to {digits[^1]}" + string.Concat(others.Select(k => $", {k}"));
+    }
+
+    /// <summary>The keys this host's card lists: the GUI's by default, pilot-tui sets <see cref="TerminalKeys"/>.</summary>
+    public IReadOnlyList<(string Keys, string What)> KeyList { get; set; } = Keys;
+
+    /// <summary>
     /// The buttons that are only a drawn mark, as the card draws them beside what they do: every one has its word as a tooltip, and
     /// this list is what keeps a reader who does not know a mark from having to guess. Add a button's mark here when it becomes one.
     /// </summary>
@@ -144,7 +172,7 @@ internal sealed class AboutCard
             rows.Add(Line(label, value, night));
         }
         rows.Add(Layout.Builder.Text("Keys", 13f, bright).RowH(24f));
-        foreach (var (keys, what) in Keys)
+        foreach (var (keys, what) in KeyList)
         {
             rows.Add(Line(keys, what, night));
         }

@@ -150,6 +150,7 @@ sessions.Transcript.Changed = Redraw;
 sessions.OnOpen = folder => DashboardCommands.Open(folder);
 NodeInfo? nodeInfo = null;
 chrome.About.Facts = () => AboutFacts.For("pilot-tui", nodeInfo, client.SocketPath);
+chrome.About.KeyList = AboutCard.TerminalKeys;
 chrome.About.Opening = () => _ = Task.Run(async () =>
 {
     try
