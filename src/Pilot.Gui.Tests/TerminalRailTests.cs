@@ -253,4 +253,32 @@ public sealed class TerminalRailTests
         }
         surrogates.ShouldBeGreaterThan(0);
     }
+
+    [Theory]
+    [InlineData(190, 44, true)] // about the owner's terminal, with the cards panel
+    [InlineData(130, 40, true)]
+    [InlineData(110, 40, false)]
+    [InlineData(100, 24, false)]
+    public void InTheFrameTheBarIsOneRowAtTheTopAndThePageHasTheRest(int columns, int rows, bool panel)
+    {
+        // pilot-tui's frame as Program.cs arranges it. The bar once ended in .Stretch(), which set its height to Star over its HFixed,
+        // so in the frame's VStack it shared the height with the page half and half (pilot #1027).
+        var rail = TerminalRail.Tree(PilotPage.Home, GlyphMode.Emoji, null, null, Now, _ => { }, null, columns);
+        var page = Layout.Builder.Text("the page", 12f).Stretch();
+        var cards = panel ? Layout.Builder.Text("the cards", 12f).Stretch() : null;
+        var arranged = Layout.Engine.Arrange(TerminalFrame.Tree(rail, page, cards), new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
+
+        foreach (var (entry, _, _) in TerminalRail.Keys)
+        {
+            var bounds = EntryOf(arranged, entry).Bounds;
+            (bounds.Y, bounds.Height).ShouldBe((0, 1), $"{entry}'s entry");
+        }
+        Layout.ArrangedNode<int> Leaf(string text) => arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == text);
+        var width = panel ? columns - (int)MathF.Round(CardsView<RgbaImage>.Width / 8f) : columns;
+        Leaf("the page").Bounds.ShouldBe(new Rect<int>(0, 1, width, rows - 1));
+        if (panel)
+        {
+            Leaf("the cards").Bounds.ShouldBe(new Rect<int>(width, 1, columns - width, rows - 1));
+        }
+    }
 }
