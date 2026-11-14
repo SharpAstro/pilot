@@ -91,6 +91,33 @@ public sealed class AccountLimitTests
     }
 
     [Fact]
+    public async Task ALoginChangeEndsTheOpenLimitAndTheOldLoginsRowDoesNotReopenIt()
+    {
+        var until = Start.AddHours(2);
+        _state.PutSession(new SessionRow
+        {
+            Id = "zz000000", SessionId = "zz000000-0000-4000-8000-000000000000", Name = "du1-zz9-planner", Kind = SessionKind.Background, Cwd = "/work/zz",
+            Role = SessionRole.Planner, Flight = "ZZ9", ContextTokens = 1_000, ContextWindow = 200_000, State = SessionState.Idle, Gone = true,
+            SpendWeighted = 0, StartedAt = Start, ApiError = "usage_limit_reached", ApiErrorResetsAt = until,
+        });
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBe(until);
+
+        _time.Advance(TimeSpan.FromMinutes(30));
+        _outage.AccountChanged(_time.GetUtcNow());
+
+        _outage.IsOpen.ShouldBeFalse();
+        _outage.LimitUntil.ShouldBeNull();
+        _outage.LastWindow.ShouldNotBeNull();
+        _gate.Hold("w", 95, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeFalse();
+        Open().ShouldBeEmpty();
+
+        await _watch.LookAsync(Ct);
+        _outage.IsOpen.ShouldBeFalse();
+        Open().ShouldBeEmpty();
+    }
+
+    [Fact]
     public void EveryStartIsHeldWithNoProbeSayingTheLimitAndTOnceAndStartsAgainAtT()
     {
         _outage.OpenLimit(Start.AddHours(1), "test", Start);

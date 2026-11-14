@@ -92,7 +92,37 @@ public sealed class TurnOutage(NodeState state)
     }
 
     /// <summary>The account's login changed at <paramref name="at"/>: no session can be taking turns on the old one, so an outage opens.</summary>
-    public void AccountChanged(DateTimeOffset at) => Open(at, "the account changed");
+    /// <remarks>
+    /// An open account limit belonged to the old login, so it ends here (its window is kept for the redo and the held says, as at the reset),
+    /// and rows that began before the change no longer count toward a limit (<see cref="LoginChangedAt"/>).
+    /// </remarks>
+    public void AccountChanged(DateTimeOffset at)
+    {
+        var limitEnded = false;
+        lock (_gate)
+        {
+            _loginChangedAt = at;
+            if (_since is { } since && _limitUntil is not null)
+            {
+                Close(since, at, "the account changed, so the old login's usage limit no longer holds");
+                limitEnded = true;
+            }
+        }
+        if (limitEnded)
+        {
+            LimitEnded?.Invoke();
+            return;
+        }
+        Open(at, "the account changed");
+    }
+
+    private DateTimeOffset? _loginChangedAt;
+
+    /// <summary>When the login last changed, or null; a limit read from a session that began before it is the old login's.</summary>
+    public DateTimeOffset? LoginChangedAt
+    {
+        get { lock (_gate) { return _loginChangedAt; } }
+    }
 
     /// <summary>
     /// A subject (a leg's worker, a validator, a reviewer, a flight's planner) showed no first turn in time, seen at <paramref name="at"/>.
