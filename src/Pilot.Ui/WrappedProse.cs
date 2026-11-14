@@ -25,9 +25,10 @@ internal static class WrappedProse
     /// A link that wraps: every word of <paramref name="text"/> is a leaf run through <paramref name="decorate"/>, which gives it the link's
     /// hit, hover and menu, so a click or the pointer on any word is on the whole link. <paramref name="tail"/> (the ↗ of a link that leaves
     /// the app) ends the last word, so it can never wrap onto a line of its own. <paramref name="maxLines"/> and <paramref name="lineChars"/> are as in <see cref="Of"/>.
+    /// <paramref name="lit"/> is the colour every word takes while the pointer is on any of them, so the link lights as a whole (null: not hovered).
     /// </summary>
     public static Layout.Node Linked(string text, float size, RGBAColor32 color, int maxLines, Func<Layout.Node, Layout.Node> decorate, string tail = "",
-        int lineChars = 0)
+        int lineChars = 0, RGBAColor32? lit = null)
     {
         var pieces = (maxLines > 0 && lineChars > 0 ? Bound(text, maxLines * lineChars) : text).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
             .SelectMany(Pieces)
@@ -36,7 +37,7 @@ internal static class WrappedProse
         {
             pieces[^1] = pieces[^1].TrimEnd() + tail + " ";
         }
-        var words = pieces.Select(piece => decorate(Layout.Builder.Text(piece, size, color).WAuto())).ToArray();
+        var words = pieces.Select(piece => decorate(lit is { } on ? Layout.Builder.Text(piece, size, color).WAuto().Bg(on) : Layout.Builder.Text(piece, size, color).WAuto())).ToArray();
         var wrap = Layout.Builder.WrapH(words).WithLineGap(size * 0.2f);
         return (maxLines > 0 ? wrap.WithMaxLines(maxLines, ellipsis: true) : wrap).WStar();
     }
