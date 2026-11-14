@@ -378,7 +378,9 @@ public sealed class AboutCardTerminalTests
         {
             shown.ShouldContain($"{key} {label}", Case.Sensitive, shown);
         }
-        foreach (var banned in new[] { "Ctrl+1", "rail", "Right-click", "back and forward buttons" })
+        // The Ctrl+digit chords are named next to the plain digits (PIL1052).
+        shown.ShouldContain("Ctrl+1 to 0");
+        foreach (var banned in new[] { "Ctrl+1 to Ctrl+9", "rail", "Right-click", "back and forward buttons" })
         {
             shown.ShouldNotContain(banned, Case.Insensitive);
             card.Kept.ShouldNotContain(l => l.Text.Contains(banned, StringComparison.OrdinalIgnoreCase), banned);

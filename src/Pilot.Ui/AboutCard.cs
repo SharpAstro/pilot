@@ -57,7 +57,7 @@ internal sealed class AboutCard
         // Not "Backspace, Alt+Left" as the GUI writes its pair: the key column is 18 cells, and a longer key is cut. One row, not two:
         // a 24-row terminal has room for this list and nothing more.
         ("Backspace", "back, as Alt+Left; Alt+Right goes forward"),
-        ("Ctrl+1 to 0", "the pages above as chords; a plain digit is text in a box"),
+        ("Ctrl+1 to 0", "the same pages; a plain digit in a box is text"),
         ("q, Ctrl+C", "quit"),
         ("Left click", "a row, a button or a page on the bar"),
     ];
