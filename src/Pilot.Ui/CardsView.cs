@@ -470,6 +470,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         BeginFrame();
         var over = Pointer is { } p && p.X >= bounds.X && p.X < bounds.X + bounds.Width && p.Y >= bounds.Y && p.Y < bounds.Y + bounds.Height;
         RenderLayout(Tree(Steady(screen, over)), bounds, drawFill: Gallery.DrawFill);
+        NoteHover(Changed);
     }
 
     // The panel as it stood when the pointer came over it, which it keeps to until the pointer leaves; null while it is
@@ -1226,7 +1227,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             return Whole(WrappedProse.Linked(Titled(card), 14f, Link, TitleLines,
                 word => _links.OnLink(word.BgHover(CardHover)
                     .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => (inApp ? OnGoTo : OnOpen)?.Invoke(titleLink)), titleLink),
-                inApp ? "" : Followable.Away, LineChars), card.Title, cut);
+                inApp ? "" : Followable.Away, LineChars, IsHovered(new HitResult.ButtonHit($"card:{card.Id}:title")) ? CardHover : null), card.Title, cut);
         }
         return Whole(WrappedProse.Of(Titled(card), 14f, Bright, TitleLines, linker(14f), lineChars: LineChars), card.Title, cut);
     }
@@ -1244,7 +1245,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         return PullRequestLink.Of(_links, $"card:{card.Id}:title", Titled(card), pr.ToString(), PullRequestLinks.Url(pr), OnOpen, () => route(card, pr),
                 "the Pull requests page", Link, CardHover, card.Title.Length > TitleFits, fill: true, size: 14f, tipSide: Layout.DockSide.Left,
-            browserAction: $"card:{card.Id}:browser", wrapLines: TitleLines);
+            browserAction: $"card:{card.Id}:browser", wrapLines: TitleLines, lit: IsHovered(new HitResult.ButtonHit($"card:{card.Id}:title")));
     }
 
     /// <summary>The buttons of a card in rows: the short ones side by side, wrapping onto further rows, each long one (see <see cref="Wraps"/>) a row of its own, in order.</summary>
