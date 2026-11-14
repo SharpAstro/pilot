@@ -85,6 +85,7 @@ var fleet = chrome.Fleet;
 var settings = chrome.Settings;
 var cards = chrome.Cards;
 var chat = chrome.Chat;
+chat.Cells = true;
 var focus = sessions.Ui.Focus;
 var tracker = new BackgroundTaskTracker();
 using var stop = new CancellationTokenSource();
@@ -491,6 +492,7 @@ while (!stop.IsCancellationRequested)
             spendReads.AskToday();
         }
         chrome.Home.Today = spendReads.Today;
+        chat.CellColumns = columns;
         var pageTree = page switch
         {
             PilotPage.Chat => chat.Tree(),
@@ -521,7 +523,12 @@ while (!stop.IsCancellationRequested)
         // Cropped to each scroll container and page rect first (Console.Lib's painter has no clip); the hit test reads the same tree.
         arranged = TerminalFrame.Clip(arranged);
         CellLayout.Paint(terminal, arranged);
-        if (focus.Current is null)
+        if (page == PilotPage.Chat && ReferenceEquals(focus.Current, chat.Input) && chat.CaretCell(arranged) is var (caretColumn, caretRow))
+        {
+            // The composer is drawn from the editor's lines (CellLayout paints no text editor), so its caret is placed here.
+            terminal.SetCaret(caretColumn, caretRow, CaretStyle.BlinkingBar);
+        }
+        else if (focus.Current is null || ReferenceEquals(focus.Current, chat.Input))
         {
             terminal.HideCaret();
         }

@@ -90,6 +90,8 @@ public sealed class TerminalFrameTests
         var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         chrome.Chat.Load = (after, _) => Task.FromResult(new ChatPage { Entries = [.. feed.Where(e => e.Index > after)], Total = feed.Count });
         chrome.Chat.OnSend = _ => Task.FromResult<string?>(null);
+        chrome.Chat.Cells = true;
+        chrome.Chat.CellColumns = columns;
         chrome.Chat.Changed = () =>
         {
             if (chrome.Chat.Entries.Count >= count)
@@ -120,7 +122,7 @@ public sealed class TerminalFrameTests
             var painted = TerminalFrame.Clip(arranged);
             var viewport = new BufferedViewport(buffer, columns, rows);
             CellLayout.Paint(viewport, painted);
-            return (buffer, painted, arranged, viewport.Caret);
+            return (buffer, painted, arranged, chrome.Chat.CaretCell(painted));
         }
         finally
         {
@@ -183,7 +185,7 @@ public sealed class TerminalFrameTests
     public async Task TheComposerIsPaintedBelowTheListWhateverTheTranscript(int count, bool scrolledUp, int columns, int rows)
     {
         var size = $"Chat {columns}x{rows} with {count} entries{(scrolledUp ? " scrolled up" : "")}";
-        var (buffer, painted, raw, _) = await PaintChatCaretAsync(count, scrolledUp, columns, rows);
+        var (buffer, painted, raw, caret) = await PaintChatCaretAsync(count, scrolledUp, columns, rows);
         buffer.Flush(new NullSink());
         var footNodes = string.Join('\n', painted.Where(a => a.Bounds.Y + a.Bounds.Height >= rows - 8 && a.Depth >= 3)
             .Select(a => $"d{a.Depth} {a.Node.GetType().Name} {(a.Node is Layout.Node.Leaf l ? l.Content.GetType().Name : "")} {a.Bounds.X},{a.Bounds.Y} {a.Bounds.Width}x{a.Bounds.Height}"))
@@ -194,6 +196,10 @@ public sealed class TerminalFrameTests
         var dump = string.Join('\n', text);
         placeholder.ShouldBeGreaterThan(0, $"{size}: the placeholder is not painted\nfoot nodes:\n{footNodes}\n{dump}");
         hint.ShouldBeGreaterThanOrEqualTo(placeholder, $"{size}: the 'Enter sends' line is not painted at or below the box\n{dump}");
+        // With the box focused (Ctrl+T, key 2) the terminal's caret goes on the box's own row, inside the page.
+        caret.ShouldNotBeNull($"{size}: the composer gives no caret cell");
+        caret.Value.Row.ShouldBe(placeholder, $"{size}: the caret is not on the box's row");
+        caret.Value.Column.ShouldBeInRange(0, columns - 1);
         if (count > 0)
         {
             var list = painted.First(a => a.Node.Scroll is { Mode: ScrollBarMode.Interactive });
