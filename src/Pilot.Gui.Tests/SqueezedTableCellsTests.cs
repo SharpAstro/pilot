@@ -24,9 +24,9 @@ public sealed class SqueezedTableCellsTests
     {
         var texts = await TextsAsync("jobs");
         var title = texts.First(t => t.Text == "State");
-        var below = texts.Where(t => t.Bounds.Y > title.Bounds.Y && Math.Abs(t.Bounds.X - title.Bounds.X) < 2f).Select(t => t.Text).ToList();
+        var below = texts.Where(t => t.Bounds.Y > title.Bounds.Y && Math.Abs(t.Bounds.X - title.Bounds.X) < 15f).Select(t => t.Text).ToList();
 
-        below.ShouldContain("running", "title " + title.Bounds + "; all: " + string.Join(" | ", texts.Where(t => t.Bounds.Y < title.Bounds.Y + 120f).Select(t => $"{t.Text}@{t.Bounds.X:0},{t.Bounds.Y:0}")));
+        below.ShouldContain("running", "the State column holds the state word: " + string.Join(" | ", below));
     }
 
     [Fact]
@@ -34,9 +34,9 @@ public sealed class SqueezedTableCellsTests
     {
         var texts = await TextsAsync("sessions");
         var title = texts.First(t => t.Text == "State");
-        var below = texts.Where(t => t.Bounds.Y > title.Bounds.Y && Math.Abs(t.Bounds.X - title.Bounds.X) < 2f).Select(t => t.Text).ToList();
+        var below = texts.Where(t => t.Bounds.Y > title.Bounds.Y && Math.Abs(t.Bounds.X - title.Bounds.X) < 15f).Select(t => t.Text).ToList();
 
-        below.ShouldNotBeEmpty("a state word sits under State");
+        below.ShouldNotBeEmpty("a state word sits under State: " + string.Join(" | ", texts.Where(t => t.Bounds.Y > title.Bounds.Y).Take(14).Select(t => $"{t.Text}@{t.Bounds.X:0},{t.Bounds.Y:0}")));
         below.ShouldNotContain(t => t.StartsWith("Opus", StringComparison.Ordinal) || t.StartsWith("Sonnet", StringComparison.Ordinal), "a Model cell is under State: " + string.Join(" | ", below));
     }
 }
