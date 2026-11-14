@@ -94,7 +94,10 @@ internal sealed partial class PullRequestsView<TSurface>
             items.Add(CardsView<TSurface>.HeaderPill(FilterName(filter), FilterAction(filter), () => Filter = isLit ? null : chosen, isLit ? lit : plain, NightOrNull?.Bright)
                 .WithTooltip(FilterTip(filter, isLit)));
         }
-        items.Add(Layout.Builder.TextInput(Search, TextSize, Palette.Input).WStar(1f, SearchFloor, SearchWidth).HFixed(AboutCard.HeaderButton));
+        if (!HeaderMetrics.Terminal)
+        {
+            items.Add(Layout.Builder.TextInput(Search, TextSize, Palette.Input).WStar(1f, SearchFloor, SearchWidth).HFixed(AboutCard.HeaderButton));
+        }
         // What the node refused of the last button pressed on a row, in its words, where the count of the list is: a place that is
         // always there, so a refusal moves nothing. Drawn from the slot's left edge, never far-aligned: a run wider than its slot would grow
         // leftwards over the pills. Cut to the room it has with an ellipsis, whole on hover.
@@ -113,7 +116,27 @@ internal sealed partial class PullRequestsView<TSurface>
             items.Add(Layout.Builder.Spacer().WStar(1f, RefusalFloor));
             items.Add(Layout.Builder.Text(shown == total ? "" : $"showing {shown} of {total}", 12f, BodyText, TextAlign.Far).WAuto());
         }
+        if (HeaderMetrics.Terminal)
+        {
+            // A cell grid: the pills and counts take one row, the search box stands under them as Claude Code's settings search box is,
+            // a rounded one-cell border round its one input row (DIR.Lib's layout has no border, so it is drawn as text).
+            return Layout.Builder.VStack(Layout.Builder.HStack([.. items]).WithGap(8f).RowH(HeaderMetrics.BarRow), TerminalSearchBox()).Stretch();
+        }
         return Layout.Builder.HStack([.. items]).WithGap(8f).RowH(ToolbarHeight);
+    }
+
+    /// <summary>The terminal's search box: a top edge, the input row between two side edges, a bottom edge; each of them one row (16 units).</summary>
+    private Layout.Node TerminalSearchBox()
+    {
+        var edge = P.Dim;
+        var row = HeaderMetrics.BarRow;
+        var top = Layout.Builder.Text("╭" + new string('─', 60) + "╮", TextSize, edge).RowH(row);
+        var bottom = Layout.Builder.Text("╰" + new string('─', 60) + "╯", TextSize, edge).RowH(row);
+        var middle = Layout.Builder.HStack(
+            Layout.Builder.Text("│", TextSize, edge).WAuto(),
+            Layout.Builder.TextInput(Search, TextSize, Palette.Input).WStar().HFixed(row),
+            Layout.Builder.Text("│", TextSize, edge).WAuto()).RowH(row);
+        return Layout.Builder.VStack(top, middle, bottom).WFixed(62f * 8f).HAuto();
     }
 
     private const float RefusalFloor = 100f;
