@@ -80,8 +80,8 @@ internal static class TopBar
     /// <summary>What the first line of the bar leaves for what every page shares at its right: Autopilot, the update light and ?, with their gaps.</summary>
     public const float SharedReserve = 290f;
 
-    /// <summary>The same in the terminal: Autopilot, the update light and ? take 35 columns with their gaps.</summary>
-    public const float TerminalSharedReserve = 280f;
+    /// <summary>The same in the terminal: Autopilot, the update light and ? take 33 columns with their gaps.</summary>
+    public const float TerminalSharedReserve = 264f;
 
     /// <summary>The bottom of the bar's row of buttons: what the ? card hangs under.</summary>
     public const float ButtonsBottom = PadY + RowHeight;

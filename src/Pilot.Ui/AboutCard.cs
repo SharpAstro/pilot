@@ -200,7 +200,7 @@ internal sealed class AboutCard
     {
         var lit = Lit;
         var label = newer.LastIndexOf('-') is var dash and >= 0 ? newer[(dash + 1)..] : newer;
-        var light = Layout.Builder.Text(Restart is null ? $"{label} installed" : $"Restart for {label}", 13f, lit ? LightText : LightOn, TextAlign.Center)
+        var light = Layout.Builder.Text(Restart is null ? $"{label} installed" : HeaderMetrics.Terminal ? $"Restart {label}" : $"Restart for {label}", 13f, lit ? LightText : LightOn, TextAlign.Center)
             .Pad(HeaderMetrics.PadX, 0f).WAuto().HFixed(Side).Bg(lit ? LightOn : LightOff)
             .WithTooltip($"pilot {newer} is installed; this window runs {NodeFeed.ClientVersion}." + (Restart is null ? " Restart it to use the new one." : " A click starts it again on the new one."));
         return Restart is { } restart ? light.Follows(new HitResult.ButtonHit("about:restart"), _ => restart()) : light;
