@@ -27,7 +27,12 @@ internal static class WrappedProse
     /// command's or its output's, a message typed as lines) where <see cref="Of"/>'s words would reflow it.
     /// </summary>
     public static Layout.Node OneLine(string text, float size, RGBAColor32 color) =>
-        Of(text, size, color, maxLines: 1).WithTooltip(text);
+        text.Length <= OneLineChars
+            ? Layout.Builder.Text(text, size, color).Selectable().WStar()
+            : Of(text, size, color, maxLines: 1).WithTooltip(text);
+
+    /// <summary>A line this short stays one text leaf (a command, a path: whole in a copy and in a test); a longer one is words, so it can end in an ellipsis.</summary>
+    private const int OneLineChars = 80;
 
     /// <summary>
     /// A link that wraps: every word of <paramref name="text"/> is a leaf run through <paramref name="decorate"/>, which gives it the link's
