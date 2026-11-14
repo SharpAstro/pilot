@@ -1356,6 +1356,10 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         return null;
     }
 
+    public void PlaceComposerCaret(System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> arranged, int column, int row)
+    {
+    }
+
     // The box: DIR.Lib's multi-line editor, and a line saying how it sends.
     private Layout.Node Foot()
     {
