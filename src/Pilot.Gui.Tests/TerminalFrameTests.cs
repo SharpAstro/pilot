@@ -183,13 +183,15 @@ public sealed class TerminalFrameTests
     public async Task TheComposerIsPaintedBelowTheListWhateverTheTranscript(int count, bool scrolledUp, int columns, int rows)
     {
         var size = $"Chat {columns}x{rows} with {count} entries{(scrolledUp ? " scrolled up" : "")}";
-        var (buffer, painted, _, _) = await PaintChatCaretAsync(count, scrolledUp, columns, rows);
+        var (buffer, painted, raw, _) = await PaintChatCaretAsync(count, scrolledUp, columns, rows);
         buffer.Flush(new NullSink());
+        var footNodes = string.Join('\n', raw.Where(a => a.Bounds.Y + a.Bounds.Height >= rows - 8 && a.Depth >= 3)
+            .Select(a => $"d{a.Depth} {a.Node.GetType().Name} {a.Bounds.X},{a.Bounds.Y} {a.Bounds.Width}x{a.Bounds.Height}"));
         var text = Enumerable.Range(0, rows).Select(buffer.FrontRowText).ToList();
         var placeholder = text.FindIndex(r => r.Contains("Message the fleet chat", StringComparison.Ordinal));
         var hint = text.FindIndex(r => r.Contains("Enter sends", StringComparison.Ordinal));
         var dump = string.Join('\n', text);
-        placeholder.ShouldBeGreaterThan(0, $"{size}: the placeholder is not painted\n{dump}");
+        placeholder.ShouldBeGreaterThan(0, $"{size}: the placeholder is not painted\nfoot nodes:\n{footNodes}\n{dump}");
         hint.ShouldBeGreaterThanOrEqualTo(placeholder, $"{size}: the 'Enter sends' line is not painted at or below the box\n{dump}");
         if (count > 0)
         {
