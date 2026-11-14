@@ -1225,6 +1225,11 @@ GUI's night rail draws as the plane and the cog). `--glyphs auto|emoji|initials`
 chooses emoji under Windows Terminal (`WT_SESSION`), VS Code, WezTerm, iTerm2 and kitty, and initials elsewhere. An entry whose emoji
 changes is drawn blank for one frame, because Console.Lib's cell buffer would flush only the changed half of two emoji sharing
 a high surrogate (SharpAstro/Console.Lib#47).
+
+The **terminal's title** (`TerminalTitle`, set through Console.Lib's `ITerminalViewport.Title`, which restores it on exit) reads
+`pilot · <page> · <node>`, led by `(N) ` when N cards wait on you, so a tab shows what is open and that something needs you. The
+page is the rail's label; the node is the one chosen on Chat (else `fleet`), or on any other page the one picked in the header
+(else this node); N is the cards panel's own count of open rings and cards for you. Pilot writes no escape itself.
 In a terminal under 88 columns, which 11 full entries need, every entry is 7 cells wide instead (the glyph's area one cell
 shorter, so a long glyph such as the ideas count is cut), which keeps all 11 on screen and clickable down to 77 columns; the
 width is fixed for a given terminal width, so the bar does not shift.
