@@ -8,7 +8,7 @@ namespace Pilot.Gui.Tests;
 /// <summary>
 /// Every page, the cards panel and an open card, drawn by the chrome (rail, page and cards panel) into DIR.Lib's <see cref="WireframeRenderer"/>
 /// at five widths, two heights and two scales: <see cref="Wireframe.Check"/> fails a case on text over text, text half on a control, controls over
-/// controls, anything off the surface and text a clip cut with no ellipsis, unless the finding is in <see cref="WireframeKnownFindings"/>.
+/// controls, anything off the surface and text a clip cut with no ellipsis, .
 /// <para>States: <b>long</b> carries the long titles, repo and branch names, paths and reports (eight sessions, four repos); <b>many</b> carries
 /// the many rows (sixty sessions, fifty jobs, forty flights and repos) and twelve fleet nodes, a quarter of them down ("waiting for the node on ...").</para>
 /// </summary>
@@ -74,7 +74,7 @@ public static class WireframeSweepTests
     private static readonly Lock DumpLock = new();
 
     internal static ImmutableArray<WireframeFinding> Unknown(string key, ImmutableArray<WireframeFinding> findings) =>
-        [.. findings.Where(f => !WireframeKnownFindings.Covers(key, f.Message))];
+        [.. findings];
 
     internal static string Message(string key, ImmutableArray<WireframeFinding> findings) =>
         $"{key} [{findings.Length} findings]" + string.Concat(findings.Select(f => $"{Environment.NewLine}  {key}: [{f.Rule}] {f.Message}"));
@@ -89,44 +89,6 @@ public static class WireframeSweepTests
         prepared.Chrome.Render(data.Sessions, data.Flights, PageTextOverlapTests.CardsOf(data, page), data.Jobs, data.Fleet, data.Repos, data.PullRequests,
             new RectF32(0, 0, width, height), data.Machines, null, data.Spend);
         return Wireframe.Check(renderer.Frame, OptionsFor(page));
-    }
-}
-
-/// <summary>The known list holds only findings that still happen.</summary>
-public sealed class WireframeSweepKnownFindingsTests
-{
-    [Fact]
-    public void EveryEntryHasAReason()
-    {
-        foreach (var entry in WireframeKnownFindings.Entries)
-        {
-            entry.Reason.ShouldNotBeNullOrWhiteSpace(entry.Case);
-            entry.Finding.ShouldNotBe("*", entry.Case + ": a blanket entry");
-        }
-    }
-
-    [Fact]
-    public async Task NoEntryOutlivesItsFinding()
-    {
-        foreach (var entry in WireframeKnownFindings.Entries)
-        {
-            var found = false;
-            foreach (var (page, state, width, dpi, height) in WireframeSweepTests.CaseTuples())
-            {
-                var key = WireframeSweepTests.Key(page, state, width, dpi, height);
-                if (!entry.CoversCase(key))
-                {
-                    continue;
-                }
-                var findings = await WireframeSweepTests.FindingsOf(page, state, width, dpi, height);
-                if (findings.Any(f => entry.Covers(key, f.Message)))
-                {
-                    found = true;
-                    break;
-                }
-            }
-            found.ShouldBeTrue($"the known entry '{entry.Case}' / '{entry.Finding}' matches no finding any more: remove it");
-        }
     }
 }
 
@@ -192,19 +154,6 @@ public sealed class WireframeSweepSelfTests
             Text(r, f, "a path that a clip cuts off…", 0, 5, 200, 20);
             r.PopClip();
         }).Where(x => x.Rule == WireframeRules.CutText).ShouldBeEmpty();
-
-    [Fact]
-    public void AKnownEntryDropsTheFindingItCoversAndNoOther()
-    {
-        var findings = Draw((r, f) =>
-        {
-            Text(r, f, "title of the page", 0, 0, 150, 20);
-            Text(r, f, "subtitle drawn over it", 20, 5, 150, 20);
-        });
-        var entry = new KnownWireframeFinding("fixture | *", "text \"subtitle*", "the fixture");
-        findings.Where(x => entry.Covers(FixtureKey, x.Message)).ShouldNotBeEmpty();
-        entry.Covers("other | sample | 200 wide | DPI 1 | 100 high", findings[0].Message).ShouldBeFalse();
-    }
 }
 
 // The sweep runs as six classes, one a state, height and scale, so xunit's own class-level parallelism shares the 320 cases.
@@ -215,7 +164,7 @@ public sealed class WireframeSweepLong900Dpi1Tests
     public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("long", 900, 1f);
 
     [Theory, MemberData(nameof(Cases))]
-    public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
+    public Task NoFindings(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
 }
 
 /// <summary>The "long" state at 900 high, DPI 1.5.</summary>
@@ -224,7 +173,7 @@ public sealed class WireframeSweepLong900Dpi15Tests
     public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("long", 900, 1.5f);
 
     [Theory, MemberData(nameof(Cases))]
-    public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
+    public Task NoFindings(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
 }
 
 /// <summary>The "long" state at 1440 high, DPI 1.</summary>
@@ -233,7 +182,7 @@ public sealed class WireframeSweepLong1440Dpi1Tests
     public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("long", 1440, 1f);
 
     [Theory, MemberData(nameof(Cases))]
-    public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
+    public Task NoFindings(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
 }
 
 /// <summary>The "long" state at 1440 high, DPI 1.5.</summary>
@@ -242,7 +191,7 @@ public sealed class WireframeSweepLong1440Dpi15Tests
     public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("long", 1440, 1.5f);
 
     [Theory, MemberData(nameof(Cases))]
-    public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
+    public Task NoFindings(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
 }
 
 /// <summary>The "many" state at 900 high, DPI 1.</summary>
@@ -251,7 +200,7 @@ public sealed class WireframeSweepMany900Dpi1Tests
     public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("many", 900, 1f);
 
     [Theory, MemberData(nameof(Cases))]
-    public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
+    public Task NoFindings(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
 }
 
 /// <summary>The "many" state at 900 high, DPI 1.5.</summary>
@@ -260,5 +209,5 @@ public sealed class WireframeSweepMany900Dpi15Tests
     public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("many", 900, 1.5f);
 
     [Theory, MemberData(nameof(Cases))]
-    public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
+    public Task NoFindings(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
 }
