@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Console.Lib;
 using DIR.Lib;
 using Layout = DIR.Lib.Layout;
@@ -64,7 +65,7 @@ public sealed class TerminalFrameTests
     }
 
     // The Chat page as pilot-tui builds it (chrome.Chat's own Tree), holding `count` long entries, read through the page's own follow.
-    private static async Task<(CellBuffer Buffer, System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> Arranged)> PaintChatAsync(
+    private static async Task<(CellBuffer Buffer, System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> Painted, System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> Raw)> PaintChatAsync(
         int count, bool scrolledUp, int columns, int rows)
     {
         using var vessel = new RgbaImageRenderer(1, 1);
@@ -109,7 +110,7 @@ public sealed class TerminalFrameTests
             buffer.Resize(columns, rows);
             var painted = TerminalFrame.Clip(arranged);
             CellLayout.Paint(new BufferedViewport(buffer, columns, rows), painted);
-            return (buffer, painted);
+            return (buffer, painted, arranged);
         }
         finally
         {
@@ -125,15 +126,21 @@ public sealed class TerminalFrameTests
     public async Task ATranscriptTallerThanItsListLeavesTheBarTheHeaderAndTheCardsPanelIntact(bool scrolledUp, int columns, int rows)
     {
         var size = $"Chat {columns}x{rows}{(scrolledUp ? " scrolled up" : "")}";
-        var (empty, _) = await PaintChatAsync(0, false, columns, rows);
-        var (full, arranged) = await PaintChatAsync(120, scrolledUp, columns, rows);
+        var (full, painted, raw) = await PaintChatAsync(120, scrolledUp, columns, rows);
 
-        var list = arranged.First(a => a.Node.Scroll is { Mode: ScrollBarMode.Interactive });
+        var list = raw.First(a => a.Node.Scroll is { Mode: ScrollBarMode.Interactive });
+        var listIndex = raw.IndexOf(list);
         var listTop = list.Bounds.Y;
         listTop.ShouldBeGreaterThan(1, $"{size}: the chat has header rows above its list");
-        var panelLeft = columns >= TerminalFrame.CardsPanelColumns ? columns - CardsView<RgbaImage>.Width : columns;
+        var panelLeft = columns >= TerminalFrame.CardsPanelColumns ? raw.Where(a => a.Depth == 2).Last().Bounds.X : columns;
 
-        // The bar row, the header rows above the list, and the cards panel's columns hold what the frame paints with no transcript.
+        // The same frame painted without the transcript: the arranged tree with the list's descendants taken out (the list's own fill stays).
+        var without = raw.Where((a, i) => !(i > listIndex && IsUnder(raw, a, list))).ToImmutableArray();
+        var empty = new CellBuffer { ColorMode = ColorMode.TrueColor };
+        empty.Resize(columns, rows);
+        CellLayout.Paint(new BufferedViewport(empty, columns, rows), without);
+
+        // The bar row, the header rows above the list, and the cards panel's columns hold what that frame paints.
         var differ = new List<string>();
         for (var y = 0; y < rows; y++)
         {
@@ -148,20 +155,11 @@ public sealed class TerminalFrameTests
         }
         differ.ShouldBeEmpty($"{size}: {differ.Count} cells outside the list changed with a transcript, first: {string.Join(' ', differ.Take(8))}");
 
-        // A click on a cell of the bar or the header is not answered by a transcript row clipped away under it.
-        foreach (var a in arranged)
-        {
-            if (a.Depth > list.Depth && a.Node != list.Node && a.Bounds.Y < listTop && a.Bounds.Y + a.Bounds.Height > 0 && a.Node.Hit is not null)
-            {
-                a.Bounds.Y.ShouldBeGreaterThanOrEqualTo(listTop, $"{size}: a node under the list reaches above it");
-            }
-        }
-        for (var x = 0; x < panelLeft; x++)
-        {
-            CellLayout.HitTest(arranged, x, 0).ShouldNotBeOfType<HitResult.TextInputHit>();
-        }
-        arranged.Where(a => a.Depth > list.Depth && a.Bounds.Y < listTop && a.Bounds.Y + a.Bounds.Height > listTop - 1 && IsUnder(arranged, a, list))
-            .ShouldBeEmpty($"{size}: no node of the list is arranged outside the list's rect");
+        // What a click reads is what was painted: no node under the list reaches outside the list's rect (the bar, the header, the panel).
+        var pl = painted.First(a => a.Node.Scroll is { Mode: ScrollBarMode.Interactive });
+        painted.Where(a => IsUnder(painted, a, pl) && (a.Bounds.Y < pl.Bounds.Y || a.Bounds.X < pl.Bounds.X
+                || a.Bounds.Y + a.Bounds.Height > pl.Bounds.Y + pl.Bounds.Height || a.Bounds.X + a.Bounds.Width > pl.Bounds.X + pl.Bounds.Width))
+            .ShouldBeEmpty($"{size}: a node under the list reaches outside the list's rect");
     }
 
     // A node is under the list when it follows it in pre-order at a deeper depth, before the next node at the list's depth or above.
