@@ -34,7 +34,11 @@ public sealed class TerminalInputTests
             Chrome.Chat.Cells = true;
             Chrome.Chat.CellColumns = TerminalFrame.PageColumns(Columns, false);
             Focus = sessions.Ui.Focus;
-            Input = new TerminalInput<RgbaImage>(Chrome, sessions, Focus, new BackgroundTaskTracker(), () => { }, () => { });
+            Input = new TerminalInput<RgbaImage>(Chrome, sessions, Focus, new BackgroundTaskTracker(), () => { }, () => { })
+            {
+                HitTest = (tree, column, row) => CellLayout.HitTest(tree, column, row),
+                TextInputs = tree => CellLayout.TextInputs(tree),
+            };
             Frame();
         }
 

@@ -21,6 +21,12 @@ internal sealed class TerminalInput<TSurface>(
     /// <summary>The last frame's arranged tree: what a click is resolved on, and which fields are on the page.</summary>
     public ImmutableArray<Layout.ArrangedNode<int>> Arranged { get; set; } = ImmutableArray<Layout.ArrangedNode<int>>.Empty;
 
+    /// <summary>Console.Lib's hit test on the arranged tree (Pilot.Ui does not reference Console.Lib; the host and the tests pass <c>CellLayout.HitTest</c>).</summary>
+    public required Func<ImmutableArray<Layout.ArrangedNode<int>>, int, int, HitResult?> HitTest { get; init; }
+
+    /// <summary>Console.Lib's text inputs of the arranged tree (<c>CellLayout.TextInputs</c>).</summary>
+    public required Func<ImmutableArray<Layout.ArrangedNode<int>>, IReadOnlyList<TextInputState>> TextInputs { get; init; }
+
     /// <summary>The cell's size in pixels, to turn a click's pixel into a cell. Zero until the terminal says.</summary>
     public Func<(int Width, int Height)> CellSize { get; set; } = () => (1, 1);
 
@@ -51,7 +57,7 @@ internal sealed class TerminalInput<TSurface>(
         {
             return;
         }
-        if (!CellLayout.TextInputs(Arranged).Any(f => ReferenceEquals(f, current)))
+        if (!TextInputs(Arranged).Any(f => ReferenceEquals(f, current)))
         {
             focus.Blur();
         }
@@ -67,7 +73,7 @@ internal sealed class TerminalInput<TSurface>(
         }
         var column = x / w;
         var row = y / h;
-        var hit = CellLayout.HitTest(Arranged, column, row);
+        var hit = HitTest(Arranged, column, row);
         if (hit is HitResult.TextInputHit field)
         {
             focus.Focus(field.Input);
@@ -91,7 +97,7 @@ internal sealed class TerminalInput<TSurface>(
         DropStaleFocus();
         var context = new TextInputInteraction.KeyContext(tracker, focus, redraw,
             ActiveSearch: chrome.Page == PilotPage.Flights ? chrome.Flights.Wizard.ActiveSearch : null,
-            TabFields: () => (IReadOnlyList<TextInputState>)CellLayout.TextInputs(Arranged));
+            TabFields: () => TextInputs(Arranged));
 
         // Shift+Enter (Alt+Enter, where a terminal cannot tell Shift) in the chat's box is a new line, not a send.
         if (evt is InputEvent.KeyDown && chrome.Chat.HandleNewLine(evt))

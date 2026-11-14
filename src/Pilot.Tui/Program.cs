@@ -91,7 +91,11 @@ var tracker = new BackgroundTaskTracker();
 using var stop = new CancellationTokenSource();
 var dirty = true;
 void Redraw() => dirty = true;
-var input = new TerminalInput<RgbaImage>(chrome, sessions, focus, tracker, Redraw, stop.Cancel);
+var input = new TerminalInput<RgbaImage>(chrome, sessions, focus, tracker, Redraw, stop.Cancel)
+{
+    HitTest = (tree, column, row) => CellLayout.HitTest(tree, column, row),
+    TextInputs = tree => CellLayout.TextInputs(tree),
+};
 
 // The same wiring as the window's: a verb on the node for each button, and Plan a leg said in the chat.
 flights.CanCommand = true;
