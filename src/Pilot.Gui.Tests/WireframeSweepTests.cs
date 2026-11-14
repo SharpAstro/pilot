@@ -14,9 +14,19 @@ namespace Pilot.Gui.Tests;
 /// </summary>
 public static class WireframeSweepTests
 {
-    private static readonly int[] Widths = [1000, 1280, 1400, 1920, 2560];
-    private static readonly int[] Heights = [900, 1440];
-    private static readonly float[] Dpis = [1f, 1.5f];
+    /// <summary>
+    /// The sizes, as (width, DPI, height): at 900 high, every width at DPI 1.5 and the three widths 1000, 1400 and 2560 at DPI 1; at 1440 high (the "long"
+    /// state only), the widths 1280 and 2560 at both scales. Every width, both heights and both scales are drawn, not their full product: the whole
+    /// product (640 cases) took about a minute, past the 30 s the class has (the repo's runner uses two threads); this is 320.
+    /// </summary>
+    private static readonly (int Width, float Dpi, int Height)[] LongSizes =
+    [
+        (1000, 1f, 900), (1400, 1f, 900), (2560, 1f, 900),
+        (1000, 1.5f, 900), (1280, 1.5f, 900), (1400, 1.5f, 900), (1920, 1.5f, 900), (2560, 1.5f, 900),
+        (1280, 1f, 1440), (2560, 1f, 1440), (1280, 1.5f, 1440), (2560, 1.5f, 1440),
+    ];
+
+    private static readonly (int Width, float Dpi, int Height)[] ManySizes = [.. LongSizes.Where(s => s.Height == 900)];
     private static readonly string[] States = ["long", "many"];
 
     internal static readonly string[] Pages =
@@ -26,7 +36,7 @@ public static class WireframeSweepTests
     ];
 
     internal static IEnumerable<(string Page, string State, int Width, float Dpi, int Height)> CaseTuples() =>
-        from state in States from height in Heights from page in Pages from width in Widths from dpi in Dpis select (page, state, width, dpi, height);
+        from state in States from size in state == "long" ? LongSizes : ManySizes from page in Pages select (page, state, size.Width, size.Dpi, size.Height);
 
     internal static IEnumerable<TheoryDataRow<string, string, int, float, int>> RowsOf(string state, int height, float dpi) =>
         CaseTuples().Where(c => c.State == state && c.Height == height && c.Dpi == dpi)
@@ -197,7 +207,7 @@ public sealed class WireframeSweepSelfTests
     }
 }
 
-// The sweep runs as eight classes, one a state, height and scale, so xunit's own class-level parallelism shares the 640 cases.
+// The sweep runs as six classes, one a state, height and scale, so xunit's own class-level parallelism shares the 320 cases.
 
 /// <summary>The "long" state at 900 high, DPI 1.</summary>
 public sealed class WireframeSweepLong900Dpi1Tests
@@ -248,24 +258,6 @@ public sealed class WireframeSweepMany900Dpi1Tests
 public sealed class WireframeSweepMany900Dpi15Tests
 {
     public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("many", 900, 1.5f);
-
-    [Theory, MemberData(nameof(Cases))]
-    public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
-}
-
-/// <summary>The "many" state at 1440 high, DPI 1.</summary>
-public sealed class WireframeSweepMany1440Dpi1Tests
-{
-    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("many", 1440, 1f);
-
-    [Theory, MemberData(nameof(Cases))]
-    public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
-}
-
-/// <summary>The "many" state at 1440 high, DPI 1.5.</summary>
-public sealed class WireframeSweepMany1440Dpi15Tests
-{
-    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("many", 1440, 1.5f);
 
     [Theory, MemberData(nameof(Cases))]
     public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
