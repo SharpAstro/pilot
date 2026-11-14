@@ -232,6 +232,171 @@ public sealed class TerminalFrameTests
         buffer.BackAt(2, row + 1).ShouldBe(buffer.BackAt(2, row - 1), $"{size}: the rule is not directly under the typed row\n{dump}");
     }
 
+    // A viewport whose caret is sticky as VirtualTerminal's is: SetCaret keeps the request until HideCaret.
+    private sealed class StickyCaretViewport(int width, int height) : ITerminalViewport
+    {
+        public (int Column, int Row) Offset => (0, 0);
+        public (int Width, int Height) Size => (width, height);
+        public TermCell CellSize => new(10, 20);
+        public ColorMode ColorMode => ColorMode.TrueColor;
+        public (int Column, int Row)? Caret { get; private set; }
+        public void SetCaret(int column, int row, CaretStyle style) => Caret = (column, row);
+        public void HideCaret() => Caret = null;
+        public void SetCursorPosition(int left, int top) { }
+        public void Write(string text) { }
+        public void WriteLine(string? text = null) { }
+        public void Flush() { }
+        public Stream OutputStream => Stream.Null;
+    }
+
+    // One frame as Program.cs makes it: tree, arrange, clip, paint. Raw is the arranged tree before the clip.
+    private static (ImmutableArray<Layout.ArrangedNode<int>> Raw, ImmutableArray<Layout.ArrangedNode<int>> Painted) PaintFrameBoth(
+        StickyCaretViewport viewport, PilotPage page, Layout.Node pageTree, int columns, int rows)
+    {
+        var rail = TerminalRail.Tree(page, GlyphMode.Emoji, null, null, Live.At, _ => { }, null, columns);
+        var raw = Layout.Engine.Arrange(TerminalFrame.Tree(rail, pageTree, null), new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
+        var painted = TerminalFrame.Clip(raw);
+        TerminalFrame.Paint(viewport.HideCaret, () => CellLayout.Paint(viewport, painted));
+        return (raw, painted);
+    }
+
+    private static ImmutableArray<Layout.ArrangedNode<int>> PaintFrame(StickyCaretViewport viewport, PilotPage page, Layout.Node pageTree, int columns, int rows)
+        => PaintFrameBoth(viewport, page, pageTree, columns, rows).Painted;
+
+    private static Layout.ArrangedNode<int>? FieldNode(ImmutableArray<Layout.ArrangedNode<int>> arranged, TextInputState field)
+        => arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput t } && ReferenceEquals(t.State, field)).Select(a => (Layout.ArrangedNode<int>?)a).FirstOrDefault();
+
+    [Fact]
+    public async Task TheCaretOfOneSettingsFieldFollowsItWhenRowsArriveAboveAndGoesWhenItIsClippedOut()
+    {
+        const int columns = 100, rows = 40;
+        var viewport = new StickyCaretViewport(columns, rows);
+        var focus = new TextInputFocus();
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+
+        // One page, one machine field throughout. The setup checks arrive after the first frame, so rows come in above the field.
+        var settings = new[] { new SettingRow { Key = "machine", Label = "Machine prefix", Detail = "Two letters and a number", Value = "DE1", Source = SettingSources.Default } };
+        var checksGate = new TaskCompletionSource<SetupChecks>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        chrome.Settings.Load = _ => Task.FromResult(new SettingsPage { File = "settings.json", Settings = settings });
+        chrome.Settings.LoadChecks = (_, _) => checksGate.Task;
+        chrome.Settings.Changed = () =>
+        {
+            if (chrome.Settings.Page is not null)
+            {
+                loaded.TrySetResult();
+            }
+        };
+        Layout.Node Tree() => chrome.Settings.Tree(DateTimeOffset.UtcNow, columns * 8f);
+        Tree();
+        await loaded.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        // First frame: the machine field focused, its caret parked in the field.
+        var machine = CellLayout.TextInputs(PaintFrame(viewport, PilotPage.Settings, Tree(), columns, rows)).Last();
+        focus.Focus(machine);
+        var rect1 = FieldNode(PaintFrame(viewport, PilotPage.Settings, Tree(), columns, rows), machine).ShouldNotBeNull().Bounds;
+        viewport.Caret.ShouldNotBeNull().Row.ShouldBe(rect1.Y);
+
+        // The checks arrive: the same field is laid out lower. The caret is in the new rect, not the old row.
+        var checksIn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        chrome.Settings.Changed = () =>
+        {
+            if (chrome.Settings.Checks is not null)
+            {
+                checksIn.TrySetResult();
+            }
+        };
+        checksGate.SetResult(new SetupChecks
+        {
+            CheckedAt = DateTimeOffset.UtcNow,
+            Checks = [.. Enumerable.Range(0, 4).Select(i => new SetupCheck { Key = $"c{i}", Title = $"Check {i}", Ok = true, Line = "fine" })],
+        });
+        await checksIn.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        var rect2 = FieldNode(PaintFrame(viewport, PilotPage.Settings, Tree(), columns, rows), machine).ShouldNotBeNull().Bounds;
+        rect2.Y.ShouldBeGreaterThan(rect1.Y);
+        var caret = viewport.Caret.ShouldNotBeNull();
+        caret.Row.ShouldBe(rect2.Y);
+        caret.Column.ShouldBeInRange(rect2.X, rect2.X + rect2.Width);
+
+        // The same page in a terminal too short to reach the field: it is laid out, but the clip drops it, so nothing is painted and no caret stays.
+        var (raw, painted) = PaintFrameBoth(viewport, PilotPage.Settings, Tree(), columns, rect2.Y);
+        FieldNode(raw, machine).ShouldNotBeNull();
+        FieldNode(painted, machine).ShouldBeNull();
+        viewport.Caret.ShouldBeNull();
+    }
+
+    [Fact]
+    public void TheCaretOfTheFlightsWhyFieldIsWithdrawnWhenTheFrameIsAnotherPage()
+    {
+        const int columns = 100, rows = 40;
+        var viewport = new StickyCaretViewport(columns, rows);
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        var flights = chrome.Flights;
+        flights.CanvasAvailable = false;
+        flights.CanCommand = true;
+        var flight = new FlightRow
+        {
+            Code = "TIA1611", Repo = "tianwen", RepoPath = "/r", Issue = 1611, Title = "Planets on the GPU", Branch = "flight/tia1611",
+            Worktree = "/r/w", Base = "origin/main", State = FlightState.Flying, CreatedAt = Live.At,
+        };
+        LegRow[] legs = [new() { Flight = "TIA1611", Name = "render", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Planned }];
+        var screen = new FlightsScreen(FlightLine.Build([flight], [], Live.At, legs), "live", Live.At);
+        flights.Tree(screen);
+        flights.OpenMenu(screen.Lines[0], 0, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
+        flights.MenuItems.Single(i => i.Label == "Remove render…").OnChoose!();
+        new TextInputFocus().Focus(flights.WhyInput);
+
+        var arranged = PaintFrame(viewport, PilotPage.Flights, flights.Tree(screen), columns, rows);
+        var field = FieldNode(arranged, flights.WhyInput).ShouldNotBeNull();
+        viewport.Caret.ShouldNotBeNull().Row.ShouldBe(field.Bounds.Y);
+
+        // Another editor's field stays focused but the frame is another page without it: the caret is withdrawn, not left behind.
+        var home = chrome.Home.Tree(new HomeScreen(screen, SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample"), new JobsScreen([], "sample", Live.At), Cards(), []));
+        PaintFrame(viewport, PilotPage.Home, home, columns, rows);
+        viewport.Caret.ShouldBeNull();
+    }
+
+    // The Chat composer is not a CellLayout text input: Program.cs parks its caret after the paint, only on the Chat page with the box focused.
+    [Fact]
+    public void TheCaretOfTheChatBoxIsParkedOnItsPageAndWithdrawnWhenTheFrameIsAnotherPage()
+    {
+        const int columns = 100, rows = 40;
+        var viewport = new StickyCaretViewport(columns, rows);
+        var focus = new TextInputFocus();
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        chrome.Chat.Load = (after, _) => Task.FromResult(new ChatPage { Entries = [], Total = 0 });
+        chrome.Chat.OnSend = _ => Task.FromResult<string?>(null);
+        chrome.Chat.Cells = true;
+        chrome.Chat.CellColumns = columns;
+        focus.Focus(chrome.Chat.Input);
+
+        void Frame(PilotPage page, Layout.Node tree)
+        {
+            var painted = PaintFrame(viewport, page, tree, columns, rows);
+            if (page == PilotPage.Chat && ReferenceEquals(focus.Current, chrome.Chat.Input) && chrome.Chat.CaretCell(painted) is var (column, row))
+            {
+                viewport.SetCaret(column, row, CaretStyle.BlinkingBar);
+            }
+        }
+
+        Frame(PilotPage.Chat, chrome.Chat.Tree());
+        var onChat = viewport.Caret.ShouldNotBeNull();
+        onChat.Row.ShouldBeInRange(1, rows - 1);
+        onChat.Column.ShouldBeInRange(0, columns - 1);
+
+        // The box is still focused, but the frame is another page: the caret is withdrawn, not left on the Chat row.
+        var screen = new FlightsScreen([], "sample", Live.At);
+        Frame(PilotPage.Home, chrome.Home.Tree(new HomeScreen(screen, SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample"), new JobsScreen([], "sample", Live.At), Cards(), [])));
+        viewport.Caret.ShouldBeNull();
+
+        // And back on Chat it is parked again.
+        Frame(PilotPage.Chat, chrome.Chat.Tree());
+        viewport.Caret.ShouldBe(onChat);
+    }
+
     private sealed class NullSink : ICellSink
     {
         public void MoveTo(int row, int column) { }
