@@ -100,9 +100,11 @@ public sealed class AccentCaptureTests
     }
 
     [Fact]
-    public async Task AFlightPageTakesTheAccentForItsLinksUnderARedAccent()
+    public async Task AFlightPageTakesTheAccentForItsLinksWhereItReadsAsText()
     {
-        var palette = Palette.StandardFor(Red);
+        // A red reads for the rail mark but not as 4.5:1 text on the dark chrome, so its link keeps the blue; a light green reads, so the links follow it.
+        var green = new RGBAColor32(0x5f, 0xd0, 0xa0, 0xff);
+        var palette = Palette.StandardFor(green);
         palette.Link.ShouldNotBe(palette.Landed, "the link follows the accent, the state colour stays fixed");
 
         async Task<byte[]> Page(RGBAColor32? accent)
@@ -120,12 +122,12 @@ public sealed class AccentCaptureTests
             return [.. renderer.Surface.Pixels];
         }
 
-        var red = await Page(Red);
+        var accented = await Page(green);
         var none = await Page(null);
-        Save("flight-page-red", red, 1280, 800);
-        Count(red, palette.Link).ShouldBeGreaterThan(0, "link text drawn in the red accent's link colour");
+        Save("flight-page-green", accented, 1280, 800);
+        Count(accented, palette.Link).ShouldBeGreaterThan(0, "link text drawn in the accent's link colour");
         Count(none, Palette.BuiltIn.Link).ShouldBeGreaterThan(0, "link text drawn in the fallback link colour");
-        Count(red, palette.Link).ShouldBeGreaterThan(Count(none, palette.Link));
+        Count(none, palette.Link).ShouldBe(0, "the fallback page has no pixel in the green");
     }
 
     [Theory]
