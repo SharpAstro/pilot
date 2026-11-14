@@ -229,11 +229,15 @@ internal sealed class AboutCard
         var hover = night?.ButtonHover ?? ButtonHover;
         var rows = new List<Layout.Node>
         {
-            Layout.Builder.HStack(
+            // A Dock measures as wide as the room it is given, where a stack measures to its content: the column's rows
+            // stretch to its widest measured row, and without this one they stopped at the widest heading's text, about
+            // 40 cells, cutting every value (pilot #1027).
+            Layout.Builder.Dock(Layout.Builder.HStack(
                     Layout.Builder.Text("pilot", 16f, bright).WStar(),
                     // The × stays a typeset rune for want of a close glyph: SharpAstro/DIR.Lib#151.
                     Layout.Builder.Text("×", 16f, body, TextAlign.Center).Pad(8f, 0f).WAuto().BgHover(hover)
                         .Follows(new HitResult.ButtonHit("about:close"), _ => Close()))
+                .Stretch())
                 .RowH(26f),
         };
         var facts = (Facts?.Invoke() ?? []).Select(f => Line(f.Label, f.Value, night)).ToList();
