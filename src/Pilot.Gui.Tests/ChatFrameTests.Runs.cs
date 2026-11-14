@@ -19,14 +19,17 @@ public sealed partial class ChatFrameTests
     private static TranscriptEntry Err(string text, DateTimeOffset at) => new() { Index = 0, Kind = TranscriptKind.Error, At = at, Text = text };
 
     // Fifteen identical errors, 11:38 to 12:17, between two other entries.
-    private static List<TranscriptEntry> SpendLimitFeed()
+    private static List<TranscriptEntry> SpendLimitFeed(bool trailing = true)
     {
         var feed = new List<TranscriptEntry> { new() { Index = 0, Kind = TranscriptKind.Assistant, At = Local(11, 30), Text = "Starting." } };
         for (var i = 0; i < 15; i++)
         {
             feed.Add(Err(SpendLimit, Local(11, 38).AddMinutes(i * 39 / 14.0)) with { Index = feed.Count });
         }
-        feed.Add(new TranscriptEntry { Index = feed.Count, Kind = TranscriptKind.Assistant, At = Local(12, 20), Text = "Back again." });
+        if (trailing)
+        {
+            feed.Add(new TranscriptEntry { Index = feed.Count, Kind = TranscriptKind.Assistant, At = Local(12, 20), Text = "Back again." });
+        }
         return feed;
     }
 
@@ -78,7 +81,7 @@ public sealed partial class ChatFrameTests
     public async Task ASixteenthErrorLaterUpdatesTheSameRowAndBuildsOnlyIt()
     {
         using var renderer = new RgbaImageRenderer(1600, 900);
-        using var held = new Held(renderer, SpendLimitFeed());
+        using var held = new Held(renderer, SpendLimitFeed(false));
         await held.OpenAsync();
         Draw(renderer, held.Chat);
 
@@ -97,7 +100,7 @@ public sealed partial class ChatFrameTests
     public async Task TheRunsRowIsTheOnlyOneBuiltWhenTheSixteenthArrives()
     {
         using var renderer = new RgbaImageRenderer(1600, 900);
-        using var held = new Held(renderer, SpendLimitFeed());
+        using var held = new Held(renderer, SpendLimitFeed(false));
         await held.OpenAsync();
         held.Chat.Tree();
 
