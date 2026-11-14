@@ -166,7 +166,6 @@ internal sealed class TerminalInput<TSurface>(
     public void Handle(InputEvent? evt, Rune? keyChar, ConsoleModifiers modifiers = 0)
     {
         redraw();
-        switch (evt) { case InputEvent.KeyDown { Key: InputKey.Q }: break; }
 
         // Shift+Enter (Alt+Enter, where a terminal cannot tell Shift) in the chat's box is a new line, not a send.
         if (evt is not null && chrome.Chat.HandleNewLine(evt))
