@@ -272,9 +272,9 @@ public sealed class TerminalFrameTests
                 loaded.TrySetResult();
             }
         };
-        chrome.Settings.Tree(Live.At, columns * 8f);
+        chrome.Settings.Tree(DateTimeOffset.UtcNow, columns * 8f);
         await loaded.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
-        return chrome.Settings.Tree(Live.At, columns * 8f);
+        return chrome.Settings.Tree(DateTimeOffset.UtcNow, columns * 8f);
     }
 
     private static Layout.ArrangedNode<int>? FieldNode(ImmutableArray<Layout.ArrangedNode<int>> arranged, TextInputState field)
