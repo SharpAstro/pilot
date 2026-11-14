@@ -230,6 +230,7 @@ internal static class CardKindCatalog
         new("store", "Ring|ForYou", ["NodeState.cs", "StoreRecovery.cs"], SourcePinned, "the start could not read the stored files (FileJournal.Load or NodeState's constructor threw), set them aside and started from a backup or an empty store", [nameof(Verbs.NoteIdea)]),
         new("stop-unconfirmed", "Ring", ["Sessions/SessionMessenger.cs"], "SessionEndTests.AStopThatDoesNotTakeRaisesOneRingCardAndIsNotConfirmed", "the session's row still shows it live after the stop was asked", [nameof(Verbs.EndSession)]),
         new("turns-outage", "ForYou", ["Flights/TurnOutage.cs"], "TurnOutageTests.AnAccountChangeOpensOneOutageWithOneCardAndATurnLaterEndsItAndKeepsTheWindow"),
+        new("account-limit", "ForYou", ["Flights/TurnOutage.cs"], "AccountLimitTests.OneCardNamesTheLimitAndTAndClosesAtT"),
         new("usage-high", "Handled", ["Sessions/UsageReader.cs"], "UsageTests.NearlySpentTheFiveHourWindowRaisesOneCardPerWindow"),
         new("usage-week", "ForYou", ["Flights/StartGate.cs"], "StartGateTests.TheWeekRingsOncePerWindowAndHoldsNothing"),
         new("removal-held", "Handled", ["Flights/RemovalQueue.cs"], "RemovalQueueTests.AFolderHeldPastThreeStartsIsOneHandledLineNamingTheHolderAndNoMoreOnceItIsReleased"),

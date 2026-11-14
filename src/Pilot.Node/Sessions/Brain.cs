@@ -74,11 +74,18 @@ public sealed class BrainClient(Func<StreamSession?> session, TimeProvider time)
         }
     }
 
+    /// <summary>The account's limit (PIL1035): while it is on, nothing is asked of the brain, so the old path runs. Null: none known.</summary>
+    public Flights.TurnOutage? Outage { get; init; }
+
     public async Task<BrainReply> AskAsync(string kind, string request, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var started = time.GetTimestamp();
         try
         {
+            if (Outage?.LimitUntil is { } until && time.GetUtcNow() < until)
+            {
+                throw new BrainDownException($"the account is on a usage limit until {until.ToLocalTime():HH:mm}");
+            }
             var reply = await AskCoreAsync(kind, request, timeout, cancellationToken);
             Note(kind, time.GetElapsedTime(started), null);
             return reply;
