@@ -82,7 +82,7 @@ public sealed class WrappedLinkHoverTests
         rig.Settle(card);
         var words = Words(rig, action);
         words.Select(w => w.Bounds.Y).Distinct().Count().ShouldBeGreaterThan(1, "the title must wrap over several lines");
-        words.ShouldNotContain(Lit);
+        words.Any(Lit).ShouldBeFalse();
 
         // The pointer on a word of the last line lights every word of every line, and no text outside the link.
         var last = words.OrderBy(w => w.Bounds.Y).ThenBy(w => w.Bounds.X).Last();
@@ -95,7 +95,7 @@ public sealed class WrappedLinkHoverTests
         // Off the link, none.
         rig.View.Pointer = (Width - 1, 1100);
         rig.Settle(card);
-        Words(rig, action).ShouldNotContain(Lit);
+        Words(rig, action).Any(Lit).ShouldBeFalse();
     }
 
     [Fact]
