@@ -174,6 +174,32 @@ public sealed class TerminalRailTests
         TerminalRail.EntryText(PilotPage.Ideas, GlyphMode.Emoji, null, IdeasOf(120), Now).Length.ShouldBe(TerminalRail.EntryCells);
     }
 
+    [Theory]
+    [InlineData(GlyphMode.Emoji, false)]
+    [InlineData(GlyphMode.Emoji, true)]
+    [InlineData(GlyphMode.Initials, false)]
+    [InlineData(GlyphMode.Initials, true)]
+    public void TheIdeasCountIsToldApartFromItsKeyAndTheEntryKeepsItsWidth(GlyphMode mode, bool narrow)
+    {
+        var width = narrow ? TerminalRail.NarrowEntryCells : TerminalRail.EntryCells;
+        foreach (var noted in new[] { 3, 10, 120 })
+        {
+            var text = TerminalRail.EntryText(PilotPage.Ideas, mode, null, IdeasOf(noted), Now, narrow);
+            text.Length.ShouldBe(width);
+            text.TrimEnd().ShouldEndWith("0");
+            // The count never runs into the key: a char that is no digit sits between the last count digit and the key.
+            var beforeKey = text.TrimEnd()[..^1];
+            char.IsDigit(beforeKey[^1]).ShouldBeFalse($"{noted} {mode} narrow={narrow}: '{text}'");
+            beforeKey[^1].ShouldNotBe('+');
+        }
+
+        var none = TerminalRail.EntryText(PilotPage.Ideas, mode, null, IdeasOf(0), Now, narrow);
+        none.Length.ShouldBe(width);
+        none.Any(char.IsDigit).ShouldBe(true);
+        none.Count(char.IsDigit).ShouldBe(1);
+        none.Trim().ShouldEndWith("0");
+    }
+
     [Fact]
     public void TheModeComesFromTheOptionOrTheEnvironment()
     {
