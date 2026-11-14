@@ -12,7 +12,7 @@ namespace Pilot.Gui.Tests;
 /// background (the bar's cells past its last entry and any gap of a page or the cards panel included), so no terminal-black cell or
 /// stale glyph is left on any page at the terminal's real size.
 /// </summary>
-public sealed class TerminalFrameTests
+internal sealed class TerminalFrameTests
 {
     private sealed class BufferedViewport(CellBuffer buffer, int width, int height) : ITerminalViewport
     {
