@@ -85,7 +85,7 @@ internal sealed class TerminalInput<TSurface>(
     }
 
     /// <summary>Routes one input event; <paramref name="keyChar"/> is the typed character, when the terminal says one.</summary>
-    public void Handle(InputEvent evt, Rune? keyChar, ConsoleModifiers modifiers = 0)
+    public void Handle(InputEvent? evt, Rune? keyChar, ConsoleModifiers modifiers = 0)
     {
         redraw();
         if (evt is InputEvent.MouseUp(var x, var y, MouseButton.Left))
