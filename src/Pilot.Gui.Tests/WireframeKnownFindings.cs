@@ -22,9 +22,6 @@ internal static class WireframeKnownFindings
 {
     public static readonly IReadOnlyList<KnownWireframeFinding> Entries =
     [
-        new("card detail | long | 1000 wide *",
-            "text \"…\" * lies partly over the control ChromeHit { } *",
-            "known on main, fixed by leg view-fixes: an ellipsis of a cut line in the open card's detail lies half over a chrome region (the card's own hit area) at 1000 wide"),
         new("chat | long | *",
             "text \"The leg is done and every step ticked. *\" * is cut to * px wide with no ellipsis",
             "known on main, fixed by leg view-fixes: the long watchtower reply in the Chat page's transcript is a line a clip cuts across its width with no ellipsis (a single unbroken line past the column)"),
