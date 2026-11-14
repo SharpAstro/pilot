@@ -52,7 +52,6 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private RGBAColor32 Flying => P.Flying;
     private RGBAColor32 Held => P.Held;
     private RGBAColor32 Landed => P.Landed;
-    private RGBAColor32 Link => P.Link;
     private RGBAColor32 PanelBg => P.PanelBg;
     private RGBAColor32 Button => P.Button;
     private RGBAColor32 ButtonHover => P.ButtonHover;

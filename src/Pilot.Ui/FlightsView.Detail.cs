@@ -550,7 +550,7 @@ internal sealed partial class FlightsView<TSurface>
 
     // The leg's sub-task in the tracker: a link that leaves the app, so it ends in the arrow, with a right-click's Copy URL.
     private Layout.Node SubTaskLink(string code, string leg, string url) =>
-        _links.OnLink(Layout.Builder.Text("sub-task" + Followable.Away, 12f, Link)
+        _links.OnLink(Layout.Builder.Text("sub-task" + Followable.Away, 12f, P.Link)
             .BgHover(RowHoverBg)
             .Follows(new HitResult.ButtonHit($"subtask:{code}:{leg}"), _ => OnOpen?.Invoke(url))
             .WithTooltip(url)
