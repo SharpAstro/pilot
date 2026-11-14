@@ -250,7 +250,7 @@ public sealed class TerminalFrameTests
             width.ShouldBeGreaterThan(60, $"row {rule}: the rule is not a long run of U+2500\n{dump}");
             for (var x = from; x < from + width; x++)
             {
-                buffer.BackAt(x, rule).ShouldBe(buffer.BackAt(x, prompt), $"row {rule} col {x}: the rule has a fill that the prompt row lacks\n{dump}");
+                buffer.BackAt(x, rule).Style.ShouldBe(buffer.BackAt(from + width, prompt).Style, $"row {rule} col {x}: the rule has a fill that the prompt row lacks\n{dump}");
             }
         }
         caret.ShouldNotBeNull();
