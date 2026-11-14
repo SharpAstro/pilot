@@ -26,7 +26,7 @@ public sealed class SqueezedTableCellsTests
         var title = texts.First(t => t.Text == "State");
         var below = texts.Where(t => t.Bounds.Y > title.Bounds.Y && Math.Abs(t.Bounds.X - title.Bounds.X) < 2f).Select(t => t.Text).ToList();
 
-        below.ShouldContain("running", "the State column holds the state word: " + string.Join(" | ", below));
+        below.ShouldContain("running", "title " + title.Bounds + "; all: " + string.Join(" | ", texts.Where(t => t.Bounds.Y < title.Bounds.Y + 120f).Select(t => $"{t.Text}@{t.Bounds.X:0},{t.Bounds.Y:0}")));
     }
 
     [Fact]
