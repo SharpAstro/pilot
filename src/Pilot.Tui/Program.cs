@@ -554,6 +554,11 @@ void Handle(ConsoleInputEvent raw)
         {
             focus.Focus(field.Input);
         }
+        else if (cell.Width > 0 && cell.Height > 0 && page == PilotPage.Chat
+            && CellLayout.HitTest(arranged, (int)x / cell.Width, (int)y / cell.Height) is HitResult.ButtonHit { Action: "chat:composer" })
+        {
+            chat.PlaceComposerCaret(arranged, (int)x / cell.Width, (int)y / cell.Height);
+        }
         return;
     }
 
