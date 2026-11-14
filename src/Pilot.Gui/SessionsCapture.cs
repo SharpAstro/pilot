@@ -71,8 +71,10 @@ internal static class SessionsCapture
     /// <param name="openFlight">The code of the flight whose page the Flights page shows in place of its table.</param>
     public static SessionsView<RgbaImage> Render(RgbaImageRenderer renderer, SessionsScreen screen, float dpiScale = 1f, bool canSay = false,
         FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null, bool inPlay = false, IReadOnlyList<MachineLine>? machines = null,
-        string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null, SpendSnapshot? spend = null, string spendWindow = "today", IReadOnlyList<SummaryRow>? summaries = null)
+        string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null, SpendSnapshot? spend = null, string spendWindow = "today", IReadOnlyList<SummaryRow>? summaries = null, RGBAColor32? accent = null)
     {
+        // The Standard palette built for this desktop accent while the frame is drawn; Night ignores it.
+        using var accentScope = Pilot.Ui.Palette.StandardForCapture(accent);
         var view = new SessionsView<RgbaImage>(renderer) { CanSay = canSay };
         var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = FontPath, DpiScale = dpiScale };
         if (summaries is { Count: > 0 })
@@ -185,10 +187,10 @@ internal static class SessionsCapture
     /// <summary>Renders one frame to <paramref name="pngPath"/> and its rows to <c>&lt;pngPath&gt;.rows.txt</c>; returns the dump's path.</summary>
     public static string Write(SessionsScreen screen, string pngPath, int width, int height, bool canSay = false,
         FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null,
-        IReadOnlyList<MachineLine>? machines = null, string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null, SpendSnapshot? spend = null, string spendWindow = "today", IReadOnlyList<SummaryRow>? summaries = null)
+        IReadOnlyList<MachineLine>? machines = null, string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null, SpendSnapshot? spend = null, string spendWindow = "today", IReadOnlyList<SummaryRow>? summaries = null, RGBAColor32? accent = null)
     {
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
-        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight, repos: repos, machines: machines, hover: hover, flightsView: flightsView, select: select, pullRequests: pullRequests, layers: layers, night: night, fold: fold, spend: spend, spendWindow: spendWindow, summaries: summaries);
+        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight, repos: repos, machines: machines, hover: hover, flightsView: flightsView, select: select, pullRequests: pullRequests, layers: layers, night: night, fold: fold, spend: spend, spendWindow: spendWindow, summaries: summaries, accent: accent);
         if (Path.GetDirectoryName(Path.GetFullPath(pngPath)) is { } folder)
         {
             Directory.CreateDirectory(folder);

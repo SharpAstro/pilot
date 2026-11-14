@@ -47,7 +47,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     private static RGBAColor32 Working => Palette.Current.Flying;
     private static RGBAColor32 Waiting => Palette.Current.Held;
     private static RGBAColor32 Failing => Palette.Current.Failed;
-    private static RGBAColor32 Link => Palette.Current.Landed;
+    private static RGBAColor32 Link => Palette.Current.Link;
     private static (RGBAColor32 Bg, RGBAColor32 Hover) Lit => (Palette.Current.PillLit, Palette.Current.PillLitHover);
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };

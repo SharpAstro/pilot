@@ -34,7 +34,7 @@ internal sealed partial class FlightsView<TSurface>
             : null;
         // Qualified: this method is named PullRequestLink too.
         return Pilot.Ui.PullRequestLink.Of(_links, action, $"PR #{flight.PullRequest}", pr?.ToString() ?? url, url, OnOpen, route, "the Pull requests page",
-                Landed, RowHoverBg, mayBeCut: false, fill: false)
+                P.Link, RowHoverBg, mayBeCut: false, fill: false)
             // HFixed, not RowH: RowH makes the width a star, which a flow's cell measures as nothing.
             .HFixed(20f);
     }
@@ -340,7 +340,7 @@ internal sealed partial class FlightsView<TSurface>
 
     // A link that leaves the app: a click opens it, a right-click offers Copy URL (over the row's own menu, which stays on the rest of the row).
     private Layout.Node Link(string text, string location, string action) =>
-        _links.OnLink(Layout.Builder.Text(text + Followable.Away, 12f, Landed)
+        _links.OnLink(Layout.Builder.Text(text + Followable.Away, 12f, P.Link)
             .BgHover(RowHoverBg)
             .Follows(new HitResult.ButtonHit(action), _ => OnOpen?.Invoke(location))
             .RowH(20f), location);
