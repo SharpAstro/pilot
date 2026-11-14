@@ -67,7 +67,7 @@ public sealed class ZzProbeTests(ITestOutputHelper output)
     {
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
-        var node = new NodeInfo { WireVersion = 1, Version = "2.1.1-beta.2218", MachineName = "DE1", MachinePrefix = "DE1", ProcessId = 1234, SocketPath = @"C:\Users\x\AppData\Local\pilot2\node.sock", DataFolder = @"C:\Users\x\AppData\Local\pilot2" };
+        var node = new NodeInfo { WireVersion = 1, Version = "2.1.1-beta.2218", MachineName = "DE1", MachinePrefix = "DE1", ProcessId = 1234, StartedAt = Live.At, Stream = "s", SocketPath = @"C:\Users\x\AppData\Local\pilot2\node.sock", DataFolder = @"C:\Users\x\AppData\Local\pilot2" };
         chrome.About.Facts = () => AboutFacts.For("pilot-tui", node, "node.sock");
         chrome.About.KeyList = AboutCard.TerminalKeys;
         var snapshot = SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath);
