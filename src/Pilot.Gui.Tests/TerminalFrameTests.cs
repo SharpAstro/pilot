@@ -232,6 +232,122 @@ public sealed class TerminalFrameTests
         buffer.BackAt(2, row + 1).ShouldBe(buffer.BackAt(2, row - 1), $"{size}: the rule is not directly under the typed row\n{dump}");
     }
 
+    // A viewport whose caret is sticky as VirtualTerminal's is: SetCaret keeps the request until HideCaret.
+    private sealed class StickyCaretViewport(int width, int height) : ITerminalViewport
+    {
+        public (int Column, int Row) Offset => (0, 0);
+        public (int Width, int Height) Size => (width, height);
+        public TermCell CellSize => new(10, 20);
+        public ColorMode ColorMode => ColorMode.TrueColor;
+        public (int Column, int Row)? Caret { get; private set; }
+        public void SetCaret(int column, int row, CaretStyle style) => Caret = (column, row);
+        public void HideCaret() => Caret = null;
+        public void SetCursorPosition(int left, int top) { }
+        public void Write(string text) { }
+        public void WriteLine(string? text = null) { }
+        public void Flush() { }
+        public Stream OutputStream => Stream.Null;
+    }
+
+    // One frame as Program.cs makes it: tree, arrange, clip, paint.
+    private static ImmutableArray<Layout.ArrangedNode<int>> PaintFrame(StickyCaretViewport viewport, PilotPage page, Layout.Node pageTree, int columns, int rows)
+    {
+        var rail = TerminalRail.Tree(page, GlyphMode.Emoji, null, null, Live.At, _ => { }, null, columns);
+        var arranged = Layout.Engine.Arrange(TerminalFrame.Tree(rail, pageTree, null), new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
+        arranged = TerminalFrame.Clip(arranged);
+        TerminalFrame.Paint(viewport, arranged);
+        return arranged;
+    }
+
+    private static async Task<Layout.Node> SettingsTreeAsync(PilotChrome<RgbaImage> chrome, int rowsAbove, int columns)
+    {
+        var settings = Enumerable.Range(0, rowsAbove).Select(i => new SettingRow { Key = $"above{i}", Label = $"Above {i}", Detail = "d", Value = "v", Source = SettingSources.Default })
+            .Append(new SettingRow { Key = "machine", Label = "Machine prefix", Detail = "Two letters and a number", Value = "DE1", Source = SettingSources.Default }).ToArray();
+        var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        chrome.Settings.Load = _ => Task.FromResult(new SettingsPage { File = "settings.json", Settings = settings });
+        chrome.Settings.Changed = () =>
+        {
+            if (chrome.Settings.Page is not null)
+            {
+                loaded.TrySetResult();
+            }
+        };
+        chrome.Settings.Tree(Live.At, columns * 8f);
+        await loaded.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        return chrome.Settings.Tree(Live.At, columns * 8f);
+    }
+
+    private static Layout.ArrangedNode<int>? FieldNode(ImmutableArray<Layout.ArrangedNode<int>> arranged, TextInputState field)
+        => arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput t } && ReferenceEquals(t.State, field)).Select(a => (Layout.ArrangedNode<int>?)a).FirstOrDefault();
+
+    [Fact]
+    public async Task TheCaretOfASettingsFieldFollowsItWhenRowsArriveAboveAndGoesWhenItScrollsOut()
+    {
+        const int columns = 100, rows = 40;
+        var viewport = new StickyCaretViewport(columns, rows);
+        var focus = new TextInputFocus();
+        using var vessel = new RgbaImageRenderer(1, 1);
+
+        // First frame: the settings loaded, the machine field focused, its caret parked in the field.
+        var first = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        var arranged1 = PaintFrame(viewport, PilotPage.Settings, await SettingsTreeAsync(first, 1, columns), columns, rows);
+        var machine = CellLayout.TextInputs(arranged1).Last();
+        focus.Focus(machine);
+        arranged1 = PaintFrame(viewport, PilotPage.Settings, await SettingsTreeAsync(first, 1, columns), columns, rows);
+        var rect1 = FieldNode(arranged1, machine).ShouldNotBeNull().Bounds;
+        viewport.Caret.ShouldNotBeNull().Row.ShouldBe(rect1.Y);
+
+        // More settings rows above it: the field is laid out lower. The caret is in the new rect, not the old row.
+        var grown = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        var arranged2 = PaintFrame(viewport, PilotPage.Settings, await SettingsTreeAsync(grown, 3, columns), columns, rows);
+        var moved = CellLayout.TextInputs(arranged2).Last();
+        focus.Focus(moved);
+        arranged2 = PaintFrame(viewport, PilotPage.Settings, await SettingsTreeAsync(grown, 3, columns), columns, rows);
+        var rect2 = FieldNode(arranged2, moved).ShouldNotBeNull().Bounds;
+        rect2.Y.ShouldBeGreaterThan(rect1.Y);
+        var caret = viewport.Caret.ShouldNotBeNull();
+        caret.Row.ShouldBe(rect2.Y);
+        caret.Column.ShouldBeInRange(rect2.X, rect2.X + rect2.Width);
+
+        // So many rows above that the field is clipped out of the page: it is not painted, so there is no caret.
+        var far = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        var arranged3 = PaintFrame(viewport, PilotPage.Settings, await SettingsTreeAsync(far, 80, columns), columns, rows);
+        FieldNode(arranged3, moved).ShouldBeNull();
+        viewport.Caret.ShouldBeNull();
+    }
+
+    [Fact]
+    public void TheCaretOfTheFlightsWhyFieldIsWithdrawnWhenTheFrameIsAnotherPage()
+    {
+        const int columns = 100, rows = 40;
+        var viewport = new StickyCaretViewport(columns, rows);
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        var flights = chrome.Flights;
+        flights.CanvasAvailable = false;
+        flights.CanCommand = true;
+        var flight = new FlightRow
+        {
+            Code = "TIA1611", Repo = "tianwen", RepoPath = "/r", Issue = 1611, Title = "Planets on the GPU", Branch = "flight/tia1611",
+            Worktree = "/r/w", Base = "origin/main", State = FlightState.Flying, CreatedAt = Live.At,
+        };
+        LegRow[] legs = [new() { Flight = "TIA1611", Name = "render", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Planned }];
+        var screen = new FlightsScreen(FlightLine.Build([flight], [], Live.At, legs), "live", Live.At);
+        flights.Tree(screen);
+        flights.OpenMenu(screen.Lines[0], 0, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
+        flights.MenuItems.Single(i => i.Label == "Remove render…").OnChoose!();
+        new TextInputFocus().Focus(flights.WhyInput);
+
+        var arranged = PaintFrame(viewport, PilotPage.Flights, flights.Tree(screen), columns, rows);
+        var field = FieldNode(arranged, flights.WhyInput).ShouldNotBeNull();
+        viewport.Caret.ShouldNotBeNull().Row.ShouldBe(field.Bounds.Y);
+
+        // Another editor's field stays focused but the frame is another page without it: the caret is withdrawn, not left behind.
+        var home = chrome.Home.Tree(new HomeScreen(screen, SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample"), new JobsScreen([], "sample", Live.At), Cards(), []));
+        PaintFrame(viewport, PilotPage.Home, home, columns, rows);
+        viewport.Caret.ShouldBeNull();
+    }
+
     private sealed class NullSink : ICellSink
     {
         public void MoveTo(int row, int column) { }

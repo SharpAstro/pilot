@@ -30,6 +30,18 @@ internal static class TerminalFrame
     }
 
     /// <summary>
+    /// Paints the arranged frame. The terminal's caret is sticky state (a parked caret stays at its cell until withdrawn), and
+    /// CellLayout.Paint parks it only for a focused field it paints. So each frame withdraws the caret first and states it afresh from
+    /// its own rects: the caret follows its field when the page moved, and is hidden when the field is not painted (scrolled out,
+    /// clipped, or on another page), instead of staying where an earlier frame left it.
+    /// </summary>
+    public static void Paint(Console.Lib.ITerminalViewport viewport, ImmutableArray<Layout.ArrangedNode<int>> arranged)
+    {
+        viewport.HideCaret();
+        Console.Lib.CellLayout.Paint(viewport, arranged);
+    }
+
+    /// <summary>
     /// The arranged tree with every node cropped, or dropped, to the rect it belongs in: a node under a scroll container stays inside the
     /// container's bounds, and the page and the cards panel stay inside their own (the frame's children, depth 2). Console.Lib's
     /// CellLayout.Paint has no clip, so a transcript taller than its list painted over the bar, the page's header and the cards panel
