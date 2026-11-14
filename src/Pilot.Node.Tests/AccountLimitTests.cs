@@ -143,6 +143,12 @@ public sealed class AccountLimitTests
         _outage.IsOpen.ShouldBeFalse();
         _restarted.ShouldBe(["TIA1/parser"]);
         _restartedPlanners.ShouldBe(["TIA2"]);
+        // The fresh starts replace the old ones and take a turn: another look redoes nothing again.
+        var fresh = _state.Sessions().Select(s => s with { ContextTokens = 5_000, LastResponseAt = _time.GetUtcNow() }).ToArray();
+        foreach (var s in fresh)
+        {
+            _state.PutSession(s);
+        }
         await _watch.LookAsync(Ct);
         _restarted.Count.ShouldBe(1);
         _restartedPlanners.Count.ShouldBe(1);

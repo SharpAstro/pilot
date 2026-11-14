@@ -16,7 +16,9 @@ public static partial class AccountLimit
         (DateTimeOffset Until, string Why)? best = null;
         foreach (var row in sessions)
         {
+            // A per-minute rate limit is the LimitWait path's own, one worker's; the account limit is a usage or spend limit.
             if (row.ApiError is { } error && error.Contains("limit", StringComparison.OrdinalIgnoreCase)
+                && !error.Contains("rate", StringComparison.OrdinalIgnoreCase)
                 && row.ApiErrorResetsAt is { } resets && resets > now && (best is null || resets > best.Value.Until))
             {
                 best = (resets, $"{row.Name} stopped on {error}");
