@@ -195,7 +195,7 @@ public sealed class TerminalFrameTests
         var placeholder = text.FindIndex(r => r.Contains("Message the fleet chat", StringComparison.Ordinal));
         var hint = text.FindIndex(r => r.Contains("Enter sends", StringComparison.Ordinal));
         var dump = string.Join('\n', text);
-        placeholder.ShouldBeGreaterThan(0, $"{size}: the placeholder is not painted\nfoot nodes:\n{footNodes}\n{dump}");
+        placeholder.ShouldBeGreaterThan(0, $"{size}: the placeholder is not painted\n{dump}");
         hint.ShouldBeGreaterThan(placeholder, $"{size}: the 'Enter sends' line is not painted at or below the box\n{dump}");
         // With the box focused (Ctrl+T, key 2) the terminal's caret goes on the box's own row, inside the page.
         caret.ShouldNotBeNull($"{size}: the composer gives no caret cell");
