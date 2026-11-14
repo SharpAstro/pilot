@@ -21,6 +21,6 @@ internal static class TerminalFrame
             ? Layout.Builder.HStack(page.WStar(), cards.WFixed(CardsView<RgbaImage>.Width)).Stretch()
             : page;
         // The bar takes the row above the page, as the page needs the width: one row (its RowH), and the page the rest.
-        return Layout.Builder.VStack(rail, beside.HStar()).Stretch();
+        return Layout.Builder.VStack(rail, beside.HStar()).Bg(Palette.Current.Ground).Stretch();
     }
 }

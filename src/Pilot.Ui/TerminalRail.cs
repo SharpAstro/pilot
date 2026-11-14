@@ -153,6 +153,12 @@ internal static class TerminalRail
         {
             glyph = glyph[..cells];
         }
+        // A counted Ideas entry puts a middle dot between its count and the key, so the count never reads as one number with the
+        // key. The dot takes the leading space's cell, so the entry keeps its width.
+        if (page == PilotPage.Ideas && glyph.Any(char.IsAsciiDigit))
+        {
+            return $"{glyph.PadRight(cells)}·{KeyFor(page)} ";
+        }
         return $" {glyph.PadRight(cells)}{KeyFor(page)} ";
     }
 
@@ -210,6 +216,6 @@ internal static class TerminalRail
         }).ToArray();
         // One row across: Stretch() would set the height to Star as well and overwrite the HFixed, and in the frame's VStack the bar
         // and the page then shared the height equally, the page and its ? card getting only the lower half (pilot #1027).
-        return Layout.Builder.HStack(entries).RowH(16f);
+        return Layout.Builder.HStack(entries).RowH(16f).Bg(palette.Ground);
     }
 }
