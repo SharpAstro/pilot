@@ -177,7 +177,7 @@ internal sealed class TranscriptEntryView
             // With something to act on the message wraps whole (a long one is read in full, not cut at the edge); the plain line keeps its lines.
             .. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => acting && l.Length > 0
                 ? WrappedProse.Of(l, 13f, Dim)
-                : Layout.Builder.Text(l, 13f, Dim).Selectable().WStar()),
+                : WrappedProse.OneLine(l, 13f, Dim)),
         ];
         // The pill sits under the words, not beside them: beside them it took width from the body, so a line with a pill and one without
         // started their words at different places.
@@ -461,7 +461,7 @@ internal sealed class TranscriptEntryView
     private static Layout.Node Mono(string line, RGBAColor32 color) =>
         line.Length == 0
             ? Layout.Builder.Text(" ", 13f, color).Selectable()
-            : Layout.Builder.Text(line, 13f, color).Selectable().WStar().WithTooltip(line);
+            : WrappedProse.OneLine(line, 13f, color);
 
     private Layout.Node Row(TranscriptEntry entry)
     {
