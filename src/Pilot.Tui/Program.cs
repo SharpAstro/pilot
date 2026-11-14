@@ -85,6 +85,7 @@ var fleet = chrome.Fleet;
 var settings = chrome.Settings;
 var cards = chrome.Cards;
 var chat = chrome.Chat;
+chat.Cells = true;
 var focus = sessions.Ui.Focus;
 var tracker = new BackgroundTaskTracker();
 using var stop = new CancellationTokenSource();
@@ -491,6 +492,8 @@ while (!stop.IsCancellationRequested)
             spendReads.AskToday();
         }
         chrome.Home.Today = spendReads.Today;
+        var cardsBeside = columns >= TerminalFrame.CardsPanelColumns && (pages.Cards.HasAny || cards.CanTell);
+        chat.CellColumns = TerminalFrame.PageColumns(columns, cardsBeside);
         var pageTree = page switch
         {
             PilotPage.Chat => chat.Tree(),
@@ -515,13 +518,18 @@ while (!stop.IsCancellationRequested)
         flights.Jobs = pages.JobRows;
         // The cards panel stands beside the page when there is room beside a usable page, and something to show.
         var tree = TerminalFrame.Tree(railTree, pageTree,
-            columns >= TerminalFrame.CardsPanelColumns && (cardsScreen.HasAny || cards.CanTell) ? cards.Tree(cardsScreen) : null);
+            cardsBeside ? cards.Tree(cardsScreen) : null);
         arranged = Layout.Engine.Arrange(tree, new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
         // No clear: the cell buffer diffs each frame against the last, and the tree's backgrounds cover every cell.
         // Cropped to each scroll container and page rect first (Console.Lib's painter has no clip); the hit test reads the same tree.
         arranged = TerminalFrame.Clip(arranged);
         CellLayout.Paint(terminal, arranged);
-        if (focus.Current is null)
+        if (page == PilotPage.Chat && ReferenceEquals(focus.Current, chat.Input) && chat.CaretCell(arranged) is var (caretColumn, caretRow))
+        {
+            // The composer is drawn from the editor's lines (CellLayout paints no text editor), so its caret is placed here.
+            terminal.SetCaret(caretColumn, caretRow, CaretStyle.BlinkingBar);
+        }
+        else if (focus.Current is null || ReferenceEquals(focus.Current, chat.Input))
         {
             terminal.HideCaret();
         }

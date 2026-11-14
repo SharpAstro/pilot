@@ -1281,6 +1281,81 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     /// <summary>How many lines the quoted card takes above the box.</summary>
     internal const int QuoteLines = 2;
 
+    /// <summary>
+    /// Set by pilot-tui (PIL1043): Console.Lib's CellLayout paints no <c>Content.TextEditor</c> (the box was a blank row there, and
+    /// no field), so in cells the composer is drawn here from the editor's own lines, as a ruled box. The GUI keeps the editor.
+    /// </summary>
+    public bool Cells { get; set; }
+
+    /// <summary>The columns the cell page has, so a long line is windowed to the caret rather than wrapped past its row.</summary>
+    public int CellColumns { get; set; } = 80;
+
+    private const string ComposerPrompt = "❯ ";
+    private Layout.Node? _composerNode;
+    private int _composerFirst, _composerStart;
+
+    // The composer in cells: a rule, one row per line the editor holds (up to its cap, windowed around the caret line) after a prompt,
+    // and a rule. The editor state still takes the keys; the host puts the terminal's caret where CaretCell says.
+    private Layout.Node CellComposer()
+    {
+        var input = _composer.Input;
+        var lines = input.Text.Split('\n');
+        var shown = Math.Min(lines.Length, ChatComposer.MaxLines);
+        var line = Math.Clamp(input.Line, 0, lines.Length - 1);
+        _composerFirst = Math.Clamp(line - shown + 1, 0, lines.Length - shown);
+        var width = Math.Max(8, CellColumns - 12 - ComposerPrompt.Length);
+        _composerStart = Math.Max(0, input.Column - (width - 1));
+        Layout.Node Rule() => Layout.Builder.Spacer().Bg(Palette.Current.Faint).WStar().RowH(16f);
+        var rows = new List<Layout.Node> { Rule() };
+        for (var i = 0; i < shown; i++)
+        {
+            var n = _composerFirst + i;
+            var prefix = n == 0 ? ComposerPrompt : new string(' ', ComposerPrompt.Length);
+            string text;
+            RGBAColor32 color;
+            if (lines.Length == 1 && lines[0].Length == 0)
+            {
+                text = input.Placeholder ?? "";
+                color = Dim;
+            }
+            else
+            {
+                var from = n == line ? Math.Min(_composerStart, lines[n].Length) : 0;
+                text = lines[n][from..];
+                text = text.Length > width ? text[..width] : text;
+                color = Palette.Current.Bright;
+            }
+            rows.Add(Layout.Builder.Text(prefix + text, 14f, color).WStar().RowH(16f));
+        }
+        rows.Add(Rule());
+        return _composerNode = Layout.Builder.VStack([.. rows]).WStar().HAuto();
+    }
+
+    /// <summary>
+    /// Where the terminal's caret goes while the box has the keyboard: a cell inside the composer's arranged rows, or null when the
+    /// page shows no composer in cells (the GUI, or the box clipped away).
+    /// </summary>
+    public (int Column, int Row)? CaretCell(System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> arranged)
+    {
+        if (_composerNode is null)
+        {
+            return null;
+        }
+        foreach (var a in arranged)
+        {
+            if (!ReferenceEquals(a.Node, _composerNode))
+            {
+                continue;
+            }
+            var input = _composer.Input;
+            var row = 1 + Math.Clamp(input.Line - _composerFirst, 0, ChatComposer.MaxLines - 1);
+            var column = ComposerPrompt.Length + Math.Max(0, input.Column - _composerStart);
+            var b = a.Bounds;
+            return b.Height > row + 1 && b.Width > column ? (b.X + column, b.Y + row) : null;
+        }
+        return null;
+    }
+
     // The box: DIR.Lib's multi-line editor, and a line saying how it sends.
     private Layout.Node Foot()
     {
@@ -1290,7 +1365,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         {
             rows.Add(Quote(quoted.Card, quoted.Node));
         }
-        rows.Add(Layout.Builder.TextEditor(_composer.Input, 14f, colors: Palette.Input, focusOnOpen: true).WStar());
+        rows.Add(Cells ? CellComposer() : Layout.Builder.TextEditor(_composer.Input, 14f, colors: Palette.Input, focusOnOpen: true).WStar());
         if (ChatStatus.Line(Volatile.Read(ref _held).Timings) is { } status)
         {
             // How fast it answers, on one line under the box: cut with an ellipsis where the window is narrow, the whole of it on hover.
