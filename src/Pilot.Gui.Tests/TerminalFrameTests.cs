@@ -236,7 +236,7 @@ public sealed class TerminalFrameTests
     [Fact]
     public async Task TheComposersRulesAreThinLinesOnThePageBackgroundAndThePromptRowHoldsThePlaceholder()
     {
-        var (buffer, _, _, caret) = await PaintChatCaretAsync(0, false, 160, 44, 0);
+        var (buffer, painted, _, caret) = await PaintChatCaretAsync(0, false, 160, 44, 0);
         buffer.Flush(new NullSink());
         var text = Enumerable.Range(0, 44).Select(buffer.FrontRowText).ToList();
         var dump = string.Join('\n', text);
@@ -248,10 +248,10 @@ public sealed class TerminalFrameTests
             from.ShouldBeGreaterThanOrEqualTo(0, $"row {rule} holds no U+2500\n{dump}");
             var width = text[rule].Skip(from).TakeWhile(c => c == '─').Count();
             width.ShouldBeGreaterThan(60, $"row {rule}: the rule is not a long run of U+2500\n{dump}");
-            for (var x = from; x < from + width; x++)
-            {
-                buffer.BackAt(x, rule).Style.ShouldBe(buffer.BackAt(from + width, prompt).Style, $"row {rule} col {x}: the rule has a fill that the prompt row lacks\n{dump}");
-            }
+            // No fill of its own: the rule's node has the background the prompt row's node has (none).
+            var node = painted.Last(a => a.Bounds.Y == rule && a.Bounds.Height == 1 && a.Bounds.Width > 60);
+            var promptNode = painted.Last(a => a.Bounds.Y == prompt && a.Bounds.Height == 1 && a.Bounds.Width > 60);
+            node.Node.Background.ShouldBe(promptNode.Node.Background, $"row {rule}: the rule has a fill that the prompt row lacks\n{dump}");
         }
         caret.ShouldNotBeNull();
     }
