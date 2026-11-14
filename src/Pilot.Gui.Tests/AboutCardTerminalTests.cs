@@ -29,7 +29,7 @@ public sealed class AboutCardTerminalTests
 
     private static FlightRow Flight(int i) => new()
     {
-        Code = $"ORB{200 + i}", Repo = "orbit", RepoPath = "/r/orbit", Issue = 200 + i, Title = $"A flight with a long title number {i}", Branch = $"flight/orb{200 + i}",
+        Code = $"ORB{200 + i}", Repo = "orbit", RepoPath = "/r/orbit", Issue = 200 + i, Title = $"A flight 🔴 漢字 ✈️ with a long title number {i}", Branch = $"flight/orb{200 + i}",
         Worktree = $"/r/orbit/w{i}", Base = "main", State = FlightState.Flying, CreatedAt = Live.At.AddHours(-2),
     };
 
