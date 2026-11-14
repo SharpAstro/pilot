@@ -149,6 +149,6 @@ internal static class TopBar
             rows.Add(Layout.Builder.Text(source, 12f, page.SourceColor ?? palette.Dim).RowH(SourceHeight));
         }
         rows.AddRange(page.Lines);
-        return Layout.Builder.VStack([.. rows]).Pad(PadX, HeaderMetrics.BarPadY).Bg(palette.HeaderBg).WStar().HAuto();
+        return Layout.Builder.VStack([.. rows]).Pad(HeaderMetrics.Terminal ? HeaderMetrics.PadX : PadX, HeaderMetrics.BarPadY).Bg(palette.HeaderBg).WStar().HAuto();
     }
 }
