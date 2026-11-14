@@ -220,21 +220,16 @@ public sealed class TerminalFrameTests
         var (buffer, painted, _, caret) = await PaintChatCaretAsync(0, false, columns, rows, 200);
         buffer.Flush(new NullSink());
         var text = Enumerable.Range(0, rows).Select(buffer.FrontRowText).ToList();
-        var dump = string.Join('
-', text);
+        var dump = string.Join('\n', text);
         var row = text.FindIndex(r => r.Contains("❯ x", StringComparison.Ordinal));
-        row.ShouldBeGreaterThan(0, $"{size}: the typed row is not painted
-{dump}");
-        caret.ShouldNotBeNull($"{size}: no caret cell for a long line
-{dump}");
+        row.ShouldBeGreaterThan(0, $"{size}: the typed row is not painted\n{dump}");
+        caret.ShouldNotBeNull($"{size}: no caret cell for a long line\n{dump}");
         var panelLeft = columns >= TerminalFrame.CardsPanelColumns ? columns - (int)CardsView<RgbaImage>.Width : columns;
         caret.Value.Row.ShouldBe(row, $"{size}: the caret is not on the typed row");
         caret.Value.Column.ShouldBeInRange(0, panelLeft - 1, $"{size}: the caret is not left of the cards panel");
         // One row: the line under it is the rule, painted like the rule above the box, not a wrapped second row of x.
-        text[row + 1].Contains("xx", StringComparison.Ordinal).ShouldBeFalse($"{size}: the line wrapped
-{dump}");
-        buffer.BackAt(2, row + 1).ShouldBe(buffer.BackAt(2, row - 1), $"{size}: the rule is not directly under the typed row
-{dump}");
+        text[row + 1].Contains("xx", StringComparison.Ordinal).ShouldBeFalse($"{size}: the line wrapped\n{dump}");
+        buffer.BackAt(2, row + 1).ShouldBe(buffer.BackAt(2, row - 1), $"{size}: the rule is not directly under the typed row\n{dump}");
     }
 
     private sealed class NullSink : ICellSink
