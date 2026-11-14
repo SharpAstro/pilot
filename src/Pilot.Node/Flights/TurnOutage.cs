@@ -127,11 +127,27 @@ public sealed class TurnOutage(NodeState state)
     /// <summary>One look at the sessions: a turn later than the outage's start (a response, or more context than at the first look) ends it, closes its card and keeps its window.</summary>
     public void Look(SessionRow[] sessions, DateTimeOffset now)
     {
+        var limitEnded = false;
         lock (_gate)
+        {
+            limitEnded = LookLocked(sessions, now);
+        }
+        if (limitEnded)
+        {
+            // Outside the lock: what waited for the reset (the node's held says) runs its own code.
+            LimitEnded?.Invoke();
+        }
+    }
+
+    /// <summary>Raised once when an open account limit ends (the first look at or after its reset), after the outage is closed.</summary>
+    public event Action? LimitEnded;
+
+    private bool LookLocked(SessionRow[] sessions, DateTimeOffset now)
+    {
         {
             if (_since is not { } since)
             {
-                return;
+                return false;
             }
             if (_limitUntil is { } until)
             {
@@ -139,8 +155,9 @@ public sealed class TurnOutage(NodeState state)
                 if (now >= until)
                 {
                     Close(since, now, $"the usage limit ended at {until.ToLocalTime():HH:mm}");
+                    return true;
                 }
-                return;
+                return false;
             }
             var first = _baseline is null;
             _baseline ??= sessions.ToDictionary(s => s.Id, s => (long)s.ContextTokens, StringComparer.Ordinal);
@@ -148,9 +165,10 @@ public sealed class TurnOutage(NodeState state)
                 || (!first && sessions.Any(s => !s.Gone && s.ContextTokens > _baseline.GetValueOrDefault(s.Id, 0)));
             if (!turned)
             {
-                return;
+                return false;
             }
             Close(since, now, $"sessions take turns again since {now.ToLocalTime():HH:mm}");
+            return false;
         }
     }
 
