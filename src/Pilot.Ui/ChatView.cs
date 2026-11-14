@@ -1358,6 +1358,13 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         return null;
     }
 
+    /// <summary>
+    /// Where the terminal's caret is parked this frame: the page is Chat, the box has the keyboard and the arranged frame gives
+    /// it a cell; null otherwise. Program.cs's draw loop and the tests ask this one method.
+    /// </summary>
+    public (int Column, int Row)? ParkedCaret(PilotPage page, TextInputFocus focus, System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> arranged)
+        => page == PilotPage.Chat && ReferenceEquals(focus.Current, Input) ? CaretCell(arranged) : null;
+
     private void FocusComposer() => Ui.Focus.Focus(_composer.Input);
 
     /// <summary>
