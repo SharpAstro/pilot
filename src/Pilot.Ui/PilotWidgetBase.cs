@@ -26,6 +26,30 @@ internal abstract class PilotWidgetBase<TSurface>(Renderer<TSurface> renderer) :
         return arranged;
     }
 
+    // The hit under the pointer as the last paint found it, which the next frame is built with.
+    private HitResult? _hoveredHit;
+
+    /// <summary>
+    /// Whether the link whose hit is <paramref name="hit"/> has the pointer on any of its words, as the last paint found it: a wrapped link
+    /// lights all its words together (the base lights only the rect under the pointer, one word). Settles one frame after the pointer moves.
+    /// </summary>
+    internal bool IsHovered(HitResult hit) => _hoveredHit is { } over && over.Equals(hit);
+
+    /// <summary>
+    /// Records the hit under the pointer, asked at the end of a render (the hit regions are this frame's only then); when it differs from the
+    /// one the frame was built with, <paramref name="redraw"/> asks one more frame, which is built with it. One redraw per change, never a loop.
+    /// </summary>
+    protected void NoteHover(Action? redraw)
+    {
+        var now = Pointer is { } p ? HitTest(p.X, p.Y) : null;
+        if (Equals(now, _hoveredHit))
+        {
+            return;
+        }
+        _hoveredHit = now;
+        redraw?.Invoke();
+    }
+
     /// <summary>
     /// The room's height in design units as the last <c>Render</c> had it (null before the first, and in a terminal): a page shorter than
     /// <see cref="ShortPageHeight"/> is laid out that tall and scrolls (<see cref="WhenShort"/>).

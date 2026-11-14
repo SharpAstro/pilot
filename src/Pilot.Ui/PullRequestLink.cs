@@ -27,11 +27,11 @@ internal static class PullRequestLink
     /// </summary>
     public static Layout.Node Of(LinkMenu links, string action, string text, string pr, string? url, Action<string>? open, Action? route, string routeName,
         RGBAColor32 color, RGBAColor32 hover, bool mayBeCut, bool fill, float size = 12f, Layout.DockSide? tipSide = null, bool tall = false, string? browserAction = null,
-        int wrapLines = 0)
+        int wrapLines = 0, bool lit = false)
     {
         if (wrapLines > 0)
         {
-            return Wrapped(links, action, text, pr, url, open, route, routeName, color, hover, mayBeCut, size, tipSide, browserAction, wrapLines);
+            return Wrapped(links, action, text, pr, url, open, route, routeName, color, hover, mayBeCut, size, tipSide, browserAction, wrapLines, lit);
         }
         if (route is null)
         {
@@ -60,11 +60,11 @@ internal static class PullRequestLink
     }
 
     private static Layout.Node Wrapped(LinkMenu links, string action, string text, string pr, string? url, Action<string>? open, Action? route, string routeName,
-        RGBAColor32 color, RGBAColor32 hover, bool mayBeCut, float size, Layout.DockSide? tipSide, string? browserAction, int lines)
+        RGBAColor32 color, RGBAColor32 hover, bool mayBeCut, float size, Layout.DockSide? tipSide, string? browserAction, int lines, bool lit)
     {
         Layout.Node Word(Layout.Node word) => Menu(links, word.BgHover(hover).Follows(new HitResult.ButtonHit(action), _ => { if (route is null) { Open(open, url); } else { route(); } }), url);
         // The whole text on hover where the cap may cut it, else where the link goes.
-        var title = Tip(WrappedProse.Linked(text, size, color, lines, Word, route is null ? Followable.Away : ""),
+        var title = Tip(WrappedProse.Linked(text, size, color, lines, Word, route is null ? Followable.Away : "", lit: lit ? hover : null),
             mayBeCut ? text : route is null ? $"Open {pr} on GitHub" : $"Show {pr} on {routeName}", tipSide);
         if (route is null)
         {
