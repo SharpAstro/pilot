@@ -1068,7 +1068,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     }
 
     private const int NoticeDetailLines = 3;
-    private const int NoticeDetailWidth = 100;
+    private const int NoticeDetailChars = 100;
 
     // The node's message about opened cards as one quote per card (the id and title, a few lines of detail, the choices), then its
     // instruction dim; the header line stays so the row still says what it is.
@@ -1099,16 +1099,16 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         var rest = detail.Trim();
         for (var n = 1; n <= NoticeDetailLines && rest.Length > 0; n++)
         {
-            if (rest.Length <= NoticeDetailWidth)
+            if (rest.Length <= NoticeDetailChars)
             {
                 yield return rest;
                 yield break;
             }
-            var at = rest.LastIndexOf(' ', NoticeDetailWidth);
-            at = at <= 0 ? NoticeDetailWidth : at;
+            var at = rest.LastIndexOf(' ', NoticeDetailChars);
+            at = at <= 0 ? NoticeDetailChars : at;
             if (n == NoticeDetailLines)
             {
-                yield return rest[..Math.Min(at, NoticeDetailWidth - 3)].TrimEnd() + "...";
+                yield return rest[..Math.Min(at, NoticeDetailChars - 3)].TrimEnd() + "...";
                 yield break;
             }
             yield return rest[..at];
