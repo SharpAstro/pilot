@@ -15,7 +15,7 @@ internal readonly record struct ViewChoice<T>(T Mode, string Action, string Name
 internal static class ViewSwitch
 {
     /// <summary>One segment's width, so the switches of two pages are the same width for the same number of views.</summary>
-    public const float Segment = 60f;
+    public static float Segment => HeaderMetrics.Terminal ? 56f : 60f;
 
     private const float Gap = 2f;
 

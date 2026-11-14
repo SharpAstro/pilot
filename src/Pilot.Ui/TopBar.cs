@@ -99,11 +99,13 @@ internal static class TopBar
     {
         var night = parts.Night?.Palette;
         var palette = night ?? Palette.Standard;
-        var items = new List<Layout.Node>
+        var items = new List<Layout.Node>();
+        // The terminal's page bar and rail already say which app this is: the brand's nine columns go to the buttons (#1044).
+        if (!HeaderMetrics.Terminal)
         {
-            Layout.Builder.Text("pilot v2", HeaderMetrics.Terminal ? 12f : 20f, palette.Bright, TextAlign.Near, TextAlign.Far).WAuto(),
-            Title(page.Title, palette.Dim),
-        };
+            items.Add(Layout.Builder.Text("pilot v2", 20f, palette.Bright, TextAlign.Near, TextAlign.Far).WAuto());
+        }
+        items.Add(Title(page.Title, palette.Dim));
         items.AddRange(parts.NodePills ?? parts.Nodes?.Pills(night) ?? []);
         items.AddRange(parts.Play?.Pills(night) ?? []);
         if (!page.CountsFit && !string.IsNullOrEmpty(page.Counts))
