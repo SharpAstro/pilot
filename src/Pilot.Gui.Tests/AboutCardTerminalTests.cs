@@ -109,9 +109,9 @@ public sealed class AboutCardTerminalTests
     {
         var about = new AboutCard { KeyList = AboutCard.TerminalKeys };
         var words = CardWords(about);
-        foreach (var (_, _, key) in TerminalRail.Keys)
+        foreach (var (_, label, key) in TerminalRail.Keys)
         {
-            AboutCard.TerminalKeys[0].Keys.ShouldContain(key.ToString());
+            AboutCard.TerminalKeys[0].What.ShouldContain($"{key} {label}");
         }
         words.ShouldContain(AboutCard.TerminalKeys[0].Keys);
         foreach (var banned in new[] { "Ctrl+1", "rail", "Right-click", "back and forward buttons" })
