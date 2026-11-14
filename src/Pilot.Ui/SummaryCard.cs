@@ -149,7 +149,7 @@ internal sealed class SummaryCard
     /// </summary>
     internal static Layout.MarkdownStyle Style(Palette p) => new()
     {
-        Text = p.Body, Strong = p.Bright, Emphasis = p.Body, Code = p.Bright, CodeBackground = p.GhostBg, Link = p.Landed, Muted = p.Dim,
+        Text = p.Body, Strong = p.Bright, Emphasis = p.Body, Code = p.Bright, CodeBackground = p.GhostBg, Link = p.Link, Muted = p.Dim,
     };
 
     /// <summary>

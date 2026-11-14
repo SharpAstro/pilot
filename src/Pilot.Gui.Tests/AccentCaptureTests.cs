@@ -100,13 +100,58 @@ public sealed class AccentCaptureTests
     }
 
     [Fact]
-    public async Task TwoAccentsPaintTheRailDifferentlyWhereOneReads()
+    public async Task AFlightPageTakesTheAccentForItsLinksUnderARedAccent()
     {
-        var (navy, _, _) = await Draw("flights", Navy, night: false);
-        var (red, _, _) = await Draw("flights", Red, night: false);
-        navy.SequenceEqual(red).ShouldBeFalse();
-        // The navy does not reach the rail mark, so that role is the built-in blue; other roles (the tinted focus) may still follow it.
-        Palette.StandardFor(Navy).RailAccent.ShouldBe(Palette.BuiltIn.RailAccent);
+        var palette = Palette.StandardFor(Red);
+        palette.Link.ShouldNotBe(palette.Landed, "the link follows the accent, the state colour stays fixed");
+
+        async Task<byte[]> Page(RGBAColor32? accent)
+        {
+            using var scope = Palette.StandardForCapture(accent);
+            using var renderer = new RgbaImageRenderer(1280, 800);
+            var data = PageData.For("long");
+            var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+            chrome.Play.ShowEverything();
+            chrome.Show(PilotPage.Flights);
+            chrome.Flights.Spend = data.FlightSpend;
+            chrome.Flights.OpenDetail(data.Flights.Lines.Count > 0 ? data.Flights.Lines[0].Code : "NONE1");
+            chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, 1280, 800), data.Machines, null, data.Spend);
+            await Task.CompletedTask;
+            return [.. renderer.Surface.Pixels];
+        }
+
+        var red = await Page(Red);
+        var none = await Page(null);
+        Save("flight-page-red", red, 1280, 800);
+        Count(red, palette.Link).ShouldBeGreaterThan(0, "link text drawn in the red accent's link colour");
+        Count(none, Palette.BuiltIn.Link).ShouldBeGreaterThan(0, "link text drawn in the fallback link colour");
+        Count(red, palette.Link).ShouldBeGreaterThan(Count(none, palette.Link));
+    }
+
+    [Theory]
+    [InlineData("#1f2a6b", true)]
+    [InlineData("e81e2a", true)]
+    [InlineData("#12345", false)]
+    [InlineData("blue", false)]
+    public void AccentTakesSixHexDigitsWithCapture(string value, bool valid)
+    {
+        var options = GuiOptions.Parse(["--capture", Path.Combine(Path.GetTempPath(), "x.png"), "--accent", value], out var error);
+        (options is not null).ShouldBe(valid, error);
+        if (valid)
+        {
+            options!.Accent.ShouldNotBeNull();
+        }
+        else
+        {
+            error.ShouldNotBeNull().ShouldContain("--accent");
+        }
+    }
+
+    [Fact]
+    public void AccentWithoutCaptureIsRefused()
+    {
+        GuiOptions.Parse(["--accent", "#1f2a6b"], out var error).ShouldBeNull();
+        error.ShouldNotBeNull().ShouldContain("--capture");
     }
 
     [Theory]

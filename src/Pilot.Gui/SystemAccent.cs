@@ -39,18 +39,9 @@ internal sealed class RegistryAccentSource : IAccentSource
     }
 }
 
-/// <summary>
-/// The desktop's accent, read once in the static initialiser (never on the render thread). <see cref="Current"/> is null
-/// where none is published and <see cref="Reason"/> says why; <see cref="LogOnce"/> writes it to gui.log at startup.
-/// </summary>
-internal static class SystemAccent
+/// <summary>Turns a source's answer into an accent or a reason. No static constructor, so a test calling it reads no registry.</summary>
+internal static class AccentResolver
 {
-    public static DesktopAccent? Current { get; }
-
-    public static string? Reason { get; }
-
-    static SystemAccent() => (Current, Reason) = Resolve(new RegistryAccentSource());
-
     /// <summary>Parses what a source gives; null with a reason when it gives none, a short value, or throws.</summary>
     internal static (DesktopAccent? Accent, string? Reason) Resolve(IAccentSource source)
     {
@@ -70,6 +61,19 @@ internal static class SystemAccent
             return (null, $"the accent could not be read ({ex.GetType().Name}: {ex.Message})");
         }
     }
+}
+
+/// <summary>
+/// The desktop's accent, read once in the static initialiser (never on the render thread). <see cref="Current"/> is null
+/// where none is published and <see cref="Reason"/> says why; <see cref="LogOnce"/> writes it to gui.log at startup.
+/// </summary>
+internal static class SystemAccent
+{
+    public static DesktopAccent? Current { get; }
+
+    public static string? Reason { get; }
+
+    static SystemAccent() => (Current, Reason) = AccentResolver.Resolve(new RegistryAccentSource());
 
     private static int _logged;
 

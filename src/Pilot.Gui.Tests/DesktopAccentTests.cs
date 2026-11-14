@@ -29,7 +29,7 @@ public sealed class DesktopAccentTests
     [Fact]
     public void ARealRampParsesIntoEightColoursInOrder()
     {
-        var accent = SystemAccent.Resolve(new FakeSource(Ramp())).Accent.ShouldNotBeNull();
+        var accent = AccentResolver.Resolve(new FakeSource(Ramp())).Accent.ShouldNotBeNull();
         accent.Light3.ShouldBe(new RGBAColor32(1, 2, 3, 0xff));
         accent.Light2.ShouldBe(new RGBAColor32(11, 12, 13, 0xff));
         accent.Base.ShouldBe(new RGBAColor32(31, 32, 33, 0xff));
@@ -52,7 +52,7 @@ public sealed class DesktopAccentTests
     public void AShortOrEmptyValueGivesNullWithAReason(int length)
     {
         DesktopAccent.Parse(new byte[length]).ShouldBeNull();
-        var (accent, reason) = SystemAccent.Resolve(new FakeSource(new byte[length]));
+        var (accent, reason) = AccentResolver.Resolve(new FakeSource(new byte[length]));
         accent.ShouldBeNull();
         reason.ShouldNotBeNullOrEmpty();
     }
@@ -60,7 +60,7 @@ public sealed class DesktopAccentTests
     [Fact]
     public void ASourceWithNoValueGivesItsReason()
     {
-        var (accent, reason) = SystemAccent.Resolve(new FakeSource(null, "not Windows"));
+        var (accent, reason) = AccentResolver.Resolve(new FakeSource(null, "not Windows"));
         accent.ShouldBeNull();
         reason.ShouldBe("not Windows");
     }
@@ -68,7 +68,7 @@ public sealed class DesktopAccentTests
     [Fact]
     public void AFailingSourceGivesNullWithAReasonAndDoesNotThrow()
     {
-        var (accent, reason) = SystemAccent.Resolve(new FakeSource(null, throws: true));
+        var (accent, reason) = AccentResolver.Resolve(new FakeSource(null, throws: true));
         accent.ShouldBeNull();
         reason.ShouldNotBeNull().ShouldContain("locked hive");
     }

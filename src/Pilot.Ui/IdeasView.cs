@@ -173,7 +173,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
 
     private (RGBAColor32 Bg, RGBAColor32 Hover) Tint => (P.Button, P.ButtonHover);
 
-    private (RGBAColor32 Bg, RGBAColor32 Hover) Lit => IsNight ? (P.RowFocusBg, P.ButtonHover) : (new RGBAColor32(0x2f, 0x5a, 0x8c, 0xff), new RGBAColor32(0x3a, 0x6c, 0xa6, 0xff));
+    private (RGBAColor32 Bg, RGBAColor32 Hover) Lit => IsNight ? (P.RowFocusBg, P.ButtonHover) : (P.PillLit, P.PillLitHover);
 
     private TextInputColors? InputColors => Palette.Input;
 

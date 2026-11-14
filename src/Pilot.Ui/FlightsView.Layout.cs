@@ -340,7 +340,7 @@ internal sealed partial class FlightsView<TSurface>
 
     // A link that leaves the app: a click opens it, a right-click offers Copy URL (over the row's own menu, which stays on the rest of the row).
     private Layout.Node Link(string text, string location, string action) =>
-        _links.OnLink(Layout.Builder.Text(text + Followable.Away, 12f, Landed)
+        _links.OnLink(Layout.Builder.Text(text + Followable.Away, 12f, Link)
             .BgHover(RowHoverBg)
             .Follows(new HitResult.ButtonHit(action), _ => OnOpen?.Invoke(location))
             .RowH(20f), location);
