@@ -12,8 +12,12 @@ internal static class TerminalFrame
     /// <summary>The fewest columns at which the cards panel stands beside the page.</summary>
     public const int CardsPanelColumns = 120;
 
+    /// <summary>The columns the page itself has: the terminal's, less the cards panel's when it stands beside the page.</summary>
+    public static int PageColumns(int columns, bool cardsShown)
+        => cardsShown ? columns - CardsView<RgbaImage>.Width : columns;
+
     /// <summary>
-    /// The frame's tree. <paramref name="cards"/> is the cards panel's tree, or null for none (a narrow terminal, nothing to show).
+    /// The frame's tree.<paramref name="cards"/> is the cards panel's tree, or null for none (a narrow terminal, nothing to show).
     /// </summary>
     public static Layout.Node Tree(Layout.Node rail, Layout.Node page, Layout.Node? cards)
     {

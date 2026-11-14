@@ -1305,8 +1305,8 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         _composerFirst = Math.Clamp(line - shown + 1, 0, lines.Length - shown);
         var width = Math.Max(8, CellColumns - 12 - ComposerPrompt.Length);
         _composerStart = Math.Max(0, input.Column - (width - 1));
-        var rule = Layout.Builder.Spacer().Bg(Palette.Current.Faint).WStar().RowH(16f);
-        var rows = new List<Layout.Node> { rule };
+        Layout.Node Rule() => Layout.Builder.Spacer().Bg(Palette.Current.Faint).WStar().RowH(16f);
+        var rows = new List<Layout.Node> { Rule() };
         for (var i = 0; i < shown; i++)
         {
             var n = _composerFirst + i;
@@ -1327,7 +1327,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             }
             rows.Add(Layout.Builder.Text(prefix + text, 14f, color).WStar().RowH(16f));
         }
-        rows.Add(rule);
+        rows.Add(Rule());
         return _composerNode = Layout.Builder.VStack([.. rows]).WStar().HAuto();
     }
 

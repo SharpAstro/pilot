@@ -70,12 +70,12 @@ public sealed class TerminalFrameTests
     private static async Task<(CellBuffer Buffer, System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> Painted, System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> Raw)> PaintChatAsync(
         int count, bool scrolledUp, int columns, int rows)
     {
-        var r = await PaintChatCaretAsync(count, scrolledUp, columns, rows);
+        var r = await PaintChatCaretAsync(count, scrolledUp, columns, rows, 0);
         return (r.Buffer, r.Painted, r.Raw);
     }
 
     private static async Task<(CellBuffer Buffer, System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> Painted, System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> Raw, (int Column, int Row)? Caret)> PaintChatCaretAsync(
-        int count, bool scrolledUp, int columns, int rows)
+        int count, bool scrolledUp, int columns, int rows, int typed)
     {
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
@@ -91,7 +91,11 @@ public sealed class TerminalFrameTests
         chrome.Chat.Load = (after, _) => Task.FromResult(new ChatPage { Entries = [.. feed.Where(e => e.Index > after)], Total = feed.Count });
         chrome.Chat.OnSend = _ => Task.FromResult<string?>(null);
         chrome.Chat.Cells = true;
-        chrome.Chat.CellColumns = columns;
+        chrome.Chat.CellColumns = TerminalFrame.PageColumns(columns, columns >= TerminalFrame.CardsPanelColumns);
+        if (typed > 0)
+        {
+            chrome.Chat.Input.InsertText(new string('x', typed));
+        }
         chrome.Chat.Changed = () =>
         {
             if (chrome.Chat.Entries.Count >= count)
@@ -185,26 +189,52 @@ public sealed class TerminalFrameTests
     public async Task TheComposerIsPaintedBelowTheListWhateverTheTranscript(int count, bool scrolledUp, int columns, int rows)
     {
         var size = $"Chat {columns}x{rows} with {count} entries{(scrolledUp ? " scrolled up" : "")}";
-        var (buffer, painted, raw, caret) = await PaintChatCaretAsync(count, scrolledUp, columns, rows);
+        var (buffer, painted, raw, caret) = await PaintChatCaretAsync(count, scrolledUp, columns, rows, 0);
         buffer.Flush(new NullSink());
-        var footNodes = string.Join('\n', painted.Where(a => a.Bounds.Y + a.Bounds.Height >= rows - 8 && a.Depth >= 3)
-            .Select(a => $"d{a.Depth} {a.Node.GetType().Name} {(a.Node is Layout.Node.Leaf l ? l.Content.GetType().Name : "")} {a.Bounds.X},{a.Bounds.Y} {a.Bounds.Width}x{a.Bounds.Height}"))
-            + $"\ninputs: {string.Join(", ", CellLayout.TextInputs(painted).Select(i => $"'{i.Placeholder}'"))}";
         var text = Enumerable.Range(0, rows).Select(buffer.FrontRowText).ToList();
         var placeholder = text.FindIndex(r => r.Contains("Message the fleet chat", StringComparison.Ordinal));
         var hint = text.FindIndex(r => r.Contains("Enter sends", StringComparison.Ordinal));
         var dump = string.Join('\n', text);
         placeholder.ShouldBeGreaterThan(0, $"{size}: the placeholder is not painted\nfoot nodes:\n{footNodes}\n{dump}");
-        hint.ShouldBeGreaterThanOrEqualTo(placeholder, $"{size}: the 'Enter sends' line is not painted at or below the box\n{dump}");
+        hint.ShouldBeGreaterThan(placeholder, $"{size}: the 'Enter sends' line is not painted at or below the box\n{dump}");
         // With the box focused (Ctrl+T, key 2) the terminal's caret goes on the box's own row, inside the page.
         caret.ShouldNotBeNull($"{size}: the composer gives no caret cell");
         caret.Value.Row.ShouldBe(placeholder, $"{size}: the caret is not on the box's row");
-        caret.Value.Column.ShouldBeInRange(0, columns - 1);
+        var panelLeft = columns >= TerminalFrame.CardsPanelColumns ? columns - CardsView<RgbaImage>.Width : columns;
+        caret.Value.Column.ShouldBeInRange(0, panelLeft - 1, $"{size}: the caret is not left of the cards panel");
         if (count > 0)
         {
             var list = painted.First(a => a.Node.Scroll is { Mode: ScrollBarMode.Interactive });
             placeholder.ShouldBeGreaterThanOrEqualTo(list.Bounds.Y + list.Bounds.Height, $"{size}: the box is not below the list");
         }
+    }
+
+    // PIL1043 review: a typed line longer than the box stays on one row, windowed to the caret, with the caret left of the cards panel.
+    [Theory]
+    [InlineData(160, 44)]
+    [InlineData(120, 24)]
+    [InlineData(100, 24)]
+    public async Task ALongTypedLineIsWindowedToTheCaretInsideTheBoxAndLeftOfThePanel(int columns, int rows)
+    {
+        var size = $"Chat {columns}x{rows} typed 200";
+        var (buffer, painted, _, caret) = await PaintChatCaretAsync(0, false, columns, rows, 200);
+        buffer.Flush(new NullSink());
+        var text = Enumerable.Range(0, rows).Select(buffer.FrontRowText).ToList();
+        var dump = string.Join('
+', text);
+        var row = text.FindIndex(r => r.Contains("❯ x", StringComparison.Ordinal));
+        row.ShouldBeGreaterThan(0, $"{size}: the typed row is not painted
+{dump}");
+        caret.ShouldNotBeNull($"{size}: no caret cell for a long line
+{dump}");
+        var panelLeft = columns >= TerminalFrame.CardsPanelColumns ? columns - CardsView<RgbaImage>.Width : columns;
+        caret.Value.Row.ShouldBe(row, $"{size}: the caret is not on the typed row");
+        caret.Value.Column.ShouldBeInRange(0, panelLeft - 1, $"{size}: the caret is not left of the cards panel");
+        // One row: the line under it is the rule, painted like the rule above the box, not a wrapped second row of x.
+        text[row + 1].Contains("xx", StringComparison.Ordinal).ShouldBeFalse($"{size}: the line wrapped
+{dump}");
+        buffer.BackAt(2, row + 1).ShouldBe(buffer.BackAt(2, row - 1), $"{size}: the rule is not directly under the typed row
+{dump}");
     }
 
     private sealed class NullSink : ICellSink
