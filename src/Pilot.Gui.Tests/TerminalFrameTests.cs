@@ -249,22 +249,38 @@ public sealed class TerminalFrameTests
         public Stream OutputStream => Stream.Null;
     }
 
-    // One frame as Program.cs makes it: tree, arrange, clip, paint.
-    private static ImmutableArray<Layout.ArrangedNode<int>> PaintFrame(StickyCaretViewport viewport, PilotPage page, Layout.Node pageTree, int columns, int rows)
+    // One frame as Program.cs makes it: tree, arrange, clip, paint. Raw is the arranged tree before the clip.
+    private static (ImmutableArray<Layout.ArrangedNode<int>> Raw, ImmutableArray<Layout.ArrangedNode<int>> Painted) PaintFrameBoth(
+        StickyCaretViewport viewport, PilotPage page, Layout.Node pageTree, int columns, int rows)
     {
         var rail = TerminalRail.Tree(page, GlyphMode.Emoji, null, null, Live.At, _ => { }, null, columns);
-        var arranged = Layout.Engine.Arrange(TerminalFrame.Tree(rail, pageTree, null), new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
-        arranged = TerminalFrame.Clip(arranged);
-        TerminalFrame.Paint(viewport.HideCaret, () => CellLayout.Paint(viewport, arranged));
-        return arranged;
+        var raw = Layout.Engine.Arrange(TerminalFrame.Tree(rail, pageTree, null), new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
+        var painted = TerminalFrame.Clip(raw);
+        TerminalFrame.Paint(viewport.HideCaret, () => CellLayout.Paint(viewport, painted));
+        return (raw, painted);
     }
 
-    private static async Task<Layout.Node> SettingsTreeAsync(PilotChrome<RgbaImage> chrome, int rowsAbove, int columns)
+    private static ImmutableArray<Layout.ArrangedNode<int>> PaintFrame(StickyCaretViewport viewport, PilotPage page, Layout.Node pageTree, int columns, int rows)
+        => PaintFrameBoth(viewport, page, pageTree, columns, rows).Painted;
+
+    private static Layout.ArrangedNode<int>? FieldNode(ImmutableArray<Layout.ArrangedNode<int>> arranged, TextInputState field)
+        => arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput t } && ReferenceEquals(t.State, field)).Select(a => (Layout.ArrangedNode<int>?)a).FirstOrDefault();
+
+    [Fact]
+    public async Task TheCaretOfOneSettingsFieldFollowsItWhenRowsArriveAboveAndGoesWhenItIsClippedOut()
     {
-        var settings = Enumerable.Range(0, rowsAbove).Select(i => new SettingRow { Key = $"above{i}", Label = $"Above {i}", Detail = "d", Value = "v", Source = SettingSources.Default })
-            .Append(new SettingRow { Key = "machine", Label = "Machine prefix", Detail = "Two letters and a number", Value = "DE1", Source = SettingSources.Default }).ToArray();
+        const int columns = 100, rows = 40;
+        var viewport = new StickyCaretViewport(columns, rows);
+        var focus = new TextInputFocus();
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+
+        // One page, one machine field throughout. The setup checks arrive after the first frame, so rows come in above the field.
+        var settings = new[] { new SettingRow { Key = "machine", Label = "Machine prefix", Detail = "Two letters and a number", Value = "DE1", Source = SettingSources.Default } };
+        var checksGate = new TaskCompletionSource<SetupChecks>(TaskCreationOptions.RunContinuationsAsynchronously);
         var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         chrome.Settings.Load = _ => Task.FromResult(new SettingsPage { File = "settings.json", Settings = settings });
+        chrome.Settings.LoadChecks = (_, _) => checksGate.Task;
         chrome.Settings.Changed = () =>
         {
             if (chrome.Settings.Page is not null)
@@ -272,50 +288,41 @@ public sealed class TerminalFrameTests
                 loaded.TrySetResult();
             }
         };
-        chrome.Settings.Tree(DateTimeOffset.UtcNow, columns * 8f);
-        if (chrome.Settings.Page is null)
-        {
-            await loaded.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
-        }
-        return chrome.Settings.Tree(DateTimeOffset.UtcNow, columns * 8f);
-    }
+        Layout.Node Tree() => chrome.Settings.Tree(DateTimeOffset.UtcNow, columns * 8f);
+        Tree();
+        await loaded.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
 
-    private static Layout.ArrangedNode<int>? FieldNode(ImmutableArray<Layout.ArrangedNode<int>> arranged, TextInputState field)
-        => arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput t } && ReferenceEquals(t.State, field)).Select(a => (Layout.ArrangedNode<int>?)a).FirstOrDefault();
-
-    [Fact]
-    public async Task TheCaretOfASettingsFieldFollowsItWhenRowsArriveAboveAndGoesWhenItScrollsOut()
-    {
-        const int columns = 100, rows = 40;
-        var viewport = new StickyCaretViewport(columns, rows);
-        var focus = new TextInputFocus();
-        using var vessel = new RgbaImageRenderer(1, 1);
-
-        // First frame: the settings loaded, the machine field focused, its caret parked in the field.
-        var first = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
-        var arranged1 = PaintFrame(viewport, PilotPage.Settings, await SettingsTreeAsync(first, 1, columns), columns, rows);
-        var machine = CellLayout.TextInputs(arranged1).Last();
+        // First frame: the machine field focused, its caret parked in the field.
+        var machine = CellLayout.TextInputs(PaintFrame(viewport, PilotPage.Settings, Tree(), columns, rows)).Last();
         focus.Focus(machine);
-        arranged1 = PaintFrame(viewport, PilotPage.Settings, await SettingsTreeAsync(first, 1, columns), columns, rows);
-        var rect1 = FieldNode(arranged1, machine).ShouldNotBeNull().Bounds;
+        var rect1 = FieldNode(PaintFrame(viewport, PilotPage.Settings, Tree(), columns, rows), machine).ShouldNotBeNull().Bounds;
         viewport.Caret.ShouldNotBeNull().Row.ShouldBe(rect1.Y);
 
-        // More settings rows above it: the field is laid out lower. The caret is in the new rect, not the old row.
-        var grown = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
-        var arranged2 = PaintFrame(viewport, PilotPage.Settings, await SettingsTreeAsync(grown, 3, columns), columns, rows);
-        var moved = CellLayout.TextInputs(arranged2).Last();
-        focus.Focus(moved);
-        arranged2 = PaintFrame(viewport, PilotPage.Settings, await SettingsTreeAsync(grown, 3, columns), columns, rows);
-        var rect2 = FieldNode(arranged2, moved).ShouldNotBeNull().Bounds;
+        // The checks arrive: the same field is laid out lower. The caret is in the new rect, not the old row.
+        var checksIn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        chrome.Settings.Changed = () =>
+        {
+            if (chrome.Settings.Checks is not null)
+            {
+                checksIn.TrySetResult();
+            }
+        };
+        checksGate.SetResult(new SetupChecks
+        {
+            CheckedAt = DateTimeOffset.UtcNow,
+            Checks = [.. Enumerable.Range(0, 4).Select(i => new SetupCheck { Key = $"c{i}", Title = $"Check {i}", Ok = true, Line = "fine" })],
+        });
+        await checksIn.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        var rect2 = FieldNode(PaintFrame(viewport, PilotPage.Settings, Tree(), columns, rows), machine).ShouldNotBeNull().Bounds;
         rect2.Y.ShouldBeGreaterThan(rect1.Y);
         var caret = viewport.Caret.ShouldNotBeNull();
         caret.Row.ShouldBe(rect2.Y);
         caret.Column.ShouldBeInRange(rect2.X, rect2.X + rect2.Width);
 
-        // So many rows above that the field is clipped out of the page: it is not painted, so there is no caret.
-        var far = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
-        var arranged3 = PaintFrame(viewport, PilotPage.Settings, await SettingsTreeAsync(far, 80, columns), columns, rows);
-        FieldNode(arranged3, moved).ShouldBeNull();
+        // The same page in a terminal too short to reach the field: it is laid out, but the clip drops it, so nothing is painted and no caret stays.
+        var (raw, painted) = PaintFrameBoth(viewport, PilotPage.Settings, Tree(), columns, rect2.Y);
+        FieldNode(raw, machine).ShouldNotBeNull();
+        FieldNode(painted, machine).ShouldBeNull();
         viewport.Caret.ShouldBeNull();
     }
 
@@ -349,6 +356,45 @@ public sealed class TerminalFrameTests
         var home = chrome.Home.Tree(new HomeScreen(screen, SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample"), new JobsScreen([], "sample", Live.At), Cards(), []));
         PaintFrame(viewport, PilotPage.Home, home, columns, rows);
         viewport.Caret.ShouldBeNull();
+    }
+
+    // The Chat composer is not a CellLayout text input: Program.cs parks its caret after the paint, only on the Chat page with the box focused.
+    [Fact]
+    public void TheCaretOfTheChatBoxIsParkedOnItsPageAndWithdrawnWhenTheFrameIsAnotherPage()
+    {
+        const int columns = 100, rows = 40;
+        var viewport = new StickyCaretViewport(columns, rows);
+        var focus = new TextInputFocus();
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        chrome.Chat.Load = (after, _) => Task.FromResult(new ChatPage { Entries = [], Total = 0 });
+        chrome.Chat.OnSend = _ => Task.FromResult<string?>(null);
+        chrome.Chat.Cells = true;
+        chrome.Chat.CellColumns = columns;
+        focus.Focus(chrome.Chat.Input);
+
+        void Frame(PilotPage page, Layout.Node tree)
+        {
+            var painted = PaintFrame(viewport, page, tree, columns, rows);
+            if (page == PilotPage.Chat && ReferenceEquals(focus.Current, chrome.Chat.Input) && chrome.Chat.CaretCell(painted) is var (column, row))
+            {
+                viewport.SetCaret(column, row, CaretStyle.BlinkingBar);
+            }
+        }
+
+        Frame(PilotPage.Chat, chrome.Chat.Tree());
+        var onChat = viewport.Caret.ShouldNotBeNull();
+        onChat.Row.ShouldBeInRange(1, rows - 1);
+        onChat.Column.ShouldBeInRange(0, columns - 1);
+
+        // The box is still focused, but the frame is another page: the caret is withdrawn, not left on the Chat row.
+        var screen = new FlightsScreen([], "sample", Live.At);
+        Frame(PilotPage.Home, chrome.Home.Tree(new HomeScreen(screen, SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "sample"), new JobsScreen([], "sample", Live.At), Cards(), [])));
+        viewport.Caret.ShouldBeNull();
+
+        // And back on Chat it is parked again.
+        Frame(PilotPage.Chat, chrome.Chat.Tree());
+        viewport.Caret.ShouldBe(onChat);
     }
 
     private sealed class NullSink : ICellSink
