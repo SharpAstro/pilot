@@ -91,6 +91,14 @@ internal sealed class TranscriptEntryView
     /// <summary>Opens a subagent's transcript, which a call that started it and a report from it link to. Null leaves those as plain words.</summary>
     public Action<SubagentRow>? OpenAgent { get; set; }
 
+    /// <summary>A run of identical errors shown as one entry: how many, and when the first came (the entry itself is the last).</summary>
+    internal sealed record ErrorRun(int Count, DateTimeOffset? First);
+
+    /// <summary>The runs of identical errors folded into an entry, by that entry's index; the owner sets it before <see cref="Rows"/>. Null for none.</summary>
+    internal IReadOnlyDictionary<int, ErrorRun>? Runs { get; set; }
+
+    private ErrorRun? RunOf(TranscriptEntry entry) => Runs is { } runs && runs.TryGetValue(entry.Index, out var run) ? run : null;
+
     /// <summary>What the person's own prompts are labelled: the Sessions page's <c>prompt</c>, the chat's <c>you</c>.</summary>
     public string PromptLabel { get; set; } = "prompt";
 
@@ -229,6 +237,7 @@ internal sealed class TranscriptEntryView
     {
         public required TranscriptEntry Entry;
         public required TranscriptEntry? Answer;
+        public required ErrorRun? Run;
         public required bool Open;
         public required bool Live;
         public required SubagentRow? Link;
@@ -304,7 +313,7 @@ internal sealed class TranscriptEntryView
                 link = ReporterOf(entry);
             }
             var open = _expanded.Contains(entry.Index);
-            if (_rows.TryGetValue(entry.Index, out var kept) && ReferenceEquals(kept.Entry, entry) && ReferenceEquals(kept.Answer, result)
+            if (_rows.TryGetValue(entry.Index, out var kept) && ReferenceEquals(kept.Entry, entry) && ReferenceEquals(kept.Answer, result) && Equals(kept.Run, RunOf(entry))
                 && kept.Open == open && kept.Live == isLive && Equals(kept.Link, link) && kept.LinkLabel == linkLabel)
             {
                 kept.Pass = pass;
@@ -314,7 +323,7 @@ internal sealed class TranscriptEntryView
             }
             // Stretched here, inside the kept node: the owners add no wrapper of their own, whose reference would change every frame.
             var node = (entry.Kind == TranscriptKind.ToolUse ? Call(entry, result, live) : entry.Kind == TranscriptKind.Divider ? Divider(entry) : Row(entry)).WStar();
-            _rows[entry.Index] = new KeptRow { Entry = entry, Answer = result, Open = open, Live = isLive, Link = link, LinkLabel = linkLabel, Node = node, Pass = pass };
+            _rows[entry.Index] = new KeptRow { Entry = entry, Answer = result, Run = RunOf(entry), Open = open, Live = isLive, Link = link, LinkLabel = linkLabel, Node = node, Pass = pass };
             nodes.Add(node);
             seen++;
             RowsBuilt++;
@@ -494,6 +503,13 @@ internal sealed class TranscriptEntryView
         body.AddRange(entry is { Kind: TranscriptKind.Assistant or TranscriptKind.Thinking } or { From: not null }
             ? FoldedMarkdown(entry, entry.Kind == TranscriptKind.Thinking ? Thought : Prose, lines)
             : Folded(entry, entry.Text, textColor, lines, ""));
+        if (entry.Kind == TranscriptKind.Error && RunOf(entry) is { } run)
+        {
+            // ASCII hyphen: the times are this machine's, the last one is also the stamp column's.
+            var first = (run.First ?? entry.At)?.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture);
+            var last = entry.At?.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture);
+            body.Add(Layout.Builder.Text(first is null || last is null ? $"x{run.Count}" : $"x{run.Count}, {first}-{last}", 11f, Dim).Selectable());
+        }
         var row = Layout.Builder.HStack(
                 Layout.Builder.Text(label, 12f, labelColor).Selectable().WStar(LabelWeight, 0f, LabelWidth).Whole(label),
                 Layout.Builder.VStack([.. body]).WStar(BodyWeight),

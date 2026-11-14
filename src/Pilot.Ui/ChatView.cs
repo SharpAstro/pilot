@@ -88,6 +88,8 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         public required object Epoch;
         public int Count;
         public readonly List<TranscriptEntry> Quoted = [];
+        // The runs of identical errors folded into one entry, by that entry's feed index (the run's newest).
+        public readonly Dictionary<int, ErrorRun> Runs = [];
         public readonly HashSet<string> SendIds = new(StringComparer.Ordinal);
         public readonly List<string> UnnamedUserTexts = [];
         public TranscriptEntry? LastAssistant;
@@ -109,7 +111,15 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         for (var i = shown.Count; i < held.Entries.Count; i++)
         {
             var entry = held.Entries[i];
-            if (entry.Kind != TranscriptKind.Thinking)
+            if (entry is { Kind: TranscriptKind.Error, ToolUseId: null } && shown.Quoted.Count > 0
+                && shown.Quoted[^1] is { Kind: TranscriptKind.Error, ToolUseId: null } previous && previous.Text == entry.Text)
+            {
+                // The same error again right after it: one entry for the run, the newest (so its row is rebuilt, and it stamps the last time).
+                shown.Runs.Remove(previous.Index, out var run);
+                shown.Runs[entry.Index] = new ErrorRun((run?.Count ?? 1) + 1, run?.First ?? previous.At);
+                shown.Quoted[^1] = entry;
+            }
+            else if (entry.Kind != TranscriptKind.Thinking)
             {
                 shown.Quoted.Add(AsQuoted(entry));
             }
@@ -886,6 +896,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         }
         var derived = ShownOf(held);
         // The rows come kept, one node an entry, already stretched to the page's width.
+        _entries.Runs = derived.Runs;
         var rows = _entries.Rows(derived.Quoted, held.Working);
         // What was said and the watchtower has not taken yet: last among the messages, dim, and saying so.
         // One send is one row, matched by its id and never by its words, so two sends of the same words are two rows: a queued
