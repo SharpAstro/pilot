@@ -189,7 +189,8 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     private const float PanelChrome = 2 * 8f + 8f + 28f;
     // The panel keeps its height while the window has the room; with less to give it, it is not shown, and the table keeps
     // BodyMinHeight before the panel has any, so a header that wrapped onto many lines leaves the table, not a panel past the foot.
-    private const float DetailMinHeight = DetailHeight;
+    // The panel's share when the table keeps its BodyMinHeight: they share 3 to 1, so the panel is hidden below 3 x 140.
+    private const float DetailCollapseBelow = BodyMinHeight * DetailWeight;
     private const float BodyMinHeight = 140f;
     private const float DetailWeight = 3f;
     private const float FactsColumn = 420f;
@@ -860,7 +861,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             .H(Layout.Sizing.Star(DetailWeight, 0f, PanelHeight(facts.Count)))
             // The panel and the table share what is left 3 to 1, and the table never has less than BodyMinHeight: the panel is hidden where its
             // share is too small to leave the table that, else the table keeps its minimum and the panel is laid out past the window's foot.
-            .CollapseBelow(Math.Max(DetailMinHeight, BodyMinHeight * DetailWeight));
+            .CollapseBelow(DetailCollapseBelow);
     }
 
     /// <summary>The end of the job's output, read from the node and followed while it is selected; its last line at the bottom.</summary>
