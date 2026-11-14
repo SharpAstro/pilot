@@ -267,6 +267,8 @@ var logger = loggerFactory.CreateLogger("Pilot.Gui");
 SdlVulkanLog.Logger = loggerFactory.CreateLogger("SdlVulkan.Renderer");
 var tracker = new BackgroundTaskTracker();
 LogLine($"pilot-gui: start, version {NodeFeed.ClientVersion}, args [{string.Join(' ', args)}], node {nodeWhere}");
+// The desktop accent is read once (SystemAccent's static initialiser); say here why there is none.
+SystemAccent.LogOnce(LogLine);
 string WhatRendered()
 {
     var what = chrome.Page.ToString();
