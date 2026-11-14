@@ -62,6 +62,11 @@ public sealed class TerminalInputTests
 
         public void Key(InputKey key, char c) => Input.Handle(new InputEvent.KeyDown(key, InputModifier.None), new Rune(c));
 
+        /// <summary>A key with modifiers; <paramref name="c"/> is the typed character a terminal reports, when it reports one.</summary>
+        public void Chord(InputKey key, InputModifier modifiers, char? c = null)
+            => Input.Handle(new InputEvent.KeyDown(key, modifiers), c is { } ch ? new Rune(ch) : null,
+                (modifiers & InputModifier.Ctrl) != 0 ? ConsoleModifiers.Control : (modifiers & InputModifier.Alt) != 0 ? ConsoleModifiers.Alt : 0);
+
         public void Click(int column, int row) => Input.Handle(new InputEvent.MouseUp(column, row, MouseButton.Left), null);
 
         public void Dispose() => Vessel.Dispose();
@@ -214,5 +219,75 @@ public sealed class TerminalInputTests
         why.Text.ShouldBe("", "the digit went into the why-field left behind by the rail click");
         EndsOnChatWithTheCaretParked(rig);
         rig.Chrome.Chat.Input.Text.ShouldBe("");
+    }
+
+    private static readonly (InputKey Key, PilotPage Page)[] Digits =
+    [
+        (InputKey.D1, PilotPage.Home), (InputKey.D2, PilotPage.Chat), (InputKey.D3, PilotPage.Sessions), (InputKey.D4, PilotPage.Flights),
+        (InputKey.D5, PilotPage.Repos), (InputKey.D6, PilotPage.Jobs), (InputKey.D7, PilotPage.Fleet), (InputKey.D8, PilotPage.Settings),
+        (InputKey.D9, PilotPage.PullRequests), (InputKey.D0, PilotPage.Ideas),
+    ];
+
+    [Fact]
+    public void CtrlDigitReachesTheSamePageAsThePlainDigitFromAnyPageAndChatFocusesItsBox()
+    {
+        foreach (var from in new[] { PilotPage.Home, PilotPage.Sessions, PilotPage.Flights, PilotPage.Settings })
+        {
+            foreach (var (key, page) in Digits)
+            {
+                using var plain = new Rig();
+                plain.Chrome.Show(from);
+                plain.Frame();
+                plain.Key(key, (char)('0' + (key - InputKey.D0)));
+                using var ctrl = new Rig();
+                ctrl.Chrome.Show(from);
+                ctrl.Frame();
+                ctrl.Chord(key, InputModifier.Ctrl);
+                ctrl.Chrome.Page.ShouldBe(plain.Chrome.Page, $"Ctrl+{key} from {from}");
+                ctrl.Chrome.Page.ShouldBe(page);
+                if (page == PilotPage.Chat)
+                {
+                    ctrl.Focus.Current.ShouldBeSameAs(ctrl.Chrome.Chat.Input);
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void WithTheChatBoxFocusedCtrlOneGoesHomeAndAltLeftGoesBack()
+    {
+        using var rig = new Rig();
+        rig.Chrome.Show(PilotPage.Sessions);
+        rig.Key(InputKey.D2, '2');
+        rig.Frame();
+        rig.Focus.Current.ShouldBeSameAs(rig.Chrome.Chat.Input);
+
+        rig.Chord(InputKey.D1, InputModifier.Ctrl);
+        rig.Chrome.Page.ShouldBe(PilotPage.Home, "Ctrl+1 was swallowed by the focused chat box");
+        rig.Frame();
+
+        rig.Key(InputKey.D2, '2');
+        rig.Frame();
+        rig.Focus.Current.ShouldBeSameAs(rig.Chrome.Chat.Input);
+        rig.Chord(InputKey.Left, InputModifier.Alt);
+        rig.Chrome.Page.ShouldBe(PilotPage.Home, "Alt+Left was swallowed by the focused chat box");
+    }
+
+    [Fact]
+    public void WithTheChatBoxFocusedCtrlSGoesToTheSayBoxAndAPlainOneIsText()
+    {
+        using var rig = new Rig();
+        rig.Key(InputKey.D2, '2');
+        rig.Frame();
+        rig.Chord(InputKey.S, InputModifier.Ctrl);
+        rig.Chrome.Page.ShouldBe(PilotPage.Sessions);
+        rig.Focus.Current.ShouldBeSameAs(rig.Chrome.Sessions.SayInput);
+
+        using var typing = new Rig();
+        typing.Key(InputKey.D2, '2');
+        typing.Frame();
+        typing.Key(InputKey.D1, '1');
+        typing.Chrome.Page.ShouldBe(PilotPage.Chat);
+        typing.Chrome.Chat.Input.Text.ShouldBe("1");
     }
 }
