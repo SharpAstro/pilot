@@ -154,11 +154,17 @@ internal sealed class AboutCard
     /// <paramref name="page"/>, with the card at its top right while it is open, hanging under the top bar's row of buttons.
     /// Pinned to the window's corner it lay over that row and covered most of the ?, whose click then landed on the card's ×
     /// (DE1, 2026-10-26): the same toggle by luck. Under the row, the ? stays itself, and closes it as it opened it.
+    /// <para>
+    /// The overlay and its top layer stretch, as the page does. The engine arranges an overlay's layers in the overlay's own rect, and a
+    /// stack places a child that does not stretch at its measured size: so as the root of a window the card had the whole window, but
+    /// as pilot-tui's page inside its frame (under the page bar, beside the cards panel) its anchor got about one row, the card's fill
+    /// was arranged 0 rows tall and its rows were drawn over the page with nothing behind them (pilot #1027, 2026-11-14).
+    /// </para>
     /// </summary>
     public Layout.Node Over(Layout.Node page, Palette? night = null) => IsOpen
         ? Layout.Builder.Overlay(page, Layout.Builder.VStack(
             Layout.Builder.Spacer().WStar().HFixed(TopBar.ButtonsBottom),
-            Layout.Builder.Anchored(Card(night), Layout.DockSide.Right, margin: 12f).WStar().HStar()))
+            Layout.Builder.Anchored(Card(night), Layout.DockSide.Right, margin: 12f).WStar().HStar()).Stretch()).Stretch()
         : page;
 
     /// <summary>
