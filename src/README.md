@@ -1210,11 +1210,13 @@ node's. pilot-tui shows the same merged pages.
 `pilot-tui` is the same dashboard in a terminal, over SSH as well as locally: the GUI's own pages and panels
 (`Pilot.Ui`), their DIR.Lib trees arranged in terminal cells by Console.Lib (`CellMeasureContext.PixelAuthored`)
 instead of painted on pixels, so a row, a button or a why field is the same node on both. The keys are the GUI rail's
-Ctrl+digit order as plain digits: **1** Home, **2** Chat (its box focused), **3** Sessions, **4** Flights, **5** Repos, **6**
+Ctrl+digit order, as **Ctrl+digit** chords (which work whatever has the keyboard) and as plain digits (which are text
+typed into a focused box, the chat's or the say bar's, and only a key with no box focused): **1** Home, **2** Chat (its box focused), **3** Sessions, **4** Flights, **5** Repos, **6**
 Background tasks, **7** Fleet, **8** Settings, **9** Pull requests, **0** Ideas, and **$** Spend (Ctrl+Shift+S is not told
 apart from Ctrl+S in most terminals). **Ctrl+S** is the say bar, **Ctrl+T** the chat with the watchtower (the box
-focused), Alt+Left, Alt+Right and Backspace walk the history, Up/Down select, a click on a cell runs what a click on
-the pixels would, **q** quits. The watchtower and cards panel shows beside the page from 120 columns. `--node host:port`
+focused), Alt+Left, Alt+Right and Backspace walk the history (Backspace is an edit key inside a box), Up/Down select a
+row on a list page and Enter opens it (a session's transcript; Escape goes up), a click on a cell runs what a click on
+the pixels would, **q** and **Ctrl+C** quit (**q** is text inside a box). The watchtower and cards panel shows beside the page from 120 columns. `--node host:port`
 flies a node on the LAN, as everywhere.
 
 A **page bar** (`TerminalRail`, built from `PilotChrome.Pages`, so a page added there shows here with no second list) runs

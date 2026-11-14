@@ -352,6 +352,58 @@ public sealed class TerminalInputTests
     }
 
     [Fact]
+    public void CtrlTOpensTheChatWithTheBoxFocusedFromAnyPage()
+    {
+        foreach (var from in new[] { PilotPage.Home, PilotPage.Sessions, PilotPage.Settings })
+        {
+            using var rig = new Rig();
+            rig.Chrome.Show(from);
+            rig.Frame();
+            rig.Chord(InputKey.T, InputModifier.Ctrl);
+            EndsOnChatWithTheCaretParked(rig);
+        }
+    }
+
+    [Fact]
+    public void BackspaceAndAltLeftGoBackAndAltRightGoesForwardOutsideABox()
+    {
+        using var rig = new Rig();
+        rig.Chrome.Show(PilotPage.Sessions);
+        rig.Frame();
+        rig.Chrome.Show(PilotPage.Flights);
+        rig.Frame();
+
+        rig.Key(InputKey.Backspace, '\b');
+        rig.Chrome.Page.ShouldBe(PilotPage.Sessions, "Backspace goes back");
+        rig.Frame();
+        rig.Chord(InputKey.Right, InputModifier.Alt);
+        rig.Chrome.Page.ShouldBe(PilotPage.Flights, "Alt+Right goes forward");
+        rig.Frame();
+        rig.Chord(InputKey.Left, InputModifier.Alt);
+        rig.Chrome.Page.ShouldBe(PilotPage.Sessions, "Alt+Left goes back");
+    }
+
+    [Fact]
+    public void ABackspaceInTheFocusedChatBoxDoesNotGoBack()
+    {
+        using var rig = new Rig();
+        rig.Chrome.Show(PilotPage.Sessions);
+        rig.Key(InputKey.D2, '2');
+        rig.Frame();
+        rig.Key(InputKey.Backspace, '\b');
+        rig.Chrome.Page.ShouldBe(PilotPage.Chat);
+    }
+
+    [Fact]
+    public void ALeftClickOnARailEntryShowsItsPage()
+    {
+        using var rig = new Rig();
+        var entry = RailEntry(rig.Frame(), PilotPage.Flights);
+        rig.Click(entry.Bounds.X + 2, entry.Bounds.Y);
+        rig.Chrome.Page.ShouldBe(PilotPage.Flights);
+    }
+
+    [Fact]
     public void QAndCtrlCQuitWithNoFieldAndAreTextOrFieldKeysInTheChatBox()
     {
         using var rig = new Rig();

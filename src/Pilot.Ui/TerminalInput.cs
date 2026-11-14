@@ -168,7 +168,7 @@ internal sealed class TerminalInput<TSurface>(
         redraw();
 
         // Shift+Enter (Alt+Enter, where a terminal cannot tell Shift) in the chat's box is a new line, not a send.
-        if (evt is InputEvent.KeyDown && chrome.Chat.HandleNewLine(evt))
+        if (evt is not null && chrome.Chat.HandleNewLine(evt))
         {
             return;
         }

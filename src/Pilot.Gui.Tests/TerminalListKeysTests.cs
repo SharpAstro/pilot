@@ -197,6 +197,9 @@ public sealed class TerminalListKeysTests
             rig.Key(InputKey.Enter);
             rig.Frame();
             rig.Chrome.Sessions.Transcript.IsOpen.ShouldBeTrue("Enter opens the transcript");
+            rig.Key(InputKey.Escape);
+            rig.Frame();
+            rig.Chrome.Sessions.Transcript.IsOpen.ShouldBeFalse("Escape goes up from the transcript to the list");
         }
     }
 }
