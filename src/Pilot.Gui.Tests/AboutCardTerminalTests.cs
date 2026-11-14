@@ -150,6 +150,7 @@ public sealed class AboutCardTerminalTests
             };
             chrome.About.Facts = () => AboutFacts.For("pilot-tui", node, "node.sock");
             chrome.About.KeyList = AboutCard.TerminalKeys;
+            chrome.About.KeysFirst = true;
             var snapshot = SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath);
             var sessions = SessionsCapture.ScreenFor(snapshot, "sample");
             var flightRows = Enumerable.Range(0, 30).Select(Flight).ToArray();
@@ -186,12 +187,62 @@ public sealed class AboutCardTerminalTests
         return new Rect<int>(left, top, Math.Max(a.X + a.Width, b.X + b.Width) - left, Math.Max(a.Y + a.Height, b.Y + b.Height) - top);
     }
 
+    private static bool Inside(Rect<int> inner, Rect<int> outer) => inner.X >= outer.X && inner.Y >= outer.Y
+        && inner.X + inner.Width <= outer.X + outer.Width && inner.Y + inner.Height <= outer.Y + outer.Height;
+
+    /// <summary>The open card in an arranged frame: its node, what it arranged, and the rect of what it draws.</summary>
+    private sealed record Card(Layout.ArrangedNode<int> Node, List<Layout.ArrangedNode<int>> Subtree, Rect<int> Drawn)
+    {
+        /// <summary>The card's text leaves that were given room, in the card's row order.</summary>
+        public List<(string Text, Rect<int> Bounds)> Kept => [.. Subtree.Where(a => a.Bounds.Width > 0 && a.Bounds.Height > 0)
+            .Select(a => (Text: (a.Node as Layout.Node.Leaf)?.Content is Layout.Content.Text t ? t.Value : null, a.Bounds))
+            .Where(l => l.Text is not null).Select(l => (l.Text!, l.Bounds))];
+    }
+
+    /// <summary>
+    /// The card, found by its close button (its header's first row, so the last thing it keeps) and the nearest node on the menu's
+    /// background above it; a card that kept not even its header is a named failure, not a throw.
+    /// </summary>
+    private static Card CardOf(System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> arranged, string size)
+    {
+        var close = Enumerable.Range(0, arranged.Length).FirstOrDefault(i => arranged[i].Node.Hit is HitResult.ButtonHit { Action: "about:close" }, -1);
+        close.ShouldBeGreaterThanOrEqualTo(0, $"at {size} the open card has no close button: it kept not even its header");
+        var at = close;
+        while (at >= 0 && !(arranged[at].Node.Background == Palette.Current.MenuBg && arranged[at].Depth < arranged[close].Depth))
+        {
+            at--;
+        }
+        at.ShouldBeGreaterThanOrEqualTo(0, $"at {size} the card's close button has no node on the menu's background above it");
+        var node = arranged[at];
+        var subtree = arranged.Skip(at + 1).TakeWhile(a => a.Depth > node.Depth).ToList();
+        var drawn = subtree.Where(a => a.Bounds.Width > 0 && a.Bounds.Height > 0).Select(a => a.Bounds).Aggregate(node.Bounds, Union);
+        return new Card(node, subtree, drawn);
+    }
+
+    /// <summary>The terminal's rows inside <paramref name="rect"/>, as the screen shows them.</summary>
+    private static List<string> RowsIn(TerminalScreen screen, Rect<int> rect) =>
+        [.. Enumerable.Range(rect.Y, rect.Height).Select(y => string.Concat(Enumerable.Range(rect.X, rect.Width).Select(x => screen.GlyphAt(x, y))))];
+
+    private static (Card Card, TerminalScreen Screen) OpenCard(int columns, int rows)
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        var frame = new HomeFrame(chrome, columns, rows);
+        var screen = new TerminalScreen(columns, rows);
+        chrome.About.Toggle();
+        return (CardOf(frame.Paint(screen), $"{columns}x{rows}"), screen);
+    }
+
     [Theory]
     [InlineData(190, 44)] // about the owner's terminal (2.1.1-beta.2218, 2026-11-14)
     [InlineData(160, 50)]
     [InlineData(200, 50)]
     [InlineData(130, 40)]
     [InlineData(110, 40)] // too narrow for the cards panel
+    [InlineData(160, 36)]
+    [InlineData(160, 30)] // shorter than the card: it drops its last rows
+    [InlineData(120, 28)]
+    [InlineData(100, 24)]
     public void NoPageGlyphShowsInsideTheCardsRectInCells(int columns, int rows)
     {
         using var vessel = new RgbaImageRenderer(1, 1);
@@ -206,16 +257,7 @@ public sealed class AboutCardTerminalTests
         var arranged = frame.Paint(screen);
 
         var menuBg = Palette.Current.MenuBg;
-        // The card is the nearest node on the menu's background above its "Keys" heading; what it draws is its whole subtree.
-        var keys = arranged.IndexOf(arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "Keys" } }));
-        var at = keys;
-        while (!(arranged[at].Node.Background == menuBg && arranged[at].Depth < arranged[keys].Depth))
-        {
-            at--;
-        }
-        var cardNode = arranged[at];
-        var subtree = arranged.Skip(at + 1).TakeWhile(a => a.Depth > cardNode.Depth).ToList();
-        var card = subtree.Where(a => a.Bounds.Width > 0 && a.Bounds.Height > 0).Select(a => a.Bounds).Aggregate(cardNode.Bounds, Union);
+        var (cardNode, subtree, card) = CardOf(arranged, $"{columns}x{rows}");
         // The card's fill covers everything the card draws: a row hanging out of it is drawn over the page with nothing behind it.
         cardNode.Bounds.ShouldBe(card, "the card's fill must cover what the card draws");
 
@@ -253,11 +295,73 @@ public sealed class AboutCardTerminalTests
         faults.ShouldBeEmpty(string.Join("; ", faults.Take(10)));
     }
 
+    [Fact]
+    public void TheCardHangsNearTheTopOfThePageUnderTheBar()
+    {
+        // In the frame, at the owner's size: the bar's row is 0 and the card hangs under the page's top bar, in the page from row 1.
+        var (card, _) = OpenCard(190, 44);
+        card.Node.Bounds.Y.ShouldBeGreaterThan(1);
+        card.Node.Bounds.Y.ShouldBeLessThan(10, "the card hangs under the page's top bar, not halfway down the terminal");
+    }
+
+    /// <summary>Every row a terminal's card lists, its key and what it does, must read whole in the terminal's cells inside the card.</summary>
+    private static void EveryKeyRowReadsWhole(Card card, TerminalScreen screen, string size)
+    {
+        var rows = RowsIn(screen, card.Drawn);
+        foreach (var (keys, what) in AboutCard.TerminalKeys.Append(AboutCard.AwayMark))
+        {
+            rows.Any(r => r.Contains(keys, StringComparison.Ordinal) && r.Contains(what, StringComparison.Ordinal))
+                .ShouldBeTrue($"at {size} the card shows no whole row '{keys}' '{what}'");
+            card.Kept.Any(l => l.Text == what && Inside(l.Bounds, card.Drawn)).ShouldBeTrue($"at {size} the card dropped '{what}'");
+        }
+        card.Kept.Any(l => l.Text == "Keys").ShouldBeTrue($"at {size} the card dropped its Keys heading");
+    }
+
+    [Theory]
+    [InlineData(190, 44)]
+    [InlineData(160, 50)]
+    [InlineData(130, 40)]
+    [InlineData(110, 40)]
+    public void TheCardKeepsEveryRowInTheFrame(int columns, int rows)
+    {
+        var size = $"{columns}x{rows}";
+        var (card, screen) = OpenCard(columns, rows);
+        EveryKeyRowReadsWhole(card, screen, size);
+        foreach (var heading in new[] { AboutCard.IconButtonsHeading, AboutCard.FactsHeading, "pilot-tui", "node data" })
+        {
+            card.Kept.Any(l => l.Text == heading && Inside(l.Bounds, card.Drawn)).ShouldBeTrue($"at {size} the card dropped '{heading}'");
+        }
+        card.Kept.Count(l => AboutCard.IconButtons.Any(i => i.What == l.Text)).ShouldBe(AboutCard.IconButtons.Count, $"at {size} the card dropped an icon row");
+    }
+
+    [Theory]
+    [InlineData(160, 36)]
+    [InlineData(160, 30)]
+    [InlineData(120, 28)]
+    [InlineData(100, 24)]
+    public void AShortTerminalKeepsEveryKeyAndDropsTheCardsLastRows(int columns, int rows)
+    {
+        // The terminal's card lists the keys first: a terminal too short for the whole card keeps them and gives up its last rows,
+        // the facts and the icon list, never one in the middle.
+        var size = $"{columns}x{rows}";
+        var (card, screen) = OpenCard(columns, rows);
+        EveryKeyRowReadsWhole(card, screen, size);
+        var texts = card.Subtree.Select(a => (a.Node as Layout.Node.Leaf)?.Content).OfType<Layout.Content.Text>().ToList();
+        var kept = card.Subtree.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text }).Select(a => a.Bounds.Width > 0 && a.Bounds.Height > 0).ToList();
+        var firstDropped = kept.IndexOf(false);
+        if (firstDropped >= 0)
+        {
+            kept.Skip(firstDropped).ShouldAllBe(k => !k, $"at {size} the card keeps a row after one it dropped ('{texts[firstDropped].Value}')");
+        }
+    }
+
     private static List<string> CardWords(AboutCard about)
     {
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
         chrome.About.KeyList = about.KeyList;
+        chrome.About.KeysFirst = about.KeysFirst;
+        chrome.About.Facts = about.Facts;
         chrome.About.Toggle();
         var arranged = Layout.Engine.Arrange(chrome.About.Over(Layout.Builder.Spacer().WStar().HStar(), null), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
         return [.. arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value)];
@@ -266,32 +370,50 @@ public sealed class AboutCardTerminalTests
     [Fact]
     public void TheTerminalCardListsItsOwnKeysAndNoneOfTheGuis()
     {
-        var about = new AboutCard { KeyList = AboutCard.TerminalKeys };
-        var words = CardWords(about);
+        // The card as pilot-tui draws it, in its frame at the owner's size: what its cells show.
+        var (card, screen) = OpenCard(190, 44);
+        var shown = string.Join("\n", RowsIn(screen, card.Drawn));
         foreach (var (_, label, key) in TerminalRail.Keys)
         {
-            AboutCard.TerminalKeys[0].What.ShouldContain($"{key} {label}");
+            shown.ShouldContain($"{key} {label}");
         }
-        words.ShouldContain(AboutCard.TerminalKeys[0].Keys);
         foreach (var banned in new[] { "Ctrl+1", "rail", "Right-click", "back and forward buttons" })
         {
-            words.Any(w => w.Contains(banned, StringComparison.OrdinalIgnoreCase)).ShouldBeFalse(banned);
+            shown.ShouldNotContain(banned, Case.Insensitive);
+            card.Kept.ShouldNotContain(l => l.Text.Contains(banned, StringComparison.OrdinalIgnoreCase), banned);
         }
     }
 
     [Fact]
     public void TheGuiCardKeepsItsOwnList()
     {
-        var about = new AboutCard();
+        var about = new AboutCard { Facts = () => [("pilot-gui", "2.1.1")] };
         about.KeyList.ShouldBeSameAs(AboutCard.Keys);
-        CardWords(about).ShouldContain("Ctrl+1 to Ctrl+9");
+        about.KeysFirst.ShouldBeFalse();
+        var words = CardWords(about);
+        words.ShouldContain("Ctrl+1 to Ctrl+9");
+        // The GUI's card keeps the facts under its header, before the keys, and has no heading over them.
+        words.IndexOf("pilot-gui").ShouldBeLessThan(words.IndexOf("Keys"));
+        words.ShouldNotContain(AboutCard.FactsHeading);
     }
 
     [Fact]
     public void EveryPageKeyTheTerminalListNamesIsOneTerminalRailHandles()
     {
-        // The page keys line names every key of the bar, and nothing else: a digit, or the dollar sign.
-        AboutCard.TerminalKeys[0].Keys.ShouldBe("1 to 9, 0, $");
+        // The page rows name every entry of the bar with its page, in the bar's order, and each row's keys column names its own keys.
+        var entries = new List<string>();
+        foreach (var (keys, what) in AboutCard.TerminalPageKeys)
+        {
+            what.Length.ShouldBeLessThanOrEqualTo(AboutCard.TerminalLineChars, what);
+            var named = (entries.Count == 0 ? what["pages: ".Length..] : what).Split(", ");
+            entries.AddRange(named);
+            var expanded = keys.Split(", ").SelectMany(part => part.Split(" to ") is [var from, var to]
+                ? Enumerable.Range(from[0], to[0] - from[0] + 1).Select(c => (char)c)
+                : new[] { part.Single() });
+            expanded.Order().ShouldBe(named.Select(e => e[0]).Order(), $"row '{keys}'");
+        }
+        AboutCard.TerminalPageKeys[0].What.ShouldStartWith("pages: ");
+        entries.ShouldBe(TerminalRail.Keys.Select(k => $"{k.Key} {k.Label}"));
         foreach (var (page, _, key) in TerminalRail.Keys)
         {
             var shown = new List<PilotPage>();
@@ -306,8 +428,9 @@ public sealed class AboutCardTerminalTests
     {
         // Read against Program.cs's Handle: q and Ctrl+C quit, Backspace goes back, Ctrl+S and Ctrl+T, Up and Down (and Enter) on the
         // page's own HandleInput, a left click through CellLayout.HitTest; and the chrome's own Alt+Left, Alt+Right and Escape.
-        AboutCard.TerminalKeys.Skip(1).Select(k => k.Keys).ShouldBe(
-            ["Ctrl+S", "Ctrl+T", "Enter", "Up, Down", "Escape", "Backspace, Alt+Left", "q, Ctrl+C", "Left click"]);
+        AboutCard.TerminalKeys.Skip(AboutCard.TerminalPageKeys.Count).Select(k => k.Keys).ShouldBe(
+            ["Ctrl+S", "Ctrl+T", "Enter", "Up, Down", "Escape", "Backspace", "Alt+Right", "q, Ctrl+C", "Left click"]);
+        AboutCard.TerminalKeys.ShouldAllBe(k => k.What.Length <= AboutCard.TerminalLineChars);
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
         chrome.Show(PilotPage.Sessions);

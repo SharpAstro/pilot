@@ -29,28 +29,64 @@ internal sealed class AboutCard
     ];
 
     /// <summary>
+    /// The most text a row of <see cref="TerminalKeys"/> holds: a terminal sets every glyph one cell wide, so the card's value column is
+    /// about 75 cells at 100 columns (its 840 units less the padding and the key column of 140 units, 18 cells) and 82 at full width, and
+    /// a longer row is cut at its start, losing what it begins with. No row of the terminal's list is cut from 100 columns up.
+    /// </summary>
+    public const int TerminalLineChars = 72;
+
+    /// <summary>
+    /// The page keys as the terminal's card lists them: every key of <see cref="TerminalRail.Keys"/> with its page, in the bar's order,
+    /// broken into rows of at most <see cref="TerminalLineChars"/>; each row's keys column names the keys on that row. Built from the
+    /// bar's own list, so it cannot drift from the bar.
+    /// </summary>
+    public static IReadOnlyList<(string Keys, string What)> TerminalPageKeys { get; } = PageRows();
+
+    /// <summary>
     /// The keys pilot-tui handles (Program.cs's Handle, TerminalRail.Handle, the chrome's Alt+Left, Alt+Right and Escape): no Ctrl+digit,
-    /// rail, right-click or mouse buttons. The page keys line is built from <see cref="TerminalRail.Keys"/>, so it cannot drift from the bar.
+    /// rail, right-click or mouse buttons. The page keys come first, from <see cref="TerminalPageKeys"/>.
     /// </summary>
     public static IReadOnlyList<(string Keys, string What)> TerminalKeys { get; } =
     [
-        (PageKeys(), "pages, in the bar's order: " + string.Join(", ", TerminalRail.Keys.Select(k => $"{k.Key} {k.Label}"))),
+        .. TerminalPageKeys,
         ("Ctrl+S", "the say bar, to the selected session"),
         ("Ctrl+T", "the chat with the watchtower"),
         ("Enter", "a session's transcript"),
         ("Up, Down", "the selection, or a wizard's highlight"),
-        ("Escape", "up a level: from a transcript or a flight's page to its list; also out of a wizard step or a menu"),
-        ("Backspace, Alt+Left", "back through the places the window has been; Alt+Right goes forward"),
+        ("Escape", "up a level: back to the list; out of a wizard step or a menu"),
+        // Two rows, where the GUI's one reads "Alt+Left, Alt+Right": the key column is 18 cells, and a longer key is cut.
+        ("Backspace", "back through the places the window has been, as Alt+Left"),
+        ("Alt+Right", "forward again"),
         ("q, Ctrl+C", "quit"),
         ("Left click", "a row, a button or a page on the bar"),
     ];
 
-    /// <summary>
-    /// The bar's keys as a set, not in the bar's order (Pull requests is 9, sixth): the digits 1 to 9 in runs, then 0, then the others.
-    /// </summary>
-    private static string PageKeys()
+    // The bar's entries as "1 Home", in its order, filled into rows no longer than TerminalLineChars; the first row says what they are.
+    private static List<(string Keys, string What)> PageRows()
     {
-        var keys = TerminalRail.Keys.Select(k => k.Key).ToList();
+        var rows = new List<(string Keys, string What)>();
+        var keys = new List<char>();
+        var line = "pages: ";
+        foreach (var (_, label, key) in TerminalRail.Keys)
+        {
+            var entry = $"{key} {label}";
+            if (keys.Count > 0 && line.Length + 2 + entry.Length > TerminalLineChars)
+            {
+                rows.Add((PageKeys(keys), line));
+                (keys, line) = ([], "");
+            }
+            line += keys.Count > 0 ? $", {entry}" : entry;
+            keys.Add(key);
+        }
+        rows.Add((PageKeys(keys), line));
+        return rows;
+    }
+
+    /// <summary>
+    /// A row's page keys as a set, not in the bar's order (Pull requests is 9, sixth): the digits 1 to 9 in runs, then 0, then the others.
+    /// </summary>
+    private static string PageKeys(IReadOnlyList<char> keys)
+    {
         var digits = keys.Where(k => k is >= '1' and <= '9').Order().ToList();
         var parts = new List<string>();
         for (var i = 0; i < digits.Count;)
@@ -71,6 +107,16 @@ internal sealed class AboutCard
     public IReadOnlyList<(string Keys, string What)> KeyList { get; set; } = Keys;
 
     /// <summary>
+    /// Whether the keys come straight under the card's header, before the facts (which then get a heading of their own); pilot-tui sets it.
+    /// The card drops the rows it has no room for from its end, and a terminal can be shorter than the card: there the keys matter most,
+    /// so a short terminal keeps them and gives up the facts and then the icon list. The GUI's card keeps the facts first.
+    /// </summary>
+    public bool KeysFirst { get; set; }
+
+    /// <summary>The heading over the facts when <see cref="KeysFirst"/> puts them below the keys.</summary>
+    public const string FactsHeading = "This pilot and its node";
+
+    /// <summary>
     /// The buttons that are only a drawn mark, as the card draws them beside what they do: every one has its word as a tooltip, and
     /// this list is what keeps a reader who does not know a mark from having to guess. Add a button's mark here when it becomes one.
     /// </summary>
@@ -80,6 +126,9 @@ internal sealed class AboutCard
         ([Layout.IconKind.Plus], "New flight, in the Flights header"),
         ([Layout.IconKind.CaretRight, Layout.IconKind.CaretDown], "unfold and fold a row's details"),
     ];
+
+    /// <summary>The heading over <see cref="IconButtons"/>.</summary>
+    public const string IconButtonsHeading = "Icon buttons (point at one for its word)";
 
     /// <summary>What the mark after a link's text means, as the card says it beside the keys.</summary>
     public static readonly (string Mark, string What) AwayMark = (Followable.Away.Trim(), "a link that opens elsewhere (the browser, a folder), not an action here");
@@ -187,9 +236,10 @@ internal sealed class AboutCard
                         .Follows(new HitResult.ButtonHit("about:close"), _ => Close()))
                 .RowH(26f),
         };
-        foreach (var (label, value) in Facts?.Invoke() ?? [])
+        var facts = (Facts?.Invoke() ?? []).Select(f => Line(f.Label, f.Value, night)).ToList();
+        if (!KeysFirst)
         {
-            rows.Add(Line(label, value, night));
+            rows.AddRange(facts);
         }
         rows.Add(Layout.Builder.Text("Keys", 13f, bright).RowH(24f));
         foreach (var (keys, what) in KeyList)
@@ -197,14 +247,19 @@ internal sealed class AboutCard
             rows.Add(Line(keys, what, night));
         }
         rows.Add(Line(AwayMark.Mark, AwayMark.What, night));
-        rows.Add(Layout.Builder.Text("Icon buttons (point at one for its word)", 13f, bright).RowH(24f));
+        if (KeysFirst && facts.Count > 0)
+        {
+            rows.Add(Layout.Builder.Text(FactsHeading, 13f, bright).RowH(24f));
+            rows.AddRange(facts);
+        }
+        rows.Add(Layout.Builder.Text(IconButtonsHeading, 13f, bright).RowH(24f));
         foreach (var (marks, what) in IconButtons)
         {
             rows.Add(IconLine(marks, what, night));
         }
-        // One column that drops the rows it has no room for, where a stack would draw them on past its own height: a terminal of 40 to
-        // 50 rows is shorter than the card, whose fill is cut to the room it has, and its last rows hung below that fill over the page
-        // with nothing behind them (pilot #1027). Each row stretches across the card, no wider than its inside.
+        // One column that drops the rows it has no room for, where a stack would draw them on past its own height: in a terminal shorter
+        // than the card, whose fill is cut to the room it has, its last rows hung below that fill over the page with nothing behind them
+        // (pilot #1027). KeysFirst decides what such a terminal keeps. Each row stretches across the card, no wider than its inside.
         return Layout.Builder.WrapV([.. rows.Select(r => r.W(Layout.Sizing.Star(max: CardWidth - 28f)))]).WithGap(2f).WithMaxLines(1)
             .Pad(14f, 10f).Bg(night?.MenuBg ?? CardBg).WFixed(CardWidth).HAuto();
     }
