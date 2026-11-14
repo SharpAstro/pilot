@@ -255,7 +255,7 @@ public sealed class TerminalFrameTests
         var rail = TerminalRail.Tree(page, GlyphMode.Emoji, null, null, Live.At, _ => { }, null, columns);
         var arranged = Layout.Engine.Arrange(TerminalFrame.Tree(rail, pageTree, null), new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
         arranged = TerminalFrame.Clip(arranged);
-        TerminalFrame.Paint(viewport, arranged);
+        TerminalFrame.Paint(viewport.HideCaret, () => CellLayout.Paint(viewport, arranged));
         return arranged;
     }
 

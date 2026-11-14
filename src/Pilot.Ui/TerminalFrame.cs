@@ -33,12 +33,13 @@ internal static class TerminalFrame
     /// Paints the arranged frame. The terminal's caret is sticky state (a parked caret stays at its cell until withdrawn), and
     /// CellLayout.Paint parks it only for a focused field it paints. So each frame withdraws the caret first and states it afresh from
     /// its own rects: the caret follows its field when the page moved, and is hidden when the field is not painted (scrolled out,
-    /// clipped, or on another page), instead of staying where an earlier frame left it.
+    /// clipped, or on another page), instead of staying where an earlier frame left it. Pilot.Ui holds no Console.Lib, so the viewport's
+    /// HideCaret and CellLayout.Paint come in as actions.
     /// </summary>
-    public static void Paint(Console.Lib.ITerminalViewport viewport, ImmutableArray<Layout.ArrangedNode<int>> arranged)
+    public static void Paint(Action hideCaret, Action paint)
     {
-        viewport.HideCaret();
-        Console.Lib.CellLayout.Paint(viewport, arranged);
+        hideCaret();
+        paint();
     }
 
     /// <summary>
