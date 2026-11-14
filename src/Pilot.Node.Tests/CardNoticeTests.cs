@@ -10,7 +10,7 @@ public sealed class CardNoticeTests
 {
     private static CardRow Card(string id, string title, string? detail = null, params string[] choices) => new()
     {
-        Id = id, Bin = CardBin.ForYou, Kind = "review", Subject = "flight/PIL1027", Title = title, Detail = detail, At = DateTimeOffset.UnixEpoch,
+        Id = id, Bin = CardBin.ForYou, Kind = "review", Subject = "flight/PIL1027", Title = title, Detail = detail, At = DateTimeOffset.UnixEpoch, State = CardState.Open,
         Choices = [.. choices.Select(c => new CardChoice { Label = c, Verb = Verbs.Dismiss, Target = Verbs.CardTarget(id) })],
     };
 

@@ -1,3 +1,4 @@
+using DIR.Lib;
 using Pilot.Contracts;
 using Shouldly;
 using Xunit;
@@ -13,7 +14,7 @@ public sealed partial class ChatFrameTests
 {
     private static CardRow NoticeCard(string id, string title, string? detail, params string[] choices) => new()
     {
-        Id = id, Bin = CardBin.ForYou, Kind = "review", Subject = "flight/PIL1027", Title = title, Detail = detail, At = Local(11, 0),
+        Id = id, Bin = CardBin.ForYou, Kind = "review", Subject = "flight/PIL1027", Title = title, Detail = detail, At = Local(11, 0), State = CardState.Open,
         Choices = [.. choices.Select(c => new CardChoice { Label = c, Verb = Verbs.Dismiss, Target = Verbs.CardTarget(id) })],
     };
 
