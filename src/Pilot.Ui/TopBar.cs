@@ -80,6 +80,9 @@ internal static class TopBar
     /// <summary>What the first line of the bar leaves for what every page shares at its right: Autopilot, the update light and ?, with their gaps.</summary>
     public const float SharedReserve = 290f;
 
+    /// <summary>The same in the terminal: Autopilot, the update light and ? take 35 columns with their gaps.</summary>
+    public const float TerminalSharedReserve = 280f;
+
     /// <summary>The bottom of the bar's row of buttons: what the ? card hangs under.</summary>
     public const float ButtonsBottom = PadY + RowHeight;
 
@@ -132,7 +135,7 @@ internal static class TopBar
         // buttons and words of any size share one middle. A row of one HStack ran past a narrow page, drawing Autopilot and ? out
         // of it (PIL380). What every page shares stands at the bar's right corner, the same place on every page, and the flow
         // leaves it room on its first line.
-        var flow = FlowRow.Of(HeaderMetrics.BarRow, HeaderMetrics.Terminal ? 8f : 12f, shared.Count > 0 ? SharedReserve : 0f, items);
+        var flow = FlowRow.Of(HeaderMetrics.BarRow, HeaderMetrics.Terminal ? 8f : 12f, shared.Count > 0 ? HeaderMetrics.Terminal ? TerminalSharedReserve : SharedReserve : 0f, items);
         var corner = Layout.Builder.HStack([.. shared.Select(item => FlowRow.Cell(item, HeaderMetrics.BarRow))]).WithGap(HeaderMetrics.Terminal ? 8f : 12f).WAuto().HFixed(HeaderMetrics.BarRow);
         var rows = new List<Layout.Node> { shared.Count > 0 ? Layout.Builder.Overlay(flow, Layout.Builder.Anchored(corner, Layout.DockSide.Right).WStar().HStar()).WStar().HAuto() : flow };
         if (page.CountsFit && !string.IsNullOrEmpty(page.Counts))
