@@ -526,7 +526,7 @@ while (!stop.IsCancellationRequested)
         }
         var cardsScreen = pages.Cards;
         // Every frame: the terminal keeps the last title and only writes a changed one.
-        terminal.Title = TerminalTitle.Of(page, TerminalTitle.NodeName(page, chat.Node, chrome.Nodes), TerminalTitle.Waiting(cardsScreen));
+        terminal.Title = TerminalTitle.Of(page, TerminalTitle.NodeName(page, chat.Node, chrome.Nodes), TerminalTitle.Waiting(cards.Visible(cardsScreen)));
         flights.Jobs = pages.JobRows;
         // The cards panel stands beside the page when there is room beside a usable page, and something to show.
         var tree = TerminalFrame.Tree(railTree, pageTree,

@@ -54,6 +54,15 @@ public sealed class TerminalTitleTests
     }
 
     [Fact]
+    public void SeveralPickedNodesAreAllNamed()
+    {
+        var nodes = Filter();
+        nodes.Toggle("se1");
+        nodes.Toggle("de1");
+        Title(PilotPage.Jobs, null, nodes, Cards(0)).ShouldBe("pilot · Background tasks · DE1+SE1");
+    }
+
+    [Fact]
     public void NoNodeKnownLeavesItOut() =>
         TerminalTitle.Of(PilotPage.Home, null, 0).ShouldBe("pilot · Home");
 

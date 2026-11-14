@@ -21,7 +21,8 @@ internal static class TerminalTitle
 
     /// <summary>
     /// The node the title names: on Chat the one chosen to talk to, else "fleet"; on any other page the one node picked in the
-    /// header, else the node this window is on.
+    /// header; with several picked, their names joined by "+" (the title must not name one node of the several); else the node this
+    /// window is on.
     /// </summary>
     public static string? NodeName(PilotPage page, NodeMark? chatNode, NodeFilter nodes)
     {
@@ -30,7 +31,9 @@ internal static class TerminalTitle
             return chatNode?.Name ?? Fleet;
         }
         var picked = nodes.All ? [] : nodes.Choices.Where(c => nodes.Picked.Contains(c.Key)).ToList();
-        return (picked.Count == 1 ? picked[0] : nodes.Choices.FirstOrDefault(c => c.Here))?.Name;
+        return picked.Count > 1
+            ? string.Join('+', picked.Select(c => c.Name))
+            : (picked.Count == 1 ? picked[0] : nodes.Choices.FirstOrDefault(c => c.Here))?.Name;
     }
 
     /// <summary>The cards the panel's head counts: open rings and open cards for the person.</summary>
