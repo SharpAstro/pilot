@@ -191,7 +191,7 @@ public sealed class TerminalRailTests
             // The count never runs into the key: a char that is no digit sits between the last count digit and the key.
             var beforeKey = text.TrimEnd()[..^1];
             char.IsDigit(beforeKey[^1]).ShouldBeFalse($"{noted} {mode} narrow={narrow}: '{text}'");
-            beforeKey[^1].ShouldNotBe('+');
+            beforeKey[^1].ShouldBe('·', $"a separator char, not a pad space: '{text}'");
         }
 
         var none = TerminalRail.EntryText(PilotPage.Ideas, mode, null, IdeasOf(0), Now, narrow);

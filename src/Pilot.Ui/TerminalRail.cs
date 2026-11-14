@@ -153,11 +153,11 @@ internal static class TerminalRail
         {
             glyph = glyph[..cells];
         }
-        // A glyph that fills its area (a counted Ideas one) would touch the key and read as one number: it gives up the leading
-        // space for a separator, so the entry keeps its width.
-        if (page == PilotPage.Ideas && glyph.Length == cells && glyph.Any(char.IsAsciiDigit))
+        // A counted Ideas entry puts a middle dot between its count and the key, so the count never reads as one number with the
+        // key. The dot takes the leading space's cell, so the entry keeps its width.
+        if (page == PilotPage.Ideas && glyph.Any(char.IsAsciiDigit))
         {
-            return $"{glyph} {KeyFor(page)} ";
+            return $"{glyph.PadRight(cells)}·{KeyFor(page)} ";
         }
         return $" {glyph.PadRight(cells)}{KeyFor(page)} ";
     }
