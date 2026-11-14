@@ -28,8 +28,8 @@ public static class WireframeSweepTests
     internal static IEnumerable<(string Page, string State, int Width, float Dpi, int Height)> CaseTuples() =>
         from state in States from height in Heights from page in Pages from width in Widths from dpi in Dpis select (page, state, width, dpi, height);
 
-    internal static IEnumerable<TheoryDataRow<string, string, int, float, int>> RowsOf(string state, int height) =>
-        CaseTuples().Where(c => c.State == state && c.Height == height)
+    internal static IEnumerable<TheoryDataRow<string, string, int, float, int>> RowsOf(string state, int height, float dpi) =>
+        CaseTuples().Where(c => c.State == state && c.Height == height && c.Dpi == dpi)
             .Select(c => new TheoryDataRow<string, string, int, float, int>(c.Page, c.State, c.Width, c.Dpi, c.Height) { TestDisplayName = Key(c.Page, c.State, c.Width, c.Dpi, c.Height) });
 
     internal static string Key(string page, string state, int width, float dpi, int height) =>
@@ -50,7 +50,7 @@ public static class WireframeSweepTests
     {
         var key = Key(page, state, width, dpi, height);
         var findings = await FindingsOf(page, state, width, dpi, height);
-        if ((Environment.GetEnvironmentVariable("PILOT_WIREFRAME_DUMP") ?? @"C:\Users\SebastianGodelet\.claude\jobs\9f734a48\tmp\wf2.tsv") is { Length: > 0 } dump)
+        if (Environment.GetEnvironmentVariable("PILOT_WIREFRAME_DUMP") is { Length: > 0 } dump)
         {
             lock (DumpLock)
             {
@@ -197,39 +197,75 @@ public sealed class WireframeSweepSelfTests
     }
 }
 
-// The sweep runs as four classes, one a state and height, so xunit's own class-level parallelism shares the 640 cases (serial they take about a minute).
+// The sweep runs as eight classes, one a state, height and scale, so xunit's own class-level parallelism shares the 640 cases.
 
-/// <summary>The "long" state at 900 high.</summary>
-public sealed class WireframeSweepLong900Tests
+/// <summary>The "long" state at 900 high, DPI 1.</summary>
+public sealed class WireframeSweepLong900Dpi1Tests
 {
-    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("long", 900);
+    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("long", 900, 1f);
 
     [Theory, MemberData(nameof(Cases))]
     public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
 }
 
-/// <summary>The "long" state at 1440 high.</summary>
-public sealed class WireframeSweepLong1440Tests
+/// <summary>The "long" state at 900 high, DPI 1.5.</summary>
+public sealed class WireframeSweepLong900Dpi15Tests
 {
-    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("long", 1440);
+    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("long", 900, 1.5f);
 
     [Theory, MemberData(nameof(Cases))]
     public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
 }
 
-/// <summary>The "many" state at 900 high.</summary>
-public sealed class WireframeSweepMany900Tests
+/// <summary>The "long" state at 1440 high, DPI 1.</summary>
+public sealed class WireframeSweepLong1440Dpi1Tests
 {
-    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("many", 900);
+    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("long", 1440, 1f);
 
     [Theory, MemberData(nameof(Cases))]
     public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
 }
 
-/// <summary>The "many" state at 1440 high.</summary>
-public sealed class WireframeSweepMany1440Tests
+/// <summary>The "long" state at 1440 high, DPI 1.5.</summary>
+public sealed class WireframeSweepLong1440Dpi15Tests
 {
-    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("many", 1440);
+    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("long", 1440, 1.5f);
+
+    [Theory, MemberData(nameof(Cases))]
+    public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
+}
+
+/// <summary>The "many" state at 900 high, DPI 1.</summary>
+public sealed class WireframeSweepMany900Dpi1Tests
+{
+    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("many", 900, 1f);
+
+    [Theory, MemberData(nameof(Cases))]
+    public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
+}
+
+/// <summary>The "many" state at 900 high, DPI 1.5.</summary>
+public sealed class WireframeSweepMany900Dpi15Tests
+{
+    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("many", 900, 1.5f);
+
+    [Theory, MemberData(nameof(Cases))]
+    public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
+}
+
+/// <summary>The "many" state at 1440 high, DPI 1.</summary>
+public sealed class WireframeSweepMany1440Dpi1Tests
+{
+    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("many", 1440, 1f);
+
+    [Theory, MemberData(nameof(Cases))]
+    public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
+}
+
+/// <summary>The "many" state at 1440 high, DPI 1.5.</summary>
+public sealed class WireframeSweepMany1440Dpi15Tests
+{
+    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() => WireframeSweepTests.RowsOf("many", 1440, 1.5f);
 
     [Theory, MemberData(nameof(Cases))]
     public Task NoFindingsBeyondTheKnownOnes(string page, string state, int width, float dpi, int height) => WireframeSweepTests.Run(page, state, width, dpi, height);
