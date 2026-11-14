@@ -311,7 +311,9 @@ public sealed class AboutCardTerminalTests
         foreach (var (keys, what) in AboutCard.TerminalKeys.Append(AboutCard.AwayMark))
         {
             rows.Any(r => r.Contains(keys, StringComparison.Ordinal) && r.Contains(what, StringComparison.Ordinal))
-                .ShouldBeTrue($"at {size} the card shows no whole row '{keys}' '{what}'");
+                .ShouldBeTrue($"at {size} the card shows no whole row '{keys}' '{what}'; its rows:
+{string.Join("
+", rows)}");
             card.Kept.Any(l => l.Text == what && Inside(l.Bounds, card.Drawn)).ShouldBeTrue($"at {size} the card dropped '{what}'");
         }
         card.Kept.Any(l => l.Text == "Keys").ShouldBeTrue($"at {size} the card dropped its Keys heading");
@@ -375,7 +377,7 @@ public sealed class AboutCardTerminalTests
         var shown = string.Join("\n", RowsIn(screen, card.Drawn));
         foreach (var (_, label, key) in TerminalRail.Keys)
         {
-            shown.ShouldContain($"{key} {label}");
+            shown.ShouldContain($"{key} {label}", Case.Sensitive, shown);
         }
         foreach (var banned in new[] { "Ctrl+1", "rail", "Right-click", "back and forward buttons" })
         {
