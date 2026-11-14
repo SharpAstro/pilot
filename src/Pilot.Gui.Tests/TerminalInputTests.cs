@@ -198,8 +198,11 @@ public sealed class TerminalInputTests
         rig.StandIn = (PilotPage.Flights, () => Layout.Builder.TextInput(why, 14f, Palette.Input).RowH(28f).WStar());
         rig.Chrome.Show(PilotPage.Flights);
         var arranged = rig.Frame();
-        var field = arranged.First(a => a.Node.Hit is HitResult.TextInputHit hit && ReferenceEquals(hit.Input, why));
-        rig.Click(field.Bounds.X + 1, field.Bounds.Y);
+        var (column, row) = (from r in Enumerable.Range(0, Rows)
+                             from c in Enumerable.Range(0, Columns)
+                             where CellLayout.HitTest(arranged, c, r) is HitResult.TextInputHit hit && ReferenceEquals(hit.Input, why)
+                             select (c, r)).First();
+        rig.Click(column, row);
         rig.Focus.Current.ShouldBeSameAs(why);
 
         var home = RailEntry(rig.Frame(), PilotPage.Home);
