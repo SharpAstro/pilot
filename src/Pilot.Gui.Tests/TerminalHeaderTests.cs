@@ -16,7 +16,7 @@ namespace Pilot.Gui.Tests;
 public sealed class TerminalHeaderTests
 {
     // The tests turn the mode on through this; false shows what the base did.
-    private static bool TerminalMode => false;
+    private static bool TerminalMode => true;
 
     private static readonly NodeMark Here = new("a", "a", "SE1", true);
 
