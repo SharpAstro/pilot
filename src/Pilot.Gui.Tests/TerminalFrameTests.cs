@@ -185,8 +185,9 @@ public sealed class TerminalFrameTests
         var size = $"Chat {columns}x{rows} with {count} entries{(scrolledUp ? " scrolled up" : "")}";
         var (buffer, painted, raw, _) = await PaintChatCaretAsync(count, scrolledUp, columns, rows);
         buffer.Flush(new NullSink());
-        var footNodes = string.Join('\n', raw.Where(a => a.Bounds.Y + a.Bounds.Height >= rows - 8 && a.Depth >= 3)
-            .Select(a => $"d{a.Depth} {a.Node.GetType().Name} {a.Bounds.X},{a.Bounds.Y} {a.Bounds.Width}x{a.Bounds.Height}"));
+        var footNodes = string.Join('\n', painted.Where(a => a.Bounds.Y + a.Bounds.Height >= rows - 8 && a.Depth >= 3)
+            .Select(a => $"d{a.Depth} {a.Node.GetType().Name} {(a.Node is Layout.Node.Leaf l ? l.Content.GetType().Name : "")} {a.Bounds.X},{a.Bounds.Y} {a.Bounds.Width}x{a.Bounds.Height}"))
+            + $"\ninputs: {string.Join(", ", CellLayout.TextInputs(painted).Select(i => $"'{i.Placeholder}'"))}";
         var text = Enumerable.Range(0, rows).Select(buffer.FrontRowText).ToList();
         var placeholder = text.FindIndex(r => r.Contains("Message the fleet chat", StringComparison.Ordinal));
         var hint = text.FindIndex(r => r.Contains("Enter sends", StringComparison.Ordinal));
