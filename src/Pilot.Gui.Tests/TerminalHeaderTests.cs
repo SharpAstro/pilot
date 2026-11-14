@@ -97,4 +97,66 @@ public sealed class TerminalHeaderTests
         }
         bad.ShouldBeEmpty(string.Join('\n', bad));
     }
+
+    // The Flights header's buttons by row, at one terminal size.
+    private static (SortedSet<int> Rows, int Right, int MaxRight) FlightsHeaderRows(int columns, int rows)
+    {
+        using var terminal = HeaderMetrics.Use(TerminalMode);
+        using var renderer = new RgbaImageRenderer(1, 1);
+        var chrome = NewChrome(renderer);
+        var page = chrome.Flights.Build(Flights(Live.At));
+        var rail = TerminalRail.Tree(PilotPage.Flights, GlyphMode.Emoji, null, null, Live.At, _ => { }, null, columns);
+        var arranged = Layout.Engine.Arrange(TerminalFrame.Tree(rail, page, null), new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
+        var header = arranged.First(a => a.Bounds.Y == 1 && a.Node.Background == Palette.Standard.HeaderBg && a.Bounds.Width > columns / 2);
+        var from = arranged.IndexOf(header);
+        var set = new SortedSet<int>();
+        var max = 0;
+        for (var i = from + 1; i < arranged.Length && arranged[i].Depth > header.Depth; i++)
+        {
+            if (arranged[i].Node.Hit is HitResult.ButtonHit && arranged[i].Node.Background is not null)
+            {
+                set.Add(arranged[i].Bounds.Y);
+                max = Math.Max(max, arranged[i].Bounds.X + arranged[i].Bounds.Width);
+            }
+        }
+        return (set, header.Bounds.X + header.Bounds.Width, max);
+    }
+
+    [Fact]
+    public void TheFlightsHeaderIsOneLineAt250Columns()
+    {
+        var (rows, _, _) = FlightsHeaderRows(250, 50);
+        rows.Count.ShouldBe(1, $"the header's buttons stand on rows {string.Join(", ", rows)}");
+    }
+
+    [Fact]
+    public void TheFlightsHeaderWrapsAt100ColumnsWithNothingPastThePage()
+    {
+        var (rows, right, maxRight) = FlightsHeaderRows(100, 30);
+        rows.Count.ShouldBeGreaterThan(1);
+        maxRight.ShouldBeLessThanOrEqualTo(right);
+    }
+
+    [Fact]
+    public void ThePullRequestsSearchBoxIsBorderedByRoundedBoxCharactersRoundOneInputRow()
+    {
+        using var terminal = HeaderMetrics.Use(TerminalMode);
+        using var renderer = new RgbaImageRenderer(1, 1);
+        var chrome = NewChrome(renderer);
+        var pr = new PullRequestRow
+        {
+            Repo = "SharpAstro/pilot", Number = 1, Title = "t", Url = "https://github.com/SharpAstro/pilot/pull/1", Author = "a", Kind = PullRequestKind.Ready, Label = "Ready",
+            UpdatedAt = Live.At, CreatedAt = Live.At, Head = "feature/x", Base = "main",
+        };
+        var row = new PullRequestsRow { Orgs = ["SharpAstro"], ReadAt = Live.At, Viewer = "a", PullRequests = [pr] };
+        var page = chrome.PullRequests.Tree(new PullRequestsScreen(row, "test", Live.At), 200 * 8f);
+        var arranged = Layout.Engine.Arrange(page, new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored);
+        var input = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).Bounds;
+        input.Height.ShouldBe(1);
+        string TextAt(int y, char glyph) => arranged
+            .Where(a => a.Bounds.Y == y && a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.Contains(glyph))
+            .Select(a => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value).FirstOrDefault() ?? "";
+        TextAt(input.Y - 1, '╭').ShouldContain("╮");
+        TextAt(input.Y + 1, '╰').ShouldContain("╯");
+    }
 }
