@@ -11,7 +11,7 @@ public sealed class ZProbe
     {
         using var renderer = new RgbaImageRenderer(667, 900);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null); chrome.Nodes.Choices = [.. Enumerable.Range(0, 12).Select(i => new NodeMark("n" + i, "n" + i, "NODE" + i, i == 0))];
         var now = Live.At;
         var tree = chrome.Repos.Tree(new ReposScreen([], "test", now));
         var arr = Layout.Engine.Arrange(tree, new Rect<float>(0, 0, 667, 900), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
