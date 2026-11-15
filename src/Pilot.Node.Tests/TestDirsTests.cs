@@ -22,11 +22,11 @@ public sealed class TestDirsTests
     }
 
     private static readonly Regex Walk = new(
-        @"EnumerateFiles\([^;]*\)\s*\)\s*\{[^}]*File\.SetAttributes\(",
+        @"EnumerateFiles\([^,;]+,\s*""\*""[^;]*\)\s*\)\s*\{[^}]*File\.SetAttributes\(",
         RegexOptions.Singleline | RegexOptions.CultureInvariant);
 
     /// <summary>#1063: an unguarded walk calling File.SetAttributes throws FileNotFoundException when a git child removes a
-    /// file mid-walk, failing the test in Dispose. TestDirs.DeleteTree is the one place that walk lives, tolerant per file.</summary>
+    /// file mid-walk, failing the test in Dispose. A walk of one named file (SeedRepo's "config" rewrite) is not a cleanup walk and is allowed. TestDirs.DeleteTree is the one place that walk lives, tolerant per file.</summary>
     [Fact]
     [Trait("Category", "Invariant")]
     public void OnlyTestDirsWalksATreeCallingSetAttributes()
