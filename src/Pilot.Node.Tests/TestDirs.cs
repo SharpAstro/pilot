@@ -14,14 +14,7 @@ internal static class TestDirs
             {
                 foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
                 {
-                    try
-                    {
-                        File.SetAttributes(file, FileAttributes.Normal);
-                    }
-                    catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
-                    {
-                        // A git child removed it mid-walk (#1063): nothing left to make writable.
-                    }
+                    MakeWritable(file);
                 }
                 Directory.Delete(root, recursive: true);
             }
@@ -32,6 +25,19 @@ internal static class TestDirs
                     Thread.Sleep(Math.Min(100 * attempt, 500));
                 }
             }
+        }
+    }
+
+    /// <summary>Clears a file's read-only flag so the tree can be deleted. A file that is already gone (a git child removed it
+    /// mid-walk, #1063) has nothing to make writable and is skipped.</summary>
+    internal static void MakeWritable(string file)
+    {
+        try
+        {
+            File.SetAttributes(file, FileAttributes.Normal);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
         }
     }
 }

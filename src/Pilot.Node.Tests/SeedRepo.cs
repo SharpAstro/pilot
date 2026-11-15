@@ -99,7 +99,9 @@ internal static class SeedRepo
 
     private static void Delete(string root)
     {
-        TestDirs.DeleteTree(root);
+        // Runs at process exit and in the old-folder sweep: a folder still held after about 0.3 s is left for the next
+        // run's sweep, so this never waits the 2.5 s a full DeleteTree would on a held folder.
+        TestDirs.DeleteTree(root, attempts: 3);
     }
 
     /// <summary>
