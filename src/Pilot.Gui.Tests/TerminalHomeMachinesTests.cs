@@ -113,13 +113,11 @@ public sealed class TerminalHomeMachinesTests
     public void EveryGaugeFigureAppearsWholeOnItsRow()
     {
         var (_, text, _) = Paint();
-        var dump = string.Join('
-', text);
+        var dump = string.Join('\n', text);
         var sample = Machine(30, 80, 95L << 30, "aa", null);
         foreach (var gauge in sample.Gauges())
         {
-            text.Any(row => row.Contains(gauge.Figure, StringComparison.Ordinal)).ShouldBeTrue($"the figure '{gauge.Figure}' is cut
-{dump}");
+            text.Any(row => row.Contains(gauge.Figure, StringComparison.Ordinal)).ShouldBeTrue($"the figure '{gauge.Figure}' is cut\n{dump}");
         }
         sample.Gauges().Select(g => g.Figure).ShouldContain("4.4/4.5 Mbps (in/out)");
         sample.Gauges().Select(g => g.Figure).ShouldContain("61.1/930.4 GB free");
