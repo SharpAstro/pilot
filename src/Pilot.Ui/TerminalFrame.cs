@@ -30,6 +30,14 @@ internal static class TerminalFrame
     }
 
     /// <summary>
+    /// The frame as the terminal paints it: <see cref="Tree"/> arranged in the <paramref name="columns"/> by <paramref name="rows"/> grid and
+    /// cropped by <see cref="Clip"/>. Program.cs paints this result and the wireframe sweep judges it, so a test arranges exactly what the
+    /// terminal draws. <paramref name="measure"/> is Console.Lib's CellMeasureContext.PixelAuthored, which Pilot.Ui does not hold.
+    /// </summary>
+    public static ImmutableArray<Layout.ArrangedNode<int>> Build(Layout.Node rail, Layout.Node page, Layout.Node? cards, int columns, int rows, Layout.IMeasureContext<int> measure)
+        => Clip(Layout.Engine.Arrange(Tree(rail, page, cards), new Rect<int>(0, 0, columns, rows), measure));
+
+    /// <summary>
     /// Paints the arranged frame. The terminal's caret is sticky state (a parked caret stays at its cell until withdrawn), and
     /// CellLayout.Paint parks it only for a focused field it paints. So each frame withdraws the caret first and states it afresh from
     /// its own rects: the caret follows its field when the page moved, and is hidden when the field is not painted (scrolled out,
