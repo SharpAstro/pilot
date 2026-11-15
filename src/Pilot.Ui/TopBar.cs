@@ -77,9 +77,6 @@ internal static class TopBar
     /// <summary>The padding either side of the bar.</summary>
     public const float PadX = 16f;
 
-    /// <summary>What the first line of the bar leaves for what every page shares at its right: Autopilot, the update light and ?, with their gaps.</summary>
-    public const float SharedReserve = 290f;
-
     /// <summary>The bottom of the bar's row of buttons: what the ? card hangs under.</summary>
     public const float ButtonsBottom = PadY + RowHeight;
 
@@ -125,12 +122,11 @@ internal static class TopBar
         }
 
         // The bar flows: what does not fit beside the rest starts a line under it, each item in a cell of the bar's row height so
-        // buttons and words of any size share one middle. A row of one HStack ran past a narrow page, drawing Autopilot and ? out
-        // of it (PIL380). What every page shares stands at the bar's right corner, the same place on every page, and the flow
-        // leaves it room on its first line.
-        var flow = FlowRow.Of(32f, 12f, shared.Count > 0 ? SharedReserve : 0f, items);
+        // buttons and words of any size share one middle (PIL380). What every page shares stands at the bar's right corner as a
+        // trailing node of its own width: the flow takes the width the engine measures is left beside it, on any surface.
+        var flow = FlowRow.Of(32f, 12f, items);
         var corner = Layout.Builder.HStack([.. shared.Select(item => FlowRow.Cell(item, 32f))]).WithGap(12f).WAuto().HFixed(32f);
-        var rows = new List<Layout.Node> { shared.Count > 0 ? Layout.Builder.Overlay(flow, Layout.Builder.Anchored(corner, Layout.DockSide.Right).WStar().HStar()).WStar().HAuto() : flow };
+        var rows = new List<Layout.Node> { shared.Count > 0 ? Layout.Builder.HStack(flow, corner).WithGap(12f).WStar().HAuto() : flow };
         if (page.CountsFit && !string.IsNullOrEmpty(page.Counts))
         {
             // Counts that may be long stand on a line of their own under the bar: cut with an ellipsis and carried whole on hover where
