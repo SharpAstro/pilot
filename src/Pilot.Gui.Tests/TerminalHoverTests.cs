@@ -90,7 +90,7 @@ public sealed class TerminalHoverTests
     public void AMouseMoveWithNoButtonLightsTheCardUnderIt()
     {
         using var rig = new Rig();
-        var at = rig.TextOf("Short card").Bounds;
+        var at = rig.TextOf("Short ").Bounds;
         var before = rig.Buffer.BackAt(at.X, at.Y).Style.Background;
 
         rig.Move(at.X + 1, at.Y);
@@ -105,7 +105,7 @@ public sealed class TerminalHoverTests
     public void ARestingPointerOnACutTitleGetsTheWholeTitleAsATooltipOverThePanel()
     {
         using var rig = new Rig();
-        var title = rig.TextOf("TIA1818/details-width");
+        var title = rig.TextOf("TIA1818/details-width ");
         var panelEnd = rig.Arranged.Length;
         rig.Move(title.Bounds.X + 1, title.Bounds.Y);
         rig.Frame();
