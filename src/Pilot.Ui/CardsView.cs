@@ -257,23 +257,6 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The width of a declared border, in design units (a cell paints one glyph row or column).</summary>
     private const float EdgeWidth = 1f;
 
-    /// <summary>
-    /// A fill that paints nothing, kept for the extent mapping: a cell surface gives an empty node a row only when it carries a fill,
-    /// so this is a one-row strip in cells and EdgeWidth units in the GUI, and neither draws anything.
-    /// </summary>
-    private static readonly RGBAColor32 Clear = new(0, 0, 0, 0);
-
-    /// <summary>
-    /// A border drawn by a node with no content of its own, over or under the content: Console.Lib's cell mapping (MapExtent) gives
-    /// a border on a node that holds text as many rows of inset as the node has lines of text, and no column, so a framed card came
-    /// out with a blank band as tall as its text inside each edge (SharpAstro/Console.Lib#82). An empty node's border is one row and
-    /// one cell. The content leaves the edge a strip of its own (<see cref="EdgeStrip"/>), as a border would have inset it.
-    /// </summary>
-    private static Layout.Node Edged(Layout.Node content, Layout.Node frame) => Layout.Builder.Overlay(frame, content);
-
-    /// <summary>A strip the height of a border that draws nothing, above or below content the border must not be drawn over.</summary>
-    private static Layout.Node EdgeStrip() => Layout.Builder.Spacer().Bg(Clear).RowH(EdgeWidth);
-
     /// <summary>The corner radius of a card, which the GUI rounds with and the terminal draws as arc glyphs.</summary>
     private const float CardRadius = 6f;
 
@@ -834,9 +817,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                             .WithTooltip(string.Join("\n", _waiting.Skip(WaitingDots).Select(c => $"new: {Titled(c)}")), Layout.DockSide.Left)]
                         : Array.Empty<Layout.Node>()])
                 .RowH(20f));
-        // The head (watchtower, For you, the summary) ends in a rule of its own before the first card: a declared bottom border on a
-        // row of its own, which the GUI draws as a line and the terminal as a row of rule glyphs.
-        blocks.Add(Layout.Builder.Spacer().BorderBottom(Edge, EdgeWidth).RowH(EdgeWidth).WStar());
+        // The head (watchtower, For you, the summary) ends in a rule of its own before the first card: a declared bottom border, which
+        // the GUI draws as a line and the terminal as a row of rule glyphs.
+        blocks = [Layout.Builder.VStack([.. blocks]).BorderBottom(Edge, EdgeWidth).WStar().HAuto()];
         // No gap between cards: each card's own border separates it from the next, in units and in cells alike (a gap of a few
         // units is under one cell row and vanishes in the terminal).
         foreach (var card in screen.Open)
@@ -886,9 +869,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         var stack = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).Stretch();
         // A card's image opens full size over the panel (the page beside it does not draw a second viewer for it).
-        var panel = Edged(Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch(),
-            Layout.Builder.Spacer().BorderLeft(Edge, EdgeWidth).Stretch()).Stretch();
-        return Gallery.Over(_links.Over(WithPageSelection(panel)), panel: true);
+        return Gallery.Over(_links.Over(WithPageSelection(Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).BorderLeft(Edge, EdgeWidth).Stretch())), panel: true);
     }
 
     /// <summary>The panel's line for a node out of reach: dim, two lines at most, the whole text on hover once it is cut.</summary>
@@ -1236,20 +1217,15 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         // whole width, taking off neither a sibling's width nor a padding, so the detail and the buttons were measured wider than
         // they were arranged, and a card whose last button wrapped came out a line short, the button poking out of its bottom edge
         // (DIR.Lib: Engine.MeasureStack). A grid measures its cells at the width their column is given.
-        lines.Insert(0, EdgeStrip());
-        lines.Add(EdgeStrip());
-        var body = Layout.Builder.Grid(5,
-                Layout.Builder.Spacer(),
+        return Layout.Builder.Grid(4,
                 Layout.Builder.Spacer().Bg(accent).HStar(),
                 Layout.Builder.Spacer(),
                 Layout.Builder.VStack([.. lines]).Pad(0f, 8f).WStar(),
                 Layout.Builder.Spacer())
-            .WithColumns(Layout.Sizing.Fixed(EdgeWidth), Layout.Sizing.Fixed(AccentBar), Layout.Sizing.Fixed(10f), Layout.Sizing.Star(), Layout.Sizing.Fixed(10f))
+            .WithColumns(Layout.Sizing.Fixed(AccentBar), Layout.Sizing.Fixed(10f), Layout.Sizing.Star(), Layout.Sizing.Fixed(10f))
             .WithAutoRows()
-            .WStar()
-            .HAuto();
-        // The fill and the frame are one empty node under the content, so the rounded corner clips the fill as it clips nothing else.
-        return Edged(body, Layout.Builder.Spacer().Bg(!closed && Focused(card) ? FocusBg : CardBg).Border(Edge, EdgeWidth, CardRadius).Stretch())
+            .Bg(!closed && Focused(card) ? FocusBg : CardBg)
+            .Border(Edge, EdgeWidth, CardRadius)
             .WStar()
             .HAuto();
     }
