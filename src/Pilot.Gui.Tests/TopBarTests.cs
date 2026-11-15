@@ -129,6 +129,24 @@ public sealed class TopBarTests
     }
 
     /// <summary>
+    /// The bar's row is <see cref="TopBar.RowHeight"/> high in a window whatever its items' own heights, so a bar of one line and a
+    /// source line is <see cref="TopBar.Height"/> high, which the pages laid out under it count on. A flow cell's strut whose padding
+    /// sat inside its own Fixed height left the row as tall as its 28 high buttons, 4 short.
+    /// </summary>
+    [Fact]
+    public void AOneLineBarIsTopBarHeightHigh()
+    {
+        using var renderer = new RgbaImageRenderer((int)Width, 800);
+        var chrome = NewChrome(renderer);
+        foreach (var (page, tree) in Pages(chrome).Where(p => p.Page is "sessions" or "flights" or "background tasks" or "repos"))
+        {
+            var arranged = Arrange(renderer, tree);
+            var header = arranged.First(a => a.Node.Background == Palette.Standard.HeaderBg && a.Bounds.Width > Width / 2);
+            header.Bounds.Height.ShouldBe(TopBar.Height, 0.01f, page);
+        }
+    }
+
+    /// <summary>
     /// The ? card hangs under the bar's row: it covers neither the ? nor anything beside it, so the ? itself closes it again
     /// (it once covered the ?, whose click landed on the card's × instead).
     /// </summary>

@@ -51,11 +51,12 @@ internal static class FlowRow
     /// A row <paramref name="rowHeight"/> high and no width, said as what it is: one line of text and the room above and below it.
     /// A window draws it whole. A terminal (Console.Lib's PixelAuthored mapping) keeps the line as one row and rounds the room,
     /// a padding, down to whole rows, so a one-line item's cell is one row there. A minimum height of 32 would round to two rows,
-    /// leaving an empty row under every line of the flow.
+    /// leaving an empty row under every line of the flow. The room pads a stack round the line, not the line itself: a Fixed
+    /// height holds its own padding, so a 16 high line padded 8 a side is still 16 high in a window.
     /// </summary>
     private static Layout.Node Strut(float rowHeight)
     {
         var line = MathF.Min(rowHeight, Line);
-        return Layout.Builder.Spacer().WFixed(0f).HFixed(line).Pad(0f, (rowHeight - line) / 2f);
+        return Layout.Builder.VStack(Layout.Builder.Spacer().WFixed(0f).HFixed(line)).Pad(0f, (rowHeight - line) / 2f).WAuto().HAuto();
     }
 }
