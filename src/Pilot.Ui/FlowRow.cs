@@ -42,7 +42,7 @@ internal static class FlowRow
     /// height, so the cell is as tall as the taller of the two.
     /// </summary>
     public static Layout.Node Cell(Layout.Node item, float rowHeight) =>
-        Layout.Builder.HStack(item).WAuto().HAuto().HClamp(rowHeight);
+        Layout.Builder.HStack(item, Strut(rowHeight)).WAuto().HAuto();
 
     /// <summary>One line of text in design units: a row of the terminal, which lays a pixel-authored tree out at 16 a row.</summary>
     private const float Line = 16f;
