@@ -31,10 +31,11 @@
   <!-- Pilot.Gui: the SharpAstro stack. A local build compiles the sibling clones instead (the UseLocal* switches in
        Pilot.Gui.csproj); these are what CI restores. -->
   <ItemGroup>
-    <PackageVersion Include="Console.Lib" Version="5.22.*" />
-    <PackageVersion Include="Console.Lib.Debug" Version="5.22.*" />
-    <PackageVersion Include="DIR.Lib" Version="11.67.*" />
-    <PackageVersion Include="DIR.Lib.Debug" Version="11.67.*" />
+    <!-- Console.Lib is exact: 5.25.2741 is the first release with the border cell mapping (Console.Lib#82) and it depends on DIR.Lib 11.69.7001, which the DIR.Lib pins below follow. -->
+    <PackageVersion Include="Console.Lib" Version="5.25.2741" />
+    <PackageVersion Include="Console.Lib.Debug" Version="5.25.2741" />
+    <PackageVersion Include="DIR.Lib" Version="11.69.*" />
+    <PackageVersion Include="DIR.Lib.Debug" Version="11.69.*" />
     <PackageVersion Include="LAN.Lib" Version="2.4.*" />
     <!-- The per-user node's socket location, lock, Kestrel hosting, event queue and ring buffer (SharpAstro/Node.Lib), shared with tianwen. -->
     <PackageVersion Include="Node.Lib" Version="1.2.*" />

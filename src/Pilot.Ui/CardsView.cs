@@ -251,6 +251,18 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     private const float Gutter = 14f;
 
+    /// <summary>The colour of every declared border of the panel: a card's frame, the head's rule and the panel's left edge.</summary>
+    private static RGBAColor32 Edge => Palette.Current.CardBorder;
+
+    /// <summary>The width of a declared border, in design units (a cell paints one glyph row or column).</summary>
+    private const float EdgeWidth = 1f;
+
+    /// <summary>The corner radius of a card, which the GUI rounds with and the terminal draws as arc glyphs.</summary>
+    private const float CardRadius = 6f;
+
+    /// <summary>The space between a card's edge and its content on either side, its frame included.</summary>
+    private const float CardInset = 10f;
+
     private static RGBAColor32 PanelBg => Palette.Current.RowAltBg;
     private static RGBAColor32 CardBg => Palette.Current.MenuBg;
     private static RGBAColor32 Bright => Palette.Current.Bright;
@@ -808,15 +820,18 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                             .WithTooltip(string.Join("\n", _waiting.Skip(WaitingDots).Select(c => $"new: {Titled(c)}")), Layout.DockSide.Left)]
                         : Array.Empty<Layout.Node>()])
                 .RowH(20f));
+        // The head (watchtower, For you, the summary) ends in a rule of its own before the first card: a declared bottom border, which
+        // the GUI draws as a line and the terminal as a row of rule glyphs.
+        blocks = [Layout.Builder.VStack([.. blocks]).BorderBottom(Edge, EdgeWidth).WStar().HAuto()];
+        // No gap between cards: each card's own border separates it from the next, in units and in cells alike (a gap of a few
+        // units is under one cell row and vanishes in the terminal).
         foreach (var card in screen.Open)
         {
-            blocks.Add(Layout.Builder.Spacer().RowH(8f));
             blocks.Add(Card(card, screen.NodeOf(card), _closed.Contains(card)));
         }
         // A merge that finished a moment ago reads Merged where it was, then goes: closed, so nothing on it can be pressed.
         foreach (var card in screen.Merged)
         {
-            blocks.Add(Layout.Builder.Spacer().RowH(8f));
             blocks.Add(Card(card, screen.NodeOf(card), closed: true, merged: true));
         }
         // A node out of reach leaves the panel, one dim line each at the foot of For you: a click opens its row on the Fleet page.
@@ -857,7 +872,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         var stack = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).Stretch();
         // A card's image opens full size over the panel (the page beside it does not draw a second viewer for it).
-        return Gallery.Over(_links.Over(WithPageSelection(Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch())), panel: true);
+        return Gallery.Over(_links.Over(WithPageSelection(Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).BorderLeft(Edge, EdgeWidth).Stretch())), panel: true);
     }
 
     /// <summary>The panel's line for a node out of reach: dim, two lines at most, the whole text on hover once it is cut.</summary>
@@ -1210,9 +1225,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 Layout.Builder.Spacer(),
                 Layout.Builder.VStack([.. lines]).Pad(0f, 8f).WStar(),
                 Layout.Builder.Spacer())
-            .WithColumns(Layout.Sizing.Fixed(AccentBar), Layout.Sizing.Fixed(10f), Layout.Sizing.Star(), Layout.Sizing.Fixed(10f))
+            // The frame's width comes out of the inner spacing (the engine reserves a border outside the cells), so the content keeps the
+            // width it had unframed and a row of buttons that fit before still fits (Chat about this beside Dismiss at MinWidth).
+            .WithColumns(Layout.Sizing.Fixed(AccentBar), Layout.Sizing.Fixed(CardInset - EdgeWidth), Layout.Sizing.Star(), Layout.Sizing.Fixed(CardInset - EdgeWidth))
             .WithAutoRows()
             .Bg(!closed && Focused(card) ? FocusBg : CardBg)
+            .Border(Edge, EdgeWidth, CardRadius)
             .WStar()
             .HAuto();
     }
