@@ -449,6 +449,9 @@ internal sealed partial class PullRequestsView<TSurface>
     private Layout.Node Row(PullRequestRow pr, int index, IReadOnlyList<(ListColumn Column, Func<PullRequestRow, Layout.Node> Cell)> columns)
     {
         var row = Table.Row([.. columns.Select(c => c.Column)], Layout.Builder.Spacer().Bg(StripeColor(P, pr.Kind)), [.. columns.Select(c => c.Cell(pr))])
+            // Vertical padding as the row's own, so a terminal that arranges the row two cells tall holds its one line of text with a declared
+            // row of padding around it (the wireframe's EmptyRows), and the pixel row, 40 tall, is unchanged.
+            .Pad(0f, RowPad)
             .RowH(RowHeight)
             .BgHover(P.RowHoverBg)
             .BgFocus(P.RowFocusBg)
