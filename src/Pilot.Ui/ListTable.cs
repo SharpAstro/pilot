@@ -43,7 +43,7 @@ internal sealed record ListColumn(string Header, Layout.Sizing Width, float? Dro
 
     /// <summary>
     /// <paramref name="units"/> to the nearest whole cell of a terminal (8 design units). A star column's least and cap are declared so: the header
-    /// sizes a divider grip as its column plus the gap (<see cref="Dropping"/>) and the terminal rounds each size to cells, and
+    /// sizes a divider grip as its column plus the gap (ListTable.Dropping) and the terminal rounds each size to cells, and
     /// <c>round((cap + 14) / 8)</c> is not <c>round(cap / 8) + round(14 / 8)</c> for every cap (a Model column of 140 units made the grip a cell off, over the next
     /// title). On pixels a size moves by 4 units at most.
     /// </summary>
