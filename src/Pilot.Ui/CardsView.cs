@@ -265,6 +265,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
 
+
+    /// <summary>The lists this page scrolls, whose scroll bars <see cref="PilotWidgetBase{TSurface}.WithoutScrollBars"/> takes away.</summary>
+
+    protected override IEnumerable<ListScrollController> PageScrolls => [_scroll];
+
     /// <summary>Called with the card and the choice's number from 1 when its button is clicked.</summary>
     public Action<CardRow, int>? OnAnswer { get; set; }
 

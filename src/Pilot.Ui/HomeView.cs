@@ -197,6 +197,11 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
 
+
+    /// <summary>The lists this page scrolls, whose scroll bars <see cref="PilotWidgetBase{TSurface}.WithoutScrollBars"/> takes away.</summary>
+
+    protected override IEnumerable<ListScrollController> PageScrolls => [_scroll];
+
     /// <summary>Whether this window's node is in maintenance: the page says so, under the two verdicts. Set by the host from the node's <see cref="NodeInfo.Maintenance"/>.</summary>
     public bool Maintenance { get; set; }
 

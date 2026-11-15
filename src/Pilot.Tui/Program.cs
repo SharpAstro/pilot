@@ -86,6 +86,8 @@ var settings = chrome.Settings;
 var cards = chrome.Cards;
 var chat = chrome.Chat;
 chat.Cells = true;
+// No scroll bar is drawn in a terminal, and the engine would reserve 6 columns for each beside an overflowing list.
+chrome.WithoutScrollBars();
 var focus = sessions.Ui.Focus;
 var tracker = new BackgroundTaskTracker();
 using var stop = new CancellationTokenSource();

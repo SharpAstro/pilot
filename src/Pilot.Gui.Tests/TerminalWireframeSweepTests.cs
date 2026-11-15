@@ -54,6 +54,7 @@ public static class TerminalWireframeSweepTests
         var data = Data(state);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath };
         chrome.Chat.Cells = true;
+        chrome.WithoutScrollBars();
         chrome.Flights.CanCommand = true;
         chrome.Jobs.CanCommand = true;
         chrome.Cards.CanTell = true;
@@ -150,12 +151,10 @@ public static class TerminalWireframeSweepTests
         var recorded = watch.ElapsedMilliseconds;
         frame.Frame.Texts.IsEmpty.ShouldBeFalse($"{key}: the frame recorded no text (a frame painted outside CellLayout.Paint records empty and would pass unjudged)");
         var result = Check(frame);
-        if (@"C:\Users\SebastianGodelet\.claude\jobs\028da901\tmp\dump.txt" is { Length: > 0 } dump)
+        if (Environment.GetEnvironmentVariable("PILOT_WIREFRAME_DUMP") is { Length: > 0 } dump)
         {
             lock (DumpLock)
             {
-                File.AppendAllText(dump, key + "\n" + CellWireframe.Describe(result) + "\n");
-                File.AppendAllLines(dump, frame.Frame.Texts.Select(t => key + "\tTEXT\t" + t.ToString()));
                 File.AppendAllLines(dump, [$"{key}	TIME	record {recorded} ms, check {watch.ElapsedMilliseconds - recorded} ms"]);
                 File.AppendAllLines(dump, Findings(result).Select(f => $"{key}\t{f.Rule}\t{f.What}"));
             }
@@ -195,73 +194,6 @@ public static class TerminalWireframeSweepTests
     /// </summary>
     internal static readonly (string Case, string Rule, string What)[] Baseline =
     [
-        // A text leaf a cell or more short of the room its row has: cut while free cells remain to its right
-        ("fleet | long | 100x30", "CutWithRoom", "text is cut (98 of 117 cells)"),
-        ("fleet | long | 80x24", "CutWithRoom", "text is cut (78 of 117 cells)"),
-        ("fleet | many | 100x30", "CutWithRoom", "text is cut (98 of 117 cells)"),
-        ("fleet | many | 80x24", "CutWithRoom", "text is cut (78 of 117 cells)"),
-        ("flights | long | 100x30", "CutWithRoom", "text is cut (98 of 287 cells)"),
-        ("flights | long | 160x44", "CutWithRoom", "text is cut (120 of 287 cells)"),
-        ("flights | long | 250x60", "CutWithRoom", "text is cut (210 of 287 cells)"),
-        ("flights | long | 80x24", "CutWithRoom", "text is cut (78 of 287 cells)"),
-        ("help card | long | 100x30", "CutWithRoom", "text is cut (98 of 287 cells)"),
-        ("help card | long | 160x44", "CutWithRoom", "text is cut (120 of 287 cells)"),
-        ("help card | long | 250x60", "CutWithRoom", "text is cut (210 of 287 cells)"),
-        ("help card | long | 80x24", "CutWithRoom", "text is cut (78 of 287 cells)"),
-        ("home | long | 100x30", "CutWithRoom", "text is cut (98 of 287 cells)"),
-        ("home | long | 160x44", "CutWithRoom", "text is cut (120 of 287 cells)"),
-        ("home | long | 250x60", "CutWithRoom", "text is cut (210 of 287 cells)"),
-        ("home | long | 80x24", "CutWithRoom", "text is cut (78 of 287 cells)"),
-        ("jobs | long | 100x30", "CutWithRoom", "text is cut (46 of 47 cells)"),
-        ("jobs | long | 100x30", "CutWithRoom", "text is cut (98 of 147 cells)"),
-        ("jobs | long | 160x44", "CutWithRoom", "text is cut (120 of 147 cells)"),
-        ("jobs | long | 80x24", "CutWithRoom", "text is cut (78 of 147 cells)"),
-        ("open card | long | 100x30", "CutWithRoom", "text is cut (98 of 287 cells)"),
-        ("open card | long | 160x44", "CutWithRoom", "text is cut (120 of 287 cells)"),
-        ("open card | long | 250x60", "CutWithRoom", "text is cut (210 of 287 cells)"),
-        ("open card | long | 80x24", "CutWithRoom", "text is cut (78 of 287 cells)"),
-        ("pull requests | long | 100x30", "CutWithRoom", "text is cut (75 of 89 cells)"),
-        ("pull requests | long | 100x30", "CutWithRoom", "text is cut (98 of 111 cells)"),
-        ("pull requests | long | 160x44", "CutWithRoom", "text is cut (13 of 14 cells)"),
-        ("pull requests | long | 160x44", "CutWithRoom", "text is cut (13 of 14 cells)"),
-        ("pull requests | long | 160x44", "CutWithRoom", "text is cut (13 of 14 cells)"),
-        ("pull requests | long | 160x44", "CutWithRoom", "text is cut (13 of 15 cells)"),
-        ("pull requests | long | 160x44", "CutWithRoom", "text is cut (13 of 15 cells)"),
-        ("pull requests | long | 160x44", "CutWithRoom", "text is cut (13 of 15 cells)"),
-        ("pull requests | long | 160x44", "CutWithRoom", "text is cut (13 of 15 cells)"),
-        ("pull requests | long | 160x44", "CutWithRoom", "text is cut (13 of 15 cells)"),
-        ("pull requests | long | 160x44", "CutWithRoom", "text is cut (13 of 15 cells)"),
-        ("pull requests | long | 80x24", "CutWithRoom", "text is cut (55 of 89 cells)"),
-        ("pull requests | long | 80x24", "CutWithRoom", "text is cut (78 of 111 cells)"),
-        ("pull requests | long | 80x24", "CutWithRoom", "text is cut (78 of 85 cells)"),
-        ("pull requests | many | 100x30", "CutWithRoom", "text is cut (76 of 90 cells)"),
-        ("pull requests | many | 100x30", "CutWithRoom", "text is cut (98 of 113 cells)"),
-        ("pull requests | many | 160x44", "CutWithRoom", "text is cut (13 of 14 cells)"),
-        ("pull requests | many | 160x44", "CutWithRoom", "text is cut (13 of 14 cells)"),
-        ("pull requests | many | 160x44", "CutWithRoom", "text is cut (13 of 14 cells)"),
-        ("pull requests | many | 160x44", "CutWithRoom", "text is cut (13 of 14 cells)"),
-        ("pull requests | many | 160x44", "CutWithRoom", "text is cut (13 of 14 cells)"),
-        ("pull requests | many | 160x44", "CutWithRoom", "text is cut (13 of 14 cells)"),
-        ("pull requests | many | 160x44", "CutWithRoom", "text is cut (13 of 14 cells)"),
-        ("pull requests | many | 160x44", "CutWithRoom", "text is cut (13 of 14 cells)"),
-        ("pull requests | many | 160x44", "CutWithRoom", "text is cut (13 of 14 cells)"),
-        ("pull requests | many | 160x44", "CutWithRoom", "text is cut (13 of 15 cells)"),
-        ("pull requests | many | 160x44", "CutWithRoom", "text is cut (13 of 15 cells)"),
-        ("pull requests | many | 160x44", "CutWithRoom", "text is cut (13 of 15 cells)"),
-        ("pull requests | many | 160x44", "CutWithRoom", "text is cut (13 of 15 cells)"),
-        ("pull requests | many | 80x24", "CutWithRoom", "text is cut (56 of 90 cells)"),
-        ("pull requests | many | 80x24", "CutWithRoom", "text is cut (78 of 113 cells)"),
-        ("pull requests | many | 80x24", "CutWithRoom", "text is cut (78 of 85 cells)"),
-        ("settings | long | 100x30", "CutWithRoom", "text is cut (81 of 87 cells)"),
-        ("settings | long | 100x30", "CutWithRoom", "text is cut (98 of 185 cells)"),
-        ("settings | long | 160x44", "CutWithRoom", "text is cut (120 of 185 cells)"),
-        ("settings | long | 80x24", "CutWithRoom", "text is cut (61 of 87 cells)"),
-        ("settings | long | 80x24", "CutWithRoom", "text is cut (78 of 185 cells)"),
-        ("settings | many | 100x30", "CutWithRoom", "text is cut (81 of 87 cells)"),
-        ("settings | many | 80x24", "CutWithRoom", "text is cut (61 of 87 cells)"),
-        ("settings | many | 80x24", "CutWithRoom", "text is cut (78 of 88 cells)"),
-        ("spend | long | 80x24", "CutWithRoom", "text is cut (78 of 85 cells)"),
-        ("spend | long | 80x24", "CutWithRoom", "text is cut (78 of 98 cells)"),
         // Text lying partly over a control of another node (a header over the divider handle, a count over the row it sits in)
         ("fleet | many | 100x30", "TextOverRegion", "text \"1 ringing\""),
         ("fleet | many | 100x30", "TextOverRegion", "text \"2 ringing\""),

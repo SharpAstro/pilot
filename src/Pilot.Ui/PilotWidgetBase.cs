@@ -11,6 +11,21 @@ internal abstract class PilotWidgetBase<TSurface> : PixelWidgetBase<TSurface>
 {
     protected PilotWidgetBase(Renderer<TSurface> renderer) : base(renderer) => ListCursor.Moved += CursorMoved;
 
+    /// <summary>The lists the page scrolls; a view names them so a cell host can take their scroll bars away.</summary>
+    protected virtual IEnumerable<ListScrollController> PageScrolls => [];
+
+    /// <summary>
+    /// For a terminal, which draws no scroll bar: the engine still reserves 6 columns beside every overflowing list (Console.Lib's CellLayout says a cell host
+    /// sets the mode to None), so rows were laid out for a page 6 columns wider than they had and their last cells lay past the list.
+    /// </summary>
+    internal void WithoutScrollBars()
+    {
+        foreach (var scroll in PageScrolls)
+        {
+            scroll.Mode = ScrollBarMode.None;
+        }
+    }
+
     /// <summary>Told the arranged nodes each time the page is rendered (the chrome's <see cref="LiveTextCheck"/>); null when nobody looks.</summary>
     public Action<ImmutableArray<Layout.ArrangedNode<float>>>? Arranged { get; set; }
 

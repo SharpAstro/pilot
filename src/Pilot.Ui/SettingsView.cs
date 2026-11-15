@@ -52,6 +52,11 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private static RGBAColor32 FieldBg => Palette.Current.MenuBg;
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
+
+
+    /// <summary>The lists this page scrolls, whose scroll bars <see cref="PilotWidgetBase{TSurface}.WithoutScrollBars"/> takes away.</summary>
+
+    protected override IEnumerable<ListScrollController> PageScrolls => [_scroll];
     private readonly Dictionary<string, TextInputState> _fields = new(StringComparer.Ordinal);
     // What the page has read, as one immutable record swapped whole: reads land on the pool, the render thread draws what
     // it finds, and neither waits on the other.

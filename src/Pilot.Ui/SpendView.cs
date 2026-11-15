@@ -124,6 +124,11 @@ internal sealed class SpendView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
 
+
+    /// <summary>The lists this page scrolls, whose scroll bars <see cref="PilotWidgetBase{TSurface}.WithoutScrollBars"/> takes away.</summary>
+
+    protected override IEnumerable<ListScrollController> PageScrolls => [_scroll];
+
     /// <summary>The window picked.</summary>
     public string Window { get; private set; } = "today";
 

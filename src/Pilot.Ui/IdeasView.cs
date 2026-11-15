@@ -40,6 +40,11 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     private sealed record Item(string Key, string Title, string? Description, bool IsNew, string Meta, string? Reason);
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
+
+
+    /// <summary>The lists this page scrolls, whose scroll bars <see cref="PilotWidgetBase{TSurface}.WithoutScrollBars"/> takes away.</summary>
+
+    protected override IEnumerable<ListScrollController> PageScrolls => [_scroll];
     private IdeasScreen _screen = IdeasScreen.Empty;
     private Open? _open;
     private Proposal? _proposal;
