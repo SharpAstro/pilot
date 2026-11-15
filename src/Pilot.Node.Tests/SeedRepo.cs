@@ -99,18 +99,7 @@ internal static class SeedRepo
 
     private static void Delete(string root)
     {
-        try
-        {
-            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(root, recursive: true);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Held or gone: the next run's sweep takes it.
-        }
+        TestDirs.DeleteTree(root);
     }
 
     /// <summary>

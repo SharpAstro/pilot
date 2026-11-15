@@ -30,10 +30,6 @@ public sealed class HeadWordsTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var file in Directory.EnumerateFiles(_dir, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
         TestDirs.DeleteTree(_dir);
     }
 

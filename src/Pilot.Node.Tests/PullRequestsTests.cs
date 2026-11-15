@@ -28,10 +28,6 @@ public sealed class PullRequestsTests : IDisposable
         {
             try
             {
-                foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-                {
-                    File.SetAttributes(file, FileAttributes.Normal);
-                }
                 TestDirs.DeleteTree(_root);
                 return;
             }
@@ -949,11 +945,7 @@ public sealed class PullRequestsTests : IDisposable
         (await watch.RefreshAsync(Ct))!.PullRequests.Length.ShouldBe(2);
 
         // The clone goes: its repo is tracked no more, and the PR GitHub still holds is not in the row.
-        foreach (var file in Directory.EnumerateFiles(mercury, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(mercury, recursive: true);
+        TestDirs.DeleteTree(mercury);
         var row = (await watch.RefreshAsync(Ct))!;
 
         row.PullRequests.Select(p => p.Repo).ShouldBe(["SharpAstro/pilot"]);

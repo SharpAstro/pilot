@@ -117,11 +117,7 @@ public sealed class FlightHoldLabelTests : ReviewTestsBase
 
         public void Dispose()
         {
-            foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(_root, recursive: true);
+            TestDirs.DeleteTree(_root);
         }
 
         private string Clone()

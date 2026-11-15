@@ -14,7 +14,14 @@ internal static class TestDirs
             {
                 foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
                 {
-                    File.SetAttributes(file, FileAttributes.Normal);
+                    try
+                    {
+                        File.SetAttributes(file, FileAttributes.Normal);
+                    }
+                    catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+                    {
+                        // A git child removed it mid-walk (#1063): nothing left to make writable.
+                    }
                 }
                 Directory.Delete(root, recursive: true);
             }

@@ -240,10 +240,6 @@ public sealed class DisconnectCliTests : IAsyncDisposable
         }
         if (Directory.Exists(_nodeRoot))
         {
-            foreach (var file in Directory.EnumerateFiles(_nodeRoot, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
             TestDirs.DeleteTree(_nodeRoot);
         }
     }

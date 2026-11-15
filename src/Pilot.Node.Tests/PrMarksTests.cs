@@ -66,10 +66,6 @@ public abstract class PrMarksTestsBase : IDisposable
             }
         }
         _testGit.Release();
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
         TestDirs.DeleteTree(_root);
         _testGit.Verify();
     }
