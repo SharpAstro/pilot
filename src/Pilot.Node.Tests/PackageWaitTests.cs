@@ -331,6 +331,33 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
+    public async Task AWaitWithNoProducerRaisesItsOneCardSayingNoProducerIsKnownAndLooksForNoRun()
+    {
+        var node = NewRig();
+        (await Drive(node, Verbs.CreateFlight, Verbs.RepoTarget(Repo), "1", "Issue 1")).Ok.ShouldBeTrue();
+        var flight = node.State.Flights().Single();
+        node.State.PutFlight(flight with
+        {
+            PackageWaits = [new PackageWait { Id = "Drawboard.Core", Line = "1.2", Wanted = "1.2.7", Producer = PackageWait.NoProducer, Since = Start }],
+        });
+        _feed.Publish("Drawboard.Core", "1.2.5");
+
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await node.Watch.LookAsync(Ct);
+        node.State.Cards().ShouldNotContain(c => c.Kind == PackageWatch.LateKind);
+
+        _time.Advance(TimeSpan.FromMinutes(25));
+        await node.Watch.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await node.Watch.LookAsync(Ct);
+
+        var card = node.State.Cards().Where(c => c.Kind == PackageWatch.LateKind).ShouldHaveSingleItem();
+        card.Detail.ShouldNotBeNull().ShouldContain("no producer is known for Drawboard.Core 1.2.7");
+        card.Detail.ShouldContain("latest published: 1.2.5");
+        _github.Runs.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task AWaitSurvivesARestartOfTheNodeAndSoDoesTheCardAlreadyRaised()
     {
         MakeRepoAReleaser();

@@ -18,6 +18,9 @@ public sealed partial class LegCommander
     /// <summary>What says whether a package a restore missed is being published; null in a test that holds nothing.</summary>
     public PackageReleases? Releases { get; set; }
 
+    /// <summary>nuget.org's flat container, for telling a restore that read a stale HTTP cache from a package not yet published (#1064); null in a test that has none.</summary>
+    public INuGetFeed? Feed { get; set; }
+
     /// <summary>
     /// Holds <paramref name="leg"/> when <paramref name="text"/> (a failed report, a failed check's output) names a restore
     /// miss of a package being published: true when it did. The caller stops the worker.

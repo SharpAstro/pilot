@@ -56,6 +56,86 @@ public sealed class JobTestsFailures : JobTestsBase
         _said.ShouldHaveSingleItem();
     }
 
+    private const string Miss = "error NU1102: Unable to find package Drawboard.Core with version (>= 1.2.7) [/w/App.csproj]";
+
+    private string Plane()
+    {
+        var plane = Path.Combine(_root, ".claude", "worktrees", "TIA1");
+        Directory.CreateDirectory(plane);
+        return plane;
+    }
+
+    // The first start fails with the miss; every later start runs the script `later`.
+    private FakeJobLauncher FirstMissesThen(FakeScript later)
+    {
+        var fake = UseFake();
+        fake.On(_ => true, FakeScript.Prints(1, Miss));
+        fake.On(_ => fake.Starts.Count > 0, later);
+        return fake;
+    }
+
+    private string RerunOf(string first) => _state.Jobs().Single(j => j.Id != first && j.Kind == JobKind.Run).Id;
+
+    [Fact]
+    public async Task AStaleRestoreInAPlaneIsRerunOnceWithoutTheHttpCacheAndItsOwnerHearsTheRerunOnly()
+    {
+        var feed = new FakeNuGetFeed();
+        feed.Publish("Drawboard.Core", "1.2.7");
+        _jobs.Feed = feed;
+        var fake = FirstMissesThen(FakeScript.Prints(0, "restored"));
+
+        var first = Run("dotnet build", cwd: Plane()).Made.ShouldNotBeNull();
+        var again = await Until(first, j => j.EndedAt is not null && j.Error is { } e && e.Contains("rerun once as job"));
+        var second = RerunOf(first);
+        var ended = await Ended(second);
+
+        ended.State.ShouldBe(JobState.Succeeded);
+        again.Error.ShouldNotBeNull().ShouldContain($"rerun once as job {second}");
+        fake.Job(second).Launch.Environment.ShouldNotBeNull().ShouldContainKeyAndValue("RestoreNoHttpCache", "true");
+        _said.Select(s => s.Args[0]).ToList().ShouldHaveSingleItem().ShouldContain($"Your job {second}");
+        _said.Single().Args[0].ShouldContain("succeeded");
+        _said.Single().Args[0].ShouldContain("rerun once because the HTTP cache was stale for Drawboard.Core 1.2.7");
+        _state.Cards().ShouldBeEmpty();
+        fake.Starts.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ASecondMissIsToldAsAFailureWithNoThirdRun()
+    {
+        var feed = new FakeNuGetFeed();
+        feed.Publish("Drawboard.Core", "1.2.7");
+        _jobs.Feed = feed;
+        var fake = FirstMissesThen(FakeScript.Prints(1, Miss));
+
+        var first = Run("dotnet build", cwd: Plane()).Made.ShouldNotBeNull();
+        await Until(first, j => j.Error is { } e && e.Contains("rerun once as job"));
+        var ended = await Ended(RerunOf(first));
+
+        ended.State.ShouldBe(JobState.Failed);
+        _said.Select(s => s.Args[0]).ToList().ShouldHaveSingleItem().ShouldContain("failed");
+        fake.Starts.Count.ShouldBe(2);
+        _state.Jobs().Count(j => j.Kind == JobKind.Run).ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task AnUnlistedVersionAJobOutsideAPlaneAndACheckAreNotRerun()
+    {
+        var feed = new FakeNuGetFeed();
+        _jobs.Feed = feed;
+        var fake = UseFake();
+        fake.On(_ => true, FakeScript.Prints(1, Miss));
+
+        var unlisted = await Ended(Run("dotnet build", cwd: Plane()).Made.ShouldNotBeNull());
+        feed.Publish("Drawboard.Core", "1.2.7");
+        var outside = await Ended(Run("dotnet build").Made.ShouldNotBeNull());
+        var check = await _jobs.RunCheckAsync("TIA1", "parser", "dotnet build", Plane(), TimeSpan.FromMinutes(30), Ct);
+
+        (unlisted.State, outside.State).ShouldBe((JobState.Failed, JobState.Failed));
+        check.Passed.ShouldBeFalse();
+        fake.Starts.Count.ShouldBe(3);
+        _state.Jobs().Count(j => j.Kind == JobKind.Run).ShouldBe(2);
+    }
+
     private async Task<CommandRequest> Said(int count)
     {
         for (var i = 0; i < 100 && _said.Count < count; i++)

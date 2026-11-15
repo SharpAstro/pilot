@@ -132,7 +132,7 @@ dotnet test Pilot.Gui.Tests -c Release --no-build
 - **A behaviour of the live node, an update, or a fleet peer:** cannot be checked from a plane. Check it by a test
   against the in-memory node and say that the live run is the controller's.
 - **A change in a sibling repo or a published package:** not checkable here; it is its own flight. A restore failing
-  NU1101 or NU1102 on a package a sibling is publishing is held by the node, not fixed in the plane.
+  NU1101 or NU1102 on a package a sibling is publishing is held by the node, not fixed in the plane. An NU1102 on a version nuget.org already lists is NuGet's HTTP cache (about 30 minutes), which the node reruns past once; one on a version it does not list yet is held, whoever publishes it.
 - **Docs only** (`README.md`, `src/README.md`, this file): the Release build still runs, since CI does for any change
   under `src`, and a PR touching nothing of `src` skips the build and passes the gate.
 

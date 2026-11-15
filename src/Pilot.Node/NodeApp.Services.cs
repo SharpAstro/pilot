@@ -340,6 +340,8 @@ public static partial class NodeApp
             legs.Slots = services.GetRequiredService<AdmissionGate>();
             legs.Attachments = services.GetRequiredService<Attachments>();
             legs.Releases = services.GetRequiredService<PackageReleases>();
+            legs.Feed = services.GetRequiredService<INuGetFeed>();
+            services.GetRequiredService<JobRunner>().Feed = services.GetRequiredService<INuGetFeed>();
             legs.Ledger = services.GetRequiredService<SpendLedger>();
             legs.SiblingSync = services.GetRequiredService<RepoSync>();
             // Read as it is when a finish's check ends: a finish that outlasts the command route's deadline was answered queued.

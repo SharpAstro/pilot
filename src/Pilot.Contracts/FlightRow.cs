@@ -539,6 +539,13 @@ public sealed record PackageWait
     /// </summary>
     public string? Wanted { get; init; }
 
+    /// <summary>The <see cref="Producer"/> of a leg's hold that no flight, release or sibling clone is known to publish: only nuget.org is watched.</summary>
+    public const string NoProducer = "nuget.org";
+
+    /// <summary>Whether no producer is known for this wait (<see cref="NoProducer"/>): there is no publish run to look for.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasNoProducer => string.Equals(Producer, NoProducer, StringComparison.Ordinal) && Commit is null && RepoPath is null;
+
     /// <summary>The producer's clone, for a producer that is a repo and no flight (<see cref="Producer"/> is then its name); null otherwise.</summary>
     public string? RepoPath { get; init; }
 }

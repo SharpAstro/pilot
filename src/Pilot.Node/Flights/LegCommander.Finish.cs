@@ -197,6 +197,7 @@ public sealed partial class LegCommander
                 {
                     throw new FlightException($"{stale.Text}\nThen finish again; if it still fails, report it again and the node will take it as a failure.");
                 }
+                await RefuseStaleReportAsync(flight, leg, report, cancellationToken);
                 // A conflict worker that failed is followed at once by the next rung of the ladder (PIL846), with no card between; past the
                 // last rung only a report in the decision shape rings, and any other failure is the leg-failed card's below.
                 if (await ConflictRoundEndedAsync(flight, leg, report, cancellationToken))
@@ -572,7 +573,7 @@ public sealed partial class LegCommander
             HoldForLeg(flight.Code, leg.Name, $"the {leg.Name} leg's check is rerunning since {since.ToLocalTime():HH:mm}");
             try
             {
-                run = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken, flight.Code, leg.Name));
+                run = await RerunStaleAsync(await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken, flight.Code, leg.Name)), check, flight, leg, cancellationToken);
                 if (run.StoppedSaturated)
                 {
                     // Stopped by its budget on a machine that was saturated for most of the run: run once more, as a fresh job.

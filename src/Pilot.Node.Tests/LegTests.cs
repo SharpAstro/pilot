@@ -96,6 +96,9 @@ internal sealed class FakeChecks : ICheckRunner
 
     public List<(string Command, string Cwd)> Runs { get; } = [];
 
+    /// <summary>The extra environment each run was given, parallel to <see cref="Runs"/>; null for a run with none.</summary>
+    public List<IReadOnlyDictionary<string, string>?> Environments { get; } = [];
+
     /// <summary>Awaited as each run begins: a check that takes as long as the test says. Null answers at once.</summary>
     public Func<Task>? OnRun { get; set; }
 
@@ -104,9 +107,10 @@ internal sealed class FakeChecks : ICheckRunner
 
     public bool NodeStopping => Stopping;
 
-    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null)
+    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null, IReadOnlyDictionary<string, string>? environment = null)
     {
         Runs.Add((command, cwd));
+        Environments.Add(environment);
         if (OnRun is { } wait)
         {
             await wait();

@@ -218,6 +218,71 @@ public sealed class LegHoldTests1 : LegHoldTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task ACheckThatFailsNu1102OnAListedVersionIsRerunOnceWithoutTheHttpCacheAndTheLegGoesOnWithNoCard()
+    {
+        MakeSiblingARelease();
+        _feed.Publish("Drawboard.Core", "1.2.7");
+        _legs.Feed = _feed;
+        await FlyingParser(check: "dotnet build");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        var runs = _checks.Runs.Count;
+        _checks.Script.Enqueue(new CheckRun(1, $"Build FAILED.\n{Nu1102}\n    1 Error(s)"));
+        _checks.Next = new CheckRun(0, "all green");
+
+        var result = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "all good");
+
+        result.Ok.ShouldBeTrue();
+        L("parser").State.ShouldBe(LegState.Done);
+        _checks.Runs.Count.ShouldBe(runs + 2);
+        _checks.Environments[runs].ShouldBeNull();
+        var rerun = _checks.Environments[runs + 1].ShouldNotBeNull();
+        rerun["RestoreNoHttpCache"].ShouldBe("true");
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+        _state.Cards().ShouldNotContain(c => c.Kind == "leg-failed" || c.Kind == LegCommander.HoldKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARerunThatFailsNu1102AgainIsNotRerunAThirdTime()
+    {
+        MakeSiblingARelease();
+        _feed.Publish("Drawboard.Core", "1.2.7");
+        _legs.Feed = _feed;
+        await FlyingParser(check: "dotnet build");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        var runs = _checks.Runs.Count;
+        _checks.Next = new CheckRun(1, $"Build FAILED.\n{Nu1102}");
+
+        var result = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "all good");
+
+        result.Ok.ShouldBeFalse();
+        _checks.Runs.Count.ShouldBe(runs + 2);
+        L("parser").State.ShouldBe(LegState.Flying);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFailedReportNamingAListedMissIsRefusedOnceWithHowToRerunThenTakenAsAFailure()
+    {
+        MakeSiblingARelease();
+        _feed.Publish("Drawboard.Core", "1.2.7");
+        _legs.Feed = _feed;
+        await FlyingParser();
+
+        var first = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", Nu1102);
+
+        first.Ok.ShouldBeFalse();
+        first.Error.ShouldNotBeNull().ShouldContain("-p:RestoreNoHttpCache=true");
+        first.Error.ShouldContain("Drawboard.Core 1.2.7");
+        L("parser").State.ShouldBe(LegState.Flying);
+
+        await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", Nu1102);
+
+        L("parser").State.ShouldBe(LegState.Failed);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task ANu1101WithoutAVersionHoldsForTheReleasesLine()
     {
         MakeSiblingARelease();
@@ -250,17 +315,47 @@ public sealed class LegHoldTests1 : LegHoldTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AnNu1102OnAPackageNobodyIsPublishingFailsAndRingsAsBefore()
+    public async Task AnNu1102OnAVersionNuGetDoesNotListYetHoldsEvenWhenNobodyIsKnownToPublishIt()
     {
         // The sibling is on another line than the one asked for, and no flight records a release.
         MakeSiblingARelease(line: "1.3");
         await FlyingParser();
+        var job = L("parser").WorkerJob.ShouldNotBeNull();
 
         await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", Nu1102);
 
         var leg = L("parser");
-        (leg.State, leg.Hold).ShouldBe((LegState.Failed, null));
-        _state.Cards().Where(c => c.Kind == "leg-failed").ShouldHaveSingleItem().Bin.ShouldBe(CardBin.Ring);
+        (leg.State, leg.WorkerJob).ShouldBe((LegState.Planned, null));
+        var hold = leg.Hold.ShouldNotBeNull();
+        (hold.Id, hold.Wanted, hold.Line, hold.Producer, hold.Commit, hold.RepoPath).ShouldBe(("Drawboard.Core", "1.2.7", "1.2", PackageWait.NoProducer, null, null));
+        FlightWaiting.HoldText(hold).ShouldBe("holding: Drawboard.Core 1.2.7 not on nuget.org yet");
+        _workers.Stopped.ShouldContain(job);
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+        _state.Cards().Where(c => c.Kind == LegCommander.HoldKind).ShouldHaveSingleItem().Bin.ShouldBe(CardBin.Handled);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AHoldWithNoProducerStartsTheLegAfreshOnceTheFakeFeedListsTheVersion()
+    {
+        await FlyingParser();
+        await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", Nu1102);
+        L("parser").Hold.ShouldNotBeNull().Producer.ShouldBe(PackageWait.NoProducer);
+        var started = _workers.Started.Count;
+        _legs.Models = new RoleModels(null);
+
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        L("parser").Hold.ShouldNotBeNull();
+
+        _feed.Publish("Drawboard.Core", "1.2.7");
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await _watch.LookAsync(Ct);
+
+        var leg = L("parser");
+        (leg.State, leg.Hold).ShouldBe((LegState.Flying, null));
+        _workers.Started.Skip(started).ShouldHaveSingleItem().Brief.ShouldContain("## Resumed after a hold");
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
     }
 
     [Fact]
@@ -436,6 +531,8 @@ public sealed class LegHoldTests2 : LegHoldTestsBase
         brief.ShouldContain("the NU line, verbatim");
         brief.ShouldContain("no local");
         brief.ShouldContain("feed, no pin changed back");
+        brief.ShouldContain("NuGet's HTTP cache");
+        brief.ShouldNotContain("registration lag", Case.Insensitive);
     }
 
     [Theory]

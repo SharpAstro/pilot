@@ -966,12 +966,13 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     public CheckLimit CheckLimitFor(string command, string cwd) => CheckLimit.For(state.Jobs(), command, cwd);
 
     /// <summary>As above, with the limit and where it came from, so a stop can say both.</summary>
-    public Task<CheckRun> RunCheckAsync(string flight, string leg, string command, string cwd, CheckLimit limit, CancellationToken cancellationToken)
+    public Task<CheckRun> RunCheckAsync(string flight, string leg, string command, string cwd, CheckLimit limit, CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         // The look for a carried check and the attach to it (or the queueing of a new one) are one step against a watch ending a check.
         lock (_checkEndLock)
         {
-            return RunCheckLockedAsync(flight, leg, command, cwd, limit, cancellationToken);
+            return RunCheckLockedAsync(flight, leg, command, cwd, limit, cancellationToken, environment);
         }
     }
 
@@ -1008,7 +1009,8 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     /// <summary>Test hook: runs once a job's slot is free and the look for the next in line is asked for.</summary>
     internal Action<string>? SlotFreed { get; set; }
 
-    private async Task<CheckRun> RunCheckLockedAsync(string flight, string leg, string command, string cwd, CheckLimit limit, CancellationToken cancellationToken)
+    private async Task<CheckRun> RunCheckLockedAsync(string flight, string leg, string command, string cwd, CheckLimit limit, CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string>? environment)
     {
         var budget = limit.Limit;
         // A check a previous node left queued (carried over the restart) is waited on, not queued again at the back, and so is the
@@ -1053,6 +1055,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             StartedAt = now,
             QueuedAt = now,
             MemoryKey = JobKey.Of(command, cwd).ToString(),
+            ExtraEnvironment = environment is { Count: > 0 } ? new Dictionary<string, string>(environment, StringComparer.Ordinal) : null,
         };
         _checkWaiters[jobId] = done;
         _mine[jobId] = 0;
@@ -1815,6 +1818,13 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         foreach (var (name, value) in Flights.BuildCache.Variables(BuildCache, job.Cwd, BuildCacheRoot, IsSeed(job)))
         {
             variables[name] = value;
+        }
+        if (job.ExtraEnvironment is { } extra)
+        {
+            foreach (var (name, value) in extra)
+            {
+                variables[name] = value;
+            }
         }
         return variables;
     }
@@ -2650,7 +2660,11 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             Pump();
             SlotFreed?.Invoke(job.Id);
         }
-        await TellAsync(ended, CancellationToken.None, last);
+        // A stale NuGet HTTP cache (#1064): the slot is free, so the feed lookup holds nothing; the rerun's end is what the owner hears.
+        if (!await RerunStaleAsync(ended, last))
+        {
+            await TellAsync(ended, CancellationToken.None, last);
+        }
         process.Child?.Dispose();
     }
 
@@ -2672,7 +2686,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 : current with { TestsFailed = current.TestsFailed + 1, FirstTestFailed = current.FirstTestFailed ?? failure.Name };
             // A fail-fast run ends at its first failed test and its end names it at once: an early word would say it twice, the
             // first time wrongly ("runs on"). A build error does not stop it, so that one is still told early.
-            if (!updated.FailureTold && updated.Owner is not null && updated.Kind != JobKind.Check && !(updated.FailFast && updated.TestsFailed > 0) && Say is not null)
+            if (!updated.FailureTold && updated.Owner is not null && updated.Kind != JobKind.Check && !(updated.FailFast && updated.TestsFailed > 0) && !HoldsStaleMiss(updated, failure) && Say is not null)
             {
                 updated = updated with { FailureTold = true };
                 toTell = updated;
@@ -2786,7 +2800,8 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             _ => $"failed: {job.Error}",
         };
         var lines = last is { Length: > 0 } ? "\nIts last lines:\n" + string.Join('\n', last.TakeLast(12)) : "";
-        var text = $"Your job {job.Id} (`{job.Command}`, in {job.Cwd}) {how}, after {Took(took)}.{lines}\nThe whole output is in {job.LogPath}. Carry on from here.";
+        var rerun = _rerunNotes.TryGetValue(job.Id, out var note) ? $" ({note})" : "";
+        var text = $"Your job {job.Id} (`{job.Command}`, in {job.Cwd}) {how}{rerun}, after {Took(took)}.{lines}\nThe whole output is in {job.LogPath}. Carry on from here.";
         if (Ready is not null)
         {
             // Pilot #810: the judgement of the owner below reads the session rows, and until the tracker's first poll those are the
