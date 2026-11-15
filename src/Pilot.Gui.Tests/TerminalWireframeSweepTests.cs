@@ -115,7 +115,8 @@ public static class TerminalWireframeSweepTests
                         loaded.TrySetResult();
                     }
                 };
-                chrome.Settings.Tree(PageData.Now, width);
+                // The read goes on only while the page is drawn "now" (SettingsView.Unseen), so this first draw is at the real time.
+                chrome.Settings.Tree(DateTimeOffset.UtcNow, width);
                 await loaded.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
                 tree = chrome.Settings.Tree(PageData.Now, width);
                 break;
