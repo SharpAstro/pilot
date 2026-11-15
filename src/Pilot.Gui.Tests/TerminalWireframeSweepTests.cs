@@ -21,7 +21,7 @@ public static class TerminalWireframeSweepTests
     internal static readonly string[] Cases =
     [
         "home", "sessions", "flights", "repos", "pull requests", "jobs", "fleet", "ideas", "spend", "settings", "chat",
-        "help card", "open card", "chat long typed",
+        "help card", "open card", "chat long typed", "tooltip open",
     ];
 
     internal static IEnumerable<TheoryDataRow<string, string, int, int>> RowsOf(int columns, int rows, string state) =>
@@ -64,7 +64,7 @@ public static class TerminalWireframeSweepTests
         chrome.About.KeysFirst = true;
         var page = name switch
         {
-            "help card" or "open card" => PilotPage.Home,
+            "help card" or "open card" or "tooltip open" => PilotPage.Home,
             "chat long typed" => PilotPage.Chat,
             _ => PageTextOverlapTests.PageOf(name),
         };
@@ -124,7 +124,18 @@ public static class TerminalWireframeSweepTests
             default: tree = chrome.Home.Tree(new HomeScreen(data.Flights, data.Sessions, data.Jobs, cards, data.Machines)); break;
         }
         var rail = TerminalRail.Tree(page, GlyphMode.Emoji, data.Jobs, null, PageData.Now, _ => { }, null, columns);
-        var arranged = TerminalFrame.Build(rail, tree, cardsBeside ? chrome.Cards.Tree(cards) : null, columns, rows, CellMeasureContext.PixelAuthored);
+        var cardsTree = cardsBeside ? chrome.Cards.Tree(cards) : null;
+        var arranged = TerminalFrame.Build(rail, tree, cardsTree, columns, rows, CellMeasureContext.PixelAuthored);
+        if (name == "tooltip open")
+        {
+            // A hovered node's tooltip is due: the first node that carries one (a cut card title when the panel stands beside the page,
+            // else a rail or page node), anchored on its cells as CellInputRouter anchors it.
+            var hovered = arranged.FirstOrDefault(a => a.Node.Tooltip is { Length: > 0 });
+            hovered.Node.ShouldNotBeNull($"{name} | {columns}x{rows}: no node carries a tooltip, so no tooltip was opened");
+            var b = hovered.Bounds;
+            arranged = TerminalFrame.Build(rail, tree, cardsTree, columns, rows, CellMeasureContext.PixelAuthored,
+                new TooltipRequest(hovered.Node.Tooltip!, new RectF32(b.X, b.Y, b.Width, b.Height)));
+        }
         return Record(arranged, columns, rows);
     }
 
@@ -178,10 +189,67 @@ public static class TerminalWireframeSweepTests
 
     /// <summary>
     /// The findings on main when the sweep was written, grouped by cause: the case, the rule, and a part of the finding's message.
-    /// Later legs empty this list; nothing is added to it.
+    /// Later legs empty this list; nothing is added to it. Console.Lib 5.22's EmptyRows and SolidStrip raised the entries below (PIL1075),
+    /// each tagged with the issue that owns it: Console.Lib #77 (SolidStrip on an empty TextInput), #78 (EmptyRows on a scroll viewport),
+    /// pilot #1077 (rows two cells tall).
     /// </summary>
     internal static readonly (string Case, string Rule, string What)[] Baseline =
     [
+        ("pull requests | long | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 11 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | long | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 13 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | long | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 21 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("settings | many | 80x24", "SolidStrip", "a filled node one row tall and 43 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // Console.Lib #77
+        ("pull requests | many | 80x24", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 12 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 80x24", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 14 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 80x24", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 18 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 80x24", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 22 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("settings | long | 100x30", "SolidStrip", "a filled node one row tall and 63 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // Console.Lib #77
+        ("jobs | long | 100x30", "EmptyRows", "a filled container is arranged 18 rows tall but its content sits on row 12 only; 17 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // Console.Lib #78
+        ("settings | many | 250x60", "SolidStrip", "a filled node one row tall and 175 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // Console.Lib #77
+        ("pull requests | many | 250x60", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 11 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 250x60", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 13 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 250x60", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 17 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 250x60", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 21 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 250x60", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 25 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 250x60", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 33 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 250x60", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 37 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 250x60", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 41 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 250x60", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 45 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 250x60", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 53 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 250x60", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 57 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("jobs | many | 250x60", "EmptyRows", "a filled container is arranged 18 rows tall but its content sits on row 42 only; 17 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // Console.Lib #78
+        ("jobs | long | 160x44", "EmptyRows", "a filled container is arranged 18 rows tall but its content sits on row 26 only; 17 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // Console.Lib #78
+        ("settings | long | 160x44", "SolidStrip", "a filled node one row tall and 85 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // Console.Lib #77
+        ("pull requests | long | 160x44", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 11 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | long | 160x44", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 13 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | long | 160x44", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 21 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | long | 160x44", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 29 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("jobs | long | 250x60", "EmptyRows", "a filled container is arranged 18 rows tall but its content sits on row 42 only; 17 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // Console.Lib #78
+        ("pull requests | long | 250x60", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 11 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | long | 250x60", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 13 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | long | 250x60", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 21 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | long | 250x60", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 29 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("settings | long | 250x60", "SolidStrip", "a filled node one row tall and 175 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // Console.Lib #77
+        ("settings | many | 100x30", "SolidStrip", "a filled node one row tall and 63 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // Console.Lib #77
+        ("pull requests | many | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 12 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 14 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 18 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 22 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 26 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("settings | many | 160x44", "SolidStrip", "a filled node one row tall and 85 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // Console.Lib #77
+        ("pull requests | many | 160x44", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 12 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 160x44", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 14 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 160x44", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 18 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 160x44", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 22 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 160x44", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 26 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 160x44", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 34 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 160x44", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 38 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | many | 160x44", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 42 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("jobs | many | 160x44", "EmptyRows", "a filled container is arranged 18 rows tall but its content sits on row 26 only; 17 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // Console.Lib #78
+        ("settings | long | 80x24", "SolidStrip", "a filled node one row tall and 43 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // Console.Lib #77
+        ("pull requests | long | 80x24", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 12 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | long | 80x24", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 14 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
+        ("pull requests | long | 80x24", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 22 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s))"), // pilot #1077
     ];
 }
 

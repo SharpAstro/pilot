@@ -458,7 +458,7 @@ while (!stop.IsCancellationRequested)
     }
 
     var now = DateTimeOffset.UtcNow;
-    if (dirty || feed.Version + fleetWatch.Version != drawnVersion || now - drawnAt >= TimeSpan.FromSeconds(1))
+    if (dirty || input.Router.TooltipNeedsFrame || feed.Version + fleetWatch.Version != drawnVersion || now - drawnAt >= TimeSpan.FromSeconds(1))
     {
         dirty = false;
         drawnVersion = feed.Version + fleetWatch.Version;
@@ -532,7 +532,7 @@ while (!stop.IsCancellationRequested)
         // The cards panel stands beside the page when there is room beside a usable page, and something to show.
         // Arranged and cropped to each scroll container and page rect (Console.Lib's painter has no clip); the hit test reads the same tree.
         // No clear: the cell buffer diffs each frame against the last, and the tree's backgrounds cover every cell.
-        arranged = TerminalFrame.Build(railTree, pageTree, cardsBeside ? cards.Tree(cardsScreen) : null, columns, rows, CellMeasureContext.PixelAuthored);
+        arranged = TerminalFrame.Build(railTree, pageTree, cardsBeside ? cards.Tree(cardsScreen) : null, columns, rows, CellMeasureContext.PixelAuthored, input.Router.Tooltip);
         TerminalFrame.Paint(terminal.HideCaret, () => CellLayout.Paint(terminal, arranged, surface));
         input.Painted();
         if (chat.ParkedCaret(page, focus, arranged) is var (caretColumn, caretRow))
