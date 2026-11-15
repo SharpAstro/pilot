@@ -55,7 +55,11 @@ public sealed class JobsTests
     }
 
     private static string Cells(JobsView<RgbaImage> jobs, JobsScreen screen) =>
-        CellLayout.Describe(Layout.Engine.Arrange(jobs.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored));
+        Cells(Layout.Engine.Arrange(jobs.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored));
+
+    // The cell dump, then what the page says a sentence at a time: a line that wraps is a leaf a word.
+    private static string Cells(System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> arranged) =>
+        CellLayout.Describe(arranged) + "\n" + string.Join("\n", SentenceRuns.Texts(arranged.Select(a => a.Node)));
 
     [Fact]
     public void TheRailsTasksGlyphSaysWhatTheJobsAreDoingAndItsTooltipCountsThem()
@@ -162,7 +166,7 @@ public sealed class JobsTests
         jobs.OnOpen = _ => { };
 
         var arranged = Layout.Engine.Arrange(jobs.Tree(Screen()), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
-        var described = CellLayout.Describe(arranged);
+        var described = Cells(arranged);
 
         described.ShouldContain("background tasks");
         described.ShouldContain("/data/jobs/j14.log");
@@ -287,7 +291,7 @@ public sealed class JobsTests
         var jobs = await Following(vessel, LogWith(), screen);
 
         var arranged = Layout.Engine.Arrange(jobs.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
-        var described = CellLayout.Describe(arranged);
+        var described = Cells(arranged);
         described.ShouldContain("pid");
         described.ShouldContain("4812");
         // The wrapper is the pid fact; the tree is what runs under it, a child marked └ under its parent, as pstree draws it.
@@ -603,7 +607,7 @@ public sealed class JobsTests
 
         // The output takes the panel's width beside the facts: a row sized by its height alone left it none on pixels.
         var arranged = Layout.Engine.Arrange(jobs.Tree(Screen()), new Rect<float>(0, 0, 1228, 800), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
-        arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "its output is in its log, on the node's machine" } })
+        arranged.Single(a => a.Node.Tooltip == "its output is in its log, on the node's machine")
             .Bounds.Width.ShouldBeGreaterThan(400f);
     }
 
