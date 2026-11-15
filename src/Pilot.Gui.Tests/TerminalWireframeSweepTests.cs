@@ -21,7 +21,7 @@ public static class TerminalWireframeSweepTests
     internal static readonly string[] Cases =
     [
         "home", "sessions", "flights", "repos", "pull requests", "jobs", "fleet", "ideas", "spend", "settings", "chat",
-        "help card", "open card", "chat long typed",
+        "help card", "open card", "chat long typed", "tooltip open",
     ];
 
     internal static IEnumerable<TheoryDataRow<string, string, int, int>> RowsOf(int columns, int rows, string state) =>
@@ -64,7 +64,7 @@ public static class TerminalWireframeSweepTests
         chrome.About.KeysFirst = true;
         var page = name switch
         {
-            "help card" or "open card" => PilotPage.Home,
+            "help card" or "open card" or "tooltip open" => PilotPage.Home,
             "chat long typed" => PilotPage.Chat,
             _ => PageTextOverlapTests.PageOf(name),
         };
@@ -124,7 +124,18 @@ public static class TerminalWireframeSweepTests
             default: tree = chrome.Home.Tree(new HomeScreen(data.Flights, data.Sessions, data.Jobs, cards, data.Machines)); break;
         }
         var rail = TerminalRail.Tree(page, GlyphMode.Emoji, data.Jobs, null, PageData.Now, _ => { }, null, columns);
-        var arranged = TerminalFrame.Build(rail, tree, cardsBeside ? chrome.Cards.Tree(cards) : null, columns, rows, CellMeasureContext.PixelAuthored);
+        var cardsTree = cardsBeside ? chrome.Cards.Tree(cards) : null;
+        var arranged = TerminalFrame.Build(rail, tree, cardsTree, columns, rows, CellMeasureContext.PixelAuthored);
+        if (name == "tooltip open")
+        {
+            // A hovered node's tooltip is due: the first node that carries one (a cut card title when the panel stands beside the page,
+            // else a rail or page node), anchored on its cells as CellInputRouter anchors it.
+            var hovered = arranged.FirstOrDefault(a => a.Node.Tooltip is { Length: > 0 });
+            hovered.Node.ShouldNotBeNull($"{name} | {columns}x{rows}: no node carries a tooltip, so no tooltip was opened");
+            var b = hovered.Bounds;
+            arranged = TerminalFrame.Build(rail, tree, cardsTree, columns, rows, CellMeasureContext.PixelAuthored,
+                new TooltipRequest(hovered.Node.Tooltip!, new RectF32(b.X, b.Y, b.Width, b.Height)));
+        }
         return Record(arranged, columns, rows);
     }
 
