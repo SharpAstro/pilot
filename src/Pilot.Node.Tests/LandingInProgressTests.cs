@@ -66,6 +66,54 @@ public sealed class LandingInProgressTests : ReviewTestsBase
         _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.NotLandedKind);
     }
 
+    private async Task<(FlightCommander Flights, Task<CommandResult> Land, Gate Gate, FlightRow Flight)> LandingUnderWay(string issue)
+    {
+        var (flight, _) = await Passed(issue);
+        var gate = new Gate();
+        var flights = new FlightCommander(_state, new Planes(new GatedGit(_git, gate)), TimeProvider.System, _workers, _github);
+        var land = flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget(flight.Code), Who = "controller" }, Ct);
+        await Within(gate.Reached, "the plane's removal was out");
+        return (flights, land, gate, flight);
+    }
+
+    [Fact]
+    public async Task AMergeSeenWithTheReadyCardDismissedWhileTheFlightIsBeingLandedRaisesNoNotLandedRing_PIL1055()
+    {
+        var (flights, land, gate, flight) = await LandingUnderWay("1057");
+        // No open PrReady card: the look reaches LandMergedWithoutCardAsync, the first of the two catches.
+        foreach (var card in Open().Where(c => c.Kind == LegCommander.PrReady))
+        {
+            _state.CloseCard(card.Id, "dismissed: known", "gui").ShouldBeTrue();
+        }
+        _github.Pr = _github.Pr! with { State = "MERGED" };
+
+        await new PrChecks(_state, _github, TimeProvider.System, flights, _legs).LookAsync(Ct);
+
+        _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.NotLandedKind);
+
+        gate.Open();
+        (await land).Ok.ShouldBeTrue();
+        F(flight.Code).State.ShouldBe(FlightState.Landed);
+        _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.NotLandedKind);
+    }
+
+    [Fact]
+    public async Task AMergeCommandWhoseLandingMeetsALandingUnderWayEndsWithNoErrorAndNoDidNotLandText_PIL1055()
+    {
+        var (flights, land, gate, flight) = await LandingUnderWay("1058");
+        var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
+        var legs = new LegCommander(_state, _workers, new FakeChecks(), _github, _git, new Planes(_git), flights, options, TimeProvider.System);
+
+        var result = await legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [_github.Pr!.Head[..8]], Who = "controller" }, Ct);
+
+        result.Error.ShouldBeNull();
+        result.Ok.ShouldBeTrue();
+
+        gate.Open();
+        (await land).Ok.ShouldBeTrue();
+        F(flight.Code).State.ShouldBe(FlightState.Landed);
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task AMergeWhoseLandingIsRefusedForAnotherReasonStillRingsNotLanded_PIL1055()
