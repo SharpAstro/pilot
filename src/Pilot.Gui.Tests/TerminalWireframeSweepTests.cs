@@ -341,14 +341,20 @@ public sealed class TerminalWireframe250Many { public static IEnumerable<TheoryD
 /// <summary>The sweep's own tests: the defects that were fixed, built again, fail the same check.</summary>
 public sealed class TerminalWireframeRegressionTests
 {
-    private static string Describe(CellWireframeResult r) => string.Join('\n', TerminalWireframeSweepTests.Findings(r).Select(f => $"[{f.Rule}] {f.What}")) + "\n" + CellWireframe.Describe(r);
+    private static string Describe(CellWireframeResult r) => string.Join('\n', TerminalWireframeSweepTests.Findings(r).Select(f => $"[{f.Rule}] {f.What}")) + "\n" + CellWireframe.Describe(r) + "\n" + _tree;
 
     private static Layout.Node Page() => Layout.Builder.VStack(
         Layout.Builder.Text("A page title", 14f, Palette.Current.Bright).WStar().RowH(16f),
         Layout.Builder.Text("A line of the page body", 14f, Palette.Current.Bright).WStar().RowH(16f)).Bg(Palette.Current.Ground).WStar().HStar();
 
-    private static CellWireframeResult Judge(Layout.Node rail, Layout.Node page, int columns = 80, int rows = 24) =>
-        TerminalWireframeSweepTests.Check(TerminalWireframeSweepTests.Record(TerminalFrame.Build(rail, page, null, columns, rows, CellMeasureContext.PixelAuthored), columns, rows));
+    [ThreadStatic] private static string? _tree;
+
+    private static CellWireframeResult Judge(Layout.Node rail, Layout.Node page, int columns = 80, int rows = 24)
+    {
+        var arranged = TerminalFrame.Build(rail, page, null, columns, rows, CellMeasureContext.PixelAuthored);
+        _tree = string.Join('\n', arranged.Select(a => $"{new string(' ', a.Depth)}{a.Bounds.X},{a.Bounds.Y} {a.Bounds.Width}x{a.Bounds.Height} {((a.Node as Layout.Node.Leaf)?.Content as Layout.Content.Text)?.Value}"));
+        return TerminalWireframeSweepTests.Check(TerminalWireframeSweepTests.Record(arranged, columns, rows));
+    }
 
     private static Layout.Node Entries() => Layout.Builder.HStack(
         Layout.Builder.Text("Home", 14f, Palette.Current.Bright), Layout.Builder.Text("Sessions", 14f, Palette.Current.Bright));
