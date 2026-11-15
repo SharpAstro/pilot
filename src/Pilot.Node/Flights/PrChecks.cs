@@ -1135,6 +1135,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     }
                     catch (AlreadyLandingException)
                     {
+                        // The landing under way lands the flight, or leaves it flying for the next look (pilot #1055).
                         continue;
                     }
                     catch (FlightException ex)
