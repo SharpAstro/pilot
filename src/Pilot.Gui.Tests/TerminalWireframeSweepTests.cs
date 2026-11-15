@@ -384,12 +384,11 @@ public sealed class TerminalWireframeRegressionTests
     }
 
     [Fact]
-    public void AOneLineRowGiven28UnitsOfHeightIsCaught()
+    public void AOneLineRowGivenTwoRowsOfHeightIsCaught()
     {
-        // The row's container is 28 units high and its one-line text leaf stretches to it: two rows, the second empty inside the fill.
-        // 28 units are 1.75 cells: the rows after the first start off a cell edge, and the second (28 to 56 units) spans two cells either way it rounds.
-        Layout.Node Row(string text) => Layout.Builder.HStack(Layout.Builder.Text(text, 14f, Palette.Current.Bright).WStar().HStar()).WStar().HFixed(28f).Bg(Palette.Current.Faint);
-        var row = Layout.Builder.VStack(Row("A one-line row given 28 units"), Row("Another one-line row given 28 units")).WStar();
+        // A row whose container is taller than its one line: the text leaf stretches to it, so the second row is empty inside the fill.
+        // PixelAuthored cells are about 20 units high, so 28 units still arrange as one row; 32 is the first height that gives two.
+        var row = Layout.Builder.HStack(Layout.Builder.Text("A one-line row given too much height", 14f, Palette.Current.Bright).WStar().HStar()).WStar().HFixed(32f).Bg(Palette.Current.Faint);
         var result = Judge(Entries().RowH(16f), Layout.Builder.VStack(row, Page()).Bg(Palette.Current.Ground).WStar().HStar());
         TerminalWireframeSweepTests.Findings(result).Any(f => f.Rule == nameof(CellWireframeRules.DoubledRow)).ShouldBeTrue(Describe(result));
     }
