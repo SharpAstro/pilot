@@ -77,7 +77,8 @@ public sealed class TerminalHoverTests
         }
 
         public Layout.ArrangedNode<int> TextOf(string text)
-            => Arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.StartsWith(text, StringComparison.Ordinal));
+            => Arranged.FirstOrDefault(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.StartsWith(text, StringComparison.Ordinal)) is { Node: not null } found ? found
+                : throw new InvalidOperationException("no text starts " + text + "; texts: " + string.Join(" | ", Arranged.Select(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } ? $"{t.Value}@{a.Bounds.X},{a.Bounds.Y}" : null).OfType<string>()));
 
         /// <summary>A pointer move with no button, as a terminal with any-motion tracking reports it.</summary>
         public void Move(int column, int row) => Input.Handle(new InputEvent.MouseMove(column, row), null);
@@ -107,6 +108,7 @@ public sealed class TerminalHoverTests
         var title = rig.TextOf("TIA1818/details-width");
         var panelEnd = rig.Arranged.Length;
         rig.Move(title.Bounds.X + 1, title.Bounds.Y);
+        rig.Frame();
         rig.Input.Router.TooltipNeedsFrame.ShouldBeFalse("the delay has not run out");
         rig.Clock.Advance(rig.Input.Router.TooltipDelay + TimeSpan.FromMilliseconds(1));
         rig.Input.Router.TooltipNeedsFrame.ShouldBeTrue("a tooltip came due on a resting pointer");
