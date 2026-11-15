@@ -6,8 +6,8 @@ namespace Pilot.Gui.Tests;
 
 /// <summary>
 /// The divider grips of every table header, in cells, over a range of widths: a grip lies in the gap between two titles and never over
-/// one (SharpAstro/DIR.Lib#233, found at 250 columns on Sessions). The columns declare what drops
-/// (ListTable.Dropping), and the terminal rounds every size to whole cells, so a group's cells must be the column's and the gap's.
+/// one (SharpAstro/DIR.Lib#233, found at 250 columns on Sessions). The columns declare what drops and which dividers have no grip
+/// (declared through TableColumn.DropBelow and GripAfter), and the terminal rounds every size to whole cells, so a grip must still fall in the gap.
 /// </summary>
 public sealed class TerminalGripSweepTests
 {
