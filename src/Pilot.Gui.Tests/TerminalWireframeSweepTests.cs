@@ -54,7 +54,7 @@ public static class TerminalWireframeSweepTests
         var data = Data(state);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath };
         chrome.Chat.Cells = true;
-        chrome.WithoutScrollBars();
+        chrome.ForCells();
         chrome.Flights.CanCommand = true;
         chrome.Jobs.CanCommand = true;
         chrome.Cards.CanTell = true;
