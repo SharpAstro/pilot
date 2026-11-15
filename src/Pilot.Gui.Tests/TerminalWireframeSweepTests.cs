@@ -156,6 +156,7 @@ public static class TerminalWireframeSweepTests
             {
                 File.AppendAllLines(dump, [$"{key}	TIME	record {recorded} ms, check {watch.ElapsedMilliseconds - recorded} ms"]);
                 File.AppendAllLines(dump, Findings(result).Select(f => $"{key}\t{f.Rule}\t{f.What}"));
+                File.AppendAllLines(dump, frame.Frame.Texts.Select(t => key + "\tTEXT\t" + t.ToString()));
             }
         }
         var expected = Baseline.Where(b => b.Case == key).ToList();
