@@ -194,34 +194,10 @@ public static class TerminalWireframeSweepTests
     /// </summary>
     internal static readonly (string Case, string Rule, string What)[] Baseline =
     [
-        // Text lying partly over a control of another node (a header over the divider handle, a count over the row it sits in)
-        ("fleet | many | 100x30", "TextOverRegion", "text \"1 ringing\""),
-        ("fleet | many | 100x30", "TextOverRegion", "text \"2 ringing\""),
-        ("jobs | long | 80x24", "TextOverRegion", "text \"Every page is checked for t…\""),
-        ("jobs | long | 80x24", "TextOverRegion", "text \"Every page is checked for t…\""),
-        ("jobs | long | 80x24", "TextOverRegion", "text \"Every page is checked for t…\""),
-        ("jobs | long | 80x24", "TextOverRegion", "text \"The leg is done and every s…\""),
-        ("jobs | long | 80x24", "TextOverRegion", "text \"cancelled · owner not told\""),
-        ("jobs | long | 80x24", "TextOverRegion", "text \"succeeded · owner not told\""),
+        // Text lying partly over a control of another node: a header over the divider grip (SharpAstro/DIR.Lib#233)
         ("sessions | long | 250x60", "TextOverRegion", "text \"Model\""),
         ("sessions | many | 250x60", "TextOverRegion", "text \"Model\""),
-        // A control inside another control (a row button inside its list item, a divider handle over a header button)
-        ("pull requests | long | 100x30", "RegionOverRegion", "the control ButtonHit { Action = pr:https://github.com/example-org/Pilot.Ui.PageTextOverlapTests.Eve"),
-        ("pull requests | long | 100x30", "RegionOverRegion", "the control ButtonHit { Action = pr:https://github.com/example-org/Pilot.Ui.PageTextOverlapTests.Eve"),
-        ("pull requests | long | 100x30", "RegionOverRegion", "the control ButtonHit { Action = pr:https://github.com/example-org/Pilot.Ui.PageTextOverlapTests.Eve"),
-        ("pull requests | long | 100x30", "RegionOverRegion", "the control ButtonHit { Action = pr:https://github.com/example-org/Pilot.Ui.PageTextOverlapTests.Eve"),
-        ("pull requests | long | 100x30", "RegionOverRegion", "the control ButtonHit { Action = pr:https://github.com/example-org/Pilot.Ui.PageTextOverlapTests.Eve"),
-        ("pull requests | long | 100x30", "RegionOverRegion", "the control ButtonHit { Action = pr:https://github.com/example-org/Pilot.Ui.PageTextOverlapTests.Eve"),
-        ("pull requests | long | 100x30", "RegionOverRegion", "the control ButtonHit { Action = pr:https://github.com/example-org/Pilot.Ui.PageTextOverlapTests.Eve"),
-        ("pull requests | long | 100x30", "RegionOverRegion", "the control ButtonHit { Action = pr:https://github.com/example-org/Pilot.Ui.PageTextOverlapTests.Eve"),
-        ("pull requests | many | 100x30", "RegionOverRegion", "the control ButtonHit { Action = pr:https://github.com/SharpAstro/repo-0/pull/100:open }"),
-        ("pull requests | many | 100x30", "RegionOverRegion", "the control ButtonHit { Action = pr:https://github.com/SharpAstro/repo-0/pull/101:open }"),
-        ("pull requests | many | 100x30", "RegionOverRegion", "the control ButtonHit { Action = pr:https://github.com/SharpAstro/repo-0/pull/102:open }"),
-        ("pull requests | many | 100x30", "RegionOverRegion", "the control ButtonHit { Action = pr:https://github.com/SharpAstro/repo-0/pull/103:open }"),
-        ("pull requests | many | 100x30", "RegionOverRegion", "the control ButtonHit { Action = pr:https://github.com/SharpAstro/repo-1/pull/110:open }"),
-        ("pull requests | many | 100x30", "RegionOverRegion", "the control ButtonHit { Action = pr:https://github.com/SharpAstro/repo-1/pull/111:open }"),
-        ("pull requests | many | 100x30", "RegionOverRegion", "the control ButtonHit { Action = pr:https://github.com/SharpAstro/repo-1/pull/112:open }"),
-        ("pull requests | many | 100x30", "RegionOverRegion", "the control ButtonHit { Action = pr:https://github.com/SharpAstro/repo-1/pull/113:open }"),
+        // A control inside another control: a divider grip over a header button (SharpAstro/DIR.Lib#233)
         ("sessions | long | 250x60", "RegionOverRegion", "the control ButtonHit { Action = sessions:table:divider:0 }"),
         ("sessions | many | 250x60", "RegionOverRegion", "the control ButtonHit { Action = sessions:table:divider:0 }"),
     ];
