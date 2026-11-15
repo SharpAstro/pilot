@@ -106,9 +106,9 @@ internal sealed class AutopilotSwitch
         var working = Presses.PendingOf(Action) is not null;
         // While the node has the press the switch says so in words ("Setting…"), then shows the state it took, never "done".
         var button = Layout.Builder.Text(working ? WorkingLabel : Label, 12f, working ? night?.Dim ?? Dim : on ? Bright : night?.Dim ?? Dim, TextAlign.Center, TextAlign.Center)
-            .Pad(10f, 0f)
+            .Pad(AboutCard.HeaderButtonPad, 0f)
             .WAuto()
-            .HFixed(28f)
+            .HFixed(AboutCard.HeaderButton)
             .Bg(on ? LitBg : night?.Button ?? PlainBg)
             .WithTooltip(Tooltip);
         if (OnToggle is not { } toggle)

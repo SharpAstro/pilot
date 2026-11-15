@@ -1362,9 +1362,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>A header pill with no hit: the working word of a header button whose press is with the node.</summary>
     internal static Layout.Node DeadHeaderPill(string label, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null) =>
         Layout.Builder.Text(label, 12f, Dim, TextAlign.Center, TextAlign.Center)
-            .Pad(10f, 0f)
+            .Pad(AboutCard.HeaderButtonPad, 0f)
             .WAuto()
-            .HFixed(28f)
+            .HFixed(AboutCard.HeaderButton)
             .Bg(tint?.Bg ?? HeaderFill);
 
     // In the terminal the selected (tinted) pill is filled and the others are plain text on the header's own background.
@@ -1373,9 +1373,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>A header button whose click is told which modifier keys were held: the node pills' Shift adds to the pick.</summary>
     internal static Layout.Node HeaderPill(string label, string action, Action<InputModifier> onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null, RGBAColor32? textColor = null) =>
         Layout.Builder.Text(label, 12f, textColor ?? Bright, TextAlign.Center, TextAlign.Center)
-            .Pad(10f, 0f)
+            .Pad(AboutCard.HeaderButtonPad, 0f)
             .WAuto()
-            .HFixed(28f)
+            .HFixed(AboutCard.HeaderButton)
             .Bg(tint?.Bg ?? HeaderFill)
             .BgHover(tint?.Hover ?? ButtonHover)
             .Follows(new HitResult.ButtonHit(action), onClick);

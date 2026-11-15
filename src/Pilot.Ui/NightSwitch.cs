@@ -48,9 +48,9 @@ internal sealed class NightSwitch
     {
         var night = Palette;
         var button = Layout.Builder.Text(Label, 12f, On ? night!.Bright : Dim, TextAlign.Center, TextAlign.Center)
-            .Pad(10f, 0f)
+            .Pad(AboutCard.HeaderButtonPad, 0f)
             .WAuto()
-            .HFixed(28f)
+            .HFixed(AboutCard.HeaderButton)
             .Bg(night?.Button ?? AutopilotSwitch.PlainBg)
             .BgHover(night?.ButtonHover ?? AutopilotSwitch.PlainHover)
             .WithTooltip(Tooltip);

@@ -129,8 +129,8 @@ internal static class TopBar
         // The corner's switches stand 8 apart, as the update light and ? do: one cluster, and one cell apart in the terminal.
         // It wraps too: in a window narrower than the whole cluster its switches break onto lines of their own, measured
         // against the bar's width, and the page's buttons start beneath them, so nothing reaches past the page.
-        var corner = Layout.Builder.WrapH([.. shared.Select(item => FlowRow.Cell(item, 32f))]).WithGap(8f).WAuto().HAuto();
-        var flow = shared.Count > 0 ? FlowRow.Of(32f, 12f, corner, items) : FlowRow.Of(32f, 12f, items);
+        var corner = Layout.Builder.WrapH([.. shared.Select(item => FlowRow.Cell(item, RowHeight))]).WithGap(8f).WAuto().HAuto();
+        var flow = shared.Count > 0 ? FlowRow.Of(RowHeight, 12f, corner, items) : FlowRow.Of(RowHeight, 12f, items);
         var rows = new List<Layout.Node> { flow };
         if (page.CountsFit && !string.IsNullOrEmpty(page.Counts))
         {
@@ -143,6 +143,6 @@ internal static class TopBar
             rows.Add(Layout.Builder.Text(source, 12f, page.SourceColor ?? palette.Dim).RowH(SourceHeight));
         }
         rows.AddRange(page.Lines);
-        return Layout.Builder.VStack([.. rows]).Pad(PadX, 6f).Bg(palette.HeaderBg).WStar().HAuto();
+        return Layout.Builder.VStack([.. rows]).Pad(PadX, PadY).Bg(palette.HeaderBg).WStar().HAuto();
     }
 }

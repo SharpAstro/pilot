@@ -172,18 +172,19 @@ internal sealed class AboutCard
     private static RGBAColor32 LightOff => Palette.Current.LightOff;
     private static RGBAColor32 LightText => Palette.Current.LightText;
 
+    /// <summary>The side of the header's square buttons (?, +) and the height of everything else on its row that is a button.</summary>
+    public const float HeaderButton = 28f;
+
+    /// <summary>The room either side of a header button's word: Autopilot, Night, the node pills, the update light.</summary>
+    public const float HeaderButtonPad = 10f;
+
     /// <summary>
     /// The header's button, and while a newer pilot is installed the update light before it. The "?" stays a word for want
     /// of a help glyph: SharpAstro/DIR.Lib#151.
     /// </summary>
-    /// <summary>The side of the header's square buttons (?, +) and the height of everything else on its row that is a button.</summary>
-    public const float HeaderButton = 28f;
-
-    private static float Side => 28f;
-
     public Layout.Node Button(Palette? night = null)
     {
-        var help = Layout.Builder.Text("?", 14f, night?.Bright ?? Bright, TextAlign.Center, TextAlign.Center).WFixed(Side).HFixed(Side)
+        var help = Layout.Builder.Text("?", 14f, night?.Bright ?? Bright, TextAlign.Center, TextAlign.Center).WFixed(HeaderButton).HFixed(HeaderButton)
             .Bg(night?.Button ?? ButtonBg).BgHover(night?.ButtonHover ?? ButtonHover)
             .Follows(new HitResult.ButtonHit("about:toggle"), _ => Toggle())
             .WithTooltip("Which pilot this is, where its things are, and the keys");
@@ -201,7 +202,7 @@ internal sealed class AboutCard
         var lit = Lit;
         var label = newer.LastIndexOf('-') is var dash and >= 0 ? newer[(dash + 1)..] : newer;
         var light = Layout.Builder.Text(Restart is null ? $"{label} installed" : $"Restart {label}", 13f, lit ? LightText : LightOn, TextAlign.Center)
-            .Pad(10f, 0f).WAuto().HFixed(Side).Bg(lit ? LightOn : LightOff)
+            .Pad(HeaderButtonPad, 0f).WAuto().HFixed(HeaderButton).Bg(lit ? LightOn : LightOff)
             .WithTooltip($"pilot {newer} is installed; this window runs {NodeFeed.ClientVersion}." + (Restart is null ? " Restart it to use the new one." : " A click starts it again on the new one."));
         return Restart is { } restart ? light.Follows(new HitResult.ButtonHit("about:restart"), _ => restart()) : light;
     }
@@ -219,7 +220,7 @@ internal sealed class AboutCard
     /// </summary>
     public Layout.Node Over(Layout.Node page, Palette? night = null) => IsOpen
         ? Layout.Builder.Overlay(page, Layout.Builder.VStack(
-            Layout.Builder.Spacer().WStar().HFixed(38f),
+            Layout.Builder.Spacer().WStar().HFixed(TopBar.ButtonsBottom),
             Layout.Builder.Anchored(Card(night), Layout.DockSide.Right, margin: 12f).WStar().HStar()).Stretch()).Stretch()
         : page;
 
