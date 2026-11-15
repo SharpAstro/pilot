@@ -223,7 +223,7 @@ internal sealed partial class FlightsView<TSurface>
 
         List<Layout.Node> page =
         [
-            FlowRow.Of(32f, 10f, head),
+            FlowRow.Of(8f, 10f, head),
         ];
         if (MoveFailureBand.Build<TSurface>(line, P, RetryOf(line), presses: Presses) is { } band)
         {
@@ -272,7 +272,7 @@ internal sealed partial class FlightsView<TSurface>
         // The node's copies of the images the legs recorded, above the legs: the links in each leg stay as they were.
         // The facts and who is working lead what scrolls, as the summary does: they wrap onto as many lines as the page needs, and
         // above the scroll they pushed the page's foot past the window's.
-        List<Layout.Node> scrolled = [FlowRow.Of(22f, 14f, facts), FlowRow.Of(26f, 10f, WhoWorks(line))];
+        List<Layout.Node> scrolled = [FlowRow.Of(3f, 14f, facts), FlowRow.Of(5f, 10f, WhoWorks(line))];
         scrolled.AddRange(SessionRows(line, detail.Sessions, null));
         // The checklist leads the legs' detail: one line a leg, each opening its block below, then what a person added in the tracker.
         if (Checklist(line.Code, detail) is { } checklist)
@@ -602,7 +602,7 @@ internal sealed partial class FlightsView<TSurface>
         foreach (var s in sessions)
         {
             var label = char.ToUpperInvariant(s.Role[0]) + s.Role[1..];
-            yield return FlowRow.Of(28f, 10f, [Layout.Builder.Text(label, 11f, Faint).WFixed(DetailLabelWidth), SessionLink(line, leg, s, false)]);
+            yield return FlowRow.Of(6f, 10f, [Layout.Builder.Text(label, 11f, Faint).WFixed(DetailLabelWidth), SessionLink(line, leg, s, false)]);
         }
     }
 
@@ -628,14 +628,14 @@ internal sealed partial class FlightsView<TSurface>
             head.Add(Layout.Builder.Text(attempt, 12f, Dim).WAuto().Selectable());
         }
 
-        var rows = new List<Layout.Node> { FlowRow.Of(24f, 12f, head) };
+        var rows = new List<Layout.Node> { FlowRow.Of(4f, 12f, head) };
         if (leg.Session is { } current)
         {
-            rows.Add(FlowRow.Of(28f, 10f, [Layout.Builder.Text("session", 11f, Faint).WFixed(DetailLabelWidth), SessionLink(line, leg.Name, current, false)]));
+            rows.Add(FlowRow.Of(6f, 10f, [Layout.Builder.Text("session", 11f, Faint).WFixed(DetailLabelWidth), SessionLink(line, leg.Name, current, false)]));
         }
         foreach (var old in leg.Earlier)
         {
-            rows.Add(FlowRow.Of(28f, 10f, [Layout.Builder.Text("earlier", 11f, Faint).WFixed(DetailLabelWidth), SessionLink(line, leg.Name, old, true)]));
+            rows.Add(FlowRow.Of(6f, 10f, [Layout.Builder.Text("earlier", 11f, Faint).WFixed(DetailLabelWidth), SessionLink(line, leg.Name, old, true)]));
         }
         rows.Add(Field("Goal", leg.Goal));
         rows.Add(Field("Done when", leg.DoneWhen));
@@ -662,7 +662,7 @@ internal sealed partial class FlightsView<TSurface>
             {
                 links.Add(Link("folder", folder, $"artifact-folder:{code}:{leg.Name}:{artifact.Title}").WAuto());
             }
-            rows.Add(FlowRow.Of(20f, 10f, links));
+            rows.Add(FlowRow.Of(2f, 10f, links));
             var where = $"{artifact.When} · {artifact.Location}";
             rows.Add(Layout.Builder.Text(where, 11f, Faint, trim: TextTrim.Start).WithTooltip(where).RowH(20f).Selectable());
         }

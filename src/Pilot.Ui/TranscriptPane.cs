@@ -27,8 +27,8 @@ internal sealed class TranscriptPane
     private const float BannerMinHeight = 40f;
     private readonly ListScrollController _bannerScroll = new() { Mode = ScrollBarMode.Interactive };
 
-    // The head's row: the Back pill's height, so the pill and the words beside it share a middle.
-    private const float HeadRowHeight = 28f;
+    // The head's row is the Back pill's height, a line and 6 above and below it (28), so the pill and the words beside it share a middle.
+    private const float HeadRowRoom = 6f;
 
     // The entries' colours, Markdown styles and spacing are the entry view's, shared with the Chat page; the tests reach them here.
     internal static RGBAColor32 OutputShade => TranscriptEntryView.OutputShade;
@@ -308,7 +308,7 @@ internal sealed class TranscriptPane
         // The banner is a row of the page, not of the list: it stays under the entries, whatever is scrolled.
         var banner = Banner(current, now ?? DateTimeOffset.UtcNow);
         // The head flows onto lines of its own where the pane is narrower than it is, as the top bar does.
-        var top = FlowRow.Of(HeadRowHeight, 12f, head);
+        var top = FlowRow.Of(HeadRowRoom, 12f, head);
         List<Layout.Node> page = _entries.Subagents.Count == 0 ? [top, list] : [top, Agents(), list];
         if (banner is not null)
         {

@@ -62,8 +62,11 @@ internal static class TopBar
     /// <summary>The title of a page whose rows are this window's node's only, e.g. "DE1's ideas (this machine)".</summary>
     public static string ThisNodeTitle(NodeFilter? nodes, string page) => $"{ThisNodeName(nodes)}'s {page} (this machine)";
 
-    /// <summary>The row of the bar itself, design units.</summary>
-    public const float RowHeight = 32f;
+    /// <summary>The room above and below a line of the bar: its row is a line of text and this either side.</summary>
+    public const float RowRoom = 8f;
+
+    /// <summary>The row of the bar itself, design units: a line and its room either side, 32.</summary>
+    public const float RowHeight = FlowRow.Line + 2 * RowRoom;
 
     /// <summary>The source line's row.</summary>
     public const float SourceHeight = 20f;
@@ -129,8 +132,8 @@ internal static class TopBar
         // The corner's switches stand 8 apart, as the update light and ? do: one cluster, and one cell apart in the terminal.
         // It wraps too: in a window narrower than the whole cluster its switches break onto lines of their own, measured
         // against the bar's width, and the page's buttons start beneath them, so nothing reaches past the page.
-        var corner = Layout.Builder.WrapH([.. shared.Select(item => FlowRow.Cell(item, RowHeight))]).WithGap(8f).WAuto().HAuto();
-        var flow = shared.Count > 0 ? FlowRow.Of(RowHeight, 12f, corner, items) : FlowRow.Of(RowHeight, 12f, items);
+        var corner = Layout.Builder.WrapH([.. shared.Select(item => FlowRow.Cell(item, RowRoom))]).WithGap(8f).WAuto().HAuto();
+        var flow = shared.Count > 0 ? FlowRow.Of(RowRoom, 12f, corner, items) : FlowRow.Of(RowRoom, 12f, items);
         var rows = new List<Layout.Node> { flow };
         if (page.CountsFit && !string.IsNullOrEmpty(page.Counts))
         {
