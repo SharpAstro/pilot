@@ -2686,7 +2686,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 : current with { TestsFailed = current.TestsFailed + 1, FirstTestFailed = current.FirstTestFailed ?? failure.Name };
             // A fail-fast run ends at its first failed test and its end names it at once: an early word would say it twice, the
             // first time wrongly ("runs on"). A build error does not stop it, so that one is still told early.
-            if (!updated.FailureTold && updated.Owner is not null && updated.Kind != JobKind.Check && !(updated.FailFast && updated.TestsFailed > 0) && Say is not null)
+            if (!updated.FailureTold && updated.Owner is not null && updated.Kind != JobKind.Check && !(updated.FailFast && updated.TestsFailed > 0) && !HoldsStaleMiss(updated, failure) && Say is not null)
             {
                 updated = updated with { FailureTold = true };
                 toTell = updated;

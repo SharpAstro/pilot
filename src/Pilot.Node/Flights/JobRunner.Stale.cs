@@ -17,6 +17,11 @@ public sealed partial class JobRunner
 
     private static bool IsStaleRerun(JobRow job) => job.ExtraEnvironment?.ContainsKey("RestoreNoHttpCache") == true;
 
+    /// <summary>An NU1102 in a plane job of a flight is not told early: the feed may say the cache was stale, and the rerun's end is the news.</summary>
+    private bool HoldsStaleMiss(JobRow job, TestFailures.Failure failure) =>
+        Feed is not null && failure is { IsBuildError: true, Name: "NU1102" } && job.Flight is not null && job.Kind != JobKind.Check
+        && Flights.PlaneOutput.PlaneOf(job.Cwd) is not null;
+
     /// <summary>Whether <paramref name="ended"/> may be a stale-cache miss worth a look at the feed: a failed plane job of a flight, not yet a rerun.</summary>
     private bool MayBeStale(JobRow ended, string[]? last) =>
         Feed is not null && ended is { State: JobState.Failed, ExitCode: not null, Flight: not null } && ended.Kind != JobKind.Check
