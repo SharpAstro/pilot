@@ -19,7 +19,9 @@ public sealed class AccountTests
         var sessions = new SessionsView<RgbaImage>(vessel);
         var screen = new SessionsScreen([], "live", Live.At, Usage: "5h 42% (resets 14:00)", Account: Ada.Line());
 
-        var described = CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored));
+        var arranged = Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored);
+        // A long source line is a leaf a word: read it a sentence at a time as well.
+        var described = CellLayout.Describe(arranged) + "\n" + string.Join("\n", SentenceRuns.Texts(arranged.Select(a => a.Node)));
 
         described.ShouldContain("ada@example.org (Example, team) · usage 5h 42%");
     }
