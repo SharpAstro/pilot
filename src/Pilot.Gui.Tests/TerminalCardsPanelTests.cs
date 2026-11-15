@@ -34,11 +34,25 @@ public sealed class TerminalCardsPanelTests
     [Fact]
     public async Task TmpDump()
     {
-        var frame = await TerminalWireframeSweepTests.RecordCase("open card", "many", 250, 60);
-        var lines = frame.Frame.Texts.Where(t => t.Box.X >= 213).Select(t => $"{t.Box.X},{t.Box.Y} {t.Box.Width}x{t.Box.Height} {t.Text}");
-        await TerminalWireframeSweepTests.RecordCase("open card", "many", 250, 60);
-        var dump = TerminalWireframeSweepTests.LastArranged.Where(a => a.Bounds.X >= 213 && a.Bounds.Y >= 8 && a.Bounds.Y < 32).Select(a => $"{a.Depth} {a.Node.GetType().Name} {a.Bounds.X},{a.Bounds.Y} {a.Bounds.Width}x{a.Bounds.Height} {(a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } ? t.Value : "")}");
-        string.Join("\n", dump).ShouldBe("");
+        await Task.CompletedTask;
+        var c = new RGBAColor32(200, 200, 200, 255);
+        Layout.Node G(bool border, bool wrap)
+        {
+            var g = Layout.Builder.Grid(2, Layout.Builder.Spacer().Bg(c).HStar(),
+                    Layout.Builder.VStack(Layout.Builder.Text("a", 12f, c).RowH(16f), Layout.Builder.Text("b", 12f, c).RowH(20f)).Pad(0f, 8f).WStar())
+                .WithColumns(Layout.Sizing.Fixed(3f), Layout.Sizing.Star()).WithAutoRows().Bg(c);
+            if (border) { g = g.Border(c, 1f, 6f); }
+            g = g.WStar().HAuto();
+            return wrap ? Layout.Builder.VStack(g).Border(c, 1f, 6f).WStar().HAuto() : g;
+        }
+        var report = new List<string>();
+        foreach (var (border, wrap) in new[] { (false, false), (true, false), (false, true) })
+        {
+            var root = Layout.Builder.VStack(G(border, wrap), G(border, wrap)).Pad(8f, 10f).Stretch();
+            var arranged = Layout.Engine.Arrange(root, new Rect<int>(0, 0, 36, 50), CellMeasureContext.PixelAuthored);
+            report.Add($"border={border} wrap={wrap}: " + string.Join(" | ", arranged.Where(a => a.Node is Layout.Node.Grid || a.Node is Layout.Node.Stack).Select(a => $"{a.Node.GetType().Name} {a.Bounds.Y}+{a.Bounds.Height}")));
+        }
+        string.Join("\n", report).ShouldBe("");
     }
 
     private static CardRow Card(string id, CardBin bin, string title) => new()
