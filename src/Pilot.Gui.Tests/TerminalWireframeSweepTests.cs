@@ -141,24 +141,12 @@ public static class TerminalWireframeSweepTests
     internal static IEnumerable<(string Rule, string What)> Findings(CellWireframeResult result) =>
         result.Findings.Select(f => (f.Rule.ToString(), f.Message)).Concat(result.CellFindings.Select(f => (f.Rule.ToString(), f.Message)));
 
-    private static readonly Lock DumpLock = new();
-
     internal static async Task Run(string page, string state, int columns, int rows)
     {
         var key = Key(page, state, columns, rows);
-        var watch = System.Diagnostics.Stopwatch.StartNew();
         var frame = await RecordCase(page, state, columns, rows);
-        var recorded = watch.ElapsedMilliseconds;
         frame.Frame.Texts.IsEmpty.ShouldBeFalse($"{key}: the frame recorded no text (a frame painted outside CellLayout.Paint records empty and would pass unjudged)");
         var result = Check(frame);
-        if (Environment.GetEnvironmentVariable("PILOT_WIREFRAME_DUMP") is { Length: > 0 } dump)
-        {
-            lock (DumpLock)
-            {
-                File.AppendAllLines(dump, [$"{key}	TIME	record {recorded} ms, check {watch.ElapsedMilliseconds - recorded} ms"]);
-                File.AppendAllLines(dump, Findings(result).Select(f => $"{key}\t{f.Rule}\t{f.What}"));
-            }
-        }
         var expected = Baseline.Where(b => b.Case == key).ToList();
         var unknown = new List<(string Rule, string What)>();
         foreach (var f in Findings(result))
@@ -218,10 +206,12 @@ public sealed class TerminalWireframeRegressionTests
         Layout.Builder.Text("A line of the page body", 14f, Palette.Current.Bright).WStar().RowH(16f)).Bg(Palette.Current.Ground).WStar().HStar();
 
     [ThreadStatic] private static string? _tree;
+    [ThreadStatic] private static ImmutableArray<Layout.ArrangedNode<int>> _arranged;
 
     private static CellWireframeResult Judge(Layout.Node rail, Layout.Node page, int columns = 80, int rows = 24)
     {
         var arranged = TerminalFrame.Build(rail, page, null, columns, rows, CellMeasureContext.PixelAuthored);
+        _arranged = arranged;
         _tree = string.Join('\n', arranged.Select(a => $"{new string(' ', a.Depth)}{a.Bounds.X},{a.Bounds.Y} {a.Bounds.Width}x{a.Bounds.Height} {((a.Node as Layout.Node.Leaf)?.Content as Layout.Content.Text)?.Value}"));
         return TerminalWireframeSweepTests.Check(TerminalWireframeSweepTests.Record(arranged, columns, rows));
     }
@@ -229,15 +219,31 @@ public sealed class TerminalWireframeRegressionTests
     private static Layout.Node Entries() => Layout.Builder.HStack(
         Layout.Builder.Text("Home", 14f, Palette.Current.Bright), Layout.Builder.Text("Sessions", 14f, Palette.Current.Bright));
 
-    [Fact(Skip = "Not caught: the bar's fill is 12 empty-but-for-one-row rows and no CellWireframe rule looks at a container (SharpAstro/Console.Lib#69)")]
+    // CellWireframe judges text and fills, not a container or a text-less strip (SharpAstro/Console.Lib#69 and #70), so these two assert on the
+    // arranged bounds, which fail on the defect now. Once those issues ship, add the CellWireframe finding here as well.
+    [Fact]
     public void ThePageBarGivenHFixedAndStretchIsCaught()
     {
         // PIL1027 (the flight that fixed it was PIL1032): Stretch() sets the height to Star as well and overwrote the HFixed, so the bar took the screen.
-        var result = Judge(Entries().HFixed(16f).Stretch().Bg(Palette.Current.Ground), Page());
-        TerminalWireframeSweepTests.Findings(result).ShouldNotBeEmpty(Describe(result));
+        var rail = Entries().HFixed(16f).Stretch().Bg(Palette.Current.Ground);
+        var result = Judge(rail, Page());
+        var total = _arranged.Max(a => a.Bounds.Y + a.Bounds.Height);
+        var bar = _arranged.First(a => ReferenceEquals(a.Node, rail));
+        (bar.Bounds.Height * 4).ShouldBeLessThan(total, "the page bar takes a quarter of the screen or more: one row was declared
+" + Describe(result));
     }
 
-    [Fact(Skip = "Not caught: a filled one-row strip with no text breaks no CellWireframe rule (SharpAstro/Console.Lib#70)")]
+    [Fact]
+    public void TheRealPageBarIsOneRowTall()
+    {
+        var rail = TerminalRail.Tree(PilotPage.Home, GlyphMode.Emoji, PageData.For("long").Jobs, null, PageData.Now, _ => { }, null, 80);
+        Judge(rail, Page());
+        var total = _arranged.Max(a => a.Bounds.Y + a.Bounds.Height);
+        var bar = _arranged.First(a => ReferenceEquals(a.Node, rail));
+        (bar.Bounds.Height * 4).ShouldBeLessThan(total, _tree);
+    }
+
+    [Fact]
     public void TheComposerRulesDrawnAsGreyBarsAreCaught()
     {
         // PIL1049: the rule was a Spacer with a fill on a 16-unit row: a grey bar, no text on it.
@@ -246,7 +252,9 @@ public sealed class TerminalWireframeRegressionTests
             Layout.Builder.Text("❯ Message the fleet chat", 14f, Palette.Current.Bright).WStar().RowH(16f),
             Layout.Builder.Spacer().Bg(Palette.Current.Faint).WStar().RowH(16f)).WStar().HAuto();
         var result = Judge(Entries().RowH(16f), Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), composer).Bg(Palette.Current.Ground).WStar().HStar());
-        TerminalWireframeSweepTests.Findings(result).ShouldNotBeEmpty(Describe(result));
+        var bars = _arranged.Count(a => a.Node is Layout.Node.Leaf { Content: not Layout.Content.Text } && a.Bounds.Height <= 20);
+        bars.ShouldBe(0, "a filled spacer one row tall is drawn as a grey bar
+" + Describe(result));
     }
 
     [Fact]
