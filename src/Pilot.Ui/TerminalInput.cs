@@ -46,9 +46,6 @@ internal sealed class TerminalInput<TSurface>(
     /// <summary>After a frame is painted onto the surface: the router settles what the frame left standing.</summary>
     public void Painted() => Router.AfterPaint();
 
-    private string? TempListSwitch => chrome.Page switch { PilotPage.Jobs => JobsView<TSurface>.ListId, _ => null };
-    private string? TempShownList => chrome.Page switch { PilotPage.Jobs => (JobsView<TSurface>.ListId, 1).Item1, _ => null };
-
     /// <summary>The last frame's arranged tree: what a click on the chat composer is resolved on.</summary>
     public ImmutableArray<Layout.ArrangedNode<int>> Arranged { get; set; } = ImmutableArray<Layout.ArrangedNode<int>>.Empty;
 
