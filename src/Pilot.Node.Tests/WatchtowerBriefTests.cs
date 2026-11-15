@@ -23,6 +23,16 @@ public class WatchtowerBriefTests
     };
 
     [Fact]
+    public void ThePlaybookNamesNuGetsHttpCacheForAnNu1102OnAListedVersionAndNeverRegistrationLag()
+    {
+        var brief = Brief();
+
+        brief.ShouldContain("NU1102 on a version nuget.org already lists is NuGet's HTTP cache");
+        brief.ShouldContain("restarting the worker does not help");
+        brief.ShouldNotContain("registration lag", Case.Insensitive);
+    }
+
+    [Fact]
     public void TheBriefOfAHugeStateIsAtMostSixThousandCharacters()
     {
         var flights = Enumerable.Range(1, 30).Select(i => Flight(i, held: i % 3 == 0)).ToList();

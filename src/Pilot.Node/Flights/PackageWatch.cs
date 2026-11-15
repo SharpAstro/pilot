@@ -222,6 +222,12 @@ public sealed class PackageWatch(NodeState state, FlightCommander flights, INuGe
         var producerRepo = state.Flights().FirstOrDefault(f => f.Code == wait.Producer)?.RepoPath ?? wait.RepoPath;
         var waited = now - wait.Since;
 
+        // A hold nobody is known to publish: no run to read, late once the grace is up, and the card says so.
+        if (wait.HasNoProducer)
+        {
+            return waited < NoRunGrace ? null : Card(subject, verb, wait, versions, $"no producer is known for {wait.Id} {wait.Wanted ?? wait.Line} (no flight, release or sibling clone publishes it), so no publish run can be looked for; start the leg anyway or fix the pin");
+        }
+
         string? run = null;
         if (wait.Commit is { Length: > 0 } commit && producerRepo is not null)
         {

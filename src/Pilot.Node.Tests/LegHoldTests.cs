@@ -315,17 +315,46 @@ public sealed class LegHoldTests1 : LegHoldTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AnNu1102OnAPackageNobodyIsPublishingFailsAndRingsAsBefore()
+    public async Task AnNu1102OnAVersionNuGetDoesNotListYetHoldsEvenWhenNobodyIsKnownToPublishIt()
     {
         // The sibling is on another line than the one asked for, and no flight records a release.
         MakeSiblingARelease(line: "1.3");
         await FlyingParser();
+        var job = L("parser").WorkerJob.ShouldNotBeNull();
 
         await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", Nu1102);
 
         var leg = L("parser");
-        (leg.State, leg.Hold).ShouldBe((LegState.Failed, null));
-        _state.Cards().Where(c => c.Kind == "leg-failed").ShouldHaveSingleItem().Bin.ShouldBe(CardBin.Ring);
+        (leg.State, leg.WorkerJob).ShouldBe((LegState.Planned, null));
+        var hold = leg.Hold.ShouldNotBeNull();
+        (hold.Id, hold.Wanted, hold.Line, hold.Producer, hold.Commit, hold.RepoPath).ShouldBe(("Drawboard.Core", "1.2.7", "1.2", PackageWait.NoProducer, null, null));
+        FlightWaiting.HoldText(hold).ShouldBe("holding: Drawboard.Core 1.2.7 not on nuget.org yet");
+        _workers.Stopped.ShouldContain(job);
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+        _state.Cards().Where(c => c.Kind == LegCommander.HoldKind).ShouldHaveSingleItem().Bin.ShouldBe(CardBin.Handled);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AHoldWithNoProducerStartsTheLegAfreshOnceTheFakeFeedListsTheVersion()
+    {
+        await FlyingParser();
+        await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", Nu1102);
+        L("parser").Hold.ShouldNotBeNull().Producer.ShouldBe(PackageWait.NoProducer);
+        var started = _workers.Started.Count;
+
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        L("parser").Hold.ShouldNotBeNull();
+
+        _feed.Publish("Drawboard.Core", "1.2.7");
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await _watch.LookAsync(Ct);
+
+        var leg = L("parser");
+        (leg.State, leg.Hold).ShouldBe((LegState.Flying, null));
+        _workers.Started.Skip(started).ShouldHaveSingleItem().Brief.ShouldContain("## Resumed after a hold");
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
     }
 
     [Fact]
@@ -501,6 +530,8 @@ public sealed class LegHoldTests2 : LegHoldTestsBase
         brief.ShouldContain("the NU line, verbatim");
         brief.ShouldContain("no local");
         brief.ShouldContain("feed, no pin changed back");
+        brief.ShouldContain("NuGet's HTTP cache");
+        brief.ShouldNotContain("registration lag", Case.Insensitive);
     }
 
     [Theory]

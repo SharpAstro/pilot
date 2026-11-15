@@ -270,6 +270,14 @@ public sealed partial class PackageReleases(IGit git, INuGetFeed feed, TimeProvi
                 break;
             }
         }
+
+        // Nobody known publishes it, but nuget.org answered and does not list the version a restore asked for (a leg planned after
+        // its flight's hold was met): held all the same, with no producer, and released when the version appears. A miss with no
+        // version (NU1101) names no line to wait for, so it fails as it always did.
+        if (miss.Version is not null && wanted is { Length: >= 2 })
+        {
+            return Wait($"{wanted[0]}.{wanted[1]}", PackageWait.NoProducer, null, null);
+        }
         return null;
     }
 

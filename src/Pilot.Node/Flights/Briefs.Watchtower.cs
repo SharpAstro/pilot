@@ -225,6 +225,7 @@ public static partial class Briefs
         text.AppendLine("stays the person's until it has an answer (their comment on the PR, or words they give you): then `review fix <owner/repo#n> <answer>` fixes it. A flight's leg past its round cap is the person's unless they ask for it in the chat: say so on the card and leave it to them.");
         text.AppendLine("Name a PR outside a flight as owner/repo#n (or #n) with its title. A flight code such as PIL1000 names only a flight, never a PR of the same number.");
         text.AppendLine($"On a leg-failed card, run `{pilot} leg finish verified --leg <code>/<leg>` for that leg first: the node finishes it only if its pushed work checks out, else the card stays the person's.");
+        text.AppendLine("An NU1102 on a version nuget.org already lists is NuGet's HTTP cache of the old version list (about 30 minutes), not a publishing delay: the node reruns the job once without the cache and holds the leg by itself, so restarting the worker does not help.");
         text.AppendLine();
         if (NamingRule(machine, "<flight or card>") is { Length: > 0 } naming)
         {

@@ -203,6 +203,8 @@ public static partial class Briefs
         text.AppendLine($"  report it with `{run} leg finish failed \"<the NU line, verbatim>\"` and end your turn. The node reads the line, holds the");
         text.AppendLine("  leg until nuget.org serves that version, and flies it again with a fresh worker. Do not work around it: no local");
         text.AppendLine("  feed, no pin changed back, no package reference removed.");
+        text.AppendLine("  An NU1102 on a version nuget.org already lists is NuGet's HTTP cache of the old version list (about 30 minutes), which the node");
+        text.AppendLine("  bypasses by rerunning once; it is not to be worked round either.");
         text.AppendLine("- A CS1704 or MSB3243 in a sibling clone's path is a stale restore left by another plane's build: run the restore the node");
         text.AppendLine($"  names through `{run} run -- dotnet restore <project>`, then the check again.");
         text.AppendLine($"- A full build or test run, or anything else long: `{run} run -- <command>`, then end your turn. The node");
