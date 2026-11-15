@@ -506,6 +506,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         return Build(screen);
     }
 
+    /// <summary>One line of words in a wrap capped at one line: it ends in an ellipsis where the panel is narrower than the text (even by a cell), whole on hover.</summary>
+    private static Layout.Node NameLine(string text) => WrappedProse.Of(text, 11f, Dim, maxLines: 1).WithTooltip(text, Layout.DockSide.Left);
+
     /// <summary>The watchtower's block: who it is, how it is, and its Remote Control link.</summary>
     private List<Layout.Node> Watchtower(SessionRow row)
     {
@@ -518,7 +521,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                     Layout.Builder.Text(said, 12f, colour, TextAlign.Far).Selectable().WAuto())
                 .RowH(30f),
             // One line that ends in an ellipsis, whole on hover, where the panel is narrower than the name: a plain text leaf is cut by the clip (wireframe sweep).
-            WrappedProse.OneLine($"{row.Name}{(row.ContextWindow > 0 ? $" · context {100.0 * row.ContextTokens / row.ContextWindow:0}%" : "")}", 11f, Dim).RowH(18f),
+            NameLine($"{row.Name}{(row.ContextWindow > 0 ? $" · context {100.0 * row.ContextTokens / row.ContextWindow:0}%" : "")}").RowH(18f),
         };
         // The link's row is kept whether there is a link or not: the block is always as tall, so the cards under it never
         // move when the watchtower gains or loses its Remote Control, or a fresh one starts (SE1, 2026-10-24).
