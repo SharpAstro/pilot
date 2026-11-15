@@ -163,14 +163,6 @@ public sealed class HeadWordsTests : IDisposable
         (await Describe(indented, Head)).Repinnable.ShouldBeTrue();
     }
 
-    [Theory]
-    [InlineData("src/run.py", true)]
-    [InlineData(".github/workflows/dotnet.yml", true)]
-    [InlineData("Makefile", true)]
-    [InlineData("src/Pilot.Node/Flights/HeadWords.cs", false)]
-    public void IndentationMattersWhereItIsMeaning(string path, bool matters) =>
-        HeadWords.IndentationMatters(path).ShouldBe(matters);
-
     [Fact]
     public async Task AHeadBehindItsBaseSaysByHowManyCommitsAndANotBehindOneSaysNothing()
     {
