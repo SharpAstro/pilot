@@ -111,6 +111,18 @@ public sealed class AccentPaletteTests
         night.SelectionBg.ShouldBe(new RGBAColor32(0xf0, 0x00, 0x00, 0xff));
     }
 
+    [Theory]
+    [MemberData(nameof(Names))]
+    public void TheCardBorderIsAMarkOnThePanelAndOnTheCardInEveryPalette(string name)
+    {
+        foreach (var p in new[] { Palette.Standard, Palette.Night, Palette.StandardFor(Accent(name)) })
+        {
+            // The panel is drawn on RowAltBg, a card on MenuBg (CardsView); a mark needs 3:1 on what it is drawn on.
+            Contrast.Ratio(p.CardBorder, p.RowAltBg).ShouldBeGreaterThanOrEqualTo(3.0, "CardBorder on the panel");
+            Contrast.Ratio(p.CardBorder, p.MenuBg).ShouldBeGreaterThanOrEqualTo(3.0, "CardBorder on a card");
+        }
+    }
+
     [Fact]
     public void TheSharedContrastHelperMatchesKnownRatios()
     {
