@@ -32,27 +32,18 @@ public sealed class TerminalCardsPanelTests
     }
 
     [Fact]
-    public async Task TmpDump()
+    public void ACardsTextSitsOneRowInsideEachEdgeNotABandAsTallAsTheTextAway()
     {
-        await Task.CompletedTask;
-        var c = new RGBAColor32(200, 200, 200, 255);
-        Layout.Node G(bool border, bool wrap)
+        var (b, p) = Paint();
+        var rows = Enumerable.Range(p.Y, p.Height).Select(y => (y, text: RowText(b, p, y))).ToList();
+        var tops = rows.Where(r => r.text.Contains('╭') || r.text.Contains('┌')).Select(r => r.y).ToList();
+        var bottoms = rows.Where(r => r.text.Contains('╰') || r.text.Contains('└')).Select(r => r.y).ToList();
+        for (var i = 0; i < tops.Count; i++)
         {
-            var g = Layout.Builder.Grid(2, Layout.Builder.Spacer().Bg(c).HStar(),
-                    Layout.Builder.VStack(Layout.Builder.Text("a", 12f, c).RowH(16f), Layout.Builder.Text("b", 12f, c).RowH(20f)).Pad(0f, 8f).WStar())
-                .WithColumns(Layout.Sizing.Fixed(3f), Layout.Sizing.Star()).WithAutoRows().Bg(c);
-            if (border) { g = g.Border(c, 1f, 6f); }
-            g = g.WStar().HAuto();
-            return wrap ? Layout.Builder.VStack(g).Border(c, 1f, 6f).WStar().HAuto() : g;
+            bool Blank(int y) => !rows[y - p.Y].text.Any(char.IsLetterOrDigit);
+            Blank(tops[i] + 1).ShouldBeFalse($"card {i}: the row inside its top edge holds text");
+            Blank(bottoms[i] - 1).ShouldBeFalse($"card {i}: the row inside its bottom edge holds text");
         }
-        var report = new List<string>();
-        foreach (var (border, wrap) in new[] { (false, false), (true, false), (false, true) })
-        {
-            var root = Layout.Builder.VStack(G(border, wrap), G(border, wrap)).Pad(8f, 10f).Stretch();
-            var arranged = Layout.Engine.Arrange(root, new Rect<int>(0, 0, 36, 50), CellMeasureContext.PixelAuthored);
-            report.Add($"border={border} wrap={wrap}: " + string.Join(" | ", arranged.Where(a => a.Node is Layout.Node.Grid || a.Node is Layout.Node.Stack).Select(a => $"{a.Node.GetType().Name} {a.Bounds.Y}+{a.Bounds.Height}")));
-        }
-        string.Join("\n", report).ShouldBe("");
     }
 
     private static CardRow Card(string id, CardBin bin, string title) => new()

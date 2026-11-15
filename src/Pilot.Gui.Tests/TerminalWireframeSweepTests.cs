@@ -136,11 +136,9 @@ public static class TerminalWireframeSweepTests
             arranged = TerminalFrame.Build(rail, tree, cardsTree, columns, rows, CellMeasureContext.PixelAuthored,
                 new TooltipRequest(hovered.Node.Tooltip!, new RectF32(b.X, b.Y, b.Width, b.Height)));
         }
-        LastArranged = arranged;
         return Record(arranged, columns, rows);
     }
 
-    internal static ImmutableArray<Layout.ArrangedNode<int>> LastArranged;
 
     internal static CellWireframeFrame Record(ImmutableArray<Layout.ArrangedNode<int>> arranged, int columns, int rows)
     {
