@@ -579,7 +579,7 @@ internal sealed class NewFlightWizard
         {
             buttons.Add(WrappedProse.Of(Status ?? "", 13f, Dim).WAuto());
         }
-        return FlowRow.Of(30f, 8f, buttons);
+        return FlowRow.Of(7f, 8f, buttons);
     }
 
     // A button whose press is with the node: its working word, dimmed, with no hit.

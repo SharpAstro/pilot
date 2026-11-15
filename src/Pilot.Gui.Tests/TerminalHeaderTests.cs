@@ -10,14 +10,12 @@ namespace Pilot.Gui.Tests;
 
 /// <summary>
 /// pilot-tui's page headers (#1044): every button and chip of the header takes exactly one row with its label on it, on every page
-/// and at the terminal's real sizes, with the host's terminal mode on (the trees are the GUI's, arranged at 8 design units a column
-/// and 16 a row, where the GUI's 28 high button is two rows).
+/// and at the terminal's real sizes, and each line of the bar is one row with nothing empty under it. The trees are the GUI's, with
+/// no terminal mode: the one-row header comes from Console.Lib's PixelAuthored mapping, which lays them out at 8 design units a column
+/// and 16 a row, rounds a 28 high button to one row, and keeps a flow cell's 32 unit strut (one line and the room round it) at one row.
 /// </summary>
 public sealed class TerminalHeaderTests
 {
-    // The tests turn the mode on through this; false shows what the base did.
-    private static bool TerminalMode => true;
-
     private static readonly NodeMark Here = new("a", "a", "SE1", true);
 
     private static PilotChrome<RgbaImage> NewChrome(RgbaImageRenderer renderer)
@@ -54,7 +52,6 @@ public sealed class TerminalHeaderTests
     [InlineData(250, 50)]
     public void EveryHeaderButtonIsOneRowHighWithItsLabelOnThatRow(int columns, int rows)
     {
-        using var terminal = HeaderMetrics.Use(TerminalMode);
         using var renderer = new RgbaImageRenderer(1, 1);
         var chrome = NewChrome(renderer);
         chrome.Chat.Cells = true;
@@ -98,10 +95,62 @@ public sealed class TerminalHeaderTests
         bad.ShouldBeEmpty(string.Join('\n', bad));
     }
 
-    // The Flights header's buttons by row, at one terminal size.
-    private static (SortedSet<int> Rows, int Right, int MaxRight) FlightsHeaderRows(int columns, int rows)
+    // The rows of a header that something starts on: a word at least one row high, or anything with a hit (a button, a segment of
+    // the view switch). A flow line two rows high starts nothing on its second row, which is how an empty row under it shows.
+    private static SortedSet<int> RowsStarted(ImmutableArray<Layout.ArrangedNode<int>> arranged, Layout.ArrangedNode<int> header)
     {
-        using var terminal = HeaderMetrics.Use(TerminalMode);
+        var from = arranged.IndexOf(header);
+        var set = new SortedSet<int>();
+        for (var i = from + 1; i < arranged.Length && arranged[i].Depth > header.Depth; i++)
+        {
+            var a = arranged[i];
+            if (a.Bounds.Height >= 1 && (a.Node is Layout.Node.Leaf { Content: Layout.Content.Text } || a.Node.Hit is not null))
+            {
+                set.Add(a.Bounds.Y);
+            }
+        }
+        return set;
+    }
+
+    /// <summary>
+    /// The header is its lines and no more, one row each: the bar's line and the source line under it, so two rows on every page at
+    /// 250 columns and at 160. Flights at 160 has a second line of the bar: with four nodes, its node pills, the In play pills, its
+    /// counts and the view switch at their window widths (the brand, 12 unit gaps, 60 unit segments) do not fit beside the shared
+    /// corner. A 32 unit row that rounds to two rows (a Min clamp) makes every header a row taller, the empty row under each line.
+    /// </summary>
+    [Theory]
+    [InlineData(160, 44, 3)]
+    [InlineData(250, 50, 2)]
+    public void EveryHeaderIsOneRowALineWithNoEmptyRow(int columns, int rows, int flightsRows)
+    {
+        using var renderer = new RgbaImageRenderer(1, 1);
+        var chrome = NewChrome(renderer);
+        chrome.Chat.Cells = true;
+        chrome.Chat.CellColumns = TerminalFrame.PageColumns(columns, false);
+        var bad = new List<string>();
+        foreach (var (name, id, page) in Pages(chrome, columns))
+        {
+            var rail = TerminalRail.Tree(id, GlyphMode.Emoji, null, null, Live.At, _ => { }, null, columns);
+            var arranged = Layout.Engine.Arrange(TerminalFrame.Tree(rail, page, null), new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
+            var header = arranged.First(a => a.Bounds.Y == 1 && a.Node.Background == Palette.Standard.HeaderBg && a.Bounds.Width > columns / 2);
+            var expected = name == "flights" ? flightsRows : 2;
+            if (header.Bounds.Height != expected)
+            {
+                bad.Add($"{name} {columns}x{rows}: the header is {header.Bounds.Height} rows, not {expected}");
+            }
+            var started = RowsStarted(arranged, header);
+            var empty = Enumerable.Range(header.Bounds.Y, header.Bounds.Height).Where(y => !started.Contains(y)).ToList();
+            if (empty.Count > 0)
+            {
+                bad.Add($"{name} {columns}x{rows}: nothing starts on header row(s) {string.Join(", ", empty)}");
+            }
+        }
+        bad.ShouldBeEmpty(string.Join('\n', bad));
+    }
+
+    // The Flights header's buttons by row, at one terminal size, and the header's height.
+    private static (SortedSet<int> Rows, int Right, int MaxRight, int Height) FlightsHeaderRows(int columns, int rows)
+    {
         using var renderer = new RgbaImageRenderer(1, 1);
         var chrome = NewChrome(renderer);
         var page = chrome.Flights.Build(Flights(Live.At));
@@ -119,55 +168,41 @@ public sealed class TerminalHeaderTests
                 max = Math.Max(max, arranged[i].Bounds.X + arranged[i].Bounds.Width);
             }
         }
-        return (set, header.Bounds.X + header.Bounds.Width, max);
+        return (set, header.Bounds.X + header.Bounds.Width, max, header.Bounds.Height);
     }
 
     [Fact]
     public void TheFlightsHeaderIsOneLineAt250Columns()
     {
-        var (rows, _, _) = FlightsHeaderRows(250, 50);
+        var (rows, _, _, _) = FlightsHeaderRows(250, 50);
         rows.Count.ShouldBe(1, $"the header's buttons stand on rows {string.Join(", ", rows)}");
     }
 
     [Fact]
     public void TheFlightsHeaderWrapsAt100ColumnsWithNothingPastThePage()
     {
-        var (rows, right, maxRight) = FlightsHeaderRows(100, 30);
+        var (rows, right, maxRight, _) = FlightsHeaderRows(100, 30);
         rows.Count.ShouldBeGreaterThan(1);
         maxRight.ShouldBeLessThanOrEqualTo(right);
     }
 
+    /// <summary>A wrapped bar's lines stand on consecutive rows, and the header is those lines and the source line under them.</summary>
     [Fact]
-    public void ThePullRequestsSearchBoxIsBorderedByRoundedBoxCharactersRoundOneInputRow()
+    public void AWrappedFlightsHeaderStandsItsLinesOnConsecutiveRows()
     {
-        using var terminal = HeaderMetrics.Use(TerminalMode);
-        using var renderer = new RgbaImageRenderer(1, 1);
-        var chrome = NewChrome(renderer);
-        var pr = new PullRequestRow
-        {
-            Repo = "SharpAstro/pilot", Number = 1, Title = "t", Url = "https://github.com/SharpAstro/pilot/pull/1", Author = "a", Kind = PullRequestKind.Ready, Label = "Ready",
-            UpdatedAt = Live.At, CreatedAt = Live.At, Head = "feature/x", Base = "main",
-        };
-        var row = new PullRequestsRow { Orgs = ["SharpAstro"], ReadAt = Live.At, Viewer = "a", PullRequests = [pr] };
-        var page = chrome.PullRequests.Tree(new PullRequestsScreen(row, "test", Live.At), 200 * 8f);
-        var arranged = Layout.Engine.Arrange(page, new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored);
-        var input = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).Bounds;
-        input.Height.ShouldBe(1);
-        string TextAt(int y, char glyph) => arranged
-            .Where(a => a.Bounds.Y == y && a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.Contains(glyph))
-            .Select(a => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value).FirstOrDefault() ?? "";
-        TextAt(input.Y - 1, '╭').ShouldContain("╮");
-        TextAt(input.Y + 1, '╰').ShouldContain("╯");
-        // The toolbar is its content tall: the table's header stands on the row right under the box's bottom edge.
-        var header = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == "Pull request").ToList();
-        header.Count.ShouldBe(1);
-        header[0].Bounds.Y.ShouldBe(input.Y + 2);
+        var (rows, _, _, height) = FlightsHeaderRows(100, 30);
+        rows.Count.ShouldBeGreaterThan(1);
+        (rows.Max - rows.Min + 1).ShouldBe(rows.Count, $"the header's buttons stand on rows {string.Join(", ", rows)}");
+        height.ShouldBe(rows.Count + 1, $"the header's buttons stand on rows {string.Join(", ", rows)}");
     }
 
-    [Fact]
-    public void ThePullRequestsSearchBoxFollowsANarrowPage()
+    /// <summary>The Pull requests page's search box, which is the window's box with no terminal tree of its own: one row high and within the page.</summary>
+    [Theory]
+    [InlineData(160)]
+    [InlineData(100)]
+    [InlineData(50)]
+    public void ThePullRequestsSearchBoxIsOneRowWithinThePage(int columns)
     {
-        using var terminal = HeaderMetrics.Use(TerminalMode);
         using var renderer = new RgbaImageRenderer(1, 1);
         var chrome = NewChrome(renderer);
         var pr = new PullRequestRow
@@ -176,12 +211,12 @@ public sealed class TerminalHeaderTests
             UpdatedAt = Live.At, CreatedAt = Live.At, Head = "feature/x", Base = "main",
         };
         var row = new PullRequestsRow { Orgs = ["SharpAstro"], ReadAt = Live.At, Viewer = "a", PullRequests = [pr] };
-        var page = chrome.PullRequests.Tree(new PullRequestsScreen(row, "test", Live.At), 50 * 8f);
-        var arranged = Layout.Engine.Arrange(page, new Rect<int>(0, 0, 50, 40), CellMeasureContext.PixelAuthored);
+        var page = chrome.PullRequests.Tree(new PullRequestsScreen(row, "test", Live.At), columns * 8f);
+        var arranged = Layout.Engine.Arrange(page, new Rect<int>(0, 0, columns, 40), CellMeasureContext.PixelAuthored);
         var input = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).Bounds;
-        (input.X + input.Width).ShouldBeLessThanOrEqualTo(50);
-        var top = arranged.Single(a => a.Bounds.Y == input.Y - 1 && a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.StartsWith('╭'));
-        (top.Bounds.X + top.Bounds.Width).ShouldBeLessThanOrEqualTo(50);
-        top.Bounds.Height.ShouldBe(1);
+        input.Height.ShouldBe(1);
+        input.Width.ShouldBeGreaterThan(0);
+        input.X.ShouldBeGreaterThanOrEqualTo(0);
+        (input.X + input.Width).ShouldBeLessThanOrEqualTo(columns);
     }
 }

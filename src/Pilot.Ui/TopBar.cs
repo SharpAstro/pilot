@@ -62,8 +62,11 @@ internal static class TopBar
     /// <summary>The title of a page whose rows are this window's node's only, e.g. "DE1's ideas (this machine)".</summary>
     public static string ThisNodeTitle(NodeFilter? nodes, string page) => $"{ThisNodeName(nodes)}'s {page} (this machine)";
 
-    /// <summary>The row of the bar itself, design units.</summary>
-    public const float RowHeight = 32f;
+    /// <summary>The room above and below a line of the bar: its row is a line of text and this either side.</summary>
+    public const float RowRoom = 8f;
+
+    /// <summary>The row of the bar itself, design units: a line and its room either side, 32.</summary>
+    public const float RowHeight = FlowRow.Line + 2 * RowRoom;
 
     /// <summary>The source line's row.</summary>
     public const float SourceHeight = 20f;
@@ -77,12 +80,6 @@ internal static class TopBar
     /// <summary>The padding either side of the bar.</summary>
     public const float PadX = 16f;
 
-    /// <summary>What the first line of the bar leaves for what every page shares at its right: Autopilot, the update light and ?, with their gaps.</summary>
-    public const float SharedReserve = 290f;
-
-    /// <summary>The same in the terminal: Autopilot, the update light and ? take 33 columns with their gaps.</summary>
-    public const float TerminalSharedReserve = 264f;
-
     /// <summary>The bottom of the bar's row of buttons: what the ? card hangs under.</summary>
     public const float ButtonsBottom = PadY + RowHeight;
 
@@ -94,8 +91,8 @@ internal static class TopBar
 
     // The page's name: one leaf where it is short, words that wrap within the bar where it is long (a title 436 px wide cut at the edge of a 422 px page).
     private static Layout.Node Title(string title, RGBAColor32 color) => title.Length > WrappedTitleChars
-        ? WrappedProse.Of(title, HeaderMetrics.Terminal ? 12f : 20f, color, selectable: true).WAuto()
-        : Layout.Builder.Text(title, HeaderMetrics.Terminal ? 12f : 20f, color, TextAlign.Near, TextAlign.Far).WAuto();
+        ? WrappedProse.Of(title, 20f, color, selectable: true).WAuto()
+        : Layout.Builder.Text(title, 20f, color, TextAlign.Near, TextAlign.Far).WAuto();
 
     /// <summary>The bar as one tree, <paramref name="page"/> laid out among <paramref name="parts"/>.</summary>
     public static Layout.Node Build(PageHeader page, TopBarParts parts)
@@ -103,11 +100,7 @@ internal static class TopBar
         var night = parts.Night?.Palette;
         var palette = night ?? Palette.Standard;
         var items = new List<Layout.Node>();
-        // The terminal's page bar and rail already say which app this is: the brand's nine columns go to the buttons (#1044).
-        if (!HeaderMetrics.Terminal)
-        {
-            items.Add(Layout.Builder.Text("pilot v2", 20f, palette.Bright, TextAlign.Near, TextAlign.Far).WAuto());
-        }
+        items.Add(Layout.Builder.Text("pilot v2", 20f, palette.Bright, TextAlign.Near, TextAlign.Far).WAuto());
         items.Add(Title(page.Title, palette.Dim));
         items.AddRange(parts.NodePills ?? parts.Nodes?.Pills(night) ?? []);
         items.AddRange(parts.Play?.Pills(night) ?? []);
@@ -116,12 +109,13 @@ internal static class TopBar
             items.AddRange(PlayFilter.Summary(parts.Play, page.Counts, page.Hidden, page.HiddenAction, palette.Body, palette.RowHoverBg, night));
         }
         items.AddRange(page.Buttons);
-        // Night flows with the page's own buttons: the corner is as wide as the narrowest page leaves it room for, and no wider.
+        // Night is on every page, so it stands in the shared corner with Autopilot. It flowed with the page's own buttons only while the
+        // corner was a fixed reserve that had to suit the narrowest page; the measured corner keeps it on the first line on every page.
+        var shared = new List<Layout.Node>();
         if (parts.Night is { } nightSwitch)
         {
-            items.Add(nightSwitch.Button());
+            shared.Add(nightSwitch.Button());
         }
-        var shared = new List<Layout.Node>();
         if (parts.Autopilot is { } autopilot)
         {
             shared.Add(autopilot.Button(night));
@@ -132,12 +126,15 @@ internal static class TopBar
         }
 
         // The bar flows: what does not fit beside the rest starts a line under it, each item in a cell of the bar's row height so
-        // buttons and words of any size share one middle. A row of one HStack ran past a narrow page, drawing Autopilot and ? out
-        // of it (PIL380). What every page shares stands at the bar's right corner, the same place on every page, and the flow
-        // leaves it room on its first line.
-        var flow = FlowRow.Of(HeaderMetrics.BarRow, HeaderMetrics.Terminal ? 8f : 12f, shared.Count > 0 ? HeaderMetrics.Terminal ? TerminalSharedReserve : SharedReserve : 0f, items);
-        var corner = Layout.Builder.HStack([.. shared.Select(item => FlowRow.Cell(item, HeaderMetrics.BarRow))]).WithGap(HeaderMetrics.Terminal ? 8f : 12f).WAuto().HFixed(HeaderMetrics.BarRow);
-        var rows = new List<Layout.Node> { shared.Count > 0 ? Layout.Builder.Overlay(flow, Layout.Builder.Anchored(corner, Layout.DockSide.Right).WStar().HStar()).WStar().HAuto() : flow };
+        // buttons and words of any size share one middle (PIL380). What every page shares stands at the bar's right corner, the same
+        // place on every page: the flow's first-line trailing node, measured, so the first line's items take exactly the room left
+        // beside it on any surface and the lines after it run the whole width beneath it.
+        // The corner's switches stand 8 apart, as the update light and ? do: one cluster, and one cell apart in the terminal.
+        // It wraps too: in a window narrower than the whole cluster its switches break onto lines of their own, measured
+        // against the bar's width, and the page's buttons start beneath them, so nothing reaches past the page.
+        var corner = Layout.Builder.WrapH([.. shared.Select(item => FlowRow.Cell(item, RowRoom))]).WithGap(8f).WAuto().HAuto();
+        var flow = shared.Count > 0 ? FlowRow.Of(RowRoom, 12f, corner, items) : FlowRow.Of(RowRoom, 12f, items);
+        var rows = new List<Layout.Node> { flow };
         if (page.CountsFit && !string.IsNullOrEmpty(page.Counts))
         {
             // Counts that may be long stand on a line of their own under the bar: cut with an ellipsis and carried whole on hover where
@@ -149,6 +146,6 @@ internal static class TopBar
             rows.Add(Layout.Builder.Text(source, 12f, page.SourceColor ?? palette.Dim).RowH(SourceHeight));
         }
         rows.AddRange(page.Lines);
-        return Layout.Builder.VStack([.. rows]).Pad(HeaderMetrics.Terminal ? HeaderMetrics.PadX : PadX, HeaderMetrics.BarPadY).Bg(palette.HeaderBg).WStar().HAuto();
+        return Layout.Builder.VStack([.. rows]).Pad(PadX, PadY).Bg(palette.HeaderBg).WStar().HAuto();
     }
 }

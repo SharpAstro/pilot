@@ -423,14 +423,28 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     private const float GaugeLabelWidth = 40f;
     private const float GaugeBarWidth = 120f;
     private const float GaugeBarHeight = 8f;
-    private const float GaugeFigureWidth = 150f;
     private const float GaugeGap = 8f;
     private const float GaugeSpacing = 28f;
     private const float ProcessRowHeight = 28f;
-    private const float PidWidth = 56f;
-    private const float CpuWidth = 56f;
-    private const float MemoryWidth = 72f;
-    private const float OwnerWidth = 240f;
+    // The process table's numeric and owner columns are sized from their content (the widest of the header and the rows), never past
+    // the old design width (the Most): header and rows read the same ProcessColumns, so they stay aligned column for column.
+    private const float PidMost = 56f;
+    private const float CpuMost = 56f;
+    private const float MemoryMost = 96f;
+    private const float OwnerMost = 240f;
+    private const float GlyphWidth = 0.62f;
+    private const float PillPadding = 28f;
+
+    private readonly record struct ProcessColumns(float Pid, float Cpu, float Memory, float Owner);
+
+    private static float Fit(float size, float most, string header, IEnumerable<string> cells, float padding = 0f) =>
+        Math.Min(most, cells.Append(header).Max(t => t.Length) * size * GlyphWidth + padding);
+
+    private ProcessColumns ColumnsOf(HomeScreen screen, MachineLine line) => new(
+        Fit(12f, PidMost, "pid", line.Row.Processes.Select(p => p.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture))),
+        Fit(13f, CpuMost, "cpu", line.Row.Processes.Select(MachineLine.Cpu)),
+        Fit(13f, MemoryMost, "memory", line.Row.Processes.Select(MachineLine.Memory)),
+        Fit(12f, OwnerMost, "owner", line.Row.Processes.Select(p => screen.OwnerChip(line, p)?.Label ?? p.Owner ?? ""), PillPadding));
     private const float FolderWidth = 240f;
     private const float ColumnGap = 12f;
 
@@ -457,17 +471,18 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             }
             // Wrapping, as the chips are, so a narrow page drops the last gauge to the next line rather than cutting a figure.
             blocks.Add(Layout.Builder.WrapH([.. line.Row.Gauges().Select(Gauge)]).WithGap(GaugeSpacing).WithLineGap(0f).WStar());
+            var columns = ColumnsOf(screen, line);
             blocks.Add(Layout.Builder.HStack(
                 Layout.Builder.Text("process", 11f, Dim).Selectable().WStar().HStar(),
                 Folder(Layout.Builder.Text("working dir", 11f, Dim).Selectable()),
-                Layout.Builder.Text("pid", 11f, Dim, TextAlign.Far).Selectable().WFixed(PidWidth).HStar(),
-                Layout.Builder.Text("cpu", 11f, Dim, TextAlign.Far).Selectable().WFixed(CpuWidth).HStar(),
-                Layout.Builder.Text("memory", 11f, Dim, TextAlign.Far).Selectable().WFixed(MemoryWidth).HStar(),
-                Layout.Builder.Text("owner", 11f, Dim).Selectable().WFixed(OwnerWidth).HStar()).WithGap(ColumnGap).RowH(22f).WStar(1f, 0f, TableMaxWidth));
+                Layout.Builder.Text("pid", 11f, Dim, TextAlign.Far).Selectable().WFixed(columns.Pid).HStar(),
+                Layout.Builder.Text("cpu", 11f, Dim, TextAlign.Far).Selectable().WFixed(columns.Cpu).HStar(),
+                Layout.Builder.Text("memory", 11f, Dim, TextAlign.Far).Selectable().WFixed(columns.Memory).HStar(),
+                Layout.Builder.Text("owner", 11f, Dim).Selectable().WFixed(columns.Owner).HStar()).WithGap(ColumnGap).RowH(22f).WStar(1f, 0f, TableMaxWidth));
             for (var i = 0; i < MachineLine.ProcessRows; i++)
             {
                 blocks.Add(i < line.Row.Processes.Length
-                    ? ProcessRow(screen, line, line.Row.Processes[i])
+                    ? ProcessRow(screen, line, line.Row.Processes[i], columns)
                     : Layout.Builder.Text(i == 0 ? "no process is busy" : "", 12f, Dim).Selectable().RowH(ProcessRowHeight));
             }
             blocks.Add(Layout.Builder.Spacer().RowH(8f));
@@ -482,22 +497,22 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
                 Layout.Builder.Spacer().HStar(),
                 SessionsView<TSurface>.Bar((float)gauge.Fraction).RowH(GaugeBarHeight),
                 Layout.Builder.Spacer().HStar()).WFixed(GaugeBarWidth),
-            Layout.Builder.Text(gauge.Figure, 12f, Bright).Selectable().WFixed(GaugeFigureWidth).HStar())
+            Layout.Builder.Text(gauge.Figure, 12f, Bright).Selectable().WAuto().HStar())
             .WithGap(GaugeGap)
             .WAuto()
             .HFixed(GaugeRow);
 
-    private Layout.Node ProcessRow(HomeScreen screen, MachineLine line, MachineProcess process)
+    private Layout.Node ProcessRow(HomeScreen screen, MachineLine line, MachineProcess process, ProcessColumns columns)
     {
         var name = Layout.Builder.Text(process.Name, 13f, Bright).Selectable().WStar().HStar();
         var folder = Layout.Builder.Text(MachineLine.Folder(process), 12f, Dim).Selectable();
         return Layout.Builder.HStack(
             name.WithTooltip(MachineLine.Hover(process)),
             Folder(process.WorkingDirectory is { } directory ? folder.WithTooltip(directory) : folder),
-            Layout.Builder.Text(process.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture), 12f, Dim, TextAlign.Far).Selectable().WFixed(PidWidth).HStar(),
-            Layout.Builder.Text(MachineLine.Cpu(process), 13f, Bright, TextAlign.Far).Selectable().WFixed(CpuWidth).HStar(),
-            Layout.Builder.Text(MachineLine.Memory(process), 13f, Bright, TextAlign.Far).Selectable().WFixed(MemoryWidth).HStar(),
-            Owner(screen.OwnerChip(line, process), process.Owner))
+            Layout.Builder.Text(process.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture), 12f, Dim, TextAlign.Far).Selectable().WFixed(columns.Pid).HStar(),
+            Layout.Builder.Text(MachineLine.Cpu(process), 13f, Bright, TextAlign.Far).Selectable().WFixed(columns.Cpu).HStar(),
+            Layout.Builder.Text(MachineLine.Memory(process), 13f, Bright, TextAlign.Far).Selectable().WFixed(columns.Memory).HStar(),
+            Owner(screen.OwnerChip(line, process), process.Owner, columns.Owner))
             .WithGap(ColumnGap)
             .RowH(ProcessRowHeight).WStar(1f, 0f, TableMaxWidth);
     }
@@ -508,11 +523,11 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     // The owner as its chip, which opens that session's or job's page as the chip above it does; the node's word when the page has
     // no such session or job any more (it ended since the sample), which opens nothing; empty for a process that is nobody's.
-    private Layout.Node Owner(HomeChip? chip, string? owner)
+    private Layout.Node Owner(HomeChip? chip, string? owner, float width)
     {
         if (chip is null)
         {
-            var cell = Layout.Builder.Text(owner ?? "", 12f, Dim).Selectable().WFixed(OwnerWidth).HStar();
+            var cell = Layout.Builder.Text(owner ?? "", 12f, Dim).Selectable().WFixed(width).HStar();
             return owner is { Length: > 0 } ? cell.WithTooltip(owner) : cell;
         }
         var tint = chip.Tone is "queued" ? Amber : Green;
@@ -523,7 +538,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         return Layout.Builder.VStack(
             Layout.Builder.Spacer().HStar(),
             pill.WithTooltip(chip.Label).RowH(24f),
-            Layout.Builder.Spacer().HStar()).WFixed(OwnerWidth);
+            Layout.Builder.Spacer().HStar()).WFixed(width);
     }
 
     // How much of a label a chip shows before it ends in an ellipsis, so one chip is never wider than a narrow page; the brief on

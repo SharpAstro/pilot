@@ -172,21 +172,20 @@ internal sealed class AboutCard
     private static RGBAColor32 LightOff => Palette.Current.LightOff;
     private static RGBAColor32 LightText => Palette.Current.LightText;
 
+    /// <summary>The side of the header's square buttons (?, +) and the height of everything else on its row that is a button.</summary>
+    public const float HeaderButton = 28f;
+
+    /// <summary>The room either side of a header button's word: Autopilot, Night, the node pills, the update light.</summary>
+    public const float HeaderButtonPad = 10f;
+
     /// <summary>
     /// The header's button, and while a newer pilot is installed the update light before it. The "?" stays a word for want
     /// of a help glyph: SharpAstro/DIR.Lib#151.
     /// </summary>
-    /// <summary>The side of the header's square buttons (?, +) and the height of everything else on its row that is a button.</summary>
-    public const float HeaderButton = 28f;
-
-    private static float Side => HeaderMetrics.Button;
-
-    private static RGBAColor32 Plain(RGBAColor32 fill, Palette? night) => HeaderMetrics.Terminal ? night?.HeaderBg ?? Palette.Current.HeaderBg : fill;
-
     public Layout.Node Button(Palette? night = null)
     {
-        var help = Layout.Builder.Text("?", 14f, night?.Bright ?? Bright, TextAlign.Center, TextAlign.Center).WFixed(Side).HFixed(Side)
-            .Bg(Plain(night?.Button ?? ButtonBg, night)).BgHover(night?.ButtonHover ?? ButtonHover)
+        var help = Layout.Builder.Text("?", 14f, night?.Bright ?? Bright, TextAlign.Center, TextAlign.Center).WFixed(HeaderButton).HFixed(HeaderButton)
+            .Bg(night?.Button ?? ButtonBg).BgHover(night?.ButtonHover ?? ButtonHover)
             .Follows(new HitResult.ButtonHit("about:toggle"), _ => Toggle())
             .WithTooltip("Which pilot this is, where its things are, and the keys");
         return Newer?.Invoke() is { } newer ? Layout.Builder.HStack(Light(newer), help).WithGap(8f).WAuto() : help;
@@ -195,13 +194,15 @@ internal sealed class AboutCard
     /// <summary>Whether the light is lit at this moment: on and off a second each, redrawn at least once a second.</summary>
     internal bool Lit => Clock() / 1000 % 2 == 0;
 
-    // A pill in amber that pulses, saying what is installed; a click restarts the window on it.
+    // A pill in amber that pulses, saying what is installed; a click restarts the window on it. "Restart beta.1", not "Restart for
+    // beta.1": the shared corner is the first line's trailing node, and at 160 columns the four cells of " for" pushed the
+    // last chat node pill off it.
     private Layout.Node Light(string newer)
     {
         var lit = Lit;
         var label = newer.LastIndexOf('-') is var dash and >= 0 ? newer[(dash + 1)..] : newer;
-        var light = Layout.Builder.Text(Restart is null ? $"{label} installed" : HeaderMetrics.Terminal ? $"Restart {label}" : $"Restart for {label}", 13f, lit ? LightText : LightOn, TextAlign.Center)
-            .Pad(HeaderMetrics.PadX, 0f).WAuto().HFixed(Side).Bg(lit ? LightOn : LightOff)
+        var light = Layout.Builder.Text(Restart is null ? $"{label} installed" : $"Restart {label}", 13f, lit ? LightText : LightOn, TextAlign.Center)
+            .Pad(HeaderButtonPad, 0f).WAuto().HFixed(HeaderButton).Bg(lit ? LightOn : LightOff)
             .WithTooltip($"pilot {newer} is installed; this window runs {NodeFeed.ClientVersion}." + (Restart is null ? " Restart it to use the new one." : " A click starts it again on the new one."));
         return Restart is { } restart ? light.Follows(new HitResult.ButtonHit("about:restart"), _ => restart()) : light;
     }
@@ -219,7 +220,7 @@ internal sealed class AboutCard
     /// </summary>
     public Layout.Node Over(Layout.Node page, Palette? night = null) => IsOpen
         ? Layout.Builder.Overlay(page, Layout.Builder.VStack(
-            Layout.Builder.Spacer().WStar().HFixed(HeaderMetrics.ButtonsBottom),
+            Layout.Builder.Spacer().WStar().HFixed(TopBar.ButtonsBottom),
             Layout.Builder.Anchored(Card(night), Layout.DockSide.Right, margin: 12f).WStar().HStar()).Stretch()).Stretch()
         : page;
 
