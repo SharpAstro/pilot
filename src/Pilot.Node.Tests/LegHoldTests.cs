@@ -342,6 +342,7 @@ public sealed class LegHoldTests1 : LegHoldTestsBase
         await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", Nu1102);
         L("parser").Hold.ShouldNotBeNull().Producer.ShouldBe(PackageWait.NoProducer);
         var started = _workers.Started.Count;
+        _legs.Models = new RoleModels(null);
 
         _time.Advance(TimeSpan.FromMinutes(2));
         await _watch.LookAsync(Ct);
