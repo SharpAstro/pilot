@@ -236,11 +236,7 @@ public sealed class AttachmentTests : IAsyncDisposable
             catch (InvalidOperationException)
             {
             }
-            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(root, recursive: true);
+            TestDirs.DeleteTree(root);
         }
     }
 

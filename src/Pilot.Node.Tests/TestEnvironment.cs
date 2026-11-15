@@ -166,8 +166,22 @@ internal static class TestEnvironment
 
         var count = int.TryParse(Environment.GetEnvironmentVariable("GIT_CONFIG_COUNT"), out var n) && n >= 0 ? n : 0;
         var nowhere = Path.Combine(Path.GetTempPath(), "pilot-tests-no-github-offline").Replace('\\', '/');
-        Environment.SetEnvironmentVariable($"GIT_CONFIG_KEY_{count}", $"url.{nowhere}/.insteadOf");
-        Environment.SetEnvironmentVariable($"GIT_CONFIG_VALUE_{count}", "https://github.com/");
-        Environment.SetEnvironmentVariable("GIT_CONFIG_COUNT", (count + 1).ToString());
+        // Git's automatic maintenance is off for every git the tests start (#1063). A test repo's commit can start 'git maintenance run
+        // --auto' (or gc --auto), which detaches and keeps writing .git/objects/maintenance.lock after the command returns, so a test's
+        // Dispose walking .git raced it (FileNotFoundException on maintenance.lock, run 43659977318). Pairs are appended, never overwritten.
+        (string Key, string Value)[] pairs =
+        [
+            ($"url.{nowhere}/.insteadOf", "https://github.com/"),
+            ("gc.auto", "0"),
+            ("maintenance.auto", "false"),
+            ("gc.autoDetach", "false"),
+        ];
+        foreach (var (key, value) in pairs)
+        {
+            Environment.SetEnvironmentVariable($"GIT_CONFIG_KEY_{count}", key);
+            Environment.SetEnvironmentVariable($"GIT_CONFIG_VALUE_{count}", value);
+            count++;
+        }
+        Environment.SetEnvironmentVariable("GIT_CONFIG_COUNT", count.ToString());
     }
 }

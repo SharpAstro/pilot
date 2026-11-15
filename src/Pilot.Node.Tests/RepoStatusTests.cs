@@ -17,10 +17,6 @@ public sealed class RepoStatusTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
         TestDirs.DeleteTree(_root);
     }
 

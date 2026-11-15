@@ -99,18 +99,9 @@ internal static class SeedRepo
 
     private static void Delete(string root)
     {
-        try
-        {
-            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(root, recursive: true);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Held or gone: the next run's sweep takes it.
-        }
+        // Runs at process exit and in the old-folder sweep: a folder still held after about 0.3 s is left for the next
+        // run's sweep, so this never waits the 2.5 s a full DeleteTree would on a held folder.
+        TestDirs.DeleteTree(root, attempts: 3);
     }
 
     /// <summary>
