@@ -128,8 +128,10 @@ public static class TerminalWireframeSweepTests
         return Record(arranged, columns, rows);
     }
 
+    internal static string? TmpArranged;
     internal static CellWireframeFrame Record(ImmutableArray<Layout.ArrangedNode<int>> arranged, int columns, int rows)
     {
+        TmpArranged = string.Join("\n", arranged.Where(a => a.Bounds.Height <= 2).Select(a => $"TMPDUMP {a.Bounds.X},{a.Bounds.Y} {a.Bounds.Width}x{a.Bounds.Height} {a.Node.GetType().Name} {((a.Node as Layout.Node.Leaf)?.Content)?.GetType().Name} {((a.Node as Layout.Node.Leaf)?.Content as Layout.Content.Text)?.Value}"));
         var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
         buffer.Resize(columns, rows);
         return CellWireframe.RecordCells(new BufferedViewport(buffer, columns, rows), arranged, null, false);
@@ -167,6 +169,7 @@ public static class TerminalWireframeSweepTests
             message.AppendLine($"{key}: {unknown.Count} finding(s) not in the baseline:");
             foreach (var u in unknown) { message.AppendLine($"  [{u.Rule}] {u.What}"); }
             message.AppendLine(CellWireframe.Describe(result));
+            message.AppendLine(TmpArranged);
         }
         if (expected.Count > 0)
         {
