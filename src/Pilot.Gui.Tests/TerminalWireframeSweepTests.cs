@@ -138,13 +138,16 @@ public static class TerminalWireframeSweepTests
     internal static async Task Run(string page, string state, int columns, int rows)
     {
         var key = Key(page, state, columns, rows);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
         var frame = await RecordCase(page, state, columns, rows);
+        var recorded = watch.ElapsedMilliseconds;
         frame.Frame.Texts.IsEmpty.ShouldBeFalse($"{key}: the frame recorded no text (a frame painted outside CellLayout.Paint records empty and would pass unjudged)");
         var result = Check(frame);
         if (Environment.GetEnvironmentVariable("PILOT_WIREFRAME_DUMP") is { Length: > 0 } dump)
         {
             lock (DumpLock)
             {
+                File.AppendAllLines(dump, [$"{key}	TIME	record {recorded} ms, check {watch.ElapsedMilliseconds - recorded} ms"]);
                 File.AppendAllLines(dump, Findings(result).Select(f => $"{key}\t{f.Rule}\t{f.What}"));
             }
         }
