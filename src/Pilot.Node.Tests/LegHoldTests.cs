@@ -222,6 +222,71 @@ public sealed class LegHoldTests1 : LegHoldTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task ACheckThatFailsNu1102OnAListedVersionIsRerunOnceWithoutTheHttpCacheAndTheLegGoesOnWithNoCard()
+    {
+        MakeSiblingARelease();
+        _feed.Publish("Drawboard.Core", "1.2.7");
+        _legs.Feed = _feed;
+        await FlyingParser(check: "dotnet build");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        var runs = _checks.Runs.Count;
+        _checks.Script.Enqueue(new CheckRun(1, $"Build FAILED.\n{Nu1102}\n    1 Error(s)"));
+        _checks.Next = new CheckRun(0, "all green");
+
+        var result = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "all good");
+
+        result.Ok.ShouldBeTrue();
+        L("parser").State.ShouldBe(LegState.Done);
+        _checks.Runs.Count.ShouldBe(runs + 2);
+        _checks.Environments[runs].ShouldBeNull();
+        var rerun = _checks.Environments[runs + 1].ShouldNotBeNull();
+        rerun["RestoreNoHttpCache"].ShouldBe("true");
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+        _state.Cards().ShouldNotContain(c => c.Kind == "leg-failed" || c.Kind == LegCommander.HoldKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARerunThatFailsNu1102AgainIsNotRerunAThirdTime()
+    {
+        MakeSiblingARelease();
+        _feed.Publish("Drawboard.Core", "1.2.7");
+        _legs.Feed = _feed;
+        await FlyingParser(check: "dotnet build");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        var runs = _checks.Runs.Count;
+        _checks.Next = new CheckRun(1, $"Build FAILED.\n{Nu1102}");
+
+        var result = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "all good");
+
+        result.Ok.ShouldBeFalse();
+        _checks.Runs.Count.ShouldBe(runs + 2);
+        L("parser").State.ShouldBe(LegState.Flying);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFailedReportNamingAListedMissIsRefusedOnceWithHowToRerunThenTakenAsAFailure()
+    {
+        MakeSiblingARelease();
+        _feed.Publish("Drawboard.Core", "1.2.7");
+        _legs.Feed = _feed;
+        await FlyingParser();
+
+        var first = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", Nu1102);
+
+        first.Ok.ShouldBeFalse();
+        first.Error.ShouldNotBeNull().ShouldContain("-p:RestoreNoHttpCache=true");
+        first.Error.ShouldContain("Drawboard.Core 1.2.7");
+        L("parser").State.ShouldBe(LegState.Flying);
+
+        await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", Nu1102);
+
+        L("parser").State.ShouldBe(LegState.Failed);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task ANu1101WithoutAVersionHoldsForTheReleasesLine()
     {
         MakeSiblingARelease();
