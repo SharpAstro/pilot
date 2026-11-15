@@ -36,14 +36,8 @@ public sealed class TerminalCardsPanelTests
     {
         var frame = await TerminalWireframeSweepTests.RecordCase("open card", "many", 250, 60);
         var lines = frame.Frame.Texts.Where(t => t.Box.X >= 213).Select(t => $"{t.Box.X},{t.Box.Y} {t.Box.Width}x{t.Box.Height} {t.Text}");
-        using var vessel = new RgbaImageRenderer(1, 1);
-        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
-        var cards = CardsScreen.From([Card("c1", CardBin.Ring, "First ring")]);
-        var snapshot = SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath);
-        var sessions = SessionsCapture.ScreenFor(snapshot, "sample");
-        var jobs = new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), sessions.Source, snapshot.At);
-        var arranged = TerminalFrame.Build(TerminalRail.Tree(PilotPage.Home, GlyphMode.Emoji, null, null, Live.At, _ => { }, null, 250), chrome.Home.Tree(new HomeScreen(new FlightsScreen([], "sample", Live.At), sessions, jobs, cards, [])), chrome.Cards.Tree(cards), 250, 60, CellMeasureContext.PixelAuthored);
-        var dump = arranged.Where(a => a.Bounds.X >= 213 && (a.Node is Layout.Node.Grid || a.Node is Layout.Node.Stack)).Select(a => $"{a.Depth} {a.Node.GetType().Name} {a.Bounds.X},{a.Bounds.Y} {a.Bounds.Width}x{a.Bounds.Height}");
+        await TerminalWireframeSweepTests.RecordCase("open card", "many", 250, 60);
+        var dump = TerminalWireframeSweepTests.LastArranged.Where(a => a.Bounds.X >= 213 && a.Bounds.Y >= 8 && a.Bounds.Y < 32).Select(a => $"{a.Depth} {a.Node.GetType().Name} {a.Bounds.X},{a.Bounds.Y} {a.Bounds.Width}x{a.Bounds.Height} {(a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } ? t.Text : "")}");
         string.Join("\n", dump).ShouldBe("");
     }
 
