@@ -229,8 +229,7 @@ public sealed class TerminalWireframeRegressionTests
         var result = Judge(rail, Page());
         var total = _arranged.Max(a => a.Bounds.Y + a.Bounds.Height);
         var bar = _arranged.First(a => ReferenceEquals(a.Node, rail));
-        (bar.Bounds.Height * 4).ShouldBeLessThan(total, "the page bar takes a quarter of the screen or more: one row was declared
-" + Describe(result));
+        (bar.Bounds.Height * 4).ShouldBeLessThan(total, "the page bar takes a quarter of the screen or more: one row was declared: " + Describe(result));
     }
 
     [Fact]
@@ -253,8 +252,7 @@ public sealed class TerminalWireframeRegressionTests
             Layout.Builder.Spacer().Bg(Palette.Current.Faint).WStar().RowH(16f)).WStar().HAuto();
         var result = Judge(Entries().RowH(16f), Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), composer).Bg(Palette.Current.Ground).WStar().HStar());
         var bars = _arranged.Count(a => a.Node is Layout.Node.Leaf { Content: not Layout.Content.Text } && a.Bounds.Height <= 20);
-        bars.ShouldBe(0, "a filled spacer one row tall is drawn as a grey bar
-" + Describe(result));
+        bars.ShouldBe(0, "a filled spacer one row tall is drawn as a grey bar: " + Describe(result));
     }
 
     [Fact]
