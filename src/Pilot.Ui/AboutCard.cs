@@ -44,7 +44,7 @@ internal sealed class AboutCard
     public static IReadOnlyList<(string Keys, string What)> TerminalPageKeys { get; } = PageRows();
 
     /// <summary>
-    /// The keys pilot-tui handles (Program.cs's Handle, TerminalRail.Handle, the chrome's Alt+Left, Alt+Right and Escape): no Ctrl+digit,
+    /// The keys pilot-tui handles (TerminalInput's router and its declared chords, the chrome's Alt+Left, Alt+Right and Escape): no Ctrl+digit,
     /// rail, right-click or mouse buttons. The page keys come first, from <see cref="TerminalPageKeys"/>.
     /// </summary>
     public static IReadOnlyList<(string Keys, string What)> TerminalKeys { get; } =
@@ -52,12 +52,12 @@ internal sealed class AboutCard
         .. TerminalPageKeys,
         ("Ctrl+S", "the say bar, to the selected session"),
         ("Ctrl+T", "the chat with the watchtower"),
-        ("Enter", "a session's transcript"),
-        ("Up, Down", "the selection, or a wizard's highlight"),
+        ("Up, Down, Enter", "select a row, open it; or a wizard's highlight"),
         ("Escape", "up a level, or out of a wizard step or a menu"),
         // Not "Backspace, Alt+Left" as the GUI writes its pair: the key column is 18 cells, and a longer key is cut. One row, not two:
         // a 24-row terminal has room for this list and nothing more.
         ("Backspace", "back, as Alt+Left; Alt+Right goes forward"),
+        ("Ctrl+1 to 0", "the same pages; a plain digit in a box is text"),
         ("q, Ctrl+C", "quit"),
         ("Left click", "a row, a button or a page on the bar"),
     ];

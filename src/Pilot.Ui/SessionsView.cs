@@ -506,6 +506,15 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// </summary>
     public void SelectFirst(Func<SessionLine, bool> match) => _pendingFirst = match;
 
+    /// <summary>The cursor stepped onto a row (a key or a click): the session it follows is that row's.</summary>
+    protected override void CursorMoved(int index)
+    {
+        if (index >= 0 && index < _lines.Count)
+        {
+            SelectedId = _lines[index].Key;
+        }
+    }
+
     /// <summary>Moves the selection to the row <paramref name="index"/>, and the session it follows with it.</summary>
     public void Select(int index)
     {
@@ -836,7 +845,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
         return Layout.Builder.VStack(
                 Table.Header(columns, Scale),
-                Layout.Builder.VStack([.. rows]).WithScroll(_scroll).Stretch())
+                Layout.Builder.VStack([.. rows]).WithScroll(_scroll).Stretch().ListOf(ListCursor, ListId))
             .Pad(Gutter, 8f)
             .Stretch();
     }
@@ -918,6 +927,15 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index))
+            // Enter, from the list cursor of either surface, opens the transcript as a double-click does.
+            .Activatable(_ =>
+            {
+                Select(index);
+                if (Transcript.Load is not null)
+                {
+                    Transcript.Open(line);
+                }
+            })
             .WithContextMenu(at => OpenMenu(line, index, at))
             // The same brief as the Home chip (#258), under the session's whole name: the Session column may cut it with an ellipsis.
             .WithTooltip(ChipBrief.SessionRow(line))

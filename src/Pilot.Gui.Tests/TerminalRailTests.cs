@@ -42,44 +42,30 @@ public sealed class TerminalRailTests
     public void TheBarFollowsTheGuisRailOrderWithItsCtrlDigitsAsKeysAndSpendHasADollar()
     {
         TerminalRail.Keys.Select(k => (k.Page, k.Key)).ShouldBe(Expected);
-        TerminalRail.PageFor('0').ShouldBe(PilotPage.Ideas);
-        TerminalRail.PageFor('$').ShouldBe(PilotPage.Spend);
-        TerminalRail.PageFor('x').ShouldBeNull();
-        TerminalRail.PageFor(InputKey.D6, InputModifier.None).ShouldBe(PilotPage.Jobs);
-        TerminalRail.PageFor(InputKey.D4, InputModifier.Shift).ShouldBe(PilotPage.Spend);
+        TerminalRail.PlainChord('0').ShouldBe(new KeyChord(InputKey.D0, InputModifier.None));
+        TerminalRail.PlainChord('6').ShouldBe(new KeyChord(InputKey.D6, InputModifier.None));
+        TerminalRail.PlainChord('$').ShouldBe(new KeyChord(InputKey.D4, InputModifier.Shift));
         foreach (var (page, _, key) in TerminalRail.Keys.Where(k => k.Key != TerminalRail.SpendKey))
         {
-            TerminalRail.PageFor(new InputEvent.KeyDown((InputKey)((int)InputKey.D0 + (key - '0')), InputModifier.None)).ShouldBe(page);
+            var ctrl = TerminalRail.ChordFor(page);
+            ctrl.Modifiers.ShouldBe(InputModifier.Ctrl);
+            ctrl.Key.ShouldBe(TerminalRail.PlainChord(key).Key, $"{page}: the bar's key is the digit of its GUI chord");
         }
-        TerminalRail.PageFor(new InputEvent.KeyDown(InputKey.D4, InputModifier.Shift)).ShouldBe(PilotPage.Spend);
-        TerminalRail.PageFor(new InputEvent.KeyDown(InputKey.D2, InputModifier.Ctrl)).ShouldBeNull();
     }
 
     [Fact]
-    public void HandleTakesEveryPageKeyAndFocusesChatOnTwoAndNothingElse()
+    public void EveryEntryDeclaresItsPagesChordAndCarriesTheShowAsItsHandler()
     {
-        foreach (var (page, _, key) in TerminalRail.Keys.Where(k => k.Key != TerminalRail.SpendKey))
+        var shown = new List<PilotPage>();
+        var arranged = Arrange(TerminalRail.Tree(PilotPage.Home, GlyphMode.Emoji, null, null, Now, shown.Add));
+        foreach (var (page, _, _) in TerminalRail.Keys)
         {
-            var shown = new List<PilotPage>();
-            TerminalRail.Handle(new InputEvent.KeyDown((InputKey)((int)InputKey.D0 + (key - '0')), InputModifier.None), null, shown.Add, () => { }).ShouldBeTrue();
-            shown.ShouldBe([page]);
+            var entry = EntryOf(arranged, page);
+            entry.Node.Shortcut.ShouldBe(TerminalRail.ChordFor(page), $"{page}");
+            entry.Node.OnClick.ShouldNotBeNull();
+            entry.Node.OnClick!(InputModifier.Ctrl);
         }
-        var spend = new List<PilotPage>();
-        TerminalRail.Handle(new InputEvent.KeyDown(InputKey.D4, InputModifier.Shift), null, spend.Add, () => { }).ShouldBeTrue();
-        TerminalRail.Handle(null, new System.Text.Rune('$'), spend.Add, () => { }).ShouldBeTrue();
-        spend.ShouldBe([PilotPage.Spend, PilotPage.Spend]);
-
-        var focused = 0;
-        TerminalRail.Handle(new InputEvent.KeyDown(InputKey.D2, InputModifier.None), null, _ => { }, () => focused++).ShouldBeTrue();
-        focused.ShouldBe(1);
-        TerminalRail.Handle(new InputEvent.KeyDown(InputKey.D3, InputModifier.None), null, _ => { }, () => focused++).ShouldBeTrue();
-        focused.ShouldBe(1);
-
-        var reached = new List<PilotPage>();
-        TerminalRail.Handle(new InputEvent.KeyDown(InputKey.D2, InputModifier.Ctrl), null, reached.Add, () => focused++).ShouldBeFalse();
-        TerminalRail.Handle(null, new System.Text.Rune('x'), reached.Add, () => focused++).ShouldBeFalse();
-        reached.ShouldBeEmpty();
-        focused.ShouldBe(1);
+        shown.ShouldBe(TerminalRail.Keys.Select(k => k.Page));
     }
 
     [Theory]

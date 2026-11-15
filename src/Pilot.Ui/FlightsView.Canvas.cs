@@ -58,7 +58,7 @@ internal sealed partial class FlightsView<TSurface>
             .WithLineGap(FlightCanvas.GapY)
             .WStar();
         return Layout.Builder.VStack(wrap)
-            .WithScroll(_scroll)
+            .WithScroll(_scroll).ListOf(ListCursor, ListId)
             .Pad(Gutter, 8f)
             .Stretch();
     }

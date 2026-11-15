@@ -612,7 +612,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             table.Add(Layout.Builder.Text(holder, 13f, Queued).Selectable().RowH(24f));
         }
         table.Add(Table.Header(columns, Scale));
-        table.Add(Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch());
+        table.Add(Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch().ListOf(ListCursor, ListId));
         return Layout.Builder.VStack([.. table])
             .Pad(Gutter, 8f)
             .Stretch();

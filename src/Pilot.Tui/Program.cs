@@ -91,10 +91,12 @@ var tracker = new BackgroundTaskTracker();
 using var stop = new CancellationTokenSource();
 var dirty = true;
 void Redraw() => dirty = true;
-var input = new TerminalInput<RgbaImage>(chrome, sessions, focus, tracker, Redraw, stop.Cancel)
+// Every event goes through DIR.Lib's router on the arranged cell tree (Console.Lib's CellInputSurface declares what the frame painted).
+var surface = new CellInputSurface(sessions.Ui);
+var input = new TerminalInput<RgbaImage>(chrome, sessions, focus, Redraw, stop.Cancel)
 {
+    Router = CellInputRouter.Create(surface, tracker, Redraw),
     HitTest = (tree, column, row) => CellLayout.HitTest(tree, column, row),
-    TextInputs = tree => CellLayout.TextInputs(tree),
 };
 
 // The same wiring as the window's: a verb on the node for each button, and Plan a leg said in the chat.
@@ -419,7 +421,6 @@ if (terminal.IsInputRedirected || terminal.IsOutputRedirected)
 await terminal.InitAsync();
 terminal.EnterAlternateScreen();
 terminal.EnableCellBuffer();
-input.CellSize = () => (terminal.CellSize.Width, terminal.CellSize.Height);
 
 var page = PilotPage.Home;
 // A card about a leg opens its worker's transcript from the moment the card was raised.
@@ -518,7 +519,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };
-        var railTree = TerminalRail.Tree(page, glyphMode, pages.Jobs, pages.Ideas, now, input.Show, railMemory, columns);
+        var railTree = TerminalRail.Tree(page, glyphMode, pages.Jobs, pages.Ideas, now, input.Show, railMemory, columns, input.Chords());
         // A glyph that changed was drawn blank for this frame (see TerminalRail.Memory): draw the next at once.
         if (railMemory.Settling)
         {
@@ -535,7 +536,8 @@ while (!stop.IsCancellationRequested)
         // No clear: the cell buffer diffs each frame against the last, and the tree's backgrounds cover every cell.
         // Cropped to each scroll container and page rect first (Console.Lib's painter has no clip); the hit test reads the same tree.
         arranged = TerminalFrame.Clip(arranged);
-        TerminalFrame.Paint(terminal.HideCaret, () => CellLayout.Paint(terminal, arranged));
+        TerminalFrame.Paint(terminal.HideCaret, () => CellLayout.Paint(terminal, arranged, surface));
+        input.Painted();
         if (chat.ParkedCaret(page, focus, arranged) is var (caretColumn, caretRow))
         {
             // The composer is drawn from the editor's lines (CellLayout paints no text editor), so its caret is placed here.
@@ -551,5 +553,5 @@ return 0;
 void Handle(ConsoleInputEvent raw)
 {
     input.Arranged = arranged;
-    input.Handle(raw.ToInputEvent, raw.KeyChar, raw.Modifiers);
+    input.Handle(raw.ToCellInputEvent(terminal.CellSize), raw.KeyChar, raw.Modifiers);
 }

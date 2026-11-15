@@ -378,7 +378,9 @@ public sealed class AboutCardTerminalTests
         {
             shown.ShouldContain($"{key} {label}", Case.Sensitive, shown);
         }
-        foreach (var banned in new[] { "Ctrl+1", "rail", "Right-click", "back and forward buttons" })
+        // The Ctrl+digit chords are named next to the plain digits (PIL1052).
+        shown.ShouldContain("Ctrl+1 to 0");
+        foreach (var banned in new[] { "Ctrl+1 to Ctrl+9", "rail", "Right-click", "back and forward buttons" })
         {
             shown.ShouldNotContain(banned, Case.Insensitive);
             card.Kept.ShouldNotContain(l => l.Text.Contains(banned, StringComparison.OrdinalIgnoreCase), banned);
@@ -417,20 +419,20 @@ public sealed class AboutCardTerminalTests
         entries.ShouldBe(TerminalRail.Keys.Select(k => $"{k.Key} {k.Label}"));
         foreach (var (page, _, key) in TerminalRail.Keys)
         {
-            var shown = new List<PilotPage>();
-            InputEvent? evt = char.IsDigit(key) ? new InputEvent.KeyDown(InputKey.D0 + (key - '0')) : null;
-            TerminalRail.Handle(evt, new Rune(key), shown.Add, () => { }).ShouldBeTrue($"{key}");
-            shown.ShouldBe([page]);
+            // The listed key is a declared chord: the plain digit (or Shift+4 for '$'), and the page's Ctrl+digit on its bar entry.
+            var plain = TerminalRail.PlainChord(key);
+            (key == TerminalRail.SpendKey ? InputKey.D4 : InputKey.D0 + (key - '0')).ShouldBe(plain.Key, $"{key}");
+            TerminalRail.ChordFor(page).Key.ShouldNotBe(InputKey.None, $"{page}");
         }
     }
 
     [Fact]
     public void EveryOtherKeyTheTerminalListNamesIsOneProgramHandles()
     {
-        // Read against Program.cs's Handle: q and Ctrl+C quit, Backspace goes back, Ctrl+S and Ctrl+T, Up and Down (and Enter) on the
-        // page's own HandleInput, a left click through CellLayout.HitTest; and the chrome's own Alt+Left, Alt+Right and Escape.
+        // Read against TerminalInput: q and Ctrl+C quit, Backspace goes back, Ctrl+S and Ctrl+T are declared chords, Up and Down (and Enter)
+        // are the router's list keys, a left click goes through the router; and the chrome's own Alt+Left, Alt+Right and Escape.
         AboutCard.TerminalKeys.Skip(AboutCard.TerminalPageKeys.Count).Select(k => k.Keys).ShouldBe(
-            ["Ctrl+S", "Ctrl+T", "Enter", "Up, Down", "Escape", "Backspace", "q, Ctrl+C", "Left click"]);
+            ["Ctrl+S", "Ctrl+T", "Up, Down, Enter", "Escape", "Backspace", "Ctrl+1 to 0", "q, Ctrl+C", "Left click"]);
         AboutCard.TerminalKeys.Single(k => k.Keys == "Backspace").What.ShouldContain("Alt+Right");
         AboutCard.TerminalKeys.ShouldAllBe(k => k.What.Length <= AboutCard.TerminalLineChars);
         // The away mark's row is the card's too: it fits the terminal's narrowest card and keeps the words CursorAndLinksTests reads.

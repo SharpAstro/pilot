@@ -1,4 +1,3 @@
-using System.Text;
 using DIR.Lib;
 
 namespace Pilot.Ui;
@@ -40,25 +39,6 @@ internal static class TerminalRail
     /// <summary>Whether a terminal this many columns wide gets narrow entries.</summary>
     public static bool IsNarrow(int columns) => columns < FullColumns;
 
-    /// <summary>
-    /// Handles a page key: a digit, Shift+4, or a bare '$' (<paramref name="keyChar"/>, for terminals that do not report Shift+4).
-    /// Calls <paramref name="show"/> with the page, and <paramref name="focusChat"/> when it is Chat. Returns whether it took the key.
-    /// </summary>
-    public static bool Handle(InputEvent? evt, Rune? keyChar, Action<PilotPage> show, Action focusChat)
-    {
-        var page = (evt is null ? null : PageFor(evt)) ?? (keyChar is { } c && c.Value == SpendKey ? PilotPage.Spend : null);
-        if (page is not { } reached)
-        {
-            return false;
-        }
-        show(reached);
-        if (reached == PilotPage.Chat)
-        {
-            focusChat();
-        }
-        return true;
-    }
-
     /// <summary>The cells the glyph has: a light bulb and "99+" is the longest.</summary>
     private const int GlyphCells = 5;
 
@@ -81,18 +61,12 @@ internal static class TerminalRail
     /// <summary>The key a page has on the bar.</summary>
     public static char KeyFor(PilotPage page) => Keys.First(k => k.Page == page).Key;
 
-    /// <summary>The page a key reaches: a digit by the GUI's Ctrl+digit order, and the dollar sign Spend; null for any other.</summary>
-    public static PilotPage? PageFor(char key) => Keys.Where(k => k.Key == key).Select(k => (PilotPage?)k.Page).FirstOrDefault();
+    /// <summary>The plain key of a page's bar key, as a declared chord: the digit, or Shift+4 for '$' (a terminal that reports only the character is mapped to it by the input).</summary>
+    public static KeyChord PlainChord(char key) =>
+        key == SpendKey ? new KeyChord(InputKey.D4, InputModifier.Shift) : new KeyChord(InputKey.D0 + (key - '0'), InputModifier.None);
 
-    /// <summary>The page a key press reaches: a digit key, or Shift+4 (the dollar sign on a US keyboard) for Spend.</summary>
-    public static PilotPage? PageFor(InputKey key, InputModifier modifiers) =>
-        key is >= InputKey.D0 and <= InputKey.D9
-            ? ((modifiers & InputModifier.Shift) != 0 && key == InputKey.D4 ? PilotPage.Spend : PageFor((char)('0' + (key - InputKey.D0))))
-            : null;
-
-    /// <summary>The page an input event reaches by the table: a plain key-down of a digit, or Shift+4; null for any other event.</summary>
-    public static PilotPage? PageFor(InputEvent evt) =>
-        evt is InputEvent.KeyDown(var key, var modifiers) && (modifiers & ~InputModifier.Shift) == 0 ? PageFor(key, modifiers) : null;
+    /// <summary>The chord the GUI's rail gives a page (Ctrl+digit), declared on the page's bar entry.</summary>
+    public static KeyChord ChordFor(PilotPage page) => PilotChrome<DIR.Lib.RgbaImage>.Pages.First(p => p.Page == page).Shortcut;
 
     /// <summary>
     /// The mode a terminal gets from its environment: emoji where it is known to draw them two cells wide (Windows Terminal,
@@ -194,8 +168,8 @@ internal static class TerminalRail
 
     private static string Remember(Memory? memory, PilotPage page, string text) => memory?.Entry(page, text) ?? text;
 
-    /// <summary>The bar's tree: one row of entries, the active page marked with a background, each a button that shows its page.</summary>
-    public static Layout.Node Tree(PilotPage active, GlyphMode mode, JobsScreen? jobs, IdeasScreen? ideas, DateTimeOffset now, Action<PilotPage> show, Memory? memory = null, int columns = FullColumns)
+    /// <summary>The bar's tree: one row of entries, the active page marked with a background, each a button that shows its page and declares the page's Ctrl+digit chord. <paramref name="chords"/> are zero-size nodes that ride in the row (the input's other declared keys).</summary>
+    public static Layout.Node Tree(PilotPage active, GlyphMode mode, JobsScreen? jobs, IdeasScreen? ideas, DateTimeOffset now, Action<PilotPage> show, Memory? memory = null, int columns = FullColumns, IEnumerable<Layout.Node>? chords = null)
     {
         if (memory is not null)
         {
@@ -212,10 +186,11 @@ internal static class TerminalRail
                 .Bg(on ? palette.RowFocusBg : palette.RowAltBg)
                 .BgHover(palette.RowHoverBg)
                 .WithTooltip($"{k.Label} ({k.Key})")
-                .Follows(new HitResult.ButtonHit(Action(k.Page)), _ => show(k.Page));
+                .Follows(new HitResult.ButtonHit(Action(k.Page)), _ => show(k.Page))
+                .WithShortcut(ChordFor(k.Page));
         }).ToArray();
         // One row across: Stretch() would set the height to Star as well and overwrite the HFixed, and in the frame's VStack the bar
         // and the page then shared the height equally, the page and its ? card getting only the lower half (pilot #1027).
-        return Layout.Builder.HStack(entries).RowH(16f).Bg(palette.Ground);
+        return Layout.Builder.HStack([.. entries, .. chords ?? []]).RowH(16f).Bg(palette.Ground);
     }
 }
