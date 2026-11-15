@@ -881,7 +881,8 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var lines = new List<Layout.Node>();
         if (problem is not null)
         {
-            lines.Add(WrappedProse.Of($"could not read the log: {problem}", 11f, Failed, maxLines: 1).WithTooltip($"could not read the log: {problem}").RowH(LogLineHeight));
+            // Wrapped, never cut: what the node said it could not read is what the person came to find out.
+            lines.Add(WrappedProse.Of($"could not read the log: {problem}", 11f, Failed).HAuto());
         }
         else if (log is null)
         {
