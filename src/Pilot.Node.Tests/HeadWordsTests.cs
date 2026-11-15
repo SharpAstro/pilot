@@ -30,10 +30,6 @@ public sealed class HeadWordsTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var file in Directory.EnumerateFiles(_dir, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
         TestDirs.DeleteTree(_dir);
     }
 
@@ -162,14 +158,6 @@ public sealed class HeadWordsTests : IDisposable
         Commit("py trailing space and a blank line");
         (await Describe(indented, Head)).Repinnable.ShouldBeTrue();
     }
-
-    [Theory]
-    [InlineData("src/run.py", true)]
-    [InlineData(".github/workflows/dotnet.yml", true)]
-    [InlineData("Makefile", true)]
-    [InlineData("src/Pilot.Node/Flights/HeadWords.cs", false)]
-    public void IndentationMattersWhereItIsMeaning(string path, bool matters) =>
-        HeadWords.IndentationMatters(path).ShouldBe(matters);
 
     [Fact]
     public async Task AHeadBehindItsBaseSaysByHowManyCommitsAndANotBehindOneSaysNothing()

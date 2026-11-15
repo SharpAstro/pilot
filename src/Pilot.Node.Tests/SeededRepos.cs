@@ -123,10 +123,6 @@ internal sealed class SeededRepos : IDisposable
         Model?.Release();
         if (Directory.Exists(_root))
         {
-            foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
             TestDirs.DeleteTree(_root);
         }
         (Model?.Unsupported ?? []).ShouldBeEmpty("this test needs real git: pass realGit: true to SeededRepos");

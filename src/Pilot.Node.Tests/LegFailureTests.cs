@@ -279,10 +279,6 @@ public sealed class LegFailureTests : IDisposable
     {
         try
         {
-            foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
             TestDirs.DeleteTree(_root);
         }
         catch (IOException)

@@ -514,11 +514,7 @@ public sealed class MergeBatchTests
         }
         finally
         {
-            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(root, recursive: true);
+            TestDirs.DeleteTree(root);
         }
     }
 

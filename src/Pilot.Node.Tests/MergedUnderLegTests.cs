@@ -34,10 +34,6 @@ public sealed class MergedUnderLegTests : IDisposable
         try
         {
             Git(Repo, "worktree", "prune");
-            foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
             TestDirs.DeleteTree(_root);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)

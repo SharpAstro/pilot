@@ -88,10 +88,6 @@ public abstract class JobTestsBase : IDisposable
         try
         {
             // Git's object files are read-only, and a test that made a repo here would fail the delete.
-            foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
             TestDirs.DeleteTree(_root);
         }
         catch (IOException)

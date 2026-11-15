@@ -21,7 +21,6 @@ public sealed class LfsTests : IDisposable
     {
         try
         {
-            ClearReadOnly(_root);
             TestDirs.DeleteTree(_root);
         }
         catch (IOException)
@@ -83,22 +82,13 @@ public sealed class LfsTests : IDisposable
         {
             try
             {
-                ClearReadOnly(root);
-                Directory.Delete(root, recursive: true);
+                TestDirs.DeleteTree(root);
             }
             catch (IOException)
             {
             }
         };
         return root;
-    }
-
-    private static void ClearReadOnly(string root)
-    {
-        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
     }
 
     private static void CopyTree(string from, string to)
