@@ -21,8 +21,6 @@ internal sealed partial class PullRequestsView<TSurface>(Renderer<TSurface> rend
 
     /// <summary>One PR's row; every row of every group is this tall.</summary>
     public const float RowHeight = 40f;
-    /// <summary>A row's own vertical padding each side: its chip (22) and text sit in the 24 left of <see cref="RowHeight"/>.</summary>
-    public const float RowPad = 8f;
 
     /// <summary>A repo's header row.</summary>
     public const float GroupHeight = 34f;
