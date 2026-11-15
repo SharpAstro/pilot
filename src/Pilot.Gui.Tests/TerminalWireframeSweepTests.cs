@@ -139,7 +139,6 @@ public static class TerminalWireframeSweepTests
         return Record(arranged, columns, rows);
     }
 
-
     internal static CellWireframeFrame Record(ImmutableArray<Layout.ArrangedNode<int>> arranged, int columns, int rows)
     {
         var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
