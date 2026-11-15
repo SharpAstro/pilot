@@ -51,6 +51,14 @@ internal sealed partial class FlightsView<TSurface>
     // Whether the last render arranged the layer menu, so the pointer is held against where it is.
     private bool _layersOnShow;
 
+    /// <summary>The clock whose timer wakes the page when the layer menu's idle delay ends: the system's, a fake in a test.</summary>
+    public TimeProvider Time { get; set; } = TimeProvider.System;
+
+    // The one wake armed for the end of the layer menu's idle delay. Armed and read on the draw; the timer fires off it, so
+    // the fired flag is volatile, and a fired timer counts as gone, so a wake that came a little early is armed again.
+    private ITimer? _layersWake;
+    private volatile bool _layersWakeFired;
+
     /// <summary>The map body's rect as the last frame drew it, surface units; for tests to aim a pointer.</summary>
     internal RectF32? MapBody => _mapBody;
 
@@ -334,8 +342,8 @@ internal sealed partial class FlightsView<TSurface>
     // Measured from the window's top instead, each frame moved it a header's height further down.
     private static readonly HitResult LayersPanelHit = new HitResult.ButtonHit(FlightMapLayerPalette.GripAction + ":Panel");
 
-    // Where the palette landed, handed back so its stored offset follows the engine's clamp; and while it fades, a frame asked
-    // for, or the fade stops wherever the last event left it (nothing else redraws while the pointer is still).
+    // Where the palette landed, handed back so its stored offset follows the engine's clamp; and a frame asked for when the
+    // palette needs one, or the fade stops wherever the last event left it (nothing else redraws while the pointer is still).
     private void NoteLayersArranged(IReadOnlyList<Layout.ArrangedNode<float>> arranged)
     {
         _layersOnShow = false;
@@ -361,12 +369,34 @@ internal sealed partial class FlightsView<TSurface>
             var (panel, inside) = (arranged[i].Bounds, arranged[parent].Bounds);
             MapLayers.Palette.NoteArranged(new RectF32(panel.X, panel.Y, panel.Width, panel.Height), new RectF32(inside.X, inside.Y, inside.Width, inside.Height), Scale);
             _layersOnShow = true;
-            if (MapLayers.Palette.IsFading)
-            {
-                Changed?.Invoke();
-            }
+            AskForLayersFrame(MapLayers.Palette.NextFrameIn);
             return;
         }
+    }
+
+    /// <summary>
+    /// Asks for the layer menu's next frame as its <see cref="FloatingPaletteState.NextFrameIn"/> says (DIR.Lib 11.59): zero while the
+    /// alpha moves, a frame per refresh; the time left of the idle delay while it waits, one wake when that ends and not a frame per
+    /// refresh; null when nothing changes by itself (hovered, dragged or at rest). Internal for tests, which cannot age the palette.
+    /// </summary>
+    internal void AskForLayersFrame(TimeSpan? next)
+    {
+        if (next is not { } wait)
+        {
+            return;
+        }
+        if (wait <= TimeSpan.Zero)
+        {
+            Changed?.Invoke();
+            return;
+        }
+        if (_layersWake is not null && !_layersWakeFired)
+        {
+            return;
+        }
+        _layersWake?.Dispose();
+        _layersWakeFired = false;
+        _layersWake = Time.CreateTimer(_ => { _layersWakeFired = true; Changed?.Invoke(); }, null, wait, Timeout.InfiniteTimeSpan);
     }
 
     /// <summary>

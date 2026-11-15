@@ -22,6 +22,19 @@ internal static class WrappedProse
     }
 
     /// <summary>
+    /// One line of <paramref name="text"/> that ends in an ellipsis where the column is narrower than it (a plain text leaf is cut by the
+    /// clip with nothing to say so): its words in a wrap capped at one line (the engine ends a capped wrap in an ellipsis only when it drops a child, so one leaf is never cut so), whole on hover. For a line that keeps its own line (a
+    /// command's or its output's, a message typed as lines) where <see cref="Of"/>'s words would reflow it.
+    /// </summary>
+    public static Layout.Node OneLine(string text, float size, RGBAColor32 color) =>
+        text.Length <= OneLineChars
+            ? Layout.Builder.Text(text, size, color).Selectable().WStar()
+            : Of(text, size, color, maxLines: 1).WithTooltip(text);
+
+    /// <summary>A line this short stays one text leaf (a command, a path: whole in a copy and in a test); a longer one is words, so it can end in an ellipsis.</summary>
+    private const int OneLineChars = 80;
+
+    /// <summary>
     /// A link that wraps: every word of <paramref name="text"/> is a leaf run through <paramref name="decorate"/>, which gives it the link's
     /// hit, hover and menu, so a click or the pointer on any word is on the whole link. <paramref name="tail"/> (the ↗ of a link that leaves
     /// the app) ends the last word, so it can never wrap onto a line of its own. <paramref name="maxLines"/> and <paramref name="lineChars"/> are as in <see cref="Of"/>.
