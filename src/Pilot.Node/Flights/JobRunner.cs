@@ -966,12 +966,13 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     public CheckLimit CheckLimitFor(string command, string cwd) => CheckLimit.For(state.Jobs(), command, cwd);
 
     /// <summary>As above, with the limit and where it came from, so a stop can say both.</summary>
-    public Task<CheckRun> RunCheckAsync(string flight, string leg, string command, string cwd, CheckLimit limit, CancellationToken cancellationToken)
+    public Task<CheckRun> RunCheckAsync(string flight, string leg, string command, string cwd, CheckLimit limit, CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         // The look for a carried check and the attach to it (or the queueing of a new one) are one step against a watch ending a check.
         lock (_checkEndLock)
         {
-            return RunCheckLockedAsync(flight, leg, command, cwd, limit, cancellationToken);
+            return RunCheckLockedAsync(flight, leg, command, cwd, limit, cancellationToken, environment);
         }
     }
 
@@ -1008,7 +1009,8 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     /// <summary>Test hook: runs once a job's slot is free and the look for the next in line is asked for.</summary>
     internal Action<string>? SlotFreed { get; set; }
 
-    private async Task<CheckRun> RunCheckLockedAsync(string flight, string leg, string command, string cwd, CheckLimit limit, CancellationToken cancellationToken)
+    private async Task<CheckRun> RunCheckLockedAsync(string flight, string leg, string command, string cwd, CheckLimit limit, CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string>? environment)
     {
         var budget = limit.Limit;
         // A check a previous node left queued (carried over the restart) is waited on, not queued again at the back, and so is the
@@ -1053,6 +1055,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             StartedAt = now,
             QueuedAt = now,
             MemoryKey = JobKey.Of(command, cwd).ToString(),
+            ExtraEnvironment = environment is { Count: > 0 } ? new Dictionary<string, string>(environment, StringComparer.Ordinal) : null,
         };
         _checkWaiters[jobId] = done;
         _mine[jobId] = 0;
@@ -1815,6 +1818,13 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         foreach (var (name, value) in Flights.BuildCache.Variables(BuildCache, job.Cwd, BuildCacheRoot, IsSeed(job)))
         {
             variables[name] = value;
+        }
+        if (job.ExtraEnvironment is { } extra)
+        {
+            foreach (var (name, value) in extra)
+            {
+                variables[name] = value;
+            }
         }
         return variables;
     }

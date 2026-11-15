@@ -89,6 +89,12 @@ public sealed record JobRow
     /// </summary>
     public string? MemoryKey { get; init; }
 
+    /// <summary>
+    /// Environment variables the node adds to this job's process, beyond its own (a check rerun without NuGet's HTTP cache, pilot
+    /// #1064). Null on a row from an older node and on any job that adds none.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? ExtraEnvironment { get; init; }
+
     /// <summary>The median, in bytes, of the samples taken every 2 s of the job's process tree: the run's value in the estimate, which a short spike does not move. Null until it has ended, or when none could be taken.</summary>
     public long? MemoryMedian { get; init; }
 

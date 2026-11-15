@@ -197,6 +197,14 @@ public sealed partial class LegCommander
                 {
                     throw new FlightException($"{stale.Text}\nThen finish again; if it still fails, report it again and the node will take it as a failure.");
                 }
+                // A restore that read NuGet's stale HTTP cache of a version nuget.org lists: the first report naming one is refused with
+                // how to rerun it, and a second is a failure (#1064).
+                if (Feed is { } staleFeed
+                    && await OffLockAsync(null, () => StaleRestoreCache.ListedMissesAsync(report, staleFeed, cancellationToken)) is { Count: > 0 } listed
+                    && _staleRefused.TryAdd($"{flight.Code}/{leg.Name}", 0))
+                {
+                    throw new FlightException($"nuget.org lists {listed[0].Id} {listed[0].Version}, so the restore read a stale HTTP cache. Rerun the job with -p:RestoreNoHttpCache=true and finish again; if it still fails, report it again and the node will take it as a failure.");
+                }
                 // A conflict worker that failed is followed at once by the next rung of the ladder (PIL846), with no card between; past the
                 // last rung only a report in the decision shape rings, and any other failure is the leg-failed card's below.
                 if (await ConflictRoundEndedAsync(flight, leg, report, cancellationToken))
@@ -375,6 +383,9 @@ public sealed partial class LegCommander
 
     // The legs whose first failed report naming a sibling's stale restore was refused.
     private readonly ConcurrentDictionary<string, byte> _siblingRefused = new(StringComparer.Ordinal);
+
+    // The legs whose first failed report naming a restore miss of a listed version (a stale HTTP cache) was refused.
+    private readonly ConcurrentDictionary<string, byte> _staleRefused = new(StringComparer.Ordinal);
 
     /// <summary>The outcome of <c>finish-leg</c> that pushes a rebased branch over origin's with a lease on the sha the card named (the controller's).</summary>
     public const string PushedWithLease = "pushed-with-lease";
@@ -580,6 +591,15 @@ public sealed partial class LegCommander
                     run = again.StoppedByBudget
                         ? again with { Tail = $"stopped by its budget twice; the machine was saturated the first time, so it was retried once\n{again.Tail}" }
                         : again;
+                }
+                else if (!run.Passed && !run.StoppedByBudget && Feed is { } feed
+                    && await OffLockAsync(null, () => StaleRestoreCache.ListedMissesAsync(run.Tail, feed, cancellationToken)) is { Count: > 0 } stale)
+                {
+                    // The restore read NuGet's stale HTTP cache of a version nuget.org lists (#1064): one more try, as a fresh job, with
+                    // the cache bypassed, and at most one per recheck.
+                    var first = stale[0];
+                    var again = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken, flight.Code, leg.Name, StaleRestoreCache.Environment));
+                    run = again with { Tail = $"NuGet's HTTP cache was stale for {first.Id} {first.Version}; the check was rerun once without it\n{again.Tail}" };
                 }
                 else if (run.TestHostNeverLaunched)
                 {

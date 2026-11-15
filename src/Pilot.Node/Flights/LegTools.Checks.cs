@@ -51,7 +51,9 @@ public interface ICheckRunner
 {
     /// <param name="flight">The flight whose leg's check this is, for the job that runs it; null for a check that is no leg's.</param>
     /// <param name="leg">The leg whose check it is.</param>
-    Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null);
+    /// <param name="environment">Variables added to the check's environment (a rerun without NuGet's HTTP cache); null adds none.</param>
+    Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null,
+        IReadOnlyDictionary<string, string>? environment = null);
 
     /// <summary>
     /// True while the node is stopping, so a run that ended cancelled is the node's end (its job is left for the next node) and not
@@ -69,8 +71,9 @@ public sealed class JobCheckRunner(JobRunner jobs) : ICheckRunner
 {
     public bool NodeStopping => jobs.NodeStopping;
 
-    public Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null) =>
-        jobs.RunCheckAsync(flight ?? "", leg ?? "", command, cwd, jobs.CheckLimitFor(command, cwd), cancellationToken);
+    public Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null,
+        IReadOnlyDictionary<string, string>? environment = null) =>
+        jobs.RunCheckAsync(flight ?? "", leg ?? "", command, cwd, jobs.CheckLimitFor(command, cwd), cancellationToken, environment);
 }
 
 /// <summary>
@@ -87,7 +90,8 @@ public sealed class ShellCheckRunner : ICheckRunner
     /// <summary>The priority the check's process tree runs at (#629); Normal keeps the node's own.</summary>
     public JobPriority Priority { get; init; } = JobPriority.BelowNormal;
 
-    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null)
+    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         using var shell = ShellScript.For(command, cwd, Priority);
         var start = shell.Start;
@@ -95,6 +99,13 @@ public sealed class ShellCheckRunner : ICheckRunner
         start.RedirectStandardError = true;
         start.UseShellExecute = false;
         start.CreateNoWindow = true;
+        if (environment is not null)
+        {
+            foreach (var (name, value) in environment)
+            {
+                start.Environment[name] = value;
+            }
+        }
 
         ProcessStarts.Observe("check", start);
         using var process = Process.Start(start) ?? throw new FlightException($"the check `{command}` did not start");
