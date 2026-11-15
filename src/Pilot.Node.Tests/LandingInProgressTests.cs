@@ -22,7 +22,7 @@ public sealed class LandingInProgressTests : ReviewTestsBase
         public async Task PassAsync()
         {
             _reached.TrySetResult();
-            await Task.WhenAny(_open.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+            await Task.WhenAny(_open.Task, Task.Delay(TimeSpan.FromSeconds(10)));
         }
 
         public void Open() => _open.TrySetResult();
@@ -42,7 +42,7 @@ public sealed class LandingInProgressTests : ReviewTestsBase
 
     private async Task Within(Task task, string what)
     {
-        (await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(120), Ct))).ShouldBe(task, what);
+        (await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(120), Ct))).ShouldBe(task, what); // budget: a saturated machine starts git late; only a failing test waits it out
         await task;
     }
 
