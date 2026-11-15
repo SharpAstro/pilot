@@ -78,8 +78,12 @@ internal sealed class ListTable
     /// <summary>The state stripe's width, ahead of the first column.</summary>
     public const float StripeWidth = 4f;
 
-    /// <summary>The space between columns, and between the stripe and the first.</summary>
-    public const float ColumnGap = 14f;
+    /// <summary>
+    /// The space between columns, and between the stripe and the first: two cells of a terminal (8 design units each), so that a column and the gap after it
+    /// round to whole cells as the sum of their roundings. A divider grip is sized as its column plus this gap (<see cref="Dropping"/>), and the titles
+    /// as the column and, apart, the gap; with a gap that is not whole cells (it was 14) the two disagreed by a cell for some caps, and a grip lay over a title.
+    /// </summary>
+    public const float ColumnGap = 16f;
 
     /// <summary>The height of the header row.</summary>
     public const float HeaderHeight = 28f;
