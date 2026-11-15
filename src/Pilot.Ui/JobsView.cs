@@ -609,7 +609,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var table = new List<Layout.Node>();
         if (screen.Holder is { } holder)
         {
-            table.Add(Layout.Builder.Text(holder, 13f, Queued).Selectable().RowH(24f));
+            table.Add(WrappedProse.OneLine(holder, 13f, Queued).RowH(24f));
         }
         table.Add(Table.Header(columns, Scale));
         table.Add(Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch().ListOf(ListCursor, ListId));
@@ -876,11 +876,12 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var lines = new List<Layout.Node>();
         if (problem is not null)
         {
-            lines.Add(Layout.Builder.Text($"could not read the log: {problem}", 11f, Failed).Selectable().RowH(LogLineHeight));
+            lines.Add(WrappedProse.Of($"could not read the log: {problem}", 11f, Failed, maxLines: 1).WithTooltip($"could not read the log: {problem}").RowH(LogLineHeight));
         }
         else if (log is null)
         {
-            lines.Add(Layout.Builder.Text(LoadLog is null ? "its output is in its log, on the node's machine" : "reading…", 11f, Dim).Selectable().RowH(LogLineHeight));
+            var hint = LoadLog is null ? "its output is in its log, on the node's machine" : "reading…";
+            lines.Add(WrappedProse.Of(hint, 11f, Dim, maxLines: 1).WithTooltip(hint).RowH(LogLineHeight));
         }
         else if (log.Lines.Length == 0)
         {

@@ -66,7 +66,7 @@ internal sealed partial class PullRequestsView<TSurface>(Renderer<TSurface> rend
     private const float FlightWidth = 92f;
     private const float AuthorWidth = 120f;
     private const float ReviewWidth = 84f;
-    private const float UpdatedWidth = 104f;
+    private const float UpdatedWidth = 136f;
 
     // The row's actions sit in three slots of fixed widths, so a row with fewer buttons leaves its gaps and nothing moves: the card's
     // button (Merge or Go around), Review, and Open, which is always at the right. The review slot is as wide as its longest word

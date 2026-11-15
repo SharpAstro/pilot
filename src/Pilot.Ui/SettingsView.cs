@@ -488,7 +488,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private static Layout.Node Section(string title, string hint) =>
         Layout.Builder.HStack(
                 Layout.Builder.Text(title, 15f, Bright).Selectable().WAuto(),
-                Layout.Builder.Text(hint, 12f, Faint).Whole(hint).Selectable().WStar())
+                WrappedProse.OneLine(hint, 12f, Faint))
             .WithGap(12f).Pad(8f, 10f).RowH(38f);
 
     // Setup's heading carries the refresh: it measures the checks again, and shows it is working until the node answers.
@@ -497,7 +497,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         var hint = read.ChecksProblem is { } problem ? $"could not read the checks again: {problem}" : $"what it takes for {Owner} to be part of the fleet";
         return Layout.Builder.HStack(
                 Layout.Builder.Text("Setup", 15f, Bright).WAuto(),
-                Layout.Builder.Text(hint, 12f, read.ChecksProblem is null ? Faint : Todo).WStar(),
+                WrappedProse.OneLine(hint, 12f, read.ChecksProblem is null ? Faint : Todo, selectable: false),
                 Pill("refresh", "settings:checks:refresh", () => _ = ReadChecksAsync(refresh: true, waited: true, CancellationToken.None), working: read.Checking))
             .WithGap(12f).Pad(8f, 10f).RowH(38f);
     }

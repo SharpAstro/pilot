@@ -354,7 +354,7 @@ internal sealed partial class PullRequestsView<TSurface>
         var header = Layout.Builder.HStack(
                 Layout.Builder.Icon(folded ? Layout.IconKind.CaretRight : Layout.IconKind.CaretDown, 12f, P.Bright).WFixed(16f).HStar(),
                 Layout.Builder.Text(org.Org, OrgSize, P.Bright).WAuto().HStar(),
-                Layout.Builder.Text(org.Counts, TextSize, BodyText).WithTooltip(org.Counts).WStar().HStar())
+                WrappedProse.OneLine(org.Counts, TextSize, BodyText, selectable: false).WithTooltip(org.Counts).HStar())
             .WithGap(8f)
             .Pad(8f, 0f)
             .RowH(OrgHeight)

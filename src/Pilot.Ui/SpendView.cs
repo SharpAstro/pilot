@@ -202,7 +202,7 @@ internal sealed class SpendView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             var month = $"Bench VMs, {BenchText.Month(bench)}";
             parts.Add(Heading("Bench VMs, this month (not the window above)"));
-            parts.Add(Layout.Builder.Text(month, 13f, Body).Selectable().RowH(RowH).Whole(month));
+            parts.Add(WrappedProse.OneLine(month, 13f, Body).RowH(RowH));
         }
         if (screen.Waste is { } waste)
         {
@@ -221,7 +221,7 @@ internal sealed class SpendView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     }
 
     private static Layout.Node Heading(string text) =>
-        Layout.Builder.Text(text, 14f, Bright).Selectable().RowH(30f).Whole(text);
+        WrappedProse.OneLine(text, 14f, Bright).RowH(30f);
 
     private IEnumerable<Layout.Node> Rows(SpendRow[] rows, string none)
     {

@@ -139,11 +139,11 @@ internal static class TopBar
         {
             // Counts that may be long stand on a line of their own under the bar: cut with an ellipsis and carried whole on hover where
             // the page is narrow, so they never push a button out of the window or past the page's edge. Bottom-aligned as Summary is.
-            rows.Add(Layout.Builder.Text(page.Counts, 15f, palette.Body, TextAlign.Far, TextAlign.Far).WithTooltip(page.Counts).RowH(CountsHeight));
+            rows.Add(WrappedProse.OneLine(page.Counts, 15f, palette.Body, TextAlign.Far, TextAlign.Far).WithTooltip(page.Counts).RowH(CountsHeight));
         }
         if (page.Source is { } source)
         {
-            rows.Add(Layout.Builder.Text(source, 12f, page.SourceColor ?? palette.Dim).RowH(SourceHeight));
+            rows.Add(WrappedProse.OneLine(source, 12f, page.SourceColor ?? palette.Dim).WithTooltip(source).RowH(SourceHeight));
         }
         rows.AddRange(page.Lines);
         return Layout.Builder.VStack([.. rows]).Pad(PadX, PadY).Bg(palette.HeaderBg).WStar().HAuto();

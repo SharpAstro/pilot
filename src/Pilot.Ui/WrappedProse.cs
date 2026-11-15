@@ -26,10 +26,10 @@ internal static class WrappedProse
     /// clip with nothing to say so): its words in a wrap capped at one line (the engine ends a capped wrap in an ellipsis only when it drops a child, so one leaf is never cut so), whole on hover. For a line that keeps its own line (a
     /// command's or its output's, a message typed as lines) where <see cref="Of"/>'s words would reflow it.
     /// </summary>
-    public static Layout.Node OneLine(string text, float size, RGBAColor32 color) =>
+    public static Layout.Node OneLine(string text, float size, RGBAColor32 color, TextAlign hAlign = TextAlign.Near, TextAlign vAlign = TextAlign.Near, bool selectable = true) =>
         text.Length <= OneLineChars
-            ? Layout.Builder.Text(text, size, color).Selectable().WStar()
-            : Of(text, size, color, maxLines: 1).WithTooltip(text);
+            ? Layout.Builder.Text(text, size, color, hAlign, vAlign).Selectable(selectable).WStar()
+            : Of(text, size, color, maxLines: 1, selectable: selectable).WithTooltip(text);
 
     /// <summary>A line this short stays one text leaf (a command, a path: whole in a copy and in a test); a longer one is words, so it can end in an ellipsis.</summary>
     private const int OneLineChars = 80;
