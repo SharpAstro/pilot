@@ -45,6 +45,8 @@ public sealed class TerminalHomeMachinesTests
     {
         SampledAt = Live.At, CpuPercent = cpu, Cores = 16, MemoryUsed = memUsed, MemoryTotal = 100L << 30,
         Gpu = new MachineGpu { Percent = gpu, MemoryUsed = 4L << 30, MemoryTotal = 8L << 30 },
+        NetInBytesPerSecond = 4_400_000 / 8d, NetOutBytesPerSecond = 4_500_000 / 8d, NetLinkBitsPerSecond = 1_000_000_000,
+        DiskFree = (long)(61.1 * (1L << 30)), DiskTotal = (long)(930.4 * (1L << 30)),
         Processes = [.. Enumerable.Range(1, 5).Select(i => Process(i, $"{prefix}proc{i}", i == 1 ? owner : null))],
     };
 
@@ -105,6 +107,22 @@ public sealed class TerminalHomeMachinesTests
             gaugeRows.Any(r => Carries(buffer, r, colour)).ShouldBeTrue($"no gauge row carries the {name} meter colour\n{dump}");
         }
         gaugeRows.Any(r => Carries(buffer, r, SessionsView<RgbaImage>.Track)).ShouldBeTrue($"no gauge row shows the track colour\n{dump}");
+    }
+
+    [Fact]
+    public void EveryGaugeFigureAppearsWholeOnItsRow()
+    {
+        var (_, text, _) = Paint();
+        var dump = string.Join('
+', text);
+        var sample = Machine(30, 80, 95L << 30, "aa", null);
+        foreach (var gauge in sample.Gauges())
+        {
+            text.Any(row => row.Contains(gauge.Figure, StringComparison.Ordinal)).ShouldBeTrue($"the figure '{gauge.Figure}' is cut
+{dump}");
+        }
+        sample.Gauges().Select(g => g.Figure).ShouldContain("4.4/4.5 Mbps (in/out)");
+        sample.Gauges().Select(g => g.Figure).ShouldContain("61.1/930.4 GB free");
     }
 
     [Fact]
