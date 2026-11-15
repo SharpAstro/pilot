@@ -106,11 +106,17 @@ public static class TerminalWireframeSweepTests
             case PilotPage.Ideas: tree = chrome.Ideas.Tree(PageTextOverlapTests.IdeasFor(state)); break;
             case PilotPage.Spend: tree = chrome.Spend.Tree(data.Spend); break;
             case PilotPage.Settings:
-                for (var i = 0; i < 200 && chrome.Settings.Load is not null && chrome.Settings.Page is null; i++)
+                // The page is read from the node's answer on its own task: the first Tree starts the read, and Changed says the page is in.
+                var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                chrome.Settings.Changed = () =>
                 {
-                    chrome.Settings.Tree(PageData.Now);
-                    await Task.Delay(25, TestContext.Current.CancellationToken);
-                }
+                    if (chrome.Settings.Page is not null)
+                    {
+                        loaded.TrySetResult();
+                    }
+                };
+                chrome.Settings.Tree(PageData.Now, width);
+                await loaded.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
                 tree = chrome.Settings.Tree(PageData.Now, width);
                 break;
             default: tree = chrome.Home.Tree(new HomeScreen(data.Flights, data.Sessions, data.Jobs, cards, data.Machines)); break;
