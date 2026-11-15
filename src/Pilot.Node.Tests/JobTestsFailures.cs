@@ -92,7 +92,7 @@ public sealed class JobTestsFailures : JobTestsBase
         ended.State.ShouldBe(JobState.Succeeded);
         again.Error.ShouldNotBeNull().ShouldContain($"rerun once as job {second}");
         fake.Job(second).Launch.Environment.ShouldNotBeNull().ShouldContainKeyAndValue("RestoreNoHttpCache", "true");
-        _said.ShouldHaveSingleItem().Args[0].ShouldContain($"Your job {second}");
+        _said.Select(s => s.Args[0]).ToList().ShouldHaveSingleItem().ShouldContain($"Your job {second}");
         _said.Single().Args[0].ShouldContain("succeeded");
         _said.Single().Args[0].ShouldContain("rerun once because the HTTP cache was stale for Drawboard.Core 1.2.7");
         _state.Cards().ShouldBeEmpty();
@@ -112,7 +112,7 @@ public sealed class JobTestsFailures : JobTestsBase
         var ended = await Ended(RerunOf(first));
 
         ended.State.ShouldBe(JobState.Failed);
-        _said.ShouldHaveSingleItem().Args[0].ShouldContain("failed");
+        _said.Select(s => s.Args[0]).ToList().ShouldHaveSingleItem().ShouldContain("failed");
         fake.Starts.Count.ShouldBe(2);
         _state.Jobs().Count(j => j.Kind == JobKind.Run).ShouldBe(2);
     }
