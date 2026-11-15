@@ -20,7 +20,7 @@ public sealed partial class JobRunner
     /// <summary>Whether <paramref name="ended"/> may be a stale-cache miss worth a look at the feed: a failed plane job of a flight, not yet a rerun.</summary>
     private bool MayBeStale(JobRow ended, string[]? last) =>
         Feed is not null && ended is { State: JobState.Failed, ExitCode: not null, Flight: not null } && ended.Kind != JobKind.Check
-        && !IsStaleRerun(ended) && last is { Length: > 0 } && PlaneOutput.PlaneOf(ended.Cwd) is not null;
+        && !IsStaleRerun(ended) && last is { Length: > 0 } && Flights.PlaneOutput.PlaneOf(ended.Cwd) is not null;
 
     /// <summary>
     /// Queues <paramref name="ended"/> once more with the HTTP cache bypassed when its tail names an NU1102 miss of a version the feed
