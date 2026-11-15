@@ -39,24 +39,32 @@ internal sealed record ListColumn(string Header, Layout.Sizing Width, float? Dro
     /// <see cref="Fixed(string, float)"/> would drop it: the one a row cannot do without (a state).
     /// </summary>
     public static ListColumn Fixed(string header, float width, float shrinkTo) =>
-        new(header, Layout.Sizing.Fixed(width)) { Squeezed = new ListColumn(header, Layout.Sizing.Star(1f, shrinkTo, width)) };
+        new(header, Layout.Sizing.Fixed(width)) { Squeezed = new ListColumn(header, Layout.Sizing.Star(1f, Cells(shrinkTo), Cells(width))) };
+
+    /// <summary>
+    /// <paramref name="units"/> to the nearest whole cell of a terminal (8 design units). A star column's least and cap are declared so: the header
+    /// sizes a divider grip as its column plus the gap (<see cref="Dropping"/>) and the terminal rounds each size to cells, and
+    /// <c>round((cap + 14) / 8)</c> is not <c>round(cap / 8) + round(14 / 8)</c> for every cap (a Model column of 140 units made the grip a cell off, over the next
+    /// title). On pixels a size moves by 4 units at most.
+    /// </summary>
+    internal static float Cells(float units) => MathF.Round(units / 8f, MidpointRounding.AwayFromZero) * 8f;
 
     /// <summary>The column that takes what the others leave, never less than <paramref name="min"/> (0: it may shrink to nothing).</summary>
-    public static ListColumn Star(string header, float min = 0f) => new(header, Layout.Sizing.Star(1f, min));
+    public static ListColumn Star(string header, float min = 0f) => new(header, Layout.Sizing.Star(1f, Cells(min)));
 
     /// <summary>
     /// A star column that, on a page too narrow for the table, keeps only <paramref name="squeezedMin"/> and takes
     /// <paramref name="squeezedWeight"/> shares of the room to the others' one, so it still has most of what there is.
     /// </summary>
     public static ListColumn Star(string header, float min, float squeezedMin, float squeezedWeight = 1f) =>
-        new(header, Layout.Sizing.Star(1f, min)) { Squeezed = new ListColumn(header, Layout.Sizing.Star(squeezedWeight, squeezedMin)) };
+        new(header, Layout.Sizing.Star(1f, Cells(min))) { Squeezed = new ListColumn(header, Layout.Sizing.Star(squeezedWeight, Cells(squeezedMin))) };
 
     /// <summary>
     /// A column the page drops on a narrow window: its whole <paramref name="width"/> while there is room, gone once the
     /// engine could give it less. It is a star capped at that width; a drag on the divider that stands on its edge moves the cap
     /// (DIR.Lib's table), and <see cref="ListTable"/> drops it below the dragged width.
     /// </summary>
-    public static ListColumn Optional(string header, float width) => new(header, Layout.Sizing.Star(1f, 0f, width), width);
+    public static ListColumn Optional(string header, float width) => new(header, Layout.Sizing.Star(1f, 0f, Cells(width)), Cells(width));
 }
 
 /// <summary>
@@ -78,12 +86,8 @@ internal sealed class ListTable
     /// <summary>The state stripe's width, ahead of the first column.</summary>
     public const float StripeWidth = 4f;
 
-    /// <summary>
-    /// The space between columns, and between the stripe and the first: two cells of a terminal (8 design units each), so that a column and the gap after it
-    /// round to whole cells as the sum of their roundings. A divider grip is sized as its column plus this gap (<see cref="Dropping"/>), and the titles
-    /// as the column and, apart, the gap; with a gap that is not whole cells (it was 14) the two disagreed by a cell for some caps, and a grip lay over a title.
-    /// </summary>
-    public const float ColumnGap = 16f;
+    /// <summary>The space between columns, and between the stripe and the first.</summary>
+    public const float ColumnGap = 14f;
 
     /// <summary>The height of the header row.</summary>
     public const float HeaderHeight = 28f;
