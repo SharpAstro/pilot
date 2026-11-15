@@ -194,12 +194,6 @@ public static class TerminalWireframeSweepTests
     /// </summary>
     internal static readonly (string Case, string Rule, string What)[] Baseline =
     [
-        // Text lying partly over a control of another node: a header over the divider grip (SharpAstro/DIR.Lib#233)
-        ("sessions | long | 250x60", "TextOverRegion", "text \"Model\""),
-        ("sessions | many | 250x60", "TextOverRegion", "text \"Model\""),
-        // A control inside another control: a divider grip over a header button (SharpAstro/DIR.Lib#233)
-        ("sessions | long | 250x60", "RegionOverRegion", "the control ButtonHit { Action = sessions:table:divider:0 }"),
-        ("sessions | many | 250x60", "RegionOverRegion", "the control ButtonHit { Action = sessions:table:divider:0 }"),
     ];
 }
 
