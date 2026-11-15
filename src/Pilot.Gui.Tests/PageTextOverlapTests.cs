@@ -185,7 +185,7 @@ public sealed class PageTextOverlapTests
         public void Dispose() => Renderer.Dispose();
     }
 
-    private static PilotPage PageOf(string page) => page switch
+    internal static PilotPage PageOf(string page) => page switch
     {
         "home" => PilotPage.Home,
         "sessions" or "transcript" => PilotPage.Sessions,
@@ -212,7 +212,7 @@ public sealed class PageTextOverlapTests
         [], ["pilot", "tianwen"], "live from the node", PageData.Now);
 
     /// <summary>The Ideas board in a state: the sample's three ideas, ideas with titles and bodies far past a column ("long"), sixty of every state ("many"), or none.</summary>
-    private static IdeasScreen IdeasFor(string state)
+    internal static IdeasScreen IdeasFor(string state)
     {
         var states = Enum.GetValues<IdeaState>();
         return state switch
@@ -361,7 +361,7 @@ public sealed class PageTextOverlapTests
     /// Opens the detail fold of every card by a click on its painted toggle (<c>card:&lt;id&gt;:detail</c>), as a person does, so no change to the view
     /// is needed. A painted region is where the card is drawn, so a card scrolled out of the panel has none to click: the walk goes on while a click opens one.
     /// </summary>
-    private static void OpenEveryDetail(CardsView<RgbaImage> view)
+    internal static void OpenEveryDetail(CardsView<RgbaImage> view)
     {
         for (var round = 0; round < 100; round++)
         {
@@ -409,7 +409,7 @@ public sealed class PageTextOverlapTests
         }
     }
 
-    private static async Task<Layout.Node> OpenChat(PilotChrome<RgbaImage> chrome, PageData data)
+    internal static async Task<Layout.Node> OpenChat(PilotChrome<RgbaImage> chrome, PageData data)
     {
         var chat = chrome.Chat;
         chat.Time = new FakeClock();
