@@ -25,6 +25,18 @@ internal static class FlowRow
             .WStar()
             .HAuto();
 
+    /// <summary>
+    /// As above, with <paramref name="trailing"/> standing flush at the end of the first line only, the items on that line taking
+    /// the room the engine measures is left beside it, and the lines after it running the whole width. Measured, so it is right in
+    /// pixels and in terminal cells alike, where a reserve in design units is not.
+    /// </summary>
+    public static Layout.Node Of(float rowHeight, float gap, Layout.Node trailing, IEnumerable<Layout.Node> items) =>
+        Layout.Builder.WrapH([.. items.Select(item => Cell(item, rowHeight))])
+            .WithGap(gap)
+            .WithFirstLineTrailing(trailing)
+            .WStar()
+            .HAuto();
+
     /// <summary>One item of a flow, in a cell at least <paramref name="rowHeight"/> high.</summary>
     public static Layout.Node Cell(Layout.Node item, float rowHeight) =>
         Layout.Builder.HStack(item).WAuto().HAuto().HClamp(rowHeight);
