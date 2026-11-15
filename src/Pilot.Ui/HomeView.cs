@@ -130,7 +130,7 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
     /// (the block says it): a live session's name, a running or queued job's id and state; null for a process that is nobody's, or
     /// whose session or job is gone from the page. The watchtower's processes are its session's.
     /// </summary>
-    public HomeChip? OwnerChip(MachineLine line, MachineProcess process, ProcessColumns columns)
+    public HomeChip? OwnerChip(MachineLine line, MachineProcess process)
     {
         if (process.Owner is not { } owner)
         {
