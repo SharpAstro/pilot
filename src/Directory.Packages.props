@@ -31,9 +31,9 @@
   <!-- Pilot.Gui: the SharpAstro stack. A local build compiles the sibling clones instead (the UseLocal* switches in
        Pilot.Gui.csproj); these are what CI restores. -->
   <ItemGroup>
-    <!-- Console.Lib is exact: 5.25.2741 is the first release with the border cell mapping (Console.Lib#82) and it depends on DIR.Lib 11.69.7001, which the DIR.Lib pins below follow. -->
-    <PackageVersion Include="Console.Lib" Version="5.25.2741" />
-    <PackageVersion Include="Console.Lib.Debug" Version="5.25.2741" />
+    <!-- Console.Lib is exact: 5.26.2761 is the first release with CON84 (EmptyRows skips a declared border row), and it depends on DIR.Lib 11.69.7001, which the DIR.Lib pins below follow. -->
+    <PackageVersion Include="Console.Lib" Version="5.26.2761" />
+    <PackageVersion Include="Console.Lib.Debug" Version="5.26.2761" />
     <PackageVersion Include="DIR.Lib" Version="11.69.*" />
     <PackageVersion Include="DIR.Lib.Debug" Version="11.69.*" />
     <PackageVersion Include="LAN.Lib" Version="2.4.*" />
