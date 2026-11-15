@@ -150,7 +150,7 @@ public static class TerminalWireframeSweepTests
         var recorded = watch.ElapsedMilliseconds;
         frame.Frame.Texts.IsEmpty.ShouldBeFalse($"{key}: the frame recorded no text (a frame painted outside CellLayout.Paint records empty and would pass unjudged)");
         var result = Check(frame);
-        if (Environment.GetEnvironmentVariable("PILOT_WIREFRAME_DUMP") is { Length: > 0 } dump)
+        if ("C:/Users/SebastianGodelet/.claude/jobs/de15182f/tmp/dump.txt" is { Length: > 0 } dump)
         {
             lock (DumpLock)
             {
