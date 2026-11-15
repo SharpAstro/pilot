@@ -43,11 +43,15 @@ public static class TerminalWireframeSweepTests
         public Stream OutputStream => Stream.Null;
     }
 
+    // Built once a state: PageData.For is a few dozen ms, and the sweep asks for it in every case.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<PageData>> Datas = new();
+    private static PageData Data(string state) => Datas.GetOrAdd(state, s => new Lazy<PageData>(() => PageData.For(s))).Value;
+
     /// <summary>The frame Program.cs would paint for the case, arranged, cropped and recorded.</summary>
     internal static async Task<CellWireframeFrame> RecordCase(string name, string state, int columns, int rows)
     {
         using var vessel = new RgbaImageRenderer(1, 1);
-        var data = PageData.For(state);
+        var data = Data(state);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath };
         chrome.Chat.Cells = true;
         chrome.Flights.CanCommand = true;
