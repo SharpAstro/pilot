@@ -80,9 +80,6 @@ internal static class TopBar
     /// <summary>What the first line of the bar leaves for what every page shares at its right: Autopilot, the update light and ?, with their gaps.</summary>
     public const float SharedReserve = 290f;
 
-    /// <summary>The same in the terminal: Autopilot, the update light and ? take 33 columns with their gaps.</summary>
-    public const float TerminalSharedReserve = 264f;
-
     /// <summary>The bottom of the bar's row of buttons: what the ? card hangs under.</summary>
     public const float ButtonsBottom = PadY + RowHeight;
 
@@ -94,8 +91,8 @@ internal static class TopBar
 
     // The page's name: one leaf where it is short, words that wrap within the bar where it is long (a title 436 px wide cut at the edge of a 422 px page).
     private static Layout.Node Title(string title, RGBAColor32 color) => title.Length > WrappedTitleChars
-        ? WrappedProse.Of(title, HeaderMetrics.Terminal ? 12f : 20f, color, selectable: true).WAuto()
-        : Layout.Builder.Text(title, HeaderMetrics.Terminal ? 12f : 20f, color, TextAlign.Near, TextAlign.Far).WAuto();
+        ? WrappedProse.Of(title, 20f, color, selectable: true).WAuto()
+        : Layout.Builder.Text(title, 20f, color, TextAlign.Near, TextAlign.Far).WAuto();
 
     /// <summary>The bar as one tree, <paramref name="page"/> laid out among <paramref name="parts"/>.</summary>
     public static Layout.Node Build(PageHeader page, TopBarParts parts)
@@ -103,11 +100,7 @@ internal static class TopBar
         var night = parts.Night?.Palette;
         var palette = night ?? Palette.Standard;
         var items = new List<Layout.Node>();
-        // The terminal's page bar and rail already say which app this is: the brand's nine columns go to the buttons (#1044).
-        if (!HeaderMetrics.Terminal)
-        {
-            items.Add(Layout.Builder.Text("pilot v2", 20f, palette.Bright, TextAlign.Near, TextAlign.Far).WAuto());
-        }
+        items.Add(Layout.Builder.Text("pilot v2", 20f, palette.Bright, TextAlign.Near, TextAlign.Far).WAuto());
         items.Add(Title(page.Title, palette.Dim));
         items.AddRange(parts.NodePills ?? parts.Nodes?.Pills(night) ?? []);
         items.AddRange(parts.Play?.Pills(night) ?? []);
@@ -135,8 +128,8 @@ internal static class TopBar
         // buttons and words of any size share one middle. A row of one HStack ran past a narrow page, drawing Autopilot and ? out
         // of it (PIL380). What every page shares stands at the bar's right corner, the same place on every page, and the flow
         // leaves it room on its first line.
-        var flow = FlowRow.Of(HeaderMetrics.BarRow, HeaderMetrics.Terminal ? 8f : 12f, shared.Count > 0 ? HeaderMetrics.Terminal ? TerminalSharedReserve : SharedReserve : 0f, items);
-        var corner = Layout.Builder.HStack([.. shared.Select(item => FlowRow.Cell(item, HeaderMetrics.BarRow))]).WithGap(HeaderMetrics.Terminal ? 8f : 12f).WAuto().HFixed(HeaderMetrics.BarRow);
+        var flow = FlowRow.Of(32f, 12f, shared.Count > 0 ? SharedReserve : 0f, items);
+        var corner = Layout.Builder.HStack([.. shared.Select(item => FlowRow.Cell(item, 32f))]).WithGap(12f).WAuto().HFixed(32f);
         var rows = new List<Layout.Node> { shared.Count > 0 ? Layout.Builder.Overlay(flow, Layout.Builder.Anchored(corner, Layout.DockSide.Right).WStar().HStar()).WStar().HAuto() : flow };
         if (page.CountsFit && !string.IsNullOrEmpty(page.Counts))
         {
@@ -149,6 +142,6 @@ internal static class TopBar
             rows.Add(Layout.Builder.Text(source, 12f, page.SourceColor ?? palette.Dim).RowH(SourceHeight));
         }
         rows.AddRange(page.Lines);
-        return Layout.Builder.VStack([.. rows]).Pad(HeaderMetrics.Terminal ? HeaderMetrics.PadX : PadX, HeaderMetrics.BarPadY).Bg(palette.HeaderBg).WStar().HAuto();
+        return Layout.Builder.VStack([.. rows]).Pad(PadX, 6f).Bg(palette.HeaderBg).WStar().HAuto();
     }
 }

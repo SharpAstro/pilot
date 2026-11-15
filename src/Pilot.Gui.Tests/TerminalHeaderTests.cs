@@ -10,14 +10,11 @@ namespace Pilot.Gui.Tests;
 
 /// <summary>
 /// pilot-tui's page headers (#1044): every button and chip of the header takes exactly one row with its label on it, on every page
-/// and at the terminal's real sizes, with the host's terminal mode on (the trees are the GUI's, arranged at 8 design units a column
-/// and 16 a row, where the GUI's 28 high button is two rows).
+/// and at the terminal's real sizes. The trees are the GUI's, with no terminal mode: the one-row header comes from Console.Lib's
+/// PixelAuthored mapping, which lays them out at 8 design units a column and 16 a row and rounds a 28 high button to one row.
 /// </summary>
 public sealed class TerminalHeaderTests
 {
-    // The tests turn the mode on through this; false shows what the base did.
-    private static bool TerminalMode => true;
-
     private static readonly NodeMark Here = new("a", "a", "SE1", true);
 
     private static PilotChrome<RgbaImage> NewChrome(RgbaImageRenderer renderer)
@@ -54,7 +51,6 @@ public sealed class TerminalHeaderTests
     [InlineData(250, 50)]
     public void EveryHeaderButtonIsOneRowHighWithItsLabelOnThatRow(int columns, int rows)
     {
-        using var terminal = HeaderMetrics.Use(TerminalMode);
         using var renderer = new RgbaImageRenderer(1, 1);
         var chrome = NewChrome(renderer);
         chrome.Chat.Cells = true;
@@ -101,7 +97,6 @@ public sealed class TerminalHeaderTests
     // The Flights header's buttons by row, at one terminal size.
     private static (SortedSet<int> Rows, int Right, int MaxRight) FlightsHeaderRows(int columns, int rows)
     {
-        using var terminal = HeaderMetrics.Use(TerminalMode);
         using var renderer = new RgbaImageRenderer(1, 1);
         var chrome = NewChrome(renderer);
         var page = chrome.Flights.Build(Flights(Live.At));
@@ -140,7 +135,6 @@ public sealed class TerminalHeaderTests
     [Fact]
     public void ThePullRequestsSearchBoxIsBorderedByRoundedBoxCharactersRoundOneInputRow()
     {
-        using var terminal = HeaderMetrics.Use(TerminalMode);
         using var renderer = new RgbaImageRenderer(1, 1);
         var chrome = NewChrome(renderer);
         var pr = new PullRequestRow
@@ -167,7 +161,6 @@ public sealed class TerminalHeaderTests
     [Fact]
     public void ThePullRequestsSearchBoxFollowsANarrowPage()
     {
-        using var terminal = HeaderMetrics.Use(TerminalMode);
         using var renderer = new RgbaImageRenderer(1, 1);
         var chrome = NewChrome(renderer);
         var pr = new PullRequestRow
