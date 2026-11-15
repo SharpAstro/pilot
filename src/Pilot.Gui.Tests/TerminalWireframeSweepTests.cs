@@ -383,7 +383,9 @@ public sealed class TerminalWireframeRegressionTests
     public void AOneLineRowGiven28UnitsOfHeightIsCaught()
     {
         // The row's container is 28 units high and its one-line text leaf stretches to it: two rows, the second empty inside the fill.
-        var row = Layout.Builder.HStack(Layout.Builder.Text("A one-line row given 28 units", 14f, Palette.Current.Bright).WStar().HStar()).WStar().HFixed(28f).Bg(Palette.Current.Faint);
+        // 28 units are 1.75 cells: the rows after the first start off a cell edge, and the second (28 to 56 units) spans two cells either way it rounds.
+        Layout.Node Row(string text) => Layout.Builder.HStack(Layout.Builder.Text(text, 14f, Palette.Current.Bright).WStar().HStar()).WStar().HFixed(28f).Bg(Palette.Current.Faint);
+        var row = Layout.Builder.VStack(Row("A one-line row given 28 units"), Row("Another one-line row given 28 units"));
         var result = Judge(Entries().RowH(16f), Layout.Builder.VStack(row, Page()).Bg(Palette.Current.Ground).WStar().HStar());
         TerminalWireframeSweepTests.Findings(result).Any(f => f.Rule == nameof(CellWireframeRules.DoubledRow)).ShouldBeTrue(Describe(result));
     }
