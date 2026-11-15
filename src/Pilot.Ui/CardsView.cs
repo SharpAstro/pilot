@@ -260,6 +260,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The corner radius of a card, which the GUI rounds with and the terminal draws as arc glyphs.</summary>
     private const float CardRadius = 6f;
 
+    /// <summary>The space between a card's edge and its content on either side, its frame included.</summary>
+    private const float CardInset = 10f;
+
     private static RGBAColor32 PanelBg => Palette.Current.RowAltBg;
     private static RGBAColor32 CardBg => Palette.Current.MenuBg;
     private static RGBAColor32 Bright => Palette.Current.Bright;
@@ -1222,7 +1225,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 Layout.Builder.Spacer(),
                 Layout.Builder.VStack([.. lines]).Pad(0f, 8f).WStar(),
                 Layout.Builder.Spacer())
-            .WithColumns(Layout.Sizing.Fixed(AccentBar), Layout.Sizing.Fixed(10f), Layout.Sizing.Star(), Layout.Sizing.Fixed(10f))
+            // The frame's width comes out of the inner spacing (the engine reserves a border outside the cells), so the content keeps the
+            // width it had unframed and a row of buttons that fit before still fits (Chat about this beside Dismiss at MinWidth).
+            .WithColumns(Layout.Sizing.Fixed(AccentBar), Layout.Sizing.Fixed(CardInset - EdgeWidth), Layout.Sizing.Star(), Layout.Sizing.Fixed(CardInset - EdgeWidth))
             .WithAutoRows()
             .Bg(!closed && Focused(card) ? FocusBg : CardBg)
             .Border(Edge, EdgeWidth, CardRadius)
