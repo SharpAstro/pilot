@@ -27,6 +27,33 @@ public sealed class TuiKeyDeclarationTests
         @"\bcase\s+(InputKey|ConsoleKey|InputEvent\.KeyDown|InputEvent\.KeyDown\s*\(|KeyDown\b)|\bcase\s+\w+\.(Key|KeyChar)\b|\bis\s+InputEvent\.KeyDown\s*\{[^}]*Key\s*:|\b(if|switch|when|while)\b[^\n]*(\bInputKey\.|\bConsoleKey\b|\bConsoleKeyInfo\b|InputEvent\.KeyDown|\.Key\s*(==|!=|is\b))|=>\s*[^\n]*\bInputKey\.\w+\s*=>",
         RegexOptions.Compiled);
 
+    // A per-page list switch: an arm per page that names its list or steps a list cursor by hand (the old ShownList, SurfaceCursor and
+    // CellListMoved glue). A page declares its list on its rows (Node.ListOf), and the router steps it. PilotChrome's history places
+    // name ListId too but never step a cursor, so only the stepping members and the page-to-list tuple are offences.
+    private static readonly Regex ListSwitchOffence = new(
+        @"\b(ShownList|SurfaceCursor|CellListMoved|MoveListCursor|HandleListKey)\b|\.Step\(|\bPilotPage\.\w+\b[^\n]*=>\s*\(\s*\w+(<\w+>)?\.ListId\b",
+        RegexOptions.Compiled);
+
+    [Fact]
+    public void NoPerPageListSwitchRemainsInPilotChromeOrTerminalInput()
+    {
+        var src = RepoSrc();
+        var found = new List<string>();
+        foreach (var file in new[] { Path.Combine(src, "Pilot.Ui", "PilotChrome.cs"), Path.Combine(src, "Pilot.Ui", "TerminalInput.cs") })
+        {
+            var lines = File.ReadAllLines(file);
+            for (var i = 0; i < lines.Length; i++)
+            {
+                var line = lines[i].TrimStart();
+                if (!line.StartsWith("//") && ListSwitchOffence.IsMatch(line))
+                {
+                    found.Add($"{Path.GetRelativePath(src, file)}:{i + 1}: {line}");
+                }
+            }
+        }
+        found.ShouldBeEmpty("a page declares its list with its own ListCursor (Node.ListOf), not a switch on the page:\n" + string.Join("\n", found));
+    }
+
     [Fact]
     public void NoSwitchOrIfOnAKeyRemainsInPilotTuiOrTerminalInput()
     {
