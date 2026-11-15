@@ -86,6 +86,8 @@ var settings = chrome.Settings;
 var cards = chrome.Cards;
 var chat = chrome.Chat;
 chat.Cells = true;
+// No scroll bar is drawn in a terminal, and the engine would reserve 6 columns for each beside an overflowing list.
+chrome.WithoutScrollBars();
 var focus = sessions.Ui.Focus;
 var tracker = new BackgroundTaskTracker();
 using var stop = new CancellationTokenSource();
@@ -528,12 +530,9 @@ while (!stop.IsCancellationRequested)
         terminal.Title = TerminalTitle.Of(page, TerminalTitle.NodeName(page, chat.Node, chrome.Nodes), TerminalTitle.Waiting(cards.Visible(cardsScreen)));
         flights.Jobs = pages.JobRows;
         // The cards panel stands beside the page when there is room beside a usable page, and something to show.
-        var tree = TerminalFrame.Tree(railTree, pageTree,
-            cardsBeside ? cards.Tree(cardsScreen) : null);
-        arranged = Layout.Engine.Arrange(tree, new Rect<int>(0, 0, columns, rows), CellMeasureContext.PixelAuthored);
+        // Arranged and cropped to each scroll container and page rect (Console.Lib's painter has no clip); the hit test reads the same tree.
         // No clear: the cell buffer diffs each frame against the last, and the tree's backgrounds cover every cell.
-        // Cropped to each scroll container and page rect first (Console.Lib's painter has no clip); the hit test reads the same tree.
-        arranged = TerminalFrame.Clip(arranged);
+        arranged = TerminalFrame.Build(railTree, pageTree, cardsBeside ? cards.Tree(cardsScreen) : null, columns, rows, CellMeasureContext.PixelAuthored);
         TerminalFrame.Paint(terminal.HideCaret, () => CellLayout.Paint(terminal, arranged, surface));
         input.Painted();
         if (chat.ParkedCaret(page, focus, arranged) is var (caretColumn, caretRow))

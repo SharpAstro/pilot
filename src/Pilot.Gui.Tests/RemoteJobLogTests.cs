@@ -86,7 +86,9 @@ public sealed class RemoteJobLogTests
         jobs.Tree(screen);
         (await changed.WaitAsync(TimeSpan.FromSeconds(10), Ct)).ShouldBeTrue();
 
-        var cells = CellLayout.Describe(Layout.Engine.Arrange(jobs.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored));
+        var arranged = Layout.Engine.Arrange(jobs.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
+        // A wrapped line is a leaf a word: read it a sentence at a time as well.
+        var cells = CellLayout.Describe(arranged) + "\n" + string.Join("\n", SentenceRuns.Texts(arranged.Select(a => a.Node)));
         cells.ShouldContain("could not read the log: no connection to LE1");
         cells.ShouldNotContain("reading…");
     }

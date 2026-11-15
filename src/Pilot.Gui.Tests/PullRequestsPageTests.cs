@@ -103,7 +103,7 @@ public sealed class PullRequestsPageTests
             .OrderBy(a => ((HitResult.ListItemHit)a.Node.Hit!).Index);
 
     private static string Dump(ImmutableArray<Layout.ArrangedNode<float>> arranged) =>
-        string.Join("\n", arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value));
+        string.Join("\n", SentenceRuns.Texts(arranged.Select(a => a.Node)));
 
     private static string[] Urls(PullRequestsView<RgbaImage> page) => [.. page.VisiblePullRequests.Select(r => r.Url)];
 
@@ -231,7 +231,7 @@ public sealed class PullRequestsPageTests
         var (_, page) = Chrome(renderer);
         var arranged = Arrange(renderer, page, Screen(), 2000f);
 
-        var counts = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == Screen().Counts);
+        var counts = arranged.Single(a => a.Node.Tooltip == Screen().Counts);
         var (measured, _) = renderer.MeasureText(Screen().Counts, SessionsCapture.FontPath, 15f);
         counts.Bounds.Width.ShouldBeGreaterThanOrEqualTo(measured);
     }
@@ -736,8 +736,8 @@ public sealed class PullRequestsPageTests
         (string Value, RGBAColor32 Color) SourceLine(PullRequestsScreen screen)
         {
             var arranged = Arrange(renderer, page, screen);
-            var line = arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Single(t => t.Value.StartsWith("live from the node", StringComparison.Ordinal));
-            return (line.Value, line.Color);
+            var line = SentenceRuns.Of(arranged.Select(a => a.Node)).Single(t => t.Text.StartsWith("live from the node", StringComparison.Ordinal));
+            return (line.Text, line.Color);
         }
 
         var fresh = SourceLine(Screen(Row(readAt: Now - TimeSpan.FromSeconds(75))));

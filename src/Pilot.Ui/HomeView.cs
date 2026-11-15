@@ -197,6 +197,11 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
 
+
+    /// <summary>The lists this page scrolls, whose scroll bars <see cref="PilotWidgetBase{TSurface}.WithoutScrollBars"/> takes away.</summary>
+
+    protected override IEnumerable<ListScrollController> PageScrolls => [_scroll];
+
     /// <summary>Whether this window's node is in maintenance: the page says so, under the two verdicts. Set by the host from the node's <see cref="NodeInfo.Maintenance"/>.</summary>
     public bool Maintenance { get; set; }
 
@@ -383,7 +388,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         foreach (var (line, why) in queue.Take(HomeScreen.MaxChips))
         {
             var text = $"{(line.ShownPriority is null ? "" : line.ShownPriority + " · ")}{line.Code} · {why}";
-            blocks.Add(Layout.Builder.Text(text, 13f, Palette.Current.Body)
+            blocks.Add(WrappedProse.OneLine(text, 13f, Palette.Current.Body, selectable: false)
                 .WithTooltip($"{text}\n{line.Title}")
                 .Follows(new HitResult.ButtonHit($"home:queued:{line.Code}"), _ => OnFlight?.Invoke(line))
                 .RowH(22f));

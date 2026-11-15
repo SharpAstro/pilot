@@ -19,8 +19,8 @@ public sealed class SpendPageTests
     private static SpendScreen Screen(string window = "today") => SpendScreen.From(Sample(), window, "test", At);
 
     private static List<string> TextsOf(RgbaImageRenderer renderer, SpendView<RgbaImage> page, SpendScreen screen, float width = 1400f) =>
-        [.. Layout.Engine.Arrange(page.Tree(screen), new Rect<float>(0, 0, width, 900), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f))
-            .Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value.Trim())];
+        SentenceRuns.Texts(Layout.Engine.Arrange(page.Tree(screen), new Rect<float>(0, 0, width, 900), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f))
+            .Select(a => a.Node));
 
     private static (PilotChrome<RgbaImage> Chrome, SpendView<RgbaImage> Page) Chrome(RgbaImageRenderer renderer)
     {

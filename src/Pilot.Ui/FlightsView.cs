@@ -74,6 +74,11 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
 
+
+    /// <summary>The lists this page scrolls, whose scroll bars <see cref="PilotWidgetBase{TSurface}.WithoutScrollBars"/> takes away.</summary>
+
+    protected override IEnumerable<ListScrollController> PageScrolls => [_scroll, _detailColumnsScroll, _detailScroll, _flightHeadScroll];
+
     /// <summary>The list view's table: its columns' widths, which a drag on a title's divider changes and the GUI keeps.</summary>
     public ListTable Table { get; } = new("flights");
     private int _count;

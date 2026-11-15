@@ -400,6 +400,22 @@ internal sealed class PilotChrome<TSurface>
     public ChatView<TSurface> Chat { get; }
 
     /// <summary>The hover text the router says is due, painted over the window after everything else (<see cref="TooltipLayer{TSurface}"/>).</summary>
+    /// <summary>Takes the scroll bars from every page, for a host that draws none (a terminal); see <see cref="PilotWidgetBase{TSurface}.WithoutScrollBars"/>.</summary>
+    public void WithoutScrollBars()
+    {
+        Home.WithoutScrollBars();
+        Sessions.WithoutScrollBars();
+        Flights.WithoutScrollBars();
+        Repos.WithoutScrollBars();
+        Ideas.WithoutScrollBars();
+        Spend.WithoutScrollBars();
+        PullRequests.WithoutScrollBars();
+        Jobs.WithoutScrollBars();
+        Fleet.WithoutScrollBars();
+        Settings.WithoutScrollBars();
+        Cards.WithoutScrollBars();
+    }
+
     public TooltipLayer<TSurface> Tooltips { get; }
 
     /// <summary>

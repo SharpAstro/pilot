@@ -52,6 +52,11 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private static RGBAColor32 FieldBg => Palette.Current.MenuBg;
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
+
+
+    /// <summary>The lists this page scrolls, whose scroll bars <see cref="PilotWidgetBase{TSurface}.WithoutScrollBars"/> takes away.</summary>
+
+    protected override IEnumerable<ListScrollController> PageScrolls => [_scroll];
     private readonly Dictionary<string, TextInputState> _fields = new(StringComparer.Ordinal);
     // What the page has read, as one immutable record swapped whole: reads land on the pool, the render thread draws what
     // it finds, and neither waits on the other.
@@ -488,7 +493,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private static Layout.Node Section(string title, string hint) =>
         Layout.Builder.HStack(
                 Layout.Builder.Text(title, 15f, Bright).Selectable().WAuto(),
-                Layout.Builder.Text(hint, 12f, Faint).Whole(hint).Selectable().WStar())
+                WrappedProse.OneLine(hint, 12f, Faint))
             .WithGap(12f).Pad(8f, 10f).RowH(38f);
 
     // Setup's heading carries the refresh: it measures the checks again, and shows it is working until the node answers.
@@ -497,7 +502,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         var hint = read.ChecksProblem is { } problem ? $"could not read the checks again: {problem}" : $"what it takes for {Owner} to be part of the fleet";
         return Layout.Builder.HStack(
                 Layout.Builder.Text("Setup", 15f, Bright).WAuto(),
-                Layout.Builder.Text(hint, 12f, read.ChecksProblem is null ? Faint : Todo).WStar(),
+                WrappedProse.OneLine(hint, 12f, read.ChecksProblem is null ? Faint : Todo, selectable: false),
                 Pill("refresh", "settings:checks:refresh", () => _ = ReadChecksAsync(refresh: true, waited: true, CancellationToken.None), working: read.Checking))
             .WithGap(12f).Pad(8f, 10f).RowH(38f);
     }

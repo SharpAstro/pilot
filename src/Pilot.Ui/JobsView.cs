@@ -236,6 +236,11 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
 
+
+    /// <summary>The lists this page scrolls, whose scroll bars <see cref="PilotWidgetBase{TSurface}.WithoutScrollBars"/> takes away.</summary>
+
+    protected override IEnumerable<ListScrollController> PageScrolls => [_scroll, _factsScroll, _logScroll];
+
     /// <summary>The page's table: its columns' widths, which a drag on a title's divider changes and the GUI keeps.</summary>
     public ListTable Table { get; } = new("jobs");
     private readonly ListScrollController _logScroll = new() { Mode = ScrollBarMode.Interactive, Anchor = ScrollAnchor.Bottom };
@@ -609,7 +614,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var table = new List<Layout.Node>();
         if (screen.Holder is { } holder)
         {
-            table.Add(Layout.Builder.Text(holder, 13f, Queued).Selectable().RowH(24f));
+            table.Add(WrappedProse.OneLine(holder, 13f, Queued).RowH(24f));
         }
         table.Add(Table.Header(columns, Scale));
         table.Add(Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch().ListOf(ListCursor, ListId));
@@ -876,11 +881,13 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var lines = new List<Layout.Node>();
         if (problem is not null)
         {
-            lines.Add(Layout.Builder.Text($"could not read the log: {problem}", 11f, Failed).Selectable().RowH(LogLineHeight));
+            // Wrapped, never cut: what the node said it could not read is what the person came to find out.
+            lines.Add(WrappedProse.Of($"could not read the log: {problem}", 11f, Failed).HAuto());
         }
         else if (log is null)
         {
-            lines.Add(Layout.Builder.Text(LoadLog is null ? "its output is in its log, on the node's machine" : "reading…", 11f, Dim).Selectable().RowH(LogLineHeight));
+            var hint = LoadLog is null ? "its output is in its log, on the node's machine" : "reading…";
+            lines.Add(WrappedProse.Of(hint, 11f, Dim, maxLines: 1).WithTooltip(hint).RowH(LogLineHeight));
         }
         else if (log.Lines.Length == 0)
         {

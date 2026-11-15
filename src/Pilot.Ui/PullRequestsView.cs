@@ -66,7 +66,7 @@ internal sealed partial class PullRequestsView<TSurface>(Renderer<TSurface> rend
     private const float FlightWidth = 92f;
     private const float AuthorWidth = 120f;
     private const float ReviewWidth = 84f;
-    private const float UpdatedWidth = 104f;
+    private const float UpdatedWidth = 136f;
 
     // The row's actions sit in three slots of fixed widths, so a row with fewer buttons leaves its gaps and nothing moves: the card's
     // button (Merge or Go around), Review, and Open, which is always at the right. The review slot is as wide as its longest word
@@ -80,6 +80,11 @@ internal sealed partial class PullRequestsView<TSurface>(Renderer<TSurface> rend
     public const float ActionsWidth = CardSlot + ReviewSlot + OpenSlot + 2 * SlotGap;
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
+
+
+    /// <summary>The lists this page scrolls, whose scroll bars <see cref="PilotWidgetBase{TSurface}.WithoutScrollBars"/> takes away.</summary>
+
+    protected override IEnumerable<ListScrollController> PageScrolls => [_scroll];
 
     // The tree: org and repo nodes by name (open by default; a fold is the node's being closed), so a read that rebuilds the groups
     // keeps what the reader folded. _rows is what the tree shows now, headers and PRs alike.

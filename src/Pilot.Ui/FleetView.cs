@@ -498,6 +498,11 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     private static RGBAColor32 ButtonHover => Palette.Current.ButtonHover;
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
+
+
+    /// <summary>The lists this page scrolls, whose scroll bars <see cref="PilotWidgetBase{TSurface}.WithoutScrollBars"/> takes away.</summary>
+
+    protected override IEnumerable<ListScrollController> PageScrolls => [_scroll];
     private int _count;
 
     /// <summary>The page's table: its columns' widths, which a drag on a title's divider changes and the GUI keeps.</summary>
