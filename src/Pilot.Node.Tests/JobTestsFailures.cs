@@ -90,7 +90,7 @@ public sealed class JobTestsFailures : JobTestsBase
         var ended = await Ended(second);
 
         ended.State.ShouldBe(JobState.Succeeded);
-        again.Error.ShouldContain($"rerun once as job {second}");
+        again.Error.ShouldNotBeNull().ShouldContain($"rerun once as job {second}");
         fake.Job(second).Launch.Environment.ShouldNotBeNull().ShouldContainKeyAndValue("RestoreNoHttpCache", "true");
         _said.ShouldHaveSingleItem().Args[0].ShouldContain($"Your job {second}");
         _said.Single().Args[0].ShouldContain("succeeded");
