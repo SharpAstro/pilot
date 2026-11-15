@@ -127,7 +127,9 @@ internal static class TopBar
         // place on every page: the flow's first-line trailing node, measured, so the first line's items take exactly the room left
         // beside it on any surface and the lines after it run the whole width beneath it.
         // The corner's switches stand 8 apart, as the update light and ? do: one cluster, and one cell apart in the terminal.
-        var corner = Layout.Builder.HStack([.. shared.Select(item => FlowRow.Cell(item, 32f))]).WithGap(8f).WAuto().HAuto();
+        // It wraps too: in a window narrower than the whole cluster its switches break onto lines of their own, measured
+        // against the bar's width, and the page's buttons start beneath them, so nothing reaches past the page.
+        var corner = Layout.Builder.WrapH([.. shared.Select(item => FlowRow.Cell(item, 32f))]).WithGap(8f).WAuto().HAuto();
         var flow = shared.Count > 0 ? FlowRow.Of(32f, 12f, corner, items) : FlowRow.Of(32f, 12f, items);
         var rows = new List<Layout.Node> { flow };
         if (page.CountsFit && !string.IsNullOrEmpty(page.Counts))
