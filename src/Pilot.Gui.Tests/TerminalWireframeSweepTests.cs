@@ -391,7 +391,7 @@ public sealed class TerminalWireframeRegressionTests
     {
         // A row whose container is taller than its one line: the text leaf stretches to it, so the second row is empty inside the fill.
         // PixelAuthored cells are about 20 units high, so 28 units still arrange as one row; 32 is the first height that gives two.
-        var row = Layout.Builder.HStack(Layout.Builder.Text("A one-line row given too much height", 14f, Palette.Current.Bright).WStar().HStar()).WStar().HFixed(32f).Bg(Palette.Current.Faint);
+        var row = Layout.Builder.HStack(Layout.Builder.Text("A one-line row given too much height", 14f, Palette.Current.Bright).WStar().HStar().Bg(Palette.Current.Faint)).WStar().HFixed(32f).Bg(Palette.Current.Faint);
         var result = Judge(Entries().RowH(16f), Layout.Builder.VStack(row, Page()).Bg(Palette.Current.Ground).WStar().HStar());
         TerminalWireframeSweepTests.Findings(result).Any(f => f.Rule == nameof(CellWireframeRules.DoubledRow)).ShouldBeTrue(Describe(result));
     }
