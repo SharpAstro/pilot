@@ -227,7 +227,7 @@ internal sealed class ListTable
                 sorted = new Layout.TableSort(at, own.Descending);
             }
         }
-        var header = Dropping(Inert(Layout.Builder.TableHeader(specs, sorted, handler, in style, Widths, scale, TitleSize, _hitPrefix), columns), columns);
+        var header = Layout.Builder.TableHeader(specs, sorted, handler, in style, Widths, scale, TitleSize, _hitPrefix);
         return Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(StripeWidth), header.WStar())
             .WithGap(ColumnGap)
             .PadX(EndPad)
@@ -247,13 +247,6 @@ internal sealed class ListTable
         // A squeezed table left columns out (Fit): the row keeps the cells of the columns that stayed, each under its own title.
         IReadOnlyList<Layout.Node> kept = columns.Any(c => c.Slot >= 0) ? [.. columns.Select(c => c.Slot < cells.Count ? cells[c.Slot] : Layout.Builder.Spacer())] : cells;
         var laid = ToArray(kept);
-        for (var i = 0; i < laid.Length && i < columns.Count; i++)
-        {
-            if (columns[i].DropBelow is { } dropAt)
-            {
-                laid[i] = laid[i].CollapseBelow(dropAt);
-            }
-        }
         var row = Layout.Builder.TableRow(specs, laid, in style, Widths);
         return Layout.Builder.HStack(stripe.WFixed(StripeWidth).HStar(), row.WStar().HStar())
             .WithGap(ColumnGap)
@@ -322,119 +315,9 @@ internal sealed class ListTable
         return room - ((2 * PageGutter) + (2 * EndPad) + StripeWidth + ColumnGap + others + (Math.Max(0, columns.Count - 1) * ColumnGap));
     }
 
-    /// <summary>
-    /// The header without the grip of a divider between the slack star that drops (<see cref="ListColumn.DropBelow"/>) and a
-    /// capped star beside it (an optional column, the kind DIR.Lib 11.57 pins once dragged). Dragged, that grip resizes only
-    /// the capped star and the slack star takes the difference; the slack star drops below its own width, which the capped
-    /// star's bound cannot mirror, so the drag would jump or take the slack star away. The divider stays a gap, as it is where
-    /// DIR.Lib offers no grip, and the capped star stays resizable from its other grip. A fixed column beside the slack star
-    /// keeps its grip, as it had before 11.57: on Flights, the grip between Flight and What.
-    /// </summary>
-    private static Layout.Node Inert(Layout.Node header, IReadOnlyList<ListColumn> columns)
-    {
-        if (header is not Layout.Node.Overlay { Top: Layout.Node.Stack grips } overlay)
-        {
-            return header;
-        }
-        var children = grips.Children.ToArray();
-        var changed = false;
-        for (var i = 0; i + 1 < columns.Count && 2 * i + 1 < children.Length; i++)
-        {
-            if (BesideDroppingSlack(columns[i], columns[i + 1]) || BesideDroppingSlack(columns[i + 1], columns[i]))
-            {
-                children[2 * i + 1] = Layout.Builder.Spacer().WFixed(ColumnGap).HStar();
-                changed = true;
-            }
-        }
-        return changed ? overlay with { Top = grips with { Children = [.. children] } } : header;
-    }
-
     // slack: the star that takes what is left and drops below a width of its own; other: the capped star on its side.
     private static bool BesideDroppingSlack(ListColumn slack, ListColumn other) =>
         slack.DropBelow is not null && slack.Width.IsStar && slack.Width.Max <= 0f && other.Width.IsStar && other.Width.Max > 0f;
-
-    /// <summary>
-    /// Makes the header's optional columns drop as the rows' do. DIR.Lib's header is two rows over each other: the titles
-    /// (a stack with the table's gap) and the grips (a stack with no gap, a divider as wide as the gap between every two
-    /// columns). A column that collapses takes its gap away in the first, but its divider would stay in the second and push
-    /// every grip after it a gap to the right; so each star column carries one divider with it, as a group sized as the
-    /// column plus the divider, which collapses together. Every star carrying one divider keeps the stars' shares in the
-    /// second row what they are in the first, so the grips stay under the gaps at any width. A divider no star carries
-    /// (one between two fixed columns) stands alone.
-    /// </summary>
-    private static Layout.Node Dropping(Layout.Node header, IReadOnlyList<ListColumn> columns)
-    {
-        if (columns.All(c => c.DropBelow is null) || header is not Layout.Node.Overlay { Base: Layout.Node.Stack titles, Top: Layout.Node.Stack grips })
-        {
-            return header;
-        }
-
-        var count = columns.Count;
-        var faces = titles.Children.ToArray();
-        for (var i = 0; i < count; i++)
-        {
-            if (columns[i].DropBelow is { } dropAt)
-            {
-                faces[i] = faces[i].CollapseBelow(dropAt);
-            }
-        }
-
-        // Which divider each star column carries: its own on the right, else the one on its left. From the right, so the
-        // last column (which has none on its right) takes the one its neighbour would otherwise.
-        var carried = new int[count];
-        var taken = new bool[Math.Max(0, count - 1)];
-        for (var c = count - 1; c >= 0; c--)
-        {
-            carried[c] = -1;
-            if (!grips.Children[2 * c].Width.IsStar)
-            {
-                continue;
-            }
-            if (c < count - 1 && !taken[c])
-            {
-                carried[c] = c;
-            }
-            else if (c >= 1 && !taken[c - 1])
-            {
-                carried[c] = c - 1;
-            }
-            if (carried[c] >= 0)
-            {
-                taken[carried[c]] = true;
-            }
-        }
-
-        var items = new List<Layout.Node>(grips.Children.Length);
-        for (var c = 0; c < count; c++)
-        {
-            var cell = grips.Children[2 * c];
-            if (carried[c] < 0)
-            {
-                items.Add(cell);
-            }
-            else
-            {
-                var divider = grips.Children[2 * carried[c] + 1];
-                var width = cell.Width;
-                var leading = carried[c] < c;
-                var inner = cell.WStar().HStar();
-                var group = Layout.Builder.HStack(leading ? [divider, inner] : [inner, divider]);
-                group = group with { Width = Layout.Sizing.Star(width.Value, width.Min + ColumnGap, width.Max > 0f ? width.Max + ColumnGap : 0f), Height = Layout.Sizing.Star() };
-                if (columns[c].DropBelow is { } dropAt)
-                {
-                    var groupDropAt = dropAt + ColumnGap;
-                    group = group.CollapseBelow(groupDropAt);
-                }
-                items.Add(group);
-            }
-            if (c < count - 1 && !taken[c])
-            {
-                items.Add(grips.Children[2 * c + 1]);
-            }
-        }
-
-        return Layout.Builder.Overlay(titles with { Children = [.. faces] }, grips with { Children = [.. items] });
-    }
 
     private static Layout.Node[] ToArray(IReadOnlyList<Layout.Node> cells)
     {
@@ -458,6 +341,9 @@ internal sealed class ListTable
                 DescendingFirst = columns[i].DescendingFirst,
                 // A column with no title (the action column) has the width its buttons need, and no name to keep a dragged one under.
                 Resizable = columns[i].Header.Length > 0,
+                DropBelow = columns[i].DropBelow ?? 0f,
+                // No grip on a divider between the slack star that drops and a capped star beside it: dragged, it would jump.
+                GripAfter = !(i + 1 < columns.Count && (BesideDroppingSlack(columns[i], columns[i + 1]) || BesideDroppingSlack(columns[i + 1], columns[i]))),
                 MaxWidth = columns[i].DropBelow is not null ? Most(columns, i) : columns[i].Width.IsFixed ? BesideSlackMost(columns, i) : null,
             };
             titles[i] = columns[i].Header;
