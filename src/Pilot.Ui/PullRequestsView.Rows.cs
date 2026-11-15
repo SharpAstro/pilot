@@ -75,7 +75,9 @@ internal sealed partial class PullRequestsView<TSurface>
             }
             else if (ListCursor.Index != index)
             {
+                _syncing = true;
                 ListCursor.MoveTo(index);
+                _syncing = false;
             }
             if (_reveal is null)
             {

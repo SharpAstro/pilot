@@ -77,7 +77,7 @@ internal sealed partial class FlightsView<TSurface>
 
         return Layout.Builder.VStack(
                 Table.Header(columns, Scale, NightOrNull),
-                Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch())
+                Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch().ListOf(ListCursor, ListId))
             .Pad(Gutter, 8f)
             .Stretch();
     }
@@ -210,6 +210,12 @@ internal sealed partial class FlightsView<TSurface>
             .BgHover(RowHoverBg)
             .BgFocus(failed ? P.FailedFocusBg : RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index))
+            // Enter, from the list cursor of either surface, opens the flight's page as a double-click does.
+            .Activatable(_ =>
+            {
+                ListCursor.MoveTo(index);
+                OpenDetail(line.Code);
+            })
             .WithContextMenu(at => OpenMenu(line, index, at))
             // The same brief as the Home chip (#258). A cell cut by its column keeps its own whole-text tooltip, which is the
             // innermost and so wins over the cell; the rest of the row says the brief.

@@ -7,8 +7,10 @@ namespace Pilot.Ui;
 /// What every page's widget stands on: DIR.Lib's <see cref="PixelWidgetBase{TSurface}"/>, with the one hook the live text check
 /// reads (<see cref="Arranged"/>): the page's arranged nodes, as <c>RenderLayout</c> arranged them and before it painted them.
 /// </summary>
-internal abstract class PilotWidgetBase<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal abstract class PilotWidgetBase<TSurface> : PixelWidgetBase<TSurface>
 {
+    protected PilotWidgetBase(Renderer<TSurface> renderer) : base(renderer) => ListCursor.Moved += CursorMoved;
+
     /// <summary>Told the arranged nodes each time the page is rendered (the chrome's <see cref="LiveTextCheck"/>); null when nobody looks.</summary>
     public Action<ImmutableArray<Layout.ArrangedNode<float>>>? Arranged { get; set; }
 
@@ -25,6 +27,12 @@ internal abstract class PilotWidgetBase<TSurface>(Renderer<TSurface> renderer) :
         Arranged?.Invoke(arranged);
         return arranged;
     }
+
+    /// <summary>
+    /// The page's own list cursor (declared on its rows with <c>Node.ListOf</c>) moved onto row <paramref name="index"/>, by a key or a
+    /// click: a page that remembers its selection by more than the index takes it here. Nothing by default.
+    /// </summary>
+    protected virtual void CursorMoved(int index) { }
 
     // The hit under the pointer as the last paint found it, which the next frame is built with.
     private HitResult? _hoveredHit;

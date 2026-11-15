@@ -6,29 +6,53 @@ using Pilot.Contracts;
 namespace Pilot.Ui;
 
 /// <summary>
-/// pilot-tui's input routing, out of Program.cs so a test drives the same code with <see cref="InputEvent"/>s and runes: which
-/// field has the keyboard, what a page key and a click do. Every way onto the Chat page goes through <see cref="OntoChat"/>
-/// (show the page, then focus the box).
+/// pilot-tui's input, out of Program.cs so a test drives the same code with <see cref="InputEvent"/>s and runes. Every event goes
+/// through DIR.Lib's <see cref="InputRouter"/> on the arranged cell tree (Console.Lib's <c>CellInputRouter</c>): a click, a wheel, a
+/// list key and a text field are the router's, and every page key and global key is a <see cref="KeyChord"/> declared on the tree
+/// (<see cref="TerminalRail.Tree"/> and <see cref="Chords"/>), so a chord works whether or not a box has the keyboard. What stays
+/// here is what the router cannot know: the chat box is a text editor Console.Lib does not register as a field, a typed character
+/// is text only while a field has the keyboard, and Shift+Enter is a new line in the chat's box. Every way onto the Chat page goes
+/// through <see cref="OntoChat"/> (show the page, then focus the box).
 /// </summary>
 internal sealed class TerminalInput<TSurface>(
     PilotChrome<TSurface> chrome,
     SessionsView<TSurface> sessions,
     TextInputFocus focus,
-    BackgroundTaskTracker tracker,
     Action redraw,
     Action quit)
 {
-    /// <summary>The last frame's arranged tree: what a click is resolved on, and which fields are on the page.</summary>
+    private InputRouter _router = null!;
+    private IReadOnlyList<IPixelWidget>? _widgets;
+
+    /// <summary>
+    /// The router the host built over its <c>CellInputSurface</c>. Setting it adds what is pilot's: the chat box among the fields the
+    /// frame painted (so the router does not blur it as unpainted), the flight wizard's active search, and the pages' own keys as
+    /// the router's last resort.
+    /// </summary>
+    public required InputRouter Router
+    {
+        get => _router;
+        init
+        {
+            _router = value;
+            var widgets = value.Widgets;
+            value.Widgets = () => _widgets ??= [.. widgets().Select(w => new ComposerAwareWidget(w, ChatBoxIfShown))];
+            value.ActiveSearch = () => chrome.Page == PilotPage.Flights ? chrome.Flights.Wizard.ActiveSearch : null;
+            var unhandled = value.Unhandled;
+            value.Unhandled = evt => (unhandled?.Invoke(evt) ?? false) || Fallback(evt);
+        }
+    }
+
+    /// <summary>After a frame is painted onto the surface: the router settles what the frame left standing.</summary>
+    public void Painted() => Router.AfterPaint();
+
+    /// <summary>The last frame's arranged tree: what a click on the chat composer is resolved on.</summary>
     public ImmutableArray<Layout.ArrangedNode<int>> Arranged { get; set; } = ImmutableArray<Layout.ArrangedNode<int>>.Empty;
 
     /// <summary>Console.Lib's hit test on the arranged tree (Pilot.Ui does not reference Console.Lib; the host and the tests pass <c>CellLayout.HitTest</c>).</summary>
     public required Func<ImmutableArray<Layout.ArrangedNode<int>>, int, int, HitResult?> HitTest { get; init; }
 
-    /// <summary>Console.Lib's text inputs of the arranged tree (<c>CellLayout.TextInputs</c>).</summary>
-    public required Func<ImmutableArray<Layout.ArrangedNode<int>>, IReadOnlyList<TextInputState>> TextInputs { get; init; }
-
-    /// <summary>The cell's size in pixels, to turn a click's pixel into a cell. Zero until the terminal says.</summary>
-    public Func<(int Width, int Height)> CellSize { get; set; } = () => (1, 1);
+    private IReadOnlyList<TextInputState> ChatBoxIfShown() => chrome.Page == PilotPage.Chat ? [chrome.Chat.Input] : [];
 
     /// <summary>Shows the Chat page and puts the keyboard in its box: the key, the rail entry's click and Ctrl+T all come here.</summary>
     public void OntoChat()
@@ -51,151 +75,138 @@ internal sealed class TerminalInput<TSurface>(
     }
 
     /// <summary>
-    /// Drops a focus the shown frame cannot take text for: a field of another page that kept the keyboard through a page change.
-    /// The chat box is not a layout text input, so it counts as on the frame while the page is Chat.
+    /// The chords that are not a page bar entry's own Ctrl+digit, as zero-size nodes for the page bar's row: the plain digit of every
+    /// page and '$' for Spend (a plain key, so a field that has the keyboard types it), Ctrl+S (Sessions and its say box), Ctrl+T
+    /// (Chat and its box), Alt+Left and Alt+Right (history), Backspace (back), q and Ctrl+C (quit). The flight wizard's Ctrl+Enter is
+    /// declared on the wizard's own nodes.
     /// </summary>
-    public void DropStaleFocus()
+    public IReadOnlyList<Layout.Node> Chords()
     {
-        if (focus.Current is not { } current)
+        var nodes = new List<Layout.Node>();
+        void Declare(string name, InputKey key, InputModifier modifiers, Action act)
+            => nodes.Add(Layout.Builder.Box(0f, 0f)
+                .Clickable(new HitResult.ButtonHit($"tui-key:{name}"), _ => act())
+                .WithShortcut(new KeyChord(key, modifiers)));
+
+        foreach (var (page, _, key) in TerminalRail.Keys)
         {
-            _focusPage = null;
-            return;
+            var chord = TerminalRail.PlainChord(key);
+            Declare($"page-{page}", chord.Key, chord.Modifiers, () => Show(page));
         }
-        if (chrome.Page == PilotPage.Chat && ReferenceEquals(current, chrome.Chat.Input))
+        Declare("sessions-say", InputKey.S, InputModifier.Ctrl, () =>
         {
-            return;
-        }
-        // A field this router saw take the keyboard is stale only when the page changed since; the last drawn frame cannot say,
-        // as a whole batch of events runs before the next draw (Ctrl+S then typing focuses the say box on a frame still Home's).
-        if (_focusPage is { } seen && ReferenceEquals(seen.Field, current))
-        {
-            if (seen.Page != chrome.Page)
-            {
-                focus.Blur();
-            }
-            return;
-        }
-        // A field focus was left on without this router (a test, a page's own action): the frame's fields, one-line and multi-line.
-        var onFrame = TextInputs(Arranged).Any(f => ReferenceEquals(f, current))
-            || Arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextEditor editor } && ReferenceEquals(editor.State, current));
-        if (!onFrame)
-        {
-            focus.Blur();
-        }
+            chrome.Show(PilotPage.Sessions);
+            focus.Focus(sessions.SayInput);
+        });
+        Declare("chat", InputKey.T, InputModifier.Ctrl, OntoChat);
+        Declare("back-alt", InputKey.Left, InputModifier.Alt, () => chrome.Back());
+        Declare("forward-alt", InputKey.Right, InputModifier.Alt, () => chrome.Forward());
+        Declare("back", InputKey.Backspace, InputModifier.None, () => chrome.Back());
+        Declare("quit-q", InputKey.Q, InputModifier.None, quit);
+        Declare("quit-ctrl-c", InputKey.C, InputModifier.Ctrl, quit);
+        return nodes;
     }
 
-    private (object Field, PilotPage Page)? _focusPage;
-
-    /// <summary>
-    /// Records the page a field took the keyboard on. While the same field stays focused the record is kept, so a page change made
-    /// inside an event (a click on the rail runs <c>chrome.Show</c> during the hit) still makes the field stale on the next key.
-    /// </summary>
-    private void NoteFocus()
-    {
-        if (focus.Current is not { } now)
-        {
-            _focusPage = null;
-        }
-        else if (_focusPage is not { } seen || !ReferenceEquals(seen.Field, now))
-        {
-            _focusPage = (now, chrome.Page);
-        }
-    }
-
-    /// <summary>A left click at pixel (x, y): a field focuses, the composer focuses and places its caret, the rest follows the hit.</summary>
-    private void Click(int x, int y)
-    {
-        var (w, h) = CellSize();
-        if (w <= 0 || h <= 0)
-        {
-            return;
-        }
-        var column = x / w;
-        var row = y / h;
-        var hit = HitTest(Arranged, column, row);
-        if (hit is HitResult.TextInputHit field)
-        {
-            focus.Focus(field.Input);
-        }
-        else if (chrome.Page == PilotPage.Chat && hit is HitResult.ButtonHit { Action: "chat:composer" })
-        {
-            chrome.Chat.PlaceComposerCaret(Arranged, column, row);
-        }
-    }
+    /// <summary>What the router leaves: a page's own keys (the Gallery's Escape, a page's widget), only when no field has the keyboard.</summary>
+    private bool Fallback(InputEvent evt)
+        => evt is InputEvent.KeyDown key && focus.Current is null
+            && (chrome.HandleInput(key) || chrome.PageWidget.HandleInput(key));
 
     /// <summary>Routes one input event; <paramref name="keyChar"/> is the typed character, when the terminal says one.</summary>
     public void Handle(InputEvent? evt, Rune? keyChar, ConsoleModifiers modifiers = 0)
     {
         redraw();
-        try
+
+        // Shift+Enter (Alt+Enter, where a terminal cannot tell Shift) in the chat's box is a new line, not a send.
+        if (evt is not null && chrome.Chat.HandleNewLine(evt))
         {
-            Route(evt, keyChar, modifiers);
+            return;
         }
-        finally
+
+        // A page change earlier in the same batch of input (a chord, Back, a rail click) leaves the old page's box holding the keyboard
+        // until the next paint; settle that now so a typed character does not go into a box that is no longer shown.
+        if (chrome.Page != PilotPage.Chat)
         {
-            NoteFocus();
+            focus.BlurIfFocused(chrome.Chat.Input);
+        }
+        if (chrome.Page != PilotPage.Sessions)
+        {
+            focus.BlurIfFocused(sessions.SayInput);
+        }
+
+        // A printable key is text while a field has the keyboard; with none it is a key like any other, so a plain digit, q and '$' reach
+        // their declared chords.
+        Rune? typed = keyChar is { } rune && !Rune.IsControl(rune) && (modifiers & ~ConsoleModifiers.Shift) == 0 ? rune : null;
+        if (typed is { } text && focus.Current is not null)
+        {
+            Router.Handle(new InputEvent.TextInput(text.ToString()));
+            return;
+        }
+
+        // A terminal that does not report Shift+4 sends only the '$'.
+        evt ??= typed is { Value: TerminalRail.SpendKey } ? new InputEvent.KeyDown(InputKey.D4, InputModifier.Shift) : null;
+        if (evt is null)
+        {
+            return;
+        }
+
+        Router.Handle(evt);
+
+        // The composer is drawn from the editor's lines, so a click on it also places the caret where it landed.
+        if (evt is InputEvent.MouseUp(var x, var y, MouseButton.Left) && chrome.Page == PilotPage.Chat
+            && HitTest(Arranged, (int)x, (int)y) is HitResult.ButtonHit { Action: "chat:composer" })
+        {
+            chrome.Chat.PlaceComposerCaret(Arranged, (int)x, (int)y);
         }
     }
 
-    private void Route(InputEvent? evt, Rune? keyChar, ConsoleModifiers modifiers)
+    /// <summary>
+    /// The surface's widget with the fields it does not register added: the chat box while the Chat page is shown, and any painted
+    /// text editor. <see cref="InputRouter.AfterPaint"/> blurs a focused field the widgets did not paint, so without this the router
+    /// would take the keyboard from the chat box on the first frame.
+    /// </summary>
+    private sealed class ComposerAwareWidget(IPixelWidget inner, Func<IReadOnlyList<TextInputState>> chatBox) : IPixelWidget
     {
-        if (evt is InputEvent.MouseUp(var x, var y, MouseButton.Left))
-        {
-            Click((int)x, (int)y);
-            return;
-        }
+        private readonly List<Layout.ArrangedNode<float>> _nodes = [];
 
-        DropStaleFocus();
-        var context = new TextInputInteraction.KeyContext(tracker, focus, redraw,
-            ActiveSearch: chrome.Page == PilotPage.Flights ? chrome.Flights.Wizard.ActiveSearch : null,
-            TabFields: () => TextInputs(Arranged));
+        public HitResult? HitTest(float x, float y) => inner.HitTest(x, y);
 
-        // Shift+Enter (Alt+Enter, where a terminal cannot tell Shift) in the chat's box is a new line, not a send.
-        if (evt is InputEvent.KeyDown && chrome.Chat.HandleNewLine(evt))
+        public List<TextInputState> GetRegisteredTextInputs()
         {
-            return;
-        }
-
-        // Typing into a focused field: a printable key is text; everything else is the field's (Enter commits, Escape leaves).
-        if (focus.Current is { } current)
-        {
-            if (keyChar is { } rune && !Rune.IsControl(rune) && (modifiers & ~ConsoleModifiers.Shift) == 0)
+            var fields = inner.GetRegisteredTextInputs();
+            _nodes.Clear();
+            inner.CollectPaintedNodes(_nodes);
+            foreach (var a in _nodes)
             {
-                TextInputInteraction.HandleText(current, rune.ToString());
-                return;
+                if (a.Node is Layout.Node.Leaf { Content: Layout.Content.TextEditor editor } && !fields.Contains(editor.State))
+                {
+                    fields.Add(editor.State);
+                }
             }
-            if (evt is InputEvent.KeyDown(var fieldKey, var fieldModifiers))
+            foreach (var box in chatBox())
             {
-                TextInputInteraction.HandleKey(fieldKey, fieldModifiers, context);
+                if (!fields.Contains(box))
+                {
+                    fields.Add(box);
+                }
             }
-            return;
+            return fields;
         }
 
-        switch (evt)
-        {
-            case InputEvent.KeyDown(InputKey.Q, InputModifier.None) or InputEvent.KeyDown(InputKey.C, InputModifier.Ctrl):
-                quit();
-                break;
-            case InputEvent.KeyDown(InputKey.Backspace, InputModifier.None):
-                chrome.Back();
-                break;
-            case InputEvent.KeyDown navKey when chrome.HandleInput(navKey):
-                break;
-            case var _ when TerminalRail.Handle(evt, keyChar, Show, () => { }):
-                break;
-            case InputEvent.KeyDown(InputKey.S, InputModifier.Ctrl):
-                chrome.Show(PilotPage.Sessions);
-                focus.Focus(sessions.SayInput);
-                break;
-            case InputEvent.KeyDown(InputKey.T, InputModifier.Ctrl):
-                OntoChat();
-                break;
-            case InputEvent.KeyDown(InputKey.Enter, InputModifier.Ctrl) when chrome.Page == PilotPage.Flights && chrome.Flights.Wizard.IsOpen:
-                chrome.Flights.Wizard.GoOn();
-                break;
-            case InputEvent.KeyDown key:
-                _ = chrome.PageWidget.HandleInput(key);
-                break;
-        }
+        public int CaretIndexAt(HitResult.TextInputHit hit, float pointerX) => inner.CaretIndexAt(hit, pointerX);
+
+        public WindowUiSettings Ui => inner.Ui;
+
+        public void CollectPaintedRegions(List<ClickableRegion> into) => inner.CollectPaintedRegions(into);
+
+        public void CollectPaintedNodes(List<Layout.ArrangedNode<float>> into) => inner.CollectPaintedNodes(into);
+
+        public (float X, float Y)? Pointer { get => inner.Pointer; set => inner.Pointer = value; }
+
+        public ListScrollController? ScrollTargetAt(float x, float y) => inner.ScrollTargetAt(x, y);
+
+        public CursorKind? HitTestCursor(float x, float y) => inner.HitTestCursor(x, y);
+
+        public bool HandleInput(InputEvent evt) => inner.HandleInput(evt);
     }
 }

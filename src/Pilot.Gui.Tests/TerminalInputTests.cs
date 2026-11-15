@@ -18,12 +18,26 @@ public sealed class TerminalInputTests
 {
     private const int Columns = 160, Rows = 44;
 
+    private sealed class NullViewport(int width, int height) : ITerminalViewport
+    {
+        public (int Column, int Row) Offset => (0, 0);
+        public (int Width, int Height) Size => (width, height);
+        public TermCell CellSize => new(10, 20);
+        public ColorMode ColorMode => ColorMode.TrueColor;
+        public void SetCursorPosition(int left, int top) { }
+        public void Write(string text) { }
+        public void WriteLine(string? text = null) { }
+        public void Flush() { }
+        public Stream OutputStream => Stream.Null;
+    }
+
     private sealed class Rig : IDisposable
     {
         public RgbaImageRenderer Vessel { get; } = new(1, 1);
         public PilotChrome<RgbaImage> Chrome { get; }
         public TextInputFocus Focus { get; }
         public TerminalInput<RgbaImage> Input { get; }
+        public CellInputSurface Surface { get; }
 
         /// <summary>What the routing's quit does.</summary>
         public Action Quit { get; set; } = () => { };
@@ -40,10 +54,11 @@ public sealed class TerminalInputTests
             Chrome.Chat.Cells = true;
             Chrome.Chat.CellColumns = TerminalFrame.PageColumns(Columns, false);
             Focus = sessions.Ui.Focus;
-            Input = new TerminalInput<RgbaImage>(Chrome, sessions, Focus, new BackgroundTaskTracker(), () => { }, () => Quit())
+            Surface = new CellInputSurface(sessions.Ui);
+            Input = new TerminalInput<RgbaImage>(Chrome, sessions, Focus, () => { }, () => Quit())
             {
+                Router = CellInputRouter.Create(Surface, new BackgroundTaskTracker(), () => { }),
                 HitTest = (tree, column, row) => CellLayout.HitTest(tree, column, row),
-                TextInputs = tree => CellLayout.TextInputs(tree),
             };
             Frame();
         }
@@ -51,18 +66,30 @@ public sealed class TerminalInputTests
         /// <summary>Arranges the frame of the shown page (Chat, or a stand-in page) as the app does, and hands it to the routing.</summary>
         public ImmutableArray<Layout.ArrangedNode<int>> Frame()
         {
-            var rail = TerminalRail.Tree(Chrome.Page, GlyphMode.Emoji, null, null, Live.At, Input.Show, null, Columns);
+            var rail = TerminalRail.Tree(Chrome.Page, GlyphMode.Emoji, null, null, Live.At, Input.Show, null, Columns, Input.Chords());
             var page = Chrome.Page == PilotPage.Chat ? Chrome.Chat.Tree()
                 : StandIn is { } standIn && standIn.Page == Chrome.Page ? standIn.Tree()
                 : Layout.Builder.Text("elsewhere", 14f, Palette.Current.Bright).WStar().RowH(16f);
             var arranged = TerminalFrame.Clip(Layout.Engine.Arrange(TerminalFrame.Tree(rail, page, null), new Rect<int>(0, 0, Columns, Rows), CellMeasureContext.PixelAuthored));
+            // As the app does: paint declares the frame on the surface, then the router settles what the frame left standing.
+            CellLayout.Paint(new NullViewport(Columns, Rows), arranged, Surface);
+            Input.Router.AfterPaint();
             Input.Arranged = arranged;
             return arranged;
         }
 
         public void Key(InputKey key, char c) => Input.Handle(new InputEvent.KeyDown(key, InputModifier.None), new Rune(c));
 
-        public void Click(int column, int row) => Input.Handle(new InputEvent.MouseUp(column, row, MouseButton.Left), null);
+        /// <summary>A key with modifiers; <paramref name="c"/> is the typed character a terminal reports, when it reports one.</summary>
+        public void Chord(InputKey key, InputModifier modifiers, char? c = null)
+            => Input.Handle(new InputEvent.KeyDown(key, modifiers), c is { } ch ? new Rune(ch) : null,
+                (modifiers & InputModifier.Ctrl) != 0 ? ConsoleModifiers.Control : (modifiers & InputModifier.Alt) != 0 ? ConsoleModifiers.Alt : 0);
+
+        public void Click(int column, int row)
+        {
+            Input.Handle(new InputEvent.MouseDown(column, row, MouseButton.Left, InputModifier.None), null);
+            Input.Handle(new InputEvent.MouseUp(column, row, MouseButton.Left), null);
+        }
 
         public void Dispose() => Vessel.Dispose();
     }
@@ -93,6 +120,8 @@ public sealed class TerminalInputTests
         // The Flights why-field kept the keyboard through a page change: it is focused, and the shown frame (Home) has no such field.
         rig.Focus.Focus(flights.WhyInput);
         rig.Chrome.Page.ShouldBe(PilotPage.Home);
+        // The router drops it when the frame is painted (AfterPaint): a field the shown page does not draw cannot take text.
+        rig.Frame();
         rig.Key(InputKey.D2, '2');
         flights.WhyInput.Text.ShouldBe("", "the digit went into the field of another page as text");
         EndsOnChatWithTheCaretParked(rig);
@@ -140,10 +169,10 @@ public sealed class TerminalInputTests
         using var rig = new Rig();
         rig.Chrome.Show(PilotPage.Home);
         var editor = new TextEditorState { MinLines = 3, MaxLines = 14 };
-        var page = Layout.Builder.TextEditor(editor, 14f, colors: Palette.Input, focusOnOpen: true).WStar();
-        var rail = TerminalRail.Tree(rig.Chrome.Page, GlyphMode.Emoji, null, null, Live.At, rig.Input.Show, null, Columns);
-        rig.Input.Arranged = TerminalFrame.Clip(Layout.Engine.Arrange(TerminalFrame.Tree(rail, page, null), new Rect<int>(0, 0, Columns, Rows), CellMeasureContext.PixelAuthored));
+        rig.StandIn = (PilotPage.Home, () => Layout.Builder.TextEditor(editor, 14f, colors: Palette.Input, focusOnOpen: true).WStar());
+        rig.Frame();
         rig.Focus.Focus(editor);
+        rig.Frame();
 
         rig.Key(InputKey.Q, 'q');
 
@@ -213,6 +242,195 @@ public sealed class TerminalInputTests
 
         why.Text.ShouldBe("", "the digit went into the why-field left behind by the rail click");
         EndsOnChatWithTheCaretParked(rig);
+        rig.Chrome.Chat.Input.Text.ShouldBe("");
+    }
+
+    private static readonly (InputKey Key, PilotPage Page)[] Digits =
+    [
+        (InputKey.D1, PilotPage.Home), (InputKey.D2, PilotPage.Chat), (InputKey.D3, PilotPage.Sessions), (InputKey.D4, PilotPage.Flights),
+        (InputKey.D5, PilotPage.Repos), (InputKey.D6, PilotPage.Jobs), (InputKey.D7, PilotPage.Fleet), (InputKey.D8, PilotPage.Settings),
+        (InputKey.D9, PilotPage.PullRequests), (InputKey.D0, PilotPage.Ideas),
+    ];
+
+    [Fact]
+    public void CtrlDigitReachesTheSamePageAsThePlainDigitFromAnyPageAndChatFocusesItsBox()
+    {
+        foreach (var from in new[] { PilotPage.Home, PilotPage.Sessions, PilotPage.Flights, PilotPage.Settings })
+        {
+            foreach (var (key, page) in Digits)
+            {
+                using var plain = new Rig();
+                plain.Chrome.Show(from);
+                plain.Frame();
+                plain.Key(key, (char)('0' + (key - InputKey.D0)));
+                using var ctrl = new Rig();
+                ctrl.Chrome.Show(from);
+                ctrl.Frame();
+                ctrl.Chord(key, InputModifier.Ctrl);
+                ctrl.Chrome.Page.ShouldBe(plain.Chrome.Page, $"Ctrl+{key} from {from}");
+                ctrl.Chrome.Page.ShouldBe(page);
+                if (page == PilotPage.Chat)
+                {
+                    ctrl.Focus.Current.ShouldBeSameAs(ctrl.Chrome.Chat.Input);
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void WithTheChatBoxFocusedCtrlOneGoesHomeAndAltLeftGoesBack()
+    {
+        using var rig = new Rig();
+        rig.Chrome.Show(PilotPage.Sessions);
+        rig.Key(InputKey.D2, '2');
+        rig.Frame();
+        rig.Focus.Current.ShouldBeSameAs(rig.Chrome.Chat.Input);
+
+        rig.Chord(InputKey.D1, InputModifier.Ctrl);
+        rig.Chrome.Page.ShouldBe(PilotPage.Home, "Ctrl+1 was swallowed by the focused chat box");
+        rig.Frame();
+
+        rig.Key(InputKey.D2, '2');
+        rig.Frame();
+        rig.Focus.Current.ShouldBeSameAs(rig.Chrome.Chat.Input);
+        rig.Chord(InputKey.Left, InputModifier.Alt);
+        rig.Chrome.Page.ShouldBe(PilotPage.Home, "Alt+Left was swallowed by the focused chat box");
+    }
+
+    [Fact]
+    public void WithTheChatBoxFocusedCtrlSGoesToTheSayBoxAndAPlainOneIsText()
+    {
+        using var rig = new Rig();
+        rig.Key(InputKey.D2, '2');
+        rig.Frame();
+        rig.Chord(InputKey.S, InputModifier.Ctrl);
+        rig.Chrome.Page.ShouldBe(PilotPage.Sessions);
+        rig.Focus.Current.ShouldBeSameAs(rig.Chrome.Sessions.SayInput);
+
+        using var typing = new Rig();
+        typing.Key(InputKey.D2, '2');
+        typing.Frame();
+        typing.Key(InputKey.D1, '1');
+        typing.Chrome.Page.ShouldBe(PilotPage.Chat);
+        typing.Chrome.Chat.Input.Text.ShouldBe("1");
+    }
+
+    [Fact]
+    public void EveryPageKeyAndGlobalKeyIsDeclaredOnTheFrame()
+    {
+        using var rig = new Rig();
+        var declared = rig.Frame().Select(a => a.Node.Shortcut).Where(c => c.HasValue).Select(c => c!.Value).ToHashSet();
+        foreach (var (page, _, key) in TerminalRail.Keys)
+        {
+            declared.ShouldContain(TerminalRail.ChordFor(page), $"{page} Ctrl chord");
+            declared.ShouldContain(TerminalRail.PlainChord(key), $"{page} plain key {key}");
+        }
+        foreach (var chord in new KeyChord[]
+        {
+            new(InputKey.S, InputModifier.Ctrl), new(InputKey.T, InputModifier.Ctrl), new(InputKey.Left, InputModifier.Alt),
+            new(InputKey.Right, InputModifier.Alt), new(InputKey.Backspace, InputModifier.None), new(InputKey.Q, InputModifier.None),
+            new(InputKey.C, InputModifier.Ctrl),
+        })
+        {
+            declared.ShouldContain(chord);
+        }
+    }
+
+    [Fact]
+    public void ABareDollarReachesSpendOnlyWhenNoFieldHasTheKeyboard()
+    {
+        using var rig = new Rig();
+        rig.Input.Handle(null, new Rune('$'));
+        rig.Chrome.Page.ShouldBe(PilotPage.Spend);
+
+        using var typing = new Rig();
+        typing.Key(InputKey.D2, '2');
+        typing.Frame();
+        typing.Input.Handle(null, new Rune('$'));
+        typing.Chrome.Page.ShouldBe(PilotPage.Chat);
+        typing.Chrome.Chat.Input.Text.ShouldBe("$");
+    }
+
+    [Fact]
+    public void CtrlTOpensTheChatWithTheBoxFocusedFromAnyPage()
+    {
+        foreach (var from in new[] { PilotPage.Home, PilotPage.Sessions, PilotPage.Settings })
+        {
+            using var rig = new Rig();
+            rig.Chrome.Show(from);
+            rig.Frame();
+            rig.Chord(InputKey.T, InputModifier.Ctrl);
+            EndsOnChatWithTheCaretParked(rig);
+        }
+    }
+
+    [Fact]
+    public void BackspaceAndAltLeftGoBackAndAltRightGoesForwardOutsideABox()
+    {
+        using var rig = new Rig();
+        rig.Chrome.Show(PilotPage.Sessions);
+        rig.Frame();
+        rig.Chrome.Show(PilotPage.Flights);
+        rig.Frame();
+
+        rig.Key(InputKey.Backspace, '\b');
+        rig.Chrome.Page.ShouldBe(PilotPage.Sessions, "Backspace goes back");
+        rig.Frame();
+        rig.Chord(InputKey.Right, InputModifier.Alt);
+        rig.Chrome.Page.ShouldBe(PilotPage.Flights, "Alt+Right goes forward");
+        rig.Frame();
+        rig.Chord(InputKey.Left, InputModifier.Alt);
+        rig.Chrome.Page.ShouldBe(PilotPage.Sessions, "Alt+Left goes back");
+    }
+
+    [Fact]
+    public void ABackspaceInTheFocusedChatBoxDoesNotGoBack()
+    {
+        using var rig = new Rig();
+        rig.Chrome.Show(PilotPage.Sessions);
+        rig.Key(InputKey.D2, '2');
+        rig.Frame();
+        rig.Key(InputKey.Backspace, '\b');
+        rig.Chrome.Page.ShouldBe(PilotPage.Chat);
+    }
+
+    [Fact]
+    public void ALeftClickOnARailEntryShowsItsPage()
+    {
+        using var rig = new Rig();
+        var entry = RailEntry(rig.Frame(), PilotPage.Flights);
+        rig.Click(entry.Bounds.X + 2, entry.Bounds.Y);
+        rig.Chrome.Page.ShouldBe(PilotPage.Flights);
+    }
+
+    [Fact]
+    public void QAndCtrlCQuitWithNoFieldAndCtrlCStillQuitsWhileQIsTextInTheChatBox()
+    {
+        using var rig = new Rig();
+        var quit = 0;
+        rig.Quit = () => quit++;
+        rig.Key(InputKey.Q, 'q');
+        rig.Chord(InputKey.C, InputModifier.Ctrl);
+        quit.ShouldBe(2);
+
+        rig.Key(InputKey.D2, '2');
+        rig.Frame();
+        rig.Key(InputKey.Q, 'q');
+        quit.ShouldBe(2);
+        rig.Chrome.Chat.Input.Text.ShouldBe("q");
+
+        rig.Chord(InputKey.C, InputModifier.Ctrl);
+        quit.ShouldBe(3, "Ctrl+C quits even while the chat box has the keyboard");
+    }
+
+    [Fact]
+    public void ATypedCharacterAfterALeaveOfTheChatPageInTheSameBatchIsNotTextInTheOldBox()
+    {
+        using var rig = new Rig();
+        rig.Key(InputKey.D2, '2');
+        rig.Frame();
+        rig.Chord(InputKey.D1, InputModifier.Ctrl);
+        rig.Key(InputKey.X, 'x');
         rig.Chrome.Chat.Input.Text.ShouldBe("");
     }
 }
