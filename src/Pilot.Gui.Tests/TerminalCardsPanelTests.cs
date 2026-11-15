@@ -36,7 +36,8 @@ public sealed class TerminalCardsPanelTests
     {
         var frame = await TerminalWireframeSweepTests.RecordCase("open card", "many", 250, 60);
         var lines = frame.Frame.Texts.Where(t => t.Box.X >= 213).Select(t => $"{t.Box.X},{t.Box.Y} {t.Box.Width}x{t.Box.Height} {t.Text}");
-        string.Join("\n", lines).ShouldBe("");
+        var fills = frame.Frame.Fills.Where(f => f.Rect.X >= 213).Select(f => $"FILL {f.Rect.X},{f.Rect.Y} {f.Rect.Width}x{f.Rect.Height} {f.Color}");
+        string.Join("\n", lines.Concat(fills)).ShouldBe("");
     }
 
     private static CardRow Card(string id, CardBin bin, string title) => new()
