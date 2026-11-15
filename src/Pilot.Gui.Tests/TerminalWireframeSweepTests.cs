@@ -150,10 +150,11 @@ public static class TerminalWireframeSweepTests
         var recorded = watch.ElapsedMilliseconds;
         frame.Frame.Texts.IsEmpty.ShouldBeFalse($"{key}: the frame recorded no text (a frame painted outside CellLayout.Paint records empty and would pass unjudged)");
         var result = Check(frame);
-        if (Environment.GetEnvironmentVariable("PILOT_WIREFRAME_DUMP") is { Length: > 0 } dump)
+        if (@"C:\Users\SebastianGodelet\.claude\jobs\028da901\tmp\dump.txt" is { Length: > 0 } dump)
         {
             lock (DumpLock)
             {
+                File.AppendAllText(dump, key + "\n" + CellWireframe.Describe(result) + "\n");
                 File.AppendAllLines(dump, [$"{key}	TIME	record {recorded} ms, check {watch.ElapsedMilliseconds - recorded} ms"]);
                 File.AppendAllLines(dump, Findings(result).Select(f => $"{key}\t{f.Rule}\t{f.What}"));
             }
