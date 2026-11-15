@@ -35,7 +35,7 @@ public sealed class TerminalCardsPanelTests
     public async Task TmpDump()
     {
         var frame = await TerminalWireframeSweepTests.RecordCase("open card", "many", 250, 60);
-        var lines = frame.Frame.Texts.Where(t => t.Box.X >= 213 && t.Box.Y >= 44).Select(t => $"{t.Box.X},{t.Box.Y} {t.Box.Width}x{t.Box.Height} {t.Text}");
+        var lines = frame.Frame.Texts.Where(t => t.Box.X >= 213).Select(t => $"{t.Box.X},{t.Box.Y} {t.Box.Width}x{t.Box.Height} {t.Text}");
         string.Join("\n", lines).ShouldBe("");
     }
 
