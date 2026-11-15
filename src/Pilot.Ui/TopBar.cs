@@ -106,12 +106,13 @@ internal static class TopBar
             items.AddRange(PlayFilter.Summary(parts.Play, page.Counts, page.Hidden, page.HiddenAction, palette.Body, palette.RowHoverBg, night));
         }
         items.AddRange(page.Buttons);
-        // Night flows with the page's own buttons: the corner is as wide as the narrowest page leaves it room for, and no wider.
+        // Night is on every page, so it stands in the shared corner with Autopilot. It flowed with the page's own buttons only while the
+        // corner was a fixed reserve that had to suit the narrowest page; the measured corner keeps it on the first line on every page.
+        var shared = new List<Layout.Node>();
         if (parts.Night is { } nightSwitch)
         {
-            items.Add(nightSwitch.Button());
+            shared.Add(nightSwitch.Button());
         }
-        var shared = new List<Layout.Node>();
         if (parts.Autopilot is { } autopilot)
         {
             shared.Add(autopilot.Button(night));
@@ -125,7 +126,8 @@ internal static class TopBar
         // buttons and words of any size share one middle (PIL380). What every page shares stands at the bar's right corner, the same
         // place on every page: the flow's first-line trailing node, measured, so the first line's items take exactly the room left
         // beside it on any surface and the lines after it run the whole width beneath it.
-        var corner = Layout.Builder.HStack([.. shared.Select(item => FlowRow.Cell(item, 32f))]).WithGap(12f).WAuto().HAuto();
+        // The corner's switches stand 8 apart, as the update light and ? do: one cluster, and one cell apart in the terminal.
+        var corner = Layout.Builder.HStack([.. shared.Select(item => FlowRow.Cell(item, 32f))]).WithGap(8f).WAuto().HAuto();
         var flow = shared.Count > 0 ? FlowRow.Of(32f, 12f, corner, items) : FlowRow.Of(32f, 12f, items);
         var rows = new List<Layout.Node> { flow };
         if (page.CountsFit && !string.IsNullOrEmpty(page.Counts))

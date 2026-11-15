@@ -194,7 +194,8 @@ internal sealed class AboutCard
     internal bool Lit => Clock() / 1000 % 2 == 0;
 
     // A pill in amber that pulses, saying what is installed; a click restarts the window on it. "Restart beta.1", not "Restart for
-    // beta.1": the shared corner is the first line's trailing node, and at 160 columns the four cells of " for" pushed Night off it.
+    // beta.1": the shared corner is the first line's trailing node, and at 160 columns the four cells of " for" pushed the
+    // last chat node pill off it.
     private Layout.Node Light(string newer)
     {
         var lit = Lit;
