@@ -31,6 +31,14 @@ public sealed class TerminalCardsPanelTests
         public Stream OutputStream => Stream.Null;
     }
 
+    [Fact]
+    public async Task TmpDump()
+    {
+        var frame = await TerminalWireframeSweepTests.RecordCase("open card", "many", 250, 60);
+        var lines = frame.Frame.Texts.Where(t => t.Box.X >= 213 && t.Box.Y >= 44).Select(t => $"{t.Box.X},{t.Box.Y} {t.Box.Width}x{t.Box.Height} {t.Text}");
+        string.Join("\n", lines).ShouldBe("");
+    }
+
     private static CardRow Card(string id, CardBin bin, string title) => new()
     {
         Id = id, Bin = bin, Kind = "pr-ready", Subject = "flight/ORB" + id, Title = title, Detail = "d", At = Live.At, State = CardState.Open,
