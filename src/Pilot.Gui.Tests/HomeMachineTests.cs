@@ -195,8 +195,8 @@ public sealed class HomeMachineTests : IAsyncDisposable
         Text(full, "CPU").Height.ShouldBe(Text(full, "GPU").Height);
         Text(full, "CPU").Height.ShouldBeGreaterThan(0f);
 
-        // At the usual 1280 the net gauge wraps to a line of its own, whole and under the others, not over them.
-        var wrapped = Arrange(Home(pages) with { Machines = [pages.Machines![0]] }, 1280);
+        // Figures take their content width now (no fixed 150), so all four gauges fit one line at 1280; at 900 the net gauge wraps to a line of its own, whole and under the others, not over them.
+        var wrapped = Arrange(Home(pages) with { Machines = [pages.Machines![0]] }, 900);
         Text(wrapped, "2.3/0.4 Mbps (in/out)").Y.ShouldBeGreaterThanOrEqualTo(Text(wrapped, "21/32 GB").Y + Text(wrapped, "21/32 GB").Height - 0.5f);
 
         // The page ends at the same place whether the node has one busy process or five: nothing below the block moves.
