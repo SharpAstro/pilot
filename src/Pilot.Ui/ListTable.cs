@@ -39,25 +39,32 @@ internal sealed record ListColumn(string Header, Layout.Sizing Width, float? Dro
     /// <see cref="Fixed(string, float)"/> would drop it: the one a row cannot do without (a state).
     /// </summary>
     public static ListColumn Fixed(string header, float width, float shrinkTo) =>
-        new(header, Layout.Sizing.Fixed(width)) { Squeezed = new ListColumn(header, Layout.Sizing.Star(1f, shrinkTo, width)) };
+        new(header, Layout.Sizing.Fixed(width)) { Squeezed = new ListColumn(header, Layout.Sizing.Star(1f, Cells(shrinkTo), Cells(width))) };
 
+    /// <summary>
+    /// <paramref name="units"/> to the nearest whole cell of a terminal (8 design units). A star column's least and cap are declared so: the header
+    /// sizes a divider grip as its column plus the gap (ListTable.Dropping) and the terminal rounds each size to cells, and
+    /// <c>round((cap + 14) / 8)</c> is not <c>round(cap / 8) + round(14 / 8)</c> for every cap (a Model column of 140 units made the grip a cell off, over the next
+    /// title). On pixels a size moves by 4 units at most.
+    /// </summary>
+    internal static float Cells(float units) => MathF.Round(units / 8f, MidpointRounding.AwayFromZero) * 8f;
 
     /// <summary>The column that takes what the others leave, never less than <paramref name="min"/> (0: it may shrink to nothing).</summary>
-    public static ListColumn Star(string header, float min = 0f) => new(header, Layout.Sizing.Star(1f, min));
+    public static ListColumn Star(string header, float min = 0f) => new(header, Layout.Sizing.Star(1f, Cells(min)));
 
     /// <summary>
     /// A star column that, on a page too narrow for the table, keeps only <paramref name="squeezedMin"/> and takes
     /// <paramref name="squeezedWeight"/> shares of the room to the others' one, so it still has most of what there is.
     /// </summary>
     public static ListColumn Star(string header, float min, float squeezedMin, float squeezedWeight = 1f) =>
-        new(header, Layout.Sizing.Star(1f, min)) { Squeezed = new ListColumn(header, Layout.Sizing.Star(squeezedWeight, squeezedMin)) };
+        new(header, Layout.Sizing.Star(1f, Cells(min))) { Squeezed = new ListColumn(header, Layout.Sizing.Star(squeezedWeight, Cells(squeezedMin))) };
 
     /// <summary>
     /// A column the page drops on a narrow window: its whole <paramref name="width"/> while there is room, gone once the
     /// engine could give it less. It is a star capped at that width; a drag on the divider that stands on its edge moves the cap
     /// (DIR.Lib's table), and <see cref="ListTable"/> drops it below the dragged width.
     /// </summary>
-    public static ListColumn Optional(string header, float width) => new(header, Layout.Sizing.Star(1f, 0f, width), width);
+    public static ListColumn Optional(string header, float width) => new(header, Layout.Sizing.Star(1f, 0f, Cells(width)), Cells(width));
 }
 
 /// <summary>
@@ -133,31 +140,13 @@ internal sealed class ListTable
     private const float PageGutter = 16f;
 
     /// <summary>
-    /// Set by a host that lays the page out in whole cells (a terminal, 8 design units each): a star column's least, its cap and the width it drops
-    /// below are then taken to the nearest cell (<see cref="Cells"/>). The header sizes a divider grip as its column plus the gap and the titles as the
-    /// column and, apart, the gap, and the terminal rounds each size to cells; <c>round((cap + 14) / 8)</c> is not <c>round(cap / 8) + round(14 / 8)</c> for
-    /// every cap (a Model column of 140 units put the Session grip a cell over the next title). On pixels nothing is taken to cells.
-    /// </summary>
-    public bool WholeCells { get; set; }
-
-    /// <summary><paramref name="units"/> to the nearest whole cell (8 design units).</summary>
-    internal static float Cells(float units) => MathF.Round(units / 8f, MidpointRounding.AwayFromZero) * 8f;
-
-    private static ListColumn Snapped(ListColumn column) => column with
-    {
-        Width = column.Width.IsStar ? Layout.Sizing.Star(column.Width.Value, Cells(column.Width.Min), column.Width.Max > 0f ? Cells(column.Width.Max) : column.Width.Max) : column.Width,
-        DropBelow = column.DropBelow is { } at ? Cells(at) : null,
-        Squeezed = column.Squeezed is { } squeezed ? Snapped(squeezed) : null,
-    };
-
-    /// <summary>
     /// <paramref name="columns"/> as the page can hold them: as declared while the room is there for each column that cannot be
     /// dropped at its width (a fixed column's, a star column's least), else each column as it says it is when squeezed. A narrower
     /// page then has a narrower table, never one wider than itself.
     /// </summary>
     public IReadOnlyList<ListColumn> Fit(IReadOnlyList<ListColumn> columns)
     {
-        columns = Dragged(WholeCells ? [.. columns.Select(Snapped)] : columns);
+        columns = Dragged(columns);
         if (PageWidth is not { } room)
         {
             return columns;

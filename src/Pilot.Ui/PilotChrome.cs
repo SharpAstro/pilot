@@ -400,8 +400,8 @@ internal sealed class PilotChrome<TSurface>
     public ChatView<TSurface> Chat { get; }
 
     /// <summary>The hover text the router says is due, painted over the window after everything else (<see cref="TooltipLayer{TSurface}"/>).</summary>
-    /// <summary>For a host that draws in cells (a terminal): takes the scroll bars from every page and has every table size its star columns in whole cells; see <see cref="PilotWidgetBase{TSurface}.WithoutScrollBars"/>.</summary>
-    public void ForCells()
+    /// <summary>Takes the scroll bars from every page, for a host that draws none (a terminal); see <see cref="PilotWidgetBase{TSurface}.WithoutScrollBars"/>.</summary>
+    public void WithoutScrollBars()
     {
         Home.WithoutScrollBars();
         Sessions.WithoutScrollBars();
@@ -414,12 +414,6 @@ internal sealed class PilotChrome<TSurface>
         Fleet.WithoutScrollBars();
         Settings.WithoutScrollBars();
         Cards.WithoutScrollBars();
-        Sessions.Table.WholeCells = true;
-        Flights.Table.WholeCells = true;
-        Repos.Table.WholeCells = true;
-        PullRequests.Table.WholeCells = true;
-        Jobs.Table.WholeCells = true;
-        Fleet.Table.WholeCells = true;
     }
 
     public TooltipLayer<TSurface> Tooltips { get; }
