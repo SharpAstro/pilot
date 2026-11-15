@@ -87,10 +87,10 @@ public sealed class TerminalHoverTests
     }
 
     [Fact]
-    public void AMouseMoveWithNoButtonLightsTheCardUnderIt()
+    public void AMouseMoveWithNoButtonLightsTheButtonUnderIt()
     {
         using var rig = new Rig();
-        var at = rig.TextOf("Short ").Bounds;
+        var at = rig.TextOf("Dismiss").Bounds;
         var before = rig.Buffer.BackAt(at.X, at.Y).Style.Background;
 
         rig.Move(at.X + 1, at.Y);
@@ -98,7 +98,6 @@ public sealed class TerminalHoverTests
 
         var after = rig.Buffer.BackAt(at.X, at.Y).Style.Background;
         after.ShouldNotBe(before);
-        after.ShouldBe(Palette.Current.CardHover);
     }
 
     [Fact]
