@@ -122,7 +122,7 @@ public sealed partial class FlightCommander
         // The flight's sessions, git and GitHub are asked with the lock let go (PIL338); while they are, a second landing of it is refused.
         if (!_landing.TryAdd(flight.Code, true))
         {
-            throw new FlightException($"{flight.Code} is being landed already: wait for it");
+            throw new AlreadyLandingException($"{flight.Code} is being landed already: wait for it");
         }
         try
         {
