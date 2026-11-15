@@ -1,3 +1,4 @@
+using Console.Lib;
 using DIR.Lib;
 using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
@@ -20,8 +21,8 @@ public sealed class ZzProbeTests
             var now = Live.At;
             var sessions = new SessionsScreen(SessionLine.Order([SessionLine.From(Live.Row("aaaa0000", "worker", SessionState.Working), now)]), "test", now);
             var page = chrome.Sessions.Tree(sessions);
-            var rail = TerminalRail.Tree(PilotPage.Sessions, Console.Lib.GlyphMode.Emoji, null, null, now, _ => { }, null, columns);
-            var arranged = Layout.Engine.Arrange(TerminalFrame.Tree(rail, page, null), new Rect<int>(0, 0, columns, 44), Console.Lib.CellMeasureContext.PixelAuthored);
+            var rail = TerminalRail.Tree(PilotPage.Sessions, GlyphMode.Emoji, null, null, now, _ => { }, null, columns);
+            var arranged = Layout.Engine.Arrange(TerminalFrame.Tree(rail, page, null), new Rect<int>(0, 0, columns, 44), CellMeasureContext.PixelAuthored);
             var header = arranged.First(a => a.Bounds.Y == 1 && a.Node.Background == Palette.Standard.HeaderBg && a.Bounds.Width > columns / 2);
             var from = arranged.IndexOf(header);
             for (var i = from; i < arranged.Length && (i == from || arranged[i].Depth > header.Depth); i++)
