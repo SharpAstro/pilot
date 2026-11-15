@@ -2660,7 +2660,11 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             Pump();
             SlotFreed?.Invoke(job.Id);
         }
-        await TellAsync(ended, CancellationToken.None, last);
+        // A stale NuGet HTTP cache (#1064): the slot is free, so the feed lookup holds nothing; the rerun's end is what the owner hears.
+        if (!await RerunStaleAsync(ended, last))
+        {
+            await TellAsync(ended, CancellationToken.None, last);
+        }
         process.Child?.Dispose();
     }
 
@@ -2796,7 +2800,8 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             _ => $"failed: {job.Error}",
         };
         var lines = last is { Length: > 0 } ? "\nIts last lines:\n" + string.Join('\n', last.TakeLast(12)) : "";
-        var text = $"Your job {job.Id} (`{job.Command}`, in {job.Cwd}) {how}, after {Took(took)}.{lines}\nThe whole output is in {job.LogPath}. Carry on from here.";
+        var rerun = _rerunNotes.TryGetValue(job.Id, out var note) ? $" ({note})" : "";
+        var text = $"Your job {job.Id} (`{job.Command}`, in {job.Cwd}) {how}{rerun}, after {Took(took)}.{lines}\nThe whole output is in {job.LogPath}. Carry on from here.";
         if (Ready is not null)
         {
             // Pilot #810: the judgement of the owner below reads the session rows, and until the tracker's first poll those are the
