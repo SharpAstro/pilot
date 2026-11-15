@@ -332,7 +332,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         return Layout.Builder.VStack(
                 Table.Header(columns, Scale),
-                Layout.Builder.VStack([.. rows]).WithScroll(_scroll).Stretch())
+                Layout.Builder.VStack([.. rows]).WithScroll(_scroll).Stretch().ListOf(ListCursor, ListId))
             .Pad(Gutter, 8f)
             .Stretch();
     }

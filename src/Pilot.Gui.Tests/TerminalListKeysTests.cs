@@ -49,7 +49,6 @@ public sealed class TerminalListKeysTests
             {
                 Router = CellInputRouter.Create(Surface, new BackgroundTaskTracker(), () => { }),
                 HitTest = (tree, column, row) => CellLayout.HitTest(tree, column, row),
-                SurfaceCursor = Surface.ListCursor,
             };
             // As Program.cs: the terminal keeps the Flights list (cells cannot draw the map).
             Chrome.Flights.CanvasAvailable = false;

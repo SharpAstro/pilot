@@ -43,58 +43,8 @@ internal sealed class TerminalInput<TSurface>(
         }
     }
 
-    /// <summary>
-    /// The cell surface's list cursor (<c>CellInputSurface.ListCursor</c>; null where nobody routes list keys). Console.Lib's surface keeps
-    /// its own, and the router's Up, Down and Enter move that one over the rows the frame declared; <see cref="Painted"/> keeps it on the
-    /// shown page's list and carries each step to the page.
-    /// </summary>
-    public ListCursor? SurfaceCursor { get; init; }
-
-    private bool _stepsCarried;
-
-    /// <summary>
-    /// After a frame is painted onto the surface: the router settles what the frame left standing, then the surface's list cursor is put
-    /// where the shown page's own is (and out of any list when the page has none), so Down steps from the selected row.
-    /// </summary>
-    public void Painted()
-    {
-        Router.AfterPaint();
-        if (SurfaceCursor is not { } cursor)
-        {
-            return;
-        }
-        if (!_stepsCarried)
-        {
-            _stepsCarried = true;
-            cursor.Moved += index =>
-            {
-                if (chrome.ShownList is { } shown && cursor.ListId == shown.ListId)
-                {
-                    shown.View.CellListMoved(index);
-                }
-            };
-        }
-        if (chrome.ShownList is not { } list)
-        {
-            if (cursor.IsOpen)
-            {
-                cursor.Close();
-            }
-            return;
-        }
-        var page = list.View.ListCursor;
-        if (cursor.ListId != list.ListId || cursor.Index != page.Index || cursor.RowCount != page.RowCount)
-        {
-            if (page.RowCount is { } count)
-            {
-                cursor.Open(list.ListId, page.Index, count);
-            }
-            else
-            {
-                cursor.Open(list.ListId, page.Index);
-            }
-        }
-    }
+    /// <summary>After a frame is painted onto the surface: the router settles what the frame left standing.</summary>
+    public void Painted() => Router.AfterPaint();
 
     /// <summary>The last frame's arranged tree: what a click on the chat composer is resolved on.</summary>
     public ImmutableArray<Layout.ArrangedNode<int>> Arranged { get; set; } = ImmutableArray<Layout.ArrangedNode<int>>.Empty;

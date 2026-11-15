@@ -97,7 +97,6 @@ var input = new TerminalInput<RgbaImage>(chrome, sessions, focus, Redraw, stop.C
 {
     Router = CellInputRouter.Create(surface, tracker, Redraw),
     HitTest = (tree, column, row) => CellLayout.HitTest(tree, column, row),
-    SurfaceCursor = surface.ListCursor,
 };
 
 // The same wiring as the window's: a verb on the node for each button, and Plan a leg said in the chat.

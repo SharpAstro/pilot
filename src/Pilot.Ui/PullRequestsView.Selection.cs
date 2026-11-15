@@ -7,8 +7,18 @@ namespace Pilot.Ui;
 // The Pull requests page's selection and keys: the cursor's row, a jump to a PR (Reveal, ShowRepo) and the scroll it asks for, and the keys.
 internal sealed partial class PullRequestsView<TSurface>
 {
-    /// <summary>The cell surface's list cursor stepped onto a row: the selection moves, as a click would.</summary>
-    internal override void CellListMoved(int index) => Select(index);
+    /// <summary>The cursor stepped onto a row (a key or a click): the selection is that row's, as a pick of the person's own.</summary>
+    protected override void CursorMoved(int index)
+    {
+        if (!_syncing && index >= 0 && index < _rows.Count)
+        {
+            _reveal = null;
+            Remember(index);
+        }
+    }
+
+    // Set while the page puts its own cursor back on the row it remembers: that move is not a pick.
+    private bool _syncing;
 
     /// <summary>Puts the cursor on the row <paramref name="index"/> of <see cref="Rows"/>: a PR's or a header's.</summary>
     public void Select(int index)
