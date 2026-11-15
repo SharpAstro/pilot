@@ -932,6 +932,9 @@ public class FlightException(string message) : Exception(message)
     public virtual MergeRefusal? Refusal => null;
 }
 
+/// <summary>A landing refused because the same flight is being landed already (pilot #1055): the landing under way lands it or leaves it flying for the next look, so no ring is raised for the refusal.</summary>
+public sealed class AlreadyLandingException(string message) : FlightException(message);
+
 /// <summary>A landing refused after the merge because the plane holds work of its own the merge left out: the commits, to open a PR with.</summary>
 public sealed class LeftOutCommitsException(string message, IReadOnlyList<string> commits) : FlightException(message)
 {

@@ -180,6 +180,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 await flights.LandAfterMergeAsync(flight.Code, pr.Head, cancellationToken);
             }
+            catch (AlreadyLandingException)
+            {
+                // The landing under way lands the flight, or leaves it flying for the next look (pilot #1055).
+                continue;
+            }
             catch (FlightException ex)
             {
                 if (MergedUnder(flight.Code))
@@ -1127,6 +1132,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     try
                     {
                         await flights.LandAfterMergeAsync(flight.Code, pr.Head, cancellationToken);
+                    }
+                    catch (AlreadyLandingException)
+                    {
+                        // The landing under way lands the flight, or leaves it flying for the next look (pilot #1055).
+                        continue;
                     }
                     catch (FlightException ex)
                     {
