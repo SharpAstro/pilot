@@ -42,7 +42,7 @@ public sealed class UpdateLightTests
         var about = new AboutCard { Newer = () => "2.0.4-beta.297", Restart = () => restarted++, Clock = () => now };
         Hits(about.Button()).ShouldBe(["about:restart", "about:toggle"]);
 
-        Texts(about.Button()).ShouldBe(["Restart for beta.297", "?"]);
+        Texts(about.Button()).ShouldBe(["Restart beta.297", "?"]);
         about.Lit.ShouldBeTrue();
         now = 1_000;
         about.Lit.ShouldBeFalse();

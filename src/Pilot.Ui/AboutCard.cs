@@ -193,12 +193,13 @@ internal sealed class AboutCard
     /// <summary>Whether the light is lit at this moment: on and off a second each, redrawn at least once a second.</summary>
     internal bool Lit => Clock() / 1000 % 2 == 0;
 
-    // A pill in amber that pulses, saying what is installed; a click restarts the window on it.
+    // A pill in amber that pulses, saying what is installed; a click restarts the window on it. "Restart beta.1", not "Restart for
+    // beta.1": the shared corner is the first line's trailing node, and at 160 columns the four cells of " for" pushed Night off it.
     private Layout.Node Light(string newer)
     {
         var lit = Lit;
         var label = newer.LastIndexOf('-') is var dash and >= 0 ? newer[(dash + 1)..] : newer;
-        var light = Layout.Builder.Text(Restart is null ? $"{label} installed" : $"Restart for {label}", 13f, lit ? LightText : LightOn, TextAlign.Center)
+        var light = Layout.Builder.Text(Restart is null ? $"{label} installed" : $"Restart {label}", 13f, lit ? LightText : LightOn, TextAlign.Center)
             .Pad(10f, 0f).WAuto().HFixed(Side).Bg(lit ? LightOn : LightOff)
             .WithTooltip($"pilot {newer} is installed; this window runs {NodeFeed.ClientVersion}." + (Restart is null ? " Restart it to use the new one." : " A click starts it again on the new one."));
         return Restart is { } restart ? light.Follows(new HitResult.ButtonHit("about:restart"), _ => restart()) : light;
