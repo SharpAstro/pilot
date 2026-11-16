@@ -1654,6 +1654,12 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 _cpuMarks.Remove(id);
                 continue;
             }
+            if (state.Jobs().FirstOrDefault(j => j.Id == id) is { Gui: true })
+            {
+                // A window waits on the person; its timeout is its guard.
+                _cpuMarks.Remove(id);
+                continue;
+            }
             var subject = Verbs.JobTarget(id);
             var read = JobCpu ?? (jobId =>
             {
@@ -1879,6 +1885,32 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             }
         }
         return variables;
+    }
+
+    /// <summary>The names a GUI job's environment carries beyond an ordinary job's: DIR.Lib#242's two, and the artifacts directory.</summary>
+    public const string InspectorVariable = "DIR_INSPECTOR";
+    public const string InspectorTokenVariable = "DIR_INSPECTOR_TOKEN";
+    public const string ArtifactsVariable = "PILOT_JOB_ARTIFACTS";
+
+    /// <summary>The artifacts directory of a job: beside its log, named by its id.</summary>
+    internal static string ArtifactsOf(JobRow job) => Path.Combine(Path.GetDirectoryName(job.LogPath) ?? "", $"{job.Id}.artifacts");
+
+    /// <summary>
+    /// A GUI job's launch-only variables: the inspector switch with a fresh token per start (never stored, journalled or logged),
+    /// and a new empty artifacts directory.
+    /// </summary>
+    private static void AddGuiEnvironment(JobRow job, Dictionary<string, string> variables)
+    {
+        var artifacts = ArtifactsOf(job);
+        if (Directory.Exists(artifacts))
+        {
+            Directory.Delete(artifacts, recursive: true);
+        }
+        Directory.CreateDirectory(artifacts);
+        variables[InspectorVariable] = "1";
+        variables[InspectorTokenVariable] = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        variables[ArtifactsVariable] = artifacts;
     }
 
     /// <summary>The clones <paramref name="job"/> would hold while it builds, as the queue asks for them; internal so a test can read it without running the job.</summary>
@@ -2136,11 +2168,15 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             // An exit file of an earlier run of this id would end the job at once: there is none.
             File.Delete(exitPath);
             var variables = EnvironmentOf(job);
+            if (job.Gui == true)
+            {
+                AddGuiEnvironment(job, variables);
+            }
             // The recorded command stays as given; the cached build form is what runs.
             var command = BuildCache && (Flights.PlaneOutput.PlaneOf(job.Cwd) is not null || IsSeed(job))
                 ? Flights.BuildCache.With(job.Command, true, job.Cwd, BuildCacheRoot, MsBuild(), IsSeed(job), SiblingSource(job))
                 : job.Command;
-            launched = Launcher.Start(new JobLaunch(job.Id, command, job.Cwd, job.LogPath, exitPath, Priority, variables,
+            launched = Launcher.Start(new JobLaunch(job.Id, command, job.Cwd, job.LogPath, exitPath, job.Gui == true ? JobPriority.Normal : Priority, variables,
                 Flights.PlaneOutput.NoBuildNotice(PlaneOutput, job.Command, job.Cwd)));
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException)
