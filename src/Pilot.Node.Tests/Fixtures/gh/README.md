@@ -94,6 +94,22 @@ Later legs append here; the PR body is drawn from this section.
   fills it. The PR now has a URL and its row is a link, `| [#8 wip](https://example.com/pull/8) | ...`. The code under test was not wrong (it links whatever URL it is given).
 - **Open PRs generally** (`RepoStatusTests`, `RepoWatchTests`, `LegEndOverlapTests`, `PrRecheckTests`): the builder gives an open PR the recording's URL and a rollup from its `checks` argument; no expectation changed.
 
+- **Merge state review text** (`AutopilotMergeRefusalTests` x2, `MergeRefusalTests`): `new MergeState(Blocked, Reason: "at least 1 approving review is required")`. `GhCli.ReadMergeState`
+  says `a review is required` for a review-required PR and never the other text, so the card and refusal asserted on a string no reader gives. They are now built with
+  `GhAnswers.MergeState(Blocked, review: true)` and expect `a review is required`. The code under test was not wrong (it shows whatever the reader says).
+- **Merge state by hand** (46 sites in `AutopilotMergeRefusalTests`, `ConflictResolutionTests`, `MergeArmTests`, `MergeBatchTests`, `MergeMirrorTests`, `MergeRefusalTests`,
+  `PrRecheckTests`, `RebaseLayFlightTests`, `RetryAndHoldTests`, `ReviewTests`): `GhAnswers.MergeState` builds a `gh pr view` answer from the merge-state recording (checks rollup, review
+  decision, mergeable, merge state status, auto-merge request) plus the queue recording, reads it with `ParseMergeState`, and throws when the answer reads as another kind
+  (a pending state with every check done, a failed check outside the finished ones, a blocked state that is neither draft, review nor failed). Dropped-from-queue text is the
+  reader's (`failed checks` from `FAILED_CHECKS`), so those tests pass the enum. No expectation changed; the code under test was not wrong.
+- **`FakeGitHub.MergeStateAsync`** copied `RemovedReason` into `DroppedFromQueue` as it was, so with the queue reasons now GitHub's enum it said `MANUALLY_REMOVED` where the reader says
+  `manually removed`. It no longer derives anything: it hands `GhCli.ReadMergeState` the checks, auto-merge and queue it holds. A fake holding only a check status (`Checks`) now has one check, so
+  its progress is 1 of 1 (it was 0 of 0, which no check list gives).
+- **`CiRun`** (`CiBudgetTests.CiOf`): was `new CiRun(...)`. `CiRunsAsync` now parses through `GhCli.ParseCiRuns` (endpoint in `CiRunsEndpoint`, the keys it reads in `CiRunKeys`; the runner minutes
+  stay a per-run call), `Fixtures/gh/ci-runs/` records `gh api repos/{owner}/{repo}/actions/runs` (trimmed to those keys, since the REST answer has no field list to compare with, which
+  `GhFieldListTests.EveryCiRunRecordingCarriesExactlyTheKeysTheParserReads` pins), and `GhAnswers.CiRun` builds from them. No expectation changed.
+
 Across the whole flight (legs 1 to 4) the tests whose expectation changed are: `CliTests.ReposWriteMarkdownWithTablesAndLeavePlainAsItWas` (the PR #8 row),
-`PullRequestsTests` (the "In merge queue" label with no number), `ReviewTests` queue-card details and `MergesTests` entry why (enum text instead of free text). The
-code under test was wrong in none of them; the PIL1101 case (a by-number fake carrying `MergedAt`) is a fake the builders now refuse.
+`PullRequestsTests` (the "In merge queue" label with no number), `ReviewTests` queue-card details and `MergesTests` entry why (enum text instead of free text),
+`AutopilotMergeRefusalTests` and `MergeRefusalTests` (the review-required text). The code under test was wrong in none of them; the PIL1101 case (a by-number fake
+carrying `MergedAt`) is a fake the builders now refuse.

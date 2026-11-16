@@ -226,7 +226,7 @@ public sealed class MergeRefusalTests
         Flight(node);
         node.GitHub.Merge = GhAnswers.MergeState(MergeKinds.Blocked, review: true);
 
-        Refused(await Merge(node), Persons(MergeAction.ApproveOnGitHub), "is blocked on GitHub: at least 1 approving review is required");
+        Refused(await Merge(node), Persons(MergeAction.ApproveOnGitHub), "is blocked on GitHub: a review is required");
     }
 
     [Fact]

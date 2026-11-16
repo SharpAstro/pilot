@@ -207,7 +207,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         var card = Refused().ShouldHaveSingleItem();
         card.Bin.ShouldBe(CardBin.Ring);
         card.Link.ShouldBe(F(flight.Code).PullRequestUrl);
-        card.Detail.ShouldNotBeNull().ShouldContain("at least 1 approving review is required");
+        card.Detail.ShouldNotBeNull().ShouldContain("a review is required");
         card.Detail.ShouldContain("What the node tried: asked GitHub to merge once");
         card.Detail.ShouldContain("Approve the PR on GitHub");
         var choice = card.Choices.ShouldHaveSingleItem();
