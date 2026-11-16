@@ -126,8 +126,11 @@ public sealed class FlightArchiveTests : IDisposable
         using var journal = Journal();
         var state = Open(journal);
         state.PutFlight(Flight("TIA1", FlightState.Flying));
-        Land(state, "TIA2");
+        // A card raised about a flight already landed is closed at once (RaiseCard), so the card is raised while it flies, and it lands with the card open.
+        state.PutFlight(Flight("TIA2", FlightState.Flying));
+        state.PutLeg(Leg("TIA2"));
         state.RaiseCard(CardBin.ForYou, "worker", "flight/TIA2/only", "a worker stopped");
+        state.PutFlight(Flight("TIA2"));
         Land(state, "TIA3");
         state.PutSession(new SessionRow
         {
