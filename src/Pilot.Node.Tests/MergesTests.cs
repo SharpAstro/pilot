@@ -29,7 +29,7 @@ public sealed class MergesTests
         };
         node.State.PutFlight(row);
         node.State.PutLeg(new LegRow { Flight = code, Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done });
-        node.GitHub.Pr = new PullRequest(63, "OPEN", PrHead, PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(number: 63, head: PrHead, url: PrUrl);
         return row;
     }
 
@@ -354,7 +354,7 @@ public sealed class MergesTests
         Entry(node, "TIA1").State.ShouldBe(MergeEntryState.Checks);
 
         // GitHub merges it: the look clears the arm and finds the entry with nothing armed before the flight lands.
-        node.GitHub.Pr = new PullRequest(63, "MERGED", PrHead, PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(state: "merged", number: 63, head: PrHead, url: PrUrl);
         await node.App.Services.GetRequiredService<PrChecks>().LookAsync(Ct);
 
         node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
@@ -371,7 +371,7 @@ public sealed class MergesTests
         {
             Flight = "TIA1", Repo = "tianwen", Pr = 63, Head = PrHead, Method = "rebase", State = MergeEntryState.Checks, AwaitsReview = true, AddedAt = DateTimeOffset.UtcNow,
         });
-        node.GitHub.Pr = new PullRequest(63, "MERGED", PrHead, PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(state: "merged", number: 63, head: PrHead, url: PrUrl);
 
         // The look's merge is refused (the PR is merged, not open), which drops the entry before the same look lands the flight.
         await node.App.Services.GetRequiredService<PrChecks>().LookAsync(Ct);
@@ -394,7 +394,7 @@ public sealed class MergesTests
         node.State.PutMerge(new MergeRow { Flight = "TIA1", Repo = "tianwen", Pr = 63, Head = PrHead, Method = "rebase", State = MergeEntryState.Merging, Why = LegCommander.QueuedLine("TIA1"), AddedAt = at });
         node.State.PutMerge(new MergeRow { Flight = "TIA2", Repo = "tianwen", Pr = 63, Head = PrHead, Method = "rebase", State = MergeEntryState.Checks, AwaitsReview = true, AddedAt = at.AddSeconds(1) });
         node.State.Renumber("tianwen");
-        node.GitHub.Pr = new PullRequest(63, "MERGED", PrHead, PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(state: "merged", number: 63, head: PrHead, url: PrUrl);
 
         // A leg planned now finds the PR merged already: the flight lets its PR go, so no look of the queues sees it again.
         var plan = await node.Client.SendAsync(new CommandRequest
@@ -429,7 +429,7 @@ public sealed class MergesTests
             }
             if (mergedMeanwhile)
             {
-                node.GitHub.Pr = new PullRequest(63, "MERGED", PrHead, PrUrl);
+                node.GitHub.Pr = GhAnswers.PullRequestByBranch(state: "merged", number: 63, head: PrHead, url: PrUrl);
             }
             return Task.FromException(givenUp ? new OperationCanceledException() : new System.ComponentModel.Win32Exception(2, "The system cannot find the file specified"));
         };

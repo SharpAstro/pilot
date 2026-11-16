@@ -40,7 +40,7 @@ public sealed class AutopilotTests
             PullRequest = number, PullRequestUrl = $"https://github.com/x/tianwen/pull/{number}",
             Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow },
         });
-        node.GitHub.Pr = new PullRequest(number, "OPEN", PrHead, $"https://github.com/x/tianwen/pull/{number}");
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(number: number, head: PrHead, url: $"https://github.com/x/tianwen/pull/{number}");
     }
 
     /// <summary>The assistant as the node lists it: an interactive session of that name, so a say reaches it over the relay.</summary>

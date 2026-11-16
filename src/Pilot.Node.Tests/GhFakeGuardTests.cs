@@ -37,13 +37,13 @@ public sealed partial class GhFakeGuardTests
     /// </summary>
     private static readonly string[] NotYetMigrated =
     [
-        "AutopilotMergeCardTests.cs", "AutopilotMergeRefusalTests.cs", "AutopilotTests.cs", "CardAnsweringTests.cs", "CardSummaryRaiserTests.cs",
-        "CliTests.cs", "ConflictResolutionTests.cs", "ConnectReleaseTests.cs", "ConnectTests.cs", "DecisionSourcesTests.cs", "DesignQueueTests.cs",
-        "DiskSweepTests.cs", "FailureInvestigationTests.cs", "FlightHoldLabelTests.cs", "FlightHoldTests.cs", "GoAroundFromCardTests.cs",
+        "AutopilotMergeCardTests.cs", "AutopilotMergeRefusalTests.cs", "CardSummaryRaiserTests.cs",
+        "CliTests.cs", "ConflictResolutionTests.cs", "DesignQueueTests.cs",
+        "FailureInvestigationTests.cs", "FlightHoldLabelTests.cs", "FlightHoldTests.cs", "GoAroundFromCardTests.cs",
         "HandPrLandingTests.cs", "LandingPathTests.cs", "LegEndOverlapTests.cs", "LegHoldTests.cs", "LockFreeGitTests.cs", "MergeArmTests.cs",
-        "MergeBatchTests.cs", "MergeFixtureCardTests.cs", "MergeMirrorTests.cs", "MergeQueueTests.cs", "MergeRefusalTests.cs", "MergeTakeBackTests.cs",
-        "MergedPullRequestTests.cs", "MergedUnderLegTests.cs", "MergesTests.cs", "MergingCardTests.cs", "PrFixTests.cs", "PrRecheckTests.cs",
-        "PrReviewTests.cs", "PullRequestsTests.cs", "PushEarlyTests.cs", "QueuedPushTests.cs", "RebaseLayFlightTests.cs", "RemovalQueueTests.cs",
+        "MergeBatchTests.cs", "MergeMirrorTests.cs", "MergeQueueTests.cs", "MergeRefusalTests.cs", "MergeTakeBackTests.cs",
+        "MergesTests.cs", "MergingCardTests.cs", "PrFixTests.cs", "PrRecheckTests.cs",
+        "PrReviewTests.cs", "PullRequestsTests.cs", "QueuedPushTests.cs", "RebaseLayFlightTests.cs",
         "RepoStatusTests.cs", "RepoWatchTests.cs", "RetryAndHoldTests.cs", "ReviewTests.cs", "StaleCardTests.cs", "StoreFixtureWriter.cs",
     ];
 

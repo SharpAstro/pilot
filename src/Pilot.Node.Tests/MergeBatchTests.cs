@@ -79,7 +79,7 @@ public sealed class MergeBatchTests
         row = shape?.Invoke(row) ?? row;
         node.State.PutFlight(row);
         node.State.PutLeg(new LegRow { Flight = code, Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done });
-        node.GitHub.Pr = new PullRequest(pr, "OPEN", PrHead, row.PullRequestUrl!);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(number: pr, head: PrHead, url: row.PullRequestUrl!);
         node.GitHub.PrOf[row.Branch] = node.GitHub.Pr;
         return row;
     }

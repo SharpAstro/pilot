@@ -131,7 +131,7 @@ public abstract class PrRecheckTestsBase : IDisposable
         PrOrigins.Git(work, "add", ".");
         PrOrigins.Git(work, [.. who, "commit", "-q", "-m", "main moves"]);
         PrOrigins.Git(work, "push", "-q", "origin", "HEAD:main");
-        _github.Prs["acme/widget#7"] = new PullRequest(7, "OPEN", head, "https://github.com/acme/widget/pull/7", Title: "PR 7", Author: "controller", Base: "main", HeadRef: "feature/seven");
+        _github.Prs["acme/widget#7"] = GhAnswers.PullRequestByNumber(number: 7, head: head, url: "https://github.com/acme/widget/pull/7", title: "PR 7", author: "controller", baseBranch: "main", headRef: "feature/seven");
         return (head, PrOrigins.Git(work, "rev-parse", "HEAD"));
     }
 

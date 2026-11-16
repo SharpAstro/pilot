@@ -40,7 +40,7 @@ public sealed class MergedPullRequestTests : LegCommanderTestsBase
         Numbers(_state).ShouldBe([63, 64]);
 
         var head = Git(_state.Flights().Single().Worktree, "rev-parse", "HEAD");
-        _github.Pr = new PullRequest(63, "MERGED", head, "https://github.com/SharpAstro/tianwen/pull/63");
+        _github.Pr = GhAnswers.PullRequestByBranch(state: "merged", number: 63, head: head, url: "https://github.com/SharpAstro/tianwen/pull/63");
         await _flights.LandAfterMergeAsync("TIA1", head, Ct);
 
         Numbers(_state).ShouldBe([64]);

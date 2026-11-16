@@ -47,7 +47,7 @@ public sealed class GoAroundFromCardTests : IDisposable
             Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow },
         });
         node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done });
-        node.GitHub.Pr = new PullRequest(63, "OPEN", PrHead, PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(number: 63, head: PrHead, url: PrUrl);
         return node.State.RaiseCard(CardBin.Ring, kind, Subject, "TIA1's PR #63", "Planets: 1 leg done.", choices, link: PrUrl);
     }
 

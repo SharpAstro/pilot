@@ -32,7 +32,7 @@ public sealed class RemovalQueueTests : IDisposable
         PrOrigins.Git(Roots, "clone", "-q", widget, "widget");
         PrOrigins.Git(WidgetClone, "config", "remote.origin.url", "https://github.com/acme/widget.git");
         PrOrigins.Git(WidgetClone, "config", $"url.{widget.Replace('\\', '/')}.insteadOf", "https://github.com/acme/widget.git");
-        _github.Prs["acme/widget#7"] = new PullRequest(7, "OPEN", head, "https://github.com/acme/widget/pull/7", Title: "PR 7", Author: "ada", Base: "main");
+        _github.Prs["acme/widget#7"] = GhAnswers.PullRequestByNumber(number: 7, head: head, url: "https://github.com/acme/widget/pull/7", title: "PR 7", author: "ada", baseBranch: "main");
 
         var git = _repos.Git;
         _options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [Roots]);
@@ -414,7 +414,7 @@ public sealed class RemovalQueueTests : IDisposable
     {
         var (gizmo, head) = PrOrigins.Make(_root, "gizmo", 3);
         _github.Origins["acme/gizmo"] = gizmo;
-        _github.Prs["acme/gizmo#3"] = new PullRequest(3, "OPEN", head, "https://github.com/acme/gizmo/pull/3", Title: "PR 3", Author: "ada", Base: "main");
+        _github.Prs["acme/gizmo#3"] = GhAnswers.PullRequestByNumber(number: 3, head: head, url: "https://github.com/acme/gizmo/pull/3", title: "PR 3", author: "ada", baseBranch: "main");
         var cached = Path.Combine(_reviews.CloneCache, "acme", "gizmo");
         Directory.CreateDirectory(cached);
         File.WriteAllText(Path.Combine(cached, "partial"), "x");

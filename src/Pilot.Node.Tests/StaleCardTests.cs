@@ -32,7 +32,7 @@ public sealed class StaleCardTests
         _state = new NodeState(new InMemoryJournal(), _time);
         _summaries = new Summaries(_state, _model, _time) { GitHub = _github };
         // The PR the node holds for PIL342, as GitHub has it unless a test says otherwise.
-        _github.Pr = new PullRequest(344, "OPEN", Head, PrUrl, "MERGEABLE");
+        _github.Pr = GhAnswers.PullRequestByBranch(number: 344, head: Head, url: PrUrl, mergeable: "MERGEABLE");
         _state.PutFlight(Flight("PIL342") with { PullRequest = 344, PullRequestUrl = PrUrl, GitHubHead = OldHead });
         // Another flight in play, so the fleet always has something to summarise.
         _state.PutFlight(Flight("DIR7", issue: 7));
@@ -468,7 +468,7 @@ public sealed class StaleCardTests
         _github.Pr = null;
         Left(card, await Check(card), "GitHub shows no PR #344 on its branch");
 
-        _github.Pr = new PullRequest(999, "MERGED", Head, "https://github.com/SharpAstro/tianwen/pull/999");
+        _github.Pr = GhAnswers.PullRequestByBranch(state: "merged", number: 999, head: Head, url: "https://github.com/SharpAstro/tianwen/pull/999");
         Left(card, await Check(card), "GitHub shows no PR #344 on its branch");
     }
 

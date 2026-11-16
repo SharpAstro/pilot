@@ -118,7 +118,7 @@ public sealed class FailureInvestigationTests
     {
         Flight("TIA72", 72, armed: [Head('b'), "squash"]);
         _github.PrFiles[72] = ["README.md"];
-        _github.Pr = new PullRequest(72, "OPEN", Head('b'), "https://github.com/x/tianwen/pull/72");
+        _github.Pr = GhAnswers.PullRequestByBranch(number: 72, head: Head('b'), url: "https://github.com/x/tianwen/pull/72");
         _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 1, 2, "build", "https://github.com/x/tianwen/actions/runs/5002");
         FailedRun(72, queue: false, id: 5002);
 
@@ -160,7 +160,7 @@ public sealed class FailureInvestigationTests
         // Another PR, another run, the same test with another timing in its message.
         Flight("TIA74", 74, armed: [Head('d'), "squash"]);
         _github.Queue = null;
-        _github.Pr = new PullRequest(74, "OPEN", Head('d'), "https://github.com/x/tianwen/pull/74");
+        _github.Pr = GhAnswers.PullRequestByBranch(number: 74, head: Head('d'), url: "https://github.com/x/tianwen/pull/74");
         _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 1, 2, "build", null);
         FailedRun(74, queue: false, id: 5003, Log().Replace("10s", "12s"));
         await Checks().LookAsync(Ct);
@@ -211,7 +211,7 @@ public sealed class FailureInvestigationTests
         // A later occurrence in another PR, failing in the ubuntu job only, comments that job alone.
         Flight("TIA74", 74, armed: [Head('d'), "squash"]);
         _github.Queue = null;
-        _github.Pr = new PullRequest(74, "OPEN", Head('d'), "https://github.com/x/tianwen/pull/74");
+        _github.Pr = GhAnswers.PullRequestByBranch(number: 74, head: Head('d'), url: "https://github.com/x/tianwen/pull/74");
         _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 1, 2, "build", null);
         _github.PrFiles[74] = ["b.cs"];
         _github.FailedRuns[(74, false)] = new FailedRun(5003, "https://github.com/x/tianwen/actions/runs/5003", ["test (ubuntu-latest)", "gate"],

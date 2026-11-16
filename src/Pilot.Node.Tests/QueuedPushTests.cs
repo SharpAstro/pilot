@@ -43,7 +43,7 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
             PullRequest = 63, PullRequestUrl = PrUrl,
             Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", ReviewedHead = old, StartedAt = DateTimeOffset.UtcNow },
         });
-        _github.Pr = new PullRequest(63, "OPEN", old, PrUrl);
+        _github.Pr = GhAnswers.PullRequestByBranch(number: 63, head: old, url: PrUrl);
         _github.Queue = new MergeQueueState("OPEN", old, Queued: true, Position: 1);
 
         File.WriteAllText(Path.Combine(flight.Worktree, "parser.cs"), "class Parser {}\n");
@@ -109,7 +109,7 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
         {
             if (call == nameof(IGitHub.PullRequestAsync) && File.Exists(RefusedMarker))
             {
-                _github.Pr = new PullRequest(63, "MERGED", head, PrUrl);
+                _github.Pr = GhAnswers.PullRequestByBranch(state: "merged", number: 63, head: head, url: PrUrl);
             }
             return Task.CompletedTask;
         };
@@ -158,7 +158,7 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
         Rings().ShouldBeEmpty();
 
         // The follow-up merges, and the flight lands.
-        _github.Pr = new PullRequest(71, "MERGED", head, "https://github.com/x/tianwen/pull/71");
+        _github.Pr = GhAnswers.PullRequestByBranch(state: "merged", number: 71, head: head, url: "https://github.com/x/tianwen/pull/71");
         await _flights.LandAfterMergeAsync("TIA1", head, Ct);
         _state.Flights().Single().State.ShouldBe(FlightState.Landed);
     }

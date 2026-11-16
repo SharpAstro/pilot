@@ -1033,7 +1033,7 @@ public sealed class PrReviewCliTests : IAsyncLifetime
         _head = head;
         _node = await NodeHarness.StartAsync(Ct, git: _git, folder: Path.Combine(_root, "n"));
         _node.GitHub.Origins["acme/gadget"] = origin;
-        _node.GitHub.Prs["acme/gadget#9"] = new PullRequest(9, "OPEN", head, "https://github.com/acme/gadget/pull/9", Title: "Gadgets", Author: "bob", Base: "main");
+        _node.GitHub.Prs["acme/gadget#9"] = GhAnswers.PullRequestByNumber(number: 9, head: head, url: "https://github.com/acme/gadget/pull/9", title: "Gadgets", author: "bob", baseBranch: "main");
     }
 
     public async ValueTask DisposeAsync()

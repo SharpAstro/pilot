@@ -29,7 +29,7 @@ public sealed class MergeMirrorTests
             Review = new ReviewRow { State = review, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow },
         });
         node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done });
-        node.GitHub.Pr = new PullRequest(63, "OPEN", PrHead, PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(number: 63, head: PrHead, url: PrUrl);
         return node.State.RaiseCard(CardBin.Ring, LegCommander.PrReady, Subject, "TIA1's PR #63 is ready to merge", "Planets: 1 leg done, head cafe0000. Reviewed: fine.",
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Subject, Args = [PrHead] }], link: PrUrl);
     }
@@ -100,7 +100,7 @@ public sealed class MergeMirrorTests
         Merge(Card(node, ready)).Note.ShouldBe("position 1");
 
         // And once GitHub says merged, the card reads Merged and closes, and the flight lands.
-        node.GitHub.Pr = new PullRequest(63, "MERGED", PrHead, PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(state: "merged", number: 63, head: PrHead, url: PrUrl);
         await Look(node, new MergeState(MergeKinds.Merged));
         card = Card(node, ready);
         card.State.ShouldBe(CardState.Closed);

@@ -39,7 +39,7 @@ public sealed class MergingCardTests : ReviewTestsBase
         };
         _state.PutFlight(flight);
         _state.PutLeg(new LegRow { Flight = code, Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done });
-        _github.PrOf[flight.Branch] = new PullRequest(pr, "OPEN", head, url);
+        _github.PrOf[flight.Branch] = GhAnswers.PullRequestByBranch(number: pr, head: head, url: url);
         var card = _state.RaiseCard(CardBin.Ring, LegCommander.PrReady, Verbs.FlightTarget(code), $"{code}'s PR #{pr} is ready to merge", "Reviewed: fine.",
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(code), Args = [head], Status = status }], link: url);
         return (flight, head, card);

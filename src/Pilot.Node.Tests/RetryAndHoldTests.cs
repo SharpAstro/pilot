@@ -94,7 +94,7 @@ public sealed class RetryAndHoldTests : IDisposable
     {
         Flight(code, pr, armed: [Head(head), "squash", LegCommander.ArmedByAutopilot]);
         _github.PrFiles[pr] = files ?? ["src/Pilot.Node/Flights/PrChecks.cs"];
-        _github.PrOf[Branch(code)] = new PullRequest(pr, "OPEN", Head(head), $"https://github.com/x/tianwen/pull/{pr}");
+        _github.PrOf[Branch(code)] = GhAnswers.PullRequestByBranch(number: pr, head: Head(head), url: $"https://github.com/x/tianwen/pull/{pr}");
         _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 1, 2, "build", $"https://github.com/x/tianwen/actions/runs/{run}");
         _github.Merge = new MergeState(MergeKinds.Blocked, 1, 2, Reason: "build failed", FailedName: "build");
         FailedRun(pr, queue: false, run, log);
@@ -111,7 +111,7 @@ public sealed class RetryAndHoldTests : IDisposable
     {
         Flight(code, pr);
         _github.PrFiles[pr] = ["src/Pilot.Node/Flights/PrChecks.cs"];
-        _github.PrOf[Branch(code)] = new PullRequest(pr, "OPEN", Head(head), $"https://github.com/x/tianwen/pull/{pr}");
+        _github.PrOf[Branch(code)] = GhAnswers.PullRequestByBranch(number: pr, head: Head(head), url: $"https://github.com/x/tianwen/pull/{pr}");
         FailedRun(pr, queue: true, run);
         QueueRemoval(Head(head));
         await _checks.LookAsync(Ct);

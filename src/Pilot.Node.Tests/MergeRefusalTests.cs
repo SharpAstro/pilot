@@ -40,7 +40,7 @@ public sealed class MergeRefusalTests
         };
         node.State.PutFlight(row);
         node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = leg });
-        node.GitHub.Pr = new PullRequest(63, "OPEN", PrHead, PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(number: 63, head: PrHead, url: PrUrl);
         return row;
     }
 
@@ -112,7 +112,7 @@ public sealed class MergeRefusalTests
         // one, so the refusal is this one and not a re-pin's.
         var reviewed = Plane(node, flight.Worktree);
         node.State.PutFlight(flight with { Review = flight.Review! with { ReviewedHead = reviewed } });
-        node.GitHub.Pr = new PullRequest(63, "OPEN", "def5678aaaabbbbccccdddd", PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(number: 63, head: "def5678aaaabbbbccccdddd", url: PrUrl);
 
         Refused(await Merge(node), NodeWait, "is newer than the one you reviewed");
     }
@@ -201,7 +201,7 @@ public sealed class MergeRefusalTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
-        node.GitHub.Pr = new PullRequest(63, "OPEN", PrHead, PrUrl, Mergeable: "CONFLICTING");
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(number: 63, head: PrHead, url: PrUrl, mergeable: "CONFLICTING");
 
         Refused(await Merge(node), Conflicting, "conflicts with its base");
     }
@@ -278,7 +278,7 @@ public sealed class MergeRefusalTests
         var pushed = Plane(node, flight.Worktree);
         node.Repos!.Run(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "second");
         node.State.PutFlight(flight with { Review = flight.Review! with { ReviewedHead = pushed } });
-        node.GitHub.Pr = new PullRequest(63, "OPEN", pushed, PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(number: 63, head: pushed, url: PrUrl);
 
         Refused(await Merge(node, pushed), Persons(MergeAction.OpenPrAgain), "plane holds 1 commit past #63's head");
     }
@@ -298,7 +298,7 @@ public sealed class MergeRefusalTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
-        node.GitHub.Pr = new PullRequest(63, "CLOSED", PrHead, PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(state: "closed", number: 63, head: PrHead, url: PrUrl);
 
         Refused(await Merge(node), Persons(MergeAction.PrClosed), "is closed, not open");
     }

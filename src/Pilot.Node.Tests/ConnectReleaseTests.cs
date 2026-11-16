@@ -61,7 +61,7 @@ public sealed class ConnectReleaseTests : OverlapTestsBase
     [Fact]
     public async Task AMergeLandReleasesTheWaiterToo()
     {
-        var github = new FakeGitHub { Pr = new PullRequest(77, "MERGED", "head", "https://github.com/x/tianwen/pull/77") };
+        var github = new FakeGitHub { Pr = GhAnswers.PullRequestByBranch(state: "merged", number: 77, head: "head", url: "https://github.com/x/tianwen/pull/77") };
         var flights = new FlightCommander(_state, new Planes(_git), TimeProvider.System, null, github) { Machine = "DU1" };
         await Three(flights);
         _state.PutFlight(F("TIA1") with { PullRequest = 77 });
