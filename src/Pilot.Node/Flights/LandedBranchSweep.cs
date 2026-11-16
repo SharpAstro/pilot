@@ -107,7 +107,7 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
             var parts = new List<string> { $"deleted {deleted}" };
             if (retry > 0)
             {
-                parts.Add($"{retry} push-failed, tried again next sweep");
+                parts.Add($"{retry} tried again next sweep");
             }
             var groups = string.Join(", ", kept.OrderByDescending(g => g.Value).ThenBy(g => g.Key, StringComparer.Ordinal).Select(g => $"{g.Value} {g.Key}"));
             var title = $"branches: {string.Join(", ", parts)}, kept {keptTotal}{(keptTotal > 0 ? ": " + groups : "")}";
@@ -194,20 +194,38 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
                 continue;
             }
             var head = flight.LandedHead ?? MergedEntryHead(flight.Code);
-            if (head is null)
+            var number = flight.PullRequest ?? flight.MergedPullRequest;
+            var answered = false;
+            if (head is null && number is { } n && github is not null && flight.Repo.Contains('/'))
+            {
+                // By number first: the list is capped, so a flight older than its last MergedPrLimit PRs is only found this way.
+                try
+                {
+                    var pr = await github.PullRequestOfAsync(flight.Repo, n, cancellationToken);
+                    answered = true;
+                    if (pr.MergedAt is not null && pr.HeadRef == flight.Branch && pr.Head.Length > 0)
+                    {
+                        head = pr.Head;
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // GitHub could not say for this PR; the list below may.
+                }
+            }
+            if (head is null && !answered)
             {
                 if (!mergedRead)
                 {
                     mergedRead = true;
                     merged = github is null ? null : await github.MergedPullRequestsAsync(repoPath, MergedPrLimit, cancellationToken);
                 }
-                var number = flight.PullRequest ?? flight.MergedPullRequest;
                 head = merged?.Where(p => p.HeadRef == flight.Branch && (number is null || p.Number == number)).OrderByDescending(p => p.Number).FirstOrDefault()?.HeadOid;
-                if (head is null)
-                {
-                    Settle(entry, Keep(LandedBranchGroups.NoMergedHead, merged is null ? "GitHub could not say which PRs merged" : "GitHub does not list its PR as merged"));
-                    continue;
-                }
+            }
+            if (head is null)
+            {
+                Settle(entry, Keep(LandedBranchGroups.NoMergedHead, "GitHub does not say its PR merged at a known head"));
+                continue;
             }
             heads[flight.Code] = head;
             candidates.Add((entry, new LandedCandidate(flight, head, live)));

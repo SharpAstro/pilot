@@ -87,6 +87,37 @@ public sealed class LandedBranchesTests : IAsyncDisposable
 
     private bool OriginHas(string branch) => Git(_repo, "ls-remote", "--heads", "origin", branch).Length > 0;
 
+    [Theory]
+    [InlineData("ls-remote")]
+    [InlineData("for-each-ref")]
+    [InlineData("worktree")]
+    public async Task AFailedGitReadRetriesLaterAndDeletesNothing(string verb)
+    {
+        var head = MakeBranch("PIL7");
+        _git.FailVerb = verb;
+
+        var outcome = (await Sweep(new LandedCandidate(Row("PIL7"), head, false))).Single();
+
+        outcome.Result.ShouldBe(LandedBranchResult.RetryLater);
+        outcome.Group.ShouldBe(LandedBranchGroups.ReadFailed);
+        LocalHas("flight/pil7").ShouldBeTrue();
+        OriginHas("flight/pil7").ShouldBeTrue();
+        _git.Count("push").ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AFoldedFlightWhoseOriginCannotBeReadIsNotTakenForDeleted()
+    {
+        MakeBranch("PIL8");
+        _git.FailVerb = "ls-remote";
+        var other = Row("PIL8") with { RepoPath = _repo, FoldedInto = "PIL1" };
+
+        var (candidate, outcome) = await new LandedBranches(_git).FoldedCandidateAsync(other, null, false, Ct);
+
+        candidate.ShouldBeNull();
+        outcome!.Result.ShouldBe(LandedBranchResult.RetryLater);
+    }
+
     [Fact]
     public async Task ASafeBranchIsDeletedLocallyAndOnOrigin()
     {
@@ -208,11 +239,17 @@ public sealed class LandedBranchesTests : IAsyncDisposable
 
         public Action? BeforePush { get; init; }
 
+        public string? FailVerb { get; set; }
+
         public int Count(string verb) => _counts.GetValueOrDefault(verb);
 
         public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
         {
             _counts[args[0]] = Count(args[0]) + 1;
+            if (args[0] == FailVerb)
+            {
+                return Task.FromResult(new GitRun(128, "", "fatal: could not read"));
+            }
             if (args[0] == "push")
             {
                 BeforePush?.Invoke();

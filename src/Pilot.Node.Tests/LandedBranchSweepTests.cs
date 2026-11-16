@@ -280,7 +280,7 @@ public sealed class LandedBranchSweepTests : IDisposable
 
         failing.Count("push").ShouldBe(1);
         Enumerable.Range(1, 3).ShouldAllBe(i => OriginHas($"PIL{i}") && LocalHas($"PIL{i}") && Live($"PIL{i}").BranchDeletedAt == null);
-        Summaries().Single().Title.ShouldContain("3 push-failed");
+        Summaries().Single().Title.ShouldContain("3 tried again next sweep");
         failing.Count("push").ShouldBe(1);
 
         failing.FailPush = false;
@@ -288,6 +288,52 @@ public sealed class LandedBranchSweepTests : IDisposable
 
         failing.Count("push").ShouldBe(2);
         Enumerable.Range(1, 3).ShouldAllBe(i => !OriginHas($"PIL{i}") && Live($"PIL{i}").BranchDeletedAt == Now);
+    }
+
+    [Theory]
+    [InlineData("ls-remote")]
+    [InlineData("for-each-ref")]
+    [InlineData("worktree")]
+    public async Task AFailedGitReadRecordsNothingAndTheNextSweepDeletesBoth(string verb)
+    {
+        for (var i = 1; i <= 2; i++)
+        {
+            Put(Row($"PIL{i}", MakeBranch($"PIL{i}")));
+        }
+        var git = new CountingGit(new GitCli()) { FailVerb = verb };
+
+        (await Sweeper(git).SweepAsync(Ct)).ShouldBe(0);
+
+        Enumerable.Range(1, 2).ShouldAllBe(i => OriginHas($"PIL{i}") && LocalHas($"PIL{i}") && Live($"PIL{i}").BranchDeletedAt == null);
+        git.Count("push").ShouldBe(0);
+        Summaries().Single().Title.ShouldContain("2 tried again next sweep");
+
+        git.FailVerb = null;
+        (await Sweeper(git).SweepAsync(Ct)).ShouldBe(2);
+        Enumerable.Range(1, 2).ShouldAllBe(i => !OriginHas($"PIL{i}") && !LocalHas($"PIL{i}") && Live($"PIL{i}").BranchDeletedAt == Now);
+    }
+
+    [Fact]
+    public async Task ThePrIsAskedForByNumberWhenTheListLacksIt()
+    {
+        var merged = Row("PIL1") with { Repo = "o/repo", MergedPullRequest = 7 };
+        var kept = Row("PIL2") with { Repo = "o/repo", MergedPullRequest = 8 };
+        var other = Row("PIL3") with { Repo = "o/repo", MergedPullRequest = 9 };
+        var head1 = MakeBranch("PIL1");
+        MakeBranch("PIL2");
+        MakeBranch("PIL3");
+        Put(merged);
+        Put(kept);
+        Put(other);
+        _github.Prs["o/repo#7"] = new PullRequest(7, "MERGED", head1, "u", MergedAt: Now, HeadRef: "flight/pil1");
+        _github.Prs["o/repo#8"] = new PullRequest(8, "CLOSED", "x", "u", HeadRef: "flight/pil2");
+        _github.Prs["o/repo#9"] = new PullRequest(9, "MERGED", "x", "u", MergedAt: Now, HeadRef: "flight/other");
+
+        (await Sweeper().SweepAsync(Ct)).ShouldBe(1);
+
+        OriginHas("PIL1").ShouldBeFalse();
+        OriginHas("PIL2").ShouldBeTrue();
+        OriginHas("PIL3").ShouldBeTrue();
     }
 
     [Fact]
@@ -341,6 +387,9 @@ public sealed class LandedBranchSweepTests : IDisposable
 
         public bool FailPush { get; set; }
 
+        /// <summary>A verb whose runs fail with a non-zero exit, as a git that cannot reach origin or read its refs.</summary>
+        public string? FailVerb { get; set; }
+
         public int Total => _counts.Values.Sum();
 
         public int Count(string verb) => _counts.GetValueOrDefault(verb);
@@ -348,6 +397,10 @@ public sealed class LandedBranchSweepTests : IDisposable
         public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
         {
             _counts[args[0]] = Count(args[0]) + 1;
+            if (args[0] == FailVerb)
+            {
+                return Task.FromResult(new GitRun(128, "", "fatal: could not read"));
+            }
             return args[0] == "push" && FailPush
                 ? Task.FromResult(new GitRun(1, "", "remote: refused"))
                 : inner.RunAsync(args, cwd, cancellationToken);

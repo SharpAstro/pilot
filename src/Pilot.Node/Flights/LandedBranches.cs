@@ -23,6 +23,8 @@ public static class LandedBranchGroups
     public const string LiveSession = "live-session";
     public const string NoMergedHead = "no-merged-head";
     public const string PushFailed = "push-failed";
+    public const string ReadFailed = "read-failed";
+    public const string LocalDeleteFailed = "local-delete-failed";
     public const string PlaneFolder = "plane-folder";
     public const string FoldedPending = "folded-pending";
     public const string Moved = "moved";
@@ -51,6 +53,12 @@ public sealed class LandedBranches(IGit git)
         var local = await ReadRefsAsync(["for-each-ref", "--format=%(objectname) %(refname)", "refs/heads/flight/"], "refs/heads/", repoPath, cancellationToken);
         var origin = await ReadRefsAsync(["ls-remote", "--heads", "origin", "refs/heads/flight/*"], "refs/heads/", repoPath, cancellationToken);
         var checkedOut = await ReadCheckedOutAsync(repoPath, cancellationToken);
+        if (local is null || origin is null || checkedOut is null)
+        {
+            // A failed read is not "no branch": delete nothing, record nothing, and try again on the next sweep.
+            var what = local is null ? "the local branches" : origin is null ? "origin's branches" : "the worktree list";
+            return candidates.Select(c => new LandedBranchOutcome(c.Flight.Code, c.Flight.Branch, LandedBranchResult.RetryLater, LandedBranchGroups.ReadFailed, $"could not read {what}")).ToList();
+        }
 
         foreach (var c in candidates)
         {
@@ -97,6 +105,7 @@ public sealed class LandedBranches(IGit git)
         {
             var onOrigin = judged.Where(j => j.Origin is not null).Select(j => j.Branch).ToList();
             string? failure = null;
+            var failureGroup = LandedBranchGroups.PushFailed;
             if (onOrigin.Count > 0)
             {
                 var push = await git.RunAsync(["push", "--quiet", "origin", "--delete", .. onOrigin], repoPath, cancellationToken);
@@ -112,6 +121,7 @@ public sealed class LandedBranches(IGit git)
                 if (!del.Ok)
                 {
                     failure = $"could not delete locally: {del.Why}";
+                    failureGroup = LandedBranchGroups.LocalDeleteFailed;
                 }
             }
             foreach (var j in judged)
@@ -119,7 +129,7 @@ public sealed class LandedBranches(IGit git)
                 var code = j.Candidate.Flight.Code;
                 outcomes[code] = failure is null
                     ? new(code, j.Branch, LandedBranchResult.Deleted)
-                    : new(code, j.Branch, LandedBranchResult.RetryLater, LandedBranchGroups.PushFailed, failure);
+                    : new(code, j.Branch, LandedBranchResult.RetryLater, failureGroup, failure);
             }
         }
 
@@ -132,8 +142,12 @@ public sealed class LandedBranches(IGit git)
         var repo = other.RepoPath;
         var local = await git.RunAsync(["rev-parse", "--verify", "--quiet", $"refs/heads/{other.Branch}"], repo, cancellationToken);
         var remote = await git.RunAsync(["ls-remote", "--heads", "origin", $"refs/heads/{other.Branch}"], repo, cancellationToken);
+        if (!remote.Ok)
+        {
+            return (null, new LandedBranchOutcome(other.Code, other.Branch, LandedBranchResult.RetryLater, LandedBranchGroups.ReadFailed, $"could not read origin's {other.Branch}: {remote.Why}"));
+        }
         var localTip = local.Ok ? local.Output.Trim() : null;
-        var originTip = remote.Ok ? remote.Output.Split(['\t', ' ', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() : null;
+        var originTip = remote.Output.Split(['\t', ' ', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
         var tips = new[] { localTip, originTip }.OfType<string>().Where(t => t.Length > 0).Distinct().ToList();
         if (tips.Count == 0)
         {
@@ -170,14 +184,14 @@ public sealed class LandedBranches(IGit git)
     private static string Short(string sha) => sha.Length > 8 ? sha[..8] : sha;
 
     /// <summary>Reads <c>&lt;sha&gt; &lt;ref&gt;</c> lines (for-each-ref's format) or <c>&lt;sha&gt;\t&lt;ref&gt;</c> (ls-remote's) into branch name to tip.</summary>
-    private async Task<Dictionary<string, string>> ReadRefsAsync(IReadOnlyList<string> args, string prefix, string repoPath, CancellationToken cancellationToken)
+    private async Task<Dictionary<string, string>?> ReadRefsAsync(IReadOnlyList<string> args, string prefix, string repoPath, CancellationToken cancellationToken)
     {
         var run = await git.RunAsync(args, repoPath, cancellationToken);
-        var map = new Dictionary<string, string>();
         if (!run.Ok)
         {
-            return map;
+            return null;
         }
+        var map = new Dictionary<string, string>();
         foreach (var line in run.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var parts = line.Split([' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -189,7 +203,7 @@ public sealed class LandedBranches(IGit git)
         return map;
     }
 
-    private async Task<HashSet<string>> ReadCheckedOutAsync(string repoPath, CancellationToken cancellationToken)
+    private async Task<HashSet<string>?> ReadCheckedOutAsync(string repoPath, CancellationToken cancellationToken)
     {
         var run = await git.RunAsync(["worktree", "list", "--porcelain"], repoPath, cancellationToken);
         var set = new HashSet<string>();
