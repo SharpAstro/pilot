@@ -74,7 +74,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
     private string? _customProblem;
 
     /// <summary>The box a custom size is typed in (<c>1024x768@2</c>); Enter reads it.</summary>
-    public TextInputState CustomInput { get; } = new() { Placeholder = "1024x768@2" };
+    public TextInputState CustomInput { get; } = new() { Placeholder = "WxH@S" };
 
     /// <summary>Raised after the choice of target of a design changed, for the host to keep it.</summary>
     public event Action? TargetChanged;
@@ -428,8 +428,9 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         // Three rows, the chips sharing the column's width: one row of chips, swap and input overran a narrow column onto the versions beside it.
         return Layout.Builder.VStack(
             Layout.Builder.HStack([.. chips]).WithGap(4f).RowH(26f),
-            Layout.Builder.HStack(swap, custom).WithGap(8f).RowH(26f),
-            WrappedProse.OneLine(caption, 12f, _customProblem is null ? Dim : Bright, selectable: false).RowH(22f).Whole(caption)).WithGap(4f).RowH(86f);
+            Layout.Builder.HStack(swap).RowH(26f),
+            custom,
+            WrappedProse.OneLine(caption, 12f, _customProblem is null ? Dim : Bright, selectable: false).RowH(22f).Whole(caption)).WithGap(4f).RowH(116f);
     }
 
     private Layout.Node Strip(DesignPage page)
