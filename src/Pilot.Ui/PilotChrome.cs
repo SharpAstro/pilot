@@ -28,6 +28,9 @@ internal enum PilotPage
     /// <summary>Last in the enum for the same reason; the rail lists it after Ideas.</summary>
     Spend,
 
+    /// <summary>Last in the enum for the same reason; the rail lists it after Ideas.</summary>
+    Designs,
+
     /// <summary>
     /// Never a page shown: the rail's cue for the cards a window too narrow for the panel beside its page dropped (<c>PilotChrome.CardsOpen</c>).
     /// Last in the enum for the same reason as the others.
@@ -93,7 +96,7 @@ internal sealed class PilotChrome<TSurface>
     private static readonly Dictionary<PilotPage, string> NightGlyphs = new()
     {
         [PilotPage.Home] = "H", [PilotPage.Chat] = "C", [PilotPage.Sessions] = "S", [PilotPage.Repos] = "R",
-        [PilotPage.Jobs] = "B", [PilotPage.Fleet] = "F", [PilotPage.PullRequests] = "P", [PilotPage.Ideas] = "I", [PilotPage.Spend] = "$",
+        [PilotPage.Jobs] = "B", [PilotPage.Fleet] = "F", [PilotPage.PullRequests] = "P", [PilotPage.Ideas] = "I", [PilotPage.Spend] = "$", [PilotPage.Designs] = "D",
     };
 
     /// <summary>
@@ -152,6 +155,7 @@ internal sealed class PilotChrome<TSurface>
         Ideas = new IdeasView<TSurface>(renderer) { Gallery = sessions.Gallery };
         PullRequests = new PullRequestsView<TSurface>(renderer);
         Spend = new SpendView<TSurface>(renderer);
+        Designs = new DesignsView<TSurface>(renderer) { DrawPicture = (picture, rect) => Gallery.Draw?.Invoke(picture, rect) };
         Cards = new CardsView<TSurface>(renderer) { Gallery = sessions.Gallery };
         Chat = new ChatView<TSurface>(renderer);
         // A card's in-app link (the watchtower card's Fleet link) opens that page, in either host.
@@ -187,6 +191,7 @@ internal sealed class PilotChrome<TSurface>
         Cards.Arranged = nodes => TextCheck.Observe("cards panel", nodes, DpiScale);
         Ideas.Arranged = nodes => TextCheck.Observe("ideas", nodes, DpiScale);
         Spend.Arranged = nodes => TextCheck.Observe("spend", nodes, DpiScale);
+        Designs.Arranged = nodes => TextCheck.Observe(Designs.OpenId is null ? "designs" : "design page", nodes, DpiScale);
         Tooltips = new TooltipLayer<TSurface>(renderer);
         More = new RailMoreMenu<TSurface>(renderer);
         // A flight page's Merge is its card's own choice, run as the panel runs it.
@@ -280,6 +285,8 @@ internal sealed class PilotChrome<TSurface>
         Ideas.Nodes = Nodes;
         Spend.About = About;
         Spend.Nodes = Nodes;
+        Designs.About = About;
+        Designs.Nodes = Nodes;
         // The Autopilot switch, in every page's header, for the node the window shows.
         sessions.Autopilot = Autopilot;
         Flights.Autopilot = Autopilot;
@@ -292,8 +299,9 @@ internal sealed class PilotChrome<TSurface>
         Chat.Autopilot = Autopilot;
         Ideas.Autopilot = Autopilot;
         Spend.Autopilot = Autopilot;
+        Designs.Autopilot = Autopilot;
         // And the Night switch beside it, one state every page reads.
-        sessions.Night = Flights.Night = Repos.Night = Jobs.Night = Fleet.Night = Settings.Night = Home.Night = Chat.Night = PullRequests.Night = Ideas.Night = Spend.Night = Night;
+        sessions.Night = Flights.Night = Repos.Night = Jobs.Night = Fleet.Night = Settings.Night = Home.Night = Chat.Night = PullRequests.Night = Ideas.Night = Spend.Night = Designs.Night = Night;
         // A transcript or a flight's page opened from inside a page (Enter, a click on a row) is a move too.
         sessions.Transcript.Opening = RecordOpening;
         Flights.Opening = RecordOpening;
@@ -381,6 +389,9 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>The Spend page: the token ledger over a window, by flight and role, and the waste.</summary>
     public SpendView<TSurface> Spend { get; }
 
+    /// <summary>The Designs page: the prototypes the node keeps in versions, played in DIR.Lib's prototype player.</summary>
+    public DesignsView<TSurface> Designs { get; }
+
     /// <summary>The Pull requests page: every open PR of the repos pilot works in, grouped by repo.</summary>
     public PullRequestsView<TSurface> PullRequests { get; }
 
@@ -409,6 +420,7 @@ internal sealed class PilotChrome<TSurface>
         Repos.WithoutScrollBars();
         Ideas.WithoutScrollBars();
         Spend.WithoutScrollBars();
+        Designs.WithoutScrollBars();
         PullRequests.WithoutScrollBars();
         Jobs.WithoutScrollBars();
         Fleet.WithoutScrollBars();
@@ -447,6 +459,8 @@ internal sealed class PilotChrome<TSurface>
         PilotPage.Chat => [Nav, Rail, Chat, Cards],
         PilotPage.Ideas => [Nav, Rail, Ideas, Cards],
         PilotPage.Spend => [Nav, Rail, Spend, Cards],
+        // The player is a widget of its own, over the page, so a click in it is the prototype's: the page's own controls lie outside its rectangle.
+        PilotPage.Designs => Designs.Player is { } player ? [Nav, Rail, Designs, player, Cards] : [Nav, Rail, Designs, Cards],
         PilotPage.Sessions => [Nav, Rail, Sessions, Cards],
         PilotPage.Flights => [Nav, Rail, Flights, Cards],
         PilotPage.Repos => [Nav, Rail, Repos, Cards],
@@ -461,7 +475,7 @@ internal sealed class PilotChrome<TSurface>
     public IPixelWidget PageWidget => PageViewOf(Page);
 
     // The widget a page is drawn by, which hosts the page's text selection.
-    private PilotWidgetBase<TSurface> PageViewOf(PilotPage page) => page switch { PilotPage.Chat => Chat, PilotPage.Ideas => Ideas, PilotPage.Spend => Spend, PilotPage.Sessions => Sessions, PilotPage.Flights => Flights, PilotPage.Repos => Repos, PilotPage.PullRequests => PullRequests, PilotPage.Jobs => Jobs, PilotPage.Fleet => Fleet, PilotPage.Settings => Settings, _ => Home };
+    private PilotWidgetBase<TSurface> PageViewOf(PilotPage page) => page switch { PilotPage.Chat => Chat, PilotPage.Ideas => Ideas, PilotPage.Spend => Spend, PilotPage.Designs => Designs, PilotPage.Sessions => Sessions, PilotPage.Flights => Flights, PilotPage.Repos => Repos, PilotPage.PullRequests => PullRequests, PilotPage.Jobs => Jobs, PilotPage.Fleet => Fleet, PilotPage.Settings => Settings, _ => Home };
 
     /// <summary>Whether the last frame drew the cards panel.</summary>
     public bool ShowsCards { get; private set; }
@@ -1050,6 +1064,7 @@ internal sealed class PilotChrome<TSurface>
             Chat.DpiScale = value;
             Ideas.DpiScale = value;
             Spend.DpiScale = value;
+            Designs.DpiScale = value;
             Tooltips.DpiScale = value;
             Rail.DpiScale = value;
             More.DpiScale = value;
@@ -1074,6 +1089,7 @@ internal sealed class PilotChrome<TSurface>
             Chat.FontPath = value;
             Ideas.FontPath = value;
             Spend.FontPath = value;
+            Designs.FontPath = value;
             Tooltips.FontPath = value;
             Rail.FontPath = value;
             More.FontPath = value;
@@ -1126,7 +1142,7 @@ internal sealed class PilotChrome<TSurface>
 
     /// <param name="pullRequests">The Pull requests page's screen; null shows it as before the node's first read, as a snapshot file without one does.</param>
     /// <param name="spend">The Spend page's screen; null shows it as before the node's first answer, as a snapshot file without spend does.</param>
-    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, ReposScreen? repos, PullRequestsScreen? pullRequests, RectF32 bounds, IReadOnlyList<MachineLine>? machines = null, IdeasScreen? ideas = null, SpendScreen? spend = null)
+    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, ReposScreen? repos, PullRequestsScreen? pullRequests, RectF32 bounds, IReadOnlyList<MachineLine>? machines = null, IdeasScreen? ideas = null, SpendScreen? spend = null, DesignsScreen? designs = null)
     {
         Palette.Use(Night);
         ApplyEmojiFont();
@@ -1261,6 +1277,9 @@ internal sealed class PilotChrome<TSurface>
                     break;
                 case PageKey when Page == PilotPage.Spend:
                     Spend.Render(spend ?? new SpendScreen(Spend.Window, null, null, screen.Source, screen.AsOf), rect);
+                    break;
+                case PageKey when Page == PilotPage.Designs:
+                    Designs.Render(designs ?? DesignsScreen.Empty(screen.Source, screen.AsOf), rect);
                     break;
                 case PageKey when Page == PilotPage.Settings:
                     Settings.Render(DateTimeOffset.UtcNow, rect);
