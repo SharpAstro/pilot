@@ -158,6 +158,8 @@ public sealed class GuiArtifactsTests : JobTestsBase
         refusedExit.ShouldNotBe(0);
     }
 
+    // The node has no separate job-log sweep: DiskSweep removes <id>.artifacts on the same scratch-days cutoff as the job's
+    // log, once the job ended longer ago than that. "Swept with the log" means that shared cutoff.
     [Fact]
     public async Task TheArtifactsGoWhenTheJobsLogIsSwept()
     {
