@@ -21,7 +21,7 @@ void LogLine(string line)
 {
     if (!guiLog.Write(line))
     {
-        Console.Error.WriteLine(line);
+        System.Console.Error.WriteLine(line);
     }
 }
 // What the window says (a press and its answer, a restart, its start and close): kept in gui.log, and on stdout too when it
@@ -29,7 +29,7 @@ void LogLine(string line)
 void Note(string line)
 {
     LogLine(line);
-    Console.WriteLine(line);
+    System.Console.WriteLine(line);
 }
 
 AppDomain.CurrentDomain.UnhandledException += (_, e) => LogLine($"pilot-gui: unhandled exception: {e.ExceptionObject}");
@@ -39,7 +39,7 @@ if (GuiOptions.Parse(args, out var error, out var isHelp) is not { } options)
     if (isHelp)
     {
         // Help is a result, not an error: it goes to stdout.
-        Console.Out.Write(error);
+        System.Console.Out.Write(error);
         return 0;
     }
 
@@ -87,7 +87,7 @@ if (options.SayTo is { } sayTo)
 {
     await EnsureNodeAsync();
     using var oneShot = NewClient();
-    return await GuiSay.RunAsync(oneShot, sayTo, options.SayText ?? "", Console.Out, LogLine, CancellationToken.None);
+    return await GuiSay.RunAsync(oneShot, sayTo, options.SayText ?? "", System.Console.Out, LogLine, CancellationToken.None);
 }
 
 string? capturedNodeCode = null;
@@ -210,8 +210,8 @@ if (options.Capture is { } capturePath)
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
         jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)],
         hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, layers: options.Layers, night: options.Night, fold: options.Fold, spend: snapshot?.Spend, summaries: snapshot?.Summaries, accent: options.Accent);
-    Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
-    Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
+    System.Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
+    System.Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;
 }
 
@@ -553,7 +553,7 @@ if (feed is not null && client is not null && clients is not null)
     chrome.TextCheck.Send = request => tracker.Run(async () =>
     {
         var result = await client.SendAsync(request, cts.Token);
-        Console.WriteLine($"pilot-gui: raised '{request.Args?[1]}': {(!result.Success ? result.Error : result.Response is { Ok: false } answer ? answer.Error : "done")}");
+        System.Console.WriteLine($"pilot-gui: raised '{request.Args?[1]}': {(!result.Success ? result.Error : result.Response is { Ok: false } answer ? answer.Error : "done")}");
     }, "raise a text-overlap card");
 
     // The watchtower, from its panel: its Remote Control link one click away, and a shortcut to the Chat page.
@@ -658,7 +658,7 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Ideas.Send = async (verb, target, args, ct) =>
     {
         var reply = await IdeaCommands.SendAsync(client, verb, target, args, GuiSay.Who, ct);
-        Console.WriteLine($"pilot-gui: {verb} {target}: {(reply.Ok ? reply.Way ?? "done" : reply.Error)}");
+        System.Console.WriteLine($"pilot-gui: {verb} {target}: {(reply.Ok ? reply.Way ?? "done" : reply.Error)}");
         return reply;
     };
     chrome.Ideas.LoadRepos = async ct => (await client.GetReposAsync(ct)) is { Success: true, Response: { } repos }

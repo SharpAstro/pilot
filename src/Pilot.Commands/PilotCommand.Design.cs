@@ -43,6 +43,10 @@ public static partial class PilotCommand
         {
             text.AppendLine($"prototype sha256: {sha}");
         }
+        if (row.Terminals.Length > 0)
+        {
+            text.AppendLine($"terminals: {string.Join(' ', row.Terminals)}");
+        }
         text.AppendLine($"folder: {design.Folder}");
         text.AppendLine($"draft: {design.DraftFolder}");
         if (design.CurrentFolder is { Length: > 0 } current)
@@ -63,8 +67,14 @@ public static partial class PilotCommand
             var newBrief = Words("brief", "The owner's words, kept verbatim as the first piece of the design's brief (after --)");
             var newRepo = new Option<string?>("--repo") { Description = "The repo the design is for, as its name" };
             var newTitle = new Option<string?>("--title") { Description = "The design's title; the brief's first line, cut to 80 characters, when left out" };
-            var designNew = Action(new Command("new", "Make a design from a brief and print its id, DSN-<n>") { Arguments = { newBrief }, Options = { newRepo, newTitle } },
-                (p, client, ct) => Send(client, Verbs.DesignNew, Verbs.NodeTarget, [p.GetValue(newRepo) ?? "", p.GetValue(newTitle) ?? "", Join(p, newBrief)], who, ct));
+            var newTerminal = new Option<string[]>("--terminal") { Description = "A terminal size the design is also checked and rendered at in cells, <cols>x<rows> (80x24, 100x30, 160x44, 250x60 are the standard ones); give it once per size", AllowMultipleArgumentsPerToken = false };
+            var designNew = Action(new Command("new", "Make a design from a brief and print its id, DSN-<n>") { Arguments = { newBrief }, Options = { newRepo, newTitle, newTerminal } },
+                (p, client, ct) => Send(client, Verbs.DesignNew, Verbs.NodeTarget, [p.GetValue(newRepo) ?? "", p.GetValue(newTitle) ?? "", Join(p, newBrief), .. p.GetValue(newTerminal) ?? []], who, ct));
+
+            var terminalsId = Arg("design", "The design's id, DSN-<n>");
+            var terminalsSizes = new Argument<string[]>("sizes") { Description = "The terminal sizes, <cols>x<rows> each; none clears the design's terminal targets", Arity = ArgumentArity.ZeroOrMore };
+            var designTerminals = Action(new Command("terminals", "Set the terminal sizes a design is checked and rendered at in cells (the cell rules of Console.Lib; <screen>.<cols>x<rows>.txt and .png renders); none clears them") { Arguments = { terminalsId, terminalsSizes } },
+                (p, client, ct) => Send(client, Verbs.DesignTerminals, Verbs.DesignTarget(p.GetValue(terminalsId)!), p.GetValue(terminalsSizes) ?? [], who, ct));
 
             var briefId = Arg("design", "The design's id, DSN-<n>");
             var briefText = Words("text", "The owner's words to add, verbatim, under their time (after --)");
@@ -103,7 +113,7 @@ public static partial class PilotCommand
                     return 1;
                 });
 
-            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, draft, check, render, publish, show") { Subcommands = { designNew, designBrief, designDraft, designCheck, designRender, designPublish, designShow } };
+            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, draft, check, render, publish, show, terminals") { Subcommands = { designNew, designTerminals, designBrief, designDraft, designCheck, designRender, designPublish, designShow } };
 
             var designs = Action(new Command("designs", "Every design, newest first"),
                 async (p, client, ct) =>

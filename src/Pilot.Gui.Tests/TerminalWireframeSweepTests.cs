@@ -20,7 +20,7 @@ public static class TerminalWireframeSweepTests
 {
     internal static readonly string[] Cases =
     [
-        "home", "sessions", "flights", "repos", "pull requests", "jobs", "fleet", "ideas", "spend", "settings", "chat",
+        "home", "sessions", "flights", "repos", "pull requests", "jobs", "fleet", "ideas", "spend", "settings", "chat", "designs", "design page",
         "help card", "open card", "chat long typed", "tooltip open",
     ];
 
@@ -74,6 +74,15 @@ public static class TerminalWireframeSweepTests
             chrome.Settings.LoadRepos ??= _ => Task.FromResult<RepoInfo[]>(data.WizardRepos.Length > 0 ? data.WizardRepos : [new RepoInfo { Name = "pilot", Path = @"C:\work\pilot" }]);
         }
         chrome.Show(page);
+        if (page == PilotPage.Designs)
+        {
+            // pilot-tui plays the prototype in its own cells: the page embeds its tree, arranged in this terminal.
+            chrome.Designs.Terminal = (columns, rows);
+            if (name == "design page")
+            {
+                chrome.Designs.Open(data.Designs.Open!.Detail.Row.Id);
+            }
+        }
         var cards = name == "open card" ? data.CardsWithDetail : data.Cards;
         chrome.Cards.OnChatPage = page == PilotPage.Chat;
         var cardsBeside = columns >= TerminalFrame.CardsPanelColumns && (cards.HasAny || chrome.Cards.CanTell && !chrome.Cards.OnChatPage);
@@ -106,6 +115,7 @@ public static class TerminalWireframeSweepTests
             case PilotPage.Fleet: tree = chrome.Fleet.Tree(data.Fleet); break;
             case PilotPage.Ideas: tree = chrome.Ideas.Tree(PageTextOverlapTests.IdeasFor(state)); break;
             case PilotPage.Spend: tree = chrome.Spend.Tree(data.Spend); break;
+            case PilotPage.Designs: tree = chrome.Designs.Tree(data.Designs); break;
             case PilotPage.Settings:
                 // The page is read from the node's answer on its own task: the first Tree starts the read, and Changed says the page is in.
                 var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

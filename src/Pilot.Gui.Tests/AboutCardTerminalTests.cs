@@ -419,9 +419,9 @@ public sealed class AboutCardTerminalTests
         entries.ShouldBe(TerminalRail.Keys.Select(k => $"{k.Key} {k.Label}"));
         foreach (var (page, _, key) in TerminalRail.Keys)
         {
-            // The listed key is a declared chord: the plain digit (or Shift+4 for '$'), and the page's Ctrl+digit on its bar entry.
+            // The listed key is a declared chord: the plain digit (Shift+4 for '$', d for Designs), and the page's Ctrl+digit on its bar entry.
             var plain = TerminalRail.PlainChord(key);
-            (key == TerminalRail.SpendKey ? InputKey.D4 : InputKey.D0 + (key - '0')).ShouldBe(plain.Key, $"{key}");
+            (key == TerminalRail.SpendKey ? InputKey.D4 : key == TerminalRail.DesignsKey ? InputKey.D : InputKey.D0 + (key - '0')).ShouldBe(plain.Key, $"{key}");
             TerminalRail.ChordFor(page).Key.ShouldNotBe(InputKey.None, $"{page}");
         }
     }

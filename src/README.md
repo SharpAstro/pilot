@@ -702,6 +702,36 @@ whole width collapses (`CollapseBelow`), and nothing multiplies by the DPI or me
 `LayoutDrivenTests` reads the views' sources and fails on a computed size, a hand-applied DPI or a width breakpoint, as
 tianwen's own checks do.
 
+## Designs
+
+A design (`DSN-<n>`) is a prototype of DIR.Lib screens the owner briefs, kept in versions under `<data>/designs/DSN-<n>/`:
+`pilot design new`, `brief`, `draft`, `check`, `render`, `publish`, `show`, `terminals`, and `pilot designs`. The node is the one
+writer; `check` and `render` load the draft's `prototype.json` with DIR.Lib's `Prototype`.
+
+**Terminal targets (PIL1098).** A design can name terminal sizes among its targets, each `<cols>x<rows>`:
+`pilot design new --terminal 80x24 --terminal 160x44 -- <brief>` sets them, `pilot design terminals DSN-1 80x24 100x30` replaces
+them and `pilot design terminals DSN-1` with no size clears them (`design_terminals` over MCP). `DesignRow.Terminals` holds them
+(defaulted, so a record an older release wrote has none); `DesignTerminals.Standard` in Pilot.Contracts names the standard sizes,
+80x24, 100x30, 160x44 and 250x60, the sizes of `TerminalWireframeSweepTests`, and a test holds the list to the sweep. A design with
+no terminal target checks and renders exactly as before.
+
+- **Check.** After the pixel check at `DesignSizes`, each screen (and each of its state variants, as the pixel check draws them) is
+  arranged and painted in cells at each terminal size and judged by Console.Lib's `CellWireframe.CheckCells`. A finding is a line
+  naming the size, `<screen> | 80x24 cells | <rule>: <message>`, where a pixel finding reads `<screen> | <width>x<height> | ...`.
+  Publish refuses a draft with any such line, as it does a pixel finding.
+- **Render.** Besides `<screen>.png` at the design size, each screen at each terminal size is written as
+  `<screen>.<cols>x<rows>.txt` (the cells' rows as text, trailing spaces trimmed, trailing blank rows dropped) and
+  `<screen>.<cols>x<rows>.png` (the same cells drawn as a grid, every cell 8 by 16 pixels, in DejaVu Sans Mono). A render clears
+  the earlier `.png` and `.txt` files first and rewrites `render.json`, the stamp publish compares with the draft; publish still
+  copies the `<screen>.png` of each screen into the version.
+- **One shared piece.** `src/Pilot.Ui/PrototypeCells.cs` (namespace `Pilot.Cells`, nothing of Pilot.Ui in it) builds a screen's
+  tree with `PrototypeTreeBuilder`, arranges it with Console.Lib's `CellMeasureContext.PixelAuthored` and paints it into a
+  `CellBuffer`; it exposes the arranged nodes (for `CellLayout.HitTest` and `TextInputs`), the rows as text, the findings, and
+  `Draw`, which paints the buffer on any `Renderer<TSurface>` as a grid. Pilot.Ui and Pilot.Node both reference Console.Lib (the
+  sibling probe of Pilot.Tui, still SDL free), and the node compiles the same file by a `Compile Include ... Link`, as it links the
+  GUI's fonts (`DejaVuSans.ttf` and `DejaVuSansMono.ttf`, with their licences, from `Pilot.Gui/Fonts`). A project that references
+  Console.Lib writes `System.Console` for the console, since the `Console` namespace shadows the type.
+
 ## Idle maintenance (#1102)
 
 When the node is running but idle it gets disk space back on a schedule. The sweep starts only when the node has been idle for
@@ -1246,7 +1276,8 @@ Background tasks, **7** Fleet, **8** Settings, **9** Pull requests, **0** Ideas,
 apart from Ctrl+S in most terminals). **Ctrl+S** is the say bar, **Ctrl+T** the chat with the watchtower (the box
 focused), Alt+Left, Alt+Right and Backspace walk the history (Backspace is an edit key inside a box), Up/Down select a
 row on a list page and Enter opens it (a session's transcript; Escape goes up), a click on a cell runs what a click on
-the pixels would, **q** and **Ctrl+C** quit (**q** is text inside a box). The watchtower and cards panel shows beside the page from 120 columns. `--node host:port`
+the pixels would, **d** shows **Designs** (a plain key like **q**, since every digit is taken and Ctrl+Shift+D is not told
+apart from Ctrl+D in terminals; it is text inside a box), **q** and **Ctrl+C** quit (**q** is text inside a box). The watchtower and cards panel shows beside the page from 120 columns. `--node host:port`
 flies a node on the LAN, as everywhere.
 
 A **page bar** (`TerminalRail`, built from `PilotChrome.Pages`, so a page added there shows here with no second list) runs
@@ -1258,9 +1289,15 @@ chooses emoji under Windows Terminal (`WT_SESSION`), VS Code, WezTerm, iTerm2 an
 changes is drawn blank for one frame, because Console.Lib's cell buffer would flush only the changed half of two emoji sharing
 a high surrogate (SharpAstro/Console.Lib#47).
 
-In a terminal under 88 columns, which 11 full entries need, every entry is 7 cells wide instead (the glyph's area one cell
-shorter, so a long glyph such as the ideas count is cut), which keeps all 11 on screen and clickable down to 77 columns; the
+In a terminal under 96 columns, which 12 full entries need, every entry is 6 cells wide instead (the glyph's area two cells
+shorter, so a long glyph such as the ideas count is cut), which keeps all 12 on screen and clickable down to 72 columns (`TerminalRailTests.UnderNinetySixColumnsAllTwelveEntriesStayOnScreenAndClickable`); the
 width is fixed for a given terminal width, so the bar does not shift.
+
+The **Designs** page (list and a design's page) is shown in pilot-tui too. A design's page embeds the prototype's own tree
+(`Player.BuildTree`, sized from the left column's share) as a node of the page's tree, so `CellLayout` arranges it with the page
+and a click or key reaches a goto, a button or a field as on any page; there is no PNG strip, the screens are a wrapped row of
+named buttons (`designs:screen:<id>`) with the current one active. The terminal wireframe sweep covers the list and a design's
+page at 80x24, 100x30, 160x44 and 250x60.
 
 The **terminal's title** (`TerminalTitle`, set through Console.Lib's `ITerminalViewport.Title`, which restores it on exit) reads
 `pilot · <page> · <node>`, led by `(N) ` when N cards wait on you, so a tab shows what is open and that something needs you. The

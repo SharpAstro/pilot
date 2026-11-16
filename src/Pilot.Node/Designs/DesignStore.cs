@@ -69,13 +69,32 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
         return line.Length <= TitleLength ? line : line[..TitleLength];
     }
 
-    /// <summary>Makes a design from <paramref name="brief"/>; its id comes from the counter.</summary>
-    public DesignRow New(string? repo, string? title, string brief)
+    private static string[] NormaliseTerminals(string[] sizes) =>
+        DesignTerminals.TryNormalise(sizes, out var normalised, out var bad)
+            ? normalised
+            : throw new DesignException($"'{bad}' is not a terminal size: give <cols>x<rows>, for example {string.Join(", ", DesignTerminals.Standard)}");
+
+    /// <summary>Sets the terminal sizes of design <paramref name="id"/> (each <c>&lt;cols&gt;x&lt;rows&gt;</c>); none clears them. Returns the record.</summary>
+    public DesignRow SetTerminals(string id, string[] sizes)
+    {
+        var normalised = NormaliseTerminals(sizes);
+        lock (_lock)
+        {
+            var row = Find(id) ?? throw new DesignException($"There is no design {id}");
+            var updated = row with { Terminals = normalised };
+            WriteRecord(updated);
+            return updated;
+        }
+    }
+
+    /// <summary>Makes a design from <paramref name="brief"/>; its id comes from the counter. <paramref name="terminals"/> are its terminal targets.</summary>
+    public DesignRow New(string? repo, string? title, string brief, string[]? terminals = null)
     {
         if (string.IsNullOrWhiteSpace(brief))
         {
             throw new DesignException("a design needs a brief: the owner's words");
         }
+        var sizes = NormaliseTerminals(terminals ?? []);
         lock (_lock)
         {
             Directory.CreateDirectory(Root);
@@ -90,6 +109,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
                 Repo = repo?.Trim() is { Length: > 0 } named ? named : null,
                 At = _time.GetUtcNow(),
                 Versions = 0,
+                Terminals = sizes,
             };
             Directory.CreateDirectory(Path.Combine(Root, id));
             File.WriteAllText(Path.Combine(Root, id, BriefFile), Piece(brief, row.At!.Value));
@@ -269,7 +289,8 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
     {
         lock (_lock)
         {
-            return DesignChecker.Problems(DraftPrototypeOf(id, out _));
+            var file = DraftPrototypeOf(id, out var row);
+            return DesignChecker.Problems(file, terminals: row.Terminals);
         }
     }
 
@@ -281,7 +302,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             var file = DraftPrototypeOf(id, out var row);
             var document = DesignChecker.Load(file, out var problems)
                 ?? throw new DesignException($"{row.Id} draft does not load, so there is nothing to render:\n{string.Join('\n', problems)}");
-            return DesignChecker.Render(document, Path.Combine(FolderOf(row.Id), DraftFolderName, DesignChecker.RendersFolderName), Sha256Of(file));
+            return DesignChecker.Render(document, Path.Combine(FolderOf(row.Id), DraftFolderName, DesignChecker.RendersFolderName), Sha256Of(file), terminals: row.Terminals);
         }
     }
 
@@ -306,7 +327,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
                 throw new DesignException($"{row.Id} has no notes: {NotesFile} in the draft is missing or empty, and a version says in it what it is");
             }
             var document = DesignChecker.Load(prototype, out var problems);
-            var found = document is null ? problems : DesignChecker.Problems(prototype);
+            var found = document is null ? problems : DesignChecker.Problems(prototype, terminals: row.Terminals);
             if (found.Length > 0)
             {
                 throw new DesignException($"{row.Id} draft is not clean, so there is no version to make:\n{string.Join('\n', found)}");

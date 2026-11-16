@@ -175,6 +175,7 @@ public sealed class ButtonFeedbackTests
         (@"^nodes:", "the node filter of the rail: which nodes the pages show"),
         (@"^play:", "the in-play filter of a list: what the page shows"),
         (@":table:divider:\d+$", "a column divider dragged in a table"),
+        (@"^designs:(mode:(cells|pixels)|size:\d+x\d+)$", "a design's Pixels or Cells switch and its terminal size pills only change which view of the prototype the page shows: local state, no command on the node"),
         (@"^flights:view:", "the Flights page's view switch"),
         (@"^spend:window:", "the Spend page's timeframe tab: the page switches at once and asks a read, no command on the node"),
         (@"^flight:(back|[^:]+:open)$", "navigation to and from the flight page"),

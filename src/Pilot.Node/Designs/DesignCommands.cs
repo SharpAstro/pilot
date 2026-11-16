@@ -11,7 +11,7 @@ public sealed class DesignCommands(NodeState state, DesignStore store)
 {
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
     public static bool Handles(string verb) => verb is Verbs.DesignNew or Verbs.DesignBrief or Verbs.DesignDraft or Verbs.DesignShow or Verbs.Designs
-        or Verbs.DesignCheck or Verbs.DesignRender or Verbs.DesignPublish;
+        or Verbs.DesignTerminals or Verbs.DesignCheck or Verbs.DesignRender or Verbs.DesignPublish;
 
     public CommandResult Run(CommandRequest command)
     {
@@ -22,8 +22,12 @@ public sealed class DesignCommands(NodeState state, DesignStore store)
             {
                 case Verbs.DesignNew:
                     // args: repo, title (either may be empty), brief.
-                    var row = store.New(args.Length > 0 ? args[0] : null, args.Length > 1 ? args[1] : null, args.Length > 2 ? args[2] : "");
+                    // args: repo, title (either may be empty), brief, then any terminal sizes.
+                    var row = store.New(args.Length > 0 ? args[0] : null, args.Length > 1 ? args[1] : null, args.Length > 2 ? args[2] : "", args.Length > 3 ? args[3..] : []);
                     return state.Complete(command, null, made: row.Id);
+                case Verbs.DesignTerminals:
+                    var sized = store.SetTerminals(IdOf(command), args);
+                    return state.Complete(command, null, made: sized.Terminals.Length == 0 ? $"{sized.Id} terminals: none" : $"{sized.Id} terminals: {string.Join(' ', sized.Terminals)}");
                 case Verbs.DesignBrief:
                     var briefed = store.Brief(IdOf(command), string.Join(' ', args));
                     return state.Complete(command, null, made: briefed.Id);

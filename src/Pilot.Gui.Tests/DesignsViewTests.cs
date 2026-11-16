@@ -221,6 +221,156 @@ public sealed class DesignsViewTests
         }
     }
 
+    private static Rig CellsRig(string size)
+    {
+        var rig = new Rig(Sample());
+        rig.View.Open("DSN-1");
+        rig.Paint();
+        rig.View.ShowCells(true);
+        rig.View.PickSize(size).ShouldBeTrue();
+        rig.Paint();
+        return rig;
+    }
+
+    private static void ClickAt(Rig rig, float x, float y)
+    {
+        rig.Router.Handle(new InputEvent.MouseDown(x, y, MouseButton.Left, InputModifier.None, 1));
+        rig.Router.Handle(new InputEvent.MouseUp(x, y, MouseButton.Left));
+        rig.Paint();
+    }
+
+    // The cell where a text of the grid starts: its column and row.
+    private static (int Column, int Row) CellOf(Rig rig, string text)
+    {
+        var rows = rig.View.CellGrid!.Cells!.FrontRowText();
+        for (var row = 0; row < rows.Length; row++)
+        {
+            if (rows[row].IndexOf(text, StringComparison.Ordinal) is var column and >= 0)
+            {
+                return (column, row);
+            }
+        }
+        throw new ShouldAssertException($"'{text}' is not on the grid:{Environment.NewLine}{string.Join(Environment.NewLine, rows.Select(r => r.TrimEnd()))}");
+    }
+
+    [Fact]
+    public void PixelsIsTheDefaultAndCellsListsTheGridInsteadOfThePlayer()
+    {
+        using var rig = new Rig(Sample());
+        rig.View.Open("DSN-1");
+        rig.Paint();
+
+        rig.View.CellsShown.ShouldBeFalse();
+        rig.Chrome.Widgets.ShouldContain(rig.View.Player);
+        rig.View.ShowCells(true);
+        rig.Paint();
+        rig.Chrome.Widgets.ShouldContain(rig.View.CellGrid);
+        rig.Chrome.Widgets.ShouldNotContain(rig.View.Player);
+    }
+
+    [Theory]
+    [InlineData("80x24", 80, 24)]
+    [InlineData("160x44", 160, 44)]
+    public void CellsArrangesTheSampleScreenAtATerminalSizeAndFitsItAtOneToTwo(string size, int columns, int rows)
+    {
+        using var rig = CellsRig(size);
+        var grid = rig.View.CellGrid!;
+
+        grid.Columns.ShouldBe(columns);
+        grid.Rows.ShouldBe(rows);
+        grid.Cells!.Columns.ShouldBe(columns);
+        grid.Cells.Rows.ShouldBe(rows);
+        var text = grid.Cells.Text();
+        text.ShouldContain("Fleet");
+        text.ShouldContain("Open settings");
+        // A cell is twice as tall as it is wide, and the grid lies inside the rectangle the page gave it.
+        (grid.GridRect.Height / rows / (grid.GridRect.Width / columns)).ShouldBe(2f, 0.01f);
+        grid.GridRect.Width.ShouldBeGreaterThan(0f);
+    }
+
+    [Fact]
+    public void AFrameDoesNotRebuildTheArrangementUntilSomethingChanges()
+    {
+        using var rig = CellsRig("80x24");
+        var grid = rig.View.CellGrid!;
+        var builds = grid.Builds;
+
+        rig.Paint();
+        rig.Paint();
+        grid.Builds.ShouldBe(builds);
+
+        rig.View.PickSize("100x30");
+        rig.Paint();
+        grid.Builds.ShouldBe(builds + 1);
+    }
+
+    [Fact]
+    public void AClickOnTheCellsOfAGotoTextMovesToItsScreen()
+    {
+        using var rig = CellsRig("80x24");
+        var (column, row) = CellOf(rig, "Open settings");
+
+        var (x, y) = rig.View.CellGrid!.CellCentre(column + 3, row);
+        ClickAt(rig, x, y);
+
+        rig.View.Player!.CurrentScreen.Id.ShouldBe("settings");
+        rig.View.CellGrid!.Cells!.Text().ShouldContain("Delete this node");
+    }
+
+    [Fact]
+    public void AKeyTypedIntoTheFocusedTextInputShowsInTheGrid()
+    {
+        using var rig = CellsRig("80x24");
+        rig.View.Player!.Goto("settings").ShouldBeTrue();
+        rig.Paint();
+        var (column, row) = CellOf(rig, "Node name");
+
+        var (x, y) = rig.View.CellGrid!.CellCentre(column + 2, row);
+        ClickAt(rig, x, y);
+        rig.Router.Handle(new InputEvent.TextInput("Z"));
+        rig.Router.Handle(new InputEvent.TextInput("7"));
+        rig.Paint();
+
+        rig.View.CellGrid!.Cells!.Text().ShouldContain("Z7");
+    }
+
+    [Fact]
+    public void SwitchingBackToPixelsKeepsTheScreenAndTheTypedValue()
+    {
+        using var rig = CellsRig("80x24");
+        rig.View.Player!.Goto("settings").ShouldBeTrue();
+        rig.Paint();
+        var (column, row) = CellOf(rig, "Node name");
+        var (x, y) = rig.View.CellGrid!.CellCentre(column + 2, row);
+        ClickAt(rig, x, y);
+        rig.Router.Handle(new InputEvent.TextInput("Q"));
+        rig.Paint();
+
+        rig.View.ShowCells(false);
+        rig.Paint();
+        rig.View.Player!.CurrentScreen.Id.ShouldBe("settings");
+        rig.Chrome.Widgets.ShouldContain(rig.View.Player);
+        rig.View.ShowCells(true);
+        rig.Paint();
+        rig.View.CellGrid!.Cells!.Text().ShouldContain("Q");
+    }
+
+    [Fact]
+    public void ADesignNamingTerminalTargetsOffersThemFirstAndStartsAtTheFirst()
+    {
+        var full = Sample();
+        var detail = full.Open!.Detail with { Row = full.Open.Detail.Row with { Terminals = ["120x36", "80x24"] } };
+        using var rig = new Rig(full with { Open = full.Open with { Detail = detail } });
+        rig.View.Open("DSN-1");
+        rig.Paint();
+        rig.View.ShowCells(true);
+        rig.Paint();
+
+        rig.View.TerminalSize.ShouldBe("120x36");
+        var buttons = Painted(rig.View).Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(h => h.Action).Where(a => a.StartsWith("designs:size:", StringComparison.Ordinal)).ToList();
+        buttons.ShouldBe(["designs:size:120x36", "designs:size:80x24", "designs:size:100x30", "designs:size:160x44", "designs:size:250x60"]);
+    }
+
     [Fact]
     public void DesignSizesAreTheDistinctSizesOfTheWireframeSweep()
     {
