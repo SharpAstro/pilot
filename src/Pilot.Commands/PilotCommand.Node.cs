@@ -53,7 +53,12 @@ public static partial class PilotCommand
             var maintenance = Action(new Command("maintenance", "Run the idle-time disk sweep now (git, LFS, old packages, job folders) and print what each step freed and the free space before and after; refused while a leg flies or a job runs")
                 { Options = { maintenanceDry, actingOn } },
                 (p, client, ct) => Send(client, Verbs.Maintenance, Verbs.NodeTarget, p.GetValue(maintenanceDry) ? ["--dry-run"] : [], who, ct, p.GetValue(actingOn)));
-            var nodeCommand = new Command("node", "This machine's pilot node") { Subcommands = { nodeRestart, reboot, maintenance } };
+            // node lift-limit: a usage limit that is another login's (#1123). The card has the same choice; this is for a card marked read.
+            var liftWhy = Words("why", "Why the limit does not hold, for the record", required: false);
+            var liftLimit = Action(new Command("lift-limit", "End the usage limit the node holds its starts for, when the limit is not this login's (you logged in again and sessions take turns): the node starts sessions again, and a limit of a session that began before now no longer counts")
+                { Arguments = { liftWhy }, Options = { actingOn } },
+                (p, client, ct) => Send(client, Verbs.LiftLimit, Verbs.NodeTarget, p.GetValue(liftWhy) ?? [], who, ct, p.GetValue(actingOn)));
+            var nodeCommand = new Command("node", "This machine's pilot node") { Subcommands = { nodeRestart, reboot, maintenance, liftLimit } };
 
             // the LAN: find nodes, ask one for control, and see or take back what this node has granted
             var nodes = new Command("nodes", "The pilot nodes announcing themselves on the LAN");

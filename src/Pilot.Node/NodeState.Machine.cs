@@ -26,10 +26,27 @@ public sealed partial class NodeState
         {
             var usage = UsageRow.Newest(_usage, read);
             if (_usage is { } held && held.Account == usage.Account && held.FiveHour == usage.FiveHour && held.SevenDay == usage.SevenDay
-                && usage.ReadAt - held.ReadAt < TimeSpan.FromMinutes(10))
+                && held.LoginChangedAt == usage.LoginChangedAt && usage.ReadAt - held.ReadAt < TimeSpan.FromMinutes(10))
             {
                 return;
             }
+            Publish(new UsageChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Usage = usage });
+        }
+    }
+
+    /// <summary>
+    /// Records when the login changed, or when a person lifted a usage limit that did not hold (#1123), on the stored usage so that a
+    /// restart keeps it. An earlier time than the one held changes nothing.
+    /// </summary>
+    public void PutLoginChanged(DateTimeOffset at)
+    {
+        lock (_gate)
+        {
+            if (_usage?.LoginChangedAt is { } held && held >= at)
+            {
+                return;
+            }
+            var usage = (_usage ?? new UsageRow { ReadAt = at }) with { LoginChangedAt = at };
             Publish(new UsageChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Usage = usage });
         }
     }
