@@ -13,6 +13,7 @@
         "kind": "vstack", "gap": 12, "padding": 16,
         "children": [
           { "kind": "text", "text": "Fleet", "fontSize": 20, "color": "HeaderText" },
+          { "kind": "text", "text": "Open settings", "color": "Accent", "action": "goto:settings" },
           {
             "kind": "hstack", "gap": 8,
             "children": [
