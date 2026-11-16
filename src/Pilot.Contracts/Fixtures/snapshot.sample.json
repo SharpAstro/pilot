@@ -236,6 +236,7 @@
       "failureTold": false,
       "failFast": false,
       "local": false,
+      "gui": null,
       "benchVm": null,
       "wholeSuite": null
     },
@@ -285,6 +286,7 @@
       "failureTold": false,
       "failFast": false,
       "local": false,
+      "gui": null,
       "benchVm": null,
       "wholeSuite": null
     },
@@ -334,6 +336,7 @@
       "failureTold": false,
       "failFast": false,
       "local": false,
+      "gui": null,
       "benchVm": null,
       "wholeSuite": null
     },
@@ -383,6 +386,7 @@
       "failureTold": false,
       "failFast": false,
       "local": false,
+      "gui": null,
       "benchVm": null,
       "wholeSuite": null
     }
