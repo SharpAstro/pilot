@@ -146,6 +146,24 @@ public sealed class TerminalRailTests
         shown.ShouldBe(Expected.Select(e => e.Page));
     }
 
+    [Theory]
+    [InlineData(72)]
+    [InlineData(95)]
+    public void UnderNinetySixColumnsAllTwelveEntriesStayOnScreenAndClickable(int columns)
+    {
+        var shown = new List<PilotPage>();
+        var arranged = Layout.Engine.Arrange(
+            TerminalRail.Tree(PilotPage.Home, GlyphMode.Emoji, null, null, Now, shown.Add, null, columns),
+            new Rect<int>(0, 0, columns, 1), CellMeasureContext.PixelAuthored);
+
+        foreach (var (page, _) in Expected)
+        {
+            var entry = EntryOf(arranged, page);
+            (entry.Bounds.X + entry.Bounds.Width).ShouldBeLessThanOrEqualTo(columns, $"{page} ends inside {columns} columns");
+            entry.Bounds.Width.ShouldBeGreaterThan(0);
+        }
+    }
+
     [Fact]
     public void TheBackgroundTasksEntryFollowsJobsGlyphAndIdeasItsCount()
     {

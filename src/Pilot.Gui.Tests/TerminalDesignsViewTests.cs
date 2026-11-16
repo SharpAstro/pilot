@@ -9,7 +9,7 @@ using Xunit;
 namespace Pilot.Gui.Tests;
 
 /// <summary>The Designs page as pilot-tui plays it (PIL1098): the prototype is a node of the page's own tree, so a click on its cells is the terminal's ordinary hit test.</summary>
-public sealed class TerminalDesignsTests
+public sealed class TerminalDesignsViewTests
 {
     private const int Columns = 100;
     private const int Rows = 30;

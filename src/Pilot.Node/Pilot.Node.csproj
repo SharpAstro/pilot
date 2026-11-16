@@ -47,18 +47,6 @@
     <Compile Include="..\Pilot.Ui\PrototypeCells.cs" Link="Designs\PrototypeCells.cs" />
   </ItemGroup>
 
-  <!-- Console.Lib's cell layout and wireframe rules (PIL1098), taken as Pilot.Tui takes it. -->
-  <PropertyGroup>
-    <UseLocalConsoleLib Condition="'$(UseLocalConsoleLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)Console.Lib\src\Console.Lib\Console.Lib.csproj')">true</UseLocalConsoleLib>
-  </PropertyGroup>
-  <ItemGroup Condition="'$(UseLocalConsoleLib)' == 'true'">
-    <ProjectReference Include="$(SharpAstroRoot)Console.Lib\src\Console.Lib\Console.Lib.csproj" />
-  </ItemGroup>
-  <ItemGroup Condition="'$(UseLocalConsoleLib)' != 'true'">
-    <PackageReference Include="Console.Lib" Condition="'$(Configuration)' != 'Debug'" />
-    <PackageReference Include="Console.Lib.Debug" Condition="'$(Configuration)' == 'Debug'" />
-  </ItemGroup>
-
   <!-- The Claude Code skills the node installs for every session on the machine (UserSkills.cs), in the binary: a native
        release carries no file beside it. Named UserSkills/<skill>/<path>. -->
   <ItemGroup>
@@ -79,6 +67,18 @@
   </ItemGroup>
   <ItemGroup Condition="'$(UseLocalLanLib)' != 'true'">
     <PackageReference Include="LAN.Lib" />
+  </ItemGroup>
+
+  <!-- Console.Lib's cell layout and wireframe rules (PIL1098), taken as Pilot.Tui takes it, after SharpAstroRoot is set above. -->
+  <PropertyGroup>
+    <UseLocalConsoleLib Condition="'$(UseLocalConsoleLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)Console.Lib\src\Console.Lib\Console.Lib.csproj')">true</UseLocalConsoleLib>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalConsoleLib)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)Console.Lib\src\Console.Lib\Console.Lib.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalConsoleLib)' != 'true'">
+    <PackageReference Include="Console.Lib" Condition="'$(Configuration)' != 'Debug'" />
+    <PackageReference Include="Console.Lib.Debug" Condition="'$(Configuration)' == 'Debug'" />
   </ItemGroup>
 
   <!-- DIR.Lib's Prototype (DIR249): the node loads, checks and renders a design's prototype itself, so publish re-runs the check

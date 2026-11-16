@@ -1290,7 +1290,7 @@ changes is drawn blank for one frame, because Console.Lib's cell buffer would fl
 a high surrogate (SharpAstro/Console.Lib#47).
 
 In a terminal under 96 columns, which 12 full entries need, every entry is 6 cells wide instead (the glyph's area two cells
-shorter, so a long glyph such as the ideas count is cut), which keeps all 12 on screen and clickable down to 72 columns; the
+shorter, so a long glyph such as the ideas count is cut), which keeps all 12 on screen and clickable down to 72 columns (`TerminalRailTests.UnderNinetySixColumnsAllTwelveEntriesStayOnScreenAndClickable`); the
 width is fixed for a given terminal width, so the bar does not shift.
 
 The **Designs** page (list and a design's page) is shown in pilot-tui too. A design's page embeds the prototype's own tree

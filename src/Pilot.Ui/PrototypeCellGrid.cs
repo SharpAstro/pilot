@@ -35,7 +35,7 @@ internal sealed class PrototypeCellGrid<TSurface>(Renderer<TSurface> renderer, P
     public int Rows { get; set; } = 24;
 
     /// <summary>The cells as last arranged and painted; null before the first <see cref="Render"/>.</summary>
-    public PrototypeCells? Cells => _cells;
+    internal PrototypeCells? Cells => _cells;
 
     /// <summary>How many times the arrangement was rebuilt, which a test reads to see that a frame does not rebuild it.</summary>
     public int Builds { get; private set; }

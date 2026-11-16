@@ -13,7 +13,7 @@ namespace Pilot.Cells;
 /// and paints it into a <see cref="CellBuffer"/> through an in-memory viewport. This file names nothing of Pilot.Ui, so projects that cannot reference it
 /// (the node) link the file itself.
 /// </summary>
-public sealed class PrototypeCells
+internal sealed class PrototypeCells
 {
     /// <summary>A cell's width in the grid <see cref="Draw"/> paints, in pixels; its height is twice that.</summary>
     public const int CellWidth = 8;
