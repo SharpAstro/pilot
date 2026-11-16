@@ -392,7 +392,7 @@ public static partial class NodeApp
         builder.Services.AddSingleton<NodeLan>();
         if (options.Lan && options.LanAnnounce)
         {
-            NetworkBinds.Check($"the node's LAN discovery (UDP, every interface) with LanAnnounce on");
+            NetworkBinds.Check("the node's LAN discovery (UDP, every interface) with LanAnnounce on");
             builder.Services.AddLanDiscovery(lan =>
             {
                 lan.ServiceName = NodeWire.LanService;

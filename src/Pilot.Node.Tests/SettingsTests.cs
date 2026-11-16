@@ -221,6 +221,19 @@ public sealed class SettingsTests : IDisposable
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task SettingTheLanPortSaysTheFirewallRuleFollowsOnSetup()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "the firewall rule is Windows only");
+        await using var node = await NodeHarness.StartAsync(Ct);
+
+        var result = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["lan-port", "47801"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+
+        result.Ok.ShouldBeTrue();
+        result.Way.ShouldNotBeNull().ShouldContain("pilot-node setup");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task SetSavesASettingAndThePageShowsItSavedForTheNextStart()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

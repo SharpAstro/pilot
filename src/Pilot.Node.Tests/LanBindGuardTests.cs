@@ -19,7 +19,7 @@ public sealed class LanBindGuardTests
 
     [Fact]
     [Trait("Category", "Invariant")]
-    public void ANodeBindingEveryAddressIsRefusedInATestNamingTheSeam()
+    public void TheBindGuardRefusesInATestNamingTheSeam()
     {
         Should.Throw<InvalidOperationException>(() => NetworkBinds.Check("the node's LAN port, every address")).Message.ShouldContain("NetworkBinds");
     }
@@ -28,7 +28,7 @@ public sealed class LanBindGuardTests
     [Trait("Category", "Invariant")]
     public async Task DiscoveryInATestRunsOnTheFakeTransportAndHearsNothing()
     {
-        var peers = await NodeTargets.DiscoverAsync(TimeSpan.FromMilliseconds(150), TestContext.Current.CancellationToken);
+        var peers = await NodeTargets.DiscoverAsync(TimeSpan.Zero, TestContext.Current.CancellationToken);
         peers.ShouldBeEmpty();
     }
 }

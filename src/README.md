@@ -1445,7 +1445,10 @@ sessions, flights and jobs, and never speaks for another. To bring a second mach
    discovery`) and TCP on the LAN port (rule `pilot2 node`), Private and Domain profiles only, so every pilot-node,
    pilot-gui and pilot build at any path listens with no firewall dialog. The earlier per-program `pilot-node` rules are
    deleted. A local-only node, or one with the LAN off, makes none. Changing `lan-port` leaves the TCP rule out of date
-   until the next `pilot-node setup` (or the Settings page's Firewall fix). `pilot-node setup --check` prints the
+   until the next `pilot-node setup` (or the Settings page's Firewall fix). An optional "Old firewall rules" check counts
+   the per-path inbound allow rules of programs that no longer exist (worktree builds, under the repo roots, scratch and
+   temp folders); `pilot-node setup` only says how many, and its `Remove (asks for elevation)` fix deletes exactly those
+   rules (inbound, by program path) with one readable elevated script. `pilot-node setup --check` prints the
    checklist and changes nothing. It ends with the checklist: what is left is a person's.
 3. **What is left**, which the GUI's **Settings** page (Ctrl+8) also lists with a button for each the node can fix:
    the watchtower's folder trusted once (Claude Code's own prompt, which the page opens in a titled window; a folder

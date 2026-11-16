@@ -117,18 +117,15 @@ public sealed class FirewallLeftoversTests
     public void TheScriptDeletesEachProgramByPath()
     {
         FirewallLeftovers.Script([@"C:\a\x.exe", @"C:\a\y.exe"]).ShouldBe(
-            "netsh advfirewall firewall delete rule name=all program=\"C:\\a\\x.exe\" | Out-Null\n" +
-            "netsh advfirewall firewall delete rule name=all program=\"C:\\a\\y.exe\" | Out-Null");
+            "netsh advfirewall firewall delete rule name=all dir=in program=\"C:\\a\\x.exe\" | Out-Null\n" +
+            "netsh advfirewall firewall delete rule name=all dir=in program=\"C:\\a\\y.exe\" | Out-Null");
         FirewallLeftovers.Script([]).ShouldBeNull();
     }
 
     [Fact]
     public void TheCheckCountsLeftoversAndIsOptionalWithOneNetshRun()
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            return;
-        }
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "the firewall check is Windows only");
         var ran = new List<string>();
         var check = Setup(_ => false, ran: ran).Checks().Single(c => c.Key == NodeSetup.FirewallLeftoversKey);
 
@@ -143,10 +140,7 @@ public sealed class FirewallLeftoversTests
     [Fact]
     public async Task NothingElevatesWhenThereAreNone()
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            return;
-        }
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "the firewall check is Windows only");
         var elevations = 0;
 
         (await Setup(_ => true, (_, _) => { elevations++; return true; }).FixAsync(NodeSetup.FirewallLeftoversKey, TestContext.Current.CancellationToken)).ShouldBeNull();
@@ -157,21 +151,20 @@ public sealed class FirewallLeftoversTests
     [Fact]
     public async Task TheFixElevatesOnce()
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            return;
-        }
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "the firewall check is Windows only");
         var elevations = 0;
+        string? script = null;
 
-        await Setup(_ => false, (_, _) => { elevations++; return true; }).FixAsync(NodeSetup.FirewallLeftoversKey, TestContext.Current.CancellationToken);
+        await Setup(_ => false, (_, args) => { elevations++; script = File.ReadAllText(args.Split("-File \"")[1].TrimEnd('"')); return true; }).FixAsync(NodeSetup.FirewallLeftoversKey, TestContext.Current.CancellationToken);
 
         elevations.ShouldBe(1);
+        script.ShouldNotBeNull().ShouldContain("netsh advfirewall firewall delete rule name=all dir=in program=");
     }
 
     [Fact]
     public void TheScriptOfTheSetupIsTheExactDeleteText()
     {
         Setup(p => !p.EndsWith("pilot-gui.exe")).FirewallLeftoversScript().ShouldBe(
-            "netsh advfirewall firewall delete rule name=all program=\"C:\\Users\\me\\AppData\\Local\\pilot2\\jobs\\j1.tmp\\x\\pilot-gui.exe\" | Out-Null");
+            "netsh advfirewall firewall delete rule name=all dir=in program=\"C:\\Users\\me\\AppData\\Local\\pilot2\\jobs\\j1.tmp\\x\\pilot-gui.exe\" | Out-Null");
     }
 }

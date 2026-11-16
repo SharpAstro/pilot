@@ -45,5 +45,5 @@ public static class FirewallLeftovers
 
     /// <summary>The pwsh script that deletes the rules naming each of <paramref name="programs"/>; null when there are none.</summary>
     public static string? Script(IReadOnlyList<string> programs) =>
-        programs.Count == 0 ? null : string.Join('\n', programs.Select(p => $"netsh advfirewall firewall delete rule name=all program=\"{p}\" | Out-Null"));
+        programs.Count == 0 ? null : string.Join('\n', programs.Select(p => $"netsh advfirewall firewall delete rule name=all dir=in program=\"{p}\" | Out-Null"));
 }
