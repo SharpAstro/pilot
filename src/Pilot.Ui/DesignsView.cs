@@ -324,7 +324,8 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
             }
             bar.Add(Layout.Builder.TextInput(SizeInput, 12f, Palette.Input).WFixed(96f));
         }
-        return Layout.Builder.HStack([.. bar]).WithGap(6f).HFixed(28f).WStar();
+        // Wrapped, so at a narrow window the sizes go to a second line instead of running over the column beside.
+        return Layout.Builder.WrapH([.. bar]).WithGap(6f).WithLineGap(4f).WStar();
     }
 
     private Layout.Node SwitchButton(string label, bool on, bool cells) =>

@@ -360,7 +360,7 @@ public sealed class DesignsViewTests
     {
         var full = Sample();
         var detail = full.Open!.Detail with { Row = full.Open.Detail.Row with { Terminals = ["120x36", "80x24"] } };
-        using var rig = new Rig(full with { Open = DesignPages.Load(detail) });
+        using var rig = new Rig(full with { Open = full.Open with { Detail = detail } });
         rig.View.Open("DSN-1");
         rig.Paint();
         rig.View.ShowCells(true);
