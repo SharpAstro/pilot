@@ -14,12 +14,20 @@ public sealed partial class GhFakeGuardTests
 {
     private const string Types = "PullRequest|MergedPullRequest|MergeQueueState|ChecksSummary|PullRequestStatus|WorkflowRun|CiRun|MergeState";
 
+    // A namespace written out in front of the type (Pilot.Node.Flights.PullRequest, global::Pilot.Contracts.PullRequestStatus) is still the same type.
+    private const string Q = @"(?:global::)?(?:Pilot(?:\.\w+)*\.)?";
+
+    // Members only a builder may give a gh-read record: the reader fills them from keys the recording carries (or never), and a `with` puts in what
+    // the reader cannot (PIL1101: a MergedAt on a by-number PullRequest). The builders take each as a parameter and refuse where the reader does not read it.
+    private const string BuilderOnlyMembers = "MergedAt|RemovedAt|RemovedReason|DroppedFromQueue|AwaitsCheck";
+
     // new T(...), new T { ... }; a target-typed new(...) assigned to a T (field, property, local), arrays and nullables included; a method
     // declared to return a T whose body is `=> new(` (also across a line break) or whose first statement is `return new(`.
-    [GeneratedRegex(@"\bnew\s+(?:" + Types + @")\b"
-        + @"|\b(?:" + Types + @")(?:\[\])?\??\s+\w+\s*(?:\{[^}]*\}\s*)?=\s*new\("
-        + @"|\b(?:" + Types + @")(?:\[\])?\??\s+\w+\s*\([^)]*\)\s*=>\s*new\("
-        + @"|\b(?:" + Types + @")(?:\[\])?\??\s+\w+\s*\([^)]*\)\s*\{\s*return\s+new\(")]
+    [GeneratedRegex(@"\bnew\s+" + Q + @"(?:" + Types + @")\b"
+        + @"|\b" + Q + @"(?:" + Types + @")(?:\[\])?\??\s+\w+\s*(?:\{[^}]*\}\s*)?=\s*new\("
+        + @"|\b" + Q + @"(?:" + Types + @")(?:\[\])?\??\s+\w+\s*\([^)]*\)\s*=>\s*new\("
+        + @"|\b" + Q + @"(?:" + Types + @")(?:\[\])?\??\s+\w+\s*\([^)]*\)\s*\{\s*return\s+new\("
+        + @"|\bwith\s*\{[^}]*\b(?:" + BuilderOnlyMembers + @")\s*=")]
     private static partial Regex DirectConstruction();
 
     /// <summary>The places of <paramref name="source"/> (1-based line, the line's text) that build a gh-read record directly; a comment line is not one.</summary>
@@ -104,12 +112,17 @@ public sealed partial class GhFakeGuardTests
     [InlineData("private static CiRun CiOf(long id) =>\n        new(id, \"CI\", \"completed\", null, \"push\", Now, null, 0);")]
     [InlineData("private static PullRequest Pr(int n) => new(n, \"OPEN\", \"h\", \"u\");")]
     [InlineData("private static ChecksSummary Pending(int done, int total = 3) => new(ChoiceStatus.Pending, done, total);")]
+    [InlineData("var pr = new Pilot.Node.Flights.PullRequest(7, \"OPEN\", \"h\", \"u\");")]
+    [InlineData("var s = new global::Pilot.Contracts.PullRequestStatus { Number = 1 };")]
+    [InlineData("_github.Pr = _github.Pr! with { State = \"MERGED\", MergedAt = Now };")]
+    [InlineData("Queue = queued with { Queued = false, RemovedReason = \"X\" };")]
     [InlineData("PullRequestStatus Pr(int n)\n    {\n        return new() { Number = n };\n    }")]
     public void TheScannerFlagsADirectConstruction(string line) => Scan(line).ShouldHaveSingleItem();
 
     [Theory]
     [InlineData("var pr = GhAnswers.PullRequestByBranch(number: 7);")]
     [InlineData("// new PullRequest(7, \"MERGED\", h, \"u\") is what the guard forbids")]
+    [InlineData("_github.Pr = _github.Pr! with { Head = \"beef\" };")]
     [InlineData("var row = new PullRequestRow(1, \"o/r\");")]
     [InlineData("public Dictionary<string, PullRequest> PrOf { get; } = new(StringComparer.Ordinal);")]
     [InlineData("var gone = new PullRequestSearch.GonePullRequest(\"o/r\", 1, 2);")]

@@ -137,7 +137,8 @@ public sealed class GhFieldListTests
 
     /// <summary>
     /// <c>gh api actions/runs</c> has no <c>--json</c> list and answers every key, so a recording is kept to the keys <c>ParseCiRuns</c> reads
-    /// (<c>CiRunKeys</c>): each run of each recording carries exactly those, so a key the parser starts reading must be recorded first.
+    /// (<c>CiRunKeys</c>): each run of each recording carries exactly those, so a key the parser starts reading must be recorded first. The trimming is by hand on purpose (gh answers about 150 lines per run, none of which the parser reads), and this test is what keeps it honest:
+    /// a recording that gained or lost a key fails here, so no key the parser reads goes missing unseen.
     /// </summary>
     [Fact]
     public void EveryCiRunRecordingCarriesExactlyTheKeysTheParserReads()
