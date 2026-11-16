@@ -162,6 +162,10 @@ public sealed class TerminalRailTests
             (entry.Bounds.X + entry.Bounds.Width).ShouldBeLessThanOrEqualTo(columns, $"{page} ends inside {columns} columns");
             entry.Bounds.Width.ShouldBeGreaterThan(0);
         }
+
+        var last = EntryOf(arranged, Expected[^1].Page);
+        CellLayout.HitTest(arranged, last.Bounds.X + last.Bounds.Width - 1, last.Bounds.Y);
+        shown.ShouldBe([Expected[^1].Page]);
     }
 
     [Fact]
