@@ -43,7 +43,7 @@ public sealed class FlightArchiveTests : IDisposable
 
     private static CommandRequest Archive(string code, params string[] args) => new() { Verb = Verbs.ArchiveFlight, Target = Verbs.FlightTarget(code), Args = args, Who = "tests" };
 
-    private static FlightArchiver Archiver(NodeState state, IGit? git = null) => new(state, git);
+    private static FlightArchiver Archiver(NodeState state, RemovalQueue? removals = null) => new(state, removals);
 
     /// <summary>A landed flight with a leg and a Handled card about it, as a landing leaves one.</summary>
     private static void Land(NodeState state, string code)
@@ -149,30 +149,38 @@ public sealed class FlightArchiveTests : IDisposable
     }
 
     [Fact]
-    public async Task APlaneFolderOnDiskOrABranchStillThereHoldsItBack()
+    public async Task APlaneFolderOnDiskHoldsItBackButABranchStillThereDoesNot()
     {
         using var journal = Journal();
         var state = Open(journal);
         Land(state, "TIA1");
         Directory.CreateDirectory(Path.Combine(_root, "plane"));
-        // The repo folder must exist for git to be asked about the branch (a gone folder has no branch to wait for).
         state.PutFlight(Flight("TIA1") with { Worktree = Path.Combine(_root, "plane"), RepoPath = _root });
 
         (await Archiver(state).RunAsync(Archive("TIA1"), Ct)).Error.ShouldNotBeNull().ShouldContain("still on disk");
 
+        // The branch is never asked about (the node deletes none), so with the folder gone the flight is archived and keeps its branch name.
         Directory.Delete(Path.Combine(_root, "plane"));
-        (await Archiver(state, new BranchThere()).RunAsync(Archive("TIA1"), Ct)).Error.ShouldNotBeNull().ShouldContain("branch flight/tia1 is not removed");
-        (await Archiver(state, new BranchGone()).RunAsync(Archive("TIA1"), Ct)).Ok.ShouldBeTrue();
+        (await Archiver(state).RunAsync(Archive("TIA1"), Ct)).Ok.ShouldBeTrue();
+        state.Archive!.Read("TIA1").ShouldNotBeNull().Flight.Branch.ShouldBe("flight/tia1");
     }
 
-    private sealed class BranchThere : IGit
+    [Fact]
+    public async Task AStaleMergeQueueNoteOnAFlightWhoseMergeEntryIsMergedDoesNotHoldItBack()
     {
-        public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) => Task.FromResult(new GitRun(0, "", ""));
-    }
+        using var journal = Journal();
+        var state = Open(journal);
+        Land(state, "TIA1");
+        state.PutFlight(Flight("TIA1") with { MergeQueue = "in the merge queue, position 1" });
+        state.PutMerge(new MergeRow
+        {
+            Flight = "TIA1", Repo = "tianwen", Pr = 7, Head = "0007aaaabbbbcccc", Method = "rebase", State = MergeEntryState.Merged, Why = "merged",
+            AddedAt = Start, ChangedAt = Start,
+        });
 
-    private sealed class BranchGone : IGit
-    {
-        public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) => Task.FromResult(new GitRun(1, "", ""));
+        (await Archiver(state).RunAsync(Archive("TIA1"), Ct)).Ok.ShouldBeTrue();
+
+        state.Archive!.Read("TIA1").ShouldNotBeNull().Flight.Branch.ShouldBe("flight/tia1");
     }
 
     [Fact]
