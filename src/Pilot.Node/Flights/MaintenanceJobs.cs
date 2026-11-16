@@ -28,8 +28,12 @@ public sealed class MaintenanceJobs(NodeState state, string projectsFolder, Time
     /// <inheritdoc />
     public Task<MaintenanceMeasure> MeasureAsync(CancellationToken cancellationToken)
     {
-        var plan = Plan(cancellationToken);
-        return Task.FromResult(new MaintenanceMeasure(plan.Sum(p => p.Bytes), plan.Count));
+        var kept = new List<string>();
+        var plan = Plan(cancellationToken, kept);
+        var age = Math.Max(1, ScratchDays());
+        return Task.FromResult(new MaintenanceMeasure(
+            [.. plan.Select(p => new MaintenanceItem(Path.GetFileName(p.Folder), p.Bytes, $"transcript folder of an archived flight's plane, unwritten for {age} days or more"))],
+            MaintenanceMeasure.Count(kept)));
     }
 
     /// <inheritdoc />
@@ -52,7 +56,7 @@ public sealed class MaintenanceJobs(NodeState state, string projectsFolder, Time
         return Task.FromResult(new MaintenanceResult(freed, notes.Count == 0 ? null : string.Join("; ", notes)));
     }
 
-    private List<(string Folder, long Bytes)> Plan(CancellationToken cancellationToken)
+    private List<(string Folder, long Bytes)> Plan(CancellationToken cancellationToken, List<string>? kept = null)
     {
         var found = new List<(string Folder, long Bytes)>();
         if (!Directory.Exists(projectsFolder) || state.Archive is not { } archive)
@@ -88,12 +92,24 @@ public sealed class MaintenanceJobs(NodeState state, string projectsFolder, Time
             cancellationToken.ThrowIfCancellationRequested();
             var name = Path.GetFileName(folder);
             var owners = planes.Where(p => Covers(p, name)).ToList();
-            if (owners.Count == 0
-                // A live session whose cwd is in the plane or below it.
-                || owners.Any(p => live.Any(l => Covers(p, l)))
-                || Directory.Exists(Path.Combine(folder, "memory"))
-                || Newest(folder) >= cutoff)
+            if (owners.Count == 0)
             {
+                continue;
+            }
+            // A live session whose cwd is in the plane or below it.
+            if (owners.Any(p => live.Any(l => Covers(p, l))))
+            {
+                kept?.Add("a live session in the plane");
+                continue;
+            }
+            if (Directory.Exists(Path.Combine(folder, "memory")))
+            {
+                kept?.Add("holds a memory folder");
+                continue;
+            }
+            if (Newest(folder) >= cutoff)
+            {
+                kept?.Add("written within the scratch days");
                 continue;
             }
             found.Add((folder, DiskUsage.UniqueBytes(folder)));

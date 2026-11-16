@@ -50,9 +50,11 @@ public static partial class PilotCommand
             var reboot = new Command("reboot", "Make the machine ready to reboot, and resume after it") { Subcommands = { rebootRequest, rebootStatus, rebootCancel, rebootDone } };
             // node maintenance: the idle-time disk sweep, now (PIL1102); not the reboot mode.
             var maintenanceDry = new Option<bool>("--dry-run") { Description = "Measure what each step would remove and remove nothing" };
+            var maintenanceAll = new Option<bool>("--all") { Description = "Print every item of each step, not the first 50" };
+            var maintenanceOut = new Option<string?>("--out") { Description = "Write every item to this file as tab-separated lines (step, item, bytes, reason)" };
             var maintenance = Action(new Command("maintenance", "Run the idle-time disk sweep now (git, LFS, old packages, job folders) and print what each step freed and the free space before and after; refused while a leg flies or a job runs")
-                { Options = { maintenanceDry, actingOn } },
-                (p, client, ct) => Send(client, Verbs.Maintenance, Verbs.NodeTarget, p.GetValue(maintenanceDry) ? ["--dry-run"] : [], who, ct, p.GetValue(actingOn)));
+                { Options = { maintenanceDry, maintenanceAll, maintenanceOut, actingOn } },
+                (p, client, ct) => Send(client, Verbs.Maintenance, Verbs.NodeTarget, [.. p.GetValue(maintenanceDry) ? ["--dry-run"] : [], .. p.GetValue(maintenanceAll) ? ["--all"] : [], .. p.GetValue(maintenanceOut) is { Length: > 0 } outFile ? ["--out", outFile] : []], who, ct, p.GetValue(actingOn)));
             // node lift-limit: a usage limit that is another login's (#1123). The card has the same choice; this is for a card marked read.
             var liftWhy = Words("why", "Why the limit does not hold, for the record", required: false);
             var liftLimit = Action(new Command("lift-limit", "End the usage limit the node holds its starts for, when the limit is not this login's (you logged in again and sessions take turns): the node starts sessions again, and a limit of a session that began before now no longer counts")

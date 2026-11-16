@@ -76,15 +76,37 @@ public sealed class PackageCachePrune : IMaintenanceStep
             ? packages
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
 
-    private sealed record Candidate(string Id, string Version, string Folder, long Bytes);
+    /// <summary>The keep rules a version is counted under, as the report names them.</summary>
+    public static class KeepRules
+    {
+        /// <summary>The version is in a project.assets.json of a repo, a sibling clone or a plane, or pinned by an open PR's branch.</summary>
+        public const string AssetsFile = "named in an assets file";
 
-    private sealed record Plan(List<Candidate> Remove, List<string> Notes);
+        /// <summary>The version was read (or, without last-access times, written) within the package age.</summary>
+        public const string ReadWithinAge = "read within the age";
+
+        /// <summary>The newest version of its package.</summary>
+        public const string Newest = "newest version";
+
+        /// <summary>The newest version of its package that is not a prerelease.</summary>
+        public const string NewestStable = "newest stable version";
+
+        /// <summary>An open PR's branch pins the package with a floating version.</summary>
+        public const string FloatingPin = "floating pin";
+
+        /// <summary>An open PR's branch of a repo that restores the package could not be read.</summary>
+        public const string UnreadablePrBranch = "unreadable PR branch";
+    }
+
+    private sealed record Candidate(string Id, string Version, string Folder, long Bytes, string Reason);
+
+    private sealed record Plan(List<Candidate> Remove, List<string> Notes, List<string> Kept);
 
     /// <inheritdoc />
     public async Task<MaintenanceMeasure> MeasureAsync(CancellationToken cancellationToken)
     {
         var plan = await PlanAsync(cancellationToken);
-        return new MaintenanceMeasure(plan.Remove.Sum(c => c.Bytes), plan.Remove.Count);
+        return new MaintenanceMeasure([.. plan.Remove.Select(c => new MaintenanceItem($"{c.Id} {c.Version}", c.Bytes, c.Reason))], MaintenanceMeasure.Count(plan.Kept));
     }
 
     /// <inheritdoc />
@@ -139,13 +161,14 @@ public sealed class PackageCachePrune : IMaintenanceStep
     {
         var notes = new List<string>();
         var remove = new List<Candidate>();
+        var kept = new List<string>();
         var packages = PackagesFolder();
         if (!Directory.Exists(packages))
         {
-            return new Plan(remove, notes);
+            return new Plan(remove, notes, kept);
         }
 
-        var (used, keepAll) = await ReadUseAsync(notes, cancellationToken);
+        var (used, floating, unreadable) = await ReadUseAsync(notes, cancellationToken);
         var recorded = await (RecordsLastAccess ?? ProbeLastAccessAsync)(packages, cancellationToken);
         if (!recorded)
         {
@@ -162,23 +185,45 @@ public sealed class PackageCachePrune : IMaintenanceStep
                 continue;
             }
             var versions = Directory.EnumerateDirectories(idFolder).Select(f => (Folder: f, Version: Path.GetFileName(f))).ToList();
-            if (versions.Count == 0 || keepAll.Contains(id))
+            if (versions.Count == 0)
             {
+                continue;
+            }
+            if (floating.Contains(id) || unreadable.Contains(id))
+            {
+                kept.AddRange(versions.Select(_ => floating.Contains(id) ? KeepRules.FloatingPin : KeepRules.UnreadablePrBranch));
                 continue;
             }
             var newest = versions.Select(v => v.Version).OrderByDescending(v => v, VersionOrder.Instance).First();
             var newestStable = versions.Select(v => v.Version).Where(v => !v.Contains('-')).OrderByDescending(v => v, VersionOrder.Instance).FirstOrDefault();
             foreach (var (folder, version) in versions)
             {
-                if (string.Equals(version, newest, StringComparison.OrdinalIgnoreCase) || string.Equals(version, newestStable, StringComparison.OrdinalIgnoreCase)
-                    || used.Contains((id, version)) || LastRead(folder, recorded, cancellationToken) > cutoff)
+                if (string.Equals(version, newest, StringComparison.OrdinalIgnoreCase))
                 {
+                    kept.Add(KeepRules.Newest);
                     continue;
                 }
-                remove.Add(new Candidate(id, version, folder, DiskUsage.UniqueBytes(folder)));
+                if (string.Equals(version, newestStable, StringComparison.OrdinalIgnoreCase))
+                {
+                    kept.Add(KeepRules.NewestStable);
+                    continue;
+                }
+                if (used.Contains((id, version)))
+                {
+                    kept.Add(KeepRules.AssetsFile);
+                    continue;
+                }
+                var read = LastRead(folder, recorded, cancellationToken);
+                if (read > cutoff)
+                {
+                    kept.Add(KeepRules.ReadWithinAge);
+                    continue;
+                }
+                remove.Add(new Candidate(id, version, folder, DiskUsage.UniqueBytes(folder),
+                    $"not in any assets file scanned, {(recorded ? "last read" : "last written")} {read.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}"));
             }
         }
-        return new Plan(remove, notes);
+        return new Plan(remove, notes, kept);
     }
 
     /// <summary>
@@ -270,10 +315,11 @@ public sealed class PackageCachePrune : IMaintenanceStep
 
     private static DateTime Max(DateTime a, DateTime b) => a > b ? a : b;
 
-    private async Task<(HashSet<(string, string)> Used, HashSet<string> KeepAll)> ReadUseAsync(List<string> notes, CancellationToken cancellationToken)
+    private async Task<(HashSet<(string, string)> Used, HashSet<string> Floating, HashSet<string> Unreadable)> ReadUseAsync(List<string> notes, CancellationToken cancellationToken)
     {
         var used = new HashSet<(string, string)>(PairComparer.Instance);
-        var keepAll = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var floating = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var unreadable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var scanned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var repos = _repos().Where(r => !string.IsNullOrEmpty(r) && Directory.Exists(r)).ToList();
@@ -309,15 +355,15 @@ public sealed class PackageCachePrune : IMaintenanceStep
             {
                 used.Add(pin);
             }
-            keepAll.UnionWith(pins.FloatingIds);
+            floating.UnionWith(pins.FloatingIds);
             if (!pins.Complete)
             {
                 // The branches' pins are unknown: every version of every package this repo restores stays.
-                keepAll.UnionWith(own);
+                unreadable.UnionWith(own);
                 notes.Add($"{Path.GetFileName(Path.TrimEndingDirectorySeparator(repo))}: open PR branches not readable ({pins.Why}), its packages kept");
             }
         }
-        return (used, keepAll);
+        return (used, floating, unreadable);
     }
 
     /// <summary>Every folder one level under the parents of the tracked repos that holds a <c>.git</c> (a clone or a worktree), the repos themselves excluded.</summary>

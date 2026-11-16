@@ -4,8 +4,31 @@ using Pilot.Contracts;
 
 namespace Pilot.Node.Flights;
 
-/// <summary>What a maintenance step would remove: how many bytes, in how many items.</summary>
-public sealed record MaintenanceMeasure(long Bytes, int Items);
+/// <summary>
+/// What a maintenance step would remove: each item with its size and reason, and how many items each keep rule kept. <see cref="Bytes"/>
+/// and <see cref="Items"/> are the totals of the list.
+/// </summary>
+public sealed record MaintenanceMeasure(IReadOnlyList<MaintenanceItem> List, IReadOnlyList<MaintenanceKept> Kept)
+{
+    /// <summary>A measure of the given items, with no keep rules counted.</summary>
+    public MaintenanceMeasure(IReadOnlyList<MaintenanceItem> list) : this(list, [])
+    {
+    }
+
+    /// <summary>A measure of <paramref name="items"/> anonymous items holding <paramref name="bytes"/> between them; for a step that lists nothing by name.</summary>
+    public MaintenanceMeasure(long bytes, int items) : this([.. Enumerable.Range(0, items).Select(i => new MaintenanceItem($"item {i + 1}", i == 0 ? bytes : 0, ""))], [])
+    {
+    }
+
+    /// <summary>The bytes the items hold.</summary>
+    public long Bytes => List.Sum(i => i.Bytes);
+
+    /// <summary>How many items.</summary>
+    public int Items => List.Count;
+
+    /// <summary>Counts of keep rules by name, in the order first seen, as the report carries them.</summary>
+    public static MaintenanceKept[] Count(IEnumerable<string> rules) => [.. rules.GroupBy(r => r).Select(g => new MaintenanceKept(g.Key, g.Count()))];
+}
 
 /// <summary>What a maintenance step removed, and what it could not touch (a note for the disk alert), or null when it touched everything it meant to.</summary>
 public sealed record MaintenanceResult(long Bytes, string? Untouched = null);
@@ -33,7 +56,8 @@ public interface IMaintenanceStep
 /// <param name="Untouched">What it could not touch, or null.</param>
 /// <param name="Cancelled">Whether work arriving ended it before it was done.</param>
 /// <param name="Items">For a dry run, how many items it would remove.</param>
-public sealed record MaintenanceStepReport(string Name, long Bytes, string? Untouched, bool Cancelled = false, int Items = 0);
+/// <param name="Measured">For a dry run, the items and kept counts behind <paramref name="Bytes"/>.</param>
+public sealed record MaintenanceStepReport(string Name, long Bytes, string? Untouched, bool Cancelled = false, int Items = 0, MaintenanceMeasure? Measured = null);
 
 /// <summary>One run of the sweep: when, what each step did, and the free space before and after on the repos' drive.</summary>
 public sealed record MaintenanceRun(DateTimeOffset At, bool DryRun, IReadOnlyList<MaintenanceStepReport> Steps, string? Drive, long? FreeBefore, long? FreeAfter, bool Cancelled)
@@ -50,6 +74,14 @@ public sealed record MaintenanceRun(DateTimeOffset At, bool DryRun, IReadOnlyLis
             return notes.Length > 0 ? string.Join("; ", notes) : null;
         }
     }
+
+    /// <summary>The items and kept counts of each step, largest item first, for the client to print; the one-line way stays <see cref="Line"/>.</summary>
+    public MaintenanceReport Report() => new(DryRun,
+        [.. Steps.Select(s => new MaintenanceStepList(
+            s.Name, s.Bytes,
+            [.. (s.Measured?.List ?? []).OrderByDescending(i => i.Bytes).ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase)],
+            [.. s.Measured?.Kept ?? []],
+            s.Untouched))]);
 
     /// <summary>The report line: <c>maintenance: freed 9.2 GB (packages 8.1 GB, git 0.3 GB, lfs 0.2 GB, jobs 0.6 GB); C: 7.0 -> 16.2 GB free</c>.</summary>
     public string Line()
@@ -256,7 +288,7 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
                         if (dryRun)
                         {
                             var measure = await step.MeasureAsync(work.Token);
-                            reports.Add(new MaintenanceStepReport(step.Name, measure.Bytes, null, Items: measure.Items));
+                            reports.Add(new MaintenanceStepReport(step.Name, measure.Bytes, null, Items: measure.Items, Measured: measure));
                         }
                         else
                         {

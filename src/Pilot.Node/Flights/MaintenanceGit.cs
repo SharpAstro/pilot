@@ -128,13 +128,15 @@ public sealed partial class MaintenanceGit : IMaintenanceStep
     /// <inheritdoc />
     public async Task<MaintenanceMeasure> MeasureAsync(CancellationToken cancellationToken)
     {
-        long bytes = 0;
-        var items = 0;
+        var list = new List<MaintenanceItem>();
+        var kept = new List<string>();
         foreach (var repo in Known())
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (WhyBusy(repo) is not null)
+            var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(repo));
+            if (WhyBusy(repo) is { } busy)
             {
+                kept.Add($"repo busy ({busy})");
                 continue;
             }
             if (_kind == Kind.Git)
@@ -145,22 +147,48 @@ public sealed partial class MaintenanceGit : IMaintenanceStep
                 if (counted is { ExitCode: 0 })
                 {
                     var (packable, garbage, garbageBytes) = ParseCountObjects(counted.Output);
-                    items += packable + garbage;
-                    bytes += garbageBytes;
+                    if (packable + garbage > 0 || garbageBytes > 0)
+                    {
+                        list.Add(new MaintenanceItem(name, garbageBytes, $"git count-objects: {packable.ToString(CultureInfo.InvariantCulture)} prune-packable, {garbage.ToString(CultureInfo.InvariantCulture)} garbage objects"));
+                    }
+                    else
+                    {
+                        kept.Add("nothing for gc to remove");
+                    }
+                }
+                else
+                {
+                    kept.Add("git count-objects did not answer");
                 }
             }
-            else if (UsesLfs(repo) && await LfsInstalledAsync(repo, cancellationToken))
+            else if (UsesLfs(repo))
             {
+                if (!await LfsInstalledAsync(repo, cancellationToken))
+                {
+                    kept.Add("git-lfs is not installed");
+                    continue;
+                }
                 var dry = await TryAsync("git", [.. LfsCommand, "--dry-run"], repo, cancellationToken);
                 if (dry is { ExitCode: 0 })
                 {
-                    var (count, size) = ParseLfsDryRun(dry.Output + "\n" + dry.Error);
-                    items += count;
-                    bytes += size;
+                    var (count, size) = ParseLfsDryRun(dry.Output + "
+" + dry.Error);
+                    if (count > 0 || size > 0)
+                    {
+                        list.Add(new MaintenanceItem(name, size, $"git lfs prune --dry-run: {count.ToString(CultureInfo.InvariantCulture)} files would be pruned"));
+                    }
+                    else
+                    {
+                        kept.Add("nothing for lfs prune to remove");
+                    }
+                }
+                else
+                {
+                    kept.Add("git lfs prune --dry-run did not answer");
                 }
             }
         }
-        return new MaintenanceMeasure(bytes, items);
+        return new MaintenanceMeasure(list, MaintenanceMeasure.Count(kept));
     }
 
     /// <inheritdoc />
