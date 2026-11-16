@@ -702,6 +702,36 @@ whole width collapses (`CollapseBelow`), and nothing multiplies by the DPI or me
 `LayoutDrivenTests` reads the views' sources and fails on a computed size, a hand-applied DPI or a width breakpoint, as
 tianwen's own checks do.
 
+## Idle maintenance (#1102)
+
+When the node is running but idle it gets disk space back on a schedule. The sweep starts only when the node has been idle for
+`maintenance-idle` (default 15 minutes: no leg flying, no job running or queued, no PR review or fix round live), at most once per
+`maintenance-every` (default 24 hours; `off` turns it away). It runs its steps one at a time; each step's child processes start at
+the job priority inside a kill-on-close job object, and work arriving cancels the running step within a second (its process tree
+ends, the rest do not start). One Handled line says what each step freed, the free space before and after, and what it could not
+touch. `pilot node maintenance [--dry-run]` runs it now through the node and prints the same report; `--dry-run` measures and
+removes nothing. This is not the `maintenance` switch of a reboot (see Settings).
+
+The steps:
+
+- **git** and **lfs**: for each tracked repo, `git worktree prune`, `git fetch --prune`, `git gc --prune=<age>` (never `--aggressive`,
+  nothing that rewrites refs) and, where the repo uses LFS, `git lfs prune`. A repo is skipped while a flight of it has a plane with a
+  live session or a running or queued job. Freed bytes are the `.git` folder's size before and after.
+- **packages**: NuGet package versions in the global packages folder (`NUGET_PACKAGES`, else `~/.nuget/packages`) that nothing in use
+  restores and that have not been read for `package-age-days` (default 14). In use is read from files: every package and version in each
+  `project.assets.json` under the tracked repos, their sibling clones (one level under the same parent folders) and the planes of flights not landed, plus the pins read with git from the head of each
+  open PR's branch. The newest version of every package is always kept, and a branch that cannot be read keeps what it might need.
+- **jobs**: the Claude transcript folders under `~/.claude/projects` of archived flights' planes. A folder goes when its flight is
+  archived, its newest write is older than `scratch-days`, no live session has a cwd inside the plane, and it holds no `memory/`
+  folder. The folders under `~/.claude/jobs` are not this step's: the job sweep (`claude stop` and `claude rm`) owns them and
+  removes the jobs pilot started once their session ended; the rest belong to sessions pilot did not start, and the disk sweep
+  takes only a job's `tmp`.
+
+It never touches hibernate or page files, shadow copies, WSL or Docker disks, or anything outside the node's repos, store and
+caches. A folder that cannot be deleted now (held open) is left and named in the step's note; the next run tries it again. Every child process of a step (git, gh, fsutil) starts through one helper at the job priority (`job-priority`) inside a kill-on-close job object. When free space falls below
+`disk-alert-gb`, the disk-low card says when the last maintenance run happened, what each step freed and what it could not touch; with
+no run yet it says so and names `pilot node maintenance --dry-run`.
+
 ## Repo status
 
 `RepoWatch` keeps a `RepoStatus` for every repo `RepoCatalog` lists (the clones under the roots), so the Repos tab and

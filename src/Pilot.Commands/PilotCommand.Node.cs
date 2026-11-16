@@ -48,7 +48,12 @@ public static partial class PilotCommand
             var rebootDone = Action(new Command("done", "After the reboot: leave maintenance mode, each flight resuming from its saved state") { Options = { actingOn } },
                 (p, client, ct) => Send(client, Verbs.Reboot, Verbs.NodeTarget, ["done"], who, ct, p.GetValue(actingOn)));
             var reboot = new Command("reboot", "Make the machine ready to reboot, and resume after it") { Subcommands = { rebootRequest, rebootStatus, rebootCancel, rebootDone } };
-            var nodeCommand = new Command("node", "This machine's pilot node") { Subcommands = { nodeRestart, reboot } };
+            // node maintenance: the idle-time disk sweep, now (PIL1102); not the reboot mode.
+            var maintenanceDry = new Option<bool>("--dry-run") { Description = "Measure what each step would remove and remove nothing" };
+            var maintenance = Action(new Command("maintenance", "Run the idle-time disk sweep now (git, LFS, old packages, job folders) and print what each step freed and the free space before and after; refused while a leg flies or a job runs")
+                { Options = { maintenanceDry, actingOn } },
+                (p, client, ct) => Send(client, Verbs.Maintenance, Verbs.NodeTarget, p.GetValue(maintenanceDry) ? ["--dry-run"] : [], who, ct, p.GetValue(actingOn)));
+            var nodeCommand = new Command("node", "This machine's pilot node") { Subcommands = { nodeRestart, reboot, maintenance } };
 
             // the LAN: find nodes, ask one for control, and see or take back what this node has granted
             var nodes = new Command("nodes", "The pilot nodes announcing themselves on the LAN");

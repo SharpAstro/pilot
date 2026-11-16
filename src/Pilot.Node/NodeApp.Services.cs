@@ -113,11 +113,42 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => new RemovalQueue(RemovalQueue.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         // First: tried once at the start, before any service touches the paths it holds.
         builder.Services.AddHostedService(services => new RemovalQueueStart(services.GetRequiredService<RemovalQueue>(), services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
+        // The idle-time maintenance sweep (PIL1102): its steps are registered as IMaintenanceStep by the legs that add them.
+        builder.Services.AddSingleton(services => new IdleMaintenance(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>(), services.GetServices<IMaintenanceStep>())
+        {
+            IdleFor = () => services.GetRequiredService<RoleModels>().MaintenanceIdle,
+            Every = () => services.GetRequiredService<RoleModels>().MaintenanceEvery,
+            DrivePath = () => services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path).FirstOrDefault(),
+        });
+        builder.Services.AddSingleton<IMaintenanceStep>(services => new PackageCachePrune(services.GetRequiredService<NodeState>(),
+            () => [.. services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path)], services.GetRequiredService<TimeProvider>())
+        {
+            AgeDays = () => services.GetRequiredService<RoleModels>().PackageAgeDays,
+            Priority = services.GetRequiredService<NodeOptions>().JobPriority,
+            PinSource = PackageCachePrune.PinsFromGit(MaintenanceProcess.At(services.GetRequiredService<NodeOptions>().JobPriority)),
+        });
+        builder.Services.AddSingleton<IMaintenanceStep>(services => new MaintenanceGit(MaintenanceGit.Kind.Git, services.GetRequiredService<NodeState>(),
+            () => [.. services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path)])
+        {
+            Priority = services.GetRequiredService<NodeOptions>().JobPriority,
+        });
+        builder.Services.AddSingleton<IMaintenanceStep>(services => new MaintenanceGit(MaintenanceGit.Kind.Lfs, services.GetRequiredService<NodeState>(),
+            () => [.. services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path)])
+        {
+            Priority = services.GetRequiredService<NodeOptions>().JobPriority,
+        });
+        builder.Services.AddSingleton<IMaintenanceStep>(services => new MaintenanceJobs(services.GetRequiredService<NodeState>(),
+            Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "projects"), services.GetRequiredService<TimeProvider>())
+        {
+            ScratchDays = () => services.GetRequiredService<RoleModels>().ScratchDays,
+        });
+        builder.Services.AddHostedService(services => services.GetRequiredService<IdleMaintenance>());
         builder.Services.AddHostedService(services => new DiskSweep(
             Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs"), Path.GetTempPath(),
             services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
         {
             ScratchDays = () => services.GetRequiredService<RoleModels>().ScratchDays,
+            LastMaintenance = () => services.GetRequiredService<IdleMaintenance>().Last,
             DiskAlertGb = () => services.GetRequiredService<RoleModels>().DiskAlertGb,
             Planes = services.GetRequiredService<Planes>(),
             GitHub = services.GetService<IGitHub>(),

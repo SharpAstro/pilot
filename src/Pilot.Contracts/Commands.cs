@@ -594,6 +594,12 @@ public static class Verbs
     public const string Reboot = "reboot";
 
     /// <summary>
+    /// <c>maintenance node [--dry-run]</c> (PIL1102): runs the idle-time disk sweep now and answers with its report line. Refused while a leg
+    /// flies or a job runs. <c>--dry-run</c> measures each step and removes nothing.
+    /// </summary>
+    public const string Maintenance = "maintenance";
+
+    /// <summary>
     /// <c>set node &lt;key&gt; [value…]</c>: saves a setting in the node's settings file (no value, or <c>default</c>, takes
     /// it out); the node restarts to run with it at once; jobs carry on under the next node. This machine only.
     /// </summary>
