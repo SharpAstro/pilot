@@ -16,6 +16,12 @@ public static class DesignChecker
     /// <summary>The folder of a draft's renders, <c>draft/renders/</c>.</summary>
     public const string RendersFolderName = "renders";
 
+    /// <summary>
+    /// The UI face the check and the render draw with: the same <c>Fonts/DejaVuSans.ttf</c> the GUI's pages and its prototype player draw with
+    /// (<c>Pilot.Gui</c> ships the file; the node's project links the same file), so what the check measures is what the page plays, on any OS.
+    /// </summary>
+    public static string FontPath => Path.Combine(AppContext.BaseDirectory, "Fonts", "DejaVuSans.ttf");
+
     /// <summary>The stamp beside the renders: the hash of the prototype they were drawn from.</summary>
     public const string StampFile = "render.json";
 
@@ -32,7 +38,7 @@ public static class DesignChecker
         }
         try
         {
-            return [.. Prototype.Check(loaded, DesignSizes.All).Select(Line).Distinct(StringComparer.Ordinal)];
+            return [.. Prototype.Check(loaded, DesignSizes.All, fontPath: FontPath).Select(Line).Distinct(StringComparer.Ordinal)];
         }
         catch (FileNotFoundException ex)
         {
@@ -88,7 +94,7 @@ public static class DesignChecker
             // A stamp is of what was drawn: while the PNGs are being remade there is none to trust.
             File.Delete(stamp);
         }
-        var images = Prototype.Render(document, ((uint)document.Width, (uint)document.Height));
+        var images = Prototype.Render(document, ((uint)document.Width, (uint)document.Height), fontPath: FontPath);
         foreach (var (screen, image) in images)
         {
             File.WriteAllBytes(Path.Combine(rendersFolder, screen + ".png"), PngWriter.Encode(image.Pixels, image.Width, image.Height));

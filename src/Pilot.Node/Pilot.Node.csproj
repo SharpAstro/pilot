@@ -30,6 +30,11 @@
     <PackageReference Include="System.CommandLine" />
   </ItemGroup>
 
+  <!-- The UI face, the one file Pilot.Gui ships: the design check and render draw with it, as the Designs page plays with it (PIL1096). -->
+  <ItemGroup>
+    <Content Include="..\Pilot.Gui\Fonts\DejaVuSans.ttf" Link="Fonts\DejaVuSans.ttf" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- The Claude Code skills the node installs for every session on the machine (UserSkills.cs), in the binary: a native
        release carries no file beside it. Named UserSkills/<skill>/<path>. -->
   <ItemGroup>

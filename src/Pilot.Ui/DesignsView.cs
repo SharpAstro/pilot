@@ -267,7 +267,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         var tiles = page.Renders.Select(render =>
         {
             var screen = render.Screen;
-            var picture = Layout.Builder.Fill(key: RenderKeyPrefix + (render.File ?? "")).Bg(Well).HFixed(StripH - 28f);
+            var picture = Layout.Builder.Fill(key: RenderKeyPrefix + (render.File ?? "")).Bg(Well).Stretch();
             var caption = WrappedProse.OneLine(render.Title, 11f, Player?.CurrentScreen.Id == screen ? Bright : Dim, TextAlign.Center).RowH(20f).Whole(render.Title);
             return Layout.Builder.VStack(picture, caption).WithGap(2f)
                 .Bg(Player?.CurrentScreen.Id == screen ? Active : Button)
