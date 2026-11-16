@@ -411,11 +411,11 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
                 .Follows(new HitResult.ButtonHit($"designs:target:{name}"), _ => PickTarget(name));
         });
         var landscape = surface.Width >= surface.Height;
-        var swap = Layout.Builder.Text(landscape ? "Landscape" : "Portrait", 12f, Bright, TextAlign.Center)
-            .Pad(8f, 4f).WAuto()
+        var swap = Layout.Builder.Text("Rotate", 12f, Bright, TextAlign.Center)
+            .Pad(4f, 4f).WAuto()
             .Bg(Button)
             .BgHover(ButtonHover)
-            .WithTooltip("Swap width and height")
+            .WithTooltip(landscape ? "Landscape: swap width and height for portrait" : "Portrait: swap width and height for landscape")
             .Follows(new HitResult.ButtonHit("designs:swap"), _ => SwapSides());
         CustomInput.OnCommit = _ =>
         {
