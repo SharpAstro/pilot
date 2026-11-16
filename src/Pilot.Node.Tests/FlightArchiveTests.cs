@@ -32,7 +32,7 @@ public sealed class FlightArchiveTests : IDisposable
         Code = code, Repo = "tianwen", RepoPath = "/r", Issue = int.Parse(code[3..]), Title = $"Title of {code}", Branch = $"flight/{code.ToLowerInvariant()}",
         Worktree = $"/nowhere/{code}", Base = "main", State = state, CreatedAt = Start, PullRequest = pr, PullRequestUrl = pr is null ? null : $"https://example.test/pull/{pr}",
         LandedAt = state == FlightState.Landed ? Start.AddHours(1) : null,
-        Review = new ReviewRow { State = ReviewState.Passed },
+        Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "reviewer", StartedAt = Start },
         ReviewRounds = [],
     };
 
