@@ -131,12 +131,12 @@ public static partial class NodeApp
             () => [.. services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path)])
         {
             Priority = services.GetRequiredService<NodeOptions>().JobPriority,
-        });;
+        });
         builder.Services.AddSingleton<IMaintenanceStep>(services => MaintenanceGit.ForLfs(services.GetRequiredService<NodeState>(),
             () => [.. services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path)])
         {
             Priority = services.GetRequiredService<NodeOptions>().JobPriority,
-        });;
+        });
         builder.Services.AddSingleton<IMaintenanceStep>(services => new MaintenanceJobs(services.GetRequiredService<NodeState>(),
             Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "projects"), services.GetRequiredService<TimeProvider>())
         {
