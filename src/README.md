@@ -719,7 +719,7 @@ The steps:
   live session or a running or queued job. Freed bytes are the `.git` folder's size before and after.
 - **packages**: NuGet package versions in the global packages folder (`NUGET_PACKAGES`, else `~/.nuget/packages`) that nothing in use
   restores and that have not been read for `package-age-days` (default 14). In use is read from files: every package and version in each
-  `project.assets.json` under the tracked repos and the planes of flights not landed, plus the pins read with git from the head of each
+  `project.assets.json` under the tracked repos, their sibling clones (one level under the same parent folders) and the planes of flights not landed, plus the pins read with git from the head of each
   open PR's branch. The newest version of every package is always kept, and a branch that cannot be read keeps what it might need.
 - **jobs**: the Claude transcript folders under `~/.claude/projects` of archived flights' planes. A folder goes when its flight is
   archived, its newest write is older than `scratch-days`, no live session has a cwd inside the plane, and it holds no `memory/`
@@ -728,7 +728,7 @@ The steps:
   takes only a job's `tmp`.
 
 It never touches hibernate or page files, shadow copies, WSL or Docker disks, or anything outside the node's repos, store and
-caches. Folders go through the removal queue, so one that is held waits for the node's next start. When free space falls below
+caches. A folder that cannot be deleted now (held open) is left and named in the step's note; the next run tries it again. Every child process of a step (git, gh, fsutil) starts through one helper at the job priority (`job-priority`) inside a kill-on-close job object. When free space falls below
 `disk-alert-gb`, the disk-low card says when the last maintenance run happened, what each step freed and what it could not touch; with
 no run yet it says so and names `pilot node maintenance --dry-run`.
 

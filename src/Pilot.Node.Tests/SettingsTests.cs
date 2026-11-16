@@ -161,6 +161,21 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
+    public void PackageAgeDaysReadsAsFourteenUnsetTakesDaysAndRefusesOutOfBoundsAndWords()
+    {
+        new RoleModels(new NodeSettings()).PackageAgeDays.ShouldBe(14);
+        var set = NodeSettings.With(new NodeSettings(), "package-age-days", ["30"]).Settings!;
+        set.Get("package-age-days").ShouldBe(["30"]);
+        new RoleModels(set).PackageAgeDays.ShouldBe(30);
+        NodeSettings.With(new NodeSettings(), "package-age-days", ["1"]).Settings!.PackageAgeDays.ShouldBe(1);
+        NodeSettings.With(new NodeSettings(), "package-age-days", ["365"]).Settings!.PackageAgeDays.ShouldBe(365);
+        NodeSettings.With(set, "package-age-days", ["default"]).Settings!.PackageAgeDays.ShouldBeNull();
+        NodeSettings.With(new NodeSettings(), "package-age-days", ["0"]).Error.ShouldNotBeNull();
+        NodeSettings.With(new NodeSettings(), "package-age-days", ["366"]).Error.ShouldNotBeNull();
+        NodeSettings.With(new NodeSettings(), "package-age-days", ["soon"]).Error.ShouldNotBeNull();
+    }
+
+    [Fact]
     public void ArchiveLandedAfterReadsAsSevenDaysUnsetTakesDaysAndHoursAndOffAndRefusesOutOfBounds()
     {
         var none = new RoleModels(null);

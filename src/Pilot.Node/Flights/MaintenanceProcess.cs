@@ -13,6 +13,13 @@ public static class MaintenanceProcess
     /// <summary>What a run of a child came to: its exit code and what it wrote.</summary>
     public sealed record Outcome(int ExitCode, string Output, string Error);
 
+    /// <summary>The seam type steps use to start a child: program, arguments, working folder, token.</summary>
+    public delegate Task<Outcome> Runner(string file, IReadOnlyList<string> args, string folder, CancellationToken cancellationToken);
+
+    /// <summary>A <see cref="Runner"/> that starts every child at <paramref name="priority"/> through <see cref="RunAsync"/>.</summary>
+    public static Runner At(JobPriority priority, Func<string, IReadOnlyList<string>, string?, JobPriority, CancellationToken, Task<Outcome>>? start = null) =>
+        (file, args, folder, token) => (start ?? RunAsync)(file, args, folder, priority, token);
+
     /// <summary>Runs <paramref name="file"/> with <paramref name="args"/> in <paramref name="workingFolder"/>; throws <see cref="OperationCanceledException"/> once its tree has ended on cancel.</summary>
     public static async Task<Outcome> RunAsync(string file, IReadOnlyList<string> args, string? workingFolder, JobPriority priority, CancellationToken cancellationToken)
     {

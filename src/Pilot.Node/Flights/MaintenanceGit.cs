@@ -53,7 +53,7 @@ public sealed partial class MaintenanceGit : IMaintenanceStep
     public JobPriority Priority { get; init; } = JobPriority.BelowNormal;
 
     /// <summary>Runs a command in a folder; the test seam over <see cref="MaintenanceProcess.RunAsync"/>. Throws <see cref="Win32Exception"/> when the program is missing.</summary>
-    public Func<string, IReadOnlyList<string>, string, CancellationToken, Task<MaintenanceProcess.Outcome>>? Run { get; init; }
+    public MaintenanceProcess.Runner? Run { get; init; }
 
     /// <summary>The size of a repo's <c>.git</c> folder in bytes.</summary>
     public Func<string, long> GitSize { get; init; } = repo => Directory.Exists(Path.Combine(repo, ".git")) ? DiskUsage.UniqueBytes(Path.Combine(repo, ".git")) : 0;

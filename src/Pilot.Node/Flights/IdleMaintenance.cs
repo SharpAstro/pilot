@@ -287,7 +287,11 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
                 lock (_gate)
                 {
                     _last = run;
-                    _lastRunAt = at;
+                    // A run that work cut short does not use up the period: the next idle window runs again.
+                    if (!cancelled)
+                    {
+                        _lastRunAt = at;
+                    }
                 }
                 state.RaiseCard(CardBin.Handled, Kind, Verbs.NodeTarget, run.Line(), run.Untouched is { } untouched ? $"Could not touch: {untouched}." : null);
             }

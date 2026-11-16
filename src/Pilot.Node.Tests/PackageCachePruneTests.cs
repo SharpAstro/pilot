@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Pilot.Node.Tests.Sessions;
@@ -68,7 +69,7 @@ public sealed class PackageCachePruneTests : IDisposable
             AgeDays = () => 14,
             PlaneFolders = () => [_plane],
             PinSource = pins ?? ((_, _) => Task.FromResult(RepoPins.None)),
-            RecordsLastAccess = _ => _recorded,
+            RecordsLastAccess = (_, _) => Task.FromResult(_recorded),
         };
 
     private bool _recorded = true;
@@ -180,7 +181,7 @@ public sealed class PackageCachePruneTests : IDisposable
     }
 
     [Fact]
-    public async Task WhereTheVolumeRecordsNoLastAccessOnlyVersionsNoAssetsFileNamesGoAndTheNoteSaysSo()
+    public async Task WhereTheVolumeRecordsNoLastAccessOnlyUnnamedVersionsWrittenBeforeTheAgeGoAndTheNoteSaysSo()
     {
         _recorded = false;
         Package("Solo", "1.0.0", 60);
@@ -192,7 +193,7 @@ public sealed class PackageCachePruneTests : IDisposable
         var result = await Step().RunAsync(Ct);
 
         Exists("solo", "0.8.0").ShouldBeTrue("named by an assets file");
-        Exists("solo", "0.9.0").ShouldBeFalse("unnamed: removed whatever its recent write says, as no age proves anything");
+        Exists("solo", "0.9.0").ShouldBeTrue("unnamed, but written yesterday: the write time is still evidence of recency");
         Exists("solo", "1.0.0").ShouldBeFalse();
         result.Untouched.ShouldNotBeNull().ShouldContain("does not record last access");
     }
@@ -280,5 +281,101 @@ public sealed class PackageCachePruneTests : IDisposable
 
         pins.ShouldBe([("Alpha", "1.2.3"), ("Beta", "2.0.0"), ("Beta", "3.0.0"), ("Gamma", "4.0.0")], ignoreOrder: true);
         floating.ShouldBe(["Moving"]);
+    }
+
+    private sealed class Calls
+    {
+        public List<string> Commands { get; } = [];
+
+        public Task<MaintenanceProcess.Outcome> Run(string file, IReadOnlyList<string> args, string folder, CancellationToken cancellationToken)
+        {
+            Commands.Add(file + " " + string.Join(' ', args));
+            var output = file switch
+            {
+                "gh" => "[{\"number\":7,\"headRefName\":\"feature/x\"}]",
+                "fsutil" => "DisableLastAccess = 0 (User Managed, Last Access Updates Enabled)",
+                _ when args[0] == "ls-tree" => "Directory.Packages.props
+src/App/App.csproj
+README.md",
+                _ when args[0] == "show" && args[1].EndsWith("Directory.Packages.props", StringComparison.Ordinal) => "<Project><ItemGroup><PackageVersion Include=\"Pinned\" Version=\"1.0.0\" /></ItemGroup></Project>",
+                _ when args[0] == "show" => "<Project />",
+                _ => "",
+            };
+            return Task.FromResult(new MaintenanceProcess.Outcome(0, output, ""));
+        }
+    }
+
+    [Fact]
+    public async Task ThePrPinsAreReadWithEveryChildStartedThroughTheRunnerSeamAndNoneOutsideIt()
+    {
+        var calls = new Calls();
+        var pins = await PackageCachePrune.PinsFromGit(calls.Run)(_repo, Ct);
+
+        pins.Complete.ShouldBeTrue();
+        pins.Pins.ShouldContain(("Pinned", "1.0.0"));
+        calls.Commands[0].ShouldBe("gh pr list --state open --limit 100 --json number,headRefName");
+        calls.Commands.Skip(1).ShouldAllBe(c => c.StartsWith("git ", StringComparison.Ordinal));
+        calls.Commands.ShouldContain("git fetch --quiet origin feature/x");
+        calls.Commands.Count(c => c.StartsWith("git show ", StringComparison.Ordinal)).ShouldBe(2, "the props and the project file, not the readme");
+    }
+
+    [Fact]
+    public async Task ARepoWhoseGhCannotListItsPrsIsKeptNotGuessedAt()
+    {
+        var pins = await PackageCachePrune.PinsFromGit((_, _, _, _) => Task.FromResult(new MaintenanceProcess.Outcome(1, "", "no auth")))(_repo, Ct);
+
+        pins.Complete.ShouldBeFalse();
+        pins.Why.ShouldNotBeNull().ShouldContain("no auth");
+    }
+
+    [Fact]
+    public async Task TheLastAccessProbeStartsFsutilThroughTheRunnerOnWindows()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        var calls = new Calls();
+        var step = new PackageCachePrune(_state, () => [_repo], _time) { Run = calls.Run };
+
+        (await step.ProbeLastAccessAsync(_cache, Ct)).ShouldBeTrue();
+        calls.Commands.ShouldBe(["fsutil behavior query disablelastaccess"]);
+    }
+
+    [Fact]
+    public async Task AVersionPrereleaseTenSortsAboveNineSoNineGoesAndTheCachesDotFoldersAreNotPackages()
+    {
+        Package("Pre", "1.0.0-beta.9", 60);
+        Package("Pre", "1.0.0-beta.10", 60);
+        var dot = Path.Combine(_cache, ".tools", "0.1.0");
+        Directory.CreateDirectory(dot);
+        File.WriteAllText(Path.Combine(dot, "x.txt"), "x");
+        File.SetLastWriteTimeUtc(Path.Combine(dot, "x.txt"), Now.UtcDateTime - TimeSpan.FromDays(90));
+        Directory.SetLastWriteTimeUtc(dot, Now.UtcDateTime - TimeSpan.FromDays(90));
+
+        await Step().RunAsync(Ct);
+
+        Exists("pre", "1.0.0-beta.10").ShouldBeTrue("the newest, whatever its age");
+        Exists("pre", "1.0.0-beta.9").ShouldBeFalse();
+        Directory.Exists(dot).ShouldBeTrue("a dot folder is the cache's own, never a package id");
+    }
+
+    [Fact]
+    public async Task TheRegisteredStepsStartTheirChildrenAtTheJobPriorityTheSettingNames()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct, jobPriority: JobPriority.Idle);
+        var steps = node.App.Services.GetServices<IMaintenanceStep>().ToList();
+
+        steps.Select(s => s.Name).ShouldBe(["packages", "git", "lfs", "jobs"]);
+        steps.OfType<PackageCachePrune>().Single().Priority.ShouldBe(JobPriority.Idle);
+        steps.OfType<MaintenanceGit>().Select(g => g.Priority).ShouldAllBe(p => p == JobPriority.Idle);
+        JobPriority? seen = null;
+        var run = MaintenanceProcess.At(JobPriority.Idle, (_, _, _, priority, _) =>
+        {
+            seen = priority;
+            return Task.FromResult(new MaintenanceProcess.Outcome(0, "", ""));
+        });
+        await run("git", ["status"], _repo, Ct);
+        seen.ShouldBe(JobPriority.Idle);
     }
 }

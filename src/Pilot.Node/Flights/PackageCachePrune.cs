@@ -54,7 +54,16 @@ public sealed class PackageCachePrune : IMaintenanceStep
     /// Whether the volume of the packages folder records last access, asked once per run. Where it does not, the age rule proves nothing and only
     /// versions that no assets file names go. Defaults to <see cref="ProbeLastAccess"/>; a seam for tests.
     /// </summary>
-    public Func<string, bool>? RecordsLastAccess { get; init; }
+    public Func<string, CancellationToken, Task<bool>>? RecordsLastAccess { get; init; }
+
+    /// <summary>The priority the step's children (<c>fsutil</c>) start at (the job priority).</summary>
+    public JobPriority Priority { get; init; } = JobPriority.BelowNormal;
+
+    /// <summary>Runs a command in a folder; the test seam over <see cref="MaintenanceProcess.RunAsync"/>. Throws <see cref="System.ComponentModel.Win32Exception"/> when the program is missing.</summary>
+    public MaintenanceProcess.Runner? Run { get; init; }
+
+    private Task<MaintenanceProcess.Outcome> Exec(string file, IReadOnlyList<string> args, string folder, CancellationToken cancellationToken) =>
+        Run is { } run ? run(file, args, folder, cancellationToken) : MaintenanceProcess.RunAsync(file, args, folder, Priority, cancellationToken);
 
     /// <summary>The most files stat-ed per version when reading its last access.</summary>
     public const int MaxFilesStatted = 64;
@@ -137,10 +146,10 @@ public sealed class PackageCachePrune : IMaintenanceStep
         }
 
         var (used, keepAll) = await ReadUseAsync(notes, cancellationToken);
-        var recorded = (RecordsLastAccess ?? ProbeLastAccess)(packages);
+        var recorded = await (RecordsLastAccess ?? ProbeLastAccessAsync)(packages, cancellationToken);
         if (!recorded)
         {
-            notes.Add("the volume does not record last access, so only versions no project.assets.json under the repos' parent folders names were removed");
+            notes.Add("the volume does not record last access, so only versions no project.assets.json under the repos' parent folders names, and written before the age, were removed");
         }
         var cutoff = _time.GetUtcNow().UtcDateTime - TimeSpan.FromDays(Math.Max(1, AgeDays()));
 
@@ -148,6 +157,10 @@ public sealed class PackageCachePrune : IMaintenanceStep
         {
             cancellationToken.ThrowIfCancellationRequested();
             var id = Path.GetFileName(idFolder);
+            if (id.StartsWith('.'))
+            {
+                continue;
+            }
             var versions = Directory.EnumerateDirectories(idFolder).Select(f => (Folder: f, Version: Path.GetFileName(f))).ToList();
             if (versions.Count == 0 || keepAll.Contains(id))
             {
@@ -158,7 +171,7 @@ public sealed class PackageCachePrune : IMaintenanceStep
             foreach (var (folder, version) in versions)
             {
                 if (string.Equals(version, newest, StringComparison.OrdinalIgnoreCase) || string.Equals(version, newestStable, StringComparison.OrdinalIgnoreCase)
-                    || used.Contains((id, version)) || (recorded && LastRead(folder) > cutoff))
+                    || used.Contains((id, version)) || LastRead(folder, recorded, cancellationToken) > cutoff)
                 {
                     continue;
                 }
@@ -173,14 +186,15 @@ public sealed class PackageCachePrune : IMaintenanceStep
     /// reads (lib, ref, runtimes, build, analyzers, tools and the like), at most <see cref="MaxFilesStatted"/> of them. A build never reads the
     /// .nupkg, so its access time alone is the install time.
     /// </summary>
-    private static DateTime LastRead(string versionFolder)
+    private static DateTime LastRead(string versionFolder, bool recorded, CancellationToken cancellationToken)
     {
+        // Where the volume records no last access, the write times (the install) are the only evidence of recency left.
         var newest = DateTime.MinValue;
         foreach (var file in Directory.EnumerateFiles(versionFolder, "*.nupkg*"))
         {
             var isMetadata = file.EndsWith(".nupkg.metadata", StringComparison.OrdinalIgnoreCase);
             newest = Max(newest, File.GetLastWriteTimeUtc(file));
-            if (!isMetadata)
+            if (recorded && !isMetadata)
             {
                 newest = Max(newest, File.GetLastAccessTimeUtc(file));
             }
@@ -188,6 +202,7 @@ public sealed class PackageCachePrune : IMaintenanceStep
         var statted = 0;
         foreach (var name in BuildFolders)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var folder = Path.Combine(versionFolder, name);
             if (!Directory.Exists(folder))
             {
@@ -197,7 +212,11 @@ public sealed class PackageCachePrune : IMaintenanceStep
             {
                 foreach (var file in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
                 {
-                    newest = Max(newest, File.GetLastAccessTimeUtc(file));
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (recorded)
+                    {
+                        newest = Max(newest, File.GetLastAccessTimeUtc(file));
+                    }
                     newest = Max(newest, File.GetLastWriteTimeUtc(file));
                     if (++statted >= MaxFilesStatted)
                     {
@@ -213,28 +232,17 @@ public sealed class PackageCachePrune : IMaintenanceStep
         return newest == DateTime.MinValue ? File.GetLastWriteTimeUtc(versionFolder) : newest;
     }
 
-    /// <summary>Whether the volume records last access: <c>fsutil behavior query disablelastaccess</c> on Windows, a noatime mount elsewhere. When it cannot tell, no.</summary>
-    public static bool ProbeLastAccess(string folder)
+    /// <summary>Whether the volume records last access: <c>fsutil behavior query disablelastaccess</c> on Windows (through the step's runner), a noatime mount elsewhere. When it cannot tell, no.</summary>
+    public async Task<bool> ProbeLastAccessAsync(string folder, CancellationToken cancellationToken)
     {
         try
         {
             if (OperatingSystem.IsWindows())
             {
-                using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("fsutil", "behavior query disablelastaccess")
-                {
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                });
-                if (process is null)
-                {
-                    return false;
-                }
-                var output = process.StandardOutput.ReadToEnd();
-                process.WaitForExit(10_000);
+                var outcome = await Exec("fsutil", ["behavior", "query", "disablelastaccess"], folder, cancellationToken);
                 // "DisableLastAccess = 0 (User Managed, Last Access Updates Enabled)" or 2 (System Managed, enabled); 1 and 3 are disabled.
-                var at = output.IndexOf('=', StringComparison.Ordinal);
-                return at >= 0 && output[(at + 1)..].TrimStart() is [var digit, ..] && digit is '0' or '2';
+                var at = outcome.Output.IndexOf('=', StringComparison.Ordinal);
+                return outcome.ExitCode == 0 && at >= 0 && outcome.Output[(at + 1)..].TrimStart() is [var digit, ..] && digit is '0' or '2';
             }
             if (File.Exists("/proc/mounts"))
             {
@@ -275,19 +283,19 @@ public sealed class PackageCachePrune : IMaintenanceStep
         foreach (var plane in planes)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            ReadAssets(plane, used, scanned, notes, null);
+            ReadAssets(plane, used, scanned, notes, null, cancellationToken);
         }
         // Sibling clones under the repos' parent folders (the org roots) are not tracked but build against this cache too.
         foreach (var sibling in SiblingClones(repos))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            ReadAssets(sibling, used, scanned, notes, null);
+            ReadAssets(sibling, used, scanned, notes, null, cancellationToken);
         }
         foreach (var repo in repos)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var own = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            ReadAssets(repo, used, scanned, notes, own);
+            ReadAssets(repo, used, scanned, notes, own, cancellationToken);
             RepoPins pins;
             try
             {
@@ -338,9 +346,9 @@ public sealed class PackageCachePrune : IMaintenanceStep
         }
     }
 
-    private static void ReadAssets(string root, HashSet<(string, string)> used, HashSet<string> scanned, List<string> notes, HashSet<string>? ids)
+    private static void ReadAssets(string root, HashSet<(string, string)> used, HashSet<string> scanned, List<string> notes, HashSet<string>? ids, CancellationToken cancellationToken)
     {
-        foreach (var file in FindAssets(root))
+        foreach (var file in FindAssets(root, cancellationToken))
         {
             var full = Path.GetFullPath(file);
             var again = !scanned.Add(full);
@@ -366,18 +374,19 @@ public sealed class PackageCachePrune : IMaintenanceStep
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
             {
-                // An unreadable assets file rules nothing out: keep the whole cache's age floor by naming it.
+                // An unreadable assets file is only reported; the versions it names are then judged by the age rule alone.
                 notes.Add($"{full} unreadable: {ex.Message}");
             }
         }
     }
 
-    private static IEnumerable<string> FindAssets(string root)
+    private static IEnumerable<string> FindAssets(string root, CancellationToken cancellationToken)
     {
         var pending = new Stack<string>();
         pending.Push(root);
         while (pending.Count > 0)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var current = pending.Pop();
             IEnumerable<string> directories;
             IEnumerable<string> files;
@@ -430,18 +439,35 @@ public sealed class PackageCachePrune : IMaintenanceStep
         }
     }
 
-    /// <summary>The default <see cref="PinSource"/>: each open PR's head fetched and its project and props files read with git show.</summary>
-    public static Func<string, CancellationToken, Task<RepoPins>> PinsFromGit(IGitHub github, IGit git) => async (repo, cancellationToken) =>
+    /// <summary>
+    /// The default <see cref="PinSource"/>: the open PRs listed with <c>gh pr list</c>, each head fetched and its project and props files read with
+    /// git show. Every child starts through <paramref name="run"/> (<see cref="MaintenanceProcess"/>: job priority, job object, cancellable).
+    /// </summary>
+    public static Func<string, CancellationToken, Task<RepoPins>> PinsFromGit(MaintenanceProcess.Runner run) => async (repo, cancellationToken) =>
     {
-        var prs = await github.OpenPullRequestsAsync(repo, cancellationToken);
+        var listing = await run("gh", ["pr", "list", "--state", "open", "--limit", "100", "--json", "number,headRefName"], repo, cancellationToken);
+        if (listing.ExitCode != 0)
+        {
+            return new RepoPins(new HashSet<(string, string)>(), new HashSet<string>(), false, $"gh could not list the PRs: {listing.Error.Trim()}");
+        }
+        List<(int Number, string Head)> prs;
+        try
+        {
+            using var doc = JsonDocument.Parse(listing.Output);
+            prs = [.. doc.RootElement.EnumerateArray().Select(p => (p.GetProperty("number").GetInt32(), p.GetProperty("headRefName").GetString() ?? "")).Where(p => p.Item2.Length > 0)];
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException)
+        {
+            return new RepoPins(new HashSet<(string, string)>(), new HashSet<string>(), false, "gh pr list answered with something unreadable");
+        }
         var pins = new HashSet<(string, string)>(PairComparer.Instance);
         var floating = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var pr in prs)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var fetched = await git.RunAsync(["fetch", "--quiet", "origin", pr.Head], repo, cancellationToken);
+            var fetched = await Git(run, ["fetch", "--quiet", "origin", pr.Head], repo, cancellationToken);
             var reference = fetched.Ok ? "FETCH_HEAD" : "origin/" + pr.Head;
-            var listed = await git.RunAsync(["ls-tree", "-r", "--name-only", reference], repo, cancellationToken);
+            var listed = await Git(run, ["ls-tree", "-r", "--name-only", reference], repo, cancellationToken);
             if (!listed.Ok)
             {
                 return new RepoPins(pins, floating, false, $"PR {pr.Number.ToString(CultureInfo.InvariantCulture)}: {listed.Why}");
@@ -450,7 +476,7 @@ public sealed class PackageCachePrune : IMaintenanceStep
                 .Where(p => p.EndsWith(".props", StringComparison.OrdinalIgnoreCase) || p.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)
                     || p.EndsWith(".targets", StringComparison.OrdinalIgnoreCase) || p.EndsWith(".fsproj", StringComparison.OrdinalIgnoreCase)))
             {
-                var shown = await git.RunAsync(["show", $"{reference}:{path}"], repo, cancellationToken);
+                var shown = await Git(run, ["show", $"{reference}:{path}"], repo, cancellationToken);
                 if (!shown.Ok)
                 {
                     return new RepoPins(pins, floating, false, $"PR {pr.Number.ToString(CultureInfo.InvariantCulture)}: {shown.Why}");
@@ -467,6 +493,21 @@ public sealed class PackageCachePrune : IMaintenanceStep
         }
         return new RepoPins(pins, floating, true);
     };
+
+    private sealed record GitAnswer(bool Ok, string Output, string Why);
+
+    private static async Task<GitAnswer> Git(MaintenanceProcess.Runner run, string[] args, string repo, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var outcome = await run("git", args, repo, cancellationToken);
+            return new GitAnswer(outcome.ExitCode == 0, outcome.Output, outcome.ExitCode == 0 ? "" : outcome.Error.Trim());
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            return new GitAnswer(false, "", ex.Message);
+        }
+    }
 
     private sealed class PairComparer : IEqualityComparer<(string Id, string Version)>
     {
@@ -500,7 +541,25 @@ public sealed class PackageCachePrune : IMaintenanceStep
             {
                 return xp.Length == yp.Length ? 0 : xp.Length == 0 ? 1 : -1;
             }
-            return string.Compare(xp, yp, StringComparison.OrdinalIgnoreCase);
+            return ComparePre(xp, yp);
+        }
+
+        // SemVer: dot-separated identifiers, numeric ones by value (beta.10 above beta.9) and below alphanumeric ones, a shorter set below a longer.
+        private static int ComparePre(string x, string y)
+        {
+            var xs = x.Split('.');
+            var ys = y.Split('.');
+            for (var i = 0; i < Math.Min(xs.Length, ys.Length); i++)
+            {
+                var xNum = long.TryParse(xs[i], NumberStyles.None, CultureInfo.InvariantCulture, out var xn);
+                var yNum = long.TryParse(ys[i], NumberStyles.None, CultureInfo.InvariantCulture, out var yn);
+                var c = xNum && yNum ? xn.CompareTo(yn) : xNum ? -1 : yNum ? 1 : string.Compare(xs[i], ys[i], StringComparison.OrdinalIgnoreCase);
+                if (c != 0)
+                {
+                    return c;
+                }
+            }
+            return xs.Length.CompareTo(ys.Length);
         }
 
         private static (long[] Numbers, string Pre) Split(string version)
