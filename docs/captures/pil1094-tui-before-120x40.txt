@@ -1,0 +1,39 @@
+│ Watchtower                idle
+│ se1-watchtower · context 25%
+│ Remote Control: open in the b…
+│ For you
+│ 3 ringing · 4 for you
+│ ──────────────────────────────
+│ ╭────────────────────────────╮
+│ │ RING· stale 9 d 23 h       │
+│ │ PIL716 is stuck: its       │
+│ │ worker stopped working     │
+│ │ The worker of              │
+│ │ PIL716/failure-investigatio│
+│ │ stopped with its leg       │
+│ │ unfinished. A nudge may    │
+│ │ get it going again; if it  │
+│ │ does not, a fresh worker   │
+│ │ takes the leg over from    │
+│ │ the branch.                │
+│ │ ▸ Detail                   │
+│ │  Nudge the worker          │
+│ │  Restart the worker        │
+│ │  Chat about this           │
+│ │  Dismiss                   │
+│ ╰────────────────────────────╯
+│ ╭────────────────────────────╮
+│ │ RING· stale 9 d 23 h       │
+│ │ SharpAstro/tianwen#2051:   │
+│ │ the review asks a          │
+│ │ question of design         │
+│ │ Which share of clear       │
+│ │ frames counts as a good    │
+│ │ night? A: measure the      │
+│ │ share of clear frames of   │
+│ │ the archive nebula-fields  │
+│ │ over the whole session.    │
+│ │ B: measure it per field    │
+│ │ and keep the worst of the  │
+│ │ nebula-fields.             │
+│ ╰────────────────────────────╯

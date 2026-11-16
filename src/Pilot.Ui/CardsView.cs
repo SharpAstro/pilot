@@ -820,9 +820,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                             .WithTooltip(string.Join("\n", _waiting.Skip(WaitingDots).Select(c => $"new: {Titled(c)}")), Layout.DockSide.Left)]
                         : Array.Empty<Layout.Node>()])
                 .RowH(20f));
-        // The head (watchtower, For you, the summary) ends in a rule of its own before the first card: a declared bottom border, which
-        // the GUI draws as a line and the terminal as a row of rule glyphs.
-        blocks = [Layout.Builder.VStack([.. blocks]).BorderBottom(Edge, EdgeWidth).WStar().HAuto()];
+        // The head (watchtower, For you, the summary) declares no border: cards sit with no gap between them, so the space a rule would
+        // keep from the first card is zero, and a rule there lands on the card's own top edge and reads as a stray line on it (PIL1094).
+        // The first card's frame already separates the head from the cards, in units and in cells alike. The panel's left border keeps off
+        // the frames by the Gutter pad, and the foot below the scroll area declares only a fill, so neither needed a change.
+        blocks = [Layout.Builder.VStack([.. blocks]).WStar().HAuto()];
         // No gap between cards: each card's own border separates it from the next, in units and in cells alike (a gap of a few
         // units is under one cell row and vanishes in the terminal).
         foreach (var card in screen.Open)

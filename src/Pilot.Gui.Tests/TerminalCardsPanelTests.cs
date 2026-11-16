@@ -9,7 +9,7 @@ namespace Pilot.Gui.Tests;
 
 /// <summary>
 /// PIL1076: the cards panel in pilot-tui's cells separates its cards and its edge with declared borders: each open card framed in box
-/// glyphs, a rule under the header (watchtower block, For you, the summary) before the first card, a visible row between consecutive
+/// glyphs, a visible row between consecutive
 /// cards, and a column of the vertical glyph down the panel's left edge against the page.
 /// </summary>
 public sealed class TerminalCardsPanelTests
@@ -101,7 +101,7 @@ public sealed class TerminalCardsPanelTests
     }
 
     [Fact]
-    public void ARowSeparatesConsecutiveCardsAndTheHeaderFromTheFirstCard()
+    public void ARowSeparatesConsecutiveCardsAndNoRuleSitsOnTheFirstCard()
     {
         var (b, p) = Paint();
         var rows = Enumerable.Range(p.Y, p.Height).Select(y => (y, text: RowText(b, p, y))).ToList();
@@ -112,10 +112,11 @@ public sealed class TerminalCardsPanelTests
         {
             bottoms[i].ShouldBeLessThan(tops[i + 1], $"card {i}'s bottom edge is a row above card {i + 1}'s top edge");
         }
-        // The header's rule: a plain run of rule glyphs (no corner) between the summary line and the first card.
+        // No rule under the header: cards have no gap, so a full-width rule row between the summary line and the first card's top edge
+        // would sit on the card's own edge (PIL1094). The first card's frame separates them.
         var summary = rows.First(r => r.text.Contains("ringing")).y;
         var rule = rows.Where(r => r.y > summary && r.y < tops[0]).Where(r => r.text.Count(c => c == '─') > p.Width / 2 && !r.text.Any(c => "╭╮╰╯┌┐└┘".Contains(c))).ToList();
-        rule.ShouldNotBeEmpty("a rule under the header, before the first card");
+        rule.ShouldBeEmpty("no full-width rule between the summary line and the first card's top edge");
     }
 
     [Fact]
