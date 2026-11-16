@@ -477,7 +477,7 @@ public sealed partial class FlightCommander
                 {
                     if (other.MovedTo is { } to)
                     {
-                        result.Add(new(other.Code, other.Branch, LandedBranchResult.Kept, "moved", $"{other.Code} went to {to.Node}, whose landing handles origin"));
+                        result.Add(new(other.Code, other.Branch, LandedBranchResult.Kept, "moved", $"{other.Code} went to {to.To}, whose landing handles origin"));
                         continue;
                     }
                     var (candidate, outcome) = await FoldedCandidateAsync(other, landedHead, cancellationToken);
