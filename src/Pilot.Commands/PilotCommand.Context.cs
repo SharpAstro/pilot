@@ -107,8 +107,12 @@ public static partial class PilotCommand
 
         // Who a command is from: the Claude session running this host when it may be one, else the host; a leg's worker
         // or a flight's reviewer when the plane says so, as they are named already.
-        Task<int> Send(NodeClient client, string verb, string target, string[] args, string sender, CancellationToken ct, string? why = null, string? attachment = null) =>
-            SendAsync(client, hereSocket, verb, target, args, sender, bySession && sender == who, byAgent, why, cwd, sessionId, output, requestId, deadline, ct, attachment);
+        Task<int> Send(NodeClient client, string verb, string target, string[] args, string sender, CancellationToken ct, string? why = null, string? attachment = null, TimeSpan? deadline = null) =>
+            SendAsync(client, hereSocket, verb, target, args, sender, bySession && sender == who, byAgent, why, cwd, sessionId, output, requestId, deadline ?? this.deadline, ct, attachment);
+
+        // A dry run that runs to the end can take minutes on a large cache (PIL1114), so node maintenance waits longer than the default; a longer
+        // deadline given to the whole CLI (commandTimeout) still wins.
+        private TimeSpan MaintenanceDeadline => deadline > TimeSpan.FromMinutes(30) ? deadline : TimeSpan.FromMinutes(30);
 
         // What an assistant says it acted on, for the commands that are the person's alone (merge, land, a setting, setup, an
         // update) and a card's answer or dismissal: the node keeps it in the black box and on the card it raises (autopilot off)

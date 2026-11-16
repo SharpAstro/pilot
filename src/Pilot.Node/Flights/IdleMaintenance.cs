@@ -60,7 +60,7 @@ public interface IMaintenanceStep
 public sealed record MaintenanceStepReport(string Name, long Bytes, string? Untouched, bool Cancelled = false, int Items = 0, MaintenanceMeasure? Measured = null);
 
 /// <summary>One run of the sweep: when, what each step did, and the free space before and after on the repos' drive.</summary>
-public sealed record MaintenanceRun(DateTimeOffset At, bool DryRun, IReadOnlyList<MaintenanceStepReport> Steps, string? Drive, long? FreeBefore, long? FreeAfter, bool Cancelled)
+public sealed record MaintenanceRun(DateTimeOffset At, bool DryRun, IReadOnlyList<MaintenanceStepReport> Steps, string? Drive, long? FreeBefore, long? FreeAfter, bool Cancelled, string? Stopped = null)
 {
     /// <summary>The bytes freed (or, for a dry run, that would be) across the steps.</summary>
     public long Bytes => Steps.Sum(s => s.Bytes);
@@ -86,7 +86,7 @@ public sealed record MaintenanceRun(DateTimeOffset At, bool DryRun, IReadOnlyLis
     /// <summary>The report line: <c>maintenance: freed 9.2 GB (packages 8.1 GB, git 0.3 GB, lfs 0.2 GB, jobs 0.6 GB); C: 7.0 -> 16.2 GB free</c>.</summary>
     public string Line()
     {
-        var verb = DryRun ? "maintenance (dry run): would free" : Cancelled ? "maintenance (stopped, work arrived): freed" : "maintenance: freed";
+        var verb = DryRun ? "maintenance (dry run): would free" : Cancelled ? $"maintenance (stopped: {Stopped ?? "work arrived"}): freed" : "maintenance: freed";
         var steps = string.Join(", ", Steps.Select(s => $"{s.Name} {IdleMaintenance.Gb(s.Bytes)}{(s.Cancelled ? " (stopped)" : "")}"));
         var text = $"{verb} {IdleMaintenance.Gb(Bytes)}{(steps.Length > 0 ? $" ({steps})" : "")}";
         if (!DryRun && FreeBefore is { } before && FreeAfter is { } after)
@@ -206,10 +206,11 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
         return await RunAsync(dryRun: false, cancellationToken);
     }
 
-    /// <summary>The sweep now, ignoring the idle wait and the period but not a leg flying or a job running; the run, or why it did not start.</summary>
+    /// <summary>The sweep now, ignoring the idle wait and the period; a real run is refused while a leg flies or a job runs, a dry run is not; the run, or why it did not start.</summary>
     public async Task<(MaintenanceRun? Run, string? Refused)> RunNowAsync(bool dryRun, CancellationToken cancellationToken)
     {
-        if (WhyBusy() is { } busy)
+        // A dry run removes nothing, so work does not refuse it (PIL1114); a real run keeps the rule.
+        if (!dryRun && WhyBusy() is { } busy)
         {
             return (null, $"not now: {busy}");
         }
@@ -239,6 +240,24 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
         return null;
     }
 
+    /// <summary>What arrived, worded for a run that stopped for it ('job j6410 started'), or null when the node is idle.</summary>
+    private string? WhyStopped()
+    {
+        if (state.Legs().FirstOrDefault(l => l.State == LegState.Flying) is { } leg)
+        {
+            return $"a leg took off ({leg.Flight}/{leg.Name})";
+        }
+        if (state.Jobs().FirstOrDefault(j => j.State is JobState.Queued or JobState.Running) is { } job)
+        {
+            return $"job {job.Id} started";
+        }
+        if (state.PrReviews().FirstOrDefault(r => r.State == PrReviewState.Reviewing || r is { FixRound: not null, FixerJob: not null, State: not PrReviewState.Closed }) is { } review)
+        {
+            return $"a review round started on {review.Repo}#{review.Number}";
+        }
+        return null;
+    }
+
     /// <summary>
     /// Runs the steps one by one. While it runs a timer looks for work arriving every <see cref="WatchTick"/> and cancels the step
     /// that is running (its process tree ends); the rest do not start. Raises the Handled card, remembers the run. Null when a run is
@@ -256,13 +275,16 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
             var drive = DrivePath() is { Length: > 0 } path ? FreeSpace(path) : null;
             var at = time.GetUtcNow();
             var reports = new List<MaintenanceStepReport>();
+            string? stopped = null;
             ITimer? watch = null;
-            watch = time.CreateTimer(_ =>
+            // A dry run removes nothing and runs to the end whatever arrives (PIL1114): no watch.
+            watch = dryRun ? null : time.CreateTimer(_ =>
             {
                 try
                 {
-                    if (WhyBusy() is not null)
+                    if (WhyStopped() is { } why)
                     {
+                        stopped = why;
                         work.Cancel();
                         return;
                     }
@@ -298,7 +320,7 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
                     }
                     catch (OperationCanceledException) when (work.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                     {
-                        reports.Add(new MaintenanceStepReport(step.Name, 0, "stopped: work arrived", Cancelled: true));
+                        reports.Add(new MaintenanceStepReport(step.Name, 0, $"stopped: {stopped ?? "work arrived"}", Cancelled: true));
                         cancelled = true;
                         break;
                     }
@@ -310,10 +332,10 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
             }
             finally
             {
-                watch.Dispose();
+                watch?.Dispose();
             }
             var after = !dryRun && DrivePath() is { Length: > 0 } again ? FreeSpace(again) : null;
-            var run = new MaintenanceRun(at, dryRun, reports, drive?.Name, drive?.Free, after?.Free ?? drive?.Free, cancelled);
+            var run = new MaintenanceRun(at, dryRun, reports, drive?.Name, drive?.Free, after?.Free ?? drive?.Free, cancelled, stopped);
             if (!dryRun)
             {
                 lock (_gate)
