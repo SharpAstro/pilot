@@ -20,11 +20,13 @@ public static class FirewallLeftovers
 
     /// <summary>
     /// The program paths of the rules that are Allow, name a program under one of <paramref name="folders"/> (directory prefix with a
-    /// separator, case-insensitive) and whose file <paramref name="exists"/> says is gone; each path once, in the order met.
+    /// separator, case-insensitive) and whose file <paramref name="exists"/> says is gone; each path once, in the order met. A folder
+    /// and a program are compared with either separator read as a backslash, as netsh writes them: a folder joined by
+    /// <see cref="Path.Combine(string, string)"/> off Windows carries a slash.
     /// </summary>
     public static IReadOnlyList<string> Leftovers(IEnumerable<Rule> rules, IEnumerable<string> folders, Func<string, bool> exists)
     {
-        var prefixes = folders.Where(f => f.Length > 0).Select(f => f.TrimEnd('\\', '/') + "\\").ToList();
+        var prefixes = folders.Where(f => f.Length > 0).Select(f => f.Replace('/', '\\').TrimEnd('\\') + "\\").ToList();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var result = new List<string>();
         foreach (var rule in rules)

@@ -105,6 +105,14 @@ public sealed class FirewallLeftoversTests
     }
 
     [Fact]
+    public void AFolderWrittenWithSlashesMatchesAsWithBackslashes()
+    {
+        var found = FirewallLeftovers.Leftovers(FirewallLeftovers.Parse(Sample), [Data + "/jobs/"], _ => false);
+
+        found.ShouldBe([@"C:\Users\me\AppData\Local\pilot2\jobs\j1.tmp\x\pilot-gui.exe"]);
+    }
+
+    [Fact]
     public void ARuleWhoseFileExistsIsKept()
     {
         var found = FirewallLeftovers.Leftovers(FirewallLeftovers.Parse(Sample), [Repos], p => p.EndsWith("alive.exe"));
