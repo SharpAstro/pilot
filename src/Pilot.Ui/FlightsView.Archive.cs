@@ -60,7 +60,8 @@ internal sealed partial class FlightsView<TSurface>
         }
         var key = NodeKey(node.Node);
         var held = _archivedPages.GetValueOrDefault(key);
-        ImmutableInterlocked.SetItem(ref _archivedPages, key, new ArchivedPageState(held?.Page, number, null, true));
+        var loading = new ArchivedPageState(held?.Page, number, null, true);
+        ImmutableInterlocked.AddOrUpdate(ref _archivedPages, key, loading, (_, _) => loading);
         _ = Task.Run(async () =>
         {
             ArchivedPageState next;
@@ -73,7 +74,7 @@ internal sealed partial class FlightsView<TSurface>
             {
                 next = new ArchivedPageState(held?.Page, number, ex.Message, false);
             }
-            ImmutableInterlocked.SetItem(ref _archivedPages, key, next);
+            ImmutableInterlocked.AddOrUpdate(ref _archivedPages, key, next, (_, _) => next);
             Presses.Changed?.Invoke();
         });
     }
