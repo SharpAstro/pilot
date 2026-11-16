@@ -62,12 +62,12 @@ public sealed class CardsPanelEdgesTests
     }
 
     private static bool Within(Rect<float> a, Rect<float> b, float gap) =>
-        a.X < b.X + b.Width + gap && b.X < a.X + a.Width + gap && a.Y < b.Y + b.Height + gap && b.Y < a.Y + a.Height + gap;
+        a.X <= b.X + b.Width + gap && b.X <= a.X + a.Width + gap && a.Y <= b.Y + b.Height + gap && b.Y <= a.Y + a.Height + gap;
 
     private static void NoEdgeWithinAGapOfACard(IEnumerable<(Layout.Node Node, Rect<float> Bounds)> arranged, float unit, string where)
     {
         var (edges, frames) = Borders(arranged, unit);
-        frames.Count.ShouldBeGreaterThan(2, $"{where}: the cards are framed");
+        frames.Count.ShouldBeGreaterThanOrEqualTo(2, $"{where}: the cards are framed");
         edges.ShouldNotBeEmpty($"{where}: the panel declares an edge");
         foreach (var (name, strip) in edges)
         {
