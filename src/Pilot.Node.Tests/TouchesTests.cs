@@ -85,7 +85,7 @@ public sealed class TouchesTests : IDisposable
         Changes = changes,
     };
 
-    private static PullRequestStatus Pr(int number, string title, string head) => new() { Number = number, Title = title, Head = head };
+    private static PullRequestStatus Pr(int number, string title, string head) => GhAnswers.OpenPullRequest(number, title, head);
 
     private Task<CommandResult> Touches(params string[] files) =>
         _legs.RunAsync(new CommandRequest { Verb = Verbs.Touches, Target = "flight/PIL375", Args = files, Who = "tests" }, Ct);

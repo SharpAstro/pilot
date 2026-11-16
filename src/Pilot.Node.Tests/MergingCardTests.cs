@@ -39,7 +39,7 @@ public sealed class MergingCardTests : ReviewTestsBase
         };
         _state.PutFlight(flight);
         _state.PutLeg(new LegRow { Flight = code, Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done });
-        _github.PrOf[flight.Branch] = new PullRequest(pr, "OPEN", head, url);
+        _github.PrOf[flight.Branch] = GhAnswers.PullRequestByBranch(number: pr, head: head, url: url);
         var card = _state.RaiseCard(CardBin.Ring, LegCommander.PrReady, Verbs.FlightTarget(code), $"{code}'s PR #{pr} is ready to merge", "Reviewed: fine.",
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(code), Args = [head], Status = status }], link: url);
         return (flight, head, card);
@@ -87,7 +87,7 @@ public sealed class MergingCardTests : ReviewTestsBase
     {
         var (a, headA, _) = Ready("TIA1", 63);
         var (b, headB, cardB) = Ready("TIA2", 64);
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         var legs = Commander();
         var (open, reached) = Hold(nameof(IGitHub.MergeAsync));
         var first = Press(legs, a.Code, headA);
@@ -114,7 +114,7 @@ public sealed class MergingCardTests : ReviewTestsBase
     public async Task AMergeWaitingForChecksShowsHowManyArePendingAndEndsArmed()
     {
         var (flight, head, card) = Ready("TIA1", 63, ChoiceStatus.Pending);
-        _github.SummaryOf[63] = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        _github.SummaryOf[63] = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
         var legs = Commander();
         var (open, reached) = Hold(nameof(IGitHub.MergeQueueAsync));
         var merge = Press(legs, flight.Code, head);
@@ -137,7 +137,7 @@ public sealed class MergingCardTests : ReviewTestsBase
     public async Task AMergeThatJoinsTheQueueLeavesTheCardQueued()
     {
         var (flight, head, card) = Ready("TIA1", 63);
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         _github.Queues = true;
 
         var result = await Press(Commander(), flight.Code, head);
@@ -150,7 +150,7 @@ public sealed class MergingCardTests : ReviewTestsBase
     public async Task ARefusedMergePutsBackTheMergeTheCardOfferedAndSaysTheRefusalOnce()
     {
         var (flight, head, card) = Ready("TIA1", 63, ChoiceStatus.Passing);
-        _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3, "build (linux)", "https://github.com/x/tianwen/actions/runs/1");
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 2, 3, "build (linux)", "https://github.com/x/tianwen/actions/runs/1");
 
         var result = await Press(Commander(), flight.Code, head);
 
@@ -166,10 +166,10 @@ public sealed class MergingCardTests : ReviewTestsBase
     {
         var (a, headA, _) = Ready("TIA1", 63);
         var (b, headB, cardB) = Ready("TIA2", 64);
-        _github.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
         var legs = Commander();
         var (open, reached) = Hold(nameof(IGitHub.MergeAsync));
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         var first = Press(legs, a.Code, headA);
         await Reaches(reached);
         var waiting = Press(legs, b.Code, headB);
@@ -192,7 +192,7 @@ public sealed class MergingCardTests : ReviewTestsBase
     {
         // The plane does not exist, so bringing it up to date fails and the entry is dropped: the card must not stay on Merging.
         var (flight, head, card) = Ready("TIA1", 63, ChoiceStatus.Passing);
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         _github.MergeRefuses = refusal;
 
         var result = await Press(Commander(), flight.Code, head);
@@ -207,7 +207,7 @@ public sealed class MergingCardTests : ReviewTestsBase
     {
         // Held in the merge call itself, unmoved past the limit: a call that never returns is stuck, not waiting for a turn or checks.
         var (flight, head, _) = Ready("TIA1", 63);
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         var legs = Commander();
         var (open, reached) = Hold(nameof(IGitHub.MergeAsync));
         var merge = Press(legs, flight.Code, head);

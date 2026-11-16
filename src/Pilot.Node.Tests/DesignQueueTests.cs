@@ -16,8 +16,8 @@ public sealed class DesignQueueTests : PrFixTestsBase
 
     private void Green(string head)
     {
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
-        _github.Queue = new MergeQueueState("OPEN", head, false);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
+        _github.Queue = GhAnswers.MergeQueue("idle", head);
     }
 
     [Theory]
@@ -88,7 +88,7 @@ public sealed class DesignQueueTests : PrFixTestsBase
     public async Task APrInTheMergeQueueWhenItsAnswerStartsAFixerIsTakenOutFirstAndTheCardSaysSo()
     {
         var row = await Review("acme/widget#7", "comment", Question);
-        _github.Queue = new MergeQueueState("OPEN", row.Head, true, Position: 1);
+        _github.Queue = GhAnswers.MergeQueue("queued", row.Head, 1);
 
         (await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library")).Error.ShouldBeNull();
 
@@ -102,7 +102,7 @@ public sealed class DesignQueueTests : PrFixTestsBase
     public async Task ADequeueGitHubRefusesFailsTheAnswerAndStartsNoFixer()
     {
         var row = await Review("acme/widget#7", "comment", Question);
-        _github.Queue = new MergeQueueState("OPEN", row.Head, true, Position: 1);
+        _github.Queue = GhAnswers.MergeQueue("queued", row.Head, 1);
         _github.DequeueFails = "the queue is busy";
 
         (await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library")).Error.ShouldNotBeNull().ShouldContain("the queue is busy");

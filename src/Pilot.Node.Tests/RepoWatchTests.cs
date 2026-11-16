@@ -86,8 +86,8 @@ public sealed class RepoWatchTests : IDisposable
         github.SetIssueLabels(2, "pilot node: SE1");
         github.OpenPrs[repo] =
         [
-            new PullRequestStatus { Number = 11, Title = "TIA1", Head = "flight/tia1", Labels = ["pilot: changes"] },
-            new PullRequestStatus { Number = 12, Title = "someone's", Head = "feat/other" },
+            GhAnswers.OpenPullRequest(number: 11, title: "TIA1", head: "flight/tia1", labels: ["pilot: changes"]),
+            GhAnswers.OpenPullRequest(number: 12, title: "someone's", head: "feat/other"),
         ];
 
         await Look(repo, github, Flight(repo, 1, FlightState.Flying), Flight(repo, 2, FlightState.Flying), Flight(repo, 3, FlightState.Landed));

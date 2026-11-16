@@ -14,7 +14,7 @@ public sealed class CiBudgetTests : ReviewTestsBase
     private static readonly DateTimeOffset Now = new(2026, 11, 6, 12, 0, 0, TimeSpan.Zero);
 
     private static CiRun CiOf(long id, double minutes, string? conclusion = "success", string name = "CI", DateTimeOffset? completed = null) =>
-        new(id, name, conclusion is null ? "in_progress" : "completed", conclusion, "pull_request", Now.AddHours(-5), conclusion is null ? null : completed ?? Now.AddHours(-1), minutes);
+        GhAnswers.CiRun(id, minutes, conclusion, name, started: Now.AddHours(-5), completedAt: conclusion is null ? null : completed ?? Now.AddHours(-1));
 
     private PrChecks Checks(TimeSpan? interval = null) => new(_state, _github, TimeProvider.System, _flights, _legs) { CiInterval = interval ?? TimeSpan.Zero };
 

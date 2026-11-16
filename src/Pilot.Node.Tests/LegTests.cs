@@ -621,7 +621,7 @@ internal sealed class FakeGitHub : IGitHub
         Task.FromResult(SummaryOf.TryGetValue(number, out var own) ? own?.Status : Summary?.Status ?? Checks);
 
     public Task<ChecksSummary?> ChecksSummaryAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult(SummaryOf.TryGetValue(number, out var own) ? own : Summary ?? (Checks is { } status ? new ChecksSummary(status, 0, 0) : null));
+        Task.FromResult(SummaryOf.TryGetValue(number, out var own) ? own : Summary ?? (Checks is { } status ? GhAnswers.ChecksOf(status) : null));
 
     /// <summary>Whether the repo allows GitHub's auto-merge, as AutoMergeAllowedAsync answers.</summary>
     public bool AutoMergeAllowed { get; set; }
@@ -750,24 +750,26 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromResult<MergeState?>(Merge);
         }
-        if (Queue is { Queued: true } queued)
+        // GitHub's own reader says it, over the checks and queue the fake holds: what the node reads is what ReadMergeState makes of them.
+        // The checks are the ones ChecksSummaryAsync answers for this PR, so the two reads cannot disagree: a pending check is 0 of 1 and pending, never 1 of 1 awaiting a check.
+        var summary = SummaryOf.TryGetValue(number, out var ownSummary) ? ownSummary : Summary ?? (Checks is { } held ? GhAnswers.ChecksOf(held) : null);
+        var status = summary?.Status;
+        var checks = new List<(string Bucket, string? Name, string? Link)>();
+        if (summary is { } s)
         {
-            return Task.FromResult<MergeState?>(new MergeState(MergeKinds.Queued, Position: queued.Position));
+            var failed = s.Status == ChoiceStatus.Failing ? 1 : 0;
+            if (failed == 1)
+            {
+                checks.Add(("fail", s.FailedName ?? "gate", s.FailedLink));
+            }
+            for (var i = 1 + failed; i <= s.Total; i++)
+            {
+                checks.Add(i <= s.Done ? ("pass", $"check {i}", null) : ("pending", $"check {i}", null));
+            }
         }
-        var dropped = Queue is { Queued: false, RemovedAt: not null, RemovedReason: { Length: > 0 } reason } && reason != "merged" ? reason : null;
-        var (done, total) = (Summary?.Done ?? 0, Summary?.Total ?? 0);
-        // GitHub says armed for as long as its auto-merge request is on the PR, whatever the checks (a failed one is blocked first).
-        if ((Summary?.Status ?? Checks) is not ChoiceStatus.Failing && AutoMergeArmed.Any(a => a.Number == number) && !AutoMergeDisarmed.Contains(number))
-        {
-            return Task.FromResult<MergeState?>(new MergeState(MergeKinds.Armed, done, total));
-        }
-        return Task.FromResult<MergeState?>((Summary?.Status ?? Checks) switch
-        {
-            ChoiceStatus.Failing => new MergeState(MergeKinds.Blocked, done, total, Reason: $"{Summary?.FailedName ?? "build"} failed", FailedName: Summary?.FailedName ?? "build", FailedLink: Summary?.FailedLink, DroppedFromQueue: dropped),
-            ChoiceStatus.Pending => new MergeState(MergeKinds.Pending, done, total, DroppedFromQueue: dropped),
-            ChoiceStatus.Passing => new MergeState(MergeKinds.Ready, done, total, DroppedFromQueue: dropped),
-            _ => null,
-        });
+        var armed = AutoMergeArmed.Any(a => a.Number == number) && !AutoMergeDisarmed.Contains(number);
+        var mergeState = status == ChoiceStatus.Passing ? "CLEAN" : status is null ? null : "BLOCKED";
+        return Task.FromResult(GhCli.ReadMergeState(new MergeFacts("OPEN", false, mergeState, "MERGEABLE", null, armed, checks), Queue));
     }
 
     /// <summary>What MergeQueueAsync answers for any PR: null, a base with no merge queue, unless set.</summary>
@@ -799,7 +801,7 @@ internal sealed class FakeGitHub : IGitHub
         // The queue lets it go: the PR is not queued any more, and GitHub says it was removed by hand.
         if (Queue is { Queued: true } queued)
         {
-            Queue = queued with { Queued = false, Position = null, RemovedAt = DateTimeOffset.UtcNow, RemovedReason = "manually removed" };
+            Queue = GhAnswers.MergeQueue("dropped", head: queued.Head, removedAt: DateTimeOffset.UtcNow, removedReason: "MANUALLY_REMOVED");
         }
         return Task.CompletedTask;
     }
@@ -837,7 +839,7 @@ internal sealed class FakeGitHub : IGitHub
     {
         await Called(nameof(CreateAsync));
         Created.Enqueue((branch, baseBranch, title, body));
-        Pr = new PullRequest(70 + Created.Count, "OPEN", "cafe0000cafe0000", $"https://github.com/x/tianwen/pull/{70 + Created.Count}");
+        Pr = GhAnswers.PullRequestByBranch(number: 70 + Created.Count, head: "cafe0000cafe0000", url: $"https://github.com/x/tianwen/pull/{70 + Created.Count}");
         return Pr;
     }
 
@@ -1390,7 +1392,7 @@ public abstract class LegCommanderTestsBase : IDisposable
             (await Leg(Verbs.FinishLeg, $"flight/TIA1/{name}", "done")).Ok.ShouldBeTrue();
         }
         var tip = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
-        _github.Pr = new PullRequest(63, "OPEN", tip, "https://github.com/x/tianwen/pull/63");
+        _github.Pr = GhAnswers.PullRequestByBranch(number: 63, head: tip, url: "https://github.com/x/tianwen/pull/63");
         _state.PutFlight(_state.Flights().Single() with
         {
             PullRequest = 63,
@@ -2365,7 +2367,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         // As the reviewer's pass leaves it (its own test drives the review): this one is about the merge's guards.
         _state.PutFlight(_state.Flights().Single() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow } });
         (await Leg(Verbs.Merge, "flight/TIA1", "abc1234")).Error.ShouldBe("flight/tia1 has no PR");
-        _github.Pr = new PullRequest(63, "OPEN", "def5678aaaabbbbccccdddd", "https://github.com/x/tianwen/pull/63");
+        _github.Pr = GhAnswers.PullRequestByBranch(number: 63, head: "def5678aaaabbbbccccdddd", url: "https://github.com/x/tianwen/pull/63");
         (await Leg(Verbs.Merge, "flight/TIA1", "abc1234")).Error.ShouldNotBeNull().ShouldContain("reviewed abc1234");
         (await Leg(Verbs.Merge, "flight/TIA1", "def56")).Error.ShouldNotBeNull().ShouldContain("7 characters");
 
@@ -2374,12 +2376,12 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         File.WriteAllText(Path.Combine(flight.Worktree, "late.md"), "a read written after the push\n");
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "late read");
-        _github.Pr = new PullRequest(63, "OPEN", pushed, "https://github.com/x/tianwen/pull/63");
+        _github.Pr = GhAnswers.PullRequestByBranch(number: 63, head: pushed, url: "https://github.com/x/tianwen/pull/63");
         var unpushedRefusal = await Leg(Verbs.Merge, "flight/TIA1", pushed[..8]);
         unpushedRefusal.Error.ShouldBe("TIA1's plane holds 1 commit past #63's head: open the PR again (flight pr) to push it, and review what is new before it lands");
         unpushedRefusal.Refusal.ShouldBe(MergeRefusals.Unpushed);
         var tip = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
-        _github.Pr = new PullRequest(63, "OPEN", tip, "https://github.com/x/tianwen/pull/63");
+        _github.Pr = GhAnswers.PullRequestByBranch(number: 63, head: tip, url: "https://github.com/x/tianwen/pull/63");
 
         (await Leg(Verbs.Merge, "flight/TIA1", tip[..8], "rebase")).Ok.ShouldBeTrue();
 

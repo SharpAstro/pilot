@@ -205,7 +205,7 @@ public sealed class DiskSweepTests : IDisposable
     {
         Directory.CreateDirectory(Repo);
         var git = new ScriptedGit { Main = Repo };
-        var github = new FakeGitHub { Pr = new PullRequest(7, prState, "sha", "https://example.invalid/pr/7") };
+        var github = new FakeGitHub { Pr = GhAnswers.PullRequestByBranch(state: prState.ToLowerInvariant(), number: 7, head: "sha", url: "https://example.invalid/pr/7") };
         var sweep = new DiskSweep(Jobs, Temp, _state, _time)
         {
             ScratchDays = () => 2, Planes = new Planes(git), GitHub = github, Repos = () => [Repo],
@@ -278,7 +278,7 @@ public sealed class DiskSweepTests : IDisposable
         var (sweep, git, github) = WorktreeSweep();
         var open = MakeWt(git, "open");
         var none = MakeWt(git, "none");
-        github.PrOf["b-open"] = new PullRequest(8, "OPEN", "sha", "https://example.invalid/pr/8");
+        github.PrOf["b-open"] = GhAnswers.PullRequestByBranch(number: 8, head: "sha", url: "https://example.invalid/pr/8");
         github.PrOf["b-none"] = null!;
         github.Pr = null;
 

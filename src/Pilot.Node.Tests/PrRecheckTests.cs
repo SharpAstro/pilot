@@ -34,7 +34,7 @@ public abstract class PrRecheckTestsBase : IDisposable
         PrOrigins.Git(WidgetClone, "config", "remote.origin.url", "https://github.com/acme/widget.git");
         PrOrigins.Git(WidgetClone, "config", $"url.{widget.Replace('\\', '/')}.insteadOf", "https://github.com/acme/widget.git");
         _github.Prs["acme/widget#7"] = Pr("OPEN");
-        _github.OpenPrs[WidgetClone] = [new PullRequestStatus { Number = 7, Title = "PR 7", Head = "feature/seven" }];
+        _github.OpenPrs[WidgetClone] = [GhAnswers.OpenPullRequest(number: 7, title: "PR 7", head: "feature/seven")];
         _github.SetLabels(7, PilotMarks.Recheck);
 
         var git = _repos.Git;
@@ -64,7 +64,7 @@ public abstract class PrRecheckTestsBase : IDisposable
     private protected string WidgetClone => Path.Combine(Roots, "widget");
 
     private protected PullRequest Pr(string state) =>
-        new(7, state, _head, "https://github.com/acme/widget/pull/7", Title: "PR 7", Author: "ada", Base: "main");
+        GhAnswers.PullRequestByNumber(number: 7, head: _head, url: "https://github.com/acme/widget/pull/7", title: "PR 7", author: "ada", baseBranch: "main", prState: state);
 
     public void Dispose() => _repos.Dispose();
 
@@ -131,7 +131,7 @@ public abstract class PrRecheckTestsBase : IDisposable
         PrOrigins.Git(work, "add", ".");
         PrOrigins.Git(work, [.. who, "commit", "-q", "-m", "main moves"]);
         PrOrigins.Git(work, "push", "-q", "origin", "HEAD:main");
-        _github.Prs["acme/widget#7"] = new PullRequest(7, "OPEN", head, "https://github.com/acme/widget/pull/7", Title: "PR 7", Author: "controller", Base: "main", HeadRef: "feature/seven");
+        _github.Prs["acme/widget#7"] = GhAnswers.PullRequestByNumber(number: 7, head: head, url: "https://github.com/acme/widget/pull/7", title: "PR 7", author: "controller", baseBranch: "main", headRef: "feature/seven");
         return (head, PrOrigins.Git(work, "rev-parse", "HEAD"));
     }
 
@@ -316,7 +316,7 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
     [Fact]
     public async Task APrAlreadyInTheMergeQueueIsLeftWithTheQueuedLabelAlone()
     {
-        _github.Queue = new MergeQueueState("OPEN", _head, Queued: true, Position: 1);
+        _github.Queue = GhAnswers.MergeQueue("queued", _head, 1);
 
         await LookAsync();
 
@@ -459,7 +459,7 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
         await ReviewedAsync();
         _github.Checks = ChoiceStatus.Passing;
         _github.Queues = true;
-        _github.Queue = new MergeQueueState("OPEN", _head, Queued: false);
+        _github.Queue = GhAnswers.MergeQueue("idle", _head);
 
         await LookAsync();
 
@@ -660,7 +660,7 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     {
         var flight = await PassedFlightAsync();
         MainMoves();
-        _github.Merge = new MergeState(MergeKinds.Behind);
+        _github.Merge = GhAnswers.MergeState(MergeKinds.Behind);
 
         await LookAsync();
 
@@ -839,7 +839,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     [Fact]
     public async Task ALabelSeenAgainAfterARecheckEndedRunsItOnceMore()
     {
-        _github.Queue = new MergeQueueState("OPEN", _head, Queued: true, Position: 1);
+        _github.Queue = GhAnswers.MergeQueue("queued", _head, 1);
         await LookAsync();
         Handled().ShouldBe(["recheck of widget#7: already queued"]);
 

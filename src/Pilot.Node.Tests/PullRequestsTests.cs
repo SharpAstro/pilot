@@ -166,7 +166,7 @@ public sealed class PullRequestsTests : IDisposable
     private static (MergeState? Card, PullRequestMergeState Page) Of(bool draft = false, string? mergeable = "MERGEABLE", string? status = "CLEAN", string? decision = null,
         bool queued = false, int? position = null, bool armed = false, params (string Bucket, string? Name, string? Link)[] checks)
     {
-        var merge = GhCli.ReadMergeState(new MergeFacts("OPEN", draft, status, mergeable, decision, armed, checks), queued ? new MergeQueueState("QUEUED", "", true, position) : null);
+        var merge = GhCli.ReadMergeState(new MergeFacts("OPEN", draft, status, mergeable, decision, armed, checks), queued ? GhAnswers.MergeQueue("queued", position: position ?? 1) : null);
         return (merge, PullRequestSearch.Say(merge, draft));
     }
 
@@ -178,7 +178,7 @@ public sealed class PullRequestsTests : IDisposable
         // A draft is a draft on the page whatever else is true; a PR in the queue is in it.
         Of(draft: true, mergeable: "CONFLICTING", checks: [("fail", "build", null)]).Page.Label.ShouldBe("Draft");
         Of(queued: true, position: 1, mergeable: "CONFLICTING", checks: [Pass()]).Page.Label.ShouldBe("In merge queue #1");
-        Of(queued: true, checks: [Pass()]).Page.Label.ShouldBe("In merge queue");
+        Of(queued: true, checks: [Pass()]).Page.Label.ShouldBe("In merge queue #1");
         // The card's order: conflicts, behind, a failed check, then changes requested, then what waits.
         Of(mergeable: "CONFLICTING", decision: "CHANGES_REQUESTED", checks: [Pass()]).Page.Label.ShouldBe("Conflicts");
         Of(status: "BEHIND", decision: "CHANGES_REQUESTED", checks: [Pass()]).Page.Label.ShouldBe("Behind");
@@ -240,7 +240,7 @@ public sealed class PullRequestsTests : IDisposable
         var card = GhCli.ReadMergeState(
             new MergeFacts("OPEN", json.GetProperty("isDraft").GetBoolean(), Str(json, "mergeStateStatus"), Str(json, "mergeable"), Str(json, "reviewDecision"),
                 json.GetProperty("autoMergeRequest").ValueKind == JsonValueKind.Object, checks),
-            json.GetProperty("isInMergeQueue").GetBoolean() ? new MergeQueueState("QUEUED", "", true, json.GetProperty("mergeQueueEntry").GetProperty("position").GetInt32()) : null);
+            json.GetProperty("isInMergeQueue").GetBoolean() ? GhAnswers.MergeQueue("queued", position: json.GetProperty("mergeQueueEntry").GetProperty("position").GetInt32()) : null);
 
         PullRequestSearch.Say(card, pr.Draft).ShouldBe(new PullRequestMergeState(pr.Kind, pr.Label, pr.NeedsMe));
     }
