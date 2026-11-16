@@ -1440,8 +1440,16 @@ sessions, flights and jobs, and never speaks for another. To bring a second mach
    self-update).
 2. **`pilot-node setup`** (with `--repo-root <org root>`, and `--machine SE2` where the machine name's first two letters
    would clash with another machine's prefix). It saves the LAN on (and what was given) in the node's settings file,
-   installs the hooks, installs the logon entry and starts the node, and asks Windows for elevation once to let
-   `pilot-node` in on private networks. It ends with the checklist: what is left is a person's.
+   installs the hooks, installs the logon entry and starts the node, and asks Windows for elevation once (it prints the
+   script first) to allow the node's ports by port, with no program: UDP on the discovery port (rule `pilot2 LAN
+   discovery`) and TCP on the LAN port (rule `pilot2 node`), Private and Domain profiles only, so every pilot-node,
+   pilot-gui and pilot build at any path listens with no firewall dialog. The earlier per-program `pilot-node` rules are
+   deleted. A local-only node, or one with the LAN off, makes none. Changing `lan-port` leaves the TCP rule out of date
+   until the next `pilot-node setup` (or the Settings page's Firewall fix). An optional "Old firewall rules" check counts
+   the per-path inbound allow rules of programs that no longer exist (worktree builds, under the repo roots, scratch and
+   temp folders); `pilot-node setup` only says how many, and its `Remove (asks for elevation)` fix deletes exactly those
+   rules (inbound, by program path) with one readable elevated script. `pilot-node setup --check` prints the
+   checklist and changes nothing. It ends with the checklist: what is left is a person's.
 3. **What is left**, which the GUI's **Settings** page (Ctrl+8) also lists with a button for each the node can fix:
    the watchtower's folder trusted once (Claude Code's own prompt, which the page opens in a titled window; a folder
    above it that is trusted already covers it), gh signed in, and usage figures (a status line that writes
@@ -1632,11 +1640,10 @@ resume their stream. A setting the command line gives is saved but says it does
 not count until the command line stops giving it.
 
 Above the settings, the page has the setup checklist: started at logon, Claude Code's hooks for this binary, on the
-LAN, the firewall rule for this binary and for `pilot`, `pilot-gui` and `pilot-tui` beside it, which listen for other
-nodes' beacons and are let in on the discovery port alone (Windows), the watchtower's folder trusted (read from Claude Code's own record,
+LAN, the firewall's two port rules (UDP discovery port, TCP LAN port; Windows; any binary at any path is let in), the watchtower's folder trusted (read from Claude Code's own record,
 a folder above it counting), gh signed in, and usage figures. Each says how it stands; those the node can fix have a
-button (`setup node <check>`): the logon entry, the hooks, the LAN, the firewall rule (one elevation prompt, which
-replaces an earlier install's rule), the Windows Defender exclusions (below), the trust prompt (opened in a window titled for what it is). `pilot settings`
+button (`setup node <check>`): the logon entry, the hooks, the LAN, the firewall rules (one elevation prompt, which
+replaces an earlier install's per-program rule with the two port rules), the Windows Defender exclusions (below), the trust prompt (opened in a window titled for what it is). `pilot settings`
 prints both. The route and both verbs are this machine's only: a grant from the LAN never reaches them, and nor does
 the watchtower.
 

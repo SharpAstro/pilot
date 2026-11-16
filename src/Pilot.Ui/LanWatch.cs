@@ -39,7 +39,7 @@ internal sealed class LanWatch : IAsyncDisposable
     public static async Task<LanWatch> StartAsync(CancellationToken cancellationToken)
     {
         var options = new LanDiscoveryOptions { Announce = false, Listen = true };
-        var transport = new UdpLanTransport(options.DiscoveryPort);
+        var transport = Pilot.Commands.LanTransports.Create(options.DiscoveryPort);
         var discovery = new LanDiscovery(transport, TimeProvider.System, options, LanIdentity.Create(null));
         await discovery.StartAsync(cancellationToken);
         return new LanWatch(
@@ -94,7 +94,7 @@ internal sealed class LanWatch : IAsyncDisposable
         }
     }
 
-    private sealed class Owned(LanDiscovery discovery, UdpLanTransport transport) : IAsyncDisposable
+    private sealed class Owned(LanDiscovery discovery, ILanTransport transport) : IAsyncDisposable
     {
         public async ValueTask DisposeAsync()
         {

@@ -117,6 +117,9 @@ public sealed class McpParentTests : IDisposable
             CreateNoWindow = true,
             StandardInputEncoding = new UTF8Encoding(false),
         };
+        // The child is outside this assembly's bind guard and fake transport (#1104): a verb that discovers ('nodes') would
+        // listen on UDP on every interface from a program at a brand-new path, and Windows Firewall would ask.
+        info.Environment[LanTransports.OffVariable] = "1";
         foreach (var arg in args)
         {
             info.ArgumentList.Add(arg);
@@ -187,7 +190,8 @@ public sealed class McpParentTests : IDisposable
     [Fact]
     public void APilotStartedWithAnotherVerbIsNotOne()
     {
-        // 'nodes' listens for the LAN announcements for a few seconds, so it is alive when asked.
+        // 'nodes' listens for the LAN announcements for a few seconds, so it is alive when asked; with LanTransports.OffVariable
+        // set by Start it listens on a transport with no socket, so the wait is the same and nothing binds.
         var nodes = Start("--node-socket", Socket, "nodes");
         WaitUntilExeced(nodes, "nodes");
         McpParent.IsPilotMcp(nodes.Id).ShouldBeFalse();
