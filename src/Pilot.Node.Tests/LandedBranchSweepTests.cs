@@ -142,7 +142,7 @@ public sealed class LandedBranchSweepTests : IDisposable
         {
             var head = MakeBranch(code);
             Put(Row(code) with { MergedPullRequest = number }, archived: code == "PIL14");
-            _github.MergedPrs[_repo] = [.. _github.MergedPrs.GetValueOrDefault(_repo) ?? [], new MergedPullRequest(number++, $"flight/{code.ToLowerInvariant()}", head)];
+            _github.MergedPrs[_repo] = [.. (_github.MergedPrs.TryGetValue(_repo, out var listed) ? listed : null) ?? [], new MergedPullRequest(number++, $"flight/{code.ToLowerInvariant()}", head)];
             deleted.Add(code);
         }
         // PIL15: no head, GitHub does not list it.

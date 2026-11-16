@@ -533,14 +533,14 @@ internal sealed class FakeGitHub : IGitHub
     public HashSet<int> IssuesClosedOnGitHub { get; } = [];
 
     /// <summary>The merged PRs each repo folder path lists (null answers as a gh that could not say), and how many times they were asked for.</summary>
-    public Dictionary<string, MergedPullRequest[]?> MergedPrs { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public ConcurrentDictionary<string, MergedPullRequest[]?> MergedPrs { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public int MergedPrListings;
 
     public Task<MergedPullRequest[]?> MergedPullRequestsAsync(string repoPath, int limit, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref MergedPrListings);
-        return Task.FromResult(MergedPrs.GetValueOrDefault(repoPath) ?? (MergedPrs.ContainsKey(repoPath) ? null : []));
+        return Task.FromResult(MergedPrs.TryGetValue(repoPath, out var listed) ? listed : []);
     }
 
     public Task<bool?> IssueClosedAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<bool?>(IssuesClosedOnGitHub.Contains(number));
