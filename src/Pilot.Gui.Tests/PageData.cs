@@ -97,7 +97,7 @@ internal sealed class PageData
         return new DesignsScreen([row], "test", now, page);
     }
 
-    private static readonly NodeMark Here =new("node.sock", "node.sock", "SE1", true);
+    private static readonly NodeMark Here = new("node.sock", "node.sock", "SE1", true);
     private static readonly NodeMark Other = new("10.0.0.9:47731", "10.0.0.9:47731", "LE1", false);
 
     public static SessionRow Row(string id, string name, SessionState state) => new()

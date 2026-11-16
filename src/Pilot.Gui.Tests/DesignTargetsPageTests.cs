@@ -100,6 +100,33 @@ public sealed class DesignTargetsPageTests
     }
 
     [Fact]
+    public void LandscapeStaysLandscapeWhenAnotherTargetIsPickedAndATypedSizeIsShownAsTyped()
+    {
+        using var rig = new Rig();
+        rig.View.PickTarget("Phone");
+        rig.View.SwapSides();
+        rig.View.PickTarget("Desktop");
+        rig.Paint();
+        rig.View.Surface.Width.ShouldBe(1440);
+        rig.View.Surface.Height.ShouldBe(900);
+
+        rig.View.PickTarget("Tablet");
+        rig.View.Surface.Width.ShouldBe(1180);
+        rig.View.Surface.Height.ShouldBe(820);
+
+        rig.View.CustomInput.Text = "1024x768";
+        rig.View.CommitCustom().ShouldBeTrue();
+        rig.View.Surface.Width.ShouldBe(1024);
+        rig.View.Surface.Height.ShouldBe(768);
+
+        rig.View.SwapSides();
+        rig.View.CustomInput.Text = "600x900";
+        rig.View.CommitCustom().ShouldBeTrue();
+        rig.View.Surface.Width.ShouldBe(600);
+        rig.View.Surface.Height.ShouldBe(900);
+    }
+
+    [Fact]
     public void ACustomSizeIsTypedOnThePageAndABadEntryKeepsTheLastTargetAndSaysWhy()
     {
         using var rig = new Rig();

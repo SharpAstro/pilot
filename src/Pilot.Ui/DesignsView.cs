@@ -115,7 +115,10 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         {
             return false;
         }
-        Set(id, DesignTargetChoice.Of(surface) with { Swapped = Choice.Swapped });
+        // The orientation the person is in carries over, not the swap flag: the flag means the opposite on a portrait-native target and a landscape-native one.
+        var now = Choice.Surface();
+        var landscape = now.Width > now.Height;
+        Set(id, DesignTargetChoice.Of(surface) with { Swapped = landscape != surface.Width > surface.Height });
         return true;
     }
 
@@ -135,7 +138,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         {
             return false;
         }
-        var parsed = DesignTargetChoice.Parse(CustomInput.Text, Choice.Swapped, out var problem);
+        var parsed = DesignTargetChoice.Parse(CustomInput.Text, false, out var problem);
         _customProblem = problem;
         if (parsed is null)
         {

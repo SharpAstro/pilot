@@ -321,7 +321,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             if (pngs.FirstOrDefault(p => !File.Exists(p.Path)) is { Path: not null } missing)
             {
                 var atTarget = missing.Target.Length > 0 ? $" at target {missing.Target}" : "";
-                throw new DesignException($"{row.Id} has no render {Path.GetFileName(missing.Path)}{atTarget};pilot design render {row.Id} draws them again");
+                throw new DesignException($"{row.Id} has no render {Path.GetFileName(missing.Path)}{atTarget}; pilot design render {row.Id} draws them again");
             }
 
             var versions = Path.Combine(FolderOf(row.Id), VersionsFolderName);
