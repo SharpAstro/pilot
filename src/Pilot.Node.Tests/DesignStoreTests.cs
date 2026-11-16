@@ -160,10 +160,12 @@ public sealed class DesignStoreTests : IDisposable
         {
             Id = "DSN-1", Title = "T", Repo = "pilot", Current = 3, Versions = 3, At = _time.GetUtcNow(), Why = "the owner asked", PrototypeSha256 = "ab12",
         };
-        JsonSerializer.Deserialize(JsonSerializer.Serialize(row, PilotJsonContext.Default.DesignRow), PilotJsonContext.Default.DesignRow).ShouldBe(row);
+        var back = JsonSerializer.Deserialize(JsonSerializer.Serialize(row, PilotJsonContext.Default.DesignRow), PilotJsonContext.Default.DesignRow).ShouldNotBeNull();
+        back.History.ShouldBeEmpty();
+        (back with { History = row.History }).ShouldBe(row);
 
         var made = store.New("pilot", "T", "brief");
-        store.Find("DSN-1").ShouldBe(made);
+        (store.Find("DSN-1").ShouldNotBeNull() with { History = made.History }).ShouldBe(made);
         made.Current.ShouldBeNull();
         made.Versions.ShouldBe(0);
 
@@ -181,7 +183,8 @@ public sealed class DesignStoreTests : IDisposable
         var row = store.New("pilot", null, "the brief");
         var detail = store.Detail(row.Id);
 
-        detail.Row.ShouldBe(row);
+        detail.Row.History.ShouldBeEmpty();
+        (detail.Row with { History = row.History }).ShouldBe(row);
         detail.Brief.ShouldNotBeNull().ShouldContain("the brief");
         detail.Folder.ShouldBe(Path.Combine(_data, "designs", "DSN-1"));
         detail.DraftFolder.ShouldBe(Path.Combine(_data, "designs", "DSN-1", "draft"));

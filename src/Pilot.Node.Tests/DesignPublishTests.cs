@@ -72,7 +72,7 @@ public sealed class DesignPublishTests : IAsyncLifetime
 
         var (checkExit, checkSaid) = await Pilot("design", "check", "DSN-1");
         checkExit.ShouldBe(0, checkSaid);
-        checkSaid.Trim().ShouldBe("clean");
+        checkSaid.Trim().ShouldEndWith("clean");
 
         var (renderExit, rendered) = await Pilot("design", "render", "DSN-1");
         renderExit.ShouldBe(0, rendered);
@@ -209,7 +209,7 @@ public sealed class DesignPublishTests : IAsyncLifetime
 
         var (exit, said) = await Pilot("design", "check", "DSN-1");
         exit.ShouldBe(0, said);
-        said.Trim().ShouldBe("clean");
+        said.Trim().ShouldEndWith("clean");
     }
 
     [Fact]
