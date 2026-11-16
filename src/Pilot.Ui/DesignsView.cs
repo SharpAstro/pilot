@@ -374,8 +374,8 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
             Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).HStar();
         // The target switcher spans the page above both columns: inside the player's column it was squeezed at a narrow window and drew over the versions beside it.
         return page.Version is not null && Player is not null
-            ? Layout.Builder.VStack(TargetBar(page), columns).WithGap(8f).Pad(Gutter, 8f)
-            : Layout.Builder.VStack(columns).Pad(Gutter, 8f);
+            ? Layout.Builder.VStack(TargetBar(page), columns).WithGap(8f).Pad(Gutter, 8f).Stretch()
+            : Layout.Builder.VStack(columns).Pad(Gutter, 8f).Stretch();
     }
 
     private IEnumerable<Layout.Node> Versions(DesignPage page)
