@@ -171,7 +171,7 @@ public sealed class MergeRefusalTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
-        node.GitHub.Merge = new MergeState(MergeKinds.Behind);
+        node.GitHub.Merge = GhAnswers.MergeState(MergeKinds.Behind);
 
         Refused(await Merge(node), Passing, "is behind its base");
     }
@@ -224,7 +224,7 @@ public sealed class MergeRefusalTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
-        node.GitHub.Merge = new MergeState(MergeKinds.Blocked, Reason: "at least 1 approving review is required");
+        node.GitHub.Merge = GhAnswers.MergeState(MergeKinds.Blocked, review: true);
 
         Refused(await Merge(node), Persons(MergeAction.ApproveOnGitHub), "is blocked on GitHub: at least 1 approving review is required");
     }
@@ -234,7 +234,7 @@ public sealed class MergeRefusalTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
-        node.GitHub.Merge = new MergeState(MergeKinds.ChangesRequested);
+        node.GitHub.Merge = GhAnswers.MergeState(MergeKinds.ChangesRequested);
 
         Refused(await Merge(node), Persons(MergeAction.ReadChanges), "has changes requested on GitHub");
     }
@@ -288,7 +288,7 @@ public sealed class MergeRefusalTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
-        node.GitHub.Merge = new MergeState(MergeKinds.Blocked, Reason: "it is a draft", Draft: true);
+        node.GitHub.Merge = GhAnswers.MergeState(MergeKinds.Blocked, draft: true);
 
         Refused(await Merge(node), Persons(MergeAction.MarkReadyOnGitHub), "it is a draft");
     }

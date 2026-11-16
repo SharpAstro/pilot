@@ -153,7 +153,7 @@ public abstract class PrReviewTestsBase : IDisposable
     private protected string GadgetCache => Path.Combine(_root, "data", "clones", "acme", "gadget");
 
     private protected static PullRequest Pr(string repo, int number, string head, string author, string state = "OPEN") =>
-        new(number, state, head, $"https://github.com/{repo}/pull/{number}", Title: $"PR {number} of {repo}", Author: author, Base: "main");
+        GhAnswers.PullRequestByNumber(number: number, head: head, url: $"https://github.com/{repo}/pull/{number}", title: $"PR {number} of {repo}", author: author, baseBranch: "main", prState: state);
 
     /// <summary>
     /// Runs this test on git itself, for a test that checks what git does in a class that otherwise checks what the node decides. Called first,

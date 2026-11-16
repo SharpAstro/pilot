@@ -96,7 +96,7 @@ public sealed class RetryAndHoldTests : IDisposable
         _github.PrFiles[pr] = files ?? ["src/Pilot.Node/Flights/PrChecks.cs"];
         _github.PrOf[Branch(code)] = GhAnswers.PullRequestByBranch(number: pr, head: Head(head), url: $"https://github.com/x/tianwen/pull/{pr}");
         _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 1, 2, "build", $"https://github.com/x/tianwen/actions/runs/{run}");
-        _github.Merge = new MergeState(MergeKinds.Blocked, 1, 2, Reason: "build failed", FailedName: "build");
+        _github.Merge = GhAnswers.MergeState(MergeKinds.Blocked, 1, 2, failedName: "build");
         FailedRun(pr, queue: false, run, log);
     }
 

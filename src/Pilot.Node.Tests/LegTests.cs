@@ -750,24 +750,19 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromResult<MergeState?>(Merge);
         }
-        if (Queue is { Queued: true } queued)
+        // GitHub's own reader says it, over the checks and queue the fake holds: what the node reads is what ReadMergeState makes of them.
+        var status = Summary?.Status ?? Checks;
+        var (done, total) = (Summary?.Done ?? (status is null ? 0 : 1), Summary?.Total ?? (status is null ? 0 : 1));
+        var checks = new List<(string Bucket, string? Name, string? Link)>();
+        for (var i = 1; i <= total; i++)
         {
-            return Task.FromResult<MergeState?>(new MergeState(MergeKinds.Queued, Position: queued.Position));
+            checks.Add(status == ChoiceStatus.Failing && i == 1 ? ("fail", Summary?.FailedName ?? "build", Summary?.FailedLink)
+                : i <= done ? ("pass", $"check {i}", null)
+                : ("pending", $"check {i}", null));
         }
-        var dropped = Queue is { Queued: false, RemovedAt: not null, RemovedReason: { Length: > 0 } reason } && reason != "merged" ? reason : null;
-        var (done, total) = (Summary?.Done ?? 0, Summary?.Total ?? 0);
-        // GitHub says armed for as long as its auto-merge request is on the PR, whatever the checks (a failed one is blocked first).
-        if ((Summary?.Status ?? Checks) is not ChoiceStatus.Failing && AutoMergeArmed.Any(a => a.Number == number) && !AutoMergeDisarmed.Contains(number))
-        {
-            return Task.FromResult<MergeState?>(new MergeState(MergeKinds.Armed, done, total));
-        }
-        return Task.FromResult<MergeState?>((Summary?.Status ?? Checks) switch
-        {
-            ChoiceStatus.Failing => new MergeState(MergeKinds.Blocked, done, total, Reason: $"{Summary?.FailedName ?? "build"} failed", FailedName: Summary?.FailedName ?? "build", FailedLink: Summary?.FailedLink, DroppedFromQueue: dropped),
-            ChoiceStatus.Pending => new MergeState(MergeKinds.Pending, done, total, DroppedFromQueue: dropped),
-            ChoiceStatus.Passing => new MergeState(MergeKinds.Ready, done, total, DroppedFromQueue: dropped),
-            _ => null,
-        });
+        var armed = AutoMergeArmed.Any(a => a.Number == number) && !AutoMergeDisarmed.Contains(number);
+        var mergeState = status == ChoiceStatus.Passing ? "CLEAN" : status is null ? null : "BLOCKED";
+        return Task.FromResult(GhCli.ReadMergeState(new MergeFacts("OPEN", false, mergeState, "MERGEABLE", null, armed, checks), Queue));
     }
 
     /// <summary>What MergeQueueAsync answers for any PR: null, a base with no merge queue, unless set.</summary>

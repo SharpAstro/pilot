@@ -1627,7 +1627,7 @@ public sealed class ReviewTests4 : ReviewTestsBase
         _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         var (flight, _) = await Passed("37");
         var head = Git(flight.Worktree, "rev-parse", "HEAD");
-        _github.Merge = new MergeState(MergeKinds.Queued, Position: 1);
+        _github.Merge = GhAnswers.MergeState(MergeKinds.Queued, position: 1);
         // A PR GitHub has queued is one whose base has a merge queue, as GitHub reads both.
         _github.Queue = GhAnswers.MergeQueue("queued", _github.Pr!.Head, 1);
         MainMoves();
@@ -1982,7 +1982,7 @@ public sealed class ReviewTests5 : ReviewTestsBase
 
         // GitHub shows it conflicting; turning its auto-merge off fails.
         _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
-        _github.Merge = new MergeState(MergeKinds.Conflicts, 3, 3);
+        _github.Merge = GhAnswers.MergeState(MergeKinds.Conflicts, 3, 3);
         _github.DisarmFails = "gh could not turn auto-merge off on #71: HTTP 502";
         await checks.LookAsync(Ct);
 
@@ -2010,7 +2010,7 @@ public sealed class ReviewTests5 : ReviewTestsBase
         var (flight, pr, checks) = await ArmedPassedFlight("34");
 
         _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
-        _github.Merge = new MergeState(kind, 3, 3, Reason: kind == MergeKinds.Blocked ? "a review is required" : null);
+        _github.Merge = GhAnswers.MergeState(kind, 3, 3, review: kind == MergeKinds.Blocked);
         await checks.LookAsync(Ct);
 
         _github.AutoMergeDisarmed.ShouldBe([pr.Number]);

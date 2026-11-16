@@ -64,7 +64,7 @@ public abstract class PrRecheckTestsBase : IDisposable
     private protected string WidgetClone => Path.Combine(Roots, "widget");
 
     private protected PullRequest Pr(string state) =>
-        new(7, state, _head, "https://github.com/acme/widget/pull/7", Title: "PR 7", Author: "ada", Base: "main");
+        GhAnswers.PullRequestByNumber(number: 7, head: _head, url: "https://github.com/acme/widget/pull/7", title: "PR 7", author: "ada", baseBranch: "main", prState: state);
 
     public void Dispose() => _repos.Dispose();
 
@@ -660,7 +660,7 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     {
         var flight = await PassedFlightAsync();
         MainMoves();
-        _github.Merge = new MergeState(MergeKinds.Behind);
+        _github.Merge = GhAnswers.MergeState(MergeKinds.Behind);
 
         await LookAsync();
 

@@ -135,6 +135,24 @@ public sealed class GhFieldListTests
         }
     }
 
+    /// <summary>
+    /// <c>gh api actions/runs</c> has no <c>--json</c> list and answers every key, so a recording is kept to the keys <c>ParseCiRuns</c> reads
+    /// (<c>CiRunKeys</c>): each run of each recording carries exactly those, so a key the parser starts reading must be recorded first.
+    /// </summary>
+    [Fact]
+    public void EveryCiRunRecordingCarriesExactlyTheKeysTheParserReads()
+    {
+        var read = GhCli.CiRunKeys.Split(',').Order().ToArray();
+        foreach (var file in Directory.GetFiles(Path.Combine(Root, "ci-runs"), "*.json"))
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(file));
+            foreach (var run in doc.RootElement.GetProperty("workflow_runs").EnumerateArray())
+            {
+                run.EnumerateObject().Select(p => p.Name).Order().ToArray().ShouldBe(read, Path.GetFileName(file));
+            }
+        }
+    }
+
     /// <summary>The field names a GraphQL query selects: its words, less the operation, the variables, the arguments and the type conditions.</summary>
     private static HashSet<string> QueryFields(string query)
     {

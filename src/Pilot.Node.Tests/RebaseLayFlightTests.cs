@@ -196,7 +196,7 @@ public sealed class RebaseLayFlightTests() : ReviewTestsBase(realGit: true)
     public async Task ADroppedHeadThatIsQueuedNowIsNotReportedAsDroppedForAConflict()
     {
         var (flight, head) = await DroppedUnexplained();
-        _github.Merge = new MergeState(MergeKinds.Queued, Position: 1);
+        _github.Merge = GhAnswers.MergeState(MergeKinds.Queued, position: 1);
 
         var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head);
 

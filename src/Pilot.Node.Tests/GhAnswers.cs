@@ -227,6 +227,146 @@ internal static class GhAnswers
         return GhCli.ParseMergeQueue(o.ToJsonString())!;
     }
 
+    /// <summary>
+    /// One run of <c>CiRunsAsync</c>: the recording of a completed run (or, with a null <paramref name="conclusion"/>, one still going) with the named
+    /// keys changed, parsed by <c>GhCli.ParseCiRuns</c> and given the runner <paramref name="minutes"/> its own call reads. A running run has no end.
+    /// </summary>
+    public static CiRun CiRun(long id, double minutes, string? conclusion = "success", string name = "CI", string @event = "pull_request",
+        DateTimeOffset? started = null, DateTimeOffset? completedAt = null)
+    {
+        var o = (JsonObject)JsonNode.Parse(GhRecordingTests.Recording("ci-runs", conclusion is null ? "running" : "completed"))!;
+        var run = o["workflow_runs"]!.AsArray()[0]!.AsObject();
+        run["id"] = id;
+        run["name"] = name;
+        run["event"] = @event;
+        run["conclusion"] = conclusion;
+        if (started is not null)
+        {
+            run["run_started_at"] = Utc(started.Value);
+            run["created_at"] = Utc(started.Value);
+        }
+        if (completedAt is not null)
+        {
+            if (conclusion is null)
+            {
+                throw new ArgumentException("A run still going has no end.", nameof(completedAt));
+            }
+            run["updated_at"] = Utc(completedAt.Value);
+        }
+        return GhCli.CiRunOf(GhCli.ParseCiRuns(o.ToJsonString(), DateTimeOffset.UtcNow).Single(), minutes);
+    }
+
+    /// <summary>
+    /// What <c>MergeStateAsync</c> returns, read by the real <c>GhCli.ParseMergeState</c> from a <c>gh pr view</c> answer built to say what the
+    /// kind needs, with <paramref name="total"/> checks of which <paramref name="done"/> have finished (a failed one among them for a blocked
+    /// state with <paramref name="failedName"/>); a queued state goes through the queue recording at <paramref name="position"/>, and
+    /// <paramref name="droppedReason"/> (GitHub's enum, <c>FAILED_CHECKS</c>) through the dropped one. A combination no gh answer reads as that kind throws.
+    /// <paramref name="review"/> is a blocked state waiting for a review, or an armed one whose only wait is a review.
+    /// </summary>
+    public static MergeState MergeState(string kind, int done = 0, int total = 0, int? position = null, string? failedName = null, string? failedLink = null,
+        string? droppedReason = null, bool draft = false, bool review = false)
+    {
+        var o = (JsonObject)JsonNode.Parse(GhRecordingTests.Recording("merge-state", "draft"))!;
+        o["isDraft"] = false;
+        o["autoMergeRequest"] = null;
+        o["mergeable"] = "MERGEABLE";
+        o["reviewDecision"] = "";
+        o["state"] = "OPEN";
+        o["mergeStateStatus"] = "CLEAN";
+        var template = o["statusCheckRollup"]!.AsArray().Select(c => c!.AsObject()).First(c => c["conclusion"]?.GetValue<string>() == "SUCCESS");
+        JsonObject Check(string name, string status, string? conclusion, string? link = null)
+        {
+            var c = (JsonObject)template.DeepClone();
+            c["name"] = name;
+            c["status"] = status;
+            c["conclusion"] = conclusion ?? "";
+            c["detailsUrl"] = link ?? $"https://github.com/SharpAstro/pilot/actions/runs/1/job/{name.Length}";
+            return c;
+        }
+        var failing = failedName is not null;
+        if (failing && (done < 1 || done > total))
+        {
+            throw new ArgumentException($"A failed check is a finished one: {done} of {total} cannot hold it.");
+        }
+        var rollup = new JsonArray();
+        for (var i = 1; i <= total; i++)
+        {
+            rollup.Add(failing && i == 1 ? Check(failedName!, "COMPLETED", "FAILURE", failedLink)
+                : i <= done ? Check($"check {i}", "COMPLETED", "SUCCESS")
+                : Check($"check {i}", "IN_PROGRESS", null));
+        }
+        o["statusCheckRollup"] = rollup;
+        MergeQueueState? queue = null;
+        if (droppedReason is not null)
+        {
+            queue = MergeQueue("dropped", removedReason: droppedReason);
+        }
+        switch (kind)
+        {
+            case MergeKinds.Merged:
+                o["state"] = "MERGED";
+                break;
+            case MergeKinds.Closed:
+                o["state"] = "CLOSED";
+                break;
+            case MergeKinds.Queued:
+                queue = MergeQueue("queued", position: position ?? throw new ArgumentException("A queued state has a position.", nameof(position)));
+                break;
+            case MergeKinds.Conflicts:
+                o["mergeable"] = "CONFLICTING";
+                o["mergeStateStatus"] = "DIRTY";
+                break;
+            case MergeKinds.Behind:
+                o["mergeStateStatus"] = "BEHIND";
+                break;
+            case MergeKinds.ChangesRequested:
+                o["reviewDecision"] = "CHANGES_REQUESTED";
+                o["mergeStateStatus"] = "BLOCKED";
+                break;
+            case MergeKinds.Armed:
+                o["autoMergeRequest"] = new JsonObject { ["enabledAt"] = "2026-11-16T14:00:00Z" };
+                if (review)
+                {
+                    o["mergeStateStatus"] = "BLOCKED";
+                    o["reviewDecision"] = "REVIEW_REQUIRED";
+                }
+                break;
+            case MergeKinds.Pending:
+                if (done >= total)
+                {
+                    throw new ArgumentException("A pending state has a check still running.", nameof(done));
+                }
+                o["mergeStateStatus"] = "BLOCKED";
+                break;
+            case MergeKinds.Ready:
+                break;
+            case MergeKinds.Blocked:
+                if (draft)
+                {
+                    o["isDraft"] = true;
+                    o["mergeStateStatus"] = "DRAFT";
+                }
+                else if (review)
+                {
+                    o["mergeStateStatus"] = "BLOCKED";
+                    o["reviewDecision"] = "REVIEW_REQUIRED";
+                }
+                else if (!failing)
+                {
+                    throw new ArgumentException("A blocked state is a draft, a review wanted or a failed check.");
+                }
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(kind), kind, "no gh answer reads as that");
+        }
+        var state = GhCli.ParseMergeState(o.ToJsonString(), queue) ?? throw new ArgumentException($"No gh answer built for {kind} reads as a merge state.");
+        if (state.Kind != kind)
+        {
+            throw new ArgumentException($"The answer built for {kind} reads as {state.Kind}: {state}.");
+        }
+        return state;
+    }
+
     private static Editor Load(string method, string recording, string fields, string where)
     {
         var state = recording;

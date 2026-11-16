@@ -238,7 +238,7 @@ public sealed class MergeBatchTests
         await using var disposing = node;
         if (odd == "changes")
         {
-            node.GitHub.MergeOf[11] = new MergeState(MergeKinds.ChangesRequested);
+            node.GitHub.MergeOf[11] = GhAnswers.MergeState(MergeKinds.ChangesRequested);
         }
 
         release.TrySetResult();

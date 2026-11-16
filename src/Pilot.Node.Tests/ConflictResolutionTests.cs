@@ -132,7 +132,7 @@ public sealed class ConflictResolutionTests : ReviewTestsBase
         Open().ShouldContain(c => c.Kind == LegCommander.PrReady);
         var started = _workers.Started.Count;
         _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
-        _github.Merge = new MergeState(MergeKinds.Conflicts, 3, 3);
+        _github.Merge = GhAnswers.MergeState(MergeKinds.Conflicts, 3, 3);
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
 

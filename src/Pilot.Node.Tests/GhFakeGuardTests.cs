@@ -12,16 +12,27 @@ namespace Pilot.Node.Tests;
 /// </summary>
 public sealed partial class GhFakeGuardTests
 {
-    private const string Types = "PullRequest|MergedPullRequest|MergeQueueState|ChecksSummary|PullRequestStatus|WorkflowRun|CiRun";
+    private const string Types = "PullRequest|MergedPullRequest|MergeQueueState|ChecksSummary|PullRequestStatus|WorkflowRun|CiRun|MergeState";
 
-    // new T(...), new T { ... }, and a target-typed new(...) assigned to a T (field, property, local), arrays and nullables included.
-    [GeneratedRegex(@"\bnew\s+(?:" + Types + @")\b|\b(?:" + Types + @")(?:\[\])?\??\s+\w+\s*(?:\{[^}]*\}\s*)?=\s*new\(")]
+    // new T(...), new T { ... }; a target-typed new(...) assigned to a T (field, property, local), arrays and nullables included; a method
+    // declared to return a T whose body is `=> new(` (also across a line break) or whose first statement is `return new(`.
+    [GeneratedRegex(@"\bnew\s+(?:" + Types + @")\b"
+        + @"|\b(?:" + Types + @")(?:\[\])?\??\s+\w+\s*(?:\{[^}]*\}\s*)?=\s*new\("
+        + @"|\b(?:" + Types + @")(?:\[\])?\??\s+\w+\s*\([^)]*\)\s*=>\s*new\("
+        + @"|\b(?:" + Types + @")(?:\[\])?\??\s+\w+\s*\([^)]*\)\s*\{\s*return\s+new\(")]
     private static partial Regex DirectConstruction();
 
-    /// <summary>The lines of <paramref name="source"/> (1-based) that build a gh-read record directly; a comment line is not one.</summary>
-    internal static IReadOnlyList<(int Line, string Text)> Scan(string source) =>
-        [.. source.Split('\n').Select((text, i) => (Line: i + 1, Text: text.TrimEnd('\r')))
-            .Where(l => !l.Text.TrimStart().StartsWith("//", StringComparison.Ordinal) && DirectConstruction().IsMatch(l.Text))];
+    /// <summary>The places of <paramref name="source"/> (1-based line, the line's text) that build a gh-read record directly; a comment line is not one.</summary>
+    internal static IReadOnlyList<(int Line, string Text)> Scan(string source)
+    {
+        var lines = source.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
+        var code = string.Join('\n', lines.Select(l => l.TrimStart().StartsWith("//", StringComparison.Ordinal) ? "" : l));
+        return [.. DirectConstruction().Matches(code).Select(m =>
+        {
+            var line = code.AsSpan(0, m.Index).Count('\n') + 1;
+            return (line, lines[line - 1]);
+        })];
+    }
 
     /// <summary>Files allowed to build these records directly for good: the builders, this guard, and the parser's own expectations.</summary>
     private static readonly string[] Allowed =
@@ -89,6 +100,11 @@ public sealed partial class GhFakeGuardTests
     [InlineData("c = new CiRun(1, \"CI\", \"completed\", null, \"push\", Now, null, 0);")]
     [InlineData("public PullRequest? Pr { get; set; } = new(7, \"OPEN\", \"h\", \"u\");")]
     [InlineData("PullRequest pr = new(7, \"OPEN\", \"h\", \"u\");")]
+    [InlineData("m = new MergeState(MergeKinds.Ready, 3, 3);")]
+    [InlineData("private static CiRun CiOf(long id) =>\n        new(id, \"CI\", \"completed\", null, \"push\", Now, null, 0);")]
+    [InlineData("private static PullRequest Pr(int n) => new(n, \"OPEN\", \"h\", \"u\");")]
+    [InlineData("private static ChecksSummary Pending(int done, int total = 3) => new(ChoiceStatus.Pending, done, total);")]
+    [InlineData("PullRequestStatus Pr(int n)\n    {\n        return new() { Number = n };\n    }")]
     public void TheScannerFlagsADirectConstruction(string line) => Scan(line).ShouldHaveSingleItem();
 
     [Theory]

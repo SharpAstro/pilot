@@ -118,6 +118,26 @@ public sealed class GhRecordingTests
     }
 
     [Fact]
+    public void ACompletedCiRunCarriesItsStartAndEnd()
+    {
+        var row = GhCli.ParseCiRuns(Recording("ci-runs", "completed"), DateTimeOffset.UnixEpoch).ShouldHaveSingleItem();
+        GhCli.CiRunOf(row, 2.5).ShouldBe(new CiRun(43884565698, "v2 (.NET)", "completed", "success", "push",
+            DateTimeOffset.Parse("2026-11-16T14:19:45Z", System.Globalization.CultureInfo.InvariantCulture),
+            DateTimeOffset.Parse("2026-11-16T14:29:34Z", System.Globalization.CultureInfo.InvariantCulture), 2.5));
+    }
+
+    [Fact]
+    public void ARunningCiRunHasNoConclusionAndNoEnd()
+    {
+        var run = GhCli.CiRunOf(GhCli.ParseCiRuns(Recording("ci-runs", "running"), DateTimeOffset.UnixEpoch).ShouldHaveSingleItem(), 0);
+        (run.Status, run.Conclusion, run.CompletedAt).ShouldBe(("in_progress", null, null));
+    }
+
+    [Fact]
+    public void NoCiRunsIsAnEmptyList() =>
+        GhCli.ParseCiRuns(Recording("ci-runs", "none"), DateTimeOffset.UnixEpoch).ShouldBeEmpty();
+
+    [Fact]
     public void NoWorkflowRunsIsAnEmptyList() =>
         GhCli.ParseWorkflowRuns(Recording("workflow-runs", "none")).ShouldBeEmpty();
 

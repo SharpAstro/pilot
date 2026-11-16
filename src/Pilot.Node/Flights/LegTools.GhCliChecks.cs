@@ -72,20 +72,26 @@ public sealed partial class GhCli
     // A completed run's runner minutes by run id and the time it was last updated (a rerun updates it): read once, not at every look.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<(long Id, DateTimeOffset Updated), double> _runMinutes = new();
 
-    public async Task<CiRun[]> CiRunsAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    /// <summary>The endpoint of <see cref="CiRunsAsync"/> for a branch: the REST list of its workflow runs (no <c>--json</c> list, gh api answers every key).</summary>
+    internal static string CiRunsEndpoint(string branch) => $"repos/{{owner}}/{{repo}}/actions/runs?branch={Uri.EscapeDataString(branch)}&per_page=100";
+
+    /// <summary>The keys of each entry of <c>workflow_runs</c> that <see cref="ParseCiRuns"/> reads; a recording of the answer carries at least these.</summary>
+    internal const string CiRunKeys = "id,name,status,conclusion,event,run_started_at,created_at,updated_at";
+
+    /// <summary>One run of <see cref="ParseCiRuns"/> before its runner minutes are known.</summary>
+    internal sealed record CiRunRow(long Id, string Name, string Status, string? Conclusion, string Event, DateTimeOffset StartedAt, DateTimeOffset Updated)
     {
-        var (exit, output, error) = await RunAsync(
-            ["api", $"repos/{{owner}}/{{repo}}/actions/runs?branch={Uri.EscapeDataString(branch)}&per_page=100"], repoPath, cancellationToken);
-        if (exit != 0)
-        {
-            throw new FlightException($"gh could not list the workflow runs of {branch}: {(error.Trim().Length > 0 ? error : output).Trim()}");
-        }
-        var now = DateTimeOffset.UtcNow;
-        var runs = new List<CiRun>();
-        using var doc = JsonDocument.Parse(output);
+        public bool Completed => Status == "completed";
+    }
+
+    /// <summary>The runs of <see cref="CiRunsEndpoint"/>'s answer; <paramref name="now"/> stands in for a run's missing start. Unreadable entries are skipped.</summary>
+    internal static List<CiRunRow> ParseCiRuns(string json, DateTimeOffset now)
+    {
+        var rows = new List<CiRunRow>();
+        using var doc = JsonDocument.Parse(json);
         if (!doc.RootElement.TryGetProperty("workflow_runs", out var listed) || listed.ValueKind != JsonValueKind.Array)
         {
-            return [];
+            return rows;
         }
         foreach (var r in listed.EnumerateArray())
         {
@@ -93,19 +99,37 @@ public sealed partial class GhCli
             {
                 continue;
             }
-            var status = TextOf(r, "status") ?? "";
             var started = StampOf(r, "run_started_at") ?? StampOf(r, "created_at") ?? now;
-            var updated = StampOf(r, "updated_at") ?? started;
-            var completed = status == "completed";
-            if (!_runMinutes.TryGetValue((id, updated), out var minutes) || !completed)
+            rows.Add(new CiRunRow(id, TextOf(r, "name") ?? "", TextOf(r, "status") ?? "", TextOf(r, "conclusion") is { Length: > 0 } conclusion ? conclusion : null,
+                TextOf(r, "event") ?? "", started, StampOf(r, "updated_at") ?? started));
+        }
+        return rows;
+    }
+
+    /// <summary>A parsed run with its runner minutes: a completed run carries when it ended, one still going does not.</summary>
+    internal static CiRun CiRunOf(CiRunRow r, double minutes) =>
+        new(r.Id, r.Name, r.Status, r.Conclusion, r.Event, r.StartedAt, r.Completed ? r.Updated : null, minutes);
+
+    public async Task<CiRun[]> CiRunsAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["api", CiRunsEndpoint(branch)], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not list the workflow runs of {branch}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        var now = DateTimeOffset.UtcNow;
+        var runs = new List<CiRun>();
+        foreach (var r in ParseCiRuns(output, now))
+        {
+            if (!_runMinutes.TryGetValue((r.Id, r.Updated), out var minutes) || !r.Completed)
             {
-                minutes = await RunnerMinutesAsync(repoPath, id, now, cancellationToken);
-                if (completed)
+                minutes = await RunnerMinutesAsync(repoPath, r.Id, now, cancellationToken);
+                if (r.Completed)
                 {
-                    _runMinutes[(id, updated)] = minutes;
+                    _runMinutes[(r.Id, r.Updated)] = minutes;
                 }
             }
-            runs.Add(new CiRun(id, TextOf(r, "name") ?? "", status, TextOf(r, "conclusion") is { Length: > 0 } conclusion ? conclusion : null, TextOf(r, "event") ?? "", started, completed ? updated : null, minutes));
+            runs.Add(CiRunOf(r, minutes));
         }
         return [.. runs.OrderByDescending(r => r.Id)];
     }

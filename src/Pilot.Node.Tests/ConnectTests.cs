@@ -357,7 +357,7 @@ public sealed class ConnectTests : OverlapTestsBase
         held.PeerConnections.ShouldHaveSingleItem().Code.ShouldBe("PIL300");
     }
 
-    private static PullRequest Pr(int number, string state) => new(number, state, "head", $"https://github.com/x/tianwen/pull/{number}");
+    private static PullRequest Pr(int number, string state) => GhAnswers.PullRequestByBranch(state.ToLowerInvariant(), number, "head", $"https://github.com/x/tianwen/pull/{number}");
 
     private async Task<(FlightCommander Flights, FakeGitHub GitHub, FakePeer Peer)> WaitingOnAFoldedFlight(bool survivorHasPr)
     {
