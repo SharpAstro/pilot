@@ -168,6 +168,30 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>How often the idle-time disk sweep runs (<see cref="NodeSettings.MaintenanceEveryKey"/>); 24 hours unless set, null when off.</summary>
+    public TimeSpan? MaintenanceEvery
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.MaintenanceEvery is { } set ? (set == TimeSpan.Zero ? null : set) : NodeSettings.DefaultMaintenanceEvery;
+            }
+        }
+    }
+
+    /// <summary>How long the node must be idle before the idle-time disk sweep starts (<see cref="NodeSettings.MaintenanceIdleKey"/>); 15 minutes unless set.</summary>
+    public TimeSpan MaintenanceIdle
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.MaintenanceIdle ?? NodeSettings.DefaultMaintenanceIdle;
+            }
+        }
+    }
+
     /// <summary>The model a session of <paramref name="role"/> starts on, or null for Claude Code's own default.</summary>
     public string? Model(string role) => _defaults ? Range(role).Default.Model : null;
 

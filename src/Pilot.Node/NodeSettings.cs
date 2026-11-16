@@ -178,6 +178,12 @@ public sealed record NodeSettings
     /// <summary>How long a landed flight stays live before the node archives it (PIL1083); <see cref="TimeSpan.Zero"/> saved means off.</summary>
     public const string ArchiveLandedAfterKey = "archive-landed-after";
     public static readonly TimeSpan DefaultArchiveLandedAfter = TimeSpan.FromDays(7);
+    /// <summary>How often the idle-time disk sweep runs (PIL1102; not <see cref="MaintenanceKey"/>, the reboot mode); <see cref="TimeSpan.Zero"/> saved means off.</summary>
+    public const string MaintenanceEveryKey = "maintenance-every";
+    public static readonly TimeSpan DefaultMaintenanceEvery = TimeSpan.FromHours(24);
+    /// <summary>How long the node must be idle before the idle-time disk sweep starts (PIL1102).</summary>
+    public const string MaintenanceIdleKey = "maintenance-idle";
+    public static readonly TimeSpan DefaultMaintenanceIdle = TimeSpan.FromMinutes(15);
     public const string OpusCapKey = "opus-cap";
 
     /// <summary>The most reviews and fixers this node runs at once (#912); a start past it waits for a slot.</summary>
@@ -200,7 +206,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. BenchKeys, .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -357,6 +363,10 @@ public sealed record NodeSettings
     public TimeSpan? AdoptAfter { get; init; }
     /// <summary>How long a landed flight waits before it is archived (<see cref="ArchiveLandedAfterKey"/>); null reads as <see cref="DefaultArchiveLandedAfter"/>, <see cref="TimeSpan.Zero"/> is off.</summary>
     public TimeSpan? ArchiveLandedAfter { get; init; }
+    /// <summary>How often the idle-time disk sweep runs (<see cref="MaintenanceEveryKey"/>); null reads as <see cref="DefaultMaintenanceEvery"/>, <see cref="TimeSpan.Zero"/> is off.</summary>
+    public TimeSpan? MaintenanceEvery { get; init; }
+    /// <summary>How long the node is idle before the idle-time disk sweep starts (<see cref="MaintenanceIdleKey"/>); null reads as <see cref="DefaultMaintenanceIdle"/>.</summary>
+    public TimeSpan? MaintenanceIdle { get; init; }
     /// <summary>The margin, in points, a start tolerates between the 7-day window's used share and its elapsed share; null is off.</summary>
     public double? WeekPace { get; init; }
 
@@ -611,6 +621,8 @@ public sealed record NodeSettings
         WeekLimitKey => WeekLimit is { } week ? [week.ToString(CultureInfo.InvariantCulture)] : null,
         PrWatchIdleKey => PrWatchIdle is { } idle ? [DurationText(idle)] : null,
         AdoptAfterKey => AdoptAfter is { } adoptAfter ? [DurationText(adoptAfter)] : null,
+        MaintenanceEveryKey => MaintenanceEvery is { } every ? [every == TimeSpan.Zero ? "off" : ArchiveDurationText(every)] : null,
+        MaintenanceIdleKey => MaintenanceIdle is { } idle ? [DurationText(idle)] : null,
         ArchiveLandedAfterKey => ArchiveLandedAfter is { } archiveAfter ? [archiveAfter == TimeSpan.Zero ? "off" : ArchiveDurationText(archiveAfter)] : null,
         WeekPaceKey => WeekPace is { } pace ? [pace.ToString(CultureInfo.InvariantCulture)] : null,
         SpendAlertKey => SpendAlert is { } alert ? [alert.ToString(CultureInfo.InvariantCulture)] : null,
@@ -999,6 +1011,26 @@ public sealed record NodeSettings
                 return ParseDuration(One()) is { } adopt && adopt >= TimeSpan.FromMinutes(1) && adopt <= TimeSpan.FromDays(7)
                     ? (settings with { AdoptAfter = adopt }, null)
                     : (null, "adopt-after takes how long a peer node must be unheard before this node may take over its flights, 1 minute to 7 days, as 30m or 1h (a bare number is minutes)");
+            case MaintenanceEveryKey:
+                if (clear)
+                {
+                    return (settings with { MaintenanceEvery = null }, null);
+                }
+                if (One() is "off" or "none" or "never")
+                {
+                    return (settings with { MaintenanceEvery = TimeSpan.Zero }, null);
+                }
+                return ParseDuration(One(), days: true) is { } every && every >= TimeSpan.FromHours(1) && every <= TimeSpan.FromDays(365)
+                    ? (settings with { MaintenanceEvery = every }, null)
+                    : (null, "maintenance-every takes how often the idle-time disk sweep runs, 1 hour to 365 days, as 12h or 1d (a bare number is minutes), or off to never run it (this is not the reboot maintenance mode)");
+            case MaintenanceIdleKey:
+                if (clear)
+                {
+                    return (settings with { MaintenanceIdle = null }, null);
+                }
+                return ParseDuration(One()) is { } idleFor && idleFor >= TimeSpan.FromMinutes(1) && idleFor <= TimeSpan.FromDays(1)
+                    ? (settings with { MaintenanceIdle = idleFor }, null)
+                    : (null, "maintenance-idle takes how long the node must be idle before the idle-time disk sweep starts, 1 minute to 1 day, as 15m or 1h (a bare number is minutes)");
             case ArchiveLandedAfterKey:
                 if (clear)
                 {
