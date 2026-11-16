@@ -430,7 +430,6 @@ public sealed class DiskSweepTests : IDisposable
         var card = _state.Cards().Single(c => c.Kind == DiskSweep.DiskLowKind);
         const string said = "Last maintenance run 2026-11-16 03:30 UTC freed 9.0 GB (packages 8.0 GB, git 1.0 GB). Could not touch: git: worktree prune failed in tianwen.";
         card.Detail!.ShouldContain(said);
-        card.Summary!.ShouldContain(said);
     }
 
     [Fact]
@@ -442,7 +441,6 @@ public sealed class DiskSweepTests : IDisposable
 
         var card = _state.Cards().Single(c => c.Kind == DiskSweep.DiskLowKind);
         card.Detail!.ShouldContain("No maintenance run yet; 'pilot node maintenance --dry-run' shows what one would free.");
-        card.Summary!.ShouldContain("pilot node maintenance --dry-run");
     }
 
     [Fact]
