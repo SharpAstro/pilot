@@ -206,7 +206,8 @@ public sealed class LandedBranchSweepTests : IDisposable
         Put(Row("PIL30", Git(_repo, "rev-parse", "main"), branch: "main"));
         kept.Add("PIL30");
 
-        (await Sweeper().SweepAsync(Ct)).ShouldBe(deleted.Count);
+        var sweeper = Sweeper();
+        (await sweeper.SweepAsync(Ct)).ShouldBe(deleted.Count);
 
         foreach (var code in deleted)
         {
@@ -226,6 +227,7 @@ public sealed class LandedBranchSweepTests : IDisposable
         Git(_repo, "rev-parse", "--verify", "main").ShouldNotBeEmpty();
 
         var line = Summaries().ShouldHaveSingleItem();
+        line.Kind.ShouldBe(LandedBranchSweep.SummaryKind);
         line.Title.ShouldBe("branches: deleted 18, kept 11: 2 live-session, 2 local-ahead, 2 plane-folder, 1 checked-out, 1 folded-pending, 1 no-merged-head, 1 not-flight-branch, 1 origin-ahead");
 
         // The outcome is on the live row, and in the file of an archived flight and its index.
@@ -243,9 +245,11 @@ public sealed class LandedBranchSweepTests : IDisposable
         _github.MergedPrListings.ShouldBe(1);
         _git.Count("push").ShouldBeLessThanOrEqualTo(5);
 
-        // A second sweep says nothing new and deletes nothing more.
-        (await Sweeper().SweepAsync(Ct)).ShouldBe(0);
-        Summaries().Count().ShouldBe(1);
+        // A second sweep deletes nothing more and says what is left once; a third says nothing, as the same line is not raised again.
+        (await sweeper.SweepAsync(Ct)).ShouldBe(0);
+        Summaries().Count().ShouldBe(2);
+        (await sweeper.SweepAsync(Ct)).ShouldBe(0);
+        Summaries().Count().ShouldBe(2);
     }
 
     [Fact]
