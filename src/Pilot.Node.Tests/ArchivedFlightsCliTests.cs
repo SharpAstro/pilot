@@ -105,7 +105,7 @@ public sealed class ArchivedFlightsCliTests : IAsyncLifetime
         (await Pilot("flight", "archive", "--landed")).Output.ShouldContain("22 of 22 landed flights archived");
 
         var (_, first) = await Pilot("status", "--archived", "--output-format", "plain");
-        first.ShouldContain("TIA1022  Title of TIA1022  (tianwen, PR #1023, landed 2026-11-01)");
+        first.ShouldContain("TIA1022  Title of TIA1022  (tianwen, PR #1023, landed 2026-11-02)");
         first.ShouldContain("22 archived flights, 1 to 20; next page: pilot status --archived --page 2");
         first.ShouldNotContain("TIA1001  ");
         first.IndexOf("TIA1022", StringComparison.Ordinal).ShouldBeLessThan(first.IndexOf("TIA1021", StringComparison.Ordinal));
@@ -117,7 +117,7 @@ public sealed class ArchivedFlightsCliTests : IAsyncLifetime
 
         var (_, markdown) = await Pilot("status", "--archived", "--output-format", "markdown");
         markdown.ShouldContain("| Code | Title | PR | Landed |");
-        markdown.ShouldContain("| TIA1022 | Title of TIA1022 | [#1023](https://example.test/pull/1023) | 2026-11-01 |");
+        markdown.ShouldContain("| TIA1022 | Title of TIA1022 | [#1023](https://example.test/pull/1023) | 2026-11-02 |");
         markdown.ShouldContain("22 archived flights, 1 to 20");
     }
 
