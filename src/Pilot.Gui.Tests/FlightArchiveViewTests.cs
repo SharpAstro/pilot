@@ -124,7 +124,7 @@ public sealed class FlightArchiveViewTests
         };
 
         Click(view.Tree(Screen()), FlightsView<RgbaImage>.ArchivedHit);
-        await loaded.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await loaded.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
         view.IsArchivedOpen.ShouldBeTrue();
         asked.Select(a => a.Node).ShouldBe(["DE1", "SE1"], ignoreOrder: true);
@@ -229,7 +229,7 @@ public sealed class FlightArchiveViewTests
                             }
                         };
                         view.OpenArchived();
-                        await loaded.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                        await loaded.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
                         view.Render(screen, new RectF32(0, 0, width, height));
                     }
 
