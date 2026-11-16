@@ -103,8 +103,12 @@ Later legs append here; the PR body is drawn from this section.
   (a pending state with every check done, a failed check outside the finished ones, a blocked state that is neither draft, review nor failed). Dropped-from-queue text is the
   reader's (`failed checks` from `FAILED_CHECKS`), so those tests pass the enum. No expectation changed; the code under test was not wrong.
 - **`FakeGitHub.MergeStateAsync`** copied `RemovedReason` into `DroppedFromQueue` as it was, so with the queue reasons now GitHub's enum it said `MANUALLY_REMOVED` where the reader says
-  `manually removed`. It no longer derives anything: it hands `GhCli.ReadMergeState` the checks, auto-merge and queue it holds. A fake holding only a check status (`Checks`) now has one check, so
-  its progress is 1 of 1 (it was 0 of 0, which no check list gives).
+  `manually removed`. It no longer derives anything: it hands `GhCli.ReadMergeState` the checks, auto-merge and queue it holds. Its checks are the ones `ChecksSummaryAsync`
+  answers for the same PR (`SummaryOf`, `Summary`, else `GhAnswers.ChecksOf(Checks)`), so the two reads cannot disagree: a fake holding only `Checks` has one check, passing 1 of 1,
+  failing 1 of 1 with the failed one first, pending 0 of 1 with that check pending (it was 0 of 0, which no check list gives). A first cut of this round marked every check up to
+  `Done` passing and took a lone pending check as 1 of 1, so a blocked PR read `AwaitsCheck` ("a required check has yet to report") while `ChecksSummaryAsync` said one pending
+  check; the 16 tests that set `Checks = Pending` with no `Summary` (`AutopilotMergeCardTests`, `AutopilotMergeRefusalTests`, `DecisionSourcesTests`, `PrRecheckTests`, `ReviewTests`,
+  `LegTests`) then drove the awaiting-check path instead of the pending-checks one their names say. They drive the pending path again.
 - **`CiRun`** (`CiBudgetTests.CiOf`): was `new CiRun(...)`. `CiRunsAsync` now parses through `GhCli.ParseCiRuns` (endpoint in `CiRunsEndpoint`, the keys it reads in `CiRunKeys`; the runner minutes
   stay a per-run call), `Fixtures/gh/ci-runs/` records `gh api repos/{owner}/{repo}/actions/runs` (trimmed to those keys, since the REST answer has no field list to compare with, which
   `GhFieldListTests.EveryCiRunRecordingCarriesExactlyTheKeysTheParserReads` pins), and `GhAnswers.CiRun` builds from them. No expectation changed.

@@ -751,14 +751,21 @@ internal sealed class FakeGitHub : IGitHub
             return Task.FromResult<MergeState?>(Merge);
         }
         // GitHub's own reader says it, over the checks and queue the fake holds: what the node reads is what ReadMergeState makes of them.
-        var status = Summary?.Status ?? Checks;
-        var (done, total) = (Summary?.Done ?? (status is null ? 0 : 1), Summary?.Total ?? (status is null ? 0 : 1));
+        // The checks are the ones ChecksSummaryAsync answers for this PR, so the two reads cannot disagree: a pending check is 0 of 1 and pending, never 1 of 1 awaiting a check.
+        var summary = SummaryOf.TryGetValue(number, out var ownSummary) ? ownSummary : Summary ?? (Checks is { } held ? GhAnswers.ChecksOf(held) : null);
+        var status = summary?.Status;
         var checks = new List<(string Bucket, string? Name, string? Link)>();
-        for (var i = 1; i <= total; i++)
+        if (summary is { } s)
         {
-            checks.Add(status == ChoiceStatus.Failing && i == 1 ? ("fail", Summary?.FailedName ?? "build", Summary?.FailedLink)
-                : i <= done ? ("pass", $"check {i}", null)
-                : ("pending", $"check {i}", null));
+            var failed = s.Status == ChoiceStatus.Failing ? 1 : 0;
+            if (failed == 1)
+            {
+                checks.Add(("fail", s.FailedName ?? "gate", s.FailedLink));
+            }
+            for (var i = 1 + failed; i <= s.Total; i++)
+            {
+                checks.Add(i <= s.Done ? ("pass", $"check {i}", null) : ("pending", $"check {i}", null));
+            }
         }
         var armed = AutoMergeArmed.Any(a => a.Number == number) && !AutoMergeDisarmed.Contains(number);
         var mergeState = status == ChoiceStatus.Passing ? "CLEAN" : status is null ? null : "BLOCKED";
