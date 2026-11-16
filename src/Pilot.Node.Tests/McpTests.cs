@@ -104,6 +104,7 @@ public sealed class McpTests : IAsyncLifetime
         tools.Keys.ShouldContain("design_render");
         tools.Keys.ShouldContain("design_publish");
         tools.Keys.ShouldContain("design_show");
+        tools.Keys.ShouldContain("design_terminals");
         tools.Keys.ShouldContain("designs");
         tools.Keys.ShouldContain("leg_go-around");
         tools.Keys.ShouldContain("leg_remove");

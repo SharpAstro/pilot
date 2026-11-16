@@ -1,0 +1,18 @@
+{
+  "width": 1280,
+  "height": 720,
+  "entry": "home",
+  "screens": [
+    {
+      "id": "home",
+      "title": "Home",
+      "root": {
+        "kind": "hstack", "gap": 0, "padding": 0,
+        "children": [
+          { "kind": "text", "text": "Flights in the air and on the ground", "width": 400 },
+          { "kind": "text", "text": "Jobs queued behind the running build", "width": 400 }
+        ]
+      }
+    }
+  ]
+}

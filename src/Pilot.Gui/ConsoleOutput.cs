@@ -27,8 +27,8 @@ internal static partial class ConsoleOutput
 
         if (AttachConsole(AttachParentProcess))
         {
-            Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
-            Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
+            System.Console.SetOut(new StreamWriter(System.Console.OpenStandardOutput()) { AutoFlush = true });
+            System.Console.SetError(new StreamWriter(System.Console.OpenStandardError()) { AutoFlush = true });
         }
     }
 

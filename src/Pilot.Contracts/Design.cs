@@ -32,6 +32,12 @@ public sealed record DesignRow
 
     /// <summary>Every version made, oldest first: number, time, why and hash of each. Empty while there is none, and in a record an older release wrote.</summary>
     public DesignVersionRow[] History { get; init => field = value ?? []; } = [];
+
+    /// <summary>
+    /// The terminal sizes the design is also arranged in cells at (PIL1098), each <c>&lt;cols&gt;x&lt;rows&gt;</c>: <c>pilot design check</c> runs Console.Lib's cell rules on every screen at each,
+    /// and <c>pilot design render</c> writes each screen at each as text and as a grid. Empty for a design with no terminal target, and in a record an older release wrote.
+    /// </summary>
+    public string[] Terminals { get; init => field = value ?? []; } = [];
 }
 
 /// <summary>
@@ -47,6 +53,50 @@ public static class DesignSizes
         (1000, 900), (1280, 900), (1400, 900), (1920, 900), (2560, 900),
         (1280, 1440), (2560, 1440),
     ];
+}
+
+/// <summary>
+/// The terminal sizes a design can name as targets (<c>pilot design new --terminal</c>, <c>pilot design terminals</c>): the sizes of the terminal wireframe sweep
+/// (<c>TerminalWireframeSweepTests</c>), so a design that passes at them fits the screens pilot-tui itself is held to. One list, held to the sweep by a test.
+/// </summary>
+public static class DesignTerminals
+{
+    /// <summary><c>&lt;cols&gt;x&lt;rows&gt;</c> of the standard sizes.</summary>
+    public static readonly string[] Standard = ["80x24", "100x30", "160x44", "250x60"];
+
+    /// <summary>Reads <c>&lt;cols&gt;x&lt;rows&gt;</c> (both positive, at most 1000), or false.</summary>
+    public static bool TryParse(string? text, out int columns, out int rows)
+    {
+        columns = rows = 0;
+        var parts = (text ?? "").Split('x');
+        return parts.Length == 2
+            && int.TryParse(parts[0], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out columns)
+            && int.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out rows)
+            && columns is > 0 and <= 1000 && rows is > 0 and <= 1000;
+    }
+
+    /// <summary>The canonical <c>&lt;cols&gt;x&lt;rows&gt;</c> of each of <paramref name="sizes"/>, in order, without repeats; false naming the first that is not a size.</summary>
+    public static bool TryNormalise(IEnumerable<string> sizes, out string[] normalised, out string bad)
+    {
+        var list = new List<string>();
+        bad = "";
+        foreach (var size in sizes)
+        {
+            if (!TryParse(size.Trim(), out var c, out var r))
+            {
+                bad = size;
+                normalised = [];
+                return false;
+            }
+            var canon = string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{c}x{r}");
+            if (!list.Contains(canon, StringComparer.Ordinal))
+            {
+                list.Add(canon);
+            }
+        }
+        normalised = [.. list];
+        return true;
+    }
 }
 
 /// <summary>Why a version was made, as <c>pilot design publish --why</c> takes it: the owner's <c>brief</c>, a <c>message</c> of theirs, or a <c>fix</c> of a finding.</summary>

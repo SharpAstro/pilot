@@ -945,6 +945,12 @@ public static class Verbs
     /// </summary>
     public const string DesignPublish = "design-publish";
 
+    /// <summary>
+    /// <c>design-terminals design/DSN-&lt;n&gt; &lt;cols&gt;x&lt;rows&gt;...</c> (PIL1098): sets the terminal sizes the design is checked and rendered at in cells; no args clears them.
+    /// <c>design-new</c> takes them as its fourth and later args.
+    /// </summary>
+    public const string DesignTerminals = "design-terminals";
+
     /// <summary><c>design-show design/DSN-&lt;n&gt;</c>: reads one design whole, as <see cref="CommandResult.Design"/>. Changes nothing.</summary>
     public const string DesignShow = "design-show";
 
