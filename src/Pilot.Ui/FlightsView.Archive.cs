@@ -122,6 +122,12 @@ internal sealed partial class FlightsView<TSurface>
         }
     }
 
+    /// <summary>
+    /// The colour of the quiet count on the header: the dim text colour, which reads on the header in the standard palette; Night's
+    /// dim red is too dark on its header (as its other dim text is), so Night uses its bright red, as the header's other clauses do.
+    /// </summary>
+    internal static RGBAColor32 QuietColor(Palette palette) => ReferenceEquals(palette, Palette.Night) ? palette.Bright : palette.Dim;
+
     /// <summary>Sends archive-flight for each of <paramref name="lines"/> to its own node, one after the other; every refusal is said.</summary>
     internal Task ArchiveLanded(IReadOnlyList<FlightLine> lines)
     {
