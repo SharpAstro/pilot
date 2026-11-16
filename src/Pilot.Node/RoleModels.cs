@@ -225,6 +225,18 @@ public sealed partial class RoleModels
     public string? ReviewerModel(ReviewDepth depth) =>
         !_defaults ? null : depth == ReviewDepth.Deep ? Range(Reviewer).Max.Model : Model(Reviewer);
 
+    /// <summary>Whether a landed flight's branch is deleted (<see cref="NodeSettings.DeleteLandedBranchesKey"/>); on unless the settings say off.</summary>
+    public bool DeleteLandedBranches
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.DeleteLandedBranches ?? true;
+            }
+        }
+    }
+
     /// <summary>Whether the first review of a large diff runs on the deep model (<see cref="NodeSettings.ReviewDeepFirstKey"/>); on unless the settings say off.</summary>
     public bool ReviewDeepFirst
     {

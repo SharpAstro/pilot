@@ -96,6 +96,18 @@ public sealed record FlightRow
     /// </summary>
     public string? MergedHead { get; init; }
 
+    /// <summary>The head the landed PR merged at (PIL1101): the tip its branch must still have for the node to delete it; null when not recorded.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LandedHead { get; init; }
+
+    /// <summary>When the node deleted the flight's branch, locally and on origin (PIL1101); null until then.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? BranchDeletedAt { get; init; }
+
+    /// <summary>Why the node kept the flight's branch (PIL1101), a short reason; null once deleted or before a look.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? BranchKept { get; init; }
+
     /// <summary>The number of the PR that merged without the new leg, while <see cref="MergedHead"/> says so.</summary>
     public int? MergedPullRequest { get; init; }
 
@@ -608,6 +620,15 @@ public readonly record struct FlightCounts(int Flying, int Held, int OnHold)
 /// <summary>What a held flight waits for, in one place for every client's <c>held, waiting for …</c>.</summary>
 public static class FlightWaiting
 {
+    /// <summary>What a landed flight's branch came to (<c>branch flight/x1 merged at 1a2b3c4d, deleted 2026-11-16</c>), for pilot status and the flight's detail; null when nothing was recorded.</summary>
+    public static string? BranchText(FlightRow flight)
+    {
+        var merged = flight.LandedHead is { Length: > 0 } head ? $" merged at {(head.Length > 8 ? head[..8] : head)}" : "";
+        var fate = flight.BranchDeletedAt is { } at ? $", deleted {at.ToUniversalTime():yyyy-MM-dd}"
+            : flight.BranchKept is { Length: > 0 } kept ? $", kept: {kept}" : "";
+        return merged.Length == 0 && fate.Length == 0 ? null : $"branch {flight.Branch}{merged}{fate}";
+    }
+
     /// <summary>What a flight in a holding pattern says in place of its merge stage (<c>holding: the watchtower is making the review's small fixes</c>); null when it is not holding.</summary>
     public static string? HoldingText(FlightRow flight) => flight.Holding is { } holding ? $"holding: {holding.Reason}" : null;
 
