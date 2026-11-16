@@ -88,6 +88,8 @@ Later legs append here; the PR body is drawn from this section.
   checks that give those counts), but `ChecksSummary(Passing, 3, 7)` (StaleCardTests passes `3, 7` for pending and failing only) and `ChecksSummary(status, 1, 1)` with status Pending
   (`PrReviewTests.ReviewedWidget`, one check cannot be pending and done) are not: passing means every check done, pending means one is not. `ChecksOf` throws on such a count;
   `ReviewedWidget` now gives pending as 0 of 1. No expectation changed. The code under test was not wrong.
+- **Pending checks with none counted** (`RebaseLayFlightTests.ADroppedHeadWhoseChecksArePendingIsNotReportedAsDroppedForAConflict`): `new ChecksSummary(Pending, 0, 0)` is pending with no check
+  behind it; `ParseChecks` returns null for no checks. It is now 0 of 1 (one pending check). The expectation is unchanged and the code under test was not wrong.
 - **An open PR with no URL** (`CliTests.ReposWriteMarkdownWithTablesAndLeavePlainAsItWas`, PR #8): `new PullRequestStatus { ... }` with no `Url`; `gh pr list --json ... url` always
   fills it. The PR now has a URL and its row is a link, `| [#8 wip](https://example.com/pull/8) | ...`. The code under test was not wrong (it links whatever URL it is given).
 - **Open PRs generally** (`RepoStatusTests`, `RepoWatchTests`, `LegEndOverlapTests`, `PrRecheckTests`): the builder gives an open PR the recording's URL and a rollup from its `checks` argument; no expectation changed.

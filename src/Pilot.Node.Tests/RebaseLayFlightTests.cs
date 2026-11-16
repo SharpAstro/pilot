@@ -208,7 +208,7 @@ public sealed class RebaseLayFlightTests() : ReviewTestsBase(realGit: true)
     public async Task ADroppedHeadWhoseChecksArePendingIsNotReportedAsDroppedForAConflict()
     {
         var (flight, head) = await DroppedUnexplained();
-        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 0, 0);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 0, 1);
 
         var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head);
 
