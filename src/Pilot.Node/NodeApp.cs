@@ -32,6 +32,7 @@ public static partial class NodeApp
                 // Node.Lib.Hosting binds nothing when the node is local-only, so that holds where the bind happens.
                 if (!options.LanLoopbackOnly)
                 {
+                    NetworkBinds.Check($"the node's LAN port {options.LanPort}, every address");
                     kestrel.ListenOnNodeNetwork(options.LanPort, new LocalOnlyMode(options.LocalOnly));
                 }
                 else if (!options.LocalOnly)
