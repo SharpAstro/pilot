@@ -413,6 +413,32 @@ public sealed class CliTests : IAsyncLifetime
         (job.Kind, job.Local, job.Command).ShouldBe((JobKind.Bench, true, "echo benched"));
     }
 
+    /// <summary>--gui reaches the node (the CLI sends <see cref="Verbs.GuiArg"/>, and the MCP run tool builds its call from the same command tree) and marks the job's row.</summary>
+    [Fact]
+    public async Task PilotRunGuiSendsTheGuiFlagAndTheJobRowIsMarkedGui()
+    {
+        var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        FakeJobs(runner);
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        runner.DesktopProbe = () => null;
+
+        await Ok(_root, "run", "--gui", "--", "echo windowed");
+
+        var job = await TheJobUntil(j => j.EndedAt is not null, "the GUI job did not end");
+        job.Gui.ShouldBe(true);
+        job.Command.ShouldBe("echo windowed");
+    }
+
+    [Fact]
+    public async Task PilotRunGuiWithAloneIsAUsageErrorAndStartsNothing()
+    {
+        var (exit, output, error) = await Pilot(_root, "run", "--gui", "--alone", "--", "echo", "x");
+
+        exit.ShouldNotBe(0);
+        $"{output}{error}".ShouldContain("--gui is for a job with a window");
+        _node.State.Jobs().ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task PilotRunLocalWithoutAloneIsAUsageErrorAndStartsNothing()
     {
