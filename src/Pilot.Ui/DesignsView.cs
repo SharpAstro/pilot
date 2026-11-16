@@ -357,7 +357,6 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         }
         else
         {
-            left.Add(TargetBar(page));
             left.Add(Layout.Builder.Fill(key: PlayerKey).Bg(Well).Stretch());
             left.Add(Strip(page));
         }
@@ -370,9 +369,13 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         }
         right.Add(Heading("Brief"));
         right.Add(Markdown(string.IsNullOrWhiteSpace(page.Detail.Brief) ? "(no brief)" : page.Detail.Brief!));
-        return Layout.Builder.HStack(
-            Layout.Builder.VStack([.. left]).WithGap(8f).WStar(2.2f, 180f).HStar(),
-            Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 110f, 520f).HStar()).WithGap(Gutter).Pad(Gutter, 8f);
+        var columns = Layout.Builder.HStack(
+            Layout.Builder.VStack([.. left]).WithGap(8f).WStar(2.2f).HStar(),
+            Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).HStar();
+        // The target switcher spans the page above both columns: inside the player's column it was squeezed at a narrow window and drew over the versions beside it.
+        return page.Version is not null && Player is not null
+            ? Layout.Builder.VStack(TargetBar(page), columns).WithGap(8f).Pad(Gutter, 8f)
+            : Layout.Builder.VStack(columns).Pad(Gutter, 8f);
     }
 
     private IEnumerable<Layout.Node> Versions(DesignPage page)
@@ -430,13 +433,12 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         var custom = Layout.Builder.TextInput(CustomInput, 12f, Palette.Input).WStar().RowH(26f);
         var scale = surface.Scale.ToString("0.##", CultureInfo.InvariantCulture);
         var caption = _customProblem ?? $"{surface.Name}: {surface.Width} x {surface.Height} at {scale}x";
-        // Two rows of two chips, then swap, input and caption: a narrow window leaves this column little width, and a row of four chips or a wider swap overran it onto the versions beside it.
+        // Rows of the chips, the swap, the input and the caption, over the full width of the page.
         return Layout.Builder.VStack(
-            Layout.Builder.HStack([.. chips.Take(2)]).WithGap(4f).RowH(26f),
-            Layout.Builder.HStack([.. chips.Skip(2)]).WithGap(4f).RowH(26f),
+            Layout.Builder.HStack([.. chips]).WithGap(4f).RowH(26f),
             Layout.Builder.HStack(swap).RowH(26f),
             custom,
-            WrappedProse.OneLine(caption, 12f, _customProblem is null ? Dim : Bright, selectable: false).RowH(22f).Whole(caption)).WithGap(4f).RowH(142f);
+            WrappedProse.OneLine(caption, 12f, _customProblem is null ? Dim : Bright, selectable: false).RowH(22f).Whole(caption)).WithGap(4f).RowH(116f);
     }
 
     private Layout.Node Strip(DesignPage page)
