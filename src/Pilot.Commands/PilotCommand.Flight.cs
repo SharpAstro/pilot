@@ -131,8 +131,47 @@ public static partial class PilotCommand
                 (p, client, ct) => Send(client, Verbs.Separate, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
             var connectOverlap = Action(new Command("connect-overlap", "Answer an overlap by connecting the flight to the other (on this node or another): it holds until the other has landed, and a fresh planner is started, told the answer") { Arguments = { code, other } },
                 (p, client, ct) => Send(client, Verbs.ConnectOverlap, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
+            // archive: a landed flight leaves the live state for the archive store (PIL1083); --landed does every landed one that can go.
+            var archiveCode = new Argument<string?>("code") { Description = "The landed flight's code; leave it out with --landed", Arity = ArgumentArity.ZeroOrOne };
+            var archiveLanded = new Option<bool>("--landed") { Description = "Every landed flight that can be archived; names the ones it leaves and why" };
+            var archiveUndo = new Option<bool>("--undo") { Description = "Bring the archived flight back into the flights" };
+            var archive = Action(new Command("archive", "Move a landed flight out of the live state into the archive, where pilot status <code> still reads it; --landed does every landed one, --undo brings one back")
+                { Arguments = { archiveCode }, Options = { archiveLanded, archiveUndo } },
+                async (p, client, ct) =>
+                {
+                    var named = p.GetValue(archiveCode);
+                    var undo = p.GetValue(archiveUndo);
+                    if (p.GetValue(archiveLanded))
+                    {
+                        if (named is not null || undo)
+                        {
+                            throw new UsageException("--landed takes no code and no --undo");
+                        }
+                        var sender = await SenderAsync(client, hereSocket, who, bySession, byAgent, cwd, sessionId, ct);
+                        var landedCodes = (await SnapshotAsync(client, ct)).Flights.Where(f => f.State == FlightState.Landed).OrderBy(f => f.LandedAt).Select(f => f.Code).ToList();
+                        var archived = 0;
+                        foreach (var landedCode in landedCodes)
+                        {
+                            var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.ArchiveFlight, Target = Verbs.FlightTarget(landedCode), Args = [], Who = sender, Agent = byAgent }, ct);
+                            if (answer is { Success: true, Response: { Ok: true } })
+                            {
+                                archived++;
+                                await output.WriteLineAsync($"archived {landedCode}");
+                            }
+                            else
+                            {
+                                await output.WriteLineAsync($"left {landedCode}: {answer.Response?.Error ?? answer.Error}");
+                            }
+                        }
+                        await output.WriteLineAsync($"{archived} of {landedCodes.Count} landed {(landedCodes.Count == 1 ? "flight" : "flights")} archived");
+                        return 0;
+                    }
+                    return named is { Length: > 0 }
+                        ? await Send(client, Verbs.ArchiveFlight, Verbs.FlightTarget(named), undo ? ["undo"] : [], who, ct)
+                        : throw new UsageException("archive takes a flight's code, or --landed");
+                });
             var flight = new Command("flight", "Flights: create, plan, check what they touch, overlap, connect, disconnect, fly past a package wait, open a PR, review, merge, land")
-                { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, priority, move, adopt, pr, reviewStart, allowRound, ciBudget, hold, clear, ground, unground, merge, land } };
+                { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, priority, move, adopt, pr, reviewStart, allowRound, ciBudget, hold, clear, ground, unground, merge, land, archive } };
 
             return flight;
         }
