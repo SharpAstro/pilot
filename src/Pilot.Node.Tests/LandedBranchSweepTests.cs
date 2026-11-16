@@ -1,0 +1,352 @@
+using Pilot.Contracts;
+using Pilot.Node.Flights;
+using Shouldly;
+using Xunit;
+
+namespace Pilot.Node.Tests;
+
+/// <summary>
+/// PIL1101: the sweep that deletes the branches of flights that landed before the node did it at landing, on real git (a temp repo and a
+/// bare origin): which refs are safe to delete is git's own answer, and the one-push-per-batch claim counts real git calls.
+/// </summary>
+[Trait("Category", "Slow")] // real git processes: a sweep of 30 branches runs about 60 git commands, each 100 to 400 ms on Windows
+public sealed class LandedBranchSweepTests : IDisposable
+{
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private static readonly DateTimeOffset Now = new(2026, 11, 16, 9, 0, 0, TimeSpan.Zero);
+
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2lbs-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _repo;
+    private readonly string _origin;
+    private readonly FileJournal _journal;
+    private readonly NodeState _state;
+    private readonly CountingGit _git = new(new GitCli());
+    private readonly FakeGitHub _github = new();
+    private readonly Dictionary<string, string> _heads = [];
+
+    public LandedBranchSweepTests()
+    {
+        _repo = Path.Combine(_root, "repo");
+        _origin = Path.Combine(_root, "origin.git");
+        Directory.CreateDirectory(_repo);
+        Directory.CreateDirectory(_origin);
+        Git(_origin, "init", "--bare", "-b", "main");
+        Git(_repo, "init", "-b", "main");
+        Git(_repo, "config", "user.email", "t@example.com");
+        Git(_repo, "config", "user.name", "t");
+        Git(_repo, "config", "commit.gpgsign", "false");
+        Git(_repo, "remote", "add", "origin", _origin);
+        File.WriteAllText(Path.Combine(_repo, "a.txt"), "a");
+        Git(_repo, "add", "-A");
+        Git(_repo, "commit", "-m", "first");
+        Git(_repo, "push", "origin", "main");
+        _journal = new FileJournal(Path.Combine(_root, "store"));
+        _state = new NodeState(_journal, new FakeTime()) { Archive = new FlightArchive(_root) };
+    }
+
+    public void Dispose()
+    {
+        _journal.Dispose();
+        TestDirs.DeleteTree(_root);
+    }
+
+    private sealed class FakeTime : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
+    private string Git(string cwd, params string[] args)
+    {
+        var run = new GitCli().RunAsync(args, cwd, Ct).GetAwaiter().GetResult();
+        run.Ok.ShouldBeTrue($"git {string.Join(' ', args)}: {run.Error}");
+        return run.Output.Trim();
+    }
+
+    /// <summary>A branch with one commit past main, pushed unless told not to; returns the head it was merged at.</summary>
+    private string MakeBranch(string code, bool push = true)
+    {
+        var branch = $"flight/{code.ToLowerInvariant()}";
+        Git(_repo, "checkout", "-q", "-b", branch, "main");
+        File.WriteAllText(Path.Combine(_repo, code + ".txt"), code);
+        Git(_repo, "add", "-A");
+        Git(_repo, "commit", "-m", "work " + code);
+        var head = Git(_repo, "rev-parse", "HEAD");
+        if (push)
+        {
+            Git(_repo, "push", "origin", branch);
+        }
+        Git(_repo, "checkout", "-q", "main");
+        _heads[code] = head;
+        return head;
+    }
+
+    private void CommitOn(string code, string message, bool push)
+    {
+        Git(_repo, "checkout", "-q", $"flight/{code.ToLowerInvariant()}");
+        File.WriteAllText(Path.Combine(_repo, message.Replace(' ', '_') + ".txt"), message);
+        Git(_repo, "add", "-A");
+        Git(_repo, "commit", "-m", message);
+        if (push)
+        {
+            Git(_repo, "push", "origin", $"flight/{code.ToLowerInvariant()}");
+        }
+        Git(_repo, "checkout", "-q", "main");
+    }
+
+    private bool LocalHas(string code) => Git(_repo, "branch", "--list", $"flight/{code.ToLowerInvariant()}").Length > 0;
+
+    private bool OriginHas(string code) => Git(_repo, "ls-remote", "--heads", "origin", $"flight/{code.ToLowerInvariant()}").Length > 0;
+
+    private FlightRow Row(string code, string? head = null, string? branch = null) => new()
+    {
+        Code = code, Repo = "repo", RepoPath = _repo, Issue = int.Parse(code[3..]), Branch = branch ?? $"flight/{code.ToLowerInvariant()}",
+        Worktree = Path.Combine(_root, "planes", code), Base = "origin/main", State = FlightState.Landed, CreatedAt = Now.AddDays(-30),
+        LandedAt = Now.AddDays(-20), LandedHead = head, ReviewRounds = [],
+    };
+
+    private void Put(FlightRow row, bool archived = false)
+    {
+        _state.PutFlight(row);
+        if (archived)
+        {
+            _state.ArchiveFlight(row.Code);
+        }
+    }
+
+    private LandedBranchSweep Sweeper(IGit? git = null, int batch = 5, Func<bool>? enabled = null) =>
+        new(_state, new LandedBranches(git ?? _git), _github, new FakeTime()) { Batch = batch, Pause = TimeSpan.Zero, StartDelay = TimeSpan.FromHours(1), Enabled = enabled ?? (() => true) };
+
+    private IEnumerable<CardRow> Summaries() => _state.Cards().Where(c => c.Kind == LandedBranchSweep.SummaryKind);
+
+    private FlightRow Live(string code) => _state.Flights().Single(f => f.Code == code);
+
+    private FlightRow Archived(string code) => _state.Archive!.Read(code)!.Flight;
+
+    [Fact]
+    public async Task ThirtyLandedRowsDeleteExactlyTheSafeOnesAndRaiseOneLineWithCountsByReason()
+    {
+        var deleted = new List<string>();
+        var kept = new List<string>();
+
+        // PIL1 to 8: live, the merged head recorded; PIL9 to 12: archived, the same.
+        for (var i = 1; i <= 12; i++)
+        {
+            var code = $"PIL{i}";
+            Put(Row(code, MakeBranch(code)), archived: i > 8);
+            deleted.Add(code);
+        }
+        // PIL13 (live) and PIL14 (archived): no head on the row, GitHub lists the PR as merged.
+        var number = 100;
+        foreach (var code in new[] { "PIL13", "PIL14" })
+        {
+            var head = MakeBranch(code);
+            Put(Row(code) with { MergedPullRequest = number }, archived: code == "PIL14");
+            _github.MergedPrs[_repo] = [.. _github.MergedPrs.GetValueOrDefault(_repo) ?? [], new MergedPullRequest(number++, $"flight/{code.ToLowerInvariant()}", head)];
+            deleted.Add(code);
+        }
+        // PIL15: no head, GitHub does not list it.
+        MakeBranch("PIL15");
+        Put(Row("PIL15"));
+        kept.Add("PIL15");
+        // PIL16 (live) and PIL17 (archived): the local branch is a commit past the merged head.
+        foreach (var code in new[] { "PIL16", "PIL17" })
+        {
+            Put(Row(code, MakeBranch(code)), archived: code == "PIL17");
+            CommitOn(code, "local only work " + code, push: false);
+            kept.Add(code);
+        }
+        // PIL18: origin is a commit past the merged head, the local branch is at it.
+        Put(Row("PIL18", MakeBranch("PIL18")));
+        CommitOn("PIL18", "origin work", push: true);
+        Git(_repo, "branch", "-f", "flight/pil18", _heads["PIL18"]);
+        kept.Add("PIL18");
+        // PIL19 and PIL20: never pushed, so no remote branch.
+        foreach (var code in new[] { "PIL19", "PIL20" })
+        {
+            Put(Row(code, MakeBranch(code, push: false)));
+            deleted.Add(code);
+        }
+        // PIL21: its branch is gone everywhere already.
+        Put(Row("PIL21", Git(_repo, "rev-parse", "main")));
+        deleted.Add("PIL21");
+        // PIL22: folded into PIL1 with a branch PIL1's merge holds; PIL23: folded into a flight that has not landed.
+        var pil1 = _heads["PIL1"];
+        Git(_repo, "branch", "flight/pil22", pil1);
+        Git(_repo, "push", "origin", "flight/pil22");
+        Put(Row("PIL22") with { FoldedInto = "PIL1" });
+        deleted.Add("PIL22");
+        MakeBranch("PIL23");
+        Put(Row("PIL23") with { FoldedInto = "PIL99" });
+        kept.Add("PIL23");
+        // PIL24 and PIL25: a session of the flight is live.
+        foreach (var code in new[] { "PIL24", "PIL25" })
+        {
+            Put(Row(code, MakeBranch(code)));
+            _state.PutSession(new SessionRow
+            {
+                Id = "s" + code, SessionId = $"{code}-0000-4000-8000-000000000000", Name = $"de1-{code}-worker", Kind = SessionKind.Background, Cwd = "/work",
+                Role = SessionRole.Worker, Flight = code, ContextTokens = 1, ContextWindow = 200_000, State = SessionState.Idle, SpendWeighted = 0, StartedAt = Now,
+            });
+            kept.Add(code);
+        }
+        // PIL26 and PIL27: the plane folder is still on disk.
+        foreach (var code in new[] { "PIL26", "PIL27" })
+        {
+            Put(Row(code, MakeBranch(code)));
+            Directory.CreateDirectory(Path.Combine(_root, "planes", code));
+            kept.Add(code);
+        }
+        // PIL28: already marked deleted (its branch is left in place to show that nobody looks).
+        Put(Row("PIL28", MakeBranch("PIL28")) with { BranchDeletedAt = Now.AddDays(-1) });
+        // PIL29: checked out in another worktree. PIL30: a row whose branch is not its own flight branch.
+        Put(Row("PIL29", MakeBranch("PIL29")));
+        Git(_repo, "worktree", "add", Path.Combine(_root, "elsewhere"), "flight/pil29");
+        kept.Add("PIL29");
+        Put(Row("PIL30", Git(_repo, "rev-parse", "main"), branch: "main"));
+        kept.Add("PIL30");
+
+        (await Sweeper().SweepAsync(Ct)).ShouldBe(deleted.Count);
+
+        foreach (var code in deleted)
+        {
+            LocalHas(code).ShouldBeFalse($"{code} local");
+            OriginHas(code).ShouldBeFalse($"{code} origin");
+        }
+        foreach (var code in kept.Where(c => c != "PIL30"))
+        {
+            // A kept branch is untouched, wherever it lived.
+            if (code is not "PIL19" and not "PIL20")
+            {
+                (LocalHas(code) || OriginHas(code)).ShouldBeTrue($"{code} kept");
+            }
+        }
+        LocalHas("PIL28").ShouldBeTrue();
+        OriginHas("PIL28").ShouldBeTrue();
+        Git(_repo, "rev-parse", "--verify", "main").ShouldNotBeEmpty();
+
+        var line = Summaries().ShouldHaveSingleItem();
+        line.Title.ShouldBe("branches: deleted 18, kept 11: 2 live-session, 2 local-ahead, 2 plane-folder, 1 checked-out, 1 folded-pending, 1 no-merged-head, 1 not-flight-branch, 1 origin-ahead");
+
+        // The outcome is on the live row, and in the file of an archived flight and its index.
+        Live("PIL1").BranchDeletedAt.ShouldBe(Now);
+        Live("PIL13").LandedHead.ShouldBe(_heads["PIL13"]);
+        Archived("PIL9").BranchDeletedAt.ShouldBe(Now);
+        _state.ArchivedRow("PIL9")!.BranchDeletedAt.ShouldBe(Now);
+        Archived("PIL14").LandedHead.ShouldBe(_heads["PIL14"]);
+        Archived("PIL17").BranchDeletedAt.ShouldBeNull();
+        Archived("PIL17").BranchKept.ShouldNotBeNull().ShouldContain("not the merged head");
+        Live("PIL16").BranchKept.ShouldNotBeNull();
+        Live("PIL28").BranchDeletedAt.ShouldBe(Now.AddDays(-1));
+
+        // GitHub was read once for the repo, whatever the number of rows without a head.
+        _github.MergedPrListings.ShouldBe(1);
+        _git.Count("push").ShouldBeLessThanOrEqualTo(5);
+
+        // A second sweep says nothing new and deletes nothing more.
+        (await Sweeper().SweepAsync(Ct)).ShouldBe(0);
+        Summaries().Count().ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task TwelveSafeBranchesOfOneRepoCostOnePushPerBatchOfFive()
+    {
+        for (var i = 1; i <= 12; i++)
+        {
+            Put(Row($"PIL{i}", MakeBranch($"PIL{i}")));
+        }
+
+        (await Sweeper().SweepAsync(Ct)).ShouldBe(12);
+
+        _git.Count("push").ShouldBe(3);
+        _git.Count("branch").ShouldBe(3);
+        Enumerable.Range(1, 12).ShouldAllBe(i => !OriginHas($"PIL{i}") && !LocalHas($"PIL{i}"));
+    }
+
+    [Fact]
+    public async Task AFailedPushIsTriedAgainOnTheNextSweepAndNotInBetween()
+    {
+        for (var i = 1; i <= 3; i++)
+        {
+            Put(Row($"PIL{i}", MakeBranch($"PIL{i}")));
+        }
+        var failing = new CountingGit(new GitCli()) { FailPush = true };
+
+        (await Sweeper(failing).SweepAsync(Ct)).ShouldBe(0);
+
+        failing.Count("push").ShouldBe(1);
+        Enumerable.Range(1, 3).ShouldAllBe(i => OriginHas($"PIL{i}") && LocalHas($"PIL{i}") && Live($"PIL{i}").BranchDeletedAt == null);
+        Summaries().Single().Title.ShouldContain("3 push-failed");
+        failing.Count("push").ShouldBe(1);
+
+        failing.FailPush = false;
+        (await Sweeper(failing).SweepAsync(Ct)).ShouldBe(3);
+
+        failing.Count("push").ShouldBe(2);
+        Enumerable.Range(1, 3).ShouldAllBe(i => !OriginHas($"PIL{i}") && Live($"PIL{i}").BranchDeletedAt == Now);
+    }
+
+    [Fact]
+    public async Task WithTheSettingOffNothingIsDeletedAndGitIsNotRun()
+    {
+        Put(Row("PIL1", MakeBranch("PIL1")));
+        var before = _git.Total;
+
+        (await Sweeper(enabled: () => false).SweepAsync(Ct)).ShouldBe(0);
+
+        _git.Total.ShouldBe(before);
+        OriginHas("PIL1").ShouldBeTrue();
+        LocalHas("PIL1").ShouldBeTrue();
+        Live("PIL1").BranchDeletedAt.ShouldBeNull();
+        Summaries().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AFlightAlreadyMarkedDeletedIsNotLookedAtAgain()
+    {
+        Put(Row("PIL1", MakeBranch("PIL1")));
+        Put(Row("PIL2", MakeBranch("PIL2")), archived: true);
+        (await Sweeper().SweepAsync(Ct)).ShouldBe(2);
+        var calls = _git.Total;
+        var listings = _github.MergedPrListings;
+
+        (await Sweeper().SweepAsync(Ct)).ShouldBe(0);
+
+        _git.Total.ShouldBe(calls);
+        _github.MergedPrListings.ShouldBe(listings);
+    }
+
+    [Fact]
+    public async Task TheFirstSweepWaitsForTheStartDelayAndStartingIsNotHeld()
+    {
+        Put(Row("PIL1", MakeBranch("PIL1")));
+        var before = _git.Total;
+        var sweep = Sweeper();
+
+        await sweep.StartAsync(Ct);
+        await sweep.StopAsync(Ct);
+
+        _git.Total.ShouldBe(before);
+        OriginHas("PIL1").ShouldBeTrue();
+    }
+
+    /// <summary>Counts the git verbs run, and can fail a push as a remote that refuses.</summary>
+    private sealed class CountingGit(IGit inner) : IGit
+    {
+        private readonly Dictionary<string, int> _counts = [];
+
+        public bool FailPush { get; set; }
+
+        public int Total => _counts.Values.Sum();
+
+        public int Count(string verb) => _counts.GetValueOrDefault(verb);
+
+        public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
+        {
+            _counts[args[0]] = Count(args[0]) + 1;
+            return args[0] == "push" && FailPush
+                ? Task.FromResult(new GitRun(1, "", "remote: refused"))
+                : inner.RunAsync(args, cwd, cancellationToken);
+        }
+    }
+}
