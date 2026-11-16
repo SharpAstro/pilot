@@ -21,6 +21,7 @@ public sealed class MaintenanceListTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "pilot-mlist-" + Guid.NewGuid().ToString("N"));
     private readonly string _cache;
     private readonly string _repo;
+    private readonly string _plane;
     private readonly NodeState _state;
     private readonly TimerTime _time = new(Now);
 
@@ -28,6 +29,8 @@ public sealed class MaintenanceListTests : IDisposable
     {
         _cache = Path.Combine(_root, "packages");
         _repo = Path.Combine(_root, "repo");
+        _plane = Path.Combine(_root, "plane");
+        Directory.CreateDirectory(_plane);
         Directory.CreateDirectory(_cache);
         Directory.CreateDirectory(_repo);
         _state = new NodeState(new InMemoryJournal(), _time);
@@ -51,9 +54,9 @@ public sealed class MaintenanceListTests : IDisposable
         }
     }
 
-    private void Assets(params string[] libraries)
+    private void Assets(string folder, params string[] libraries)
     {
-        var obj = Path.Combine(_repo, "src", "App", "obj");
+        var obj = Path.Combine(folder, "src", "App", "obj");
         Directory.CreateDirectory(obj);
         var entries = string.Join(",", libraries.Select(l => $"\"{l}\": {{ \"type\": \"package\" }}"));
         File.WriteAllText(Path.Combine(obj, "project.assets.json"), $"{{ \"version\": 3, \"libraries\": {{ {entries} }} }}");
@@ -64,7 +67,7 @@ public sealed class MaintenanceListTests : IDisposable
         {
             PackagesFolder = () => _cache,
             AgeDays = () => 14,
-            PlaneFolders = () => [],
+            PlaneFolders = () => [_plane],
             PinSource = (_, _) => Task.FromResult(pins),
             RecordsLastAccess = (_, _) => Task.FromResult(true),
         };
@@ -88,7 +91,9 @@ public sealed class MaintenanceListTests : IDisposable
         Package("Float", "2.0.0", 60);
         Package("Unread", "1.0.0", 60);             // unreadable PR branch (2)
         Package("Unread", "2.0.0", 60);
-        Assets("Alpha/1.0.0", "Unread/1.0.0");
+        // Alpha is named by a flight's plane; only the repo's own packages (Unread) fall under its unreadable PR branch.
+        Assets(_plane, "Alpha/1.0.0");
+        Assets(_repo, "Unread/1.0.0");
     }
 
     private static int KeptOf(MaintenanceMeasure measure, string rule) => measure.Kept.SingleOrDefault(k => k.Rule == rule)?.Count ?? 0;
