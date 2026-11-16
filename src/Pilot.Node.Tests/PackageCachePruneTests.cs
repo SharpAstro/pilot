@@ -156,7 +156,7 @@ public sealed class PackageCachePruneTests : IDisposable
         var freed = await step.RunAsync(Ct);
 
         measured.Bytes.ShouldBeGreaterThan(0);
-        freed.Bytes.ShouldBe(measured.Bytes, 16);
+        Math.Abs(freed.Bytes - measured.Bytes).ShouldBeLessThanOrEqualTo(16);
         measured.Items.ShouldBeGreaterThan(0);
         Exists("delta", "1.0.0").ShouldBeFalse();
         Exists("alpha", "2.0.0").ShouldBeFalse();
