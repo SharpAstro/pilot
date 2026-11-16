@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Xml.Linq;
+using Pilot.Contracts;
 
 namespace Pilot.Node.Flights;
 
