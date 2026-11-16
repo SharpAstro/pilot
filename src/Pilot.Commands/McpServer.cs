@@ -600,6 +600,21 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
     private static IEnumerable<Option> OwnOptions(Command command) =>
         command.Options.Where(o => !o.Hidden && o is not (HelpOption or VersionOption));
 
+    /// <summary>
+    /// The arguments and options of an ancestor command that scope its subcommands, as <c>command:key</c>: <c>job</c>'s id is read by
+    /// <c>artifact</c> from its parent's closure. Another parent's own are the input of its own action (<c>order</c>'s text, <c>repos</c>'s
+    /// <c>--all</c>) that a subcommand ignores, so a tool does not carry or require them.
+    /// </summary>
+    internal static readonly string[] ScopingKeys = ["job:job"];
+
+    /// <summary>The visible arguments of a command of the chain as the tool takes them: all of the leaf's, only the scoping ones of an ancestor.</summary>
+    private static IEnumerable<Argument> ArgumentsOf(Command[] chain, Command command) =>
+        command.Arguments.Where(a => !a.Hidden && (command == chain[^1] || ScopingKeys.Contains($"{command.Name}:{a.Name}")));
+
+    /// <summary>The own options of a command of the chain as the tool takes them: all of the leaf's, only the scoping ones of an ancestor.</summary>
+    private static IEnumerable<Option> OptionsOf(Command[] chain, Command command) =>
+        OwnOptions(command).Where(o => command == chain[^1] || ScopingKeys.Contains($"{command.Name}:{Key(o)}"));
+
     /// <summary>A property's name for an option: its long name without the dashes, as <c>done-when</c>.</summary>
     private static string Key(Option option) => option.Name.TrimStart('-');
 
@@ -611,7 +626,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         // The leaf's own arguments and options come first, so on a name clash the leaf's is the one kept.
         foreach (var command in chain.Reverse())
         {
-            foreach (var argument in command.Arguments.Where(a => !a.Hidden))
+            foreach (var argument in ArgumentsOf(chain, command))
             {
                 if (!properties.TryAdd(argument.Name, Schema(argument.ValueType, argument.Description, argument.GetCompletions(CompletionContext.Empty))))
                 {
@@ -622,7 +637,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
                     required.Add(argument.Name);
                 }
             }
-            foreach (var option in OwnOptions(command))
+            foreach (var option in OptionsOf(chain, command))
             {
                 if (!properties.TryAdd(Key(option), Schema(option.ValueType, option.Description, option.GetCompletions(CompletionContext.Empty))))
                 {
@@ -666,7 +681,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
     internal static string[] Spell(string[] path, Command[] chain, Dictionary<string, JsonElement>? given)
     {
         given ??= [];
-        var keys = chain.SelectMany(c => c.Arguments.Where(a => !a.Hidden).Select(a => a.Name).Concat(OwnOptions(c).Select(Key))).Distinct(StringComparer.Ordinal).ToList();
+        var keys = chain.SelectMany(c => ArgumentsOf(chain, c).Select(a => a.Name).Concat(OptionsOf(chain, c).Select(Key))).Distinct(StringComparer.Ordinal).ToList();
         if (given.Keys.FirstOrDefault(k => !keys.Contains(k, StringComparer.Ordinal)) is { } unknown)
         {
             throw new PilotCommand.UsageException($"{string.Join(' ', path)} takes no {unknown}; it takes {string.Join(", ", keys)}");
@@ -677,7 +692,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         var owned = new Dictionary<Command, (List<Option> Options, List<Argument> Arguments)>();
         foreach (var command in chain.Reverse())
         {
-            owned[command] = ([.. OwnOptions(command).Where(o => claimed.Add(Key(o)))], [.. command.Arguments.Where(a => !a.Hidden && claimed.Add(a.Name))]);
+            owned[command] = ([.. OptionsOf(chain, command).Where(o => claimed.Add(Key(o)))], [.. ArgumentsOf(chain, command).Where(a => claimed.Add(a.Name))]);
         }
         for (var i = 0; i < chain.Length; i++)
         {

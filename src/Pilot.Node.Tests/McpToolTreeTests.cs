@@ -16,11 +16,11 @@ public sealed class McpToolTreeTests(ITestOutputHelper output)
 
     private static string Key(Option option) => option.Name.TrimStart('-');
 
-    /// <summary>The visible arguments and own options of every ancestor of the leaf, as (name, required).</summary>
+    /// <summary>The visible arguments and own options of every ancestor of the leaf that scope its subcommands (McpServer.ScopingKeys), as (name, required).</summary>
     private static IEnumerable<(string Name, bool Required)> AncestorKeys(Command[] chain) =>
         chain[..^1].SelectMany(c =>
-            c.Arguments.Where(a => !a.Hidden).Select(a => (a.Name, a.Arity.MinimumNumberOfValues > 0))
-                .Concat(c.Options.Where(o => !o.Hidden && o.Name is not ("--help" or "--version")).Select(o => (Key(o), o.Required))));
+            c.Arguments.Where(a => !a.Hidden && McpServer.ScopingKeys.Contains($"{c.Name}:{a.Name}")).Select(a => (a.Name, a.Arity.MinimumNumberOfValues > 0))
+                .Concat(c.Options.Where(o => !o.Hidden && o.Name is not ("--help" or "--version") && McpServer.ScopingKeys.Contains($"{c.Name}:{Key(o)}")).Select(o => (Key(o), o.Required))));
 
     /// <summary>The tools whose schema lacks (or does not require) a key of an ancestor command; the check a second test feeds a broken schema.</summary>
     internal static List<string> Lacking(Dictionary<string, (string[] Path, Command[] Chain)> tools, Func<string, string[], Command[], ToolSchema> schemaOf)
@@ -124,7 +124,7 @@ public sealed class McpToolTreeTests(ITestOutputHelper output)
 
     /// <summary>job's id is one Argument object shared by job and its subcommands (cancel, pause, resume), so it is the same value, not a clash.</summary>
     [Fact]
-    public void ANameAParentSharesWithItsLeafIsNamed()
+    public void NoParentNameClashesWithItsLeafUnlessTheObjectIsShared()
     {
         var clashes = new List<string>();
         foreach (var (tool, (_, chain)) in McpServer.Tools(Root()))
@@ -141,12 +141,39 @@ public sealed class McpToolTreeTests(ITestOutputHelper output)
         clashes.ShouldBeEmpty();
     }
 
+    /// <summary>A parent's own action's input (order's text) is not the subcommand's: order_done takes the id alone and spells as the CLI parses it.</summary>
+    [Fact]
+    public void OrderDoneStaysCallableWithTheIdAlone()
+    {
+        var root = Root();
+        var (path, chain) = McpServer.Tools(root)["order_done"];
+
+        var schema = McpServer.Describe("order_done", path, chain).InputSchema;
+        schema.Required.ShouldBe(["id"]);
+        schema.Properties.ContainsKey("text").ShouldBeFalse();
+        var spelled = McpServer.Spell(path, chain, Arguments("""{"id":"o1"}"""));
+        spelled.ShouldBe(["order", "done", "--", "o1"]);
+        var parsed = root.Parse(spelled);
+        parsed.Errors.ShouldBeEmpty();
+        parsed.CommandResult.Command.Name.ShouldBe("done");
+    }
+
     [Fact]
     public void TheToolsWithParentArgumentsAreListed()
     {
-        var withParents = McpServer.Tools(Root()).Where(t => AncestorKeys(t.Value.Chain).Any()).Select(t => t.Key).Order().ToList();
+        var withParents = McpServer.Tools(Root())
+            .Where(t => AncestorKeys(t.Value.Chain).Any())
+            .Select(t => $"{t.Key}: {string.Join(", ", AncestorKeys(t.Value.Chain).Select(k => k.Name))}")
+            .Order().ToList();
 
-        output.WriteLine("tools with parent arguments or options: " + string.Join(", ", withParents));
-        withParents.ShouldContain("job_artifact");
+        output.WriteLine("tools with parent arguments or options: " + string.Join("; ", withParents));
+        withParents.ShouldBe(["job_artifact: job"]);
+        // The schemas agree: no other tool carries a key from an ancestor.
+        foreach (var (name, (path, chain)) in McpServer.Tools(Root()))
+        {
+            var own = chain[^1].Arguments.Select(a => a.Name).Concat(chain[^1].Options.Select(Key)).Append("node").ToHashSet();
+            var extra = McpServer.Describe(name, path, chain).InputSchema.Properties.Keys.Where(k => !own.Contains(k)).ToList();
+            extra.ShouldBe(name == "job_artifact" ? ["job"] : []);
+        }
     }
 }
