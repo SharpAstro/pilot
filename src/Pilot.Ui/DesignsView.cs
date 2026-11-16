@@ -360,7 +360,8 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
             left.Add(Layout.Builder.Fill(key: PlayerKey).Bg(Well).Stretch());
             left.Add(Strip(page));
         }
-        List<Layout.Node> right = [Heading("Versions")];
+        // The target switcher sits above the versions, in the column that has the width for it: in the player's column it was squeezed at a narrow window and drew over the version line beside it.
+        List<Layout.Node> right = page.Version is not null && Player is not null ? [TargetBar(page), Heading("Versions")] : [Heading("Versions")];
         right.AddRange(Versions(page));
         if (page.Notes is { Length: > 0 } notes)
         {
@@ -369,13 +370,9 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         }
         right.Add(Heading("Brief"));
         right.Add(Markdown(string.IsNullOrWhiteSpace(page.Detail.Brief) ? "(no brief)" : page.Detail.Brief!));
-        var columns = Layout.Builder.HStack(
+        return Layout.Builder.HStack(
             Layout.Builder.VStack([.. left]).WithGap(8f).WStar(2.2f).HStar(),
-            Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).HStar();
-        // The target switcher spans the page above both columns: inside the player's column it was squeezed at a narrow window and drew over the versions beside it.
-        return page.Version is not null && Player is not null
-            ? Layout.Builder.VStack(TargetBar(page), columns).WithGap(8f).Pad(Gutter, 8f).Stretch()
-            : Layout.Builder.VStack(columns).Pad(Gutter, 8f).Stretch();
+            Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).Pad(Gutter, 8f);
     }
 
     private IEnumerable<Layout.Node> Versions(DesignPage page)
@@ -433,7 +430,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         var custom = Layout.Builder.TextInput(CustomInput, 12f, Palette.Input).WStar().RowH(26f);
         var scale = surface.Scale.ToString("0.##", CultureInfo.InvariantCulture);
         var caption = _customProblem ?? $"{surface.Name}: {surface.Width} x {surface.Height} at {scale}x";
-        // Rows of the chips, the swap, the input and the caption, over the full width of the page.
+        // Three rows, the chips sharing the column's width: one row of chips, swap and input overran a narrow column onto the versions beside it.
         return Layout.Builder.VStack(
             Layout.Builder.HStack([.. chips]).WithGap(4f).RowH(26f),
             Layout.Builder.HStack(swap).RowH(26f),
