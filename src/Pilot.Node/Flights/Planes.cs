@@ -252,6 +252,12 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
     /// <summary>The folders waiting for a start to remove them; null where a test or a host keeps none.</summary>
     public RemovalQueue? Queue => queue;
 
+    /// <summary>The git the planes run on, which a landed flight's branch is judged and deleted through (<see cref="LandedBranches"/>).</summary>
+    public IGit Git => git;
+
+    /// <summary>The git the planes run on, which a landed flight's branch is judged and deleted through (<see cref="LandedBranches"/>).</summary>
+    public IGit Git => git;
+
     /// <summary>The main checkout of the repo <paramref name="path"/> is in, a linked worktree's included; null outside a repo.</summary>
     public async Task<string?> MainCheckoutAsync(string path, CancellationToken cancellationToken)
     {

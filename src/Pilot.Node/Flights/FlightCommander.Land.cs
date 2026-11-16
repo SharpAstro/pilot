@@ -178,7 +178,7 @@ public sealed partial class FlightCommander
         var jobs = state.Legs(flight.Code).Select(l => l.WorkerJob).Append(flight.Review?.ReviewerJob).OfType<string>().Concat(sessions).Distinct().ToList();
         var endReason = mergedHead is not null ? SessionEndReasons.Merged : SessionEndReasons.Landed;
         var endBy = mergedHead is not null ? "merge" : "land";
-        var (released, consumed, leftover) = await OffLockAsync(async () =>
+        var (released, consumed, leftover, landedHead) = await OffLockAsync(async () =>
         {
             // Its sessions first: a worker inside its stop grace, or a reviewer, still has the plane open, and a folder held
             // open is not removed. Seen live: a flight landed a minute after its worker finished kept its plane.
@@ -267,8 +267,12 @@ public sealed partial class FlightCommander
                 }
             }
 
+            // The head its PR merged at, when one did (PIL1101): the merge's own, a merged merge entry's, or GitHub's for the flight's branch.
+            // A landing by hand with no merged PR knows none, and its branch is never deleted. A fold has nothing of its own to delete.
+            var landedHead = foldedInto is not null ? null
+                : mergedHead ?? MergedEntryHead(flight) ?? await MergedPrHeadAsync(flight, cancellationToken);
             var leftover = await planes.RemoveAsync(flight.RepoPath, flight.Worktree, cancellationToken);
-            return (released, consumed, leftover);
+            return (released, consumed, leftover, landedHead);
         });
 
         if (leftover is not null && planes.Queue is { } queue)
@@ -305,6 +309,9 @@ public sealed partial class FlightCommander
             // Its review ends with it: nothing resumes or nudges a reviewer of a landed flight.
             Review = f.Review is { State: ReviewState.Reviewing } ? null : f.Review,
             FoldedInto = foldedInto ?? f.FoldedInto,
+            LandedHead = landedHead ?? f.LandedHead,
+            // A folded flight keeps its branch until the flight it went into lands (PIL1101).
+            BranchKept = foldedInto is null ? f.BranchKept : $"waiting for {foldedInto}",
             Overlaps = foldedInto is null ? f.Overlaps : flight.Overlaps,
             // A move that failed is no longer anything to do once the flight landed (PIL909 merged with a maintenance hand-off's
             // failure still on it, and Home drew its red band with nothing to press): the failure and its card go with the landing.
@@ -359,6 +366,12 @@ public sealed partial class FlightCommander
                 $"{flight.Title ?? flight.Item.Noun} ({flight.Item.Display}) is now {foldedInto}'s: its PR closes it, and {foldedInto}'s planner plans its points{(labelNote is null ? "" : $"; {labelNote}")}");
         }
 
+        // Its branch goes once its plane has, and so do those of the flights folded into it (PIL1101).
+        if (foldedInto is null)
+        {
+            await DeleteLandedBranchesAsync(flight, landedHead, leftover, cancellationToken);
+        }
+
         // Its issue is closed with it once its PR merged: GitHub links a PR's "Closes #n" only sometimes (#302, #267 and #238
         // merged and left #285, #254 and #207 open), and an issue open after its work landed looks like work still to do.
         if (foldedInto is null && github is not null && flight.Item.Tracker == TrackerKind.GitHub && flight.PullRequest is { } merged
@@ -402,6 +415,164 @@ public sealed partial class FlightCommander
                 continue;
             }
             state.PutFlight(Settle(waiting));
+        }
+    }
+
+    private string? MergedEntryHead(FlightRow flight) =>
+        state.Merges().FirstOrDefault(m => m.Flight == flight.Code && m.State == MergeEntryState.Merged) is { Head.Length: > 0 } entry ? entry.Head : null;
+
+    private async Task<string?> MergedPrHeadAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return github is not null
+                && await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken) is { State: "MERGED", Head.Length: > 0 } pr
+                && (flight.PullRequest is null || flight.PullRequest == pr.Number)
+                ? pr.Head
+                : null;
+        }
+        catch (FlightException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Deletes the branch of the landed <paramref name="flight"/> through <see cref="LandedBranches"/>, locally and on origin, once its
+    /// plane is gone, and judges the flights folded into it the same way (a fold keeps its branch until now). Off when the
+    /// delete-landed-branches setting is. A branch holding commits past the merged head is kept with a For-you card naming them; any
+    /// other reason is one Handled line; a failed push is left for the next sweep. Never throws: the flight has landed.
+    /// </summary>
+    private async Task DeleteLandedBranchesAsync(FlightRow flight, string? landedHead, string? leftover, CancellationToken cancellationToken)
+    {
+        if (!Models.DeleteLandedBranches)
+        {
+            return;
+        }
+        try
+        {
+            var candidates = new List<LandedCandidate>();
+            if (landedHead is not null)
+            {
+                if (leftover is not null)
+                {
+                    // The plane folder still holds the branch: the past sweep takes it once the folder is gone.
+                    state.UpdateFlight(flight.Code, f => f with { BranchKept = "its plane folder is not removed yet" });
+                }
+                else
+                {
+                    candidates.Add(new LandedCandidate(flight, landedHead, LiveSessionOf(flight.Code)));
+                }
+            }
+            var folded = state.Flights().Where(f => f.State == FlightState.Landed && f.BranchDeletedAt is null
+                && string.Equals(f.FoldedInto, flight.Code, StringComparison.OrdinalIgnoreCase) && f.RepoPath == flight.RepoPath).ToList();
+            if (candidates.Count == 0 && folded.Count == 0)
+            {
+                return;
+            }
+            var outcomes = await OffLockAsync(async () =>
+            {
+                var result = new List<LandedBranchOutcome>();
+                foreach (var other in folded)
+                {
+                    if (other.MovedTo is { } to)
+                    {
+                        result.Add(new(other.Code, other.Branch, LandedBranchResult.Kept, "moved", $"{other.Code} went to {to.Node}, whose landing handles origin"));
+                        continue;
+                    }
+                    var (candidate, outcome) = await FoldedCandidateAsync(other, landedHead, cancellationToken);
+                    if (candidate is not null)
+                    {
+                        candidates.Add(candidate);
+                    }
+                    else
+                    {
+                        result.Add(outcome!);
+                    }
+                }
+                if (candidates.Count > 0)
+                {
+                    result.AddRange(await Branches.SweepAsync(flight.RepoPath, candidates, cancellationToken));
+                }
+                return result;
+            });
+            foreach (var outcome in outcomes)
+            {
+                RecordBranchOutcome(outcome);
+            }
+        }
+        catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            state.RaiseCard(CardBin.Handled, BranchKeptKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} landed, but its branch could not be judged",
+                $"{ex.Message}; the branch is left for the next sweep");
+        }
+    }
+
+    private bool LiveSessionOf(string code) =>
+        state.Sessions().Any(s => s.State is not (SessionState.Ended or SessionState.Failed) && string.Equals(s.Flight, code, StringComparison.Ordinal));
+
+    /// <summary>A folded flight's candidate: its branch tips must be contained in the lander's merged head or in main; else an outcome that keeps it.</summary>
+    private async Task<(LandedCandidate? Candidate, LandedBranchOutcome? Outcome)> FoldedCandidateAsync(FlightRow other, string? landerHead, CancellationToken cancellationToken)
+    {
+        var git = planes.Git;
+        var repo = other.RepoPath;
+        var local = await git.RunAsync(["rev-parse", "--verify", "--quiet", $"refs/heads/{other.Branch}"], repo, cancellationToken);
+        var remote = await git.RunAsync(["ls-remote", "--heads", "origin", $"refs/heads/{other.Branch}"], repo, cancellationToken);
+        var localTip = local.Ok ? local.Output.Trim() : null;
+        var originTip = remote.Ok ? remote.Output.Split(['\t', ' ', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() : null;
+        var tips = new[] { localTip, originTip }.OfType<string>().Where(t => t.Length > 0).Distinct().ToList();
+        if (tips.Count == 0)
+        {
+            // Nothing of it is left anywhere: its branch is gone already.
+            return (null, new LandedBranchOutcome(other.Code, other.Branch, LandedBranchResult.Deleted));
+        }
+        var mainRef = other.Base.Length > 0 ? other.Base : "origin/main";
+        var ahead = new List<string>();
+        foreach (var tip in tips)
+        {
+            var contained = landerHead is not null && (await git.RunAsync(["merge-base", "--is-ancestor", tip, landerHead], repo, cancellationToken)).Ok
+                || (await git.RunAsync(["merge-base", "--is-ancestor", tip, mainRef], repo, cancellationToken)).Ok;
+            if (!contained)
+            {
+                var log = await git.RunAsync(["log", "--oneline", tip, "--not", mainRef, .. (landerHead is null ? [] : new[] { landerHead })], repo, cancellationToken);
+                ahead.AddRange(log.Ok ? log.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : []);
+            }
+        }
+        if (ahead.Count > 0)
+        {
+            var where = localTip is not null && originTip is null ? LandedBranchGroups.LocalAhead : LandedBranchGroups.OriginAhead;
+            return (null, new LandedBranchOutcome(other.Code, other.Branch, LandedBranchResult.Kept, where,
+                $"{other.Branch} holds work in neither the merged head of {other.FoldedInto} nor {mainRef}", [.. ahead.Distinct()]));
+        }
+        return (new LandedCandidate(other, localTip ?? originTip!, LiveSessionOf(other.Code)), null);
+    }
+
+    private void RecordBranchOutcome(LandedBranchOutcome outcome)
+    {
+        var now = time.GetUtcNow();
+        var target = Verbs.FlightTarget(outcome.Code);
+        switch (outcome.Result)
+        {
+            case LandedBranchResult.Deleted:
+                state.UpdateFlight(outcome.Code, f => f with { BranchDeletedAt = now, BranchKept = null });
+                return;
+            case LandedBranchResult.RetryLater:
+                state.UpdateFlight(outcome.Code, f => f with { BranchKept = outcome.Why });
+                state.RaiseCard(CardBin.Handled, BranchKeptKind, target, $"{outcome.Code} landed, but its branch {outcome.Branch} is not deleted yet",
+                    $"{outcome.Why}; the next sweep tries again");
+                return;
+        }
+        state.UpdateFlight(outcome.Code, f => f with { BranchKept = outcome.Why });
+        if (outcome.Commits is { Length: > 0 } commits)
+        {
+            var where = outcome.Group == LandedBranchGroups.LocalAhead ? "local" : "origin";
+            state.RaiseCard(CardBin.ForYou, BranchKeptKind, target,
+                $"{outcome.Code} landed, but its {where} branch {outcome.Branch} holds {(commits.Length == 1 ? "1 commit" : $"{commits.Length} commits")} past the merge",
+                $"{outcome.Why}, so the branch is kept and nothing is lost: {string.Join("; ", commits)}. Land them in a PR of their own, or delete the branch by hand.");
+        }
+        else
+        {
+            state.RaiseCard(CardBin.Handled, BranchKeptKind, target, $"{outcome.Code} landed, but its branch {outcome.Branch} was kept", outcome.Why ?? "it is not safe to delete");
         }
     }
 

@@ -119,6 +119,10 @@ internal static class StatusMarkdown
                 line.Add($"[PR {Text(PullNumber(url) is { } n ? $"#{n}" : url)}]({url})");
             }
             line.Add($"plane `{flight.Worktree}` on `{flight.Branch}`");
+            if (FlightWaiting.BranchText(flight) is { } branchText)
+            {
+                line.Add(Text(branchText));
+            }
             if (flight.Tokens is > 0 and var tokens)
             {
                 line.Add($"{tokens.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} tokens so far");
