@@ -38,7 +38,11 @@ public static class DesignChecker
         }
         try
         {
-            return [.. Prototype.Check(loaded, DesignSizes.All, fontPath: fontPath ?? FontPath).Select(Line).Distinct(StringComparer.Ordinal)];
+            // A document that names targets is checked at each of them, the target's name on every finding; one that names none at the sweep of sizes, as #1096's did.
+            var findings = NamesTargets(loaded)
+                ? Prototype.Check(loaded, fontPath: fontPath ?? FontPath)
+                : Prototype.Check(loaded, DesignSizes.All, fontPath: fontPath ?? FontPath);
+            return [.. findings.Select(Line).Distinct(StringComparer.Ordinal)];
         }
         catch (FileNotFoundException ex)
         {
@@ -51,8 +55,19 @@ public static class DesignChecker
     {
         // A state variant (a when's name=value) is named after its screen; the default state is the screen alone.
         var screen = f.State == "default" || f.State.Length == 0 ? f.Screen : $"{f.Screen} [{f.State}]";
-        return $"{screen} | {f.Width}x{f.Height} | {f.Finding.Rule}: {f.Finding.Message}";
+        var at = string.IsNullOrEmpty(f.Target) ? "" : f.Target + " | ";
+        return $"{screen} | {at}{f.Width}x{f.Height} | {f.Finding.Rule}: {f.Finding.Message}";
     }
+
+    /// <summary>True when the document's own <c>targets</c> says where it is for; false for the one target DIR.Lib gives a document that names none.</summary>
+    public static bool NamesTargets(PrototypeDocument document) =>
+        !(document.Targets.Length == 1 && string.Equals(document.Targets[0].Name, PrototypeTargets.DefaultName, StringComparison.Ordinal));
+
+    /// <summary>The PNG names a render of <paramref name="document"/> leaves: <c>&lt;screen&gt;.png</c> for a document naming no target, else <c>&lt;screen&gt;.&lt;target&gt;.png</c> per target, each with its target's name (empty for none).</summary>
+    public static (string File, string Target)[] RenderFiles(PrototypeDocument document) =>
+        NamesTargets(document)
+            ? [.. document.Targets.SelectMany(t => document.Screens.Select(s => (DesignTargets.RenderFile(s.Id, t.Name), t.Name)))]
+            : [.. document.Screens.Select(s => (s.Id + ".png", ""))];
 
     /// <summary>The prototype at <paramref name="prototypeFile"/>, or null with <paramref name="problems"/> (a line each, with its JSON path) when it cannot be read.</summary>
     public static PrototypeDocument? Load(string prototypeFile, out string[] problems)
@@ -94,13 +109,28 @@ public static class DesignChecker
             // A stamp is of what was drawn: while the PNGs are being remade there is none to trust.
             File.Delete(stamp);
         }
-        var images = Prototype.Render(document, ((uint)document.Width, (uint)document.Height), fontPath: fontPath ?? FontPath);
-        foreach (var (screen, image) in images)
+        string[] made;
+        if (NamesTargets(document))
         {
-            File.WriteAllBytes(Path.Combine(rendersFolder, screen + ".png"), PngWriter.Encode(image.Pixels, image.Width, image.Height));
+            // One PNG per screen per named target, at the target's width and height times its scale.
+            var images = Prototype.Render(document, fontPath: fontPath ?? FontPath);
+            foreach (var (target, screen, image) in images)
+            {
+                File.WriteAllBytes(Path.Combine(rendersFolder, DesignTargets.RenderFile(screen, target)), PngWriter.Encode(image.Pixels, image.Width, image.Height));
+            }
+            made = [.. images.Select(i => $"{i.Item2}.{i.Item1}")];
+        }
+        else
+        {
+            var images = Prototype.Render(document, ((uint)document.Width, (uint)document.Height), fontPath: fontPath ?? FontPath);
+            foreach (var (screen, image) in images)
+            {
+                File.WriteAllBytes(Path.Combine(rendersFolder, screen + ".png"), PngWriter.Encode(image.Pixels, image.Width, image.Height));
+            }
+            made = [.. images.Select(i => i.Screen)];
         }
         File.WriteAllText(stamp, JsonSerializer.Serialize(new DesignRenderStamp { PrototypeSha256 = prototypeSha256 }, PilotJsonContext.Default.DesignRenderStamp), new UTF8Encoding(false));
-        return [.. images.Select(i => i.Screen)];
+        return made;
     }
 
     /// <summary>The hash a folder of renders was stamped with, or null when there is no readable stamp.</summary>

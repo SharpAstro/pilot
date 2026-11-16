@@ -57,6 +57,11 @@ internal static class DesignPages
         var renders = document.Screens.Select(s =>
         {
             var file = Path.Combine(folder, "renders", s.Id + ".png");
+            if (!File.Exists(file) && document.Targets.Length > 0)
+            {
+                // A design that names targets has a PNG per target and none at the design size: the first target's stands for the screen.
+                file = Path.Combine(folder, "renders", DesignTargets.RenderFile(s.Id, document.Targets[0].Name));
+            }
             return new DesignRender(s.Id, string.IsNullOrEmpty(s.Title) ? s.Id : s.Title, File.Exists(file) ? file : null);
         }).ToList();
         return new DesignPage(detail, n, document, notes, renders);
