@@ -27,6 +27,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     public const string HooksKey = "hooks";
     public const string LanKey = "lan";
     public const string FirewallKey = "firewall";
+    public const string FirewallLeftoversKey = "firewall-leftovers";
     public const string DefenderKey = "defender";
     public const string TrustKey = "trust";
     public const string GhKey = "gh";
@@ -95,7 +96,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     /// <summary>What reading the check <paramref name="key"/> runs or asks, for a page's "checking…" line; null when it only reads files.</summary>
     public static string? RunsOf(string key) => key switch
     {
-        FirewallKey => "runs netsh",
+        FirewallKey or FirewallLeftoversKey => "runs netsh",
         GhKey => "runs gh, which asks GitHub",
         _ => null,
     };
@@ -145,6 +146,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                 Fix = rule ? null : "Allow (asks for elevation)",
                 Optional = !lanWanted,
             });
+            checks.Add(FirewallLeftoversCheck());
         }
 
         if (DefenderApplies)
@@ -246,6 +248,25 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                 }
                 return FirewallAllows() is (true, _) ? null : "the rules are still not right";
             }
+            case FirewallLeftoversKey:
+            {
+                if (!OperatingSystem.IsWindows())
+                {
+                    return "the node makes a firewall rule on Windows only";
+                }
+                if (FirewallLeftoversScript() is not { } remove)
+                {
+                    return null;
+                }
+                using var script = Flights.ShellScript.For(remove, Path.GetTempPath());
+                if (!RunElevated(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe"),
+                        $"--headless pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{script.Script}\""))
+                {
+                    return "the elevation prompt was refused or did not open";
+                }
+                var left = FirewallLeftoverPrograms().Count;
+                return left == 0 ? null : $"{left} rules are still there";
+            }
             case DefenderKey:
                 // The walk over the repo roots is slow on a cold disk: off the command thread.
                 return await Task.Run(() => FixDefender(processes), cancellationToken);
@@ -260,7 +281,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                     ? null
                     : $"no window opened: run claude in {options.WatchtowerFolder} and accept its trust prompt";
             default:
-                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, HooksKey, MergeGuardKey, ClaudePermissionsKey, GuardHooksKey, BuildRspKey, UserSkillsKey, LanKey, FirewallKey, DefenderKey, TrustKey })}, not {key}";
+                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, HooksKey, MergeGuardKey, ClaudePermissionsKey, GuardHooksKey, BuildRspKey, UserSkillsKey, LanKey, FirewallKey, FirewallLeftoversKey, DefenderKey, TrustKey })}, not {key}";
         }
     }
 
@@ -651,6 +672,38 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             $"netsh advfirewall firewall delete rule name=\"{NodeRule}\" | Out-Null",
             $"netsh --% advfirewall firewall add rule name=\"{DiscoveryRule}\" dir=in action=allow protocol=UDP localport={LAN.Lib.LanProtocol.DiscoveryPort} {profile}",
             $"netsh --% advfirewall firewall add rule name=\"{NodeRule}\" dir=in action=allow protocol=TCP localport={options.LanPort} {profile}");
+    }
+
+    /// <summary>Whether a program file exists; a test replaces it.</summary>
+    public Func<string, bool> ProgramExists { get; init; } = File.Exists;
+
+    /// <summary>The folders whose per-path rules count as leftovers: repo roots (their worktrees lie under them), the job scratch folder and the temp folder.</summary>
+    private IEnumerable<string> LeftoverFolders() =>
+        [.. options.RepoRoots, Path.Combine(options.DataFolder, "jobs"), Path.GetTempPath()];
+
+    /// <summary>The program paths of the inbound allow rules under <see cref="LeftoverFolders"/> whose file is gone: one netsh run.</summary>
+    public IReadOnlyList<string> FirewallLeftoverPrograms()
+    {
+        var (exit, output) = Run("netsh", ["advfirewall", "firewall", "show", "rule", "name=all", "dir=in", "verbose"], TimeSpan.FromSeconds(60));
+        return exit != 0 ? [] : FirewallLeftovers.Leftovers(FirewallLeftovers.Parse(output), LeftoverFolders(), ProgramExists);
+    }
+
+    /// <summary>The pwsh script that deletes the leftover rules by program path; null when there are none.</summary>
+    public string? FirewallLeftoversScript() => FirewallLeftovers.Script(FirewallLeftoverPrograms());
+
+    private SetupCheck FirewallLeftoversCheck()
+    {
+        var count = FirewallLeftoverPrograms().Count;
+        return new SetupCheck
+        {
+            Key = FirewallLeftoversKey,
+            Title = "Old firewall rules",
+            Ok = count == 0,
+            Optional = true,
+            Line = count == 0 ? "none for programs that no longer exist"
+                : $"{count} firewall rules for programs that no longer exist (worktree builds)",
+            Fix = count == 0 ? null : "Remove (asks for elevation)",
+        };
     }
 
     /// <summary>Whether the two port rules are in, and how they stand, in a line that says what is missing or wrong.</summary>

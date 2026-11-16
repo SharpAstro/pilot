@@ -83,6 +83,10 @@ public static class NodeSetupCommand
                 await output.WriteLineAsync($"setup: asking Windows for elevation, to allow the node's ports (Private and Domain networks only, no program). The elevated script:\n{script}");
                 await Step(NodeSetup.FirewallKey, "firewall rules made");
             }
+            if (setup.FirewallLeftoverPrograms().Count is > 0 and var old)
+            {
+                await output.WriteLineAsync($"setup: {old} firewall rules for programs that no longer exist (worktree builds); remove them with the Settings page's Old firewall rules fix (Remove), or 'pilot-node setup --check' to see the count; setup never removes them unasked");
+            }
         }
         Directory.CreateDirectory(options.WatchtowerFolder);
 
