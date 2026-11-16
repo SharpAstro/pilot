@@ -59,7 +59,8 @@ public sealed class GhAnswersTests
     [Fact]
     public void TheListBuildersRoundTrip()
     {
-        GhAnswers.MergedPullRequest(4, "flight/x", "h").ShouldBe(new Pilot.Node.Flights.MergedPullRequest(4, "flight/x", "h"));
+        var merged = GhAnswers.MergedPullRequest(4, "flight/x", "h");
+        (merged.Number, merged.HeadRef, merged.HeadOid).ShouldBe((4, "flight/x", "h"));
 
         var open = GhAnswers.OpenPullRequest(8, "Title", "feat/y", "https://x/8", true, ["l1"]);
         (open.Number, open.Title, open.Head, open.Url, open.Draft).ShouldBe((8, "Title", "feat/y", "https://x/8", true));
