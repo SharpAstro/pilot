@@ -1,5 +1,6 @@
 using DIR.Lib;
 using DIR.Lib.Prototyping;
+using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Shouldly;
 using Xunit;
