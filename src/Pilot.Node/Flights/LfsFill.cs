@@ -40,7 +40,7 @@ public static class LfsFill
             var checkout = await git.RunAsync(["lfs", "checkout"], worktree, cancellationToken);
             if (!checkout.Ok)
             {
-                Console.Error.WriteLine($"git lfs checkout in {worktree} failed: {checkout.Why}");
+                System.Console.Error.WriteLine($"git lfs checkout in {worktree} failed: {checkout.Why}");
             }
             var pointers = await PointersAsync(git, worktree, cancellationToken);
             if (pointers is { Count: > 0 })
@@ -50,7 +50,7 @@ public static class LfsFill
                     var pull = await git.RunAsync(["lfs", "pull", "--include=" + string.Join(',', chunk)], worktree, cancellationToken);
                     if (!pull.Ok)
                     {
-                        Console.Error.WriteLine($"git lfs pull in {worktree} failed: {pull.Why}");
+                        System.Console.Error.WriteLine($"git lfs pull in {worktree} failed: {pull.Why}");
                     }
                 }
                 pointers = await PointersAsync(git, worktree, cancellationToken);
@@ -63,7 +63,7 @@ public static class LfsFill
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            Console.Error.WriteLine($"LFS fill of {worktree} failed: {ex.Message}");
+            System.Console.Error.WriteLine($"LFS fill of {worktree} failed: {ex.Message}");
         }
     }
 
@@ -158,7 +158,7 @@ public static class LfsFill
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            Console.Error.WriteLine($"could not record the missing LFS paths of {worktree}: {ex.Message}");
+            System.Console.Error.WriteLine($"could not record the missing LFS paths of {worktree}: {ex.Message}");
         }
     }
 

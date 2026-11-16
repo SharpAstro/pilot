@@ -95,6 +95,54 @@ public sealed class DesignCliTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task NewTakesTerminalTargetsAndTerminalsSetsAndClearsThem()
+    {
+        var (exit, made) = await Pilot("design", "new", "--terminal", "80x24", "--terminal", "100x30", "--", "a console view");
+        exit.ShouldBe(0);
+        made.ShouldContain("DSN-1");
+        (await Pilot("design", "show", "DSN-1")).Output.ShouldContain("terminals: 80x24 100x30");
+
+        (await Pilot("design", "terminals", "DSN-1", "160x44", "250x60", "160x44")).Exit.ShouldBe(0);
+        (await Pilot("design", "show", "DSN-1")).Output.ShouldContain("terminals: 160x44 250x60");
+
+        (await Pilot("design", "terminals", "DSN-1")).Exit.ShouldBe(0);
+        (await Pilot("design", "show", "DSN-1")).Output.ShouldNotContain("terminals:");
+    }
+
+    [Fact]
+    public async Task ASizeThatIsNotColsXRowsIsRefusedAndTheTargetsStay()
+    {
+        await Pilot("design", "new", "--terminal", "80x24", "--", "brief");
+
+        var (exit, said) = await Pilot("design", "terminals", "DSN-1", "wide");
+        exit.ShouldBe(1);
+        said.ShouldContain("'wide' is not a terminal size");
+        (await Pilot("design", "new", "--terminal", "80", "--", "other")).Exit.ShouldBe(1);
+        (await Pilot("design", "show", "DSN-1")).Output.ShouldContain("terminals: 80x24");
+        (await Pilot("design", "terminals", "DSN-9", "80x24")).Output.ShouldContain("There is no design DSN-9");
+    }
+
+    [Fact]
+    public async Task CheckAndRenderUseTheDesignsTerminalTargets()
+    {
+        await Pilot("design", "new", "--terminal", "80x24", "--", "brief");
+        await Pilot("design", "draft", "DSN-1");
+        var draft = Path.Combine(DesignFolder("DSN-1"), "draft");
+        File.Copy(Path.Combine(AppContext.BaseDirectory, "Fixtures", "Designs", "cells-overlap.prototype.json"), Path.Combine(draft, "prototype.json"), overwrite: true);
+
+        var (checkExit, checkText) = await Pilot("design", "check", "DSN-1");
+        checkExit.ShouldBe(1);
+        checkText.ShouldContain("home | 80x24 cells | ");
+
+        (await Pilot("design", "render", "DSN-1")).Exit.ShouldBe(0);
+        File.Exists(Path.Combine(draft, "renders", "home.80x24.txt")).ShouldBeTrue();
+        File.Exists(Path.Combine(draft, "renders", "home.80x24.png")).ShouldBeTrue();
+
+        await Pilot("design", "terminals", "DSN-1");
+        (await Pilot("design", "check", "DSN-1")).Output.ShouldNotContain(" cells | ");
+    }
+
+    [Fact]
     public async Task DesignsListsEveryDesignNewestFirst()
     {
         (await Pilot("designs")).Output.ShouldContain("No designs");

@@ -1,0 +1,18 @@
+{
+  "width": 1280,
+  "height": 720,
+  "entry": "home",
+  "screens": [
+    {
+      "id": "home",
+      "title": "Home",
+      "root": {
+        "kind": "overlay",
+        "children": [
+          { "kind": "text", "text": "Flights in the air and on the ground today", "align": "near" },
+          { "kind": "text", "text": "Jobs queued behind the running build now", "align": "far" }
+        ]
+      }
+    }
+  ]
+}

@@ -34,6 +34,19 @@
     <PackageReference Include="DIR.Lib.Debug" Condition="'$(Configuration)' == 'Debug'" />
   </ItemGroup>
 
+  <!-- Console.Lib for PrototypeCells (PIL1098): a design's screens arranged and painted in terminal cells, drawn as a grid by the GUI and played
+       by pilot-tui. Taken as Pilot.Tui takes it (the sibling clone's source when it is there, else the package); no SDL, so it stays window free. -->
+  <PropertyGroup>
+    <UseLocalConsoleLib Condition="'$(UseLocalConsoleLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)Console.Lib\src\Console.Lib\Console.Lib.csproj')">true</UseLocalConsoleLib>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalConsoleLib)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)Console.Lib\src\Console.Lib\Console.Lib.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalConsoleLib)' != 'true'">
+    <PackageReference Include="Console.Lib" Condition="'$(Configuration)' != 'Debug'" />
+    <PackageReference Include="Console.Lib.Debug" Condition="'$(Configuration)' == 'Debug'" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="pilot-gui" />
     <InternalsVisibleTo Include="pilot-tui" />
