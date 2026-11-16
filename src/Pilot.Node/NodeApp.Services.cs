@@ -130,12 +130,18 @@ public static partial class NodeApp
             AgeDays = () => services.GetRequiredService<RoleModels>().PackageAgeDays,
             PinSource = PackageCachePrune.PinsFromGit(services.GetRequiredService<IGitHub>(), services.GetRequiredService<IGit>()),
         });
+        builder.Services.AddSingleton<IMaintenanceStep>(services => new MaintenanceJobs(services.GetRequiredService<NodeState>(),
+            Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "projects"), services.GetRequiredService<TimeProvider>())
+        {
+            ScratchDays = () => services.GetRequiredService<RoleModels>().ScratchDays,
+        });
         builder.Services.AddHostedService(services => services.GetRequiredService<IdleMaintenance>());
         builder.Services.AddHostedService(services => new DiskSweep(
             Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs"), Path.GetTempPath(),
             services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
         {
             ScratchDays = () => services.GetRequiredService<RoleModels>().ScratchDays,
+            LastMaintenance = () => services.GetRequiredService<IdleMaintenance>().Last,
             DiskAlertGb = () => services.GetRequiredService<RoleModels>().DiskAlertGb,
             Planes = services.GetRequiredService<Planes>(),
             GitHub = services.GetService<IGitHub>(),

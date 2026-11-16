@@ -481,6 +481,24 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
         return false;
     }
 
+    /// <summary>
+    /// The idle-time maintenance sweep's last run (PIL1102), read when the disk-low card is made: a null function means the node has no
+    /// sweep wired and the card says nothing of it; a function that returns null means no run yet.
+    /// </summary>
+    public Func<MaintenanceRun?>? LastMaintenance { get; init; }
+
+    /// <summary>The sentence the disk-low card says of the last maintenance run: when, what each step freed, what it could not touch; or that none ran yet.</summary>
+    public static string MaintenanceSentence(MaintenanceRun? last)
+    {
+        if (last is null)
+        {
+            return "No maintenance run yet; 'pilot node maintenance --dry-run' shows what one would free.";
+        }
+        var steps = string.Join(", ", last.Steps.Select(s => $"{s.Name} {IdleMaintenance.Gb(s.Bytes)}"));
+        var untouched = last.Untouched is { } u ? $" Could not touch: {u}." : " Nothing was left untouched.";
+        return $"Last maintenance run {last.At.UtcDateTime:yyyy-MM-dd HH:mm} UTC freed {IdleMaintenance.Gb(last.Bytes)}{(steps.Length > 0 ? $" ({steps})" : "")}.{untouched}";
+    }
+
     /// <summary>The size an item must reach to be named as reclaimable on the disk-low card: 1 GB unless a test says less.</summary>
     public long BigItem { get; init; } = 1L << 30;
 
@@ -512,13 +530,14 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
         var list = top.Count == 0
             ? "Nothing big to reclaim here: the space is used outside pilot."
             : $"Biggest items to reclaim, by unique bytes: {string.Join("; ", top.Select(r => $"{r.Name} {Size(r.Bytes)}"))}.";
+        var maintenance = LastMaintenance is { } last ? " " + MaintenanceSentence(last()) : "";
         var low = state.RaiseCard(CardBin.ForYou, DiskLowKind, space.Name,
             $"Drive {space.Name} has {Size(space.Free)} free, below the {Size(threshold)} alert",
-            $"{space.Name} has {Size(space.Free)} free of {Size(space.Total)}; the alert is {Size(threshold)} (setting disk-alert-gb). {list}",
+            $"{space.Name} has {Size(space.Free)} free of {Size(space.Total)}; the alert is {Size(threshold)} (setting disk-alert-gb). {list}{maintenance}",
             // The one thing the node can do on the person's word: the alert itself. Freeing space is by hand, and the panel's Dismiss
             // already says "I have seen it": no second button says it again (the review of #797).
             [new CardChoice { Label = "Lower the disk alert", Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.DiskAlertGbKey], AsksFor = "The new alert, in GB" }],
-            summary: $"Free some space on {space.Name}, or lower the alert. {list}");
+            summary: $"Free some space on {space.Name}, or lower the alert. {list}{maintenance}");
     }
 
     private static void Remove(string folder, ref int count, ref long bytes)
