@@ -1565,7 +1565,10 @@ public sealed class ReviewTests4 : ReviewTestsBase
         result.Error.ShouldBeNull();
         _github.Merged.ShouldHaveSingleItem();
         // Nothing merged in or pushed: the head reviewed is the head queued (the plane went with the landing, so the remote says).
-        Git(Repo, "ls-remote", "origin", $"flight/{flight.Code.ToLowerInvariant()}").ShouldStartWith(head);
+        // Since PIL1101 the landing also deletes the landed branch on origin once it sits at the merged head, so the remote holds
+        // either that head or, when the delete ran, no branch at all; a tip other than the head would be a merge or a push.
+        var remote = Git(Repo, "ls-remote", "origin", $"flight/{flight.Code.ToLowerInvariant()}");
+        (remote.Length == 0 || remote.StartsWith(head, StringComparison.Ordinal)).ShouldBeTrue(remote);
     }
 
     [Fact]
