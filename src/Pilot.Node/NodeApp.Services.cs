@@ -127,12 +127,12 @@ public static partial class NodeApp
             Priority = services.GetRequiredService<NodeOptions>().JobPriority,
             PinSource = PackageCachePrune.PinsFromGit(MaintenanceProcess.At(services.GetRequiredService<NodeOptions>().JobPriority)),
         });
-        builder.Services.AddSingleton<IMaintenanceStep>(services => MaintenanceGit.ForGit(services.GetRequiredService<NodeState>(),
+        builder.Services.AddSingleton<IMaintenanceStep>(services => new MaintenanceGit(MaintenanceGit.Kind.Git, services.GetRequiredService<NodeState>(),
             () => [.. services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path)])
         {
             Priority = services.GetRequiredService<NodeOptions>().JobPriority,
         });
-        builder.Services.AddSingleton<IMaintenanceStep>(services => MaintenanceGit.ForLfs(services.GetRequiredService<NodeState>(),
+        builder.Services.AddSingleton<IMaintenanceStep>(services => new MaintenanceGit(MaintenanceGit.Kind.Lfs, services.GetRequiredService<NodeState>(),
             () => [.. services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path)])
         {
             Priority = services.GetRequiredService<NodeOptions>().JobPriority,
