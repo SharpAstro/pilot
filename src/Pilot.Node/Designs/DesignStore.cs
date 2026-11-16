@@ -320,8 +320,8 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             var pngs = DesignChecker.RenderFiles(document!).Select(r => (Path: Path.Combine(renders, r.File), r.Target)).ToArray();
             if (pngs.FirstOrDefault(p => !File.Exists(p.Path)) is { Path: not null } missing)
             {
-                var at = missing.Target.Length > 0 ? $" at target {missing.Target}" : "";
-                throw new DesignException($"{row.Id} has no render {Path.GetFileName(missing.Path)}{at}; pilot design render {row.Id} draws them again");
+                var atTarget = missing.Target.Length > 0 ? $" at target {missing.Target}" : "";
+                throw new DesignException($"{row.Id} has no render {Path.GetFileName(missing.Path)}{atTarget};pilot design render {row.Id} draws them again");
             }
 
             var versions = Path.Combine(FolderOf(row.Id), VersionsFolderName);
