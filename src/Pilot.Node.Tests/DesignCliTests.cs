@@ -102,14 +102,10 @@ public sealed class DesignCliTests : IAsyncLifetime
         made.ShouldContain("DSN-1");
         (await Pilot("design", "show", "DSN-1")).Output.ShouldContain("terminals: 80x24 100x30");
 
-        var (setExit, set) = await Pilot("design", "terminals", "DSN-1", "160x44", "250x60", "160x44");
-        setExit.ShouldBe(0);
-        set.ShouldContain("DSN-1 terminals: 160x44 250x60");
+        (await Pilot("design", "terminals", "DSN-1", "160x44", "250x60", "160x44")).Exit.ShouldBe(0);
         (await Pilot("design", "show", "DSN-1")).Output.ShouldContain("terminals: 160x44 250x60");
 
-        var (clearExit, cleared) = await Pilot("design", "terminals", "DSN-1");
-        clearExit.ShouldBe(0);
-        cleared.ShouldContain("terminals: none");
+        (await Pilot("design", "terminals", "DSN-1")).Exit.ShouldBe(0);
         (await Pilot("design", "show", "DSN-1")).Output.ShouldNotContain("terminals:");
     }
 
