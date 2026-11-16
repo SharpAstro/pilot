@@ -77,6 +77,27 @@ public sealed class StoreCompatibilityTests : IDisposable
         }
     }
 
+    /// <summary>The designs a fixture holds (PIL1096) read whole: the record has no member null that its type forbids, and the brief and the counter come with it.</summary>
+    [Theory]
+    [MemberData(nameof(Versions))]
+    public void ADesignAFixtureHoldsReadsWhole(string version)
+    {
+        var folder = Copy(version);
+        if (!Directory.Exists(Pilot.Node.Designs.DesignStore.FolderIn(folder)))
+        {
+            return;
+        }
+        var store = new Pilot.Node.Designs.DesignStore(folder);
+        var rows = store.List();
+        rows.ShouldNotBeEmpty();
+        var details = rows.Select(r => store.Detail(r.Id)).ToList();
+        var asRead = NullMembers.Find([.. details]);
+        Assert.True(asRead.Count == 0, Describe(version, "as read from the designs", asRead));
+        details.ShouldAllBe(d => d.Brief != null && d.Brief.Contains("## "));
+        // The counter in the fixture is not below a design it holds: the next id is a new one.
+        store.New(null, null, "next").Id.ShouldBe("DSN-" + (rows.Length + 1));
+    }
+
     private static string Describe(string version, string stage, IReadOnlyList<string> found) =>
         $"A store written by {version} comes back with members null that their type does not allow ({stage}): {string.Join(", ", found)}. " +
         "A member added to a stored record must be nullable or default for what the reader hands it (see PILOT.md).";

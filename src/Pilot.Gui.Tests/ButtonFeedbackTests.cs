@@ -194,6 +194,7 @@ public sealed class ButtonFeedbackTests
         (@"^FlightMapLayer|^map:", "the flight map's layer switches, grip and nodes: what the canvas shows and where its cursor is"),
         (@"^cards:chat$", "opens the chat with the watchtower"),
         (@"^job:[^:]+:(cancel|force|cancel-no|force-no)$", "a job's Cancel… and Force cancel… only ask the question, and Keep running drops it; the answer that cancels goes through its Presses"),
+        (@"^designs:(list|open:.+|screen:.+|version:\d+)$", "the Designs page's way to and from a design, and its pick of the screen or version the player shows: navigation, no command on the node"),
         (@"^chat:(end|back|restart|restart-no|drop-card)$", "the chat's jump to end, way back, the Restart ask and its Keep it, and Drop of a quote: no command on the node; its choices and Stop it and start fresh go through its Presses"),
     ];
 

@@ -81,9 +81,9 @@ public sealed class RailOverflowTests
     [Fact]
     public void ATallWindowShowsEveryPageAndNoMoreCell()
     {
-        using var window = new Window(HeightFor(11) + 40f);
+        using var window = new Window(HeightFor(12) + 40f);
 
-        window.Cells().Count.ShouldBe(11);
+        window.Cells().Count.ShouldBe(12);
         window.Chrome.More.Entries.ShouldBeEmpty();
         window.Save("rail-tall");
     }
@@ -96,7 +96,7 @@ public sealed class RailOverflowTests
         var cells = window.Cells();
         // Five pages and the "..." cell.
         cells.Count.ShouldBe(6);
-        window.Chrome.More.Entries.Length.ShouldBe(6);
+        window.Chrome.More.Entries.Length.ShouldBe(7);
         // Every painted cell lies wholly inside the rail: none is cropped by the window's foot or the rail's edge.
         cells.ShouldAllBe(r => r.X >= 0f && r.X + r.Width <= 53f && r.Y >= Nav - 0.5f && r.Y + r.Height <= window.Height + 0.5f);
         window.Save("rail-short");
@@ -157,7 +157,7 @@ public sealed class RailOverflowTests
 
         window.Cells().Count.ShouldBe(6);
         window.Chrome.More.Entries.Select(e => e.Value).ShouldNotContain(last);
-        window.Chrome.More.Entries.Length.ShouldBe(6);
+        window.Chrome.More.Entries.Length.ShouldBe(7);
     }
 
     [Fact]

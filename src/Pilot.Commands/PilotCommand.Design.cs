@@ -1,0 +1,123 @@
+using System.CommandLine;
+using System.Globalization;
+using System.Text;
+using Pilot.Contracts;
+
+namespace Pilot.Commands;
+
+public static partial class PilotCommand
+{
+    /// <summary>A design as <c>pilot designs</c> lists it: id, version, repo, when, title.</summary>
+    internal static string DesignLine(DesignRow row) =>
+        $"{row.Id}  {(row.Current is { } v ? "v" + v.ToString(CultureInfo.InvariantCulture) : "no version")}  {row.Repo ?? "-"}  {(row.At is { } at ? at.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) : "-")}  {row.Title}";
+
+    /// <summary>Every design, newest first, a line each.</summary>
+    internal static string Designs(DesignList list)
+    {
+        if (list.Rows.Length == 0)
+        {
+            return "No designs. pilot design new -- <brief> makes one.\n";
+        }
+        var text = new StringBuilder();
+        foreach (var row in list.Rows)
+        {
+            text.AppendLine(DesignLine(row));
+        }
+        return text.ToString();
+    }
+
+    /// <summary>One design whole: its record, its brief as written and where its folders are.</summary>
+    internal static string DesignShown(DesignDetail design)
+    {
+        var row = design.Row;
+        var text = new StringBuilder();
+        text.AppendLine($"{row.Id}  {row.Title}");
+        text.AppendLine($"repo: {row.Repo ?? "-"}");
+        text.AppendLine($"made: {(row.At is { } at ? at.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture) : "-")}");
+        text.AppendLine($"current version: {(row.Current is { } v ? "v" + v.ToString(CultureInfo.InvariantCulture) : "none")} of {row.Versions ?? 0}");
+        if (row.Why is { Length: > 0 } why)
+        {
+            text.AppendLine($"why: {why}");
+        }
+        if (row.PrototypeSha256 is { Length: > 0 } sha)
+        {
+            text.AppendLine($"prototype sha256: {sha}");
+        }
+        text.AppendLine($"folder: {design.Folder}");
+        text.AppendLine($"draft: {design.DraftFolder}");
+        if (design.CurrentFolder is { Length: > 0 } current)
+        {
+            text.AppendLine($"current: {current}");
+        }
+        text.AppendLine();
+        text.AppendLine("brief:");
+        text.AppendLine(design.Brief?.TrimEnd() ?? "(none)");
+        return text.ToString();
+    }
+
+    private sealed partial class BuildContext
+    {
+        /// <summary>Makes design and designs (PIL1096): a prototype of screens, briefed by the owner and kept in versions on the node.</summary>
+        internal (Command, Command) DesignCommands()
+        {
+            var newBrief = Words("brief", "The owner's words, kept verbatim as the first piece of the design's brief (after --)");
+            var newRepo = new Option<string?>("--repo") { Description = "The repo the design is for, as its name" };
+            var newTitle = new Option<string?>("--title") { Description = "The design's title; the brief's first line, cut to 80 characters, when left out" };
+            var designNew = Action(new Command("new", "Make a design from a brief and print its id, DSN-<n>") { Arguments = { newBrief }, Options = { newRepo, newTitle } },
+                (p, client, ct) => Send(client, Verbs.DesignNew, Verbs.NodeTarget, [p.GetValue(newRepo) ?? "", p.GetValue(newTitle) ?? "", Join(p, newBrief)], who, ct));
+
+            var briefId = Arg("design", "The design's id, DSN-<n>");
+            var briefText = Words("text", "The owner's words to add, verbatim, under their time (after --)");
+            var designBrief = Action(new Command("brief", "Append the owner's words to a design's brief, verbatim, under their time") { Arguments = { briefId, briefText } },
+                (p, client, ct) => Send(client, Verbs.DesignBrief, Verbs.DesignTarget(p.GetValue(briefId)!), [Join(p, briefText)], who, ct));
+
+            var draftId = Arg("design", "The design's id, DSN-<n>");
+            var draftReplace = new Option<bool>("--replace") { Description = "Make the draft again over an existing one" };
+            var designDraft = Action(new Command("draft", "Make the design's draft/ folder: the current version's prototype.json and NOTES.md, or a starter prototype when there is no version; refused over an existing draft unless --replace") { Arguments = { draftId }, Options = { draftReplace } },
+                (p, client, ct) => Send(client, Verbs.DesignDraft, Verbs.DesignTarget(p.GetValue(draftId)!), p.GetValue(draftReplace) ? ["replace"] : [], who, ct));
+
+            var checkId = Arg("design", "The design's id, DSN-<n>");
+            var designCheck = Action(new Command("check", "Check the draft's prototype.json with DIR.Lib: every loader problem with its JSON path and every finding at the sweep's sizes, one a line; 'clean' when there are none, and a non-zero exit when there are") { Arguments = { checkId } },
+                (p, client, ct) => Send(client, Verbs.DesignCheck, Verbs.DesignTarget(p.GetValue(checkId)!), [], who, ct));
+
+            var renderId = Arg("design", "The design's id, DSN-<n>");
+            var designRender = Action(new Command("render", "Write draft/renders/<screen id>.png for every screen at the design size, stamped with the hash of the prototype drawn") { Arguments = { renderId } },
+                (p, client, ct) => Send(client, Verbs.DesignRender, Verbs.DesignTarget(p.GetValue(renderId)!), [], who, ct));
+
+            var publishId = Arg("design", "The design's id, DSN-<n>");
+            var publishWhy = new Option<string>("--why") { Description = "Why: brief, message or fix", Required = true };
+            var designPublish = Action(new Command("publish", "Make the next read-only version from the draft, when the check is clean and the renders are of the draft as it stands; prints the version") { Arguments = { publishId }, Options = { publishWhy } },
+                (p, client, ct) => Send(client, Verbs.DesignPublish, Verbs.DesignTarget(p.GetValue(publishId)!), [p.GetValue(publishWhy)!], who, ct));
+
+            var showId = Arg("design", "The design's id, DSN-<n>");
+            var designShow = Action(new Command("show", "Show a design: its record, its brief and the paths of its folders") { Arguments = { showId } },
+                async (p, client, ct) =>
+                {
+                    var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.DesignShow, Target = Verbs.DesignTarget(p.GetValue(showId)!), Who = who, Agent = byAgent }, ct);
+                    if (answer is { Success: true, Response: { Ok: true, Design: { } design } })
+                    {
+                        await output.WriteAsync(DesignShown(design));
+                        return 0;
+                    }
+                    await output.WriteLineAsync($"refused: design show {p.GetValue(showId)}: {answer.Response?.Error ?? answer.Error}");
+                    return 1;
+                });
+
+            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, draft, check, render, publish, show") { Subcommands = { designNew, designBrief, designDraft, designCheck, designRender, designPublish, designShow } };
+
+            var designs = Action(new Command("designs", "Every design, newest first"),
+                async (p, client, ct) =>
+                {
+                    var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.Designs, Target = Verbs.NodeTarget, Who = who, Agent = byAgent }, ct);
+                    if (answer is { Success: true, Response: { Ok: true, Designs: { } list } })
+                    {
+                        await output.WriteAsync(Designs(list));
+                        return 0;
+                    }
+                    await output.WriteLineAsync($"refused: designs: {answer.Response?.Error ?? answer.Error}");
+                    return 1;
+                });
+            return (design, designs);
+        }
+    }
+}

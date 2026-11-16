@@ -20,6 +20,7 @@ internal static class PilotPageNames
         (PilotPage.Settings, "settings"),
         (PilotPage.Ideas, "ideas"),
         (PilotPage.Spend, "spend"),
+        (PilotPage.Designs, "designs"),
     ];
 
     /// <summary>Every page's name, in the rail's order.</summary>

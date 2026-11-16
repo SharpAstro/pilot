@@ -97,6 +97,14 @@ public sealed class McpTests : IAsyncLifetime
         tools.Keys.Order().ShouldBe(expected.Order());
         tools.Keys.ShouldContain("flight_review");
         tools.Keys.ShouldContain("flight_archive");
+        tools.Keys.ShouldContain("design_new");
+        tools.Keys.ShouldContain("design_brief");
+        tools.Keys.ShouldContain("design_draft");
+        tools.Keys.ShouldContain("design_check");
+        tools.Keys.ShouldContain("design_render");
+        tools.Keys.ShouldContain("design_publish");
+        tools.Keys.ShouldContain("design_show");
+        tools.Keys.ShouldContain("designs");
         tools.Keys.ShouldContain("leg_go-around");
         tools.Keys.ShouldContain("leg_remove");
         tools.Keys.ShouldContain("leg_validate");

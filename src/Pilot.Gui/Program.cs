@@ -324,6 +324,7 @@ using var client = snapshot is null ? NewClient() : null;
 // with the loop pumping instead (ShutdownDrain), so the teardown stays on this thread.
 var feed = client is null ? null : NodeFeed.For(client);
 SpendReads? spendReads = null;
+DesignReads? designReads = null;
 DecisionReads? decisionReads = null;
 if (feed is not null)
 {
@@ -813,6 +814,12 @@ if (feed is not null && client is not null && clients is not null)
     spendReads = new SpendReads(client, loop.RequestRedraw);
     chrome.Spend.OnWindow = window => spendReads.Ask(window, screen.Source, force: true);
     chrome.Flights.OnSpend = code => spendReads.AskFlight(code, force: true);
+    // The Designs page: the list and an open design read through the node's designs and design-show commands, a version's files from the paths it gives.
+    designReads = new DesignReads(client, "gui", loop.RequestRedraw);
+    var designPictures = new DesignPictures(loop.RequestRedraw);
+    chrome.Designs.PictureOf = designPictures.Lookup;
+    chrome.Designs.OnOpen = id => designReads.AskDesign(id, null, force: true);
+    chrome.Designs.OnVersion = (id, number) => designReads.AskDesign(id, number, force: true);
     decisionReads = new DecisionReads(client, loop.RequestRedraw);
     // The Background tasks page: a job's log followed while it is selected, Cancel a verb on the node.
     chrome.Jobs.CanCommand = true;
@@ -1161,6 +1168,14 @@ void RenderFrame()
     }
 
     view.Ui.FrameId++;
+    if (designReads is not null && chrome.Page == PilotPage.Designs)
+    {
+        designReads.AskList();
+        if (chrome.Designs.OpenId is { } openDesign)
+        {
+            designReads.AskDesign(openDesign, designReads.Page?.Detail.Row.Id == openDesign ? designReads.Page.Version : null);
+        }
+    }
     // With the pull requests: without them the page said "not read yet" whatever the node had read, Refresh included (SE1, 2026-10-28).
     if (spendReads is not null)
     {
@@ -1199,7 +1214,7 @@ void RenderFrame()
         decisionReads.Saw(feed?.LastDecision, shown);
         chrome.Flights.Decisions = decisionReads.Flights;
     }
-    chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines, ideas, spendReads?.Screen ?? fileSpend);
+    chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines, ideas, spendReads?.Screen ?? fileSpend, designReads?.Screen(screen.Source, screen.AsOf, chrome.Designs.OpenId));
     // The hover text the router says is due, last, over everything.
     chrome.Tooltips.Render(router.Tooltip, new RectF32(0, 0, width, height));
     router.AfterPaint();
