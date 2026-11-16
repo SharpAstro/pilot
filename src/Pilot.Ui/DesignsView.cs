@@ -284,7 +284,6 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         }
         else
         {
-            left.Add(PlayerBar(page));
             left.Add(Layout.Builder.Fill(key: CellsShown ? CellsKey : PlayerKey).Bg(Well).Stretch());
             left.Add(Strip(page));
         }
@@ -297,9 +296,13 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         }
         right.Add(Heading("Brief"));
         right.Add(Markdown(string.IsNullOrWhiteSpace(page.Detail.Brief) ? "(no brief)" : page.Detail.Brief!));
-        return Layout.Builder.HStack(
+        var columns = Layout.Builder.HStack(
             Layout.Builder.VStack([.. left]).WithGap(8f).WStar(2.2f).HStar(),
-            Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).Pad(Gutter, 8f);
+            Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).WStar().HStar();
+        // The Pixels or Cells bar spans the page above both columns, so a narrow window cannot squeeze it into the player's column.
+        return page.Version is not null && Player is not null
+            ? Layout.Builder.VStack(PlayerBar(page), columns).WithGap(8f).Pad(Gutter, 8f)
+            : Layout.Builder.VStack(columns).Pad(Gutter, 8f);
     }
 
     // The Pixels or Cells switch and, in Cells, the terminal sizes: the page's own controls, above the rectangle the prototype plays in.
