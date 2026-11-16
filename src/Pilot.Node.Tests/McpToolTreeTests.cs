@@ -20,7 +20,7 @@ public sealed class McpToolTreeTests(ITestOutputHelper output)
     private static IEnumerable<(string Name, bool Required)> AncestorKeys(Command[] chain) =>
         chain[..^1].SelectMany(c =>
             c.Arguments.Where(a => !a.Hidden).Select(a => (a.Name, a.Arity.MinimumNumberOfValues > 0))
-                .Concat(c.Options.Where(o => !o.Hidden && o is not (HelpOption or VersionOption)).Select(o => (Key(o), o.Required))));
+                .Concat(c.Options.Where(o => !o.Hidden && o.Name is not ("--help" or "--version")).Select(o => (Key(o), o.Required))));
 
     /// <summary>The tools whose schema lacks (or does not require) a key of an ancestor command; the check a second test feeds a broken schema.</summary>
     internal static List<string> Lacking(Dictionary<string, (string[] Path, Command[] Chain)> tools, Func<string, string[], Command[], ToolSchema> schemaOf)
