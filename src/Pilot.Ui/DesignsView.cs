@@ -70,6 +70,13 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
     /// <summary>The Cells half of the Pixels or Cells switch (PIL1098): the player's current screen arranged in terminal cells, or null where there is no player. The chrome lists it instead of the player while <see cref="CellsShown"/>.</summary>
     public PrototypeCellGrid<TSurface>? CellGrid { get; private set; }
 
+    /// <summary>
+    /// The terminal's size in cells when the page is drawn by pilot-tui (PIL1098), else null. There the prototype is not a player or a grid painted into a
+    /// rectangle: its tree is a node of the page's own tree, arranged, painted and hit-tested with the page by CellLayout, so its goto, set, toggle and
+    /// text inputs go through the terminal's ordinary click and key routing. The Pixels or Cells bar and the strip of renders have no place there.
+    /// </summary>
+    public (int Columns, int Rows)? Terminal { get; set; }
+
     /// <summary>True while the page plays the prototype in terminal cells rather than pixels. Pixels is the default.</summary>
     public bool CellsShown { get; private set; }
 
@@ -282,6 +289,11 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         {
             left.Add(Layout.Builder.Text($"v{page.Version} cannot be played: {page.Problem ?? "its prototype did not load"}", 14f, Dim, TextAlign.Center).Selectable().Stretch());
         }
+        else if (Terminal is { } terminal)
+        {
+            left.Add(ScreenButtons(page));
+            left.Add(Layout.Builder.VStack(EmbeddedTree(terminal)).Bg(Well).Stretch());
+        }
         else
         {
             left.Add(Layout.Builder.Fill(key: CellsShown ? CellsKey : PlayerKey).Bg(Well).Stretch());
@@ -300,9 +312,46 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
             Layout.Builder.VStack([.. left]).WithGap(8f).WStar(2.2f).HStar(),
             Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).WStar().HStar();
         // The Pixels or Cells bar spans the page above both columns, so a narrow window cannot squeeze it into the player's column.
-        return page.Version is not null && Player is not null
+        return page.Version is not null && Player is not null && Terminal is null
             ? Layout.Builder.VStack(PlayerBar(page), columns).WithGap(8f).Pad(Gutter, 8f)
             : Layout.Builder.VStack(columns).Pad(Gutter, 8f);
+    }
+
+    // The prototype's current screen as a node of the page's tree, built by the player's own builder (so its fields and its goto are the player's) for
+    // the cells the page leaves it: its left column's share of the width, less the header and the buttons above it.
+    private Layout.Node EmbeddedTree((int Columns, int Rows) terminal)
+    {
+        var builder = Player!.TreeBuilder;
+        var size = builder.DesignSize;
+        var width = terminal.Columns * 8f - 2f * Gutter;
+        var left = Math.Clamp((width - Gutter) * 2.2f / 3.2f, 160f, Math.Max(160f, width - Gutter - 260f));
+        builder.DesignSize = ((int)left, Math.Max(4, terminal.Rows - 8) * 16);
+        try
+        {
+            return Player.BuildTree().Stretch();
+        }
+        finally
+        {
+            builder.DesignSize = size;
+        }
+    }
+
+    // The version's screens as a row of named buttons, where the render strip's PNGs have no place: a press shows that screen in the player.
+    private Layout.Node ScreenButtons(DesignPage page)
+    {
+        var buttons = page.Document!.Screens.Select(screen =>
+        {
+            var id = screen.Id;
+            var current = Player?.CurrentScreen.Id == id;
+            return Layout.Builder.Text(string.IsNullOrEmpty(screen.Title) ? id : screen.Title, 12f, current ? Bright : Dim, TextAlign.Center)
+                .Pad(8f, 4f)
+                .WAuto()
+                .Bg(current ? Active : Button)
+                .BgHover(ButtonHover)
+                .WithTooltip($"Show {(string.IsNullOrEmpty(screen.Title) ? id : screen.Title)} in the player")
+                .Follows(new HitResult.ButtonHit($"designs:screen:{id}"), _ => ShowScreen(id));
+        }).ToArray();
+        return Layout.Builder.WrapH([.. buttons]).WithGap(6f).WithLineGap(4f).WStar();
     }
 
     // The Pixels or Cells switch and, in Cells, the terminal sizes: the page's own controls, above the rectangle the prototype plays in.

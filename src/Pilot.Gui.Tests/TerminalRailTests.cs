@@ -20,7 +20,7 @@ public sealed class TerminalRailTests
     [
         (PilotPage.Home, '1'), (PilotPage.Chat, '2'), (PilotPage.Sessions, '3'), (PilotPage.Flights, '4'), (PilotPage.Repos, '5'),
         (PilotPage.PullRequests, '9'), (PilotPage.Jobs, '6'), (PilotPage.Fleet, '7'), (PilotPage.Settings, '8'), (PilotPage.Ideas, '0'),
-        (PilotPage.Spend, '$'),
+        (PilotPage.Spend, '$'), (PilotPage.Designs, 'd'),
     ];
 
     private static JobsScreen JobsOf(params JobState[] states) =>
@@ -45,7 +45,8 @@ public sealed class TerminalRailTests
         TerminalRail.PlainChord('0').ShouldBe(new KeyChord(InputKey.D0, InputModifier.None));
         TerminalRail.PlainChord('6').ShouldBe(new KeyChord(InputKey.D6, InputModifier.None));
         TerminalRail.PlainChord('$').ShouldBe(new KeyChord(InputKey.D4, InputModifier.Shift));
-        foreach (var (page, _, key) in TerminalRail.Keys.Where(k => k.Key != TerminalRail.SpendKey))
+        TerminalRail.PlainChord('d').ShouldBe(new KeyChord(InputKey.D, InputModifier.None));
+        foreach (var (page, _, key) in TerminalRail.Keys.Where(k => char.IsAsciiDigit(k.Key)))
         {
             var ctrl = TerminalRail.ChordFor(page);
             ctrl.Modifiers.ShouldBe(InputModifier.Ctrl);
@@ -72,7 +73,7 @@ public sealed class TerminalRailTests
     [InlineData("emoji", 80)]
     [InlineData("initials", 80)]
     [InlineData("initials", 77)]
-    public void ANarrowTerminalKeepsAllElevenEntriesOnScreenAndClickable(string modeName, int columns)
+    public void ANarrowTerminalKeepsAllTwelveEntriesOnScreenAndClickable(string modeName, int columns)
     {
         var mode = TerminalRail.Parse(modeName)!.Value;
         var shown = new List<PilotPage>();
@@ -86,9 +87,9 @@ public sealed class TerminalRailTests
             entry.Bounds.Width.ShouldBe(TerminalRail.NarrowEntryCells);
             TerminalRail.EntryText(page, mode, null, IdeasOf(120), Now, narrow: true).TrimEnd().ShouldEndWith(key.ToString());
         }
-        var last = EntryOf(arranged, PilotPage.Spend);
+        var last = EntryOf(arranged, PilotPage.Designs);
         CellLayout.HitTest(arranged, last.Bounds.X + 2, last.Bounds.Y);
-        shown.ShouldBe([PilotPage.Spend]);
+        shown.ShouldBe([PilotPage.Designs]);
     }
 
     [Theory]
