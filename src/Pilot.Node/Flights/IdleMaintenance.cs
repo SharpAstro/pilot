@@ -253,7 +253,7 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
             detail.Append(CultureInfo.InvariantCulture, $"{step.Name}: {Gb(step.Bytes)} in {step.Items.Length} item(s)").Append('\n');
             foreach (var item in step.Items.Take(FirstRunTop))
             {
-                detail.Append(CultureInfo.InvariantCulture, $"  {item.Name}: {Gb(item.Bytes)}{(item.Reason.Length > 0 ? $" ({item.Reason})" : "")}").Append('\n');
+                detail.Append(CultureInfo.InvariantCulture, $"  {item.Name}: {Scaled(item.Bytes)}{(item.Reason.Length > 0 ? $" ({item.Reason})" : "")}").Append('\n');
             }
             if (step.Items.Length > FirstRunTop)
             {
@@ -424,5 +424,19 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
     }
 
     /// <summary>Bytes as gigabytes with one decimal (<c>9.2 GB</c>), or just the number (<c>7.0</c>) when <paramref name="unit"/> is false.</summary>
+    /// <summary>Bytes as B, KB, MB or GB, so a small item does not read as 0.0 GB.</summary>
+    public static string Scaled(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        var value = (double)bytes;
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+        return unit == 0 ? $"{bytes.ToString(CultureInfo.InvariantCulture)} B" : $"{value.ToString("0.0", CultureInfo.InvariantCulture)} {units[unit]}";
+    }
+
     public static string Gb(long bytes, bool unit = true) => (bytes / (double)(1L << 30)).ToString("0.0", CultureInfo.InvariantCulture) + (unit ? " GB" : "");
 }

@@ -209,12 +209,19 @@ public sealed class IdleMaintenanceTests
     public async Task ADryRunStartedWhileALegFliesRunsEveryStepEvenWhenAJobStartsMidRun()
     {
         Fly();
-        var one = new FakeStep("packages", 2 * Gib);
+        var gate = new GatedStep(new FakeStep("packages", 2 * Gib));
         var two = new FakeStep("git", Gib);
-        var sweep = Sweep(Every, new JobStartingStep(one, () => Job(JobState.Running)), two);
+        var sweep = Sweep(Every, gate, two);
 
         var running = sweep.RunNowAsync(dryRun: true, Ct);
-        _time.Advance(TimeSpan.FromSeconds(5));
+        await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+        Job(JobState.Running);
+        for (var i = 0; i < 5; i++)
+        {
+            _time.Advance(TimeSpan.FromSeconds(5));
+        }
+        running.IsCompleted.ShouldBeFalse();
+        gate.Release.SetResult();
         var (run, refused) = await running.WaitAsync(TimeSpan.FromSeconds(5), Ct);
 
         refused.ShouldBeNull();
@@ -239,15 +246,20 @@ public sealed class IdleMaintenanceTests
         step.Ran.ShouldBe(0);
     }
 
-    /// <summary>Measures like its inner step, after putting work on the node: the job that starts mid-run.</summary>
-    private sealed class JobStartingStep(IMaintenanceStep inner, Action start) : IMaintenanceStep
+    /// <summary>Measures like its inner step, but only once the test releases it, and says when it was entered: a step that is still running while time moves on.</summary>
+    private sealed class GatedStep(IMaintenanceStep inner) : IMaintenanceStep
     {
         public string Name => inner.Name;
 
-        public Task<MaintenanceMeasure> MeasureAsync(CancellationToken cancellationToken)
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<MaintenanceMeasure> MeasureAsync(CancellationToken cancellationToken)
         {
-            start();
-            return inner.MeasureAsync(cancellationToken);
+            Entered.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
+            return await inner.MeasureAsync(cancellationToken);
         }
 
         public Task<MaintenanceResult> RunAsync(CancellationToken cancellationToken) => inner.RunAsync(cancellationToken);

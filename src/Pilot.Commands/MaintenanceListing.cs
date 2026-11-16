@@ -33,7 +33,7 @@ public static class MaintenanceListing
         var verb = report.DryRun ? "would remove" : "removed";
         foreach (var step in report.Steps)
         {
-            yield return $"{step.Name}: {step.Items.Length.ToString(CultureInfo.InvariantCulture)} items {verb}, {Size(step.Bytes)}" + (step.Stopped is { Length: > 0 } stopped ? $" ({stopped})" : "");
+            yield return (step.Items.Length == 0 && !report.DryRun ? $"{step.Name}: {verb}, {Size(step.Bytes)}" : $"{step.Name}: {step.Items.Length.ToString(CultureInfo.InvariantCulture)} items {verb}, {Size(step.Bytes)}") + (step.Stopped is { Length: > 0 } stopped ? $" ({stopped})" : "");
             var ordered = step.Items.OrderByDescending(i => i.Bytes).ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToArray();
             var shown = all ? ordered.Length : Math.Min(Cap, ordered.Length);
             for (var i = 0; i < shown; i++)
