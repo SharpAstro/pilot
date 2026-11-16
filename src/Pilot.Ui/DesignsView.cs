@@ -132,7 +132,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
     internal Layout.Node Tree(DesignsScreen screen)
     {
         Palette.Use(Night);
-        var open = OpenId is { } id ? screen.Open is { } page && page.Detail.Row.Id == id ? page : null : null;
+        var open = OpenId is { } id && screen.Open is { } shown && shown.Detail.Row.Id == id ? shown : null;
         if (OpenId is null)
         {
             Player = null;
