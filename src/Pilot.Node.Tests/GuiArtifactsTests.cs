@@ -195,6 +195,9 @@ public sealed class GuiArtifactsTests : JobTestsBase
         text.ShouldContain("Prove what a test can headless");
         text.ShouldContain("pilot job <id> artifact");
         text.ShouldNotContain("nothing here may measure through it");
+        text.ShouldNotContain("Debug-only");
+        text.ShouldContain("The inspector is in Release builds but off");
+        text.ShouldContain("`DIR_INSPECTOR=1` and `DIR_INSPECTOR_TOKEN`");
         text.ShouldNotContain("—");
     }
 }

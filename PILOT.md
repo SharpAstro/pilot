@@ -24,10 +24,8 @@ is neither built nor tested by CI.
   opens must show what it is. Local-only starts (the GUI, the node, anything needing the real machine) are not planned
   as a step, or are planned with the way round named: the CPU-rendered tests (`Pilot.Gui.Tests`) draw a page from a
   sample snapshot with no display and no GPU.
-- The inspector is Debug-only: measure through it only by the `DIR_INSPECTOR` opt-in, in the GUI lane.
-- **The GUI lane:** a leg that must see a window runs `pilot run --gui -- <plain command>`: one GUI job per machine at Normal
-  priority, with `DIR_INSPECTOR=1`, `DIR_INSPECTOR_TOKEN` and `PILOT_JOB_ARTIFACTS` (a fresh folder) set; its files are listed
-  by `pilot job <id>` and fetched with `pilot job <id> artifact <name> [--out <path>]`. Prove what a test can headless first.
+- **GUI lane:** `pilot run --gui -- <plain command>`: one job per machine, at Normal; `PILOT_JOB_ARTIFACTS` files show in `pilot job <id>`, fetched by `pilot job <id> artifact <name>`.
+  The inspector is in Release builds but off: only `DIR_INSPECTOR=1` and `DIR_INSPECTOR_TOKEN` (set in this lane) start it. Prove what a test can headless first.
 - Never wait with a job that sleeps or polls: it holds a slot of the queue and blocks every job behind it. Use
   `pilot leg wait --for-file <path> [--until <time>]` and end the turn; the node wakes the leg once. Long builds and
   test runs go through `pilot run -- <command>`.
@@ -61,9 +59,11 @@ is neither built nor tested by CI.
 - A reboot made ready (`pilot node reboot request`, #916) puts the node in maintenance mode and tells every live session it
   started to save itself. A session told so stops where it is, **commits and pushes** what it can (unpushed work is lost
   work), and writes the file it was named (`<data>/reboot/flight-<code>-reboot-<stamp>.md`, `watchtower-reboot-…`, or its
-  name's) with four parts: what it was doing; what is committed and pushed and what is not; what it waited on; the exact next
-  step. Then it ends its turn. A session silent for 5 minutes gets a file the node writes and is ended. `pilot node reboot
-  status` says how far it is; `pilot node reboot done` (after the reboot) or `cancel` leaves maintenance mode. The node never reboots the machine.
+  name's) with four parts: what it was doing and where it stopped; what is committed and pushed and what is not; what it
+  was waiting on; the exact next step. Then it ends its turn, and the node ends the session once the file is in. A session
+  silent for 5 minutes gets a file the node writes from what it knows and is ended. `pilot node reboot status` says how far
+  it is, a "Ready to reboot" card says when all are in, and `pilot node reboot done` (after the reboot) or `cancel` leaves
+  maintenance mode. The node never reboots the machine.
 - A watch script has a deadline or an until-condition, never `while true`; check for the old one before re-arming (#870).
 - One live watchtower per node. A change to how the node finds, messages, resumes or stops a session keeps
   `OneWatchtowerTests`, `WatchtowerTests` and `ResumeOptionsTests` passing.
