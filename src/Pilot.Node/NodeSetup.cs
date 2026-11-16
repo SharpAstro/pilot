@@ -66,6 +66,9 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     /// <summary>The folder the response file goes in: the user's home, where install.sh puts it; a test points it elsewhere.</summary>
     public string MachineFolder { get; init; } = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
+    /// <summary>The kind setup's real starts (<see cref="Run"/>, <see cref="RunElevated"/>, <see cref="OpenWindow"/>) are told to <see cref="ProcessStarts"/> as.</summary>
+    public const string SetupStartKind = "setup";
+
     /// <summary>Runs a program and gives its exit code and output; a test replaces it.</summary>
     public Func<string, IReadOnlyList<string>, TimeSpan, (int Exit, string Output)> Run { get; init; } = RunProcess;
 
@@ -933,6 +936,8 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             }
             start.Environment["GH_PROMPT_DISABLED"] = "1";
             start.Environment["GH_NO_UPDATE_NOTIFIER"] = "1";
+            // Seen like every other start (#933), so a unit test that reaches setup's real netsh, pwsh, gh or dotnet fails at once.
+            ProcessStarts.Observe(SetupStartKind, start);
             using var process = Process.Start(start)!;
             var output = process.StandardOutput.ReadToEndAsync();
             var error = process.StandardError.ReadToEndAsync();
@@ -955,6 +960,8 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         try
         {
             var start = new ProcessStartInfo(program, arguments) { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden };
+            // Before the start, so a unit test that reaches it fails instead of putting a UAC prompt on the screen.
+            ProcessStarts.Observe(SetupStartKind, start);
             using var process = Process.Start(start);
             if (process is null)
             {
@@ -988,6 +995,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                 $"$Host.UI.RawUI.WindowTitle = '{title.Replace("'", "''")}';" +
                 "Write-Host 'pilot''s node opened this so its watchtower can run here.'; " +
                 "Write-Host 'Accept Claude Code''s trust prompt, then type /exit and close this window.'; claude");
+            ProcessStarts.Observe(SetupStartKind, start);
             using var process = Process.Start(start);
             return process is not null;
         }

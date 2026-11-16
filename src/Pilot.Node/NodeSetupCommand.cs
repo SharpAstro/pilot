@@ -21,12 +21,18 @@ public static class NodeSetupCommand
         ? "\nsetup: done. Ask another machine for control from its row on the Fleet page (Ctrl+7)."
         : $"\nsetup: {left} left for you, above; the Settings page (Ctrl+8) has a button for those the node can fix.";
 
+    /// <summary>
+    /// Runs setup, or with <paramref name="checkOnly"/> only prints the checklist. <paramref name="setupFor"/> makes the
+    /// <see cref="NodeSetup"/> over the settings' options; null makes the real one, whose checks run netsh, pwsh, gh and dotnet.
+    /// A test gives its own, on fakes, so it starts no process.
+    /// </summary>
     public static async Task<int> RunAsync(string socketPath, string dataFolder, string? machine, string[]? repoRoots, string? channel, bool firewall,
-        string nodePath, TextWriter output, TextWriter error, CancellationToken cancellationToken, bool checkOnly = false)
+        string nodePath, TextWriter output, TextWriter error, CancellationToken cancellationToken, bool checkOnly = false, Func<NodeOptions, NodeSetup>? setupFor = null)
     {
+        setupFor ??= options => new NodeSetup(options, nodePath, SessionTrackerOptions.FromEnvironment().Profile.Root);
         if (checkOnly)
         {
-            return await CheckAsync(socketPath, dataFolder, nodePath, output);
+            return await CheckAsync(socketPath, dataFolder, setupFor, output);
         }
         var file = NodeSettings.PathIn(dataFolder);
         var settings = NodeSettings.Read(file) with { Lan = true };
@@ -53,7 +59,7 @@ public static class NodeSetupCommand
         await output.WriteLineAsync($"setup: saved {file}: {string.Join(", ", NodeSettings.Keys.Where(k => settings.Get(k) is not null).Select(k => $"{k} {string.Join(' ', settings.Get(k)!)}"))}");
 
         var options = settings.Over(new NodeOptions(socketPath, dataFolder, UpdatePolicy: UpdatePolicy.Auto), new HashSet<string>());
-        var setup = new NodeSetup(options, nodePath, SessionTrackerOptions.FromEnvironment().Profile.Root);
+        var setup = setupFor(options);
 
         await Step(NodeSetup.HooksKey, "hooks installed");
         await Step(NodeSetup.MergeGuardKey, "merge guard installed");
@@ -114,11 +120,11 @@ public static class NodeSetupCommand
     }
 
     /// <summary><c>setup --check</c>: the checklist over the saved settings, changing nothing and asking for no elevation.</summary>
-    private static async Task<int> CheckAsync(string socketPath, string dataFolder, string nodePath, TextWriter output)
+    private static async Task<int> CheckAsync(string socketPath, string dataFolder, Func<NodeOptions, NodeSetup> setupFor, TextWriter output)
     {
         var settings = NodeSettings.Read(NodeSettings.PathIn(dataFolder));
         var options = settings.Over(new NodeOptions(socketPath, dataFolder, UpdatePolicy: UpdatePolicy.Auto), new HashSet<string>());
-        var setup = new NodeSetup(options, nodePath, SessionTrackerOptions.FromEnvironment().Profile.Root);
+        var setup = setupFor(options);
         await output.WriteLineAsync($"setup --check: the checklist as it stands, nothing changed ({NodeSettings.PathIn(dataFolder)})");
         await PrintChecklistAsync(setup, output);
         return 0;

@@ -560,17 +560,72 @@ public sealed class SettingsTests : IDisposable
         elevations.ShouldBe(0);
     }
 
+    /// <summary>
+    /// <c>setup --check</c> over a setup on fakes, with the LAN on and netsh finding both port rules missing and one leftover rule: the
+    /// checklist says so, and nothing is written, elevated or opened. On the real setup this test ran netsh three times, pwsh, gh and dotnet, and took 31 s
+    /// on the Windows runner; the guard now fails a unit test that reaches any of them.
+    /// </summary>
     [Fact]
     public async Task SetupCheckChangesNothingAndAsksForNoElevation()
     {
         var data = Path.Combine(_root, "check-data");
         Directory.CreateDirectory(data);
+        // The LAN on, so the firewall check is wanted and finds what a full setup would elevate for.
+        var settingsFile = NodeSettings.PathIn(data);
+        new NodeSettings { Lan = true }.Write(settingsFile);
+        var saved = File.ReadAllText(settingsFile);
+        var leftover = Path.Combine(data, "jobs", "j1", "pilot-node.exe");
+        var claudeSettings = Path.Combine(_root, ".claude", "settings.json");
+        var skills = Path.Combine(_root, "skills");
+        var runs = new List<string>();
+        var elevations = 0;
+        var windows = 0;
+        NodeSetup? made = null;
+        NodeSetup SetupFor(NodeOptions options) => made = new NodeSetup(options, Path.Combine(_root, "pilot-node.exe"), _root)
+        {
+            SettingsFile = claudeSettings,
+            SkillsFolder = skills,
+            MachineFolder = Path.Combine(_root, "home"),
+            FindRunawayAgent = () => null,
+            AutostartEntry = () => null,
+            UnitText = () => null,
+            ShortcutToken = () => null,
+            DefenderFolders = () => [],
+            ProgramExists = _ => false,
+            Run = (program, args, _) =>
+            {
+                lock (runs)
+                {
+                    runs.Add($"{program} {string.Join(' ', args)}");
+                }
+                return program == "netsh" && args.Contains("name=all")
+                    ? (0, $"Rule Name:                            pilot-node\r\n----------\r\nEnabled:                              Yes\r\nDirection:                            In\r\nProfiles:                             Private\r\nProgram:                              {leftover}\r\nAction:                               Allow\r\n\r\n")
+                    : (1, "No rules match the specified criteria.");
+            },
+            RunElevated = (_, _) => { Interlocked.Increment(ref elevations); return true; },
+            OpenWindow = (_, _) => { Interlocked.Increment(ref windows); return true; },
+        };
+
         var output = new StringWriter();
         var code = await NodeSetupCommand.RunAsync(Path.Combine(_root, "n.sock"), data, null, null, null, true, Path.Combine(_root, "pilot-node.exe"),
-            output, TextWriter.Null, Ct, checkOnly: true);
+            output, TextWriter.Null, Ct, checkOnly: true, setupFor: SetupFor);
+
         code.ShouldBe(0);
-        output.ToString().ShouldContain("nothing changed");
-        File.Exists(NodeSettings.PathIn(data)).ShouldBeFalse("--check writes no settings file");
+        made.ShouldNotBeNull("--check reads the checklist through the setup it was given");
+        var text = output.ToString();
+        text.ShouldContain("nothing changed");
+        if (OperatingSystem.IsWindows())
+        {
+            text.ShouldContain($"no rule {NodeSetup.DiscoveryRule}");
+            text.ShouldContain("1 firewall rules for programs that no longer exist (worktree builds)");
+        }
+        // Every program it ran only reads: netsh's show, gh's status, dotnet's SDK list and pwsh's Defender query.
+        runs.ShouldNotBeEmpty();
+        runs.ShouldAllBe(r => r.StartsWith("netsh advfirewall firewall show rule ") || r.StartsWith("gh auth status") || r == "dotnet --list-sdks" || r.StartsWith("pwsh -NoLogo -NoProfile -NonInteractive -EncodedCommand "));
+        (elevations, windows).ShouldBe((0, 0));
+        File.ReadAllText(settingsFile).ShouldBe(saved, "--check writes no settings");
+        File.Exists(claudeSettings).ShouldBeFalse("--check installs no hooks");
+        Directory.Exists(skills).ShouldBeFalse("--check installs no skills");
     }
 
     [Fact]

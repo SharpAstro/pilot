@@ -118,6 +118,24 @@ public sealed class ProcessStartGuardTests
     private static bool ReportMode =>
         ProcessStartGuard.ModeFor(Environment.GetEnvironmentVariable("PILOT_TEST_PROCESS_GUARD")) == ProcessStartGuard.GuardMode.Report;
 
+    /// <summary>
+    /// Setup's real reads (netsh, pwsh, gh, dotnet) go through the hook too, and are refused before the start: a unit test that reached
+    /// them unseen took 31 s on the Windows runner (SettingsTests.SetupCheckChangesNothingAndAsksForNoElevation, PR #1109).
+    /// </summary>
+    [Fact]
+    public void SetupsRealRunIsSeenAndRefusedBeforeItStarts()
+    {
+        // Report mode lets a start through, and this one would then run netsh for real.
+        Assert.SkipWhen(ReportMode, "PILOT_TEST_PROCESS_GUARD=report lets the start through");
+        using var provoking = TestEnvironment.ProvokingAStart();
+        var setup = new NodeSetup(new NodeOptions("/tmp/n.sock", Path.GetTempPath()), "pilot-node", Path.GetTempPath());
+
+        var ex = Should.Throw<ProcessStartNotAllowedException>(() => setup.Run("netsh", ["advfirewall", "firewall", "show", "rule", "name=all"], TimeSpan.FromSeconds(1)));
+
+        ex.Message.ShouldContain($"real {NodeSetup.SetupStartKind} process");
+        ex.Message.ShouldContain("netsh advfirewall firewall show rule name=all");
+    }
+
     [Fact]
     [Trait("Category", "Slow")] // the Slow mark is what lets the observer pass this start; nothing is started
     public void TheObserverLetsAMethodLevelSlowTestsStartThrough()
