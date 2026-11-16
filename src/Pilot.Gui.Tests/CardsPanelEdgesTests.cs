@@ -15,7 +15,7 @@ namespace Pilot.Gui.Tests;
 /// PIL1094: the rule under the cards panel's header read as a stray thin line on top of the first card. Cards have no gap between them
 /// (each card's own frame separates it from the next), so the space a header rule would keep from the first card is zero, and a border
 /// the head declares lands on the card's frame. Here: no border a header, the panel's edge or the foot declares lies within one card gap
-/// (zero: touches or overlaps) of a card's frame, in design units and in cells alike. PILOT_CARDS_CAPTURES names a folder the captures
+/// (zero: touches or overlaps) of a card's frame (the foot is arranged too, CanTell on), in design units and in cells alike. PILOT_CARDS_CAPTURES names a folder the captures
 /// (docs/captures/pil1094-*) are written to.
 /// </summary>
 public sealed class CardsPanelEdgesTests
@@ -39,7 +39,7 @@ public sealed class CardsPanelEdgesTests
     private static (List<(string Name, Rect<float> Strip)> Edges, List<Rect<float>> Frames) Borders(IEnumerable<(Layout.Node Node, Rect<float> Bounds)> arranged, float unit)
     {
         var edges = new List<(string, Rect<float>)>();
-        var frames = new List<Rect<float>>();
+        var framed = new List<Rect<float>>();
         foreach (var a in arranged)
         {
             if (a.Node.BorderStyle is not { } style)
@@ -49,7 +49,7 @@ public sealed class CardsPanelEdgesTests
             var b = a.Bounds;
             if (style.Sides == Layout.BorderSides.All)
             {
-                frames.Add(b);
+                framed.Add(b);
                 continue;
             }
             var w = Math.Max(style.Width, unit);
@@ -58,7 +58,9 @@ public sealed class CardsPanelEdgesTests
             if (style.Sides.HasFlag(Layout.BorderSides.Left)) edges.Add(("left", new Rect<float>(b.X, b.Y, w, b.Height)));
             if (style.Sides.HasFlag(Layout.BorderSides.Right)) edges.Add(("right", new Rect<float>(b.X + b.Width - w, b.Y, w, b.Height)));
         }
-        return (edges, frames);
+        // Answer fields and pills carry an all-sides border too; a card's frame spans the panel, so only the widest framed boxes count as cards.
+        var cardWidth = framed.Count == 0 ? 0f : framed.Max(f => f.Width) * 0.8f;
+        return (edges, [.. framed.Where(f => f.Width >= cardWidth)]);
     }
 
     private static bool Within(Rect<float> a, Rect<float> b, float gap) =>
@@ -78,18 +80,26 @@ public sealed class CardsPanelEdgesTests
         }
     }
 
+    /// <summary>With CanTell the foot (Tasks, the chat and clean-up pills) sits under the cards: it must be there, and declare no edge against a card.</summary>
+    private static void FootIsArranged(IEnumerable<(Layout.Node Node, Rect<float> Bounds)> arranged, string where) =>
+        arranged.Count(a => a.Node.Text == "Tasks").ShouldBe(1, $"{where}: the foot is arranged");
+
     private static ImmutableArray<Layout.ArrangedNode<float>> ArrangeUnits(float dpi, int height = 6000)
     {
         using var renderer = new RgbaImageRenderer(1, 1);
-        var view = new CardsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, DpiScale = dpi };
+        var view = new CardsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, DpiScale = dpi, CanTell = true };
         return Layout.Engine.Arrange(view.Tree(Screen()), new Rect<float>(0, 0, Width, height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, dpi));
     }
 
     [Theory]
     [InlineData(1f)]
     [InlineData(1.5f)]
-    public void NoBorderOfTheHeadOrTheEdgeLiesAgainstACardFrameInUnits(float dpi) =>
-        NoEdgeWithinAGapOfACard(ArrangeUnits(dpi).Select(a => (a.Node, a.Bounds)), 1f, $"units at {dpi}x");
+    public void NoBorderOfTheHeadTheEdgeOrTheFootLiesAgainstACardFrameInUnits(float dpi)
+    {
+        var arranged = ArrangeUnits(dpi).Select(a => (a.Node, a.Bounds)).ToList();
+        FootIsArranged(arranged, $"units at {dpi}x");
+        NoEdgeWithinAGapOfACard(arranged, 1f, $"units at {dpi}x");
+    }
 
     private sealed class BufferedViewport(CellBuffer buffer, int width, int height) : ITerminalViewport
     {
@@ -109,6 +119,7 @@ public sealed class CardsPanelEdgesTests
     {
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        chrome.Cards.CanTell = true;
         var cards = Screen();
         var snapshot = SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath);
         var sessions = SessionsCapture.ScreenFor(snapshot, "sample");
@@ -119,15 +130,17 @@ public sealed class CardsPanelEdgesTests
         var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
         buffer.Resize(Columns, Rows);
         CellLayout.Paint(new BufferedViewport(buffer, Columns, Rows), arranged);
-        var panel = arranged.Where(a => a.Depth == 2).OrderBy(a => a.Bounds.X).Last().Bounds;
+        // The panel is the box that declares only a left border and runs to the right edge of the screen.
+        var panel = arranged.Where(a => a.Node.BorderStyle is { Sides: Layout.BorderSides.Left } && a.Bounds.X + a.Bounds.Width == Columns).OrderByDescending(a => a.Bounds.Height).First().Bounds;
         return (arranged, buffer, panel);
     }
 
     [Fact]
-    public void NoBorderOfTheHeadOrTheEdgeLiesAgainstACardFrameInCells()
+    public void NoBorderOfTheHeadTheEdgeOrTheFootLiesAgainstACardFrameInCells()
     {
         var (arranged, _, panel) = Terminal();
         var inPanel = arranged.Where(a => a.Bounds.X >= panel.X).Select(a => (a.Node, new Rect<float>(a.Bounds.X, a.Bounds.Y, a.Bounds.Width, a.Bounds.Height))).ToList();
+        FootIsArranged(inPanel, "cells");
         NoEdgeWithinAGapOfACard(inPanel, 1f, "cells");
     }
 

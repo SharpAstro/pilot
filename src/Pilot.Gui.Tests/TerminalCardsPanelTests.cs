@@ -9,8 +9,7 @@ namespace Pilot.Gui.Tests;
 
 /// <summary>
 /// PIL1076: the cards panel in pilot-tui's cells separates its cards and its edge with declared borders: each open card framed in box
-/// glyphs, a visible row between consecutive
-/// cards, and a column of the vertical glyph down the panel's left edge against the page.
+/// glyphs, and a column of the vertical glyph down the panel's left edge against the page.
 /// </summary>
 public sealed class TerminalCardsPanelTests
 {
