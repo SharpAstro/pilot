@@ -36,7 +36,7 @@ public sealed class CardsPanelEdgesTests
     private static CardsScreen Screen() => CardsScreen.From([.. CardsPanelCaptureTests.RealCards.After]) with { Watchtower = Tower() };
 
     /// <summary>The strips each declared partial border draws, and the frames of the cards (a border on all sides).</summary>
-    private static (List<(string Name, Rect<float> Strip)> Edges, List<Rect<float>> Frames) Borders(IEnumerable<Layout.ArrangedNode<float>> arranged, float unit)
+    private static (List<(string Name, Rect<float> Strip)> Edges, List<Rect<float>> Frames) Borders(IEnumerable<(Layout.Node Node, Rect<float> Bounds)> arranged, float unit)
     {
         var edges = new List<(string, Rect<float>)>();
         var frames = new List<Rect<float>>();
@@ -64,7 +64,7 @@ public sealed class CardsPanelEdgesTests
     private static bool Within(Rect<float> a, Rect<float> b, float gap) =>
         a.X < b.X + b.Width + gap && b.X < a.X + a.Width + gap && a.Y < b.Y + b.Height + gap && b.Y < a.Y + a.Height + gap;
 
-    private static void NoEdgeWithinAGapOfACard(IEnumerable<Layout.ArrangedNode<float>> arranged, float unit, string where)
+    private static void NoEdgeWithinAGapOfACard(IEnumerable<(Layout.Node Node, Rect<float> Bounds)> arranged, float unit, string where)
     {
         var (edges, frames) = Borders(arranged, unit);
         frames.Count.ShouldBeGreaterThan(2, $"{where}: the cards are framed");
@@ -89,7 +89,7 @@ public sealed class CardsPanelEdgesTests
     [InlineData(1f)]
     [InlineData(1.5f)]
     public void NoBorderOfTheHeadOrTheEdgeLiesAgainstACardFrameInUnits(float dpi) =>
-        NoEdgeWithinAGapOfACard(ArrangeUnits(dpi), 1f, $"units at {dpi}x");
+        NoEdgeWithinAGapOfACard(ArrangeUnits(dpi).Select(a => (a.Node, a.Bounds)), 1f, $"units at {dpi}x");
 
     private sealed class BufferedViewport(CellBuffer buffer, int width, int height) : ITerminalViewport
     {
@@ -127,7 +127,7 @@ public sealed class CardsPanelEdgesTests
     public void NoBorderOfTheHeadOrTheEdgeLiesAgainstACardFrameInCells()
     {
         var (arranged, _, panel) = Terminal();
-        var inPanel = arranged.Where(a => a.Bounds.X >= panel.X).Select(a => new Layout.ArrangedNode<float>(a.Node, new Rect<float>(a.Bounds.X, a.Bounds.Y, a.Bounds.Width, a.Bounds.Height), a.Depth)).ToList();
+        var inPanel = arranged.Where(a => a.Bounds.X >= panel.X).Select(a => (a.Node, new Rect<float>(a.Bounds.X, a.Bounds.Y, a.Bounds.Width, a.Bounds.Height))).ToList();
         NoEdgeWithinAGapOfACard(inPanel, 1f, "cells");
     }
 
@@ -155,7 +155,7 @@ public sealed class CardsPanelEdgesTests
         {
             var w = (int)(Width * dpi);
             const int height = 1800;
-            using var renderer = new RgbaImageRenderer(w, height);
+            using var renderer = new RgbaImageRenderer((uint)w, (uint)height);
             var view = new CardsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, DpiScale = dpi };
             view.Render(Screen(), new RectF32(0, 0, w, height));
             File.WriteAllBytes(Path.Combine(folder, $"pil1094-cards-{tag}-{name}.png"), PngWriter.Encode(renderer.Surface.Pixels, w, height));
