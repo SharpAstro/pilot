@@ -80,9 +80,9 @@ public sealed class CardsPanelEdgesTests
         }
     }
 
-    /// <summary>With CanTell the foot (Tasks, the chat and clean-up pills) sits under the cards: it must be there, and declare no edge against a card.</summary>
+    /// <summary>With CanTell the foot (the chat and clean-up pills) sits under the cards: it must be there, and declare no edge against a card.</summary>
     private static void FootIsArranged(IEnumerable<(Layout.Node Node, Rect<float> Bounds)> arranged, string where) =>
-        arranged.Count(a => a.Node.Text == "Tasks").ShouldBe(1, $"{where}: the foot is arranged");
+        arranged.Count(a => a.Node.Tooltip == "Chat with the watchtower").ShouldBe(1, $"{where}: the foot is arranged");
 
     private static ImmutableArray<Layout.ArrangedNode<float>> ArrangeUnits(float dpi, int height = 6000)
     {
