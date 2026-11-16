@@ -183,6 +183,9 @@ public sealed record NodeSettings
     public static readonly TimeSpan DefaultMaintenanceEvery = TimeSpan.FromHours(24);
     /// <summary>How long the node must be idle before the idle-time disk sweep starts (PIL1102).</summary>
     public const string MaintenanceIdleKey = "maintenance-idle";
+    /// <summary>How many days an unused NuGet package version may go unread before the idle-time sweep removes it.</summary>
+    public const string PackageAgeDaysKey = "package-age-days";
+    public const int DefaultPackageAgeDays = 14;
     public static readonly TimeSpan DefaultMaintenanceIdle = TimeSpan.FromMinutes(15);
     public const string OpusCapKey = "opus-cap";
 
@@ -206,7 +209,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. BenchKeys, .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -367,6 +370,9 @@ public sealed record NodeSettings
     public TimeSpan? MaintenanceEvery { get; init; }
     /// <summary>How long the node is idle before the idle-time disk sweep starts (<see cref="MaintenanceIdleKey"/>); null reads as <see cref="DefaultMaintenanceIdle"/>.</summary>
     public TimeSpan? MaintenanceIdle { get; init; }
+
+    /// <summary>Days a package version may sit unread before the idle-time sweep removes it (<see cref="PackageAgeDaysKey"/>); null reads as <see cref="DefaultPackageAgeDays"/>.</summary>
+    public int? PackageAgeDays { get; init; }
     /// <summary>The margin, in points, a start tolerates between the 7-day window's used share and its elapsed share; null is off.</summary>
     public double? WeekPace { get; init; }
 
@@ -540,6 +546,7 @@ public sealed record NodeSettings
                     MaxJobsKey => JsonValue.Create(MaxJobs),
                     MaxGoAroundsKey => JsonValue.Create(MaxGoArounds),
                     ScratchDaysKey => JsonValue.Create(ScratchDays),
+                    PackageAgeDaysKey => JsonValue.Create(PackageAgeDays),
                     DiskAlertGbKey => JsonValue.Create(DiskAlertGb),
                     FlightCiBudgetKey => JsonValue.Create(FlightCiBudget),
                     StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => JsonValue.Create(StaleValue(key)),
@@ -610,6 +617,7 @@ public sealed record NodeSettings
         MaxJobsKey => MaxJobs is { } jobs ? [jobs.ToString(CultureInfo.InvariantCulture)] : null,
         MaxGoAroundsKey => MaxGoArounds is { } rounds ? [rounds.ToString(CultureInfo.InvariantCulture)] : null,
         ScratchDaysKey => ScratchDays is { } days ? [days.ToString(CultureInfo.InvariantCulture)] : null,
+        PackageAgeDaysKey => PackageAgeDays is { } ageDays ? [ageDays.ToString(CultureInfo.InvariantCulture)] : null,
         DiskAlertGbKey => DiskAlertGb is { } alertGb ? [alertGb.ToString(CultureInfo.InvariantCulture)] : null,
         FlightCiBudgetKey => FlightCiBudget is { } ciBudget ? [ciBudget.ToString(CultureInfo.InvariantCulture)] : null,
         StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => StaleValue(key) is { } stale ? [stale.ToString(CultureInfo.InvariantCulture)] : null,
@@ -926,6 +934,14 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var goArounds) && goArounds is >= 1 and <= 50
                     ? (settings with { MaxGoArounds = goArounds }, null)
                     : (null, "max-go-arounds takes a number, 1 to 50");
+            case PackageAgeDaysKey:
+                if (clear)
+                {
+                    return (settings with { PackageAgeDays = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var packageAge) && packageAge is >= 1 and <= 365
+                    ? (settings with { PackageAgeDays = packageAge }, null)
+                    : (null, "package-age-days takes a number, 1 to 365");
             case ScratchDaysKey:
                 if (clear)
                 {

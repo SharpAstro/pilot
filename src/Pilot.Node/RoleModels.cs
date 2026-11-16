@@ -539,6 +539,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>Days an unused package version may go unread before the idle-time sweep removes it (<see cref="NodeSettings.PackageAgeDaysKey"/>); 14 by default.</summary>
+    public int PackageAgeDays
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.PackageAgeDays ?? NodeSettings.DefaultPackageAgeDays;
+            }
+        }
+    }
+
     /// <summary>Days a job's scratch may sit before the disk sweep deletes it (<see cref="NodeSettings.ScratchDaysKey"/>); 2 by default.</summary>
     public int ScratchDays
     {
