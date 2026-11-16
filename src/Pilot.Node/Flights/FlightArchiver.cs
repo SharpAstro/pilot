@@ -7,7 +7,7 @@ namespace Pilot.Node.Flights;
 /// The archive verbs (PIL1083): <c>archive-flight flight/&lt;code&gt; [undo]</c>, and the two reads of the archive, <c>archived-flights</c> (a page of
 /// its index) and <c>archived-flight</c> (one flight whole). <see cref="WhyNotAsync"/> is the one answer to why a landed flight cannot be
 /// archived yet, used by the verb and by the sweep of a later leg, so the two cannot drift apart.
-/// The flight's branch is not waited for, by the owner's decision of 2026-11-16 (the node never deletes flight branches).
+/// The flight's branch is not waited for, by the owner's decision of 2026-11-16 (a landed flight's branch is deleted by its own sweep, LandedBranchSweep, and archiving never waits for it).
 /// </summary>
 /// <param name="removals">The folders waiting for Windows to let them go; a flight whose plane is in it is not archived yet. Null where there is none.</param>
 public sealed class FlightArchiver(NodeState state, RemovalQueue? removals = null)
