@@ -129,6 +129,7 @@ public static partial class CardSummaries
             "repo-setup" => "What repo setup made and found in a repo: the Priority field and the labels the node reads. Nothing to do; a refusal has its own card.",
             "node-label-refused" => "GitHub refused the node's label on a flight's PR or issue. Add it by hand if the flight should show which node flies it.",
             IdleMaintenance.Kind => "The node's idle-time maintenance sweep ran: the line says the bytes each step (packages, git, lfs, jobs) freed and the free space on the repos' drive before and after. Nothing to do.",
+            IdleMaintenance.FirstRunKind => "The node has never had maintenance-every set, so its idle sweep runs nothing until you answer. The card holds a dry run's totals and the five largest items per step; Run on schedule saves 1d, Keep off saves off.",
             DiskSweep.Kind => "The node's disk sweep deleted job scratch (of landed flights' ended sessions, or older than the scratch-days setting) and old probe outputs, and says how much by unique bytes. Nothing to do.",
             DiskSweep.WorktreeRemovedKind => "The node's disk sweep removed a clean worktree under .claude/worktrees whose PR had merged or closed; the branch is kept. Nothing to do.",
             DiskSweep.WorktreeDirtyKind => "A worktree under .claude/worktrees has a merged or closed PR but holds changes not committed, so the disk sweep left it. Commit or discard the changes and the next sweep removes it.",

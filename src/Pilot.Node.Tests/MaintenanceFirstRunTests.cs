@@ -88,6 +88,7 @@ public sealed class MaintenanceFirstRunTests
         packages.Ran.ShouldBe(0);
         git.Ran.ShouldBe(0);
         var card = Open().ShouldHaveSingleItem();
+        card.Kind.ShouldBe(IdleMaintenance.FirstRunKind);
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Subject.ShouldBe(Verbs.NodeTarget);
         card.Title.ShouldContain("Run the first idle disk sweep");
