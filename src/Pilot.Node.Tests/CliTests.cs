@@ -958,7 +958,7 @@ public sealed class CliTests : IAsyncLifetime
                 PullRequests =
                 [
                     GhAnswers.OpenPullRequest(number: 7, title: "A|B is *ready*", head: "flight/X1", url: "https://example.com/pull/7", checks: "passing", labels: ["pilot node: SE1", "bug"]) with { Flight = "X1" },
-                    GhAnswers.OpenPullRequest(number: 8, title: "wip", head: "wip", draft: true),
+                    GhAnswers.OpenPullRequest(number: 8, title: "wip", head: "wip", url: "https://example.com/pull/8", draft: true),
                 ],
                 Errors = ["gh offline"],
             },
@@ -970,7 +970,7 @@ public sealed class CliTests : IAsyncLifetime
         markdown.ShouldContain("main, clean, ahead 1, behind 3 of main, 2 flights");
         markdown.ShouldContain("| flight/X1 | X1 | dirty | 2 | +5 -1 |");
         markdown.ShouldContain(@"| [#7 A\|B is \*ready\*](https://example.com/pull/7) | flight/X1 | X1 | ready | passing | pilot node: SE1, bug |");
-        markdown.ShouldContain("| #8 wip | wip |  | draft |  |  |");
+        markdown.ShouldContain("| [#8 wip](https://example.com/pull/8) | wip |  | draft |  |  |");
         markdown.ShouldContain("- gh offline");
         markdown.ShouldNotContain("other");
         ReposMarkdown.Build(rows, all: true).ShouldContain("(detached), clean, 0 flights, untracked");

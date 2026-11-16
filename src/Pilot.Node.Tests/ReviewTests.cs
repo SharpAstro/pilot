@@ -415,12 +415,12 @@ public sealed class ReviewTests1 : ReviewTestsBase
         Open().ShouldBeEmpty();
 
         // The queue's checks failed: out of the queue, still open, and a card says so with the merge again.
-        _github.Queue = GhAnswers.MergeQueue("dropped", head, removedAt: DateTimeOffset.UtcNow.AddSeconds(-5), removedReason: "failed checks");
+        _github.Queue = GhAnswers.MergeQueue("dropped", head, removedAt: DateTimeOffset.UtcNow.AddSeconds(-5), removedReason: "FAILED_CHECKS");
         await checks.LookAsync(Ct);
         F("TIA20").MergeQueue.ShouldBeNull();
         var card = Open().ShouldHaveSingleItem();
         (card.Kind, card.Bin, card.Title).ShouldBe((PrChecks.QueueDropped, CardBin.ForYou, "TIA20's PR #71 left the merge queue unmerged"));
-        card.Detail.ShouldNotBeNull().ShouldContain("failed checks");
+        card.Detail.ShouldNotBeNull().ShouldContain("FAILED_CHECKS");
         card.Link.ShouldBe("https://github.com/x/tianwen/pull/71");
         var merge = card.Choices.ShouldHaveSingleItem();
         (merge.Verb, merge.Target, merge.Args.Single()).ShouldBe((Verbs.Merge, "flight/TIA20", head));
@@ -433,10 +433,10 @@ public sealed class ReviewTests1 : ReviewTestsBase
         Open().ShouldBeEmpty();
 
         // Queued again and dropped again: a new removal, a new card, closed by itself once it is back in the queue.
-        _github.Queue = GhAnswers.MergeQueue("dropped", head, removedAt: DateTimeOffset.UtcNow.AddSeconds(1), removedReason: "merge conflict");
+        _github.Queue = GhAnswers.MergeQueue("dropped", head, removedAt: DateTimeOffset.UtcNow.AddSeconds(1), removedReason: "MERGE_CONFLICT");
         await checks.LookAsync(Ct);
         var again = Open().ShouldHaveSingleItem();
-        again.Detail.ShouldNotBeNull().ShouldContain("merge conflict");
+        again.Detail.ShouldNotBeNull().ShouldContain("MERGE_CONFLICT");
         _github.Queue = GhAnswers.MergeQueue("queued", head, 1);
         await checks.LookAsync(Ct);
         Open().ShouldBeEmpty();
@@ -630,7 +630,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
 
         var startedBefore = _workers.Started.Count;
-        _github.Queue = GhAnswers.MergeQueue("dropped", _github.Pr!.Head, removedAt: DateTimeOffset.UtcNow.AddSeconds(-5), removedReason: "merge_conflict");
+        _github.Queue = GhAnswers.MergeQueue("dropped", _github.Pr!.Head, removedAt: DateTimeOffset.UtcNow.AddSeconds(-5), removedReason: "MERGE_CONFLICT");
         await checks.LookAsync(Ct);
 
         // The Handled card is the update's success: a failed update rings with a card of the same words in a different bin and kind.
@@ -799,7 +799,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
         var checks = new PrChecks(_state, _github, TimeProvider.System, _flights);
 
         // Taken out of the queue while its PR-ready card is open: that card offers the merge already.
-        _github.Queue = GhAnswers.MergeQueue("dropped", _github.Pr!.Head, removedAt: DateTimeOffset.UtcNow, removedReason: "manually removed");
+        _github.Queue = GhAnswers.MergeQueue("dropped", _github.Pr!.Head, removedAt: DateTimeOffset.UtcNow, removedReason: "MANUALLY_REMOVED");
         await checks.LookAsync(Ct);
         Open().ShouldHaveSingleItem().Kind.ShouldBe(LegCommander.PrReady);
 

@@ -118,7 +118,7 @@ public sealed class ConflictResolutionTests : ReviewTestsBase
         var flight = await Conflicted("43");
         _state.CloseCard(Open().ShouldHaveSingleItem().Id, "done", "controller").ShouldBeTrue();
         var started = _workers.Started.Count;
-        _github.Queue = GhAnswers.MergeQueue("dropped", _github.Pr!.Head, removedAt: DateTimeOffset.UtcNow.AddSeconds(-5), removedReason: "merge_conflict");
+        _github.Queue = GhAnswers.MergeQueue("dropped", _github.Pr!.Head, removedAt: DateTimeOffset.UtcNow.AddSeconds(-5), removedReason: "MERGE_CONFLICT");
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
 

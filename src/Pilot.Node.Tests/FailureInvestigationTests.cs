@@ -64,7 +64,7 @@ public sealed class FailureInvestigationTests
     private void FailedRun(int pr, bool queue, long id, string? log = null) =>
         _github.FailedRuns[(pr, queue)] = new FailedRun(id, $"https://github.com/x/tianwen/actions/runs/{id}", ["build"], log ?? Log());
 
-    private void QueueRemoval(string head, string reason = "failed checks") =>
+    private void QueueRemoval(string head, string reason = "FAILED_CHECKS") =>
         _github.Queue = GhAnswers.MergeQueue("dropped", head, removedAt: DateTimeOffset.UtcNow.AddSeconds(-5), removedReason: reason);
 
     private (string Repo, string Title, string? Body) OneIssue() => _github.IssuesCreated.ShouldHaveSingleItem();

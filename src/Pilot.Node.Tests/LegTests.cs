@@ -799,7 +799,7 @@ internal sealed class FakeGitHub : IGitHub
         // The queue lets it go: the PR is not queued any more, and GitHub says it was removed by hand.
         if (Queue is { Queued: true } queued)
         {
-            Queue = queued with { Queued = false, Position = null, RemovedAt = DateTimeOffset.UtcNow, RemovedReason = "manually removed" };
+            Queue = queued with { Queued = false, Position = null, RemovedAt = DateTimeOffset.UtcNow, RemovedReason = "MANUALLY_REMOVED" };
         }
         return Task.CompletedTask;
     }

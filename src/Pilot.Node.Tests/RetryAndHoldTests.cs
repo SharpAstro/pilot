@@ -103,7 +103,7 @@ public sealed class RetryAndHoldTests : IDisposable
     private void FailedRun(int pr, bool queue, long id, string? log = null) =>
         _github.FailedRuns[(pr, queue)] = new FailedRun(id, $"https://github.com/x/tianwen/actions/runs/{id}", ["build"], log ?? Log());
 
-    private void QueueRemoval(string head, string reason = "failed checks") =>
+    private void QueueRemoval(string head, string reason = "FAILED_CHECKS") =>
         _github.Queue = GhAnswers.MergeQueue("dropped", head, removedAt: _time.GetUtcNow().AddSeconds(-5), removedReason: reason);
 
     // A flight whose queue entry was taken out on the failed test, looked at.

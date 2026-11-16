@@ -264,7 +264,7 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
         // Queued again and then let go by GitHub: that removal is GitHub's, and is carded.
         _github.Queue = _github.Queue with { Queued = true, Position = 1, RemovedAt = null, RemovedReason = null };
         await checks.LookAsync(Ct);
-        _github.Queue = _github.Queue with { Queued = false, Position = null, RemovedAt = DateTimeOffset.UtcNow, RemovedReason = "checks failed" };
+        _github.Queue = _github.Queue with { Queued = false, Position = null, RemovedAt = DateTimeOffset.UtcNow, RemovedReason = "FAILED_CHECKS" };
         await checks.LookAsync(Ct);
         _state.Cards(openOnly: true).ShouldContain(c => c.Kind == PrChecks.QueueDropped);
     }

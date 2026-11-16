@@ -112,7 +112,7 @@ public sealed class RebaseLayFlightTests() : ReviewTestsBase(realGit: true)
     {
         // The PR-ready card offers the merge itself while it is open; a dropped PR is looked at once it is closed.
         _state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "test", LegCommander.PrReady);
-        _github.Queue = GhAnswers.MergeQueue("dropped", head, removedAt: DateTimeOffset.UtcNow, removedReason: "merge conflict");
+        _github.Queue = GhAnswers.MergeQueue("dropped", head, removedAt: DateTimeOffset.UtcNow, removedReason: "MERGE_CONFLICT");
     }
 
     [Fact]

@@ -86,7 +86,7 @@ public sealed class LandingPathTests : ReviewTestsBase
             (flight, var old) = await KeepOursFlight();
             // The PR-ready card offers the merge itself while it is open; a dropped PR is looked at once it is closed.
             _state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "test", LegCommander.PrReady);
-            _github.Queue = GhAnswers.MergeQueue("dropped", old, removedAt: DateTimeOffset.UtcNow, removedReason: "merge conflict");
+            _github.Queue = GhAnswers.MergeQueue("dropped", old, removedAt: DateTimeOffset.UtcNow, removedReason: "MERGE_CONFLICT");
         }
         else
         {
