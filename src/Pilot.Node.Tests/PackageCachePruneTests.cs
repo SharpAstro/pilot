@@ -68,7 +68,10 @@ public sealed class PackageCachePruneTests : IDisposable
             AgeDays = () => 14,
             PlaneFolders = () => [_plane],
             PinSource = pins ?? ((_, _) => Task.FromResult(RepoPins.None)),
+            RecordsLastAccess = _ => _recorded,
         };
+
+    private bool _recorded = true;
 
     private static Func<string, CancellationToken, Task<RepoPins>> Pinned(params (string Id, string Version)[] pins) =>
         (_, _) => Task.FromResult(new RepoPins(new HashSet<(string, string)>(pins), new HashSet<string>(), true));
@@ -142,6 +145,56 @@ public sealed class PackageCachePruneTests : IDisposable
         Exists("solo", "0.5.0").ShouldBeTrue("read yesterday by last access");
         Exists("solo", "0.6.0").ShouldBeTrue("metadata written two days ago");
         Exists("solo", "1.0.0").ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task AVersionWhoseLibDllWasReadYesterdayStaysThoughItsNupkgIsOld()
+    {
+        Package("Solo", "1.0.0", 60);
+        Package("Solo", "2.0.0", 60);
+        var folder = Package("Solo", "0.5.0", 60);
+        var dll = Path.Combine(folder, "lib", "net10.0", "solo.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(dll)!);
+        File.WriteAllBytes(dll, new byte[10]);
+        File.SetLastWriteTimeUtc(dll, Now.UtcDateTime.AddDays(-60));
+        File.SetLastAccessTimeUtc(dll, Now.UtcDateTime.AddDays(-1));
+
+        await Step().RunAsync(Ct);
+
+        Exists("solo", "0.5.0").ShouldBeTrue("a build read its lib yesterday");
+        Exists("solo", "1.0.0").ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task AnUntrackedSiblingCloneWhoseAssetsNameAnOldVersionKeepsIt()
+    {
+        Package("Solo", "1.0.0", 60);
+        Package("Solo", "2.0.0", 60);
+        var sibling = Path.Combine(_root, "untracked");
+        Directory.CreateDirectory(Path.Combine(sibling, ".git"));
+        Assets(sibling, "Solo/1.0.0");
+
+        await Step().RunAsync(Ct);
+
+        Exists("solo", "1.0.0").ShouldBeTrue("an untracked clone under the same parent restores it");
+    }
+
+    [Fact]
+    public async Task WhereTheVolumeRecordsNoLastAccessOnlyVersionsNoAssetsFileNamesGoAndTheNoteSaysSo()
+    {
+        _recorded = false;
+        Package("Solo", "1.0.0", 60);
+        Package("Solo", "2.0.0", 60);
+        Package("Solo", "0.9.0", 1);
+        Package("Solo", "0.8.0", 60);
+        Assets(_repo, "Solo/0.8.0");
+
+        var result = await Step().RunAsync(Ct);
+
+        Exists("solo", "0.8.0").ShouldBeTrue("named by an assets file");
+        Exists("solo", "0.9.0").ShouldBeFalse("unnamed: removed whatever its recent write says, as no age proves anything");
+        Exists("solo", "1.0.0").ShouldBeFalse();
+        result.Untouched.ShouldNotBeNull().ShouldContain("does not record last access");
     }
 
     [Fact]

@@ -50,6 +50,17 @@ public sealed class PackageCachePrune : IMaintenanceStep
     /// <summary>The folders searched for <c>project.assets.json</c>, per owner: each tracked repo, and each plane of a flight not landed that lies outside them.</summary>
     public Func<IReadOnlyList<string>>? PlaneFolders { get; init; }
 
+    /// <summary>
+    /// Whether the volume of the packages folder records last access, asked once per run. Where it does not, the age rule proves nothing and only
+    /// versions that no assets file names go. Defaults to <see cref="ProbeLastAccess"/>; a seam for tests.
+    /// </summary>
+    public Func<string, bool>? RecordsLastAccess { get; init; }
+
+    /// <summary>The most files stat-ed per version when reading its last access.</summary>
+    public const int MaxFilesStatted = 64;
+
+    private static readonly string[] BuildFolders = ["lib", "ref", "runtimes", "build", "buildTransitive", "analyzers", "tools", "contentFiles"];
+
     /// <summary>The package folder as the node's setup finds it: NUGET_PACKAGES, else the user's .nuget\packages.</summary>
     public static string DefaultPackagesFolder() =>
         Environment.GetEnvironmentVariable("NUGET_PACKAGES") is { Length: > 0 } packages
@@ -126,6 +137,11 @@ public sealed class PackageCachePrune : IMaintenanceStep
         }
 
         var (used, keepAll) = await ReadUseAsync(notes, cancellationToken);
+        var recorded = (RecordsLastAccess ?? ProbeLastAccess)(packages);
+        if (!recorded)
+        {
+            notes.Add("the volume does not record last access, so only versions no project.assets.json under the repos' parent folders names were removed");
+        }
         var cutoff = _time.GetUtcNow().UtcDateTime - TimeSpan.FromDays(Math.Max(1, AgeDays()));
 
         foreach (var idFolder in Directory.EnumerateDirectories(packages))
@@ -142,7 +158,7 @@ public sealed class PackageCachePrune : IMaintenanceStep
             foreach (var (folder, version) in versions)
             {
                 if (string.Equals(version, newest, StringComparison.OrdinalIgnoreCase) || string.Equals(version, newestStable, StringComparison.OrdinalIgnoreCase)
-                    || used.Contains((id, version)) || LastRead(folder) > cutoff)
+                    || used.Contains((id, version)) || (recorded && LastRead(folder) > cutoff))
                 {
                     continue;
                 }
@@ -153,9 +169,9 @@ public sealed class PackageCachePrune : IMaintenanceStep
     }
 
     /// <summary>
-    /// The newest of the .nupkg's last access and last write time and the .nupkg.metadata's write time. NTFS last access can be off
-    /// (<c>fsutil behavior query disablelastaccess</c>), so the write time is the floor: a version never written since the age is the worst
-    /// case of "read" this can mistake, never a version read yesterday for old.
+    /// The newest of the write times of the .nupkg and its metadata (the floor) and the last access of the .nupkg and of the files a build
+    /// reads (lib, ref, runtimes, build, analyzers, tools and the like), at most <see cref="MaxFilesStatted"/> of them. A build never reads the
+    /// .nupkg, so its access time alone is the install time.
     /// </summary>
     private static DateTime LastRead(string versionFolder)
     {
@@ -169,7 +185,79 @@ public sealed class PackageCachePrune : IMaintenanceStep
                 newest = Max(newest, File.GetLastAccessTimeUtc(file));
             }
         }
+        var statted = 0;
+        foreach (var name in BuildFolders)
+        {
+            var folder = Path.Combine(versionFolder, name);
+            if (!Directory.Exists(folder))
+            {
+                continue;
+            }
+            try
+            {
+                foreach (var file in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
+                {
+                    newest = Max(newest, File.GetLastAccessTimeUtc(file));
+                    newest = Max(newest, File.GetLastWriteTimeUtc(file));
+                    if (++statted >= MaxFilesStatted)
+                    {
+                        return newest;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Unreadable: the floor stands.
+            }
+        }
         return newest == DateTime.MinValue ? File.GetLastWriteTimeUtc(versionFolder) : newest;
+    }
+
+    /// <summary>Whether the volume records last access: <c>fsutil behavior query disablelastaccess</c> on Windows, a noatime mount elsewhere. When it cannot tell, no.</summary>
+    public static bool ProbeLastAccess(string folder)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("fsutil", "behavior query disablelastaccess")
+                {
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                });
+                if (process is null)
+                {
+                    return false;
+                }
+                var output = process.StandardOutput.ReadToEnd();
+                process.WaitForExit(10_000);
+                // "DisableLastAccess = 0 (User Managed, Last Access Updates Enabled)" or 2 (System Managed, enabled); 1 and 3 are disabled.
+                var at = output.IndexOf('=', StringComparison.Ordinal);
+                return at >= 0 && output[(at + 1)..].TrimStart() is [var digit, ..] && digit is '0' or '2';
+            }
+            if (File.Exists("/proc/mounts"))
+            {
+                var best = "";
+                var options = "";
+                var full = Path.GetFullPath(folder);
+                foreach (var line in File.ReadLines("/proc/mounts"))
+                {
+                    var parts = line.Split(' ');
+                    if (parts.Length > 3 && full.StartsWith(parts[1], StringComparison.Ordinal) && parts[1].Length >= best.Length)
+                    {
+                        best = parts[1];
+                        options = parts[3];
+                    }
+                }
+                return best.Length > 0 && !options.Split(',').Contains("noatime");
+            }
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
+        return false;
     }
 
     private static DateTime Max(DateTime a, DateTime b) => a > b ? a : b;
@@ -188,6 +276,12 @@ public sealed class PackageCachePrune : IMaintenanceStep
         {
             cancellationToken.ThrowIfCancellationRequested();
             ReadAssets(plane, used, scanned, notes, null);
+        }
+        // Sibling clones under the repos' parent folders (the org roots) are not tracked but build against this cache too.
+        foreach (var sibling in SiblingClones(repos))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ReadAssets(sibling, used, scanned, notes, null);
         }
         foreach (var repo in repos)
         {
@@ -216,6 +310,32 @@ public sealed class PackageCachePrune : IMaintenanceStep
             }
         }
         return (used, keepAll);
+    }
+
+    /// <summary>Every folder one level under the parents of the tracked repos that holds a <c>.git</c> (a clone or a worktree), the repos themselves excluded.</summary>
+    private static IEnumerable<string> SiblingClones(IReadOnlyList<string> repos)
+    {
+        var own = new HashSet<string>(repos.Select(r => Path.TrimEndingDirectorySeparator(Path.GetFullPath(r))), StringComparer.OrdinalIgnoreCase);
+        var parents = own.Select(Path.GetDirectoryName).Where(p => !string.IsNullOrEmpty(p)).Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var parent in parents)
+        {
+            List<string> children;
+            try
+            {
+                children = Directory.EnumerateDirectories(parent!).ToList();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+            foreach (var child in children)
+            {
+                if (!own.Contains(Path.TrimEndingDirectorySeparator(child)) && (Directory.Exists(Path.Combine(child, ".git")) || File.Exists(Path.Combine(child, ".git"))))
+                {
+                    yield return child;
+                }
+            }
+        }
     }
 
     private static void ReadAssets(string root, HashSet<(string, string)> used, HashSet<string> scanned, List<string> notes, HashSet<string>? ids)
