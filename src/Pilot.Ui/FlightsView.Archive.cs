@@ -114,7 +114,7 @@ internal sealed partial class FlightsView<TSurface>
         if (screen.ArchivedCount > 0)
         {
             // Quiet: the dim text colour, no pill; a click opens the list.
-            yield return Layout.Builder.Text($"{screen.ArchivedCount} archived", 15f, P.Dim, TextAlign.Far, TextAlign.Far)
+            yield return Layout.Builder.Text($"{screen.ArchivedCount} archived", 15f, QuietColor(P), TextAlign.Far, TextAlign.Far)
                 .WAuto()
                 .BgHover(P.RowHoverBg)
                 .WithTooltip("The landed flights the nodes have archived: open the list")
