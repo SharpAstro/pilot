@@ -174,6 +174,9 @@ public sealed record NodeSettings
     /// <summary>How long a peer must have been unheard before a flight it flew may be taken over by this node (#894).</summary>
     public const string AdoptAfterKey = "adopt-after";
     public static readonly TimeSpan DefaultAdoptAfter = TimeSpan.FromHours(1);
+    /// <summary>How long a landed flight stays live before the node archives it (PIL1083); <see cref="TimeSpan.Zero"/> saved means off.</summary>
+    public const string ArchiveLandedAfterKey = "archive-landed-after";
+    public static readonly TimeSpan DefaultArchiveLandedAfter = TimeSpan.FromDays(7);
     public const string OpusCapKey = "opus-cap";
 
     /// <summary>The most reviews and fixers this node runs at once (#912); a start past it waits for a slot.</summary>
@@ -196,7 +199,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. BenchKeys, .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -348,6 +351,8 @@ public sealed record NodeSettings
     public TimeSpan? PrWatchIdle { get; init; }
     /// <summary>How long a silent peer must be unheard before its flights may be taken over (<see cref="AdoptAfterKey"/>); <see cref="DefaultAdoptAfter"/> unless set.</summary>
     public TimeSpan? AdoptAfter { get; init; }
+    /// <summary>How long a landed flight waits before it is archived (<see cref="ArchiveLandedAfterKey"/>); null reads as <see cref="DefaultArchiveLandedAfter"/>, <see cref="TimeSpan.Zero"/> is off.</summary>
+    public TimeSpan? ArchiveLandedAfter { get; init; }
     /// <summary>The margin, in points, a start tolerates between the 7-day window's used share and its elapsed share; null is off.</summary>
     public double? WeekPace { get; init; }
 
@@ -600,6 +605,7 @@ public sealed record NodeSettings
         WeekLimitKey => WeekLimit is { } week ? [week.ToString(CultureInfo.InvariantCulture)] : null,
         PrWatchIdleKey => PrWatchIdle is { } idle ? [DurationText(idle)] : null,
         AdoptAfterKey => AdoptAfter is { } adoptAfter ? [DurationText(adoptAfter)] : null,
+        ArchiveLandedAfterKey => ArchiveLandedAfter is { } archiveAfter ? [archiveAfter == TimeSpan.Zero ? "off" : ArchiveDurationText(archiveAfter)] : null,
         WeekPaceKey => WeekPace is { } pace ? [pace.ToString(CultureInfo.InvariantCulture)] : null,
         SpendAlertKey => SpendAlert is { } alert ? [alert.ToString(CultureInfo.InvariantCulture)] : null,
         WatchtowerCompactShareKey => WatchtowerCompactShare is { } wcs ? [wcs.ToString(CultureInfo.InvariantCulture)] : null,
@@ -979,6 +985,18 @@ public sealed record NodeSettings
                 return ParseDuration(One()) is { } adopt && adopt >= TimeSpan.FromMinutes(1) && adopt <= TimeSpan.FromDays(7)
                     ? (settings with { AdoptAfter = adopt }, null)
                     : (null, "adopt-after takes how long a peer node must be unheard before this node may take over its flights, 1 minute to 7 days, as 30m or 1h (a bare number is minutes)");
+            case ArchiveLandedAfterKey:
+                if (clear)
+                {
+                    return (settings with { ArchiveLandedAfter = null }, null);
+                }
+                if (One() is "off" or "none" or "never")
+                {
+                    return (settings with { ArchiveLandedAfter = TimeSpan.Zero }, null);
+                }
+                return ParseDuration(One(), days: true) is { } archive && archive >= TimeSpan.FromHours(1) && archive <= TimeSpan.FromDays(365)
+                    ? (settings with { ArchiveLandedAfter = archive }, null)
+                    : (null, "archive-landed-after takes how long a landed flight stays live before it is archived, 1 hour to 365 days, as 12h or 7d (a bare number is minutes), or off to keep them");
             case WeekPaceKey:
             {
                 var raw = clear ? "off" : One();
@@ -1205,7 +1223,7 @@ public sealed record NodeSettings
             && found[1] == "shortcut" ? TrackerKind.Shortcut : TrackerKind.GitHub;
 
     /// <summary>A duration as <c>set node</c> spells it: <c>90s</c>, <c>15m</c>, <c>2h</c>, a bare number meaning minutes; null for anything else.</summary>
-    public static TimeSpan? ParseDuration(string? text)
+    public static TimeSpan? ParseDuration(string? text, bool days = false)
     {
         if (text is null || text.Length == 0)
         {
@@ -1221,6 +1239,7 @@ public sealed record NodeSettings
         {
             's' => TimeSpan.FromSeconds(n),
             'h' => TimeSpan.FromHours(n),
+            'd' when days => TimeSpan.FromDays(n),
             'm' or >= '0' and <= '9' => TimeSpan.FromMinutes(n),
             _ => null,
         };
@@ -1231,6 +1250,9 @@ public sealed record NodeSettings
         span.TotalSeconds % 3600 == 0 ? $"{(long)span.TotalHours}h"
         : span.TotalSeconds % 60 == 0 ? $"{(long)span.TotalMinutes}m"
         : $"{(long)span.TotalSeconds}s";
+
+    /// <summary>A duration for <see cref="ArchiveLandedAfterKey"/>: whole days as <c>7d</c>, else as <see cref="DurationText"/>.</summary>
+    public static string ArchiveDurationText(TimeSpan span) => span.TotalSeconds % 86400 == 0 ? $"{(long)span.TotalDays}d" : DurationText(span);
 
     // The on/off words set node takes for a switch; null for anything else.
     private static bool? OnOff(string? value) => value?.ToLowerInvariant() switch
