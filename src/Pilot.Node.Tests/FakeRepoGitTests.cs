@@ -297,7 +297,8 @@ public sealed class FakeRepoGitTests : IDisposable
         Commit(Plane, "a.txt", "one\n", "add a");
         Run(Plane, "push", "-u", "origin", "flight/x");
 
-        Should.Throw<NotSupportedException>(() => _git.Run(["push", "--quiet", "origin", "--delete", "flight/x"], Plane));
+        // --delete is modelled since PIL1101 (the landed-branch sweep pushes it); --mirror and --tags are still not.
+        Should.Throw<NotSupportedException>(() => _git.Run(["push", "--mirror", "origin"], Plane));
         Should.Throw<NotSupportedException>(() => _git.Run(["push", "--tags", "origin"], Plane));
         _git.Run(["push", "--quiet", "--set-upstream", "origin", "flight/x"], Plane).Ok.ShouldBeTrue();
     }
