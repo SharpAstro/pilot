@@ -277,7 +277,9 @@ public sealed class IdleMaintenanceTests
     {
         var step = new FakeStep("packages", Gib);
         var sweep = Sweep(Every, step);
-        var commands = new NodeCommands(new ServiceCollection().AddSingleton<TimeProvider>(_time).AddSingleton(sweep).BuildServiceProvider(), _state);
+        var options = new NodeOptions(Path.Combine(Path.GetTempPath(), "maintenance-node.sock"), Path.Combine(Path.GetTempPath(), "maintenance-data"), MachinePrefix: "DU1");
+        var tower = new Watchtower(_state, new FakeWorkers(), (command, _) => Task.FromResult(_state.Complete(command, null)), options, TimeProvider.System);
+        var commands = new NodeCommands(new ServiceCollection().AddSingleton<TimeProvider>(_time).AddSingleton(sweep).AddSingleton(tower).AddSingleton(new RoleModels(null)).BuildServiceProvider(), _state);
 
         var dry = await commands.RunAsync(new CommandRequest { Verb = Verbs.Maintenance, Target = Verbs.NodeTarget, Args = ["--dry-run"], Who = "person" }, Ct);
         var real = await commands.RunAsync(new CommandRequest { Verb = Verbs.Maintenance, Target = Verbs.NodeTarget, Args = [], Who = "person" }, Ct);

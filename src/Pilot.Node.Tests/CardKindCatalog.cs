@@ -273,6 +273,7 @@ internal static class CardKindCatalog
     /// </summary>
     public static readonly Dictionary<string, string> TitlesFrom = new()
     {
+        ["Flights/IdleMaintenance.cs|run.Line()"] = "MaintenanceRun.Line, whose text IdleMaintenanceTests.TheHandledLineIsPinnedExactly pins",
         ["Flights/Digest.cs|title"] = "Digest.Compose names what landed, what was handled and what is parked",
         ["Flights/LegWatch.cs|title"] = "the parameter of LegWatch.Ring, whose titles are the literals at each Ring( call, which the guard reads as it reads RaiseCard",
         ["Flights/LegCommander.Overlap.cs|title"] = "the overlap title built in LegCommander.Overlap names both flights, the files they share and the choice",
