@@ -15,6 +15,12 @@ public sealed record NodeRow
 
     public AccountRow? Account { get; init; }
 
+    /// <summary>Whether the node can run GUI jobs (<see cref="NodeInfo.CanRunGui"/>); null from an older node.</summary>
+    public bool? CanRunGui { get; init; }
+
+    /// <summary>Why it cannot (<see cref="NodeInfo.GuiReason"/>); null when it can.</summary>
+    public string? GuiReason { get; init; }
+
     /// <summary>How the node's watchtower is doing; null when it keeps none.</summary>
     public WatchtowerHealth? Watchtower { get; init; }
 
@@ -24,7 +30,7 @@ public sealed record NodeRow
     /// </summary>
     public static bool Differs(NodeRow held, NodeRow next) =>
         held.Maintenance != next.Maintenance || held.Autopilot != next.Autopilot || held.AcceptsFleetFlights != next.AcceptsFleetFlights
-        || held.Account != next.Account || WatchtowerDiffers(held.Watchtower, next.Watchtower);
+        || held.Account != next.Account || held.CanRunGui != next.CanRunGui || held.GuiReason != next.GuiReason || WatchtowerDiffers(held.Watchtower, next.Watchtower);
 
     private static bool WatchtowerDiffers(WatchtowerHealth? held, WatchtowerHealth? next) =>
         held is null || next is null

@@ -398,6 +398,8 @@ public static partial class NodeApp
                 lan.StableNodeIdPath = Path.Combine(options.DataFolder, "lan-node-id");
                 lan.Properties["machine"] = options.Machine;
                 lan.Properties["wire"] = NodeWire.Version.ToString(CultureInfo.InvariantCulture);
+                // Whether this machine has an interactive desktop for GUI jobs (the lane's own setting is live and not announced).
+                lan.Properties["gui"] = DesktopCapability.Why() is null ? "yes" : "no";
             });
         }
     }
@@ -557,6 +559,8 @@ public static partial class NodeApp
                     Autopilot = models.Autopilot,
                     AcceptsFleetFlights = models.AcceptsFleetFlights,
                     Account = state.Usage()?.Account,
+                    CanRunGui = services.GetRequiredService<JobRunner>().GuiWhy() is null,
+                    GuiReason = services.GetRequiredService<JobRunner>().GuiWhy(),
                     Watchtower = watchtower.Health(),
                 }, services.GetRequiredService<TimeProvider>())
                 {
@@ -587,6 +591,8 @@ public static partial class NodeApp
                 Ledger = services.GetRequiredService<SessionLedger>(),
                 MaxRunning = Math.Max(1, nodeOptions.MaxJobs),
                 JobsPerRepo = nodeOptions.Saved?.JobsPerRepo ?? NodeSettings.JobsPerRepoDefault,
+                GuiSlots = nodeOptions.Saved?.GuiSlots ?? NodeSettings.GuiSlotsDefault,
+                DesktopProbe = services.GetService<IDesktopProbe>() is { } probe ? probe.Why : DesktopCapability.Why,
                 MinFreeMemory = (long)(Math.Max(0, nodeOptions.JobMemoryGigabytes) * (1L << 30)),
                 Priority = nodeOptions.JobPriority,
                 PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? NodeSettings.JobPlaneOutputDefault,

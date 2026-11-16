@@ -24,8 +24,8 @@ is neither built nor tested by CI.
   opens must show what it is. Local-only starts (the GUI, the node, anything needing the real machine) are not planned
   as a step, or are planned with the way round named: the CPU-rendered tests (`Pilot.Gui.Tests`) draw a page from a
   sample snapshot with no display and no GPU.
-- The inspector (the debug layer of `DIR.Lib.Diagnostics` and its renderers) exists only in a Debug build. A Release
-  build, which is what CI and the checks use, does not have it, so nothing here may measure through it.
+- **GUI lane:** `pilot run --gui -- <plain command>`: one job per machine, at Normal; `PILOT_JOB_ARTIFACTS` files show in `pilot job <id>`, fetched by `pilot job <id> artifact <name>`.
+  The inspector is in Release builds but off: only `DIR_INSPECTOR=1` and `DIR_INSPECTOR_TOKEN` (set in this lane) start it. Prove what a test can headless first.
 - Never wait with a job that sleeps or polls: it holds a slot of the queue and blocks every job behind it. Use
   `pilot leg wait --for-file <path> [--until <time>]` and end the turn; the node wakes the leg once. Long builds and
   test runs go through `pilot run -- <command>`.

@@ -73,6 +73,21 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
             }
         }
 
+        // A job's artifacts go with its log: once it ended longer ago than the scratch days.
+        foreach (var job in state.Jobs().Where(j => j.EndedAt is { } ended && ended < cutoff && j.State is not (JobState.Queued or JobState.Running)))
+        {
+            var dir = JobRunner.ArtifactsOf(job);
+            if (Directory.Exists(dir))
+            {
+                var size = DiskUsage.UniqueBytes(dir);
+                JobArtifacts.Sweep(dir);
+                if (!Directory.Exists(dir))
+                {
+                    bytes += size;
+                }
+            }
+        }
+
         var (obj, artifacts, objBytes) = SweepObjFolders(sessions);
         bytes += objBytes;
 

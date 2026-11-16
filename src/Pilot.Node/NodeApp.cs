@@ -101,7 +101,7 @@ public static partial class NodeApp
             var granted = get && (path is NodeWire.ReposRoute or NodeWire.RepoStatusRoute or NodeWire.IssuesRoute or NodeWire.ChatRoute
                 || path.StartsWith(NodeWire.SessionsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/transcript", StringComparison.Ordinal)
                 || path.StartsWith(NodeWire.AttachmentsRoute + "/", StringComparison.Ordinal)
-                || path.StartsWith(NodeWire.JobsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/log", StringComparison.Ordinal));
+                || path.StartsWith(NodeWire.JobsRoute + "/", StringComparison.Ordinal) && (path.EndsWith("/log", StringComparison.Ordinal) || path.Contains("/artifacts/", StringComparison.Ordinal)));
             return watching || (post && path == NodeWire.GrantsRoute) ? NodeRouteAccess.Open
                 : (post && path is NodeWire.CommandsRoute or NodeWire.AttachmentsRoute) || granted ? NodeRouteAccess.Command
                 : NodeRouteAccess.ThisMachineOnly;
@@ -167,7 +167,7 @@ public static partial class NodeApp
         var startedAt = DateTimeOffset.UtcNow;
         var version = typeof(NodeApp).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
-        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower, AdmissionGate slots, NodeTraffic traffic, SendTimings timings, CommandTimings commandTimings, Func<NodeHeapRow> heap, RebootPrep reboot) => Results.Json(
+        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower, AdmissionGate slots, NodeTraffic traffic, SendTimings timings, CommandTimings commandTimings, Func<NodeHeapRow> heap, RebootPrep reboot, JobRunner jobRunner) => Results.Json(
             ResponseEnvelope<NodeInfo>.Ok(new NodeInfo
             {
                 WireVersion = NodeWire.Version,
@@ -184,6 +184,8 @@ public static partial class NodeApp
                 Autopilot = models.Autopilot,
                 AcceptsFleetFlights = models.AcceptsFleetFlights,
                 Account = state.Usage()?.Account,
+                CanRunGui = jobRunner.GuiWhy() is null,
+                GuiReason = jobRunner.GuiWhy(),
                 Watchtower = watchtower.Health(),
                 OpusCap = models.OpusCap,
                 OneFlightPerRepo = models.OneFlightPerRepo,
@@ -306,6 +308,18 @@ public static partial class NodeApp
             state.Jobs().FirstOrDefault(j => j.Id == id) is not { } job
                 ? Results.Json(ResponseEnvelope<JobLog>.Fail($"There is no job {id}", 404), PilotJsonContext.Default.ResponseEnvelopeJobLog, statusCode: 404)
                 : Results.Json(ResponseEnvelope<JobLog>.Ok(jobs.Describe(job, JobLogs.Tail(job.LogPath) ?? new JobLog { Lines = [], Length = 0 })), PilotJsonContext.Default.ResponseEnvelopeJobLog));
+
+        // One file a job left in its artifacts directory; a name that is not a plain file of that folder is refused.
+        app.MapGet(NodeWire.JobArtifactPattern, (string id, string name, NodeState state) =>
+        {
+            if (state.Jobs().FirstOrDefault(j => j.Id == id) is not { } job)
+            {
+                return Results.NotFound();
+            }
+            return JobArtifacts.Resolve(JobRunner.ArtifactsOf(job), name) is { } path
+                ? Results.File(path, Attachments.ContentType(Path.GetExtension(name).TrimStart('.').ToLowerInvariant()))
+                : Results.BadRequest();
+        });
 
         // The new-flight wizard's reads: the repos a flight can be made in, and a repo's open issues (through gh).
         // This machine only: the LAN policy lets no route through it does not name.

@@ -236,6 +236,9 @@
       "failureTold": false,
       "failFast": false,
       "local": false,
+      "gui": null,
+      "artifacts": null,
+      "artifactsNote": null,
       "benchVm": null,
       "wholeSuite": null
     },
@@ -285,6 +288,9 @@
       "failureTold": false,
       "failFast": false,
       "local": false,
+      "gui": null,
+      "artifacts": null,
+      "artifactsNote": null,
       "benchVm": null,
       "wholeSuite": null
     },
@@ -334,6 +340,9 @@
       "failureTold": false,
       "failFast": false,
       "local": false,
+      "gui": null,
+      "artifacts": null,
+      "artifactsNote": null,
       "benchVm": null,
       "wholeSuite": null
     },
@@ -383,6 +392,9 @@
       "failureTold": false,
       "failFast": false,
       "local": false,
+      "gui": null,
+      "artifacts": null,
+      "artifactsNote": null,
       "benchVm": null,
       "wholeSuite": null
     }

@@ -711,6 +711,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             Step = StepOf(last, job),
             EndedAt = EndOf(job, exitPath),
         };
+        ended = WithArtifacts(ended);
         _tried[job.Id] = 0;
         // A check ended while the node was down: the finish that comes back takes this result (nothing waits yet, so it is kept).
         lock (_checkEndLock)
@@ -756,7 +757,21 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             wholeSuiteWhy = args[1].Trim().Length > 0 ? args[1].Trim() : null;
             args = [.. args.Skip(2)];
         }
+        // --gui follows --whole-suite: the job opens a window and waits for the node's GUI slot.
+        var gui = args.Length > 0 && args[0] == Verbs.GuiArg;
+        if (gui)
+        {
+            args = [.. args.Skip(1)];
+        }
         var alone = args.Length > 0 && args[0] == Verbs.AloneArg;
+        if (gui && alone)
+        {
+            return state.Complete(command, $"{Verbs.GuiArg} is for a job with a window: it can't run with {Verbs.AloneArg}");
+        }
+        if (gui && GuiRefusal() is { } noGui)
+        {
+            return state.Complete(command, noGui);
+        }
         if (alone)
         {
             args = [.. args.Skip(1)];
@@ -884,6 +899,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             MemoryKey = JobKey.Of(line, cwd).ToString(),
             FailFast = failFast || IsLegCheckOfReviewerOrFixer(owner, line),
             WholeSuite = wholeSuiteWhy,
+            Gui = gui ? true : null,
         };
         job = job with { QueuedAt = job.StartedAt };
 
@@ -897,6 +913,34 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         state.PutJob(job);
         _signals.Writer.TryWrite(new HandedOver(job));
         return state.Complete(command, null, made: jobId);
+    }
+
+    /// <summary>How many GUI jobs may run at once on this node (setting gui-slots); 0 turns the lane off. Live.</summary>
+    public int GuiSlots { get; set; } = 1;
+
+    /// <summary>Null when this node has an interactive desktop for GUI jobs, else why it has none; a test puts a fake.</summary>
+    public Func<string?> DesktopProbe { get; set; } = () => null;
+
+    /// <summary>Why a GUI job is refused on this node at once, or null when it may queue.</summary>
+    private string? GuiRefusal() => GuiWhy() is { } why ? $"this node cannot run GUI jobs: {why}" : null;
+
+    /// <summary>Why this node cannot run GUI jobs (the lane is off, or no interactive desktop), or null when it can.</summary>
+    public string? GuiWhy() => GuiSlots <= 0 ? "the GUI lane is off (gui-slots is 0)" : DesktopProbe();
+
+    /// <summary>Why a GUI job waits for the GUI slot, naming the GUI jobs ahead of it; null for an ordinary job or when a slot is free.</summary>
+    private string? GuiHold(JobRow job)
+    {
+        if (job.Gui != true)
+        {
+            return null;
+        }
+        var running = state.Jobs().Where(j => j.Gui == true && j.State == JobState.Running && j.Id != job.Id && _running.ContainsKey(j.Id)).ToList();
+        if (running.Count < Math.Max(1, GuiSlots))
+        {
+            return null;
+        }
+        var ahead = string.Join(", ", running.Select(j => j.Owner is { Length: > 0 } ? $"{j.Id} ({j.OwnerName ?? j.Owner})" : j.Id));
+        return $"waiting for the GUI slot: GUI job {ahead} has the window; other jobs run meanwhile";
     }
 
     /// <summary>The git a refusal's suggested filter reads the flight's changes through; a test puts its own.</summary>
@@ -1302,7 +1346,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             var place = why is null ? "" : $" ({why})";
             _queue[i] = job with
             {
-                Step = WithLocalNote(job, i == 0 ? $"next in line: {whys[0]}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : BehindHeld(i, whys) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : BuildHold(job) is { } building ? $"queued, {i} ahead of it{place}; {building}" : BehindOwn(i, whys) is { } own ? $"queued, {i} ahead of it{place}; {own}" : $"queued, {i} ahead of it{place}; {Needs(job)}"),
+                Step = WithLocalNote(job, i == 0 ? $"next in line: {whys[0]}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : GuiHold(job) is { } guiWait ? $"queued, {i} ahead of it{place}; {guiWait}" : BehindHeld(i, whys) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : BuildHold(job) is { } building ? $"queued, {i} ahead of it{place}; {building}" : BehindOwn(i, whys) is { } own ? $"queued, {i} ahead of it{place}; {own}" : $"queued, {i} ahead of it{place}; {Needs(job)}"),
                 Slots = MaxRunning,
                 WaitsOnSibling = SiblingHold(job) is not null,
                 HoldIdleSince = idleSince,
@@ -1486,6 +1530,11 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                     // A benchmark waiting for outside load to pass holds nothing: the jobs behind it start as usual.
                     continue;
                 }
+                if (why is not null && GuiHold(job) is not null)
+                {
+                    // A GUI job waiting for the window holds nothing: an ordinary job behind it starts as usual.
+                    continue;
+                }
                 var siblingOnly = why is null || WaitsOnlyOnAHold(job);
                 if (!siblingOnly)
                 {
@@ -1606,6 +1655,12 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 _cpuMarks.Remove(id);
                 continue;
             }
+            if (state.Jobs().FirstOrDefault(j => j.Id == id) is { Gui: true })
+            {
+                // A window waits on the person; its timeout is its guard.
+                _cpuMarks.Remove(id);
+                continue;
+            }
             var subject = Verbs.JobTarget(id);
             var read = JobCpu ?? (jobId =>
             {
@@ -1696,6 +1751,10 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         if (BenchHold(job) is { } holds)
         {
             return holds;
+        }
+        if (GuiHold(job) is { } guiHeld)
+        {
+            return guiHeld;
         }
         if (!ignoreHolds && FlightHold(job) is { } flightHeld)
         {
@@ -1827,6 +1886,39 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             }
         }
         return variables;
+    }
+
+    /// <summary>The names a GUI job's environment carries beyond an ordinary job's: DIR.Lib#242's two, and the artifacts directory.</summary>
+    public const string InspectorVariable = "DIR_INSPECTOR";
+    public const string InspectorTokenVariable = "DIR_INSPECTOR_TOKEN";
+    public const string ArtifactsVariable = "PILOT_JOB_ARTIFACTS";
+
+    /// <summary>The row with what its artifacts directory holds, read as it ends; a job with no such directory is unchanged.</summary>
+    private static JobRow WithArtifacts(JobRow ended)
+    {
+        var (files, note) = JobArtifacts.Collect(ArtifactsOf(ended));
+        return files is null && note is null ? ended : ended with { Artifacts = files, ArtifactsNote = note };
+    }
+
+    /// <summary>The artifacts directory of a job: beside its log, named by its id.</summary>
+    internal static string ArtifactsOf(JobRow job) => Path.Combine(Path.GetDirectoryName(job.LogPath) ?? "", $"{job.Id}.artifacts");
+
+    /// <summary>
+    /// A GUI job's launch-only variables: the inspector switch with a fresh token per start (never stored, journalled or logged),
+    /// and a new empty artifacts directory.
+    /// </summary>
+    private static void AddGuiEnvironment(JobRow job, Dictionary<string, string> variables)
+    {
+        var artifacts = ArtifactsOf(job);
+        if (Directory.Exists(artifacts))
+        {
+            Directory.Delete(artifacts, recursive: true);
+        }
+        Directory.CreateDirectory(artifacts);
+        variables[InspectorVariable] = "1";
+        variables[InspectorTokenVariable] = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        variables[ArtifactsVariable] = artifacts;
     }
 
     /// <summary>The clones <paramref name="job"/> would hold while it builds, as the queue asks for them; internal so a test can read it without running the job.</summary>
@@ -2084,11 +2176,15 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             // An exit file of an earlier run of this id would end the job at once: there is none.
             File.Delete(exitPath);
             var variables = EnvironmentOf(job);
+            if (job.Gui == true)
+            {
+                AddGuiEnvironment(job, variables);
+            }
             // The recorded command stays as given; the cached build form is what runs.
             var command = BuildCache && (Flights.PlaneOutput.PlaneOf(job.Cwd) is not null || IsSeed(job))
                 ? Flights.BuildCache.With(job.Command, true, job.Cwd, BuildCacheRoot, MsBuild(), IsSeed(job), SiblingSource(job))
                 : job.Command;
-            launched = Launcher.Start(new JobLaunch(job.Id, command, job.Cwd, job.LogPath, exitPath, Priority, variables,
+            launched = Launcher.Start(new JobLaunch(job.Id, command, job.Cwd, job.LogPath, exitPath, job.Gui == true ? JobPriority.Normal : Priority, variables,
                 Flights.PlaneOutput.NoBuildNotice(PlaneOutput, job.Command, job.Cwd)));
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException)
@@ -2614,7 +2710,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             {
                 ended = latest with { State = JobState.Failed, Error = "its process ended without leaving an exit code" };
             }
-            ended = ended with { Step = StepOf(last, job), EndedAt = time.GetUtcNow() };
+            ended = WithArtifacts(ended with { Step = StepOf(last, job), EndedAt = time.GetUtcNow() });
             if (memory.Count > 0)
             {
                 ended = ended with { MemoryMedian = JobMemory.Median(memory), MemoryPeak = memory.Max() };

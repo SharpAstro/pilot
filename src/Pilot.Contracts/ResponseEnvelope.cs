@@ -63,6 +63,12 @@ public sealed record NodeInfo
     /// <summary>The Claude account its sessions run under; null when Claude Code has no login on record.</summary>
     public AccountRow? Account { get; init; }
 
+    /// <summary>Whether the node can run GUI jobs (<c>pilot run --gui</c>): it has an interactive desktop and its lane is on. Null from an older node.</summary>
+    public bool? CanRunGui { get; init; }
+
+    /// <summary>Why the node cannot run GUI jobs (no desktop, or the lane is off); null when it can, and from an older node.</summary>
+    public string? GuiReason { get; init; }
+
     /// <summary>The Opus cap this node counts against (<c>opus-cap</c>); the fleet's value is the one the holder of the count publishes. Null from an older node.</summary>
     public int? OpusCap { get; init; }
 

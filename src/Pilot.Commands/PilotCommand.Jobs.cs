@@ -68,17 +68,22 @@ public static partial class PilotCommand
             var runLocal = new Option<bool>("--local") { Description = "With --alone: keep the benchmark on this node's own machine (it needs its hardware: a camera, a GPU kernel test), never on a cloud VM" };
             var runFailFast = new Option<bool>("--fail-fast") { Description = "End the job at its first failed test, so a run whose first failure is all you need frees the queue (a check does this by itself)" };
             var runWholeSuite = new Option<string?>("--whole-suite") { Description = "Why this run is a dotnet test over a whole project or solution with no --filter (refused otherwise: the whole suite is CI's, on the PR)" };
+            var runGui = new Option<bool>("--gui") { Description = "The job opens a window: it waits for the machine's one GUI slot (across repos) as well as an ordinary slot; refused on a node with no interactive desktop or with gui-slots 0. Not with --alone" };
             var runWords = new Argument<string[]>("command") { Description = "The command, after --: pilot run -- dotnet test", Arity = ArgumentArity.OneOrMore };
             var runCommand = Action(new Command("run", "Hand a long run to the node as a job, then end your turn: the node wakes this session with how it ended")
                 {
                     Arguments = { runWords },
-                    Options = { runTimeout, runAlone, runLocal, runFailFast, runWholeSuite },
+                    Options = { runTimeout, runAlone, runLocal, runFailFast, runWholeSuite, runGui },
                 },
                 async (p, client, ct) =>
                 {
                     if (p.GetValue(runLocal) && !p.GetValue(runAlone))
                     {
                         throw new UsageException("--local is for a benchmark: use it with --alone");
+                    }
+                    if (p.GetValue(runGui) && p.GetValue(runAlone))
+                    {
+                        throw new UsageException("--gui is for a job with a window: it can't run with --alone");
                     }
                     var seconds = p.GetValue(runTimeout) is { } given
                         ? (TryDuration(given, out var span) ? (long)span.TotalSeconds : throw new UsageException($"--timeout takes 90m, 2h or 45s, not {given}"))
@@ -92,7 +97,7 @@ public static partial class PilotCommand
                     {
                         Verb = Verbs.Run,
                         Target = target,
-                        Args = [.. p.GetValue(runFailFast) ? new[] { Verbs.FailFastArg } : [], .. p.GetValue(runWholeSuite) is { Length: > 0 } suiteWhy ? new[] { Verbs.WholeSuiteArg, suiteWhy } : [], .. p.GetValue(runAlone) ? new[] { Verbs.AloneArg } : [], .. p.GetValue(runLocal) ? new[] { Verbs.LocalArg } : [], cwd, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
+                        Args = [.. p.GetValue(runFailFast) ? new[] { Verbs.FailFastArg } : [], .. p.GetValue(runWholeSuite) is { Length: > 0 } suiteWhy ? new[] { Verbs.WholeSuiteArg, suiteWhy } : [], .. p.GetValue(runGui) ? new[] { Verbs.GuiArg } : [], .. p.GetValue(runAlone) ? new[] { Verbs.AloneArg } : [], .. p.GetValue(runLocal) ? new[] { Verbs.LocalArg } : [], cwd, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
                         Who = owner?.Name ?? who,
                         Agent = byAgent,
                         RequestId = requestId,
@@ -316,6 +321,14 @@ public static partial class PilotCommand
                 }
                 await output.WriteLineAsync(JobLine(job));
                 await output.WriteLineAsync($"  in {job.Cwd}, for {job.OwnerName ?? "a terminal"}; log {job.LogPath}");
+                if (job.ArtifactsNote is { } artifactsNote)
+                {
+                    await output.WriteLineAsync($"  artifacts: {artifactsNote}");
+                }
+                foreach (var artifact in job.Artifacts ?? [])
+                {
+                    await output.WriteLineAsync($"  artifact {artifact.Name} ({artifact.Bytes} bytes); pilot job {job.Id} artifact {artifact.Name} --out <path> fetches it");
+                }
                 // Through the node's job log route, as the GUI reads it: the node opens a running job's log alongside its
                 // writer, where a plain read of the file here was refused while the job ran, and it works from the LAN too.
                 if (await client.GetJobLogAsync(job.Id, ct) is { Success: true, Response: { } log })
@@ -349,6 +362,24 @@ public static partial class PilotCommand
             var resumeJob = Action(new Command("resume", "Let a paused job run on") { Arguments = { jobId } },
                 (p, client, ct) => Send(client, Verbs.ResumeJob, Verbs.JobTarget(p.GetValue(jobId)!), [], who, ct));
             jobShow.Subcommands.Add(resumeJob);
+            var artifactName = new Argument<string>("name") { Description = "The file's name in the job's artifacts directory" };
+            var artifactOut = new Option<string>("--out") { Description = "Where to write it (default: its name, in the current folder)" };
+            var artifactJob = Action(new Command("artifact", "Fetch one file a job left in its artifacts directory, from the node (works from the LAN)") { Arguments = { artifactName }, Options = { artifactOut } },
+                async (p, client, ct) =>
+                {
+                    var name = p.GetValue(artifactName)!;
+                    var (status, _, bytes) = await client.GetJobArtifactAsync(p.GetValue(jobId)!, name, ct);
+                    if (status != System.Net.HttpStatusCode.OK)
+                    {
+                        await output.WriteLineAsync($"refused: no artifact {name} on job {p.GetValue(jobId)} (status {(int)status})");
+                        return 1;
+                    }
+                    var target = Path.GetFullPath(p.GetValue(artifactOut) ?? name);
+                    await File.WriteAllBytesAsync(target, bytes, ct);
+                    await output.WriteLineAsync($"wrote {bytes.Length} bytes to {target}");
+                    return 0;
+                });
+            jobShow.Subcommands.Add(artifactJob);
 
             return (runCommand, jobsCommand, mergesCommand, spendCommand, decisionsCommand, jobShow, benchCommand);
         }

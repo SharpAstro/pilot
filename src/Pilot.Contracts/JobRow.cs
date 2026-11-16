@@ -172,6 +172,21 @@ public sealed record JobRow
     public bool Local { get; init; }
 
     /// <summary>
+    /// Whether the job opens a window (<c>pilot run --gui</c>): it waits for the node's GUI slot as well as an ordinary one. Null (not
+    /// GUI) on a row from before this and for any other job. Optional, so <see cref="NodeWire.Version"/> stays.
+    /// </summary>
+    public bool? Gui { get; init; }
+
+    /// <summary>
+    /// The files the job left in its artifacts directory (<c>PILOT_JOB_ARTIFACTS</c>), read when it ended (finish, cancel or timeout);
+    /// null while it runs, for a job that left none and on a row from before this. Optional, so <see cref="NodeWire.Version"/> stays.
+    /// </summary>
+    public JobArtifact[]? Artifacts { get; init; }
+
+    /// <summary>Why <see cref="Artifacts"/> is empty when the directory held more than the per-job limit (<see cref="JobArtifact.ByteLimit"/>): names the limit and the total. Null otherwise and on an older row.</summary>
+    public string? ArtifactsNote { get; init; }
+
+    /// <summary>
     /// Where a benchmark ran: the Azure VM's size, image, region, price per hour, minutes, cost and evictions, or why it ran on the node's
     /// machine instead. Null for a job that is not a bench, for one still waiting, and on a row from before this. Optional, so
     /// <see cref="NodeWire.Version"/> stays: an older reader skips the field, and an older row reads it as null (#823).
@@ -287,4 +302,15 @@ public sealed record JobAddedEvent : NodeEvent
 public sealed record JobChangedEvent : NodeEvent
 {
     public required JobRow Job { get; init; }
+}
+
+/// <summary>One file in a job's artifacts directory: its name (no folders) and size in bytes.</summary>
+public sealed record JobArtifact
+{
+    /// <summary>The most one job's artifacts may total: 256 MB. A job over it keeps none and says so on its row (<see cref="JobRow.ArtifactsNote"/>).</summary>
+    public const long ByteLimit = 256L * 1024 * 1024;
+
+    public required string Name { get; init; }
+
+    public long Bytes { get; init; }
 }
