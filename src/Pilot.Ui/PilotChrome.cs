@@ -1036,6 +1036,8 @@ internal sealed class PilotChrome<TSurface>
             table.Changed += redraw;
         }
         file.Attach(PullRequests);
+        file.Attach(Designs);
+        Designs.TargetChanged += redraw;
         file.Attach(Night);
         Night.Changed += _ => redraw();
         // The map's layers, kept in the same file and asking for a frame when one is toggled.

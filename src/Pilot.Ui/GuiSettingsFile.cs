@@ -22,6 +22,9 @@ internal sealed record GuiSettings
 
     /// <summary>Which layers of the Flights page's map are on.</summary>
     public MapLayerSettings? MapLayers { get; init; }
+
+    /// <summary>The target each design is shown at on its page, by design id (PIL1097); nullable, so a file an older build wrote reads as before.</summary>
+    public Dictionary<string, SavedDesignTarget>? DesignTargets { get; init; }
 }
 
 /// <summary>A page's saved sort: the column's title and whether it runs descending.</summary>
@@ -54,9 +57,11 @@ internal sealed class GuiSettingsFile : IDisposable
     private ImmutableArray<string> _folds;
     private MapLayerSettings? _layers;
     private FlightMapLayerState? _layerState;
+    private ImmutableDictionary<string, SavedDesignTarget> _designTargets = ImmutableDictionary<string, SavedDesignTarget>.Empty.WithComparers(StringComparer.Ordinal);
 
-    private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, Dictionary<string, SavedSort> sorts, bool night, MapLayerSettings? layers, List<string> folds)
+    private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, Dictionary<string, SavedSort> sorts, bool night, MapLayerSettings? layers, List<string> folds, Dictionary<string, SavedDesignTarget> designTargets)
     {
+        _designTargets = designTargets.ToImmutableDictionary(StringComparer.Ordinal);
         _folds = [.. folds];
         Path = path;
         _night = night;
@@ -81,6 +86,7 @@ internal sealed class GuiSettingsFile : IDisposable
         var night = false;
         var folds = new List<string>();
         MapLayerSettings? layers = null;
+        var designTargets = new Dictionary<string, SavedDesignTarget>(StringComparer.Ordinal);
         try
         {
             if (File.Exists(path) && JsonSerializer.Deserialize(File.ReadAllText(path), GuiSettingsJsonContext.Default.GuiSettings) is { } settings)
@@ -88,6 +94,13 @@ internal sealed class GuiSettingsFile : IDisposable
                 night = settings.Night;
                 folds.AddRange(settings.PullRequestFolds?.Where(f => !string.IsNullOrEmpty(f)) ?? []);
                 layers = settings.MapLayers;
+                foreach (var (id, saved) in settings.DesignTargets ?? [])
+                {
+                    if (saved?.ToChoice() is not null)
+                    {
+                        designTargets[id] = saved;
+                    }
+                }
                 foreach (var (page, sort) in settings.Sorts ?? [])
                 {
                     if (sort is { Column.Length: > 0 })
@@ -111,8 +124,9 @@ internal sealed class GuiSettingsFile : IDisposable
             night = false;
             folds.Clear();
             layers = null;
+            designTargets.Clear();
         }
-        return new GuiSettingsFile(path, tables, sorts, night, layers, folds);
+        return new GuiSettingsFile(path, tables, sorts, night, layers, folds, designTargets);
     }
 
     /// <summary>Whether the file says Night is on.</summary>
@@ -164,6 +178,21 @@ internal sealed class GuiSettingsFile : IDisposable
         layers.Changed += Touch;
     }
 
+    /// <summary>The target each design was last shown at, as the file holds it.</summary>
+    public IReadOnlyDictionary<string, SavedDesignTarget> DesignTargets => _designTargets;
+
+    /// <summary>Gives <paramref name="page"/> the targets this file holds, and keeps the file current: a pick, a swap or a custom size writes it, a moment later. Nothing goes to the node.</summary>
+    public void Attach<TSurface>(DesignsView<TSurface> page)
+    {
+        page.RestoreTargets(_designTargets);
+        // Read on the render thread, where the choice changes; the timer's write only reads the copy.
+        page.TargetChanged += () =>
+        {
+            _designTargets = page.SnapshotTargets().ToImmutableDictionary(StringComparer.Ordinal);
+            Touch();
+        };
+    }
+
     private void Touch()
     {
         Interlocked.Exchange(ref _dirty, 1);
@@ -195,6 +224,7 @@ internal sealed class GuiSettingsFile : IDisposable
                 Sorts = Volatile.Read(ref _sorts).Count > 0 ? new Dictionary<string, SavedSort>(Volatile.Read(ref _sorts), StringComparer.Ordinal) : null,
                 Night = _night,
                 PullRequestFolds = [.. _folds],
+                DesignTargets = _designTargets.Count > 0 ? new Dictionary<string, SavedDesignTarget>(_designTargets, StringComparer.Ordinal) : null,
             },
             GuiSettingsJsonContext.Default.GuiSettings);
 
