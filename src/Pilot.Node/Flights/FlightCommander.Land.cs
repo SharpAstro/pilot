@@ -299,6 +299,9 @@ public sealed partial class FlightCommander
         {
             State = FlightState.Landed,
             LandedAt = landedAt,
+            // Landed, it is no longer in a queue: a stale note would hold back its archiving.
+            MergeQueue = null,
+            MergeWhenGreen = null,
             // Its review ends with it: nothing resumes or nudges a reviewer of a landed flight.
             Review = f.Review is { State: ReviewState.Reviewing } ? null : f.Review,
             FoldedInto = foldedInto ?? f.FoldedInto,

@@ -63,6 +63,11 @@ public sealed class FlightArchiveSweep(NodeState state, FlightArchiver archiver,
     /// <summary>One sweep; returns how many flights it archived.</summary>
     public async Task<int> SweepAsync(CancellationToken cancellationToken = default)
     {
+        // A landed row stored with a merge-queue note (older nodes left it) is healed first, so it is not refused for ever.
+        foreach (var stale in state.Flights().Where(f => f.State == FlightState.Landed && f.MergeQueue is not null).Select(f => f.Code).ToList())
+        {
+            state.UpdateFlight(stale, f => f with { MergeQueue = null });
+        }
         if (After() is not { } after)
         {
             return 0;

@@ -7,10 +7,10 @@ namespace Pilot.Node.Flights;
 /// The archive verbs (PIL1083): <c>archive-flight flight/&lt;code&gt; [undo]</c>, and the two reads of the archive, <c>archived-flights</c> (a page of
 /// its index) and <c>archived-flight</c> (one flight whole). <see cref="WhyNotAsync"/> is the one answer to why a landed flight cannot be
 /// archived yet, used by the verb and by the sweep of a later leg, so the two cannot drift apart.
+/// The flight's branch is not waited for, by the owner's decision of 2026-11-16 (the node never deletes flight branches).
 /// </summary>
-/// <param name="git">Answers whether the flight's branch is still there; null where there is no git (the branch is then not asked about).</param>
 /// <param name="removals">The folders waiting for Windows to let them go; a flight whose plane is in it is not archived yet. Null where there is none.</param>
-public sealed class FlightArchiver(NodeState state, IGit? git = null, RemovalQueue? removals = null)
+public sealed class FlightArchiver(NodeState state, RemovalQueue? removals = null)
 {
     /// <summary>How many rows <c>archived-flights</c> gives when it is not asked for a count.</summary>
     public const int DefaultPage = 50;
@@ -84,9 +84,11 @@ public sealed class FlightArchiver(NodeState state, IGit? git = null, RemovalQue
 
     /// <summary>
     /// Why <paramref name="flight"/> cannot be archived yet, or null when it can: it has not landed; its PR is not merged; a card about it is
-    /// open; a session of it is live; its plane's folder is still on disk or waits in the removal queue; or its branch is still there.
+    /// open; a session of it is live; its plane's folder is still on disk or waits in the removal queue. Its branch is not waited for.
     /// </summary>
-    public async Task<string?> WhyNotAsync(FlightRow flight, CancellationToken cancellationToken)
+    public Task<string?> WhyNotAsync(FlightRow flight, CancellationToken cancellationToken) => Task.FromResult(WhyNot(flight));
+
+    private string? WhyNot(FlightRow flight)
     {
         if (flight.State != FlightState.Landed)
         {
@@ -99,7 +101,9 @@ public sealed class FlightArchiver(NodeState state, IGit? git = null, RemovalQue
             {
                 return $"its PR #{pr.ToString(CultureInfo.InvariantCulture)} is not merged (its merge entry is {entry.State.ToString().ToLowerInvariant()})";
             }
-            if (flight.MergeQueue is { Length: > 0 } queued)
+            var knownMerged = state.Merges().FirstOrDefault(m => string.Equals(m.Flight, flight.Code, StringComparison.Ordinal)) is { State: MergeEntryState.Merged }
+                || (state.Merges().All(m => !string.Equals(m.Flight, flight.Code, StringComparison.Ordinal)) && (flight.MergedHead is not null || flight.MergedPullRequest is not null));
+            if (!knownMerged && flight.MergeQueue is { Length: > 0 } queued)
             {
                 return $"its PR #{pr.ToString(CultureInfo.InvariantCulture)} is not merged ({queued})";
             }
@@ -119,17 +123,6 @@ public sealed class FlightArchiver(NodeState state, IGit? git = null, RemovalQue
         if (removals?.Contains(flight.Worktree) == true)
         {
             return $"its plane folder {flight.Worktree} waits in the removal queue";
-        }
-        // A repo folder that is gone has no branch to wait for (and git cannot start in it).
-        if (git is not null && Directory.Exists(flight.RepoPath))
-        {
-            foreach (var reference in new[] { $"refs/heads/{flight.Branch}", $"refs/remotes/origin/{flight.Branch}" })
-            {
-                if ((await git.RunAsync(["show-ref", "--verify", "--quiet", reference], flight.RepoPath, cancellationToken)).Ok)
-                {
-                    return $"its branch {flight.Branch} is not removed yet";
-                }
-            }
         }
         return null;
     }
