@@ -31,7 +31,7 @@ public static class WireframeSweepTests
 
     internal static readonly string[] Pages =
     [
-        "home", "sessions", "flights table", "flights canvas", "flight page", "jobs", "fleet", "settings", "repos", "pull requests", "chat", "spend", "designs", "design page",
+        "home", "sessions", "flights table", "flights canvas", "flight page", "jobs", "fleet", "settings", "repos", "pull requests", "chat", "spend", "designs", "design page", "design cells",
         PageTextOverlapTests.IdeasPage, "transcript", "cards panel", PageTextOverlapTests.CardDetailPage,
     ];
 

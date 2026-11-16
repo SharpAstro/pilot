@@ -139,15 +139,21 @@ public sealed class PrototypeCells
 
     /// <summary>
     /// Paints <paramref name="buffer"/> on <paramref name="renderer"/> as a grid with its upper left at (<paramref name="x"/>, <paramref name="y"/>), every cell
-    /// <see cref="CellWidth"/> by <see cref="CellHeight"/> pixels: the cell's background, then its glyph (box-drawing borders included) in its foreground, in the
+    /// <see cref="CellWidth"/> by <see cref="CellHeight"/> pixels times <paramref name="scale"/>: the cell's background, then its glyph (box-drawing borders included) in its foreground, in the
     /// monospace face at <paramref name="fontPath"/>. A colour a cell never stated is the terminal's own: a light glyph on a dark ground.
     /// </summary>
-    public static void Draw<TSurface>(Renderer<TSurface> renderer, CellBuffer buffer, string fontPath, float x = 0f, float y = 0f)
+    public static void Draw<TSurface>(Renderer<TSurface> renderer, CellBuffer buffer, string fontPath, float x = 0f, float y = 0f, float scale = 1f)
     {
-        var fontSize = CellHeight * 0.75f;
+        var cellW = CellWidth * scale;
+        var cellH = CellHeight * scale;
+        var fontSize = CellHeight * 0.75f * scale;
+        // Cell edges are rounded once, so a scaled grid has no seams between neighbouring cells.
+        int Left(int column) => (int)MathF.Round(x + column * cellW);
+        int Top(int row) => (int)MathF.Round(y + row * cellH);
         for (var row = 0; row < buffer.Height; row++)
         {
-            var top = (int)(y + row * CellHeight);
+            var top = Top(row);
+            var height = Top(row + 1) - top;
             // A run of cells with one background is one fill, so a wide screen is not a fill a cell.
             var start = 0;
             while (start < buffer.Width)
@@ -158,18 +164,18 @@ public sealed class PrototypeCells
                 {
                     end++;
                 }
-                renderer.FillRectangle(Rect((int)(x + start * CellWidth), top, (end - start) * CellWidth, CellHeight), color);
+                renderer.FillRectangle(Rect(Left(start), top, Left(end) - Left(start), height), color);
                 start = end;
             }
             for (var column = 0; column < buffer.Width; column++)
             {
                 var cell = buffer.FrontAt(column, row);
-                if (cell.Glyph is ' ' or '\0')
+                if (cell.Glyph is ' ' or ' ')
                 {
                     continue;
                 }
                 var (foreground, _) = PenOf(cell);
-                renderer.DrawText(cell.Glyph.ToString(), fontPath, fontSize, foreground, Rect((int)(x + column * CellWidth), top, CellWidth, CellHeight), TextAlign.Center, TextAlign.Center);
+                renderer.DrawText(cell.Glyph.ToString(), fontPath, fontSize, foreground, Rect(Left(column), top, Left(column + 1) - Left(column), height), TextAlign.Center, TextAlign.Center);
             }
         }
     }

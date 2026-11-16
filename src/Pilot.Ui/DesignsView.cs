@@ -1,6 +1,7 @@
 using System.Globalization;
 using DIR.Lib;
 using DIR.Lib.Prototyping;
+using Pilot.Cells;
 using Pilot.Contracts;
 
 namespace Pilot.Ui;
@@ -17,6 +18,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
     private const float RowH = 48f;
     private const float StripH = 128f;
     private const string PlayerKey = "design-player";
+    private const string CellsKey = "design-cells-grid";
     private const string RenderKeyPrefix = "design-render:";
 
     private static RGBAColor32 Ground => Palette.Current.Ground;
@@ -65,6 +67,47 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
     /// <summary>The player of the version on show, or null on the list and where the version has no prototype that loads. The chrome lists it among the page's widgets.</summary>
     public PrototypePlayer<TSurface>? Player { get; private set; }
 
+    /// <summary>The Cells half of the Pixels or Cells switch (PIL1098): the player's current screen arranged in terminal cells, or null where there is no player. The chrome lists it instead of the player while <see cref="CellsShown"/>.</summary>
+    public PrototypeCellGrid<TSurface>? CellGrid { get; private set; }
+
+    /// <summary>True while the page plays the prototype in terminal cells rather than pixels. Pixels is the default.</summary>
+    public bool CellsShown { get; private set; }
+
+    /// <summary>The terminal size the cells are arranged for, as <c>&lt;cols&gt;x&lt;rows&gt;</c>.</summary>
+    public string TerminalSize { get; private set; } = DesignTerminals.Standard[0];
+
+    /// <summary>The typed <c>&lt;cols&gt;x&lt;rows&gt;</c> box, outside the rectangle the prototype plays in.</summary>
+    public TextInputState SizeInput { get; } = new();
+
+    private string _typedSize = "";
+
+    /// <summary>Plays in cells (true) or in pixels (false); the screen and the values stay, as both show the same player.</summary>
+    public void ShowCells(bool cells)
+    {
+        if (cells == CellsShown)
+        {
+            return;
+        }
+        CellsShown = cells;
+        CellGrid?.Invalidate();
+    }
+
+    /// <summary>Arranges the cells for <paramref name="size"/> (<c>&lt;cols&gt;x&lt;rows&gt;</c>); false for anything else.</summary>
+    public bool PickSize(string size)
+    {
+        if (!DesignTerminals.TryParse(size, out var columns, out var rows))
+        {
+            return false;
+        }
+        TerminalSize = $"{columns}x{rows}";
+        if (CellGrid is { } grid)
+        {
+            grid.Columns = columns;
+            grid.Rows = rows;
+        }
+        return true;
+    }
+
     // What the player was made for: the design, version and the version's prototype hash, so a re-read of the same version keeps the screen the person is on.
     private (string Id, int? Version, string? Sha, string Font)? _playerFor;
 
@@ -80,6 +123,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
     {
         OpenId = null;
         Player = null;
+        CellGrid = null;
         _playerFor = null;
     }
 
@@ -115,6 +159,14 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
             // Painted where the page arranged its leaf, so what the page lays over it (the ? card) is over it.
             Player?.Render(rect);
         }
+        else if (key == CellsKey)
+        {
+            if (CellGrid is { } grid)
+            {
+                grid.FontPath = FontPath;
+                grid.Render(rect);
+            }
+        }
         else if (key.StartsWith(RenderKeyPrefix, StringComparison.Ordinal) && DrawPicture is { } draw && PictureOf?.Invoke(key[RenderKeyPrefix.Length..]) is { } picture)
         {
             draw(picture, FitPicture(picture, rect));
@@ -136,6 +188,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         if (OpenId is null)
         {
             Player = null;
+            CellGrid = null;
             _playerFor = null;
         }
         else if (open is not null)
@@ -160,6 +213,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         if (page.Document is not { } document)
         {
             Player = null;
+            CellGrid = null;
             _playerFor = null;
             return;
         }
@@ -171,6 +225,13 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         }
         _playerFor = key;
         Player = new PrototypePlayer<TSurface>(Renderer, document, Prototype.DefaultTheme, FontPath ?? "");
+        CellGrid = new PrototypeCellGrid<TSurface>(Renderer, Player);
+        // A design that names terminal targets is first arranged for its first one.
+        if (page.Detail.Row.Terminals is [{ } first, ..] && DesignTerminals.TryParse(first, out _, out _))
+        {
+            TerminalSize = first;
+        }
+        PickSize(TerminalSize);
     }
 
     private Layout.Node BackButton() =>
@@ -223,7 +284,8 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         }
         else
         {
-            left.Add(Layout.Builder.Fill(key: PlayerKey).Bg(Well).Stretch());
+            left.Add(PlayerBar(page));
+            left.Add(Layout.Builder.Fill(key: CellsShown ? CellsKey : PlayerKey).Bg(Well).Stretch());
             left.Add(Strip(page));
         }
         List<Layout.Node> right = [Heading("Versions")];
@@ -238,6 +300,55 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         return Layout.Builder.HStack(
             Layout.Builder.VStack([.. left]).WithGap(8f).WStar(2.2f).HStar(),
             Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).Pad(Gutter, 8f);
+    }
+
+    // The Pixels or Cells switch and, in Cells, the terminal sizes: the page's own controls, above the rectangle the prototype plays in.
+    private Layout.Node PlayerBar(DesignPage page)
+    {
+        List<Layout.Node> bar = [SwitchButton("Pixels", !CellsShown, false), SwitchButton("Cells", CellsShown, true)];
+        if (CellsShown)
+        {
+            ApplyTypedSize();
+            // The sizes the design names come first, then the standard ones it does not already name.
+            var sizes = page.Detail.Row.Terminals.Where(t => DesignTerminals.TryParse(t, out _, out _)).Concat(DesignTerminals.Standard).Distinct(StringComparer.Ordinal);
+            foreach (var size in sizes)
+            {
+                var chosen = size;
+                bar.Add(Layout.Builder.Text(chosen, 12f, Bright, TextAlign.Center)
+                    .Pad(8f, 4f)
+                    .WAuto()
+                    .Bg(chosen == TerminalSize ? Active : Button)
+                    .BgHover(ButtonHover)
+                    .WithTooltip($"Arrange the screen for a {chosen} terminal")
+                    .Follows(new HitResult.ButtonHit($"designs:size:{chosen}"), _ => PickSize(chosen)));
+            }
+            bar.Add(Layout.Builder.TextInput(SizeInput, 12f, Palette.Input).WFixed(96f));
+        }
+        return Layout.Builder.HStack([.. bar]).WithGap(6f).HFixed(28f).WStar();
+    }
+
+    private Layout.Node SwitchButton(string label, bool on, bool cells) =>
+        Layout.Builder.Text(label, 12f, Bright, TextAlign.Center)
+            .Pad(10f, 4f)
+            .WAuto()
+            .Bg(on ? Active : Button)
+            .BgHover(ButtonHover)
+            .WithTooltip(cells ? "Arrange the screen in terminal cells, as pilot-tui plays it" : "Play the screen in pixels at its design size")
+            .Follows(new HitResult.ButtonHit($"designs:mode:{label.ToLowerInvariant()}"), _ => ShowCells(cells));
+
+    // A typed size takes effect once it reads as <cols>x<rows> and is a terminal one can arrange a screen in.
+    private void ApplyTypedSize()
+    {
+        var typed = SizeInput.Text.Trim();
+        if (typed == _typedSize)
+        {
+            return;
+        }
+        _typedSize = typed;
+        if (DesignTerminals.TryParse(typed, out var columns, out var rows) && columns >= 20 && rows >= 8)
+        {
+            PickSize(typed);
+        }
     }
 
     private IEnumerable<Layout.Node> Versions(DesignPage page)

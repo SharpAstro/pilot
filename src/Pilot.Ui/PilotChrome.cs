@@ -462,7 +462,7 @@ internal sealed class PilotChrome<TSurface>
         PilotPage.Ideas => [Nav, Rail, Ideas, Cards],
         PilotPage.Spend => [Nav, Rail, Spend, Cards],
         // The player is a widget of its own, over the page, so a click in it is the prototype's: the page's own controls lie outside its rectangle.
-        PilotPage.Designs => Designs.Player is { } player ? [Nav, Rail, Designs, player, Cards] : [Nav, Rail, Designs, Cards],
+        PilotPage.Designs => Designs.CellsShown && Designs.CellGrid is { } grid ? [Nav, Rail, Designs, grid, Cards] : Designs.Player is { } player ? [Nav, Rail, Designs, player, Cards] : [Nav, Rail, Designs, Cards],
         PilotPage.Sessions => [Nav, Rail, Sessions, Cards],
         PilotPage.Flights => [Nav, Rail, Flights, Cards],
         PilotPage.Repos => [Nav, Rail, Repos, Cards],
