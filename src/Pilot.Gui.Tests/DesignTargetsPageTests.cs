@@ -129,6 +129,19 @@ public sealed class DesignTargetsPageTests
     }
 
     [Fact]
+    public void ARotatedSquareCustomSizeHasNoOrientationSoAPickShowsTheTargetsOwnShape()
+    {
+        using var rig = new Rig();
+        rig.View.CustomInput.Text = "500x500";
+        rig.View.CommitCustom().ShouldBeTrue();
+        rig.View.SwapSides();
+
+        rig.View.PickTarget("Desktop");
+        rig.View.Surface.Width.ShouldBe(1440);
+        rig.View.Surface.Height.ShouldBe(900);
+    }
+
+    [Fact]
     public void ACustomSizeIsTypedOnThePageAndABadEntryKeepsTheLastTargetAndSaysWhy()
     {
         using var rig = new Rig();
