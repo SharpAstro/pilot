@@ -152,7 +152,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         var firewall = key == NodeSettings.LanPortKey && OperatingSystem.IsWindows()
             ? "; the firewall's TCP rule follows on 'pilot-node setup' or the Settings page's Firewall fix (until then the check reads not ok)"
             : "";
-        return state.Complete(command, null, setting: Row(key, updated), way: restart ?? $"{key} saved as {value}; the node restarts to run with it{carrying}{firewall}");
+        return state.Complete(command, null, setting: Row(key, updated), way: (restart ?? $"{key} saved as {value}; the node restarts to run with it{carrying}") + firewall);
     }
 
     private CommandResult SetFleet(CommandRequest command, string key, string[] values)
