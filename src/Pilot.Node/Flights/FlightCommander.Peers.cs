@@ -102,8 +102,9 @@ public sealed partial class FlightCommander
             var answer = await peer.SendAsync(new CommandRequest { Verb = Verbs.ArchivedFlight, Target = Verbs.FlightTarget(code), Who = "node" }, budget);
             return answer is { Ok: true, ArchivedFlight: { } archived } && string.Equals(archived.Row.Repo, gitHub[(gitHub.LastIndexOf('/') + 1)..], StringComparison.OrdinalIgnoreCase) ? archived.Flight : null;
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or OperationCanceledException or WebSocketException && !caller.IsCancellationRequested)
+        catch (Exception) when (!caller.IsCancellationRequested)
         {
+            // Only a look for a flight the peer's snapshot did not list: whatever stops it, the flight is then simply not found there.
             return null;
         }
     }
