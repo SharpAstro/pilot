@@ -91,7 +91,7 @@ public sealed class DesignCliTests : IAsyncLifetime
         exit.ShouldBe(1);
         said.ShouldContain("There is no design DSN-5");
         (await Pilot("design", "brief", "DSN-5", "--", "words")).Exit.ShouldBe(1);
-        (await Pilot("design", "show", "nonsense")).Output.ShouldContain("not a design id");
+        (await Pilot("design", "show", "nonsense")).Output.ShouldContain("There is no design nonsense");
     }
 
     [Fact]

@@ -167,7 +167,7 @@ public sealed class DesignStoreTests : IDisposable
         made.Current.ShouldBeNull();
         made.Versions.ShouldBe(0);
 
-        File.WriteAllText(Path.Combine(_data, "designs", "DSN-1", "design.json"), """{"Id":"DSN-1"}""");
+        File.WriteAllText(Path.Combine(_data, "designs", "DSN-1", "design.json"), """{"id":"DSN-1"}""");
         var bare = store.Find("DSN-1").ShouldNotBeNull();
         bare.Title.ShouldBeNull();
         bare.Current.ShouldBeNull();
