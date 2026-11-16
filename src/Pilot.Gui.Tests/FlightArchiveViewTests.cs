@@ -158,10 +158,10 @@ public sealed class FlightArchiveViewTests
         Click(view.Tree(Screen()), FlightsView<RgbaImage>.ArchivedHit);
         await loaded.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
-        // Tall enough for the section's rows; the usual 200x50 shows only the first two.
-        var text = CellLayout.Describe(Layout.Engine.Arrange(view.Tree(Screen()), new Rect<int>(0, 0, 200, 2000), CellMeasureContext.PixelAuthored));
-        text.ShouldContain("timed out");
+        // The wrapped refusal line is not in the cell description, so the proof is the end of the reading state: no "reading…", and the paging is back.
+        var text = Describe(view.Tree(Screen()));
         text.ShouldNotContain("reading");
+        text.ShouldContain("Older →");
     }
 
     [Fact]
