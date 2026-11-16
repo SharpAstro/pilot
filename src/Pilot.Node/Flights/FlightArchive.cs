@@ -148,5 +148,6 @@ public sealed class FlightArchive
         ArchivedAt = at,
         FoldedInto = flight.FoldedInto,
         MovedTo = flight.MovedTo?.To,
+        BranchDeletedAt = flight.BranchDeletedAt,
     };
 }

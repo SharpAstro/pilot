@@ -15,6 +15,9 @@ namespace Pilot.Node.Flights;
 /// <param name="Labels">The labels it carries, as read by branch; null when the read did not ask for them.</param>
 /// <param name="MergeCommit">The commit it merged as on its base, as read by branch; empty before it merges or when not read.</param>
 /// <param name="MergedAt">When it merged, as read by branch; null before it merges or when not read.</param>
+/// <summary>A merged PR as <c>gh pr list --state merged</c> names it: its number, its head branch and the commit that branch was at when it merged (PIL1101).</summary>
+public sealed record MergedPullRequest(int Number, string HeadRef, string HeadOid);
+
 public sealed record PullRequest(int Number, string State, string Head, string Url, string Mergeable = "", string Title = "", string Author = "", string Base = "", IReadOnlyList<string>? Labels = null, string MergeCommit = "", DateTimeOffset? MergedAt = null, bool Draft = false, string HeadRef = "", bool Fork = false);
 
 /// <summary>
@@ -192,6 +195,12 @@ public interface IGitHub
 
     /// <summary>Whether issue <paramref name="number"/> is closed (true), open (false), or null when GitHub would not say (#753).</summary>
     Task<bool?> IssueClosedAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<bool?>(null);
+
+    /// <summary>
+    /// The latest merged PRs of the repo at <paramref name="repoPath"/> (<c>gh pr list --state merged</c>, up to <paramref name="limit"/>), one call
+    /// for all of them, so the branch sweep reads GitHub once per repo and not once per flight (PIL1101). Null when GitHub would not say.
+    /// </summary>
+    Task<MergedPullRequest[]?> MergedPullRequestsAsync(string repoPath, int limit, CancellationToken cancellationToken) => Task.FromResult<MergedPullRequest[]?>(null);
 
     /// <summary>
     /// Where PR <paramref name="number"/>'s checks stand: <see cref="ChoiceStatus.Failing"/> when any failed,

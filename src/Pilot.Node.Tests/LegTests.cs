@@ -532,6 +532,17 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>Issue numbers GitHub says are closed (#753).</summary>
     public HashSet<int> IssuesClosedOnGitHub { get; } = [];
 
+    /// <summary>The merged PRs each repo folder path lists (null answers as a gh that could not say), and how many times they were asked for.</summary>
+    public Dictionary<string, MergedPullRequest[]?> MergedPrs { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public int MergedPrListings;
+
+    public Task<MergedPullRequest[]?> MergedPullRequestsAsync(string repoPath, int limit, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref MergedPrListings);
+        return Task.FromResult(MergedPrs.GetValueOrDefault(repoPath) ?? (MergedPrs.ContainsKey(repoPath) ? null : []));
+    }
+
     public Task<bool?> IssueClosedAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<bool?>(IssuesClosedOnGitHub.Contains(number));
 
     /// <summary>When set, reading the PR of a branch fails with it, as a gh that could not reach GitHub.</summary>

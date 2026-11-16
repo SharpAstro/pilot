@@ -480,7 +480,7 @@ public sealed partial class FlightCommander
                         result.Add(new(other.Code, other.Branch, LandedBranchResult.Kept, "moved", $"{other.Code} went to {to.To}, whose landing handles origin"));
                         continue;
                     }
-                    var (candidate, outcome) = await FoldedCandidateAsync(other, landedHead, cancellationToken);
+                    var (candidate, outcome) = await Branches.FoldedCandidateAsync(other, landedHead, LiveSessionOf(other.Code), cancellationToken);
                     if (candidate is not null)
                     {
                         candidates.Add(candidate);
@@ -510,42 +510,6 @@ public sealed partial class FlightCommander
 
     private bool LiveSessionOf(string code) =>
         state.Sessions().Any(s => s.State is not (SessionState.Ended or SessionState.Failed) && string.Equals(s.Flight, code, StringComparison.Ordinal));
-
-    /// <summary>A folded flight's candidate: its branch tips must be contained in the lander's merged head or in main; else an outcome that keeps it.</summary>
-    private async Task<(LandedCandidate? Candidate, LandedBranchOutcome? Outcome)> FoldedCandidateAsync(FlightRow other, string? landerHead, CancellationToken cancellationToken)
-    {
-        var git = planes.Git;
-        var repo = other.RepoPath;
-        var local = await git.RunAsync(["rev-parse", "--verify", "--quiet", $"refs/heads/{other.Branch}"], repo, cancellationToken);
-        var remote = await git.RunAsync(["ls-remote", "--heads", "origin", $"refs/heads/{other.Branch}"], repo, cancellationToken);
-        var localTip = local.Ok ? local.Output.Trim() : null;
-        var originTip = remote.Ok ? remote.Output.Split(['\t', ' ', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() : null;
-        var tips = new[] { localTip, originTip }.OfType<string>().Where(t => t.Length > 0).Distinct().ToList();
-        if (tips.Count == 0)
-        {
-            // Nothing of it is left anywhere: its branch is gone already.
-            return (null, new LandedBranchOutcome(other.Code, other.Branch, LandedBranchResult.Deleted));
-        }
-        var mainRef = other.Base.Length > 0 ? other.Base : "origin/main";
-        var ahead = new List<string>();
-        foreach (var tip in tips)
-        {
-            var contained = landerHead is not null && (await git.RunAsync(["merge-base", "--is-ancestor", tip, landerHead], repo, cancellationToken)).Ok
-                || (await git.RunAsync(["merge-base", "--is-ancestor", tip, mainRef], repo, cancellationToken)).Ok;
-            if (!contained)
-            {
-                var log = await git.RunAsync(["log", "--oneline", tip, "--not", mainRef, .. (landerHead is null ? [] : new[] { landerHead })], repo, cancellationToken);
-                ahead.AddRange(log.Ok ? log.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : []);
-            }
-        }
-        if (ahead.Count > 0)
-        {
-            var where = localTip is not null && originTip is null ? LandedBranchGroups.LocalAhead : LandedBranchGroups.OriginAhead;
-            return (null, new LandedBranchOutcome(other.Code, other.Branch, LandedBranchResult.Kept, where,
-                $"{other.Branch} holds work in neither the merged head of {other.FoldedInto} nor {mainRef}", [.. ahead.Distinct()]));
-        }
-        return (new LandedCandidate(other, localTip ?? originTip!, LiveSessionOf(other.Code)), null);
-    }
 
     private void RecordBranchOutcome(LandedBranchOutcome outcome)
     {
