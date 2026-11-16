@@ -50,3 +50,26 @@ The merge queue's recordings come from `gh api graphql` with `GhCli.QueueStateQu
 Keep the keys and value shapes exactly as gh gave them. Replace the login of anyone outside the org (`sebgod`, `SharpAstro`, bots)
 with `some-user`, blank their `name`, and replace their node `id` with a placeholder; drop tokens and anything else private.
 Compact the JSON to one line, as gh prints it when piped.
+
+## Builders
+
+`GhAnswers` (beside the tests) is the only place a test builds what a gh reader returns. A builder takes a recording state and named
+overrides, edits only keys in the method's field list (a key outside it throws, naming the method and the list), and returns what the
+real `Parse*` makes of the edited JSON. `GhFakeGuardTests` (`Category=Invariant`) fails a direct `new PullRequest(`, `new MergedPullRequest(`,
+`new MergeQueueState(`, `new ChecksSummary(`, `new PullRequestStatus`, `new WorkflowRun(`, `new CiRun(` or a target-typed `new(` assigned to
+those types in `Pilot.Node.Tests`, naming file and line, outside an explicit not-yet-migrated list that later legs empty. `Pilot.Gui.Tests` is
+out of scope: its page data builds wire contracts, not gh reads.
+
+## Fakes found impossible (PIL1106)
+
+Per test whose fake could not exist: what the fake set that the reader never fills, what its expectation is now, and whether the code under test was wrong too.
+Later legs append here; the PR body is drawn from this section.
+
+- `LegTests.FakeGitHub.ChecksSummaryAsync` (the `Checks` shortcut, used by every test that sets `_github.Checks`): answered `new ChecksSummary(status, 0, 0)`,
+  a status with no check behind it. `ChecksSummary` is only built by `ParseChecks`, which returns null for no checks and counts every check it
+  gives a status for, so a status with `Done = 0, Total = 0` cannot be read. It now answers `GhAnswers.ChecksOf(status)`: one check, `gate`, in the bucket
+  of that status (passing 1 of 1, pending 0 of 1, failing 1 of 1). No test's expectation changed. The code under test was not wrong.
+- Checked and found possible, so unchanged in meaning: `LegTests.FakeGitHub.CreateAsync` (by-branch fills everything it set, and `CreateAsync` reads
+  back through `PullRequestAsync`); `LandedBranchSweepTests.ThePrIsAskedForByNumberWhenTheListLacksIt` (its fake set state, head and head branch,
+  never `MergedAt`, all of which `PullRequestOfAsync` fills); `PackageWaitTests`' merged fake (`MergedAt` and `MergeCommit` are on the by-branch
+  list); `PackageWaitTests` workflow runs (all seven fields are on `WorkflowRunsAsync`'s list).

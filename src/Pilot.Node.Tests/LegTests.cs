@@ -621,7 +621,7 @@ internal sealed class FakeGitHub : IGitHub
         Task.FromResult(SummaryOf.TryGetValue(number, out var own) ? own?.Status : Summary?.Status ?? Checks);
 
     public Task<ChecksSummary?> ChecksSummaryAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult(SummaryOf.TryGetValue(number, out var own) ? own : Summary ?? (Checks is { } status ? new ChecksSummary(status, 0, 0) : null));
+        Task.FromResult(SummaryOf.TryGetValue(number, out var own) ? own : Summary ?? (Checks is { } status ? GhAnswers.ChecksOf(status) : null));
 
     /// <summary>Whether the repo allows GitHub's auto-merge, as AutoMergeAllowedAsync answers.</summary>
     public bool AutoMergeAllowed { get; set; }
@@ -837,7 +837,7 @@ internal sealed class FakeGitHub : IGitHub
     {
         await Called(nameof(CreateAsync));
         Created.Enqueue((branch, baseBranch, title, body));
-        Pr = new PullRequest(70 + Created.Count, "OPEN", "cafe0000cafe0000", $"https://github.com/x/tianwen/pull/{70 + Created.Count}");
+        Pr = GhAnswers.PullRequestByBranch(number: 70 + Created.Count, head: "cafe0000cafe0000", url: $"https://github.com/x/tianwen/pull/{70 + Created.Count}");
         return Pr;
     }
 
@@ -1390,7 +1390,7 @@ public abstract class LegCommanderTestsBase : IDisposable
             (await Leg(Verbs.FinishLeg, $"flight/TIA1/{name}", "done")).Ok.ShouldBeTrue();
         }
         var tip = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
-        _github.Pr = new PullRequest(63, "OPEN", tip, "https://github.com/x/tianwen/pull/63");
+        _github.Pr = GhAnswers.PullRequestByBranch(number: 63, head: tip, url: "https://github.com/x/tianwen/pull/63");
         _state.PutFlight(_state.Flights().Single() with
         {
             PullRequest = 63,
@@ -2365,7 +2365,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         // As the reviewer's pass leaves it (its own test drives the review): this one is about the merge's guards.
         _state.PutFlight(_state.Flights().Single() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow } });
         (await Leg(Verbs.Merge, "flight/TIA1", "abc1234")).Error.ShouldBe("flight/tia1 has no PR");
-        _github.Pr = new PullRequest(63, "OPEN", "def5678aaaabbbbccccdddd", "https://github.com/x/tianwen/pull/63");
+        _github.Pr = GhAnswers.PullRequestByBranch(number: 63, head: "def5678aaaabbbbccccdddd", url: "https://github.com/x/tianwen/pull/63");
         (await Leg(Verbs.Merge, "flight/TIA1", "abc1234")).Error.ShouldNotBeNull().ShouldContain("reviewed abc1234");
         (await Leg(Verbs.Merge, "flight/TIA1", "def56")).Error.ShouldNotBeNull().ShouldContain("7 characters");
 
@@ -2374,12 +2374,12 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         File.WriteAllText(Path.Combine(flight.Worktree, "late.md"), "a read written after the push\n");
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "late read");
-        _github.Pr = new PullRequest(63, "OPEN", pushed, "https://github.com/x/tianwen/pull/63");
+        _github.Pr = GhAnswers.PullRequestByBranch(number: 63, head: pushed, url: "https://github.com/x/tianwen/pull/63");
         var unpushedRefusal = await Leg(Verbs.Merge, "flight/TIA1", pushed[..8]);
         unpushedRefusal.Error.ShouldBe("TIA1's plane holds 1 commit past #63's head: open the PR again (flight pr) to push it, and review what is new before it lands");
         unpushedRefusal.Refusal.ShouldBe(MergeRefusals.Unpushed);
         var tip = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
-        _github.Pr = new PullRequest(63, "OPEN", tip, "https://github.com/x/tianwen/pull/63");
+        _github.Pr = GhAnswers.PullRequestByBranch(number: 63, head: tip, url: "https://github.com/x/tianwen/pull/63");
 
         (await Leg(Verbs.Merge, "flight/TIA1", tip[..8], "rebase")).Ok.ShouldBeTrue();
 
