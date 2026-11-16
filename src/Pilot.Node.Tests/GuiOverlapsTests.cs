@@ -53,6 +53,37 @@ public sealed class GuiOverlapsTests : IAsyncDisposable
         return (exit, output.ToString(), error.ToString());
     }
 
+    [Fact]
+    public async Task AFakeDisposedRightAfterStartDisposesCleanly()
+    {
+        var fake = new FakeInspector(_registry);
+        fake.Start();
+
+        await Should.NotThrowAsync(async () => await fake.DisposeAsync());
+    }
+
+    [Fact]
+    public async Task AFakeDisposedWithAClientConnectedAndSilentDisposesCleanly()
+    {
+        var fake = new FakeInspector(_registry);
+        fake.Start();
+        using var client = new TcpClient();
+        await client.ConnectAsync(IPAddress.Loopback, fake.Port, Ct);
+
+        await Should.NotThrowAsync(async () => await fake.DisposeAsync());
+    }
+
+    [Fact]
+    public async Task AFewHundredStartThenDisposeCyclesNeverThrow()
+    {
+        for (var i = 0; i < 300; i++)
+        {
+            var fake = new FakeInspector(_registry);
+            fake.Start();
+            await Should.NotThrowAsync(async () => await fake.DisposeAsync());
+        }
+    }
+
     private static readonly string[] Pages = ["home", "flights", "settings"];
 
     [Fact]
@@ -271,6 +302,10 @@ public sealed class GuiOverlapsTests : IAsyncDisposable
             catch (OperationCanceledException)
             {
             }
+            catch (Exception ex) when (_stop.IsCancellationRequested && ex is SocketException { SocketErrorCode: SocketError.OperationAborted or SocketError.Interrupted } or ObjectDisposedException)
+            {
+                // DisposeAsync stopped the listener under a pending accept; Windows reports that as OperationAborted, not as a cancellation.
+            }
         }
 
         private async Task ServeAsync(TcpClient client)
@@ -370,14 +405,22 @@ public sealed class GuiOverlapsTests : IAsyncDisposable
 
         public async ValueTask DisposeAsync()
         {
-            await _stop.CancelAsync();
-            _listener.Stop();
-            await _accepting;
-            if (_descriptor is not null)
+            try
             {
-                File.Delete(_descriptor);
+                // Cancel, let the loop end on its own (a pending accept ends as an OperationCanceledException), and only then stop the
+                // listener: nothing can be accepting while Stop closes the socket, so there is no aborted accept to race the cancellation.
+                await _stop.CancelAsync();
+                await _accepting;
             }
-            _stop.Dispose();
+            finally
+            {
+                _listener.Stop();
+                if (_descriptor is not null)
+                {
+                    File.Delete(_descriptor);
+                }
+                _stop.Dispose();
+            }
         }
     }
 }
