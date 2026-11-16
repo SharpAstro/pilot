@@ -42,6 +42,10 @@ is neither built nor tested by CI.
   conflicts, many small commits, all land as one commit. A rebase that would conflict is no reason to hold a PR.
 - Take main by a merge (`git fetch origin`, then `git merge origin/main`), never by a rebase, and never push with
   `--force`. A repo whose queue rebases says so in its own PILOT.md; tianwen's squashes too since 2026-11-08.
+- Once a flight has landed on a merged PR, the node deletes its branch, locally and on origin, after removing its plane, and
+  only while the branch tip is still the head the PR merged at; a branch holding commits past it is kept with a For-you card
+  naming them. A folded flight's branch goes when the flight it went into lands. A session never deletes a branch (the
+  `delete-landed-branches` setting, on by default, switches the node's deleting off).
 
 ## Sessions and the watchtower
 
