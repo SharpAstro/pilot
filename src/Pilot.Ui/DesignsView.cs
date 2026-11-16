@@ -116,9 +116,10 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
             return false;
         }
         // The orientation the person is in carries over, not the swap flag: the flag means the opposite on a portrait-native target and a landscape-native one.
+        // An unrotated view shows each target in its own shape; a rotated one keeps the orientation it is in.
         var now = Choice.Surface();
-        var landscape = now.Width > now.Height;
-        Set(id, DesignTargetChoice.Of(surface) with { Swapped = landscape != surface.Width > surface.Height });
+        var swapped = Choice.Swapped && now.Width > now.Height != surface.Width > surface.Height;
+        Set(id, DesignTargetChoice.Of(surface) with { Swapped = swapped });
         return true;
     }
 

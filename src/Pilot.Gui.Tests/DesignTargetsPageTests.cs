@@ -110,10 +110,12 @@ public sealed class DesignTargetsPageTests
         rig.View.Surface.Width.ShouldBe(1440);
         rig.View.Surface.Height.ShouldBe(900);
 
+        rig.View.SwapSides();
         rig.View.PickTarget("Tablet");
-        rig.View.Surface.Width.ShouldBe(1180);
-        rig.View.Surface.Height.ShouldBe(820);
+        rig.View.Surface.Width.ShouldBe(820);
+        rig.View.Surface.Height.ShouldBe(1180);
 
+        rig.View.SwapSides();
         rig.View.CustomInput.Text = "1024x768";
         rig.View.CommitCustom().ShouldBeTrue();
         rig.View.Surface.Width.ShouldBe(1024);
