@@ -543,6 +543,13 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             var (run, refused) = await Get<IdleMaintenance>().RunNowAsync(dry, cancellationToken);
             return state.Complete(command, refused, way: run?.Line());
         }
+        if (command.Verb == Verbs.LiftLimit)
+        {
+            var why = string.Join(' ', command.Args ?? []);
+            return Get<TurnOutage>().Lift(Get<TimeProvider>().GetUtcNow(), command.Who, why)
+                ? state.Complete(command, null, way: "the usage limit is lifted: the node starts sessions again, and a limit of a session that began before now no longer counts")
+                : state.Complete(command, "no usage limit holds the node's starts, so there is none to lift");
+        }
         if (command.Verb == Verbs.Reboot)
         {
             return await Get<RebootPrep>().RunAsync(command, cancellationToken);

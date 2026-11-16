@@ -602,6 +602,13 @@ public static class Verbs
     public const string Reboot = "reboot";
 
     /// <summary>
+    /// <c>lift-limit node [why…]</c> (#1123): ends a usage limit the node holds its starts for, when the limit is not this login's (read from a
+    /// session that began under another login). It ends as at an account change, and sessions that began before now no longer count toward
+    /// a limit. Refused when no limit is open. The person's alone.
+    /// </summary>
+    public const string LiftLimit = "lift-limit";
+
+    /// <summary>
     /// <c>maintenance node [--dry-run]</c> (PIL1102): runs the idle-time disk sweep now and answers with its report line. Refused while a leg
     /// flies or a job runs. <c>--dry-run</c> measures each step and removes nothing.
     /// </summary>

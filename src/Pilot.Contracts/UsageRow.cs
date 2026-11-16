@@ -26,6 +26,17 @@ public sealed record UsageRow
     public required DateTimeOffset ReadAt { get; init; }
 
     /// <summary>
+    /// When the login was last seen to change, or a person lifted a usage limit that did not hold (#1123); null when neither is on record.
+    /// A limit read from a session that began before it is not this login's. It is stored so that a restart of the node keeps it: kept in
+    /// memory alone, the old login's limit held every start again after an update.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? LoginChangedAt { get; init; }
+
+    /// <summary>The later of two login-change times, null when neither is known.</summary>
+    public static DateTimeOffset? Later(DateTimeOffset? a, DateTimeOffset? b) => a is { } x && b is { } y ? (x > y ? x : y) : a ?? b;
+
+    /// <summary>
     /// The newer of <paramref name="held"/> and <paramref name="read"/>, window by window. Every open session's status
     /// line writes the file, each from the figures its own last response carried, so a session idle for an hour can
     /// write over fresher ones; taking the last write made v1's figures flip between whoever repainted last. Within a
@@ -41,7 +52,8 @@ public sealed record UsageRow
         // Another account's figures are not newer or older than these: they are someone else's. A login change starts over.
         if (read.Account is { } account && held.Account is { } was && account.Email != was.Email)
         {
-            return read;
+            // The change time is the node's, not an account's: the later of the two is kept across the switch.
+            return read with { LoginChangedAt = Later(held.LoginChangedAt, read.LoginChangedAt) };
         }
         var fiveHour = Newest(held.FiveHour, read.FiveHour, out var fiveTaken);
         var sevenDay = Newest(held.SevenDay, read.SevenDay, out var sevenTaken);
@@ -52,6 +64,7 @@ public sealed record UsageRow
             SevenDay = sevenDay,
             // Fresh when anything was taken from the read; a stale write leaves the held figures as old as they were.
             ReadAt = fiveTaken || sevenTaken ? (read.ReadAt > held.ReadAt ? read.ReadAt : held.ReadAt) : held.ReadAt,
+            LoginChangedAt = Later(held.LoginChangedAt, read.LoginChangedAt),
         };
     }
 

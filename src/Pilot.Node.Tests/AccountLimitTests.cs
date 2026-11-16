@@ -117,6 +117,104 @@ public sealed class AccountLimitTests
         Open().ShouldBeEmpty();
     }
 
+    private SessionRow OldLoginsLimit(DateTimeOffset until) => new()
+    {
+        Id = "zz000000", SessionId = "zz000000-0000-4000-8000-000000000000", Name = "du1-watchtower", Kind = SessionKind.Background, Cwd = "/work/zz",
+        Role = SessionRole.Planner, Flight = "ZZ9", ContextTokens = 1_000, ContextWindow = 200_000, State = SessionState.Idle,
+        SpendWeighted = 0, StartedAt = Start, ApiError = "usage_limit_reached", ApiErrorResetsAt = until,
+    };
+
+    // DE1, 2026-11-17 (#1123): the owner logged in again, the node updated and restarted, and the old login's limit (read from a watchtower
+    // that began under it) held every start until that limit's reset three days on, because the change time lived in memory only.
+    [Fact]
+    public async Task ARestartOfTheNodeKeepsTheLoginChangeSoTheOldLoginsRowOpensNoLimit()
+    {
+        var until = Start.AddDays(3);
+        _state.PutSession(OldLoginsLimit(until));
+        _time.Advance(TimeSpan.FromMinutes(30));
+        _outage.AccountChanged(_time.GetUtcNow());
+        var changed = _time.GetUtcNow();
+        _state.Usage().ShouldNotBeNull().LoginChangedAt.ShouldBe(changed);
+
+        // The node restarts: a fresh outage and watch over the same stored state, with nothing of the old run's memory.
+        var outage = new TurnOutage(_state);
+        var watch = new LegWatch(_state, (c, _) => Task.FromResult(_state.Complete(c, null)), _time)
+        {
+            Pilot = "pilot", Outage = outage, StopSession = (_, _) => Task.CompletedTask,
+            RestartWorker = (_, _, _) => Task.CompletedTask, RestartPlanner = (_, _) => Task.CompletedTask,
+        };
+        outage.LoginChangedAt.ShouldBe(changed);
+        _time.Advance(TimeSpan.FromMinutes(5));
+
+        await watch.LookAsync(Ct);
+
+        outage.LimitUntil.ShouldBeNull();
+        AccountLimit.FromRows(_state.Sessions(), _time.GetUtcNow(), outage.LoginChangedAt).ShouldBeNull();
+        // A session that began after the change still counts: its limit is this login's.
+        _state.PutSession(OldLoginsLimit(until) with { Id = "yy000000", SessionId = "yy000000-0000-4000-8000-000000000000", StartedAt = changed.AddMinutes(1) });
+        await watch.LookAsync(Ct);
+        outage.LimitUntil.ShouldBe(until);
+    }
+
+    [Fact]
+    public async Task APersonLiftsALimitThatIsNotThisLoginsAndItDoesNotComeBackAndAnEarlierDismissalLeftItHolding()
+    {
+        var until = Start.AddDays(3);
+        _state.PutSession(OldLoginsLimit(until));
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBe(until);
+        var card = Open().Single(c => c.Kind == TurnOutage.LimitCardKind);
+        card.Choices.Select(c => c.Verb).ShouldBe([Verbs.Dismiss, Verbs.LiftLimit]);
+
+        // Marking it read closes the card and nothing else: the hold stays.
+        _state.CloseCard(card.Id, "read", "you");
+        _outage.LimitUntil.ShouldBe(until);
+        _gate.Hold("w", 95, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeTrue();
+
+        _time.Advance(TimeSpan.FromMinutes(10));
+        var ended = 0;
+        _outage.LimitEnded += () => ended++;
+        _outage.Lift(_time.GetUtcNow(), "you", "the watchtower began under the old login").ShouldBeTrue();
+
+        _outage.IsOpen.ShouldBeFalse();
+        _outage.LimitUntil.ShouldBeNull();
+        _outage.LastWindow.ShouldNotBeNull();
+        ended.ShouldBe(1);
+        _state.Usage().ShouldNotBeNull().LoginChangedAt.ShouldBe(_time.GetUtcNow());
+        _gate.Hold("w", 95, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeFalse();
+
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBeNull();
+        // With no limit open there is nothing to lift, and nothing changes.
+        _outage.Lift(_time.GetUtcNow().AddMinutes(1), "you", null).ShouldBeFalse();
+        _state.Usage()!.LoginChangedAt.ShouldBe(_time.GetUtcNow());
+    }
+
+    [Fact]
+    public void TheLiftVerbIsThePersonsAlone() => Standing.YourOnlyVerbs.ShouldContain(Verbs.LiftLimit);
+
+    [Fact]
+    public void TheStoredLoginChangeOutlivesFreshFiguresAndAnAccountSwitchAndNeverGoesBack()
+    {
+        var a = new AccountRow { Email = "a@example.org" };
+        var b = new AccountRow { Email = "b@example.org" };
+        var held = new UsageRow { Account = a, ReadAt = Start, LoginChangedAt = Start.AddMinutes(5) };
+
+        // The reader's rows carry no change time: the held one stays.
+        UsageRow.Newest(held, new UsageRow { Account = a, ReadAt = Start.AddMinutes(9) }).LoginChangedAt.ShouldBe(Start.AddMinutes(5));
+        // Another account's figures start over, and the change time is kept.
+        UsageRow.Newest(held, new UsageRow { Account = b, ReadAt = Start.AddMinutes(9) }).LoginChangedAt.ShouldBe(Start.AddMinutes(5));
+        // The later of two wins, whichever side has it.
+        UsageRow.Newest(held, new UsageRow { Account = a, ReadAt = Start.AddMinutes(9), LoginChangedAt = Start.AddMinutes(8) }).LoginChangedAt.ShouldBe(Start.AddMinutes(8));
+
+        _state.PutLoginChanged(Start.AddMinutes(8));
+        _state.PutLoginChanged(Start.AddMinutes(2));
+        _state.Usage().ShouldNotBeNull().LoginChangedAt.ShouldBe(Start.AddMinutes(8));
+        _state.PutUsage(new UsageRow { Account = a, ReadAt = Start.AddMinutes(20) });
+        _state.Usage()!.LoginChangedAt.ShouldBe(Start.AddMinutes(8));
+        _state.Usage()!.Account.ShouldBe(a);
+    }
+
     [Fact]
     public void EveryStartIsHeldWithNoProbeSayingTheLimitAndTOnceAndStartsAgainAtT()
     {
