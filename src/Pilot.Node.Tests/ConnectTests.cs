@@ -83,7 +83,7 @@ public sealed class ConnectTests : OverlapTestsBase
     public async Task APeerFlightWhosePrMergedReleasesTheFlightBeforeItsNodeSaysLanded()
     {
         await TwoFlights();
-        var github = new FakeGitHub { Pr = new PullRequest(77, "MERGED", "head", "https://github.com/x/tianwen/pull/77") };
+        var github = new FakeGitHub { Pr = GhAnswers.PullRequestByBranch(state: "merged", number: 77, head: "head", url: "https://github.com/x/tianwen/pull/77") };
         var flights = new FlightCommander(_state, new Planes(_git), TimeProvider.System, null, github) { Machine = "DU1", Fleet = _fleet };
         Peer("DE1", Theirs("PIL294", 294) with { PullRequest = 77 });
         (await flights.RunAsync(new CommandRequest { Verb = Verbs.Connect, Target = "flight/TIA2", Args = ["PIL294"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
@@ -110,7 +110,7 @@ public sealed class ConnectTests : OverlapTestsBase
     [Trait("Category", "Slow")]
     public async Task UnreachableNodeWithTheWaitedForPrMergedOnGitHubReleasesTheFlight_753()
     {
-        var (flights, _, peer) = await WaitingOnPeerWithGitHub(Theirs("PIL294", 294) with { PullRequest = 77 }, new PullRequest(77, "MERGED", "head", "https://github.com/x/tianwen/pull/77"));
+        var (flights, _, peer) = await WaitingOnPeerWithGitHub(Theirs("PIL294", 294) with { PullRequest = 77 }, GhAnswers.PullRequestByBranch(state: "merged", number: 77, head: "head", url: "https://github.com/x/tianwen/pull/77"));
         peer.Unreachable = true;
 
         (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(1);
@@ -137,7 +137,7 @@ public sealed class ConnectTests : OverlapTestsBase
     [Trait("Category", "Slow")]
     public async Task UnreachableNodeWithTheWaitedForPrStillOpenKeepsTheFlightHeld_753()
     {
-        var (flights, _, peer) = await WaitingOnPeerWithGitHub(Theirs("PIL294", 294) with { PullRequest = 77 }, new PullRequest(77, "OPEN", "head", "https://github.com/x/tianwen/pull/77"));
+        var (flights, _, peer) = await WaitingOnPeerWithGitHub(Theirs("PIL294", 294) with { PullRequest = 77 }, GhAnswers.PullRequestByBranch(number: 77, head: "head", url: "https://github.com/x/tianwen/pull/77"));
         peer.Unreachable = true;
 
         (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
@@ -178,7 +178,7 @@ public sealed class ConnectTests : OverlapTestsBase
     [Trait("Category", "Slow")]
     public async Task NodeThatListsNoSuchFlightWithItsPrMergedOnGitHubReleasesTheFlight_753()
     {
-        var (flights, _, peer) = await WaitingOnPeerWithGitHub(Theirs("PIL294", 294) with { PullRequest = 77 }, new PullRequest(77, "MERGED", "head", "https://github.com/x/tianwen/pull/77"));
+        var (flights, _, peer) = await WaitingOnPeerWithGitHub(Theirs("PIL294", 294) with { PullRequest = 77 }, GhAnswers.PullRequestByBranch(state: "merged", number: 77, head: "head", url: "https://github.com/x/tianwen/pull/77"));
         peer.Flights = [];
 
         (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(1);
@@ -357,7 +357,7 @@ public sealed class ConnectTests : OverlapTestsBase
         held.PeerConnections.ShouldHaveSingleItem().Code.ShouldBe("PIL300");
     }
 
-    private static PullRequest Pr(int number, string state) => new(number, state, "head", $"https://github.com/x/tianwen/pull/{number}");
+    private static PullRequest Pr(int number, string state) => GhAnswers.PullRequestByBranch(state.ToLowerInvariant(), number, "head", $"https://github.com/x/tianwen/pull/{number}");
 
     private async Task<(FlightCommander Flights, FakeGitHub GitHub, FakePeer Peer)> WaitingOnAFoldedFlight(bool survivorHasPr)
     {
@@ -515,7 +515,7 @@ public sealed class ConnectTests : OverlapTestsBase
     {
         _flights.Machine = "DU1";
         var asked = new List<string>();
-        var github = new FakeGitHub { Pr = new PullRequest(77, prState, "head", "https://github.com/x/tianwen/pull/77"), OnCall = call => { asked.Add(call); return Task.CompletedTask; } };
+        var github = new FakeGitHub { Pr = GhAnswers.PullRequestByBranch(state: prState.ToLowerInvariant(), number: 77, head: "head", url: "https://github.com/x/tianwen/pull/77"), OnCall = call => { asked.Add(call); return Task.CompletedTask; } };
         var clock = new MergedHoldClock(new DateTimeOffset(2026, 11, 10, 8, 0, 0, TimeSpan.Zero));
         var flights = new FlightCommander(_state, new Planes(new GitCli()), clock, null, github) { Machine = "DU1", Fleet = _fleet };
         _state.PutFlight(Theirs("TIA1", 1) with { RepoPath = Repo, PullRequest = 77 });
@@ -692,7 +692,7 @@ public sealed class ConnectTests : OverlapTestsBase
     [Trait("Category", "Slow")]
     public async Task AMovedFlightsUnreachableNodeWithItsPrMergedOnGitHubReleasesTheFlight_818()
     {
-        var flights = await HeldOnLocalAsync(new FakeGitHub { Pr = new PullRequest(77, "MERGED", "head", "https://github.com/x/tianwen/pull/77") }, pullRequest: 77);
+        var flights = await HeldOnLocalAsync(new FakeGitHub { Pr = GhAnswers.PullRequestByBranch(state: "merged", number: 77, head: "head", url: "https://github.com/x/tianwen/pull/77") }, pullRequest: 77);
         var peer = Peer("SE1", Theirs("TIA1", 1));
         Moves("TIA1", "SE1");
         peer.Unreachable = true;
@@ -706,7 +706,7 @@ public sealed class ConnectTests : OverlapTestsBase
     [Trait("Category", "Slow")]
     public async Task AMovedFlightsNodeThatListsNoSuchFlightWithItsPrMergedOnGitHubReleasesTheFlight_818()
     {
-        var flights = await HeldOnLocalAsync(new FakeGitHub { Pr = new PullRequest(77, "MERGED", "head", "https://github.com/x/tianwen/pull/77") }, pullRequest: 77);
+        var flights = await HeldOnLocalAsync(new FakeGitHub { Pr = GhAnswers.PullRequestByBranch(state: "merged", number: 77, head: "head", url: "https://github.com/x/tianwen/pull/77") }, pullRequest: 77);
         Peer("SE1");
         Moves("TIA1", "SE1");
 
@@ -719,7 +719,7 @@ public sealed class ConnectTests : OverlapTestsBase
     [Trait("Category", "Slow")]
     public async Task AMovedFlightsUnreachableNodeWithItsPrStillOpenKeepsTheFlightHeldAndSaysWhy_818()
     {
-        var flights = await HeldOnLocalAsync(new FakeGitHub { Pr = new PullRequest(77, "OPEN", "head", "https://github.com/x/tianwen/pull/77") }, pullRequest: 77);
+        var flights = await HeldOnLocalAsync(new FakeGitHub { Pr = GhAnswers.PullRequestByBranch(number: 77, head: "head", url: "https://github.com/x/tianwen/pull/77") }, pullRequest: 77);
         var peer = Peer("SE1", Theirs("TIA1", 1));
         Moves("TIA1", "SE1");
 

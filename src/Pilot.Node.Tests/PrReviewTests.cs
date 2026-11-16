@@ -153,7 +153,7 @@ public abstract class PrReviewTestsBase : IDisposable
     private protected string GadgetCache => Path.Combine(_root, "data", "clones", "acme", "gadget");
 
     private protected static PullRequest Pr(string repo, int number, string head, string author, string state = "OPEN") =>
-        new(number, state, head, $"https://github.com/{repo}/pull/{number}", Title: $"PR {number} of {repo}", Author: author, Base: "main");
+        GhAnswers.PullRequestByNumber(number: number, head: head, url: $"https://github.com/{repo}/pull/{number}", title: $"PR {number} of {repo}", author: author, baseBranch: "main", prState: state);
 
     /// <summary>
     /// Runs this test on git itself, for a test that checks what git does in a class that otherwise checks what the node decides. Called first,
@@ -213,8 +213,8 @@ public abstract class PrReviewTestsBase : IDisposable
     private protected async Task ReviewedWidget(string verdict, string checks = ChoiceStatus.Passing, bool queue = true)
     {
         _github.Login = "ada";
-        _github.Queue = queue ? new MergeQueueState("OPEN", _widgetHead, false) : null;
-        _github.Summary = new ChecksSummary(checks, 1, 1);
+        _github.Queue = queue ? GhAnswers.MergeQueue("idle", _widgetHead) : null;
+        _github.Summary = checks == ChoiceStatus.Pending ? GhAnswers.ChecksOf(checks, 0, 1) : GhAnswers.ChecksOf(checks, 1, 1);
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
         (await Run(Verbs.PrVerdict, "pr/acme/widget#7", Row("acme/widget", 7).Reviewer, verdict, "Fine.")).Error.ShouldBeNull();
         await _reviews.SweepAsync(Ct);
@@ -639,7 +639,7 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     {
         await ReviewedWidget("approve", checks: ChoiceStatus.Pending);
         _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Head = new string('a', 40) };
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
         await _reviews.SweepAsync(Ct);
         _github.Merged.ShouldBeEmpty();
         Row("acme/widget", 7).QueueNote.ShouldNotBeNull().ShouldContain("newer than the review");
@@ -655,7 +655,7 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
         _github.Merged.ShouldBeEmpty();
         Row("acme/widget", 7).State.ShouldBe(PrReviewState.Closed);
 
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
         await _reviews.SweepAsync(Ct);
         _github.Merged.ShouldBe([(7, _widgetHead, "squash")]);
         await _reviews.SweepAsync(Ct);
@@ -705,8 +705,8 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     public async Task ADraftQueuesNothing()
     {
         _github.Login = "ada";
-        _github.Queue = new MergeQueueState("OPEN", _widgetHead, false);
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
+        _github.Queue = GhAnswers.MergeQueue("idle", _widgetHead);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
         // A review's start marks a draft ready (PIL483); a PR made a draft again meanwhile is still not queued.
         _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Draft = true };
@@ -1033,7 +1033,7 @@ public sealed class PrReviewCliTests : IAsyncLifetime
         _head = head;
         _node = await NodeHarness.StartAsync(Ct, git: _git, folder: Path.Combine(_root, "n"));
         _node.GitHub.Origins["acme/gadget"] = origin;
-        _node.GitHub.Prs["acme/gadget#9"] = new PullRequest(9, "OPEN", head, "https://github.com/acme/gadget/pull/9", Title: "Gadgets", Author: "bob", Base: "main");
+        _node.GitHub.Prs["acme/gadget#9"] = GhAnswers.PullRequestByNumber(number: 9, head: head, url: "https://github.com/acme/gadget/pull/9", title: "Gadgets", author: "bob", baseBranch: "main");
     }
 
     public async ValueTask DisposeAsync()

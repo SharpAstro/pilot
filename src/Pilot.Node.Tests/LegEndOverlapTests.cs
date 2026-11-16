@@ -613,7 +613,7 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     {
         var repo = _state.Flights().Single(f => f.Code == "TIA1").RepoPath;
         var prs = _github.OpenPrs.TryGetValue(repo, out var have) ? have : [];
-        _github.OpenPrs[repo] = [.. prs, new PullRequestStatus { Number = number, Title = "Somebody's PR", Head = $"someone/pr{number}" }];
+        _github.OpenPrs[repo] = [.. prs, GhAnswers.OpenPullRequest(number: number, title: "Somebody's PR", head: $"someone/pr{number}")];
         _github.PrFiles[number] = files;
     }
 

@@ -118,7 +118,7 @@ public sealed class ConflictResolutionTests : ReviewTestsBase
         var flight = await Conflicted("43");
         _state.CloseCard(Open().ShouldHaveSingleItem().Id, "done", "controller").ShouldBeTrue();
         var started = _workers.Started.Count;
-        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: false, RemovedAt: DateTimeOffset.UtcNow.AddSeconds(-5), RemovedReason: "merge_conflict");
+        _github.Queue = GhAnswers.MergeQueue("dropped", _github.Pr!.Head, removedAt: DateTimeOffset.UtcNow.AddSeconds(-5), removedReason: "MERGE_CONFLICT");
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
 
@@ -131,8 +131,8 @@ public sealed class ConflictResolutionTests : ReviewTestsBase
         var flight = await Conflicted("44");
         Open().ShouldContain(c => c.Kind == LegCommander.PrReady);
         var started = _workers.Started.Count;
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
-        _github.Merge = new MergeState(MergeKinds.Conflicts, 3, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
+        _github.Merge = GhAnswers.MergeState(MergeKinds.Conflicts, 3, 3);
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
 
@@ -146,7 +146,7 @@ public sealed class ConflictResolutionTests : ReviewTestsBase
     {
         var flight = await Conflicted("45");
         var started = _workers.Started.Count;
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         _github.MergeRefuses = "the PR conflicts with its base";
 
         var result = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head);

@@ -411,7 +411,7 @@ public sealed class LegHoldTests2 : LegHoldTestsBase
         var started = _workers.Started.Count;
         _legs.Models = new RoleModels(null);
         // The sibling's publish run is still going, so the package is not yet late.
-        _github.Runs[L("parser").Hold!.Commit!] = [new WorkflowRun(4711, "CI/CD", "in_progress", null, "https://github.com/x/core/actions/runs/4711", "push", null)];
+        _github.Runs[L("parser").Hold!.Commit!] = [GhAnswers.WorkflowRun(4711, "CI/CD", "in_progress", null, "https://github.com/x/core/actions/runs/4711", "push", null)];
 
         // The sweep: the held leg is not started, and neither is the leg after it.
         await _legs.AdvanceAllAsync(Ct);
@@ -473,7 +473,7 @@ public sealed class LegHoldTests2 : LegHoldTestsBase
         await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", Nu1102);
         _legs.Models = new RoleModels(null);
         var commit = L("parser").Hold!.Commit!;
-        _github.Runs[commit] = [new WorkflowRun(4711, "CI/CD", "completed", "failure", "https://github.com/x/core/actions/runs/4711", "push", Start.AddMinutes(3))];
+        _github.Runs[commit] = [GhAnswers.WorkflowRun(4711, "CI/CD", "completed", "failure", "https://github.com/x/core/actions/runs/4711", "push", Start.AddMinutes(3))];
 
         // A failed publish run is rung for at once, once, whatever the backoff does.
         await _watch.LookAsync(Ct);

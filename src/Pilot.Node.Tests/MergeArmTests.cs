@@ -19,11 +19,11 @@ public sealed class MergeArmTests
     private const string CheckLink = "https://github.com/x/tianwen/actions/runs/123/job/456";
     private const string Subject = "flight/TIA1";
 
-    private static ChecksSummary Pending(int done, int total = 3) => new(ChoiceStatus.Pending, done, total);
+    private static ChecksSummary Pending(int done, int total = 3) => GhAnswers.ChecksOf(ChoiceStatus.Pending, done, total);
 
-    private static ChecksSummary Failing(int done = 2, int total = 3) => new(ChoiceStatus.Failing, done, total, "build (linux)", CheckLink);
+    private static ChecksSummary Failing(int done = 2, int total = 3) => GhAnswers.ChecksOf(ChoiceStatus.Failing, done, total, "build (linux)", CheckLink);
 
-    private static ChecksSummary Passing(int total = 3) => new(ChoiceStatus.Passing, total, total);
+    private static ChecksSummary Passing(int total = 3) => GhAnswers.ChecksOf(ChoiceStatus.Passing, total, total);
 
     /// <summary>
     /// TIA1 with its one leg done, its review passed and PR #63 open at <see cref="PrHead"/>, and the PR-ready card offering the merge
@@ -38,7 +38,7 @@ public sealed class MergeArmTests
             Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow },
         });
         node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done });
-        node.GitHub.Pr = new PullRequest(63, "OPEN", PrHead, PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(number: 63, head: PrHead, url: PrUrl);
         return node.State.RaiseCard(CardBin.Ring, LegCommander.PrReady, Subject, "TIA1's PR #63 is ready to merge", "Planets: 1 leg done, head cafe0000. Reviewed: fine.",
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Subject, Args = [PrHead] }], link: PrUrl);
     }
@@ -145,7 +145,7 @@ public sealed class MergeArmTests
         await using var _ = node;
 
         const string moved = "beef1111aaaabbbbccccdddd";
-        node.GitHub.Pr = new PullRequest(63, "OPEN", moved, PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(number: 63, head: moved, url: PrUrl);
         await Look(node);
 
         var card = Card(node, ready);
@@ -256,7 +256,7 @@ public sealed class MergeArmTests
         await using var _ = node;
 
         node.GitHub.Summary = Passing();
-        node.GitHub.Merge = new MergeState(MergeKinds.Armed, 3, 3, Reason: "a review");
+        node.GitHub.Merge = GhAnswers.MergeState(MergeKinds.Armed, 3, 3, review: true);
         await Look(node);
 
         var detail = Card(node, ready).Detail.ShouldNotBeNull();
@@ -274,7 +274,7 @@ public sealed class MergeArmTests
         await using var _ = node;
 
         node.GitHub.Summary = Pending(2);
-        node.GitHub.Merge = new MergeState(MergeKinds.Armed, 2, 3, DroppedFromQueue: "merge conflict");
+        node.GitHub.Merge = GhAnswers.MergeState(MergeKinds.Armed, 2, 3, droppedReason: "MERGE_CONFLICT");
         await Look(node);
 
         var detail = Card(node, ready).Detail.ShouldNotBeNull();
@@ -290,7 +290,7 @@ public sealed class MergeArmTests
         await using var _ = node;
 
         node.GitHub.Summary = Passing();
-        node.GitHub.Merge = new MergeState(MergeKinds.Armed, 3, 3, DroppedFromQueue: "failed checks");
+        node.GitHub.Merge = GhAnswers.MergeState(MergeKinds.Armed, 3, 3, droppedReason: "FAILED_CHECKS");
         await Look(node);
 
         var detail = Card(node, ready).Detail.ShouldNotBeNull();
@@ -306,7 +306,7 @@ public sealed class MergeArmTests
         var (node, ready) = await ArmedNatively(Pending(1));
         await using var _ = node;
 
-        node.GitHub.Pr = new PullRequest(63, "MERGED", PrHead, PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(state: "merged", number: 63, head: PrHead, url: PrUrl);
         await Look(node);
 
         node.GitHub.Merged.ShouldBeEmpty();
@@ -344,7 +344,7 @@ public sealed class MergeArmTests
         var (node, ready) = await ArmedNatively(Pending(1));
         await using var _ = node;
 
-        node.GitHub.Pr = new PullRequest(63, "OPEN", "beef1111aaaabbbbccccdddd", PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(number: 63, head: "beef1111aaaabbbbccccdddd", url: PrUrl);
         await Look(node);
 
         node.GitHub.AutoMergeDisarmed.ShouldBe([63]);
@@ -480,7 +480,7 @@ public sealed class MergeArmTests
         // SharpAstro/pilot: merge queue, auto-merge off, the node polls; the only required check, gate, is created after both builds
         // finish, so a look in the gap reads every check green with GitHub saying BLOCKED (Fixtures/gh/gate-absent.json).
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
-        node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: false);
+        node.GitHub.Queue = GhAnswers.MergeQueue("idle", PrHead);
         node.GitHub.Queues = true;
         var ready = Ready(node);
         node.GitHub.Summary = Passing(5);
@@ -504,13 +504,13 @@ public sealed class MergeArmTests
 
         // Gate starts: pending, still armed.
         node.GitHub.Summary = Pending(4, 6);
-        node.GitHub.Merge = new MergeState(MergeKinds.Pending, 4, 6);
+        node.GitHub.Merge = GhAnswers.MergeState(MergeKinds.Pending, 4, 6);
         await Look(node);
         node.State.Flights().Single().MergeWhenGreen.ShouldNotBeNull();
 
         // Gate passes: the node takes the merge.
         node.GitHub.Summary = Passing(6);
-        node.GitHub.Merge = new MergeState(MergeKinds.Ready, 6, 6);
+        node.GitHub.Merge = GhAnswers.MergeState(MergeKinds.Ready, 6, 6);
         await Look(node);
         node.GitHub.Merged.Select(m => m.Number).ShouldBe([63]);
     }
@@ -520,7 +520,7 @@ public sealed class MergeArmTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         node.GitHub.AutoMergeAllowed = true;
-        node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: false);
+        node.GitHub.Queue = GhAnswers.MergeQueue("idle", PrHead);
         node.GitHub.Queues = true;
         var ready = Ready(node);
         node.GitHub.Summary = Pending(1);
@@ -542,7 +542,7 @@ public sealed class MergeArmTests
 
         // Checks pass, but somebody switched auto-merge off on the PR page: GitHub says ready, not armed.
         node.GitHub.Summary = Passing();
-        node.GitHub.Merge = new MergeState(MergeKinds.Ready, 3, 3);
+        node.GitHub.Merge = GhAnswers.MergeState(MergeKinds.Ready, 3, 3);
         await Look(node);
 
         node.State.Flights().Single().MergeWhenGreen.ShouldBeNull();
@@ -567,7 +567,7 @@ public sealed class MergeArmTests
         await using var _ = node;
 
         node.GitHub.Summary = Passing();
-        node.GitHub.Merge = new MergeState(MergeKinds.ChangesRequested, 3, 3);
+        node.GitHub.Merge = GhAnswers.MergeState(MergeKinds.ChangesRequested, 3, 3);
         await Look(node);
 
         node.State.Flights().Single().MergeWhenGreen.ShouldBeNull();
@@ -593,7 +593,7 @@ public sealed class MergeArmTests
         var flight = node.State.Flights().Single();
         node.State.PutFlight(flight with { Review = flight.Review! with { State = ReviewState.Changes } });
         node.GitHub.Summary = Passing();
-        node.GitHub.Merge = new MergeState(kind, 3, 3);
+        node.GitHub.Merge = GhAnswers.MergeState(kind, 3, 3);
         await Look(node);
 
         node.GitHub.AutoMergeDisarmed.ShouldBe([63]);
@@ -631,7 +631,7 @@ public sealed class MergeArmTests
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
         node.GitHub.Summary = Passing();
-        node.GitHub.Merge = new MergeState(MergeKinds.ChangesRequested, 3, 3);
+        node.GitHub.Merge = GhAnswers.MergeState(MergeKinds.ChangesRequested, 3, 3);
         var closed = new List<string>();
         using var _ = node.State.Subscribe(null, null, new ClosedCards(closed));
         closed.Clear();
@@ -727,7 +727,7 @@ public sealed class MergeArmTests
         node.State.Flights().Single().State.ShouldBe(FlightState.Flying);
 
         // Once GitHub says the queue merged it, the card closes and the flight lands.
-        node.GitHub.Pr = new PullRequest(63, "MERGED", PrHead, PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(state: "merged", number: 63, head: PrHead, url: PrUrl);
         await Look(node);
         Card(node, ready).State.ShouldBe(CardState.Closed);
         node.State.Flights().Single().State.ShouldBe(FlightState.Landed);

@@ -142,7 +142,7 @@ public sealed class LandedBranchSweepTests : IDisposable
         {
             var head = MakeBranch(code);
             Put(Row(code) with { MergedPullRequest = number }, archived: code == "PIL14");
-            _github.MergedPrs[_repo] = [.. (_github.MergedPrs.TryGetValue(_repo, out var listed) ? listed : null) ?? [], new MergedPullRequest(number++, $"flight/{code.ToLowerInvariant()}", head)];
+            _github.MergedPrs[_repo] = [.. (_github.MergedPrs.TryGetValue(_repo, out var listed) ? listed : null) ?? [], GhAnswers.MergedPullRequest(number++, $"flight/{code.ToLowerInvariant()}", head)];
             deleted.Add(code);
         }
         // PIL15: no head, GitHub does not list it.
@@ -326,9 +326,9 @@ public sealed class LandedBranchSweepTests : IDisposable
         Put(kept);
         Put(other);
         // As gh pr view answers: the state says merged, mergedAt is not read so it stays null.
-        _github.Prs["o/repo#7"] = new PullRequest(7, "MERGED", head1, "u", HeadRef: "flight/pil1");
-        _github.Prs["o/repo#8"] = new PullRequest(8, "CLOSED", "x", "u", HeadRef: "flight/pil2");
-        _github.Prs["o/repo#9"] = new PullRequest(9, "MERGED", "x", "u", HeadRef: "flight/other");
+        _github.Prs["o/repo#7"] = GhAnswers.PullRequestByNumber(state: "merged", number: 7, head: head1, headRef: "flight/pil1");
+        _github.Prs["o/repo#8"] = GhAnswers.PullRequestByNumber(state: "closed", number: 8, head: "x", headRef: "flight/pil2");
+        _github.Prs["o/repo#9"] = GhAnswers.PullRequestByNumber(state: "merged", number: 9, head: "x", headRef: "flight/other");
 
         (await Sweeper().SweepAsync(Ct)).ShouldBe(1);
 

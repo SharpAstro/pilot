@@ -234,9 +234,12 @@ public sealed partial class GhCli
 
     public async Task<bool?> AutoMergeArmedAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
-        var (exit, output, _) = await RunAsync(["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "autoMergeRequest"], repoPath, cancellationToken);
+        var (exit, output, _) = await RunAsync(["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", AutoMergeArmedFields], repoPath, cancellationToken);
         return exit == 0 ? ParseAutoMergeArmed(output) : null;
     }
+
+    /// <summary>The <c>--json</c> list of <c>gh pr view</c> for <see cref="AutoMergeArmedAsync"/>.</summary>
+    internal const string AutoMergeArmedFields = "autoMergeRequest";
 
     /// <summary><c>gh pr view --json autoMergeRequest</c>'s answer: true with a request on the PR, false with <c>null</c>; null when it is no JSON.</summary>
     internal static bool? ParseAutoMergeArmed(string json)
@@ -262,7 +265,7 @@ public sealed partial class GhCli
         }
     }
 
-    private const string QueueStateQuery ="query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){"
+    internal const string QueueStateQuery ="query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){"
         + "state headRefOid isMergeQueueEnabled isInMergeQueue mergeQueueEntry{position} "
         + "timelineItems(last:10,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT]){nodes{__typename ... on AddedToMergeQueueEvent{createdAt} ... on RemovedFromMergeQueueEvent{createdAt reason}}}}}}";
 

@@ -119,8 +119,8 @@ public sealed class RepoStatusTests : IDisposable
         var github = new FakeGitHub();
         github.OpenPrs[tianwen] =
         [
-            new PullRequestStatus { Number = 7, Title = "Planets", Head = "flight/tia1", Draft = true, Checks = ChoiceStatus.Pending, Url = "https://github.com/SharpAstro/tianwen/pull/7" },
-            new PullRequestStatus { Number = 9, Title = "Someone's", Head = "feature/x", Checks = ChoiceStatus.Passing },
+            GhAnswers.OpenPullRequest(number: 7, title: "Planets", head: "flight/tia1", draft: true, checks: ChoiceStatus.Pending, url: "https://github.com/SharpAstro/tianwen/pull/7"),
+            GhAnswers.OpenPullRequest(number: 9, title: "Someone's", head: "feature/x", checks: ChoiceStatus.Passing),
         ];
 
         var all = await Watch(TianwenGit(tianwen), github, state).RefreshAsync(Ct);
@@ -173,7 +173,7 @@ public sealed class RepoStatusTests : IDisposable
         // What a read before the rule kept of the clone pilot never worked in goes with the next read.
         state.PutMilestones("wabt", [new MilestoneRow { Repo = "wabt", Number = 1, Title = "v1" }]);
         var github = new FakeGitHub();
-        github.OpenPrs[wabt] = [new PullRequestStatus { Number = 5, Title = "Someone else's", Head = "feature/y" }];
+        github.OpenPrs[wabt] = [GhAnswers.OpenPullRequest(number: 5, title: "Someone else's", head: "feature/y")];
 
         var all = await Watch(new ScriptedGit(), github, state).RefreshAsync(Ct);
 
@@ -191,7 +191,7 @@ public sealed class RepoStatusTests : IDisposable
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         state.PutFlight(Flight("TIA2", "tianwen", tianwen));
         var github = new FakeGitHub();
-        github.OpenPrs[tianwen] = [new PullRequestStatus { Number = 3, Title = "T", Head = "flight/tia2" }];
+        github.OpenPrs[tianwen] = [GhAnswers.OpenPullRequest(number: 3, title: "T", head: "flight/tia2")];
 
         var repo = (await Watch(new ScriptedGit(), github, state).RefreshAsync(Ct)).Single();
 
@@ -344,7 +344,7 @@ public sealed class RepoStatusTests : IDisposable
         // The node reads from boot, before this flight is put: let that read end (it knows no repo, so asks gh nothing), then read afresh.
         await node.Client.GetRepoStatusAsync(Ct);
         node.State.PutFlight(flight);
-        node.GitHub.OpenPrs[repo] = [new PullRequestStatus { Number = 5, Title = "Planets", Head = flight.Branch, Checks = ChoiceStatus.Failing }];
+        node.GitHub.OpenPrs[repo] = [GhAnswers.OpenPullRequest(number: 5, title: "Planets", head: flight.Branch, checks: ChoiceStatus.Failing)];
 
         var envelope = await node.Client.GetRepoStatusAsync(Ct, refresh: true);
 

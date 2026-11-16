@@ -47,7 +47,7 @@ public sealed class GoAroundFromCardTests : IDisposable
             Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow },
         });
         node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done });
-        node.GitHub.Pr = new PullRequest(63, "OPEN", PrHead, PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(number: 63, head: PrHead, url: PrUrl);
         return node.State.RaiseCard(CardBin.Ring, kind, Subject, "TIA1's PR #63", "Planets: 1 leg done.", choices, link: PrUrl);
     }
 
@@ -70,9 +70,9 @@ public sealed class GoAroundFromCardTests : IDisposable
     {
         await using var node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
         var ready = Ready(node, LegCommander.PrReady, new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Subject, Args = [PrHead] });
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
         (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3, "build (linux)", CheckLink);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 2, 3, "build (linux)", CheckLink);
         await node.App.Services.GetRequiredService<PrChecks>().LookAsync(Ct);
         var failed = node.State.Cards(openOnly: true).ShouldHaveSingleItem();
         failed.Kind.ShouldBe(LegCommander.MergeFailed);

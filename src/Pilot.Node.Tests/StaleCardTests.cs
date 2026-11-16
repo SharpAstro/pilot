@@ -32,7 +32,7 @@ public sealed class StaleCardTests
         _state = new NodeState(new InMemoryJournal(), _time);
         _summaries = new Summaries(_state, _model, _time) { GitHub = _github };
         // The PR the node holds for PIL342, as GitHub has it unless a test says otherwise.
-        _github.Pr = new PullRequest(344, "OPEN", Head, PrUrl, "MERGEABLE");
+        _github.Pr = GhAnswers.PullRequestByBranch(number: 344, head: Head, url: PrUrl, mergeable: "MERGEABLE");
         _state.PutFlight(Flight("PIL342") with { PullRequest = 344, PullRequestUrl = PrUrl, GitHubHead = OldHead });
         // Another flight in play, so the fleet always has something to summarise.
         _state.PutFlight(Flight("DIR7", issue: 7));
@@ -272,7 +272,7 @@ public sealed class StaleCardTests
     public async Task AFailedCheckCardIsDismissedOnceItsPrIsGreenAtANewerHead()
     {
         var card = Raise("pr-checks-failed", choices: [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/PIL342", Args = [OldHead] }]);
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 7, 7);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 7, 7);
 
         Dismissed(card, await Check(card), "its checks pass at a newer head (64d4eb3a1, was 4f2c9a01d)");
     }
@@ -281,7 +281,7 @@ public sealed class StaleCardTests
     public async Task AFailedCheckCardIsDismissedOnceTheSameHeadsChecksWereRerunGreen()
     {
         var card = Raise("pr-checks-failed");
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 7, 7);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 7, 7);
 
         Dismissed(card, await Check(card), "its checks pass at 64d4eb3a1");
     }
@@ -290,7 +290,7 @@ public sealed class StaleCardTests
     public async Task AMergeFailedCardOfAFailedCheckIsDismissedOnceItsChecksPass()
     {
         var failed = Raise(LegCommander.MergeFailed, choices: [new CardChoice { Label = "Re-run", Verb = Verbs.RerunChecks, Target = "flight/PIL342" }]);
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 7, 7);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 7, 7);
 
         Dismissed(failed, await Check(failed), "its checks pass at 64d4eb3a1");
     }
@@ -298,7 +298,7 @@ public sealed class StaleCardTests
     [Fact]
     public async Task AMergeFailedCardOfAnythingElseHasNoCheckToReadEvenWithTheChecksGreen()
     {
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 7, 7);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 7, 7);
         var refused = Raise(LegCommander.MergeFailed, "flight/DIR7");
         _state.PutFlight(_state.Flights().Single(f => f.Code == "DIR7") with { PullRequest = 344 });
         Left(refused, await Check(refused), "#344 is still open");
@@ -310,7 +310,7 @@ public sealed class StaleCardTests
     public async Task AFailedCheckCardWhosePrIsNotGreenIsLeftAlone(string status, string said)
     {
         var card = Raise("pr-checks-failed");
-        _github.Summary = new ChecksSummary(status, 3, 7, status == ChoiceStatus.Failing ? "build" : null);
+        _github.Summary = GhAnswers.ChecksOf(status, 3, 7, status == ChoiceStatus.Failing ? "build" : null);
 
         Left(card, await Check(card), $"#344's checks are {said}");
     }
@@ -468,7 +468,7 @@ public sealed class StaleCardTests
         _github.Pr = null;
         Left(card, await Check(card), "GitHub shows no PR #344 on its branch");
 
-        _github.Pr = new PullRequest(999, "MERGED", Head, "https://github.com/SharpAstro/tianwen/pull/999");
+        _github.Pr = GhAnswers.PullRequestByBranch(state: "merged", number: 999, head: Head, url: "https://github.com/SharpAstro/tianwen/pull/999");
         Left(card, await Check(card), "GitHub shows no PR #344 on its branch");
     }
 

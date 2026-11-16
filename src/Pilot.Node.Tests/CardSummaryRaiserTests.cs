@@ -60,7 +60,7 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
     public async Task AMergeThatFailedSaysWhichLegIsRedone()
     {
         var (flight, _, checks) = await ArmedPassedFlight("43");
-        _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3, "build (linux)", "https://github.com/x/tianwen/actions/runs/1/job/2");
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 2, 3, "build (linux)", "https://github.com/x/tianwen/actions/runs/1/job/2");
 
         await checks.LookAsync(Ct);
 
@@ -87,7 +87,7 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
     public async Task AMergeThatFailedWithALongLegNameAndALongReasonStaysWithinTheSummaryCap()
     {
         var (_, _, checks) = await ArmedPassedFlight("46", "a-leg-with-a-very-long-name-for-the-cap");
-        _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3, new string('x', 120), "https://github.com/x/tianwen/actions/runs/1/job/2");
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 2, 3, new string('x', 120), "https://github.com/x/tianwen/actions/runs/1/job/2");
 
         await checks.LookAsync(Ct);
 
@@ -104,7 +104,7 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         var (flight, _, checks) = await ArmedPassedFlight("44");
         // Its review no longer passes, so the send-back is refused.
         _state.PutFlight(F(flight.Code) with { Review = F(flight.Code).Review! with { State = ReviewState.Changes }, MergeWhenGreen = null });
-        _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3, "build (linux)", "https://github.com/x/tianwen/actions/runs/1/job/2");
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 2, 3, "build (linux)", "https://github.com/x/tianwen/actions/runs/1/job/2");
 
         await checks.LookAsync(Ct);
         await checks.LookAsync(Ct);

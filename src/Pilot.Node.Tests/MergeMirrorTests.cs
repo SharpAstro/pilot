@@ -29,7 +29,7 @@ public sealed class MergeMirrorTests
             Review = new ReviewRow { State = review, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow },
         });
         node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done });
-        node.GitHub.Pr = new PullRequest(63, "OPEN", PrHead, PrUrl);
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(number: 63, head: PrHead, url: PrUrl);
         return node.State.RaiseCard(CardBin.Ring, LegCommander.PrReady, Subject, "TIA1's PR #63 is ready to merge", "Planets: 1 leg done, head cafe0000. Reviewed: fine.",
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Subject, Args = [PrHead] }], link: PrUrl);
     }
@@ -53,7 +53,7 @@ public sealed class MergeMirrorTests
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
 
-        await Look(node, new MergeState(MergeKinds.Pending, 2, 7));
+        await Look(node, GhAnswers.MergeState(MergeKinds.Pending, 2, 7));
 
         var card = Card(node, ready);
         (Merge(card).Status, Merge(card).Note, Merge(card).Verb).ShouldBe((ChoiceStatus.Pending, "2 of 7", Verbs.Merge));
@@ -70,10 +70,10 @@ public sealed class MergeMirrorTests
 
         foreach (var done in new[] { 2, 5, 6 })
         {
-            await Look(node, new MergeState(MergeKinds.Pending, done, 7));
+            await Look(node, GhAnswers.MergeState(MergeKinds.Pending, done, 7));
             Merge(Card(node, ready)).Note.ShouldBe($"{done} of 7");
         }
-        await Look(node, new MergeState(MergeKinds.Ready, 7, 7));
+        await Look(node, GhAnswers.MergeState(MergeKinds.Ready, 7, 7));
 
         var card = Card(node, ready);
         (Merge(card).Status, Merge(card).Note).ShouldBe((ChoiceStatus.Passing, null));
@@ -87,7 +87,7 @@ public sealed class MergeMirrorTests
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
 
-        await Look(node, new MergeState(MergeKinds.Queued, Position: 2));
+        await Look(node, GhAnswers.MergeState(MergeKinds.Queued, position: 2));
 
         var card = Card(node, ready);
         card.State.ShouldBe(CardState.Open);
@@ -96,12 +96,12 @@ public sealed class MergeMirrorTests
         card.Detail.ShouldNotBeNull().ShouldContain("position 2");
 
         // The queue moves it up: the same card says so.
-        await Look(node, new MergeState(MergeKinds.Queued, Position: 1));
+        await Look(node, GhAnswers.MergeState(MergeKinds.Queued, position: 1));
         Merge(Card(node, ready)).Note.ShouldBe("position 1");
 
         // And once GitHub says merged, the card reads Merged and closes, and the flight lands.
-        node.GitHub.Pr = new PullRequest(63, "MERGED", PrHead, PrUrl);
-        await Look(node, new MergeState(MergeKinds.Merged));
+        node.GitHub.Pr = GhAnswers.PullRequestByBranch(state: "merged", number: 63, head: PrHead, url: PrUrl);
+        await Look(node, GhAnswers.MergeState(MergeKinds.Merged));
         card = Card(node, ready);
         card.State.ShouldBe(CardState.Closed);
         Merge(card).Status.ShouldBe(ChoiceStatus.Merged);
@@ -113,8 +113,8 @@ public sealed class MergeMirrorTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
-        node.GitHub.Merge = new MergeState(MergeKinds.Queued, Position: 3);
-        node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: true, Position: 3);
+        node.GitHub.Merge = GhAnswers.MergeState(MergeKinds.Queued, position: 3);
+        node.GitHub.Queue = GhAnswers.MergeQueue("queued", PrHead, 3);
 
         (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
 
@@ -129,16 +129,16 @@ public sealed class MergeMirrorTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
-        await Look(node, new MergeState(MergeKinds.Queued, Position: 1));
+        await Look(node, GhAnswers.MergeState(MergeKinds.Queued, position: 1));
 
-        await Look(node, new MergeState(MergeKinds.Ready, 3, 3, DroppedFromQueue: "failed checks"));
+        await Look(node, GhAnswers.MergeState(MergeKinds.Ready, 3, 3, droppedReason: "FAILED_CHECKS"));
 
         var card = Card(node, ready);
         card.State.ShouldBe(CardState.Open);
         Merge(card).Status.ShouldBe(ChoiceStatus.Passing);
         card.Detail.ShouldNotBeNull().ShouldStartWith("Dropped from the merge queue: failed checks.");
         // Looking again says it once, not once more each look.
-        await Look(node, new MergeState(MergeKinds.Ready, 3, 3, DroppedFromQueue: "failed checks"));
+        await Look(node, GhAnswers.MergeState(MergeKinds.Ready, 3, 3, droppedReason: "FAILED_CHECKS"));
         Card(node, ready).Detail.ShouldBe(card.Detail);
     }
 
@@ -149,7 +149,7 @@ public sealed class MergeMirrorTests
         // Reviewed already as asking for changes: nothing is sent back, so the card stays to be read.
         var ready = Ready(node, ReviewState.Changes);
 
-        await Look(node, new MergeState(MergeKinds.Blocked, 2, 3, Reason: "build (linux) failed", FailedName: "build (linux)", FailedLink: CheckLink));
+        await Look(node, GhAnswers.MergeState(MergeKinds.Blocked, 2, 3, failedName: "build (linux)", failedLink: CheckLink));
 
         var card = Card(node, ready);
         card.State.ShouldBe(CardState.Open);
@@ -163,7 +163,7 @@ public sealed class MergeMirrorTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
-        node.GitHub.Merge = new MergeState(MergeKinds.Blocked, 3, 3, Reason: "a review is required");
+        node.GitHub.Merge = GhAnswers.MergeState(MergeKinds.Blocked, 3, 3, review: true);
 
         var result = await Answer(node, ready, "Merge");
 
@@ -178,7 +178,7 @@ public sealed class MergeMirrorTests
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
 
-        await Look(node, new MergeState(MergeKinds.ChangesRequested, 3, 3));
+        await Look(node, GhAnswers.MergeState(MergeKinds.ChangesRequested, 3, 3));
 
         var card = Card(node, ready);
         Merge(card).Status.ShouldBe(ChoiceStatus.ChangesRequested);
@@ -198,7 +198,7 @@ public sealed class MergeMirrorTests
         // rebases): the conflict hand-over sends the last leg round, and the ready card closes as handled with no ring in its place.
         var ready = Ready(node, ReviewState.Changes);
 
-        await Look(node, new MergeState(kind));
+        await Look(node, GhAnswers.MergeState(kind));
 
         var card = Card(node, ready);
         card.State.ShouldBe(CardState.Closed);
@@ -212,9 +212,9 @@ public sealed class MergeMirrorTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node, ReviewState.Changes);
-        await Look(node, new MergeState(MergeKinds.Conflicts));
+        await Look(node, GhAnswers.MergeState(MergeKinds.Conflicts));
 
-        await Look(node, new MergeState(MergeKinds.Ready, 3, 3));
+        await Look(node, GhAnswers.MergeState(MergeKinds.Ready, 3, 3));
 
         // The fresh review after the update raises a new ready card; the closed one is not reopened, and nothing merges by itself.
         Card(node, ready).State.ShouldBe(CardState.Closed);
@@ -226,7 +226,7 @@ public sealed class MergeMirrorTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
 
         (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
 
@@ -243,7 +243,7 @@ public sealed class MergeMirrorTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
 
         (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
 
@@ -257,11 +257,11 @@ public sealed class MergeMirrorTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         node.GitHub.Queues = true;
 
         (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
-        node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: true, Position: 4);
+        node.GitHub.Queue = GhAnswers.MergeQueue("queued", PrHead, 4);
         await Look(node, null);
 
         var card = Card(node, ready);

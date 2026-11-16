@@ -74,7 +74,7 @@ public abstract class PrFixTestsBase : IDisposable
     private protected string WidgetClone => Path.Combine(Roots, "widget");
 
     private protected static PullRequest Pr(string repo, int number, string head, string author) =>
-        new(number, "OPEN", head, $"https://github.com/{repo}/pull/{number}", Title: $"PR {number} of {repo}", Author: author, Base: "main");
+        GhAnswers.PullRequestByNumber(number: number, head: head, url: $"https://github.com/{repo}/pull/{number}", title: $"PR {number} of {repo}", author: author, baseBranch: "main");
 
     /// <summary>
     /// Runs this test on git itself, for a test that checks what git does in a class that otherwise checks what the node decides. Called first,
@@ -325,8 +325,8 @@ public sealed class PrFixTests2 : PrFixTestsBase
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
         var head = FixerPushes("fixed");
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
-        _github.Queue = new MergeQueueState("OPEN", head, false);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
+        _github.Queue = GhAnswers.MergeQueue("idle", head);
 
         await Round(head, "approve");
         await _reviews.SweepAsync(Ct);

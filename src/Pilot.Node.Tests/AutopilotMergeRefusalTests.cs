@@ -200,14 +200,14 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         AutopilotOn();
         _github.Checks = ChoiceStatus.Passing;
         var (flight, _) = await Passed("50");
-        _github.Merge = new MergeState(MergeKinds.Blocked, Reason: "at least 1 approving review is required");
+        _github.Merge = GhAnswers.MergeState(MergeKinds.Blocked, review: true);
 
         await Checks().LookAsync(Ct);
 
         var card = Refused().ShouldHaveSingleItem();
         card.Bin.ShouldBe(CardBin.Ring);
         card.Link.ShouldBe(F(flight.Code).PullRequestUrl);
-        card.Detail.ShouldNotBeNull().ShouldContain("at least 1 approving review is required");
+        card.Detail.ShouldNotBeNull().ShouldContain("a review is required");
         card.Detail.ShouldContain("What the node tried: asked GitHub to merge once");
         card.Detail.ShouldContain("Approve the PR on GitHub");
         var choice = card.Choices.ShouldHaveSingleItem();
@@ -228,7 +228,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         {
             if (call == nameof(IGitHub.PullRequestAsync) && _state.Merges().Any(m => m.Open))
             {
-                _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3);
+                _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 2, 3);
             }
             return Task.CompletedTask;
         };
@@ -294,7 +294,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ChangesRequestedRingsWithReadTheRequestedChanges()
     {
-        var card = await RingsFor("53", _ => _github.Merge = new MergeState(MergeKinds.ChangesRequested), "I read the changes");
+        var card = await RingsFor("53", _ => _github.Merge = GhAnswers.MergeState(MergeKinds.ChangesRequested), "I read the changes");
 
         card.Detail.ShouldNotBeNull().ShouldContain("Read the changes a review on GitHub asks for");
     }
@@ -303,7 +303,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ADraftPrRingsWithMarkReadyOnGitHubNotApprove()
     {
-        var card = await RingsFor("54", _ => _github.Merge = new MergeState(MergeKinds.Blocked, Reason: "it is a draft", Draft: true), "I marked it ready");
+        var card = await RingsFor("54", _ => _github.Merge = GhAnswers.MergeState(MergeKinds.Blocked, draft: true), "I marked it ready");
 
         card.Detail.ShouldNotBeNull().ShouldContain("mark it ready for review on GitHub");
         card.Detail.ShouldNotContain("Approve the PR");
@@ -392,7 +392,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         AutopilotOn();
         _github.Checks = ChoiceStatus.Passing;
         var (_, _) = await Passed("59");
-        _github.Merge = new MergeState(MergeKinds.Blocked, Reason: "at least 1 approving review is required");
+        _github.Merge = GhAnswers.MergeState(MergeKinds.Blocked, review: true);
         var checks = Checks();
 
         await checks.LookAsync(Ct);

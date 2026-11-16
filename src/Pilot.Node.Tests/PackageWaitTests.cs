@@ -134,7 +134,7 @@ public abstract class PackageWaitTestsBase : IDisposable
         var head = Git(flight.Worktree, "rev-parse", "HEAD");
         if (merged)
         {
-            _github.Pr = new PullRequest(7, "MERGED", head, "https://github.com/x/tianwen/pull/7", MergeCommit: MergeCommit, MergedAt: mergedAt);
+            _github.Pr = GhAnswers.PullRequestByBranch("merged", number: 7, head: head, url: "https://github.com/x/tianwen/pull/7", mergeCommit: MergeCommit, mergedAt: mergedAt);
         }
         await node.Flights.LandAfterMergeAsync("TIA1", head, Ct);
         node.State.Flights().Single(f => f.Code == "TIA1").State.ShouldBe(FlightState.Landed);
@@ -143,7 +143,7 @@ public abstract class PackageWaitTestsBase : IDisposable
     private protected FlightRow Flight(Rig node, string code) => node.State.Flights().Single(f => f.Code == code);
 
     private protected static WorkflowRun RunOf(string conclusion, DateTimeOffset? completedAt, string status = "completed") =>
-        new(4711, "CI/CD", status, status == "completed" ? conclusion : null, "https://github.com/x/tianwen/actions/runs/4711", "push", completedAt);
+        GhAnswers.WorkflowRun(4711, "CI/CD", status, status == "completed" ? conclusion : null, "https://github.com/x/tianwen/actions/runs/4711", "push", completedAt);
 }
 
 /// <summary>Part 1 of PackageWaitTests: the class is split so its tests run side by side, not one after another.</summary>
@@ -609,7 +609,7 @@ public sealed class PackageWaitTests2 : PackageWaitTestsBase
         // A lint workflow's push run, newer and already done, and the publish run still going.
         _github.Runs[MergeCommit] =
         [
-            new WorkflowRun(4800, "Labeler", "completed", "failure", "https://github.com/x/tianwen/actions/runs/4800", "push", Start.AddMinutes(1)),
+            GhAnswers.WorkflowRun(4800, "Labeler", "completed", "failure", "https://github.com/x/tianwen/actions/runs/4800", "push", Start.AddMinutes(1)),
             RunOf("success", null, status: "in_progress"),
         ];
 

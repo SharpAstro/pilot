@@ -91,7 +91,7 @@ public sealed class HandPrLandingTests : PrReviewTestsBase
         await ReviewedWidget("approve", checks: ChoiceStatus.Pending, queue: false);
         _github.Merged.ShouldBeEmpty();
 
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
         await _reviews.SweepAsync(Ct);
         _github.Merged.ShouldBe([(7, _widgetHead, "squash")]);
     }
@@ -112,7 +112,7 @@ public sealed class HandPrLandingTests : PrReviewTestsBase
         _reviews.Models = OnAutopilot();
         await ReviewedWidget("approve", checks: ChoiceStatus.Pending, queue: false);
         _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Head = new string('a', 40) };
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
         await _reviews.SweepAsync(Ct);
 
         _github.Merged.ShouldBeEmpty();
@@ -125,7 +125,7 @@ public sealed class HandPrLandingTests : PrReviewTestsBase
         _reviews.Models = OnAutopilot();
         _github.Login = "ada";
         _github.Queue = null;
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
         // A review's start marks a draft ready (PIL483); a PR made a draft again meanwhile is still not landed.
         _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Draft = true };
