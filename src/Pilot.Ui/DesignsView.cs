@@ -422,7 +422,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
             CommitCustom();
             return Task.CompletedTask;
         };
-        var custom = Layout.Builder.TextInput(CustomInput, 12f, Palette.Input).WFixed(150f).RowH(26f);
+        var custom = Layout.Builder.TextInput(CustomInput, 12f, Palette.Input).WStar().RowH(26f);
         var scale = surface.Scale.ToString("0.##", CultureInfo.InvariantCulture);
         var caption = _customProblem ?? $"{surface.Name}: {surface.Width} x {surface.Height} at {scale}x";
         // Three rows, the chips sharing the column's width: one row of chips, swap and input overran a narrow column onto the versions beside it.
