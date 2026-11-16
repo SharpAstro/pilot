@@ -769,6 +769,9 @@ if (feed is not null && client is not null && clients is not null)
         Note($"pilot-gui: {action.Label}: {refused ?? "done"}");
         return refused;
     }, "a Flights action");
+    // The archived list reads each node's archive through its own client (PIL1083).
+    chrome.Flights.OnReadArchived = async (node, offset, count) =>
+        clients.For(node, command: false) is { } to ? await DashboardCommands.ReadArchivedAsync(to, offset, count, GuiSay.Who, cts.Token, envelope => clients.NoteRefusal(node, envelope)) : (null, FleetClients.WatchOnly(node));
     // A stale flight's Ask the watchtower (#736): the flight, its stale summary and why it is not moving, told as the person's request.
     chrome.Flights.OnAskWatchtower = async (code, summary) =>
     {
