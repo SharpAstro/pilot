@@ -161,7 +161,7 @@ public static class NodeTargets
     public static async Task<IReadOnlyList<LanPeer>> DiscoverAsync(TimeSpan listen, CancellationToken cancellationToken, Func<IReadOnlyList<LanPeer>, bool>? enough = null)
     {
         var options = new LanDiscoveryOptions { Announce = false, Listen = true };
-        await using var transport = new UdpLanTransport(options.DiscoveryPort);
+        await using var transport = LanTransports.Create(options.DiscoveryPort);
         using var discovery = new LanDiscovery(transport, TimeProvider.System, options, LanIdentity.Create(null));
         await discovery.StartAsync(cancellationToken);
         var until = DateTimeOffset.UtcNow + listen;

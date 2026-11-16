@@ -34,7 +34,7 @@ public sealed class SettingsPageTests
             new SetupCheck { Key = "autostart", Title = "Starts at logon", Ok = true, Line = @"C:\WINDOWS\system32\conhost.exe --headless C:\Users\ada\AppData\Local\Programs\pilot2\pilot-node.exe" },
             new SetupCheck { Key = "hooks", Title = "Claude Code hooks", Ok = true, Line = @"in C:\Users\ada\.claude\settings.json" },
             new SetupCheck { Key = "lan", Title = "On the LAN", Ok = true, Line = "listening on port 47731 and announcing itself as DE1" },
-            new SetupCheck { Key = "firewall", Title = "Firewall", Ok = false, Runs = "runs netsh", Line = "no rule named pilot-node: other machines' connections are dropped before they reach the node", Fix = "Allow (asks for elevation)" },
+            new SetupCheck { Key = "firewall", Title = "Firewall", Ok = false, Runs = "runs netsh", Line = "no rule pilot2 LAN discovery (UDP 38821); no rule pilot2 node (TCP 47731): other machines' connections are dropped before they reach the node", Fix = "Allow (asks for elevation)" },
             new SetupCheck { Key = "trust", Title = "Watchtower folder trusted", Ok = true, Line = @"C:\Users\ada\AppData\Local\pilot2\watchtower, through C:\" },
             new SetupCheck { Key = "gh", Title = "GitHub CLI signed in", Ok = true, Runs = "runs gh, which asks GitHub", Line = "Logged in to github.com account ada (keyring)" },
             new SetupCheck { Key = "usage", Title = "Usage figures", Ok = false, Optional = true, Line = "no rate-limits.json: a status line that writes it gives the fleet this machine's usage" },
