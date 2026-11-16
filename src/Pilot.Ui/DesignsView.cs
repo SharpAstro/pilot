@@ -599,7 +599,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
             Layout.Builder.HStack([.. chips]).WithGap(4f).RowH(26f),
             Layout.Builder.HStack(swap).RowH(26f),
             custom,
-            WrappedProse.OneLine(caption, 12f, _customProblem is null ? Dim : Bright, selectable: false).RowH(22f).Whole(caption)).WithGap(4f).RowH(116f);
+            WrappedProse.OneLine(caption, 12f, _customProblem is null ? Dim : Bright).RowH(22f).Whole(caption)).WithGap(4f).RowH(116f);
     }
 
     private Layout.Node Strip(DesignPage page)
