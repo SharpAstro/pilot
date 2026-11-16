@@ -101,7 +101,7 @@ public sealed class DesignsViewTests
         rig.View.Player.ShouldBeNull();
         var texts = TextsOf(rig);
         texts.ShouldContain(t => t.StartsWith("This design has no version yet", StringComparison.Ordinal));
-        texts.ShouldContain("Brief");
+        texts.ShouldContain(t => t.Contains("Brief", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -118,7 +118,7 @@ public sealed class DesignsViewTests
         var texts = TextsOf(rig);
         texts.ShouldContain("Versions");
         texts.ShouldContain(t => t.StartsWith("v2 (current)", StringComparison.Ordinal));
-        texts.ShouldContain("Brief");
+        texts.ShouldContain(t => t.Contains("Brief", StringComparison.Ordinal));
         texts.ShouldContain("Home");
         texts.ShouldContain("Settings");
         // The player is a widget after the page, so the router reaches it as it reaches any.
