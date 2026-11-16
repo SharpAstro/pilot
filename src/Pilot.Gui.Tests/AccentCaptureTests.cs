@@ -44,6 +44,7 @@ public sealed class AccentCaptureTests
         using var scope = Palette.StandardForCapture(accent);
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         var data = PageData.For("long");
+        var flights = data.Flights;
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Play.ShowEverything();
         chrome.Flights.CanCommand = true;
@@ -52,17 +53,17 @@ public sealed class AccentCaptureTests
         {
             // The archive's own elements: Archive landed (needs OnAction), the quiet count (needs archived flights) and the Archive button of a landed row's panel.
             chrome.Flights.OnAction = Taken.By<FlightAction>(_ => { });
-            var landed = data.Flights.Lines.ToList().FindIndex(l => l.Row.State == FlightState.Landed);
+            var landed = flights.Lines.ToList().FindIndex(l => l.Row.State == FlightState.Landed);
             landed.ShouldBeGreaterThanOrEqualTo(0, "the long data has a landed flight");
-            data = data with { Flights = data.Flights with { Archived = [new ArchivedNode(new NodeMark("node.sock", "node.sock", "DE1", true), 520)] } };
-            chrome.Flights.ListCursor.Open(FlightsView<RgbaImage>.ListId, landed, data.Flights.Lines.Count);
+            flights = flights with { Archived = [new ArchivedNode(new NodeMark("node.sock", "node.sock", "DE1", true), 520)] };
+            chrome.Flights.ListCursor.Open(FlightsView<RgbaImage>.ListId, landed, flights.Lines.Count);
         }
         chrome.Show(page == "home" ? PilotPage.Home : PilotPage.Flights);
         if (page == "wizard")
         {
             await PageTextOverlapTests.OpenWizard(chrome, data, toIssues: false);
         }
-        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend);
+        chrome.Render(data.Sessions, flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend);
         return ([.. renderer.Surface.Pixels], width, height);
     }
 
