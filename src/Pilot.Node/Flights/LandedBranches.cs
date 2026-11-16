@@ -1,0 +1,179 @@
+using Pilot.Contracts;
+
+namespace Pilot.Node.Flights;
+
+/// <summary>One landed flight to judge: its row, the head its PR merged at, and whether a session of it is still live.</summary>
+public sealed record LandedCandidate(FlightRow Flight, string MergedHead, bool LiveSession);
+
+/// <summary>How a branch fared: <see cref="Deleted"/>, <see cref="Kept"/> (with a reason group and why), or <see cref="RetryLater"/>.</summary>
+public enum LandedBranchResult
+{
+    Deleted,
+    Kept,
+    RetryLater,
+}
+
+/// <summary>The reason groups a sweep counts kept branches by.</summary>
+public static class LandedBranchGroups
+{
+    public const string NotFlightBranch = "not-flight-branch";
+    public const string LocalAhead = "local-ahead";
+    public const string OriginAhead = "origin-ahead";
+    public const string CheckedOut = "checked-out";
+    public const string LiveSession = "live-session";
+    public const string NoMergedHead = "no-merged-head";
+    public const string PushFailed = "push-failed";
+}
+
+/// <summary>The outcome for one flight; <see cref="Commits"/> lists what a branch holds past the merged head (<c>git log --oneline</c> lines).</summary>
+public sealed record LandedBranchOutcome(string Code, string Branch, LandedBranchResult Result, string? Group = null, string? Why = null, string[]? Commits = null);
+
+/// <summary>
+/// Judges whether a landed flight's branch is safe to delete and deletes the safe ones of one repo (PIL1101): locally with one
+/// <c>git branch -D a b c</c> and on origin with one <c>git push origin --delete a b c</c>. Safe means the row's own branch, local and
+/// origin tips both equal to the merged head (a missing branch counts as gone), checked out nowhere, and no live session of the flight.
+/// A failed push deletes nothing on origin and returns the branches as <see cref="LandedBranchResult.RetryLater"/>, never retried here.
+/// </summary>
+public sealed class LandedBranches(IGit git)
+{
+    public async Task<IReadOnlyList<LandedBranchOutcome>> SweepAsync(string repoPath, IReadOnlyList<LandedCandidate> candidates, CancellationToken cancellationToken)
+    {
+        if (candidates.Count == 0)
+        {
+            return [];
+        }
+        var outcomes = new Dictionary<string, LandedBranchOutcome>();
+        var judged = new List<(LandedCandidate Candidate, string Branch, string? Local, string? Origin)>();
+
+        var local = await ReadRefsAsync(["for-each-ref", "--format=%(objectname) %(refname)", "refs/heads/flight/"], "refs/heads/", repoPath, cancellationToken);
+        var origin = await ReadRefsAsync(["ls-remote", "--heads", "origin", "refs/heads/flight/*"], "refs/heads/", repoPath, cancellationToken);
+        var checkedOut = await ReadCheckedOutAsync(repoPath, cancellationToken);
+
+        foreach (var c in candidates)
+        {
+            var branch = c.Flight.Branch;
+            var code = c.Flight.Code;
+            LandedBranchOutcome Keep(string group, string why, string[]? commits = null) => new(code, branch, LandedBranchResult.Kept, group, why, commits);
+
+            if (!IsFlightBranch(c.Flight))
+            {
+                outcomes[code] = Keep(LandedBranchGroups.NotFlightBranch, $"{branch} is not the flight's own branch flight/{code.ToLowerInvariant()}");
+                continue;
+            }
+            if (string.IsNullOrWhiteSpace(c.MergedHead))
+            {
+                outcomes[code] = Keep(LandedBranchGroups.NoMergedHead, "the head its PR merged at is not known");
+                continue;
+            }
+            if (c.LiveSession)
+            {
+                outcomes[code] = Keep(LandedBranchGroups.LiveSession, "a session of the flight is still live");
+                continue;
+            }
+            if (checkedOut.Contains(branch))
+            {
+                outcomes[code] = Keep(LandedBranchGroups.CheckedOut, $"{branch} is checked out in a worktree");
+                continue;
+            }
+            local.TryGetValue(branch, out var localTip);
+            origin.TryGetValue(branch, out var originTip);
+            if (localTip is not null && localTip != c.MergedHead)
+            {
+                outcomes[code] = Keep(LandedBranchGroups.LocalAhead, $"local {branch} is at {Short(localTip)}, not the merged head {Short(c.MergedHead)}", await CommitsPastAsync(repoPath, c.MergedHead, localTip, cancellationToken));
+                continue;
+            }
+            if (originTip is not null && originTip != c.MergedHead)
+            {
+                outcomes[code] = Keep(LandedBranchGroups.OriginAhead, $"origin/{branch} is at {Short(originTip)}, not the merged head {Short(c.MergedHead)}", await CommitsPastAsync(repoPath, c.MergedHead, originTip, cancellationToken));
+                continue;
+            }
+            judged.Add((c, branch, localTip, originTip));
+        }
+
+        if (judged.Count > 0)
+        {
+            var onOrigin = judged.Where(j => j.Origin is not null).Select(j => j.Branch).ToList();
+            string? failure = null;
+            if (onOrigin.Count > 0)
+            {
+                var push = await git.RunAsync(["push", "--quiet", "origin", "--delete", .. onOrigin], repoPath, cancellationToken);
+                if (!push.Ok && !IsRefGone(push))
+                {
+                    failure = $"could not delete on origin: {push.Why}";
+                }
+            }
+            var onDisk = judged.Where(j => j.Local is not null).Select(j => j.Branch).ToList();
+            if (failure is null && onDisk.Count > 0)
+            {
+                var del = await git.RunAsync(["branch", "-D", .. onDisk], repoPath, cancellationToken);
+                if (!del.Ok)
+                {
+                    failure = $"could not delete locally: {del.Why}";
+                }
+            }
+            foreach (var j in judged)
+            {
+                var code = j.Candidate.Flight.Code;
+                outcomes[code] = failure is null
+                    ? new(code, j.Branch, LandedBranchResult.Deleted)
+                    : new(code, j.Branch, LandedBranchResult.RetryLater, LandedBranchGroups.PushFailed, failure);
+            }
+        }
+
+        return candidates.Select(c => outcomes[c.Flight.Code]).ToList();
+    }
+
+    private static bool IsFlightBranch(FlightRow flight) =>
+        flight.Branch == $"flight/{flight.Code.ToLowerInvariant()}" && flight.Branch.IndexOfAny(['*', '?', '[', ' ']) < 0;
+
+    private static bool IsRefGone(GitRun push) =>
+        (push.Error + push.Output).Contains("remote ref does not exist", StringComparison.OrdinalIgnoreCase);
+
+    private static string Short(string sha) => sha.Length > 8 ? sha[..8] : sha;
+
+    /// <summary>Reads <c>&lt;sha&gt; &lt;ref&gt;</c> lines (for-each-ref's format) or <c>&lt;sha&gt;\t&lt;ref&gt;</c> (ls-remote's) into branch name to tip.</summary>
+    private async Task<Dictionary<string, string>> ReadRefsAsync(IReadOnlyList<string> args, string prefix, string repoPath, CancellationToken cancellationToken)
+    {
+        var run = await git.RunAsync(args, repoPath, cancellationToken);
+        var map = new Dictionary<string, string>();
+        if (!run.Ok)
+        {
+            return map;
+        }
+        foreach (var line in run.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var parts = line.Split([' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length == 2 && parts[1].StartsWith(prefix, StringComparison.Ordinal))
+            {
+                map[parts[1][prefix.Length..]] = parts[0];
+            }
+        }
+        return map;
+    }
+
+    private async Task<HashSet<string>> ReadCheckedOutAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        var run = await git.RunAsync(["worktree", "list", "--porcelain"], repoPath, cancellationToken);
+        var set = new HashSet<string>();
+        if (run.Ok)
+        {
+            foreach (var line in run.Output.Split('\n', StringSplitOptions.TrimEntries))
+            {
+                if (line.StartsWith("branch refs/heads/", StringComparison.Ordinal))
+                {
+                    set.Add(line["branch refs/heads/".Length..]);
+                }
+            }
+        }
+        return set;
+    }
+
+    /// <summary>The commits of <paramref name="tip"/> past <paramref name="head"/>, one line each; empty when git cannot say (an origin tip never fetched).</summary>
+    private async Task<string[]> CommitsPastAsync(string repoPath, string head, string tip, CancellationToken cancellationToken)
+    {
+        var run = await git.RunAsync(["log", "--oneline", $"{head}..{tip}"], repoPath, cancellationToken);
+        return run.Ok
+            ? run.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : [];
+    }
+}

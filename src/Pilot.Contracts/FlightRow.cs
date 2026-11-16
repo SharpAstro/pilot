@@ -96,6 +96,18 @@ public sealed record FlightRow
     /// </summary>
     public string? MergedHead { get; init; }
 
+    /// <summary>The head the landed PR merged at (PIL1101): the tip its branch must still have for the node to delete it; null when not recorded.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LandedHead { get; init; }
+
+    /// <summary>When the node deleted the flight's branch, locally and on origin (PIL1101); null until then.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? BranchDeletedAt { get; init; }
+
+    /// <summary>Why the node kept the flight's branch (PIL1101), a short reason; null once deleted or before a look.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? BranchKept { get; init; }
+
     /// <summary>The number of the PR that merged without the new leg, while <see cref="MergedHead"/> says so.</summary>
     public int? MergedPullRequest { get; init; }
 
