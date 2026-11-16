@@ -1,5 +1,4 @@
 using System.Runtime.CompilerServices;
-using LAN.Lib;
 using Pilot.Commands;
 using Pilot.Contracts;
 
@@ -16,20 +15,6 @@ internal static class LanBindGuard
     internal static void Install()
     {
         NetworkBinds.Guard = what => throw new InvalidOperationException(NetworkBinds.Refusal(what));
-        LanTransports.Factory = _ => new SilentLanTransport();
+        LanTransports.Factory = _ => new LanTransports.Silent();
     }
-}
-
-/// <summary>A discovery transport with no socket: hears nothing, and what it is asked to broadcast goes nowhere.</summary>
-internal sealed class SilentLanTransport : ILanTransport
-{
-    public Task BroadcastAsync(string text, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public event Action<DiscoveryDatagram>? DatagramReceived
-    {
-        add { }
-        remove { }
-    }
-
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
