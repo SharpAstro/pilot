@@ -158,7 +158,8 @@ public sealed class FlightArchiveViewTests
         Click(view.Tree(Screen()), FlightsView<RgbaImage>.ArchivedHit);
         await loaded.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
-        var text = Describe(view.Tree(Screen()));
+        // Tall enough for the section's rows; the usual 200x50 shows only the first two.
+        var text = CellLayout.Describe(Layout.Engine.Arrange(view.Tree(Screen()), new Rect<int>(0, 0, 200, 2000), CellMeasureContext.PixelAuthored));
         text.ShouldContain("timed out");
         text.ShouldNotContain("reading");
     }
