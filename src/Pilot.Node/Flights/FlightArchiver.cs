@@ -86,43 +86,46 @@ public sealed class FlightArchiver(NodeState state, RemovalQueue? removals = nul
     /// Why <paramref name="flight"/> cannot be archived yet, or null when it can: it has not landed; its PR is not merged; a card about it is
     /// open; a session of it is live; its plane's folder is still on disk or waits in the removal queue. Its branch is not waited for.
     /// </summary>
-    public Task<string?> WhyNotAsync(FlightRow flight, CancellationToken cancellationToken) => Task.FromResult(WhyNot(flight));
+    public Task<string?> WhyNotAsync(FlightRow flight, CancellationToken cancellationToken) => Task.FromResult(WhyNot(flight)?.Why);
 
-    private string? WhyNot(FlightRow flight)
+    /// <summary>The same answer with its reason group, which the sweep counts for its summary.</summary>
+    internal Task<(string Group, string Why)?> WhyNotGroupedAsync(FlightRow flight, CancellationToken cancellationToken) => Task.FromResult(WhyNot(flight));
+
+    private (string Group, string Why)? WhyNot(FlightRow flight)
     {
         if (flight.State != FlightState.Landed)
         {
-            return $"it has not landed ({flight.State.ToString().ToLowerInvariant()})";
+            return ("not landed", $"it has not landed ({flight.State.ToString().ToLowerInvariant()})");
         }
         // Folded into another flight or moved to another node, its PR is the other's; otherwise the node's merge entry says whether it merged.
         if (flight.PullRequest is { } pr && flight.FoldedInto is null && flight.MovedTo is null)
         {
             if (state.Merges().FirstOrDefault(m => string.Equals(m.Flight, flight.Code, StringComparison.Ordinal)) is { State: not MergeEntryState.Merged } entry)
             {
-                return $"its PR #{pr.ToString(CultureInfo.InvariantCulture)} is not merged (its merge entry is {entry.State.ToString().ToLowerInvariant()})";
+                return ("an unmerged PR", $"its PR #{pr.ToString(CultureInfo.InvariantCulture)} is not merged (its merge entry is {entry.State.ToString().ToLowerInvariant()})");
             }
             var knownMerged = state.Merges().FirstOrDefault(m => string.Equals(m.Flight, flight.Code, StringComparison.Ordinal)) is { State: MergeEntryState.Merged }
                 || (state.Merges().All(m => !string.Equals(m.Flight, flight.Code, StringComparison.Ordinal)) && (flight.MergedHead is not null || flight.MergedPullRequest is not null));
             if (!knownMerged && flight.MergeQueue is { Length: > 0 } queued)
             {
-                return $"its PR #{pr.ToString(CultureInfo.InvariantCulture)} is not merged ({queued})";
+                return ("an unmerged PR", $"its PR #{pr.ToString(CultureInfo.InvariantCulture)} is not merged ({queued})");
             }
         }
         if (state.Cards(openOnly: true).Where(c => FlightMove.IsAbout(c, flight.Code)).ToList() is { Count: > 0 } open)
         {
-            return $"{(open.Count == 1 ? "a card is" : $"{open.Count} cards are")} open about it ({string.Join(", ", open.Select(c => c.Id))})";
+            return ("an open card", $"{(open.Count == 1 ? "a card is" : $"{open.Count} cards are")} open about it ({string.Join(", ", open.Select(c => c.Id))})");
         }
         if (state.Sessions().Where(s => string.Equals(s.Flight, flight.Code, StringComparison.OrdinalIgnoreCase) && s.State is not (SessionState.Ended or SessionState.Failed)).ToList() is { Count: > 0 } live)
         {
-            return $"{(live.Count == 1 ? "a session is" : $"{live.Count} sessions are")} live ({string.Join(", ", live.Select(s => s.Name))})";
+            return ("a live session", $"{(live.Count == 1 ? "a session is" : $"{live.Count} sessions are")} live ({string.Join(", ", live.Select(s => s.Name))})");
         }
         if (Directory.Exists(flight.Worktree))
         {
-            return $"its plane folder {flight.Worktree} is still on disk";
+            return ("a plane folder on disk", $"its plane folder {flight.Worktree} is still on disk");
         }
         if (removals?.Contains(flight.Worktree) == true)
         {
-            return $"its plane folder {flight.Worktree} waits in the removal queue";
+            return ("a plane folder in the removal queue", $"its plane folder {flight.Worktree} waits in the removal queue");
         }
         return null;
     }

@@ -204,6 +204,85 @@ public sealed class FlightArchiveSweepTests : IDisposable
         state.Cards().ShouldContain(c => c.Kind == FlightCommander.ConnectionReleasedKind && c.Subject == "flight/TIA2");
     }
 
+    private static IEnumerable<CardRow> Summaries(NodeState state) => state.Cards().Where(c => c.Kind == FlightArchiveSweep.SummaryKind);
+
+    [Fact]
+    public async Task AMixedSweepRaisesOneSummaryWithTheCountsByReason()
+    {
+        using var journal = Journal();
+        var state = Open(journal);
+        var plane = Path.Combine(_root, "plane");
+        Directory.CreateDirectory(plane);
+        state.PutFlight(Flight("TIA1", FlightState.Landed, Now.AddDays(-8)));
+        state.PutFlight(Flight("TIA2", FlightState.Landed, Now.AddDays(-8), plane));
+        state.PutFlight(Flight("TIA3", FlightState.Landed, Now.AddDays(-8), plane));
+        state.PutFlight(Flight("TIA4", FlightState.Flying, null));
+        state.PutLeg(Leg("TIA4"));
+        state.RaiseCard(CardBin.ForYou, "worker", "flight/TIA4/only", "a worker stopped");
+        state.PutFlight(Flight("TIA4", FlightState.Landed, Now.AddDays(-9)));
+        var (sweep, _) = Sweeper(state);
+
+        (await sweep.SweepAsync(Ct)).ShouldBe(1);
+
+        Summaries(state).Single().Title.ShouldBe("archived 1, held back 3: 2 a plane folder on disk, 1 an open card");
+    }
+
+    [Fact]
+    public async Task ASweepWithNothingDueRaisesNoSummary()
+    {
+        using var journal = Journal();
+        var state = Open(journal);
+        state.PutFlight(Flight("TIA1", FlightState.Landed, Now.AddDays(-1)));
+        var (sweep, _) = Sweeper(state);
+
+        (await sweep.SweepAsync(Ct)).ShouldBe(0);
+
+        Summaries(state).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task OneSweepOverThirtyLandedRowsArchivesTheTwentyFreeOnesAndSummarisesTheRest()
+    {
+        using var journal = Journal();
+        var state = Open(journal);
+        var plane = Path.Combine(_root, "plane");
+        Directory.CreateDirectory(plane);
+        for (var i = 1; i <= 30; i++)
+        {
+            var code = $"TIA{i}";
+            state.PutFlight(Flight(code, FlightState.Landed, Now.AddDays(-8)));
+        }
+        // 1-20 free, 21-24 newer, 25-26 plane folder, 27-28 open card, 29-30 live session.
+        foreach (var f in state.Flights().ToList())
+        {
+            var n = int.Parse(f.Code[3..]);
+            state.UpdateFlight(f.Code, r => r with { LandedAt = Now.AddDays(n <= 20 || n >= 25 ? -8 : -1), Worktree = n is 25 or 26 ? plane : r.Worktree });
+        }
+        foreach (var n in new[] { 27, 28 })
+        {
+            var code = $"TIA{n}";
+            state.UpdateFlight(code, r => r with { State = FlightState.Flying, LandedAt = null });
+            state.PutLeg(Leg(code));
+            state.RaiseCard(CardBin.ForYou, "worker", $"flight/{code}/only", "a worker stopped");
+            state.UpdateFlight(code, r => r with { State = FlightState.Landed, LandedAt = Now.AddDays(-8) });
+        }
+        foreach (var n in new[] { 29, 30 })
+        {
+            state.PutSession(new SessionRow
+            {
+                Id = $"s{n:D7}", SessionId = $"s{n:D7}-0000-4000-8000-000000000000", Name = $"de1-tia{n}-worker", Kind = SessionKind.Background, Cwd = "/work",
+                Role = SessionRole.Worker, Flight = $"TIA{n}", ContextTokens = 1, ContextWindow = 200_000, State = SessionState.Idle, SpendWeighted = 0, StartedAt = Now,
+            });
+        }
+        var (sweep, _) = Sweeper(state);
+
+        (await sweep.SweepAsync(Ct)).ShouldBe(20);
+
+        state.Flights().Count(f => f.State == FlightState.Landed).ShouldBe(10);
+        state.ArchivedFlightRows().Length.ShouldBe(20);
+        Summaries(state).Single().Title.ShouldBe("archived 20, held back 6: 2 a live session, 2 a plane folder on disk, 2 an open card");
+    }
+
     /// <summary>A clock a test moves.</summary>
     private sealed class MovingTime(DateTimeOffset now) : TimeProvider
     {

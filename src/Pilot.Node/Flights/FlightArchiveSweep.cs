@@ -14,6 +14,9 @@ public sealed class FlightArchiveSweep(NodeState state, FlightArchiver archiver,
     /// <summary>What the Handled line is.</summary>
     public const string HeldKind = "archive-held";
 
+    /// <summary>What the one summary Handled line of a sweep is.</summary>
+    public const string SummaryKind = "archive-sweep";
+
     /// <summary>How often the node sweeps.</summary>
     public TimeSpan Interval { get; init; } = TimeSpan.FromMinutes(10);
 
@@ -85,6 +88,7 @@ public sealed class FlightArchiveSweep(NodeState state, FlightArchiver archiver,
             _told.Remove(gone);
         }
         var archived = 0;
+        var heldBy = new Dictionary<string, int>(StringComparer.Ordinal);
         var inBatch = 0;
         foreach (var code in due)
         {
@@ -96,8 +100,9 @@ public sealed class FlightArchiveSweep(NodeState state, FlightArchiver archiver,
             }
             try
             {
-                if (await archiver.WhyNotAsync(flight, cancellationToken) is { } why)
+                if (await archiver.WhyNotGroupedAsync(flight, cancellationToken) is var (group, why))
                 {
+                    heldBy[group] = heldBy.GetValueOrDefault(group) + 1;
                     Say(flight, why);
                     continue;
                 }
@@ -109,6 +114,7 @@ public sealed class FlightArchiveSweep(NodeState state, FlightArchiver archiver,
             {
                 // One flight that cannot be judged or archived (a vanished repo folder, a store fault) never stops the ones after it.
                 await Error.WriteLineAsync($"flight archive sweep: {code} not archived: {ex.Message}");
+                heldBy["an error"] = heldBy.GetValueOrDefault("an error") + 1;
                 continue;
             }
             if (++inBatch >= Batch)
@@ -129,6 +135,12 @@ public sealed class FlightArchiveSweep(NodeState state, FlightArchiver archiver,
         {
             Archived?.Invoke();
             await flights.ReleaseLandedConnectionsAsync(cancellationToken);
+        }
+        var held = heldBy.Values.Sum();
+        if (archived + held > 0)
+        {
+            var groups = string.Join(", ", heldBy.OrderByDescending(g => g.Value).ThenBy(g => g.Key, StringComparer.Ordinal).Select(g => $"{g.Value} {g.Key}"));
+            state.RaiseCard(CardBin.Handled, SummaryKind, "archive", $"archived {archived}, held back {held}{(held > 0 ? ": " + groups : "")}");
         }
         return archived;
     }
