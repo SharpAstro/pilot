@@ -1276,7 +1276,8 @@ Background tasks, **7** Fleet, **8** Settings, **9** Pull requests, **0** Ideas,
 apart from Ctrl+S in most terminals). **Ctrl+S** is the say bar, **Ctrl+T** the chat with the watchtower (the box
 focused), Alt+Left, Alt+Right and Backspace walk the history (Backspace is an edit key inside a box), Up/Down select a
 row on a list page and Enter opens it (a session's transcript; Escape goes up), a click on a cell runs what a click on
-the pixels would, **q** and **Ctrl+C** quit (**q** is text inside a box). The watchtower and cards panel shows beside the page from 120 columns. `--node host:port`
+the pixels would, **d** shows **Designs** (a plain key like **q**, since every digit is taken and Ctrl+Shift+D is not told
+apart from Ctrl+D in terminals; it is text inside a box), **q** and **Ctrl+C** quit (**q** is text inside a box). The watchtower and cards panel shows beside the page from 120 columns. `--node host:port`
 flies a node on the LAN, as everywhere.
 
 A **page bar** (`TerminalRail`, built from `PilotChrome.Pages`, so a page added there shows here with no second list) runs
@@ -1288,9 +1289,15 @@ chooses emoji under Windows Terminal (`WT_SESSION`), VS Code, WezTerm, iTerm2 an
 changes is drawn blank for one frame, because Console.Lib's cell buffer would flush only the changed half of two emoji sharing
 a high surrogate (SharpAstro/Console.Lib#47).
 
-In a terminal under 88 columns, which 11 full entries need, every entry is 7 cells wide instead (the glyph's area one cell
-shorter, so a long glyph such as the ideas count is cut), which keeps all 11 on screen and clickable down to 77 columns; the
+In a terminal under 96 columns, which 12 full entries need, every entry is 6 cells wide instead (the glyph's area two cells
+shorter, so a long glyph such as the ideas count is cut), which keeps all 12 on screen and clickable down to 72 columns; the
 width is fixed for a given terminal width, so the bar does not shift.
+
+The **Designs** page (list and a design's page) is shown in pilot-tui too. A design's page embeds the prototype's own tree
+(`Player.BuildTree`, sized from the left column's share) as a node of the page's tree, so `CellLayout` arranges it with the page
+and a click or key reaches a goto, a button or a field as on any page; there is no PNG strip, the screens are a wrapped row of
+named buttons (`designs:screen:<id>`) with the current one active. The terminal wireframe sweep covers the list and a design's
+page at 80x24, 100x30, 160x44 and 250x60.
 
 The **terminal's title** (`TerminalTitle`, set through Console.Lib's `ITerminalViewport.Title`, which restores it on exit) reads
 `pilot · <page> · <node>`, led by `(N) ` when N cards wait on you, so a tab shows what is open and that something needs you. The
