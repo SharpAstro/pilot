@@ -310,7 +310,7 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
         var source = several ? $"{hereSessions.Source} · {filter.Choices.Count} nodes{(filter.All ? "" : $", showing {string.Join(", ", filter.Choices.Where(c => filter.Shows(c)).Select(c => c.Name))}")}" : hereSessions.Source;
         return new FleetPages(
             hereSessions with { Lines = sessions, Source = source },
-            new FlightsScreen(flights, several ? source : here.Flights(now).Source, now) { Admission = here.Flights(now).Admission, Rounds = rounds },
+            new FlightsScreen(flights, several ? source : here.Flights(now).Source, now) { Admission = here.Flights(now).Admission, Rounds = rounds, Archived = [.. reach.Where(f => !Unreachable(f.Reach) && f.Feed.ArchivedFlights > 0).Select(f => new ArchivedNode(Mark(f.Mark), f.Feed.ArchivedFlights))] },
             new JobsScreen(jobs, several ? source : here.JobsPage(now).Source, now),
             [.. shown.SelectMany(f => f.Feed.Jobs())],
             cards,

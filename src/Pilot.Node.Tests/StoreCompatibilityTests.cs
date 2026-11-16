@@ -40,11 +40,41 @@ public sealed class StoreCompatibilityTests : IDisposable
     {
         var target = Path.Combine(_folder, version);
         Directory.CreateDirectory(target);
-        foreach (var file in Directory.EnumerateFiles(Path.Combine(StoreFixtures, version)))
+        var from = Path.Combine(StoreFixtures, version);
+        foreach (var file in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories))
         {
-            File.Copy(file, Path.Combine(target, Path.GetFileName(file)));
+            var to = Path.Combine(target, Path.GetRelativePath(from, file));
+            Directory.CreateDirectory(Path.GetDirectoryName(to)!);
+            File.Copy(file, to);
         }
         return target;
+    }
+
+    /// <summary>The archive a fixture holds (contract 4 on) reads whole, and a flight it archived is not in the replayed state.</summary>
+    [Theory]
+    [MemberData(nameof(Versions))]
+    public void AnArchiveAFixtureHoldsReadsWholeAndItsFlightIsNotInTheState(string version)
+    {
+        var folder = Copy(version);
+        if (!Directory.Exists(Pilot.Node.Flights.FlightArchive.FolderIn(folder)))
+        {
+            return;
+        }
+        var archive = new Pilot.Node.Flights.FlightArchive(folder);
+        archive.Count.ShouldBeGreaterThan(0);
+        var whole = archive.Rows().Select(r => archive.Read(r.Code)).ToList();
+        whole.ShouldAllBe(a => a != null);
+        var asRead = NullMembers.Find([.. whole]);
+        Assert.True(asRead.Count == 0, Describe(version, "as read from the archive", asRead));
+
+        using var journal = new FileJournal(folder);
+        var state = new NodeState(journal, TimeProvider.System);
+        foreach (var archived in archive.Rows())
+        {
+            state.Flights().ShouldNotContain(f => f.Code == archived.Code);
+            state.Legs(archived.Code).ShouldBeEmpty();
+            state.Cards().ShouldNotContain(c => FlightMove.IsAbout(c, archived.Code) && c.Bin == CardBin.Handled);
+        }
     }
 
     private static string Describe(string version, string stage, IReadOnlyList<string> found) =>

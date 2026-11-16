@@ -17,6 +17,7 @@ internal sealed partial class FlightsView<TSurface>
         {
             buttons.Add(CardsView<TSurface>.IconPill(Layout.IconKind.Plus, "New flight", "flights:new", () => Wizard.Open(), square: AboutCard.HeaderButton));
         }
+        buttons.AddRange(ArchiveHeader(screen));
         // Discovering, discovery down, or an ask still waiting: nothing the dashboard waits for is invisible. The nodes heard
         // are not listed here: the node pills above and the Fleet page (with its Connect) show them, and a chip per node here
         // said it twice (SE1, 2026-10-24).

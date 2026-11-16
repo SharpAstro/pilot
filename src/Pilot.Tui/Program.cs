@@ -152,6 +152,8 @@ flights.Changed = Redraw;
 sessions.Changed = Redraw;
 flights.OnAction = action => Task.Run<string?>(async () =>
     clients.For(action.Node) is { } to ? await DashboardCommands.TryActAsync(to, action, Who, stop.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node));
+flights.OnReadArchived = (node, offset, count) => Task.Run(async () =>
+    clients.For(node, command: false) is { } to ? await DashboardCommands.ReadArchivedAsync(to, offset, count, Who, stop.Token, envelope => clients.NoteRefusal(node, envelope)) : (null, FleetClients.WatchOnly(node)));
 flights.OnOpen = location => flights.Say(DashboardCommands.Open(location) ? $"opened {location}" : $"could not open {location}");
 sessions.Transcript.Load = async (rowId, agent, after, ct) => (await clients.For(sessions.Transcript.Node, command: false)!.GetTranscriptAsync(rowId, after, ct, agent)) is { Success: true, Response: { } page }
     ? page

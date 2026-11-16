@@ -83,7 +83,12 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
     public (string Title, string Detail) Compose(DateTimeOffset since, DateTimeOffset now)
     {
         var flights = state.Flights();
-        var landed = flights.Where(f => f.LandedAt is { } at && at > since && at <= now).ToList();
+        // A flight that landed since the last digest is listed whether or not it was archived since: its light row says the same.
+        var landed = flights.Where(f => f.LandedAt is { } at && at > since && at <= now)
+            .Select(f => (f.Code, Title: f.Title ?? f.Item.Noun, Url: f.PullRequestUrl, At: f.LandedAt!.Value))
+            .Concat(state.ArchivedFlightRows().Where(a => a.LandedAt is { } at && at > since && at <= now)
+                .Select(a => (a.Code, Title: a.Title ?? $"issue #{a.Issue}", Url: a.PullRequestUrl, At: a.LandedAt!.Value)))
+            .OrderBy(f => f.At).ToList();
         var cards = state.Cards();
         var handled = cards.Where(c => c.Bin == CardBin.Handled && c.At > since && c.At <= now).OrderBy(c => c.At).ToList();
         var open = cards.Where(c => c.State == CardState.Open && c.Kind != Kind).ToList();
@@ -102,7 +107,7 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
         text.AppendLine(landed.Count == 0 ? "Landed: none." : "Landed:");
         foreach (var flight in landed)
         {
-            text.AppendLine($"- {flight.Code}: {flight.Title ?? flight.Item.Noun}{(flight.PullRequestUrl is { } url ? $" ({url})" : "")}");
+            text.AppendLine($"- {flight.Code}: {flight.Title}{(flight.Url is { } url ? $" ({url})" : "")}");
         }
         text.AppendLine(handled.Count == 0 ? "Handled: nothing." : "Handled:");
         foreach (var card in handled.Take(MaxLines))

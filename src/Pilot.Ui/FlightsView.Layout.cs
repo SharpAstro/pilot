@@ -162,6 +162,11 @@ internal sealed partial class FlightsView<TSurface>
             CloseWhy();
             return true;
         }
+        if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && _archivedOpen)
+        {
+            CloseArchived();
+            return true;
+        }
         // Enter opens the selected flight's page; Escape goes back to the table.
         if (evt is InputEvent.KeyDown { Key: InputKey.Enter } && !IsDetailOpen && Selected >= 0 && Selected < _screen.Lines.Count)
         {
@@ -195,15 +200,15 @@ internal sealed partial class FlightsView<TSurface>
         var selected = Selected >= 0 && Selected < screen.Lines.Count ? screen.Lines[Selected] : null;
         var open = OpenLine(whole ?? screen);
         // The wizard, or an open flight's page, takes the flights' place; the header stays.
-        var body = Wizard.IsOpen ? Wizard.Tree() : open is not null ? DetailPage(FlightDetail.From(open, screen.AsOf, Spend.FirstOrDefault(s => s.Flight == open.Code), Decisions.GetValueOrDefault(open.Code))) : Main(screen);
+        var body = Wizard.IsOpen ? Wizard.Tree() : open is not null ? DetailPage(FlightDetail.From(open, screen.AsOf, Spend.FirstOrDefault(s => s.Flight == open.Code), Decisions.GetValueOrDefault(open.Code))) : _archivedOpen ? ArchivedBody(screen) : Main(screen);
         var parts = new List<Layout.Node> { Header(screen) };
-        if (!Wizard.IsOpen && open is null)
+        if (!Wizard.IsOpen && open is null && !_archivedOpen)
         {
             // Flights whose move failed, in red above the table: what happened, and Retry move. The open flight's page has its own.
             parts.AddRange(MoveFailureBand.All<TSurface>(screen.Lines, P, RetryOf, presses: Presses).Select(band => Layout.Builder.VStack(band).Pad(Gutter, 4f).WStar().HAuto()));
         }
         parts.Add(body.HStar(1f, BodyMinHeight));
-        if (selected is not null && !Wizard.IsOpen && open is null)
+        if (selected is not null && !Wizard.IsOpen && open is null && !_archivedOpen)
         {
             // Its height is its content's, and no less than it needs: a window with less to give it (a header that wrapped onto many
             // lines) shows the table alone, which is what the page is for, rather than a panel past the window's foot.

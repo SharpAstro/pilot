@@ -156,8 +156,9 @@ public sealed partial class FlightCommander
             ?? throw new FlightException($"{path} is no git checkout");
         var repo = Path.GetFileName(repoPath);
         var flights = state.Flights();
-        var prefix = FlightCodes.PrefixFor(repo, flights);
-        var code = FlightCodes.Next(prefix, item.Id, flights)
+        var archived = state.ArchivedFlightRows();
+        var prefix = FlightCodes.PrefixFor(repo, flights, archived);
+        var code = FlightCodes.Next(prefix, item.Id, flights, archived)
             ?? throw new FlightException($"{prefix}{item.Id} and its suffixes {FlightCodes.Suffixes} are all taken");
 
         // A flight is flown by one node: a peer that flies this item, or the branch this flight would get, answers for it, and

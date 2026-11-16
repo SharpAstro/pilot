@@ -23,6 +23,7 @@ internal sealed partial class FlightsView<TSurface>
         {
             var refused = await Presses.PressAsync(code, hit, _ => send(action), say: why => $"refused: {action.Label}: {why}");
             Say(refused ?? $"ok: {action.Label}");
+            ReloadArchived();
             Presses.Changed?.Invoke();
         }
     }

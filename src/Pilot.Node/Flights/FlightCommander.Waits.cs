@@ -120,7 +120,10 @@ public sealed partial class FlightCommander
         }
         var flights = state.Flights().ToDictionary(f => f.Code, StringComparer.Ordinal);
         // A flight that went to another node is Landed here but has not landed: what waits for it keeps waiting.
-        var held = flight.PackageWaits.Length > 0 || flight.PeerConnections.Length > 0 || flight.Connections.Any(c => !flights.TryGetValue(c, out var other) || other.State != FlightState.Landed || other.MovedTo is not null);
+        var held = flight.PackageWaits.Length > 0 || flight.PeerConnections.Length > 0 || flight.Connections.Any(c => flights.TryGetValue(c, out var other)
+            ? other.State != FlightState.Landed || other.MovedTo is not null
+            // Not live: an archived flight is a landed one (unless it moved to another node); any other code is a flight not seen yet.
+            : state.ArchivedRow(c) is not { MovedTo: null });
         return flight with { State = held ? FlightState.Held : FlightState.Flying };
     }
 

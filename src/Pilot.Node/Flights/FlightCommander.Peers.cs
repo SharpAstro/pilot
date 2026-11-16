@@ -72,15 +72,41 @@ public sealed partial class FlightCommander
         }
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(PeerBudget);
-        foreach (var read in await Task.WhenAll(peers.Select(p => ReadPeerFlightsAsync(p, gitHub, budget.Token, cancellationToken))))
+        var reads = await Task.WhenAll(peers.Select(p => ReadPeerFlightsAsync(p, gitHub, budget.Token, cancellationToken)));
+        for (var i = 0; i < reads.Length; i++)
         {
+            var read = reads[i];
             if (read.Why is not null)
             {
                 why.Add(read.Why);
             }
-            found.AddRange((read.Flights ?? []).Where(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)).Select(f => new PeerFound(read.Node!, f)));
+            var rows = (read.Flights ?? []).Where(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)).Select(f => new PeerFound(read.Node!, f)).ToList();
+            if (rows.Count == 0 && read.Flights is not null && await ArchivedOnPeerAsync(peers[i], gitHub, code, budget.Token, cancellationToken) is { } archived)
+            {
+                // A flight the peer archived is no longer in its snapshot, but it is the landed flight it was: the peer is asked for it by name.
+                rows.Add(new PeerFound(read.Node!, archived));
+            }
+            found.AddRange(rows);
         }
         return (found, why);
+    }
+
+    /// <summary>
+    /// The flight <paramref name="code"/> as <paramref name="peer"/> archived it (<see cref="Verbs.ArchivedFlight"/>), when it did and the flight is of
+    /// <paramref name="gitHub"/>'s repo (by its name, as a flight's <c>Repo</c> is its checkout's folder); null when it did not, when it is an older node that refuses the verb, or when it cannot be asked.
+    /// </summary>
+    private static async Task<FlightRow?> ArchivedOnPeerAsync(IFleetPeer peer, string gitHub, string code, CancellationToken budget, CancellationToken caller)
+    {
+        try
+        {
+            var answer = await peer.SendAsync(new CommandRequest { Verb = Verbs.ArchivedFlight, Target = Verbs.FlightTarget(code), Who = "node" }, budget);
+            return answer is { Ok: true, ArchivedFlight: { } archived } && string.Equals(archived.Row.Repo, gitHub[(gitHub.LastIndexOf('/') + 1)..], StringComparison.OrdinalIgnoreCase) ? archived.Flight : null;
+        }
+        catch (Exception) when (!caller.IsCancellationRequested)
+        {
+            // Only a look for a flight the peer's snapshot did not list: whatever stops it, the flight is then simply not found there.
+            return null;
+        }
     }
 
     /// <summary>

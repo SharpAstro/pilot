@@ -14,6 +14,45 @@ public static partial class PilotCommand
     internal static string LandedHidden(int landed, string command = "pilot status --all") =>
         $"{landed} landed {(landed == 1 ? "flight" : "flights")} not shown: {command}";
 
+    /// <summary>How many archived flights <c>pilot status --archived</c> shows on a page.</summary>
+    internal const int ArchivedPageSize = 20;
+
+    private static string Date(DateTimeOffset when) => when.ToUniversalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    /// <summary>One page (<paramref name="number"/>, 1 based) of the archive's index: a line per flight, how many there are, and how to see the next page.</summary>
+    internal static string ArchivedList(ArchivedFlightsPage page, int number, bool markdown)
+    {
+        var from = (number - 1) * ArchivedPageSize;
+        var shownTo = from + page.Rows.Length;
+        var noun = page.Total == 1 ? "flight" : "flights";
+        var summary = page.Total == 0
+            ? "No archived flights."
+            : page.Rows.Length == 0
+                ? $"{page.Total} archived {noun}; page {number} is past the end"
+                : $"{page.Total} archived {noun}, {from + 1} to {shownTo}{(shownTo < page.Total ? $"; next page: pilot status --archived --page {number + 1}" : "")}";
+        var text = new System.Text.StringBuilder();
+        if (markdown)
+        {
+            text.AppendLine("# pilot status --archived").AppendLine().AppendLine(summary).AppendLine();
+            if (page.Rows.Length > 0)
+            {
+                text.AppendLine("| Code | Title | PR | Landed |").AppendLine("| --- | --- | --- | --- |");
+                foreach (var row in page.Rows)
+                {
+                    var pr = row.PullRequest is { } n ? (row.PullRequestUrl is { } url ? $"[#{n}]({url})" : $"#{n}") : "none";
+                    text.AppendLine($"| {row.Code} | {Markdown.Text(row.Title ?? "")} | {pr} | {(row.LandedAt is { } at ? Date(at) : "not stamped")} |");
+                }
+            }
+            return text.ToString();
+        }
+        foreach (var row in page.Rows)
+        {
+            text.AppendLine($"{row.Code}  {row.Title ?? "(no title)"}  ({row.Repo}, {(row.PullRequest is { } n ? $"PR #{n}" : "no PR")}, landed {(row.LandedAt is { } at ? Date(at) : "(not stamped)")})");
+        }
+        text.AppendLine(summary);
+        return text.ToString();
+    }
+
     /// <summary>The <c>Opus n/cap</c> line (with <c>peers not counted</c> when so) and the flights waiting for admission with why; nothing from a node that has not said.</summary>
     internal static IEnumerable<string> AdmissionLines(SnapshotEvent snapshot)
     {
@@ -190,9 +229,37 @@ public static partial class PilotCommand
         {
             // status, sessions
             var allFlights = new Option<bool>("--all") { Description = "Landed flights too, not only the ones in the air" };
-            var status = Action(new Command("status", "Flights in the air, their legs and artifacts, open cards, and live sessions") { Options = { allFlights } }, async (parseResult, client, ct) =>
+            var archivedFlights = new Option<bool>("--archived") { Description = "The archived flights (landed ones the node put away), newest landed first: code, title, PR and when it landed; --all lists the live state instead" };
+            var archivedPage = new Option<int>("--page") { Description = "With --archived, which page (1 is the newest; a page holds " + ArchivedPageSize + ")", DefaultValueFactory = _ => 1 };
+            var statusCode = new Argument<string?>("code") { Description = "One flight's code, as TIA1611: it shows whatever its state, an archived flight too (marked archived)", Arity = ArgumentArity.ZeroOrOne };
+            var status = Action(new Command("status", "Flights in the air, their legs and artifacts, open cards, and live sessions; --all adds the landed flights not yet archived, --archived lists the archived ones") { Arguments = { statusCode }, Options = { allFlights, archivedFlights, archivedPage } }, async (parseResult, client, ct) =>
             {
+                if (parseResult.GetValue(archivedFlights))
+                {
+                    var number = Math.Max(1, parseResult.GetValue(archivedPage));
+                    var listed = await client.SendAsync(new CommandRequest { Verb = Verbs.ArchivedFlights, Target = Verbs.NodeTarget, Args = [((number - 1) * ArchivedPageSize).ToString(CultureInfo.InvariantCulture), ArchivedPageSize.ToString(CultureInfo.InvariantCulture)], Who = who }, ct);
+                    if (listed is not { Success: true, Response: { Ok: true, ArchivedFlights: { } archivedRows } })
+                    {
+                        await output.WriteLineAsync($"refused: status --archived: {listed.Response?.Error ?? listed.Error}");
+                        return 1;
+                    }
+                    await WriteAsync(parseResult.GetValue(outputFormat), () => ArchivedList(archivedRows, number, markdown: false), () => ArchivedList(archivedRows, number, markdown: true));
+                    return 0;
+                }
                 var snapshot = await SnapshotAsync(client, ct);
+                var asked = parseResult.GetValue(statusCode);
+                if (asked is { Length: > 0 } && !snapshot.Flights.Any(f => string.Equals(f.Code, asked, StringComparison.OrdinalIgnoreCase)))
+                {
+                    var read = await client.SendAsync(new CommandRequest { Verb = Verbs.ArchivedFlight, Target = Verbs.FlightTarget(asked.ToUpperInvariant()), Who = who }, ct);
+                    if (read is { Success: true, Response: { Ok: true, ArchivedFlight: { } whole } })
+                    {
+                        var shown = snapshot with { Flights = [whole.Flight], Legs = whole.Legs };
+                        var mark = $"archived {Date(whole.Row.ArchivedAt)}, landed {(whole.Row.LandedAt is { } landedAt ? Date(landedAt) : "(not stamped)")}; pilot flight archive {whole.Row.Code} --undo brings it back";
+                        await WriteAsync(parseResult.GetValue(outputFormat), () => $"archived  {mark}\n" + Status(shown, code: whole.Row.Code),
+                            () => $"_archived: {mark}_\n\n" + StatusMarkdown.Build(shown, all: true, code: whole.Row.Code));
+                        return 0;
+                    }
+                }
                 var maintenance = false;
                 string? reboot = null;
                 bool? autopilot = null;
@@ -224,8 +291,8 @@ public static partial class PilotCommand
                 var everyFlight = parseResult.GetValue(allFlights);
                 var format = parseResult.GetValue(outputFormat);
                 var copies = format is "plain" or "text" ? new Dictionary<string, string>() : await AttachmentCopies.ResolveAsync(AttachmentCopies.Of(snapshot), client, dataFolder, ct);
-                await WriteAsync(format, () => Status(snapshot, maintenance: maintenance, autopilot: autopilot, all: everyFlight, sendTimings: timings, commandTimings: commandTimings, heap: heap, reboot: reboot, thisNode: thisNode, canRunGui: canRunGui, guiReason: guiReason),
-                    () => StatusMarkdown.Build(snapshot, maintenance, autopilot, everyFlight, copies, timings, commandTimings, heap, reboot, thisNode));
+                await WriteAsync(format, () => Status(snapshot, code: asked, maintenance: maintenance, autopilot: autopilot, all: everyFlight, sendTimings: timings, commandTimings: commandTimings, heap: heap, reboot: reboot, thisNode: thisNode, canRunGui: canRunGui, guiReason: guiReason),
+                    () => StatusMarkdown.Build(snapshot, maintenance, autopilot, everyFlight, copies, timings, commandTimings, heap, reboot, thisNode, asked));
                 return 0;
             });
             var attachmentsOwner = new Argument<string?>("flight-or-session") { Description = "A flight's code or a session's name; none lists every one", Arity = ArgumentArity.ZeroOrOne };

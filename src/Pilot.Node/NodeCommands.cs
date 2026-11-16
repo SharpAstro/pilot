@@ -565,6 +565,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return await Get<PrReviews>().RunAsync(command, cancellationToken);
         }
+        if (FlightArchiver.Handles(command.Verb))
+        {
+            return await Get<FlightArchiver>().RunAsync(command, cancellationToken);
+        }
         if (FlightCommander.Handles(command.Verb))
         {
             return await Get<FlightCommander>().RunAsync(command, cancellationToken);

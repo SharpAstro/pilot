@@ -89,6 +89,25 @@ internal static class DashboardCommands
         }
     }
 
+    /// <summary>One page of a node's archive index through the archive read verb: the page, or the node's refusal in its words.</summary>
+    public static async Task<(Pilot.Contracts.ArchivedFlightsPage? Page, string? Refused)> ReadArchivedAsync(NodeClient client, int offset, int count, string who, CancellationToken cancellationToken, Action<ResponseEnvelope<Pilot.Contracts.CommandResult>>? answered = null)
+    {
+        try
+        {
+            var envelope = await client.SendAsync(new CommandRequest
+            {
+                Verb = Verbs.ArchivedFlights, Target = Verbs.NodeTarget,
+                Args = [offset.ToString(System.Globalization.CultureInfo.InvariantCulture), count.ToString(System.Globalization.CultureInfo.InvariantCulture)], Who = who,
+            }, cancellationToken);
+            answered?.Invoke(envelope);
+            return RefusalOf(envelope) is { } refused ? (null, refused) : (envelope.Response?.ArchivedFlights, null);
+        }
+        catch (Exception ex) when (ex is System.Net.Sockets.SocketException || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            return (null, ex.Message);
+        }
+    }
+
     /// <summary>One action's verb on the node, as <see cref="AskAsync"/>: its refusal, or null when it was taken.</summary>
     public static Task<string?> TryActAsync(NodeClient client, FlightAction action, string who, CancellationToken cancellationToken, Action<ResponseEnvelope<Pilot.Contracts.CommandResult>>? answered = null) =>
         AskAsync(client, new CommandRequest { Verb = action.Verb, Target = action.Target, Args = action.Args, Who = who }, cancellationToken, answered);
