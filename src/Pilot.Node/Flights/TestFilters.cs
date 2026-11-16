@@ -97,6 +97,78 @@ public static class TestFilters
         return found;
     }
 
+    /// <summary>Whether <paramref name="option"/> is a Platform option, not VSTest's.</summary>
+    public static bool IsPlatform(string option) => !option.Equals(VsTest, StringComparison.OrdinalIgnoreCase) && Names.Contains(option);
+
+    /// <summary>
+    /// <paramref name="segment"/> with <paramref name="args"/> added after its last argument, before a bare <c>--</c> when it has one.
+    /// </summary>
+    public static string Append(string segment, string args)
+    {
+        var tokens = CheckPaths.Tokenize(segment);
+        var cursor = 0;
+        var end = 0;
+        foreach (var token in tokens)
+        {
+            var found = segment.IndexOf(token.Raw, cursor, StringComparison.Ordinal);
+            if (found < 0)
+            {
+                return segment;
+            }
+            if (token.Value == "--")
+            {
+                break;
+            }
+            cursor = found + token.Raw.Length;
+            end = cursor;
+        }
+        return string.Concat(segment.AsSpan(0, end), " ", args, segment.AsSpan(end));
+    }
+
+    /// <summary>
+    /// <paramref name="segment"/> with every Platform filter option and its values taken out (VSTest's <c>--filter</c> too when
+    /// <paramref name="includeVsTest"/>), stopping at a bare <c>--</c>.
+    /// </summary>
+    public static string Remove(string segment, bool includeVsTest)
+    {
+        var tokens = CheckPaths.Tokenize(segment);
+        var words = tokens.Select(t => t.Value).ToList();
+        var where = new int[tokens.Count];
+        var cursor = 0;
+        for (var t = 0; t < tokens.Count; t++)
+        {
+            var found = segment.IndexOf(tokens[t].Raw, cursor, StringComparison.Ordinal);
+            if (found < 0)
+            {
+                return segment;
+            }
+            where[t] = found;
+            cursor = found + tokens[t].Raw.Length;
+        }
+        var ranges = new List<(int From, int To)>();
+        for (var i = 0; i < words.Count && words[i] != "--"; i++)
+        {
+            if (!IsFilterOption(words[i]) || (IsVsTest(words[i]) && !includeVsTest))
+            {
+                continue;
+            }
+            var last = i + ValueCount(words, i);
+            ranges.Add((where[i], where[last] + tokens[last].Raw.Length));
+            i = last;
+        }
+        var result = segment;
+        for (var r = ranges.Count - 1; r >= 0; r--)
+        {
+            var from = ranges[r].From;
+            while (from > 0 && result[from - 1] == ' ')
+            {
+                from--;
+            }
+            result = string.Concat(result.AsSpan(0, from), result.AsSpan(ranges[r].To));
+        }
+        return result;
+    }
+
     /// <summary>The filters of <paramref name="tokens"/> sorted by option then value (ordinal), so argument order never changes a key.</summary>
     public static List<(string Option, string Value)> Sorted(IEnumerable<string> tokens) =>
         [.. Read(tokens).OrderBy(f => f.Option, StringComparer.Ordinal).ThenBy(f => f.Value, StringComparer.Ordinal)];

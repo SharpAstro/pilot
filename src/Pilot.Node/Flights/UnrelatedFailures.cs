@@ -70,14 +70,21 @@ public static partial class UnrelatedFailures
     public static IReadOnlyList<string> FilterNames(string check)
     {
         var names = new List<string>();
-        foreach (var expression in Filters(check))
+        foreach (var (option, text) in Filters(check))
         {
-            foreach (Match m in FilterTerm().Matches(expression))
+            if (TestFilters.IsVsTest(option))
             {
-                if (!m.Groups["op"].Value.StartsWith('!') && m.Groups["value"].Value.Trim() is { Length: > 0 } value)
+                foreach (Match m in FilterTerm().Matches(text))
                 {
-                    names.Add(value);
+                    if (!m.Groups["op"].Value.StartsWith('!') && m.Groups["value"].Value.Trim() is { Length: > 0 } value)
+                    {
+                        names.Add(value);
+                    }
                 }
+            }
+            else if (option is "--filter-class" or "--filter-method" or "--filter-namespace" && text.Trim('*', ' ') is { Length: > 0 } name)
+            {
+                names.Add(name);
             }
         }
         return names;
@@ -151,7 +158,10 @@ public static partial class UnrelatedFailures
     /// be rewritten.
     /// </summary>
     public static string? Only(string check, string test) =>
-        test.Contains('\'') ? null : Refilter(check, _ => $"FullyQualifiedName~{test}");
+        test.Contains('\'') ? null : Refilter(
+            check,
+            _ => $"FullyQualifiedName~{test}",
+            segment => TestFilters.Append(TestFilters.Remove(segment, includeVsTest: true), $"--filter-method {test}"));
 
     /// <summary>
     /// The check with each <c>dotnet test</c> segment told to leave out <paramref name="classes"/>: its filter becomes
@@ -165,11 +175,13 @@ public static partial class UnrelatedFailures
             return check;
         }
         var without = string.Join('&', classes.Order(StringComparer.Ordinal).Select(c => "FullyQualifiedName!~" + c));
-        return Refilter(check, expression => expression is null ? without : $"({expression})&{without}");
+        var platform = string.Join(' ', classes.Order(StringComparer.Ordinal).Select(c => "--filter-not-class " + c));
+        return Refilter(check, expression => expression is null ? without : $"({expression})&{without}", segment => TestFilters.Append(segment, platform));
     }
 
-    // Each dotnet test segment's filter replaced by what `filter` makes of it (null: the segment had none); null when none changed.
-    private static string? Refilter(string check, Func<string?, string> filter)
+    // Each dotnet test segment's filter replaced by what `filter` makes of it (null: the segment had none); a segment carrying Platform
+    // filters is rewritten by `platform` instead, since VSTest's --filter cannot sit beside them. Null when none changed.
+    private static string? Refilter(string check, Func<string?, string> filter, Func<string, string> platform)
     {
         var result = check;
         var cursor = 0;
@@ -181,7 +193,7 @@ public static partial class UnrelatedFailures
             {
                 continue;
             }
-            var rewritten = Rewrite(segment, filter);
+            var rewritten = HasPlatformFilter(segment) ? platform(segment) : Rewrite(segment, filter);
             changed |= rewritten != segment;
             result = string.Concat(result.AsSpan(0, at), rewritten, result.AsSpan(at + segment.Length));
             cursor = at + rewritten.Length;
@@ -234,28 +246,29 @@ public static partial class UnrelatedFailures
     private static bool Word(string text, string word) =>
         word.Length > 0 && Regex.IsMatch(text, $@"(?<![\w]){Regex.Escape(word)}(?![\w])");
 
-    private static IEnumerable<string> Filters(string check)
+    // Every filter of every dotnet test segment as (option, value).
+    private static IEnumerable<(string Option, string Value)> Filters(string check)
     {
         foreach (var segment in CheckPaths.Segments(check))
         {
             var tokens = CheckPaths.Tokenize(segment);
             var start = DotnetTest(tokens);
-            if (start < 0)
+            if (start >= 0)
             {
-                continue;
-            }
-            for (var i = start + 2; i < tokens.Count && tokens[i].Value != "--"; i++)
-            {
-                if (tokens[i].Value.Equals("--filter", StringComparison.OrdinalIgnoreCase) && i + 1 < tokens.Count)
+                foreach (var filter in TestFilters.Read(tokens.Skip(start + 2).Select(t => t.Value)))
                 {
-                    yield return tokens[i + 1].Value;
-                }
-                else if (tokens[i].Value.StartsWith("--filter=", StringComparison.OrdinalIgnoreCase))
-                {
-                    yield return tokens[i].Value["--filter=".Length..];
+                    yield return filter;
                 }
             }
         }
+    }
+
+    // Whether the segment is a dotnet test carrying a Microsoft.Testing.Platform filter option.
+    private static bool HasPlatformFilter(string segment)
+    {
+        var tokens = CheckPaths.Tokenize(segment);
+        var start = DotnetTest(tokens);
+        return start >= 0 && TestFilters.Read(tokens.Skip(start + 2).Select(t => t.Value)).Any(f => TestFilters.IsPlatform(f.Option));
     }
 
     // The index of a segment's "dotnet" when it is a dotnet test, else -1.
@@ -295,14 +308,14 @@ public static partial class UnrelatedFailures
             string? expression = null;
             var prefix = "";
             var index = i;
-            if (tokens[i].Value.Equals("--filter", StringComparison.OrdinalIgnoreCase) && i + 1 < tokens.Count)
+            if (TestFilters.IsVsTest(tokens[i].Value) && !tokens[i].Value.Contains('=') && i + 1 < tokens.Count)
             {
                 expression = tokens[i + 1].Value;
                 index = i + 1;
             }
-            else if (tokens[i].Value.StartsWith("--filter=", StringComparison.OrdinalIgnoreCase))
+            else if (TestFilters.IsVsTest(tokens[i].Value) && tokens[i].Value.Contains('='))
             {
-                prefix = "--filter=";
+                prefix = TestFilters.VsTest + "=";
                 expression = tokens[i].Value[prefix.Length..];
             }
             if (expression is null)
@@ -318,7 +331,7 @@ public static partial class UnrelatedFailures
         }
         // No filter: one goes in right after "dotnet test".
         var after = where[start + 1] + tokens[start + 1].Raw.Length;
-        return string.Concat(segment.AsSpan(0, after), $" --filter '{filter(null)}'", segment.AsSpan(after));
+        return string.Concat(segment.AsSpan(0, after), $" {TestFilters.VsTest} '{filter(null)}'", segment.AsSpan(after));
     }
 
     [GeneratedRegex(@"(?<key>FullyQualifiedName|ClassName|DisplayName|Name)\s*(?<op>!?[~=])\s*(?<value>[^|&()'""]+)")]

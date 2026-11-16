@@ -452,4 +452,23 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
         UnrelatedFailures.FailedTests("error CS1002: ; expected").ShouldBeNull();
         UnrelatedFailures.FailedTests(Failing("Ns.BarTests.Breaks(x: 1)")).ShouldBe(["BarTests.Breaks"]);
     }
+
+    [Fact]
+    public void FilterNamesReadsClassMethodAndNamespaceNamesFromPlatformFilters()
+    {
+        var check = "dotnet test T -c Release --filter-class *FooTests --filter-method Bar.Baz Bar.Qux --filter-namespace=Ns.* --filter-not-class Skipped --filter-trait Category=X";
+        UnrelatedFailures.FilterNames(check).ShouldBe(["FooTests", "Bar.Baz", "Bar.Qux", "Ns."]);
+    }
+
+    [Fact]
+    public void ExcludingAndOnlyRewritePlatformChecksInPlatformTermsNeverBesideAVsTestFilter()
+    {
+        var check = "dotnet test T -c Release --filter-class FooTests -- --report-trx";
+        UnrelatedFailures.Excluding(check, ["B", "A"]).ShouldBe(
+            "dotnet test T -c Release --filter-class FooTests --filter-not-class A --filter-not-class B -- --report-trx");
+        UnrelatedFailures.Only(check, "EphemerisTests.Loads").ShouldBe(
+            "dotnet test T -c Release --filter-method EphemerisTests.Loads -- --report-trx");
+        UnrelatedFailures.Only("dotnet test T --filter-class A --filter-method B.C", "X.Y").ShouldBe("dotnet test T --filter-method X.Y");
+        UnrelatedFailures.Excluding(check, ["A"])!.Replace("--filter-", "").ShouldNotContain("--filter");
+    }
 }
