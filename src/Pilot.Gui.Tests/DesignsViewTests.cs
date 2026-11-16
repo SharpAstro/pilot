@@ -58,6 +58,13 @@ public sealed class DesignsViewTests
         public void Dispose() => _renderer.Dispose();
     }
 
+    private static List<ClickableRegion> Painted<TView>(TView view) where TView : PixelWidgetBase<RgbaImage>
+    {
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        return regions;
+    }
+
     private static List<string> TextsOf(Rig rig) =>
         SentenceRuns.Texts(rig.View.Tree(rig.Screen) is { } tree ? Layout.Engine.Arrange(tree, new Rect<float>(0, 0, 1400, 900), new PixelMeasureContext<RgbaImage>(rig.Renderer, SessionsCapture.FontPath, 1f)).Select(a => a.Node) : []);
 
@@ -68,11 +75,8 @@ public sealed class DesignsViewTests
         rig.Paint();
 
         var texts = TextsOf(rig);
-        texts.ShouldContain("DSN-1");
-        texts.ShouldContain("Design 0");
-        texts.ShouldContain("v2");
-        texts.ShouldContain("SharpAstro/pilot");
-        texts.ShouldContain("2026-11-16 09:00");
+        texts.ShouldContain("DSN-1  Design 0");
+        texts.ShouldContain("v2 · SharpAstro/pilot · 2026-11-16 09:00");
         texts.ShouldContain("3 designs");
     }
 
@@ -98,6 +102,8 @@ public sealed class DesignsViewTests
         rig.View.Open("DSN-1");
         rig.Paint();
 
+        rig.Chrome.Page.ShouldBe(PilotPage.Designs);
+        rig.View.OpenId.ShouldBe("DSN-1");
         rig.View.Player.ShouldNotBeNull();
         rig.View.Player.CurrentScreen.Id.ShouldBe("home");
         var texts = TextsOf(rig);
@@ -119,8 +125,8 @@ public sealed class DesignsViewTests
         var player = rig.View.Player!;
 
         // The prototype's "Open settings" is a goto:settings action; the player registers it as a button.
-        var open = player.GetRegisteredRegions().Where(r => r.Result is HitResult.ButtonHit { Action: "goto:settings" } or HitResult.ButtonHit { Action: "settings" }).ToList();
-        open = open.Count > 0 ? open : [.. player.GetRegisteredRegions().Where(r => r.Result is HitResult.ButtonHit { Action: { } a } && a.Contains("settings", StringComparison.Ordinal))];
+        var open = Painted(player).Where(r => r.Result is HitResult.ButtonHit { Action: "goto:settings" } or HitResult.ButtonHit { Action: "settings" }).ToList();
+        open = open.Count > 0 ? open : [.. Painted(player).Where(r => r.Result is HitResult.ButtonHit { Action: { } a } && a.Contains("settings", StringComparison.Ordinal))];
         open.ShouldNotBeEmpty("the prototype's goto button is among the player's regions");
         rig.Click(open[0]);
 
@@ -140,8 +146,8 @@ public sealed class DesignsViewTests
 
         var versions = new List<int>();
         rig.View.OnVersion = (_, n) => versions.Add(n);
-        var page = rig.View.GetRegisteredRegions();
-        var playerRects = player.GetRegisteredRegions().ToList();
+        var page = Painted(rig.View);
+        var playerRects = Painted(player).ToList();
 
         var control = rig.Region(page, h => h is HitResult.ButtonHit { Action: "designs:version:1" });
         playerRects.ShouldAllBe(p => control.X + control.Width <= p.X || p.X + p.Width <= control.X || control.Y + control.Height <= p.Y || p.Y + p.Height <= control.Y);
@@ -159,7 +165,7 @@ public sealed class DesignsViewTests
         rig.Paint();
         rig.View.Player!.CurrentScreen.Id.ShouldBe("home");
 
-        rig.Click(rig.Region(rig.View.GetRegisteredRegions(), h => h is HitResult.ButtonHit { Action: "designs:screen:settings" }));
+        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:screen:settings" }));
 
         rig.View.Player!.CurrentScreen.Id.ShouldBe("settings");
     }
@@ -172,7 +178,7 @@ public sealed class DesignsViewTests
         rig.View.OnOpen = opened.Add;
         rig.Paint();
 
-        rig.Click(rig.Region(rig.View.GetRegisteredRegions(), h => h is HitResult.ButtonHit { Action: "designs:open:DSN-2" }));
+        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:open:DSN-2" }));
 
         opened.ShouldBe(["DSN-2"]);
         rig.View.OpenId.ShouldBe("DSN-2");
