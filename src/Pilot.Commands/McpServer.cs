@@ -82,7 +82,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         new("pilot://sessions", "sessions", "Every Claude session the node knows", Json),
     ];
 
-    private readonly Dictionary<string, (string[] Path, Command Command)> _tools = Tools(PilotCommand.Build(cwd, TextWriter.Null, TextWriter.Null, "mcp", agent: true));
+    private readonly Dictionary<string, (string[] Path, Command[] Chain)> _tools = Tools(PilotCommand.Build(cwd, TextWriter.Null, TextWriter.Null, "mcp", agent: true));
 
     private (string? Node, bool Here, string? Why)? _resolved;
 
@@ -408,7 +408,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
             {
                 "initialize" => Reply(answering, Initialize(Params(request, McpJsonContext.Default.InitializeParams)), McpJsonContext.Default.InitializeResult),
                 "ping" => Reply(answering, new EmptyResult(), McpJsonContext.Default.EmptyResult),
-                "tools/list" => Reply(answering, new ToolsListResult([.. _tools.Select(t => Describe(t.Key, t.Value.Path, t.Value.Command))]), McpJsonContext.Default.ToolsListResult),
+                "tools/list" => Reply(answering, new ToolsListResult([.. _tools.Select(t => Describe(t.Key, t.Value.Path, t.Value.Chain))]), McpJsonContext.Default.ToolsListResult),
                 "tools/call" => Reply(answering, await CallAsync(Params(request, McpJsonContext.Default.ToolCallParams), cancellationToken), McpJsonContext.Default.ToolCallResult),
                 "resources/list" => Reply(answering, new ResourcesListResult(Resources), McpJsonContext.Default.ResourcesListResult),
                 "resources/read" => Reply(answering, await ReadAsync(Params(request, McpJsonContext.Default.ResourceReadParams), cancellationToken), McpJsonContext.Default.ResourceReadResult),
@@ -457,7 +457,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         }
         var given = call.Arguments;
         string? named = null;
-        if (!OwnsNode(tool.Command) && given is not null && given.TryGetValue(NodeKey, out var nodeValue))
+        if (!OwnsNode(tool.Chain) && given is not null && given.TryGetValue(NodeKey, out var nodeValue))
         {
             given = new Dictionary<string, JsonElement>(given);
             given.Remove(NodeKey);
@@ -473,7 +473,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         string[] args;
         try
         {
-            args = Spell(tool.Path, tool.Command, given);
+            args = Spell(tool.Path, tool.Chain, given);
         }
         catch (PilotCommand.UsageException ex)
         {
@@ -571,27 +571,28 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
     /// <summary>The property every tool takes to name the node it runs on.</summary>
     internal const string NodeKey = "node";
 
-    /// <summary>Whether the command has its own argument or option named <c>node</c> (connect's): then that is what the key means, and the call stays on the server's node.</summary>
-    private static bool OwnsNode(Command command) =>
-        command.Arguments.Any(a => !a.Hidden && a.Name == NodeKey) || OwnOptions(command).Any(o => Key(o) == NodeKey);
+    /// <summary>Whether a command of the chain has its own argument or option named <c>node</c> (connect's): then that is what the key means, and the call stays on the server's node.</summary>
+    private static bool OwnsNode(Command[] chain) =>
+        chain.Any(command => command.Arguments.Any(a => !a.Hidden && a.Name == NodeKey) || OwnOptions(command).Any(o => Key(o) == NodeKey));
 
-    /// <summary>Every command with an action, by its tool name: its path from the root, joined with <c>_</c>.</summary>
-    internal static Dictionary<string, (string[] Path, Command Command)> Tools(RootCommand root)
+    /// <summary>Every command with an action, by its tool name: its path from the root, joined with <c>_</c>, and the chain of commands along it (root excluded, the command itself last).</summary>
+    internal static Dictionary<string, (string[] Path, Command[] Chain)> Tools(RootCommand root)
     {
-        var tools = new Dictionary<string, (string[], Command)>(StringComparer.Ordinal);
-        void Walk(Command command, string[] path)
+        var tools = new Dictionary<string, (string[], Command[])>(StringComparer.Ordinal);
+        void Walk(Command command, string[] path, Command[] chain)
         {
             foreach (var sub in command.Subcommands.Where(c => !c.Hidden))
             {
                 string[] at = [.. path, sub.Name];
+                Command[] below = [.. chain, sub];
                 if (sub.Action is not null)
                 {
-                    tools.Add(string.Join('_', at), (at, sub));
+                    tools.Add(string.Join('_', at), (at, below));
                 }
-                Walk(sub, at);
+                Walk(sub, at, below);
             }
         }
-        Walk(root, []);
+        Walk(root, [], []);
         return tools;
     }
 
@@ -599,35 +600,60 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
     private static IEnumerable<Option> OwnOptions(Command command) =>
         command.Options.Where(o => !o.Hidden && o is not (HelpOption or VersionOption));
 
+    /// <summary>
+    /// The arguments and options of an ancestor command that scope its subcommands, as <c>command:key</c>: <c>job</c>'s id is read by
+    /// <c>artifact</c> from its parent's closure. Another parent's own are the input of its own action (<c>order</c>'s text, <c>repos</c>'s
+    /// <c>--all</c>) that a subcommand ignores, so a tool does not carry or require them.
+    /// </summary>
+    internal static readonly string[] ScopingKeys = ["job:job"];
+
+    /// <summary>The visible arguments of a command of the chain as the tool takes them: all of the leaf's, only the scoping ones of an ancestor.</summary>
+    private static IEnumerable<Argument> ArgumentsOf(Command[] chain, Command command) =>
+        command.Arguments.Where(a => !a.Hidden && (command == chain[^1] || ScopingKeys.Contains($"{command.Name}:{a.Name}")));
+
+    /// <summary>The own options of a command of the chain as the tool takes them: all of the leaf's, only the scoping ones of an ancestor.</summary>
+    private static IEnumerable<Option> OptionsOf(Command[] chain, Command command) =>
+        OwnOptions(command).Where(o => command == chain[^1] || ScopingKeys.Contains($"{command.Name}:{Key(o)}"));
+
     /// <summary>A property's name for an option: its long name without the dashes, as <c>done-when</c>.</summary>
     private static string Key(Option option) => option.Name.TrimStart('-');
 
     /// <summary>The tool for a command: its description and path, and an input schema from its arguments and options.</summary>
-    internal static McpTool Describe(string name, string[] path, Command command)
+    internal static McpTool Describe(string name, string[] path, Command[] chain)
     {
         var properties = new Dictionary<string, PropertySchema>(StringComparer.Ordinal);
         var required = new List<string>();
-        foreach (var argument in command.Arguments.Where(a => !a.Hidden))
+        // The leaf's own arguments and options come first, so on a name clash the leaf's is the one kept.
+        foreach (var command in chain.Reverse())
         {
-            properties[argument.Name] = Schema(argument.ValueType, argument.Description, argument.GetCompletions(CompletionContext.Empty));
-            if (argument.Arity.MinimumNumberOfValues > 0)
+            foreach (var argument in ArgumentsOf(chain, command))
             {
-                required.Add(argument.Name);
+                if (!properties.TryAdd(argument.Name, Schema(argument.ValueType, argument.Description, argument.GetCompletions(CompletionContext.Empty))))
+                {
+                    continue;
+                }
+                if (argument.Arity.MinimumNumberOfValues > 0)
+                {
+                    required.Add(argument.Name);
+                }
+            }
+            foreach (var option in OptionsOf(chain, command))
+            {
+                if (!properties.TryAdd(Key(option), Schema(option.ValueType, option.Description, option.GetCompletions(CompletionContext.Empty))))
+                {
+                    continue;
+                }
+                if (option.Required)
+                {
+                    required.Add(Key(option));
+                }
             }
         }
-        foreach (var option in OwnOptions(command))
-        {
-            properties[Key(option)] = Schema(option.ValueType, option.Description, option.GetCompletions(CompletionContext.Empty));
-            if (option.Required)
-            {
-                required.Add(Key(option));
-            }
-        }
-        if (!OwnsNode(command))
+        if (!OwnsNode(chain))
         {
             properties[NodeKey] = new PropertySchema("string", "The node to run on: a name like DE1, a host, or host:port, as the nodes tool lists them (default: the node pilot mcp started with)");
         }
-        return new McpTool(name, $"{command.Description} (pilot {string.Join(' ', path)})", new ToolSchema(properties, [.. required]));
+        return new McpTool(name, $"{chain[^1].Description} (pilot {string.Join(' ', path)})", new ToolSchema(properties, [.. required]));
     }
 
     private static PropertySchema Schema(Type type, string? description, IEnumerable<CompletionItem> completions)
@@ -646,41 +672,75 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
     }
 
     /// <summary>
-    /// A call's arguments spelled back into the command line the CLI parses: options as <c>--name=value</c> (a value
-    /// that starts with a dash stays a value), then the arguments in the command's order after <c>--</c>, so a word like
-    /// <c>-x</c> in a report is a word.
+    /// A call's arguments spelled back into the command line the CLI parses, command by command: each command word, then
+    /// that command's own options as <c>--name=value</c> (a value that starts with a dash stays a value). The leaf's
+    /// arguments follow after <c>--</c>, so a word like <c>-x</c> in a report is a word; an ancestor's arguments go right
+    /// after its name, before the next command word, as <c>job j6006 artifact --out=x -- shot.png</c>. A name an ancestor
+    /// shares with the leaf belongs to the leaf.
     /// </summary>
-    internal static string[] Spell(string[] path, Command command, Dictionary<string, JsonElement>? given)
+    internal static string[] Spell(string[] path, Command[] chain, Dictionary<string, JsonElement>? given)
     {
         given ??= [];
-        var options = OwnOptions(command).ToDictionary(Key, StringComparer.Ordinal);
-        var arguments = command.Arguments.Where(a => !a.Hidden).ToDictionary(a => a.Name, StringComparer.Ordinal);
-        if (given.Keys.FirstOrDefault(k => !options.ContainsKey(k) && !arguments.ContainsKey(k)) is { } unknown)
+        var keys = chain.SelectMany(c => ArgumentsOf(chain, c).Select(a => a.Name).Concat(OptionsOf(chain, c).Select(Key))).Distinct(StringComparer.Ordinal).ToList();
+        if (given.Keys.FirstOrDefault(k => !keys.Contains(k, StringComparer.Ordinal)) is { } unknown)
         {
-            throw new PilotCommand.UsageException($"{string.Join(' ', path)} takes no {unknown}; it takes {string.Join(", ", arguments.Keys.Concat(options.Keys))}");
+            throw new PilotCommand.UsageException($"{string.Join(' ', path)} takes no {unknown}; it takes {string.Join(", ", keys)}");
         }
-        var args = new List<string>(path);
-        foreach (var (key, option) in options)
+        var args = new List<string>();
+        var claimed = new HashSet<string>(StringComparer.Ordinal);
+        // The leaf claims its names first.
+        var owned = new Dictionary<Command, (List<Option> Options, List<Argument> Arguments)>();
+        foreach (var command in chain.Reverse())
         {
-            if (!given.TryGetValue(key, out var value))
+            owned[command] = ([.. OptionsOf(chain, command).Where(o => claimed.Add(Key(o)))], [.. ArgumentsOf(chain, command).Where(a => claimed.Add(a.Name))]);
+        }
+        for (var i = 0; i < chain.Length; i++)
+        {
+            var command = chain[i];
+            var (options, arguments) = owned[command];
+            args.Add(path[i]);
+            foreach (var option in options)
             {
-                continue;
-            }
-            if (option.ValueType == typeof(bool))
-            {
-                if (value.ValueKind == JsonValueKind.True || (value.ValueKind == JsonValueKind.String && bool.TryParse(value.GetString(), out var on) && on))
+                var key = Key(option);
+                if (!given.TryGetValue(key, out var value))
                 {
-                    args.Add(option.Name);
+                    continue;
                 }
-                continue;
+                if (option.ValueType == typeof(bool))
+                {
+                    if (value.ValueKind == JsonValueKind.True || (value.ValueKind == JsonValueKind.String && bool.TryParse(value.GetString(), out var on) && on))
+                    {
+                        args.Add(option.Name);
+                    }
+                    continue;
+                }
+                args.AddRange(Values(key, value).Select(v => $"{option.Name}={v}"));
             }
-            args.AddRange(Values(key, value).Select(v => $"{option.Name}={v}"));
-        }
-        var words = command.Arguments.Where(a => given.ContainsKey(a.Name)).SelectMany(a => Values(a.Name, given[a.Name])).ToList();
-        if (words.Count > 0)
-        {
-            args.Add("--");
-            args.AddRange(words);
+            var words = arguments.Where(a => given.ContainsKey(a.Name)).SelectMany(a => Values(a.Name, given[a.Name])).ToList();
+            if (i < chain.Length - 1)
+            {
+                // No "--" can protect an ancestor's value (words after it are all values, and the next command word would be one),
+                // so a value that starts with a dash would parse as an option: refuse it.
+                // An ancestor's required argument or option is not checked by the parse of the leaf, so a call without it is refused here.
+                if (arguments.FirstOrDefault(x => x.Arity.MinimumNumberOfValues > 0 && !given.ContainsKey(x.Name)) is { } missing)
+                {
+                    throw new PilotCommand.UsageException($"{string.Join(' ', path)} needs {missing.Name}");
+                }
+                if (options.FirstOrDefault(x => x.Required && !given.ContainsKey(Key(x))) is { } missingOption)
+                {
+                    throw new PilotCommand.UsageException($"{string.Join(' ', path)} needs {Key(missingOption)}");
+                }
+                if (words.FirstOrDefault(w => w.StartsWith('-')) is { } dashed)
+                {
+                    throw new PilotCommand.UsageException($"{string.Join(' ', path)}: {string.Join('/', arguments.Select(a => a.Name))} of {command.Name} cannot start with a dash ({dashed})");
+                }
+                args.AddRange(words);
+            }
+            else if (words.Count > 0)
+            {
+                args.Add("--");
+                args.AddRange(words);
+            }
         }
         return [.. args];
     }
