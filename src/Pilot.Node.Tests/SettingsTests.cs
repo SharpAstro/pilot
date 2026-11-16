@@ -111,7 +111,7 @@ public sealed class SettingsTests : IDisposable
     [InlineData("machine", "DESKTOP", "machine takes two letters and a number, as in DE1")]
     [InlineData("update-channel", "nightly", "update-channel takes stable or beta")]
     [InlineData("max-jobs", "0", "max-jobs takes a number, 1 to 64")]
-    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, jobs-per-repo, gui-slots, job-memory, job-priority, job-plane-output, job-build-cache, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, watchtower-compact-idle, watchtower-compact-above, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, user-skills, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, review-limit, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, adopt-after, archive-landed-after, delete-landed-branches, max-go-arounds, scratch-days, disk-alert-gb, flight-ci-budget, stale-flight-hours, stale-pr-hours, stale-recheck-hours, stale-card-hours, stale-holds, stale-unreachable-hours, bench-subscription, bench-resource-group, bench-region, bench-vm-size, bench-image, bench-spot-price, bench-monthly-cap, bench-auth, bench-sp-app-id, bench-sp-tenant, bench-sp-secret, watchtower-range, worker-range, planner-range, reviewer-range, summary-model, worker-ladder")]
+    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, jobs-per-repo, gui-slots, job-memory, job-priority, job-plane-output, job-build-cache, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, watchtower-compact-idle, watchtower-compact-above, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, user-skills, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, review-limit, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, adopt-after, archive-landed-after, maintenance-every, maintenance-idle, package-age-days, delete-landed-branches, max-go-arounds, scratch-days, disk-alert-gb, flight-ci-budget, stale-flight-hours, stale-pr-hours, stale-recheck-hours, stale-card-hours, stale-holds, stale-unreachable-hours, bench-subscription, bench-resource-group, bench-region, bench-vm-size, bench-image, bench-spot-price, bench-monthly-cap, bench-auth, bench-sp-app-id, bench-sp-tenant, bench-sp-secret, watchtower-range, worker-range, planner-range, reviewer-range, summary-model, worker-ladder")]
     // Invariant: the "colour" case spells out every key, so a filtered check that adds a setting runs it too.
     [Trait("Category", InvariantTraitTests.Invariant)]
     public void ASettingRefusesWhatItDoesNotTake(string key, string value, string error)
@@ -128,6 +128,51 @@ public sealed class SettingsTests : IDisposable
         new RoleModels(on).DeleteLandedBranches.ShouldBeTrue();
         NodeSettings.With(off, "delete-landed-branches", ["default"]).Settings!.DeleteLandedBranches.ShouldBeNull();
         NodeSettings.With(new NodeSettings(), "delete-landed-branches", ["maybe"]).Error.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void MaintenanceEveryReadsAsADayUnsetTakesHoursAndDaysAndOffAndRefusesOutOfBoundsAndIsNotTheRebootMode()
+    {
+        new RoleModels(new NodeSettings()).MaintenanceEvery.ShouldBe(TimeSpan.FromDays(1));
+        NodeSettings.With(new NodeSettings(), "maintenance-every", ["12h"]).Settings!.MaintenanceEvery.ShouldBe(TimeSpan.FromHours(12));
+        var days = NodeSettings.With(new NodeSettings(), "maintenance-every", ["7d"]).Settings!;
+        days.Get("maintenance-every").ShouldBe(["7d"]);
+        new RoleModels(days).MaintenanceEvery.ShouldBe(TimeSpan.FromDays(7));
+        var off = NodeSettings.With(days, "maintenance-every", ["off"]).Settings!;
+        off.Get("maintenance-every").ShouldBe(["off"]);
+        new RoleModels(off).MaintenanceEvery.ShouldBeNull();
+        NodeSettings.With(off, "maintenance-every", ["default"]).Settings!.MaintenanceEvery.ShouldBeNull();
+        NodeSettings.With(new NodeSettings(), "maintenance-every", ["5m"]).Error.ShouldNotBeNull();
+        NodeSettings.With(new NodeSettings(), "maintenance-every", ["soon"]).Error.ShouldNotBeNull();
+        NodeSettings.With(new NodeSettings(), "maintenance-every", ["off"]).Settings!.Maintenance.ShouldBeNull();
+    }
+
+    [Fact]
+    public void MaintenanceIdleReadsAsFifteenMinutesUnsetTakesMinutesAndHoursAndRefusesOutOfBounds()
+    {
+        new RoleModels(new NodeSettings()).MaintenanceIdle.ShouldBe(TimeSpan.FromMinutes(15));
+        var set = NodeSettings.With(new NodeSettings(), "maintenance-idle", ["30m"]).Settings!;
+        set.Get("maintenance-idle").ShouldBe(["30m"]);
+        new RoleModels(set).MaintenanceIdle.ShouldBe(TimeSpan.FromMinutes(30));
+        NodeSettings.With(new NodeSettings(), "maintenance-idle", ["1h"]).Settings!.MaintenanceIdle.ShouldBe(TimeSpan.FromHours(1));
+        NodeSettings.With(set, "maintenance-idle", ["default"]).Settings!.MaintenanceIdle.ShouldBeNull();
+        NodeSettings.With(new NodeSettings(), "maintenance-idle", ["10s"]).Error.ShouldNotBeNull();
+        NodeSettings.With(new NodeSettings(), "maintenance-idle", ["off"]).Error.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void PackageAgeDaysReadsAsFourteenUnsetTakesDaysAndRefusesOutOfBoundsAndWords()
+    {
+        new RoleModels(new NodeSettings()).PackageAgeDays.ShouldBe(14);
+        var set = NodeSettings.With(new NodeSettings(), "package-age-days", ["30"]).Settings!;
+        set.Get("package-age-days").ShouldBe(["30"]);
+        new RoleModels(set).PackageAgeDays.ShouldBe(30);
+        NodeSettings.With(new NodeSettings(), "package-age-days", ["1"]).Settings!.PackageAgeDays.ShouldBe(1);
+        NodeSettings.With(new NodeSettings(), "package-age-days", ["365"]).Settings!.PackageAgeDays.ShouldBe(365);
+        NodeSettings.With(set, "package-age-days", ["default"]).Settings!.PackageAgeDays.ShouldBeNull();
+        NodeSettings.With(new NodeSettings(), "package-age-days", ["0"]).Error.ShouldNotBeNull();
+        NodeSettings.With(new NodeSettings(), "package-age-days", ["366"]).Error.ShouldNotBeNull();
+        NodeSettings.With(new NodeSettings(), "package-age-days", ["soon"]).Error.ShouldNotBeNull();
     }
 
     [Fact]

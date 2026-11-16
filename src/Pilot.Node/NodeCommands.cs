@@ -537,6 +537,12 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return Get<NodeSettingsCommands>().RestartNode(command);
         }
+        if (command.Verb == Verbs.Maintenance)
+        {
+            var dry = (command.Args ?? []).Any(a => a is "--dry-run" or "dry-run");
+            var (run, refused) = await Get<IdleMaintenance>().RunNowAsync(dry, cancellationToken);
+            return state.Complete(command, refused, way: run?.Line());
+        }
         if (command.Verb == Verbs.Reboot)
         {
             return await Get<RebootPrep>().RunAsync(command, cancellationToken);
