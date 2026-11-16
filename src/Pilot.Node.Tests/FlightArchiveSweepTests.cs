@@ -56,6 +56,9 @@ public sealed class FlightArchiveSweepTests : IDisposable
         return (after is null ? sweep : new FlightArchiveSweep(state, new FlightArchiver(state), flights, time) { Pause = TimeSpan.Zero, StartDelay = TimeSpan.FromHours(1), After = after }, flights);
     }
 
+    private static FlightArchiveSweep SweeperAt(NodeState state, TimeProvider time) =>
+        new(state, new FlightArchiver(state), new FlightCommander(state, new Planes(new FakeRepoGit(Path.Combine(Path.GetTempPath(), "p2as-git"))), time), time) { Pause = TimeSpan.Zero, StartDelay = TimeSpan.FromHours(1) };
+
     private static bool Has(SnapshotEvent s, string code) => s.Flights.Any(f => f.Code == code) || s.Legs.Any(l => l.Flight == code) || s.Cards.Any(c => FlightMove.IsAbout(c, code));
 
     private FileJournal Journal() => new(Path.Combine(_root, "store"));
@@ -209,28 +212,14 @@ public sealed class FlightArchiveSweepTests : IDisposable
         public override DateTimeOffset GetUtcNow() => Now;
     }
 
-    /// <summary>A git whose start fails the way a missing working folder does, for the flights <c>fails</c> names (all when null).</summary>
-    private sealed class ThrowingGit(Func<string, bool>? fails = null) : IGit
-    {
-        public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
-            fails is null || fails(string.Join(' ', args)) ? throw new System.ComponentModel.Win32Exception("The directory name is invalid") : Task.FromResult(new GitRun(1, "", ""));
-    }
-
-    private (FlightArchiveSweep Sweep, FlightArchiver Archiver) SweeperWithGit(NodeState state, IGit git, TimeProvider time)
-    {
-        var flights = new FlightCommander(state, new Planes(new FakeRepoGit(Path.Combine(Path.GetTempPath(), "p2as-git"))), time);
-        var archiver = new FlightArchiver(state, git);
-        return (new FlightArchiveSweep(state, archiver, flights, time) { Pause = TimeSpan.Zero, StartDelay = TimeSpan.FromHours(1) }, archiver);
-    }
-
     [Fact]
-    public async Task AFlightWhoseRepoFolderIsGoneDoesNotAskGitAndIsArchivedWithTheOnesAfterIt()
+    public async Task AFlightWhoseRepoFolderIsGoneIsArchivedWithTheOnesAfterIt()
     {
         using var journal = Journal();
         var state = Open(journal);
         state.PutFlight(Flight("TIA1", FlightState.Landed, Now.AddDays(-20)));
         state.PutFlight(Flight("TIA2", FlightState.Landed, Now.AddDays(-10)));
-        var (sweep, _) = SweeperWithGit(state, new ThrowingGit(), new FakeTime(Now));
+        var (sweep, _) = Sweeper(state);
 
         (await sweep.SweepAsync(Ct)).ShouldBe(2);
 
@@ -238,51 +227,16 @@ public sealed class FlightArchiveSweepTests : IDisposable
     }
 
     [Fact]
-    public async Task TheVerbOnAFlightWhoseRepoFolderIsGoneArchivesItWithoutAskingGit()
+    public async Task ASweepClearsAStaleMergeQueueNoteOnALandedFlightTooNewToArchive()
     {
         using var journal = Journal();
         var state = Open(journal);
-        state.PutFlight(Flight("TIA1", FlightState.Landed, Now.AddDays(-20)));
-        var (_, archiver) = SweeperWithGit(state, new ThrowingGit(), new FakeTime(Now));
+        state.PutFlight(Flight("TIA1", FlightState.Landed, Now.AddDays(-1)) with { MergeQueue = "in the merge queue, position 1" });
+        var (sweep, _) = Sweeper(state);
 
-        var result = await archiver.RunAsync(new CommandRequest { Verb = Verbs.ArchiveFlight, Target = Verbs.FlightTarget("TIA1"), Who = "test" }, Ct);
+        (await sweep.SweepAsync(Ct)).ShouldBe(0);
 
-        result.Error.ShouldBeNull();
-        state.ArchivedFlightRows().Select(r => r.Code).ShouldBe(["TIA1"]);
-    }
-
-    [Fact]
-    public async Task TheVerbOnAFlightWhoseGitThrowsWithAnExistingFolderRefusesInsteadOfThrowing()
-    {
-        using var journal = Journal();
-        var state = Open(journal);
-        Directory.CreateDirectory(_root);
-        state.PutFlight(Flight("TIA1", FlightState.Landed, Now.AddDays(-20)) with { RepoPath = _root });
-        var (_, archiver) = SweeperWithGit(state, new ThrowingGit(), new FakeTime(Now));
-
-        var result = await archiver.RunAsync(new CommandRequest { Verb = Verbs.ArchiveFlight, Target = Verbs.FlightTarget("TIA1"), Who = "test" }, Ct);
-
-        result.Error.ShouldNotBeNull().ShouldContain("failed");
-        state.Flights().Select(f => f.Code).ShouldBe(["TIA1"]);
-    }
-
-    [Fact]
-    public async Task AFlightGitCannotBeAskedAboutIsToldAndSkippedAndTheLaterOnesAreStillArchived()
-    {
-        using var journal = Journal();
-        var state = Open(journal);
-        Directory.CreateDirectory(_root);
-        state.PutFlight(Flight("TIA1", FlightState.Landed, Now.AddDays(-20)) with { RepoPath = _root });
-        state.PutFlight(Flight("TIA2", FlightState.Landed, Now.AddDays(-10)) with { RepoPath = _root });
-        var (sweep, _) = SweeperWithGit(state, new ThrowingGit(a => a.Contains("tia1", StringComparison.Ordinal)), new FakeTime(Now));
-        var error = new StringWriter();
-        sweep.Error = error;
-
-        (await sweep.SweepAsync(Ct)).ShouldBe(1);
-
-        state.ArchivedFlightRows().Select(r => r.Code).ShouldBe(["TIA2"]);
-        state.Flights().Select(f => f.Code).ShouldBe(["TIA1"]);
-        error.ToString().ShouldContain("TIA1");
+        state.Flights().Single().MergeQueue.ShouldBeNull();
     }
 
     [Fact]
@@ -292,7 +246,7 @@ public sealed class FlightArchiveSweepTests : IDisposable
         var time = new MovingTime(Now);
         var state = new NodeState(journal, time) { Archive = new FlightArchive(_root) };
         state.PutFlight(Flight("TIA1", FlightState.Landed, Now.AddDays(-10)));
-        var (sweep, _) = SweeperWithGit(state, new ThrowingGit(_ => false), time);
+        var sweep = SweeperAt(state, time);
 
         (await sweep.SweepAsync(Ct)).ShouldBe(1);
         state.RestoreFlight("TIA1").RestoredAt.ShouldBe(Now);
