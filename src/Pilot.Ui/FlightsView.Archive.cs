@@ -70,7 +70,7 @@ internal sealed partial class FlightsView<TSurface>
                 var (page, refused) = await read(node.Node, (number - 1) * ArchivedPageSize, ArchivedPageSize);
                 next = new ArchivedPageState(page, number, refused ?? (page is null ? "the node sent no page" : null), false);
             }
-            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException or OperationCanceledException)
             {
                 next = new ArchivedPageState(held?.Page, number, ex.Message, false);
             }
@@ -107,9 +107,9 @@ internal sealed partial class FlightsView<TSurface>
         if (CanCommand && OnAction is not null && ArchivableLanded(screen) is { Count: > 0 } landed)
         {
             yield return Presses.Button(ArchiveLandedKey, ArchiveLandedHit,
-                () => CardsView<TSurface>.HeaderPill($"Archive landed ({landed.Count})", ArchiveLandedHit, () => _ = ArchiveLanded(landed), (P.Button, P.ButtonHover), P.Bright)
+                () => CardsView<TSurface>.HeaderPill($"Archive landed ({landed.Count})", ArchiveLandedHit, () => _ = ArchiveLanded(landed), NightOrNull is { } n ? (n.Button, n.ButtonHover) : null, NightOrNull?.Bright)
                     .WithTooltip("Archive the landed flights shown, each on its own node"),
-                pressed => CardsView<TSurface>.DeadHeaderPill(pressed ? $"Archive landed ({landed.Count}) …" : $"Archive landed ({landed.Count})", (P.Button, P.ButtonHover)));
+                pressed => CardsView<TSurface>.DeadHeaderPill(pressed ? $"Archive landed ({landed.Count}) …" : $"Archive landed ({landed.Count})", NightOrNull is { } d ? (d.Button, d.ButtonHover) : null));
         }
         if (screen.ArchivedCount > 0)
         {

@@ -102,7 +102,7 @@ internal static class DashboardCommands
             answered?.Invoke(envelope);
             return RefusalOf(envelope) is { } refused ? (null, refused) : (envelope.Response?.ArchivedFlights, null);
         }
-        catch (Exception ex) when (ex is System.Net.Sockets.SocketException)
+        catch (Exception ex) when (ex is System.Net.Sockets.SocketException || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
         {
             return (null, ex.Message);
         }

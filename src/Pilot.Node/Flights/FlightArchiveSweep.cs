@@ -73,6 +73,12 @@ public sealed class FlightArchiveSweep(NodeState state, FlightArchiver archiver,
             .OrderBy(AgeFrom)
             .Select(f => f.Code)
             .ToList();
+        // A flight that left without being archived (reopened, removed) is no longer one the sweep holds back, so its told line goes.
+        var landed = state.Flights().Where(f => f.State == FlightState.Landed).Select(f => f.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var gone in _told.Keys.Where(k => !landed.Contains(k)).ToList())
+        {
+            _told.Remove(gone);
+        }
         var archived = 0;
         var inBatch = 0;
         foreach (var code in due)

@@ -138,6 +138,32 @@ public sealed class FlightArchiveViewTests
     }
 
     [Fact]
+    public async Task ADownLanNodeTimeoutEndsTheReadingStateAsARefusal()
+    {
+        using var renderer = NewRenderer();
+        var play = new PlayFilter();
+        play.ShowEverything();
+        var view = View(renderer, play);
+        var changes = 0;
+        var loaded = new TaskCompletionSource();
+        view.Changed = () =>
+        {
+            if (Interlocked.Increment(ref changes) >= 3)
+            {
+                loaded.TrySetResult();
+            }
+        };
+        view.OnReadArchived = (_, _, _) => throw new TaskCanceledException("timed out", new TimeoutException());
+
+        Click(view.Tree(Screen()), FlightsView<RgbaImage>.ArchivedHit);
+        await loaded.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+
+        var text = Describe(view.Tree(Screen()));
+        text.ShouldContain("timed out");
+        text.ShouldNotContain("reading");
+    }
+
+    [Fact]
     public async Task ArchiveOnALandedFlightAndBringBackOnAnArchivedOneSendArchiveFlightToTheFlightsOwnNode()
     {
         using var renderer = NewRenderer();

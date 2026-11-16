@@ -230,12 +230,40 @@ public sealed class FlightArchiveSweepTests : IDisposable
         var state = Open(journal);
         state.PutFlight(Flight("TIA1", FlightState.Landed, Now.AddDays(-20)));
         state.PutFlight(Flight("TIA2", FlightState.Landed, Now.AddDays(-10)));
-        var (sweep, archiver) = SweeperWithGit(state, new ThrowingGit(), new FakeTime(Now));
+        var (sweep, _) = SweeperWithGit(state, new ThrowingGit(), new FakeTime(Now));
 
         (await sweep.SweepAsync(Ct)).ShouldBe(2);
 
         state.ArchivedFlightRows().Select(r => r.Code).ShouldBe(["TIA2", "TIA1"], ignoreOrder: true);
-        archiver.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task TheVerbOnAFlightWhoseRepoFolderIsGoneArchivesItWithoutAskingGit()
+    {
+        using var journal = Journal();
+        var state = Open(journal);
+        state.PutFlight(Flight("TIA1", FlightState.Landed, Now.AddDays(-20)));
+        var (_, archiver) = SweeperWithGit(state, new ThrowingGit(), new FakeTime(Now));
+
+        var result = await archiver.RunAsync(new CommandRequest { Verb = Verbs.ArchiveFlight, Target = Verbs.FlightTarget("TIA1"), Who = "test" }, Ct);
+
+        result.Error.ShouldBeNull();
+        state.ArchivedFlightRows().Select(r => r.Code).ShouldBe(["TIA1"]);
+    }
+
+    [Fact]
+    public async Task TheVerbOnAFlightWhoseGitThrowsWithAnExistingFolderRefusesInsteadOfThrowing()
+    {
+        using var journal = Journal();
+        var state = Open(journal);
+        Directory.CreateDirectory(_root);
+        state.PutFlight(Flight("TIA1", FlightState.Landed, Now.AddDays(-20)) with { RepoPath = _root });
+        var (_, archiver) = SweeperWithGit(state, new ThrowingGit(), new FakeTime(Now));
+
+        var result = await archiver.RunAsync(new CommandRequest { Verb = Verbs.ArchiveFlight, Target = Verbs.FlightTarget("TIA1"), Who = "test" }, Ct);
+
+        result.Error.ShouldNotBeNull().ShouldContain("failed");
+        state.Flights().Select(f => f.Code).ShouldBe(["TIA1"]);
     }
 
     [Fact]
