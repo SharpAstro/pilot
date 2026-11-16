@@ -484,8 +484,8 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
     public void ThePlatformWildcardStopsAtANameBoundary()
     {
         // *.A matches Ns.A but not Ns.BA, which a bare *A would
-        UnrelatedFailures.Excluding("dotnet test T --filter-class F", ["A"]).ShouldContain("--filter-not-class *.A");
-        UnrelatedFailures.Excluding("dotnet test T --filter-class F", ["A"]).ShouldNotContain(" *A");
+        UnrelatedFailures.Excluding("dotnet test T --filter-class F", ["A"])!.ShouldContain("--filter-not-class *.A");
+        UnrelatedFailures.Excluding("dotnet test T --filter-class F", ["A"])!.ShouldNotContain(" *A");
     }
 
     [Fact]
@@ -498,7 +498,7 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
     public void ExcludingRewritesAVsTestSegmentAndAPlatformSegmentOfOneCheckEachInItsOwnTerms()
     {
         var check = "dotnet test A --filter 'FullyQualifiedName~X' && dotnet test B --filter-class Y";
-        UnrelatedFailures.Excluding(check, ["Z"]).ShouldBe(
+        UnrelatedFailures.Excluding(check, ["Z"])!.ShouldBe(
             "dotnet test A --filter '(FullyQualifiedName~X)&FullyQualifiedName!~Z' && dotnet test B --filter-class Y --filter-not-class *.Z");
     }
 }
