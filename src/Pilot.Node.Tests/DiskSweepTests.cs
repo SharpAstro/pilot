@@ -418,6 +418,34 @@ public sealed class DiskSweepTests : IDisposable
     }
 
     [Fact]
+    public async Task TheDiskLowCardNamesTheLastMaintenanceRunWhenItRanWhatItFreedAndWhatItCouldNotTouch()
+    {
+        var run = new MaintenanceRun(new DateTimeOffset(2026, 11, 16, 3, 30, 0, TimeSpan.Zero), false,
+            [new MaintenanceStepReport("packages", 8L << 30, null), new MaintenanceStepReport("git", 1L << 30, "worktree prune failed in tianwen")],
+            "D:", 5L << 30, 14L << 30, false);
+        var sweep = new DiskSweep(Jobs, Temp, _state, _time) { DiskAlertGb = () => 20, FreeSpace = _ => (5L << 30, 100L << 30, "D:"), Repos = () => [Repo], LastMaintenance = () => run };
+
+        await sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        var card = _state.Cards().Single(c => c.Kind == DiskSweep.DiskLowKind);
+        const string said = "Last maintenance run 2026-11-16 03:30 UTC freed 9.0 GB (packages 8.0 GB, git 1.0 GB). Could not touch: git: worktree prune failed in tianwen.";
+        card.Detail!.ShouldContain(said);
+        card.Summary!.ShouldContain(said);
+    }
+
+    [Fact]
+    public async Task TheDiskLowCardSaysNoMaintenanceRunYetAndNamesTheDryRun()
+    {
+        var sweep = new DiskSweep(Jobs, Temp, _state, _time) { DiskAlertGb = () => 20, FreeSpace = _ => (5L << 30, 100L << 30, "D:"), Repos = () => [Repo], LastMaintenance = () => null };
+
+        await sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        var card = _state.Cards().Single(c => c.Kind == DiskSweep.DiskLowKind);
+        card.Detail!.ShouldContain("No maintenance run yet; 'pilot node maintenance --dry-run' shows what one would free.");
+        card.Summary!.ShouldContain("pilot node maintenance --dry-run");
+    }
+
+    [Fact]
     public async Task AFolderThatCannotBeRemovedDoesNotStopTheRest()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
