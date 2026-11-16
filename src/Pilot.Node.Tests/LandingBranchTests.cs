@@ -74,8 +74,8 @@ public sealed class LandingBranchTests : ReviewTestsBase
         var card = Open().Single(c => c.Kind == FlightCommander.BranchKeptKind);
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Title.ShouldContain("local");
-        card.Title.ShouldContain("1 commit");
-        card.Detail.ShouldNotBeNull().ShouldContain("ahead work");
+        card.Detail.ShouldNotBeNull().ShouldContain("1 commit");
+        card.Detail.ShouldContain("ahead work");
         var row = F(flight.Code);
         row.BranchDeletedAt.ShouldBeNull();
         row.BranchKept.ShouldNotBeNull();

@@ -567,8 +567,9 @@ public sealed partial class FlightCommander
         {
             var where = outcome.Group == LandedBranchGroups.LocalAhead ? "local" : "origin";
             state.RaiseCard(CardBin.ForYou, BranchKeptKind, target,
-                $"{outcome.Code} landed, but its {where} branch {outcome.Branch} holds {(commits.Length == 1 ? "1 commit" : $"{commits.Length} commits")} past the merge",
-                $"{outcome.Why}, so the branch is kept and nothing is lost: {string.Join("; ", commits)}. Land them in a PR of their own, or delete the branch by hand.");
+                $"{outcome.Code} landed, but its {where} branch is past the merge",
+                $"{outcome.Why}: {(commits.Length == 1 ? "1 commit" : $"{commits.Length} commits")} past it, so the branch is kept and nothing is lost: {string.Join("; ", commits)}. Land them in a PR of their own, or delete the branch by hand.",
+                [new CardChoice { Label = "Mark it read", Verb = Verbs.Dismiss, Target = "" }]);
         }
         else
         {
