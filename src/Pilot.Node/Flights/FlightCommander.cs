@@ -91,13 +91,6 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
 
     private LandedBranches Branches => _branches ??= new LandedBranches(planes.Git);
 
-    /// <summary>The card saying a landed flight's branch was kept: in For you when it holds commits past the merge, else a Handled line.</summary>
-    public const string BranchKeptKind = "branch-kept";
-
-    private LandedBranches? _branches;
-
-    private LandedBranches Branches => _branches ??= new LandedBranches(planes.Git);
-
     /// <summary>The Handled card that says a flight went to another node, as this one is in maintenance.</summary>
     public const string RoutedKind = "routed";
 

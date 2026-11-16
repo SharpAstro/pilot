@@ -138,7 +138,6 @@ public static partial class CardSummaries
             StraySweep.KilledKind => "The node ended a process that outlived a job or session it started, once that owner had ended. Nothing to do.",
             "plane-left" => "A flight's plane folder could not be deleted because a process holds it. The node tries again at its next start; delete it by hand if it stays.",
             FlightCommander.BranchKeptKind => "A landed flight's branch was not deleted. A card in For you names the commits it holds past the merge (unlanded work, so nothing is lost); a Handled line names another reason (a worktree, a live session, a push that failed). The next sweep retries a failed push; nothing to do unless the commits are wanted.",
-            FlightCommander.BranchKeptKind => "A landed flight's branch was not deleted. A card in For you names the commits it holds past the merge (unlanded work, so nothing is lost); a Handled line names another reason (a worktree, a live session, a push that failed). The next sweep retries a failed push; nothing to do unless the commits are wanted.",
             "issue-left-open" => "A landed flight's issue is still open on GitHub. Close it by hand; its work is in the merged PR.",
             FlightCommander.FoldedKind => $"{what} was folded into another flight, whose planner now plans its points. Nothing to do.",
             FlightCommander.RoutedKind => "A new flight was made on another node because this one is in maintenance. Nothing to do.",
