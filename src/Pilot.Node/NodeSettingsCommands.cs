@@ -134,6 +134,12 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             jobs.Pump();
             return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now");
         }
+        if (key == NodeSettings.GuiSlotsKey)
+        {
+            jobs.GuiSlots = updated.GuiSlots ?? NodeSettings.GuiSlotsDefault;
+            jobs.Pump();
+            return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now");
+        }
         if (key is NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey)
         {
             jobs.MaxRunning = updated.MaxJobs ?? options.MaxJobs;
@@ -277,6 +283,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.UpdateChannelKey => options.UpdateChannel.Name(),
         NodeSettings.MaxJobsKey => jobs.MaxRunning.ToString(CultureInfo.InvariantCulture),
         NodeSettings.JobsPerRepoKey => jobs.JobsPerRepo.ToString(CultureInfo.InvariantCulture),
+        NodeSettings.GuiSlotsKey => jobs.GuiSlots.ToString(CultureInfo.InvariantCulture),
         NodeSettings.JobPriorityKey => Pilot.Node.Flights.JobPriorities.Name(jobs.Priority),
         NodeSettings.JobPlaneOutputKey => jobs.PlaneOutput ? "on" : "off",
         NodeSettings.JobBuildCacheKey => jobs.BuildCache ? "on" : "off",
@@ -348,6 +355,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.UpdateChannelKey => UpdateChannel.Stable.Name(),
         NodeSettings.MaxJobsKey => "1",
         NodeSettings.JobsPerRepoKey => "1",
+        NodeSettings.GuiSlotsKey => "1",
         NodeSettings.JobMemoryKey => "0",
         NodeSettings.JobPriorityKey => "below-normal",
         NodeSettings.JobPlaneOutputKey => NodeSettings.JobPlaneOutputDefault ? "on" : "off",
@@ -409,6 +417,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.UpdatePolicyKey => ("Updates", "auto installs a newer pilot at once (jobs carry on under the new node); ask raises a card; off does not look", [.. UpdatePolicies.Names]),
         NodeSettings.UpdateChannelKey => ("Update channel", "stable follows the tagged releases; beta follows main's every push (a Debug build, needs the .NET runtime)", [.. UpdateChannels.Names]),
         NodeSettings.MaxJobsKey => ("Jobs at once", "How many background tasks run at once; the rest wait their turn", ["1", "2", "3", "4"]),
+        NodeSettings.GuiSlotsKey => ("GUI jobs at once", "How many jobs that open a window (pilot run --gui) run at once on this machine, across repos; they take an ordinary slot too. 0 turns the GUI lane off", ["1", "2", "0"]),
         NodeSettings.JobsPerRepoKey => ("Jobs per repo", "The most jobs of one repo that run at once, so two heavy builds or test runs of the same repo never share the machine; jobs of other repos take the other slots beside them. 0 for no limit", ["1", "2", "3", "0"]),
         NodeSettings.JobMemoryKey => ("Job memory", "The least free memory, in GB, a second job waits for: a floor under the measured need of its kind of command, never a cap; 0 for the measured need alone", ["0", "2", "4", "8"]),
         NodeSettings.JobPriorityKey => ("Job priority", "How much CPU the builds and tests the node starts yield to other work on the machine: below-normal (default) and idle give way, normal is the old behaviour. Claude sessions stay normal", [.. Pilot.Node.Flights.JobPriorities.Names]),

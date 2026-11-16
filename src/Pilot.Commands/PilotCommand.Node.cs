@@ -63,6 +63,10 @@ public static partial class PilotCommand
                 foreach (var peer in peers)
                 {
                     await output.WriteLineAsync($"{peer.EndPoint}  {peer.DisplayName}{(peer.Properties.TryGetValue("machine", out var m) ? $"  ({m})" : "")}");
+                    if (peer.Properties.TryGetValue("gui", out var gui))
+                    {
+                        await output.WriteLineAsync($"  GUI jobs: {(gui == "yes" ? "can run (an interactive desktop)" : "none (no interactive desktop)")}");
+                    }
                     await output.WriteLineAsync("  " + await NodeTargets.WatchtowerLineAsync(peer.EndPoint.ToString()!, TimeSpan.FromSeconds(2), ct));
                 }
                 return 0;

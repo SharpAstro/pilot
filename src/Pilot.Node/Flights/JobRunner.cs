@@ -756,7 +756,21 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             wholeSuiteWhy = args[1].Trim().Length > 0 ? args[1].Trim() : null;
             args = [.. args.Skip(2)];
         }
+        // --gui follows --whole-suite: the job opens a window and waits for the node's GUI slot.
+        var gui = args.Length > 0 && args[0] == Verbs.GuiArg;
+        if (gui)
+        {
+            args = [.. args.Skip(1)];
+        }
         var alone = args.Length > 0 && args[0] == Verbs.AloneArg;
+        if (gui && alone)
+        {
+            return state.Complete(command, $"{Verbs.GuiArg} is for a job with a window: it can't run with {Verbs.AloneArg}");
+        }
+        if (gui && GuiRefusal() is { } noGui)
+        {
+            return state.Complete(command, noGui);
+        }
         if (alone)
         {
             args = [.. args.Skip(1)];
@@ -884,6 +898,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             MemoryKey = JobKey.Of(line, cwd).ToString(),
             FailFast = failFast || IsLegCheckOfReviewerOrFixer(owner, line),
             WholeSuite = wholeSuiteWhy,
+            Gui = gui ? true : null,
         };
         job = job with { QueuedAt = job.StartedAt };
 
@@ -897,6 +912,34 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         state.PutJob(job);
         _signals.Writer.TryWrite(new HandedOver(job));
         return state.Complete(command, null, made: jobId);
+    }
+
+    /// <summary>How many GUI jobs may run at once on this node (setting gui-slots); 0 turns the lane off. Live.</summary>
+    public int GuiSlots { get; set; } = 1;
+
+    /// <summary>Null when this node has an interactive desktop for GUI jobs, else why it has none; a test puts a fake.</summary>
+    public Func<string?> DesktopProbe { get; set; } = () => null;
+
+    /// <summary>Why a GUI job is refused on this node at once, or null when it may queue.</summary>
+    private string? GuiRefusal() => GuiWhy() is { } why ? $"this node cannot run GUI jobs: {why}" : null;
+
+    /// <summary>Why this node cannot run GUI jobs (the lane is off, or no interactive desktop), or null when it can.</summary>
+    public string? GuiWhy() => GuiSlots <= 0 ? "the GUI lane is off (gui-slots is 0)" : DesktopProbe();
+
+    /// <summary>Why a GUI job waits for the GUI slot, naming the GUI jobs ahead of it; null for an ordinary job or when a slot is free.</summary>
+    private string? GuiHold(JobRow job)
+    {
+        if (job.Gui != true)
+        {
+            return null;
+        }
+        var running = state.Jobs().Where(j => j.Gui == true && j.State == JobState.Running && j.Id != job.Id && _running.ContainsKey(j.Id)).ToList();
+        if (running.Count < Math.Max(1, GuiSlots))
+        {
+            return null;
+        }
+        var ahead = string.Join(", ", running.Select(j => j.Owner is { Length: > 0 } ? $"{j.Id} ({j.OwnerName ?? j.Owner})" : j.Id));
+        return $"waiting for the GUI slot: GUI job {ahead} has the window; other jobs run meanwhile";
     }
 
     /// <summary>The git a refusal's suggested filter reads the flight's changes through; a test puts its own.</summary>
@@ -1302,7 +1345,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             var place = why is null ? "" : $" ({why})";
             _queue[i] = job with
             {
-                Step = WithLocalNote(job, i == 0 ? $"next in line: {whys[0]}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : BehindHeld(i, whys) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : BuildHold(job) is { } building ? $"queued, {i} ahead of it{place}; {building}" : BehindOwn(i, whys) is { } own ? $"queued, {i} ahead of it{place}; {own}" : $"queued, {i} ahead of it{place}; {Needs(job)}"),
+                Step = WithLocalNote(job, i == 0 ? $"next in line: {whys[0]}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : GuiHold(job) is { } guiWait ? $"queued, {i} ahead of it{place}; {guiWait}" : BehindHeld(i, whys) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : BuildHold(job) is { } building ? $"queued, {i} ahead of it{place}; {building}" : BehindOwn(i, whys) is { } own ? $"queued, {i} ahead of it{place}; {own}" : $"queued, {i} ahead of it{place}; {Needs(job)}"),
                 Slots = MaxRunning,
                 WaitsOnSibling = SiblingHold(job) is not null,
                 HoldIdleSince = idleSince,
@@ -1484,6 +1527,11 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 if (why is not null && BenchYields(job))
                 {
                     // A benchmark waiting for outside load to pass holds nothing: the jobs behind it start as usual.
+                    continue;
+                }
+                if (why is not null && GuiHold(job) is not null)
+                {
+                    // A GUI job waiting for the window holds nothing: an ordinary job behind it starts as usual.
                     continue;
                 }
                 var siblingOnly = why is null || WaitsOnlyOnAHold(job);
@@ -1696,6 +1744,10 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         if (BenchHold(job) is { } holds)
         {
             return holds;
+        }
+        if (GuiHold(job) is { } guiHeld)
+        {
+            return guiHeld;
         }
         if (!ignoreHolds && FlightHold(job) is { } flightHeld)
         {

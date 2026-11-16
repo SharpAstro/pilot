@@ -172,6 +172,12 @@ public sealed record JobRow
     public bool Local { get; init; }
 
     /// <summary>
+    /// Whether the job opens a window (<c>pilot run --gui</c>): it waits for the node's GUI slot as well as an ordinary one. Null (not
+    /// GUI) on a row from before this and for any other job. Optional, so <see cref="NodeWire.Version"/> stays.
+    /// </summary>
+    public bool? Gui { get; init; }
+
+    /// <summary>
     /// Where a benchmark ran: the Azure VM's size, image, region, price per hour, minutes, cost and evictions, or why it ran on the node's
     /// machine instead. Null for a job that is not a bench, for one still waiting, and on a row from before this. Optional, so
     /// <see cref="NodeWire.Version"/> stays: an older reader skips the field, and an older row reads it as null (#823).

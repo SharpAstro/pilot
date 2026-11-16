@@ -35,9 +35,13 @@ public static partial class PilotCommand
     /// The flights and their legs, a line each, and the live sessions. Landed flights are left out unless <paramref name="all"/>,
     /// with a line saying how many; a flight asked for by <paramref name="code"/>, or the newest, shows whatever its state.
     /// </summary>
-    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null, string? thisNode = null)
+    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null, string? thisNode = null, bool? canRunGui = null, string? guiReason = null)
     {
         var text = new System.Text.StringBuilder();
+        if (!newestOnly && code is null && canRunGui is { } gui)
+        {
+            text.AppendLine(gui ? "gui  this node can run GUI jobs (pilot run --gui)" : $"gui  this node cannot run GUI jobs: {guiReason}");
+        }
         if (!newestOnly && code is null && maintenance)
         {
             text.AppendLine("maintenance  on: this node takes no new flights (pilot settings set maintenance off)");
@@ -192,6 +196,8 @@ public static partial class PilotCommand
                 var maintenance = false;
                 string? reboot = null;
                 bool? autopilot = null;
+                bool? canRunGui = null;
+                string? guiReason = null;
                 string? dataFolder = null;
                 string? thisNode = null;
                 SendTimingRow[]? timings = null;
@@ -206,6 +212,8 @@ public static partial class PilotCommand
                     maintenance = info.Maintenance;
                     reboot = info.Reboot;
                     autopilot = info.Autopilot;
+                    canRunGui = info.CanRunGui;
+                    guiReason = info.GuiReason;
                     dataFolder = info.DataFolder;
                     thisNode = info.MachinePrefix.Length > 0 ? info.MachinePrefix : info.MachineName;
                 }
@@ -216,7 +224,7 @@ public static partial class PilotCommand
                 var everyFlight = parseResult.GetValue(allFlights);
                 var format = parseResult.GetValue(outputFormat);
                 var copies = format is "plain" or "text" ? new Dictionary<string, string>() : await AttachmentCopies.ResolveAsync(AttachmentCopies.Of(snapshot), client, dataFolder, ct);
-                await WriteAsync(format, () => Status(snapshot, maintenance: maintenance, autopilot: autopilot, all: everyFlight, sendTimings: timings, commandTimings: commandTimings, heap: heap, reboot: reboot, thisNode: thisNode),
+                await WriteAsync(format, () => Status(snapshot, maintenance: maintenance, autopilot: autopilot, all: everyFlight, sendTimings: timings, commandTimings: commandTimings, heap: heap, reboot: reboot, thisNode: thisNode, canRunGui: canRunGui, guiReason: guiReason),
                     () => StatusMarkdown.Build(snapshot, maintenance, autopilot, everyFlight, copies, timings, commandTimings, heap, reboot, thisNode));
                 return 0;
             });
