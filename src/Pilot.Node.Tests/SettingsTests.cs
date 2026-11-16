@@ -131,6 +131,36 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
+    public void MaintenanceEveryReadsAsADayUnsetTakesHoursAndDaysAndOffAndRefusesOutOfBoundsAndIsNotTheRebootMode()
+    {
+        new RoleModels(new NodeSettings()).MaintenanceEvery.ShouldBe(TimeSpan.FromDays(1));
+        NodeSettings.With(new NodeSettings(), "maintenance-every", ["12h"]).Settings!.MaintenanceEvery.ShouldBe(TimeSpan.FromHours(12));
+        var days = NodeSettings.With(new NodeSettings(), "maintenance-every", ["7d"]).Settings!;
+        days.Get("maintenance-every").ShouldBe(["7d"]);
+        new RoleModels(days).MaintenanceEvery.ShouldBe(TimeSpan.FromDays(7));
+        var off = NodeSettings.With(days, "maintenance-every", ["off"]).Settings!;
+        off.Get("maintenance-every").ShouldBe(["off"]);
+        new RoleModels(off).MaintenanceEvery.ShouldBeNull();
+        NodeSettings.With(off, "maintenance-every", ["default"]).Settings!.MaintenanceEvery.ShouldBeNull();
+        NodeSettings.With(new NodeSettings(), "maintenance-every", ["5m"]).Error.ShouldNotBeNull();
+        NodeSettings.With(new NodeSettings(), "maintenance-every", ["soon"]).Error.ShouldNotBeNull();
+        NodeSettings.With(new NodeSettings(), "maintenance-every", ["off"]).Settings!.Maintenance.ShouldBeNull();
+    }
+
+    [Fact]
+    public void MaintenanceIdleReadsAsFifteenMinutesUnsetTakesMinutesAndHoursAndRefusesOutOfBounds()
+    {
+        new RoleModels(new NodeSettings()).MaintenanceIdle.ShouldBe(TimeSpan.FromMinutes(15));
+        var set = NodeSettings.With(new NodeSettings(), "maintenance-idle", ["30m"]).Settings!;
+        set.Get("maintenance-idle").ShouldBe(["30m"]);
+        new RoleModels(set).MaintenanceIdle.ShouldBe(TimeSpan.FromMinutes(30));
+        NodeSettings.With(new NodeSettings(), "maintenance-idle", ["1h"]).Settings!.MaintenanceIdle.ShouldBe(TimeSpan.FromHours(1));
+        NodeSettings.With(set, "maintenance-idle", ["default"]).Settings!.MaintenanceIdle.ShouldBeNull();
+        NodeSettings.With(new NodeSettings(), "maintenance-idle", ["10s"]).Error.ShouldNotBeNull();
+        NodeSettings.With(new NodeSettings(), "maintenance-idle", ["off"]).Error.ShouldNotBeNull();
+    }
+
+    [Fact]
     public void ArchiveLandedAfterReadsAsSevenDaysUnsetTakesDaysAndHoursAndOffAndRefusesOutOfBounds()
     {
         var none = new RoleModels(null);
