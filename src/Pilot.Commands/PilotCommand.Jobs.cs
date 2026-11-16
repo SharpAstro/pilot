@@ -67,7 +67,7 @@ public static partial class PilotCommand
             var runAlone = new Option<bool>("--alone") { Description = "Run with the node to itself (a benchmark): waits for no other job and a quiet CPU, and holds every other job (not new legs) until it ends" };
             var runLocal = new Option<bool>("--local") { Description = "With --alone: keep the benchmark on this node's own machine (it needs its hardware: a camera, a GPU kernel test), never on a cloud VM" };
             var runFailFast = new Option<bool>("--fail-fast") { Description = "End the job at its first failed test, so a run whose first failure is all you need frees the queue (a check does this by itself)" };
-            var runWholeSuite = new Option<string?>("--whole-suite") { Description = "Why this run is a dotnet test over a whole project or solution with no --filter (refused otherwise: the whole suite is CI's, on the PR)" };
+            var runWholeSuite = new Option<string?>("--whole-suite") { Description = "Why this run is a dotnet test over a whole project or solution with no filter, neither --filter nor --filter-class and its siblings (refused otherwise: the whole suite is CI's, on the PR)" };
             var runGui = new Option<bool>("--gui") { Description = "The job opens a window: it waits for the machine's one GUI slot (across repos) as well as an ordinary slot; refused on a node with no interactive desktop or with gui-slots 0. Not with --alone" };
             var runWords = new Argument<string[]>("command") { Description = "The command, after --: pilot run -- dotnet test", Arity = ArgumentArity.OneOrMore };
             var runCommand = Action(new Command("run", "Hand a long run to the node as a job, then end your turn: the node wakes this session with how it ended")

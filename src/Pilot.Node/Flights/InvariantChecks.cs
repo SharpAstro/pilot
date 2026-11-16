@@ -12,12 +12,13 @@ public static class InvariantChecks
     /// <summary>The trait value the guard tests carry (<c>[Trait("Category", "Invariant")]</c>).</summary>
     public const string Category = "Invariant";
 
-    private const string FilterOption = "--filter";
-
     /// <summary>
     /// The check with each <c>dotnet test ... --filter &lt;expr&gt;</c> segment rewritten to <c>--filter '(&lt;expr&gt;)|Category=Invariant'</c>,
     /// single-quoted so pwsh and sh read it alike. A segment is left alone when it has no filter, when its filter already names the
     /// category (so widening twice changes nothing), or when the expression holds a single quote (no quoting both shells agree on).
+    /// A Microsoft.Testing.Platform segment (<c>--filter-class</c> and the like) gets <c>--filter-trait Category=Invariant</c> added only
+    /// when every filter it carries is a <c>--filter-trait</c>: xunit v3 ORs the filters of one kind and ANDs the kinds, so a trait added
+    /// beside a class or method filter would narrow the run instead of widening it. Any other MTP segment is left unchanged.
     /// </summary>
     public static string With(string check)
     {
@@ -48,6 +49,14 @@ public static class InvariantChecks
             return segment;
         }
 
+        var filters = TestFilters.Read(tokens.Skip(start + 2).Select(t => t.Value));
+        if (filters.Any(f => TestFilters.IsPlatform(f.Option)))
+        {
+            var traitOnly = filters.All(f => f.Option == TestFilters.Trait);
+            var named = filters.Any(f => f.Value.Equals("Category=" + Category, StringComparison.OrdinalIgnoreCase));
+            return traitOnly && !named ? TestFilters.Append(segment, TestFilters.Trait + " Category=" + Category) : segment;
+        }
+
         for (var i = start + 2; i < tokens.Count; i++)
         {
             var value = tokens[i].Value;
@@ -58,14 +67,14 @@ public static class InvariantChecks
             string? expression = null;
             var prefix = "";
             var index = i;
-            if (value.Equals(FilterOption, StringComparison.OrdinalIgnoreCase) && i + 1 < tokens.Count)
+            if (TestFilters.IsVsTest(value) && !value.Contains('=') && i + 1 < tokens.Count)
             {
                 expression = tokens[i + 1].Value;
                 index = i + 1;
             }
-            else if (value.StartsWith(FilterOption + "=", StringComparison.OrdinalIgnoreCase))
+            else if (TestFilters.IsVsTest(value) && value.Contains('='))
             {
-                prefix = FilterOption + "=";
+                prefix = TestFilters.VsTest + "=";
                 expression = value[prefix.Length..];
             }
             if (expression is null)

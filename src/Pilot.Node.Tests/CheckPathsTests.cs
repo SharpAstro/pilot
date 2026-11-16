@@ -140,6 +140,15 @@ public sealed class CheckPathsTests : IDisposable
         CheckPaths.Refusal("dotnet test --filter 'A|B' -c Release", Plane).ShouldBeNull();
     }
 
+    [Fact]
+    public void APlatformFilterValueIsNotTakenForAProjectOrPath()
+    {
+        Write("Pilot.csproj");
+
+        CheckPaths.Refusal("dotnet test --filter-class A.B C.D --filter-trait=Category=GUI -c Release", Plane).ShouldBeNull();
+        CheckPaths.Refusal("dotnet test --filter-query /*/*/Foo/* -c Release", Plane).ShouldBeNull();
+    }
+
     [Theory]
     [InlineData("dotnet run --project src/Missing/Missing.csproj")]
     [InlineData("dotnet run -p src/Missing/Missing.csproj")]

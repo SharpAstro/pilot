@@ -96,10 +96,25 @@ public sealed class CheckScopeTests : IDisposable
     [InlineData("dotnet test src/Pilot.Node.Tests --filter=A", false)]
     [InlineData("dotnet test src/Pilot.Node.Tests -- --filter", true)]
     [InlineData("dotnet test --help", false)]
+    [InlineData("dotnet test X --filter-class A.B", false)]
+    [InlineData("dotnet test X --filter-trait Category=GUI", false)]
+    [InlineData("dotnet test X --filter-query /*/*/Foo/*", false)]
+    [InlineData("dotnet test X --filter-not-class A.B --filter-not-trait Category=Slow", false)]
+    [InlineData("dotnet test X --filter-method=M", false)]
     [InlineData("python -m unittest discover tests", false)]
     public void OnlyADotnetTestWithNoFilterIsTheWholeSuite(string check, bool whole)
     {
         (CheckScope.WholeSuite(check) is not null).ShouldBe(whole);
+    }
+
+    [Fact]
+    public void TheRefusalNamesBothKindsOfFilter()
+    {
+        var refusal = CheckScope.Refusal("dotnet test X", null);
+
+        refusal.ShouldContain("--filter");
+        refusal.ShouldContain("--filter-class");
+        CheckScope.WholeSuite("dotnet test X -- --filter-class A").ShouldNotBeNull();
     }
 
     [Fact]

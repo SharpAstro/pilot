@@ -750,7 +750,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         {
             args = [.. args.Skip(1)];
         }
-        // --whole-suite <why> says why a dotnet test with no --filter may run.
+        // --whole-suite <why> says why a dotnet test with no filter (--filter or --filter-class and its siblings) may run.
         string? wholeSuiteWhy = null;
         if (args.Length > 1 && args[0] == Verbs.WholeSuiteArg)
         {

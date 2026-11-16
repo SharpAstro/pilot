@@ -30,7 +30,7 @@ public static class DotnetCommand
     // The switches that take the next word as their value.
     private static readonly HashSet<string> ValueSwitches = new(StringComparer.OrdinalIgnoreCase)
     {
-        "-c", "--configuration", "-f", "--framework", "-o", "--output", "-r", "--runtime", "-v", "--verbosity", "-a", "--arch", "--os", "-bl", "--filter", "--project", "-p",
+        "-c", "--configuration", "-f", "--framework", "-o", "--output", "-r", "--runtime", "-v", "--verbosity", "-a", "--arch", "--os", "-bl", "--project", "-p",
     };
 
     /// <summary>The verb of <paramref name="args"/> (the words after <c>dotnet</c>): the first that is no switch, lower case; null when there is none.</summary>
@@ -54,7 +54,11 @@ public static class DotnetCommand
             var w = args[k];
             if (w.StartsWith('-'))
             {
-                if (!w.Contains(':') && !w.Contains('=') && ValueSwitches.Contains(w))
+                if (Flights.TestFilters.IsFilterOption(w))
+                {
+                    k += Flights.TestFilters.ValueCount(args, k);
+                }
+                else if (!w.Contains(':') && !w.Contains('=') && ValueSwitches.Contains(w))
                 {
                     k++;
                 }

@@ -15,7 +15,7 @@ public sealed record JobKey(string Repo, string ToolVerb, string Target, string 
     /// <summary>The flags of dotnet's verbs that take a value, so the value is not mistaken for the project.</summary>
     private static readonly HashSet<string> ValueFlags = new(StringComparer.OrdinalIgnoreCase)
     {
-        "-c", "--configuration", "-f", "--framework", "-r", "--runtime", "--arch", "-a", "--os", "-o", "--output", "--filter", "--logger", "-l",
+        "-c", "--configuration", "-f", "--framework", "-r", "--runtime", "--arch", "-a", "--os", "-o", "--output", "--logger", "-l",
         "-v", "--verbosity", "--results-directory", "-p", "--property", "--settings", "-s", "--test-adapter-path", "--diag", "-d", "--collect",
         "--source", "--project", "--solution", "--artifacts-path", "--version-suffix",
     };
@@ -121,6 +121,16 @@ public sealed record JobKey(string Repo, string ToolVerb, string Target, string 
             var cut = word.IndexOfAny(['=', ':']);
             var name = cut > 0 ? word[..cut] : word;
             var inline = cut > 0 ? word[(cut + 1)..] : null;
+            if (TestFilters.IsFilterOption(name))
+            {
+                // A Platform option takes every following non-option word; --opt=value takes none.
+                if (inline is null)
+                {
+                    i += TestFilters.ValueCount(rest, i);
+                }
+                flags.Add("filter");
+                continue;
+            }
             var takes = ValueFlags.Contains(name);
             var value = inline ?? (takes && i + 1 < rest.Count ? rest[++i] : null);
             switch (name.ToLowerInvariant())
@@ -130,9 +140,6 @@ public sealed record JobKey(string Repo, string ToolVerb, string Target, string 
                     break;
                 case "-c" or "--configuration":
                     flags.Add($"c={value?.ToLowerInvariant()}");
-                    break;
-                case "--filter":
-                    flags.Add("filter");
                     break;
             }
         }

@@ -49,7 +49,7 @@ public static partial class PilotCommand
             var doneWhen = new Option<string>("--done-when") { Description = "When it is done, in words", Required = true };
             var check = new Option<string?>("--check") { Description = "A command the node reruns in the plane before it takes the leg as done" };
             var ciDiffers = new Option<string?>("--ci-differs") { Description = "Why the check cannot build the way the repo's CI does (a dotnet build/test without CI's -c is refused otherwise)" };
-            var wholeSuite = new Option<string?>("--whole-suite") { Description = "Why the check runs a whole test project with no --filter (refused otherwise: the whole suite is CI's, on the PR)" };
+            var wholeSuite = new Option<string?>("--whole-suite") { Description = "Why the check runs a whole test project with no filter, neither --filter nor --filter-class and its siblings (refused otherwise: the whole suite is CI's, on the PR)" };
             var budget = new Option<string?>("--budget") { Description = "Its budget in weighted tokens" };
             var model = new Option<string?>("--model") { Description = "The model its workers run" };
             var effort = new Option<string?>("--effort") { Description = "The effort its workers run at" };

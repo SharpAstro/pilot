@@ -18,7 +18,7 @@ public static class CheckPaths
     // path options, handled apart.
     private static readonly HashSet<string> ValueOptions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "-c", "--configuration", "-f", "--framework", "-r", "--runtime", "-o", "--output", "--filter", "--logger", "-l",
+        "-c", "--configuration", "-f", "--framework", "-r", "--runtime", "-o", "--output", "--logger", "-l",
         "--verbosity", "-v", "--results-directory", "-a", "--arch", "--os", "--collect", "--settings", "-s", "--diag", "-d",
         "--test-adapter-path", "--blame-hang-timeout", "--blame-crash-collect-always", "--launch-profile", "--property",
         "--version-suffix", "--artifacts-path", "--source", "--configfile", "--runtime-identifier", "--no-launch-profile-arguments",
@@ -169,6 +169,7 @@ public static class CheckPaths
 
         var paths = new List<PathRef>();
         var positional = false;
+        var words = tokens.Select(t => t.Value).ToList();
         for (var i = at + 2; i < tokens.Count; i++)
         {
             var value = tokens[i].Value;
@@ -195,7 +196,11 @@ public static class CheckPaths
             }
             else if (value.StartsWith('-'))
             {
-                if (ValueOptions.Contains(value))
+                if (TestFilters.IsFilterOption(value))
+                {
+                    i += TestFilters.ValueCount(words, i);
+                }
+                else if (ValueOptions.Contains(value))
                 {
                     i++;
                 }

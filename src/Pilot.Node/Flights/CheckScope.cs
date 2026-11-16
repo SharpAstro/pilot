@@ -17,7 +17,7 @@ public static class CheckScope
     private static readonly HashSet<string> Skipped = new(StringComparer.OrdinalIgnoreCase) { ".git", "bin", "obj", "node_modules" };
 
     /// <summary>
-    /// The first <c>dotnet test</c> segment of a check that has no <c>--filter</c> (so runs every test of what it names), or null
+    /// The first <c>dotnet test</c> segment of a check that has no test filter (so runs every test of what it names), or null
     /// when every one is filtered or the check runs none.
     /// </summary>
     public static string? WholeSuite(string check)
@@ -33,14 +33,9 @@ public static class CheckScope
                 continue;
             }
 
-            var filtered = false;
-            var help = false;
-            foreach (var token in tokens.Skip(start + 2).TakeWhile(t => t.Value != "--"))
-            {
-                filtered |= token.Value.Equals("--filter", StringComparison.OrdinalIgnoreCase)
-                    || token.Value.StartsWith("--filter=", StringComparison.OrdinalIgnoreCase);
-                help |= token.Value is "-h" or "--help" or "-?";
-            }
+            var words = tokens.Skip(start + 2).TakeWhile(t => t.Value != "--").Select(t => t.Value).ToList();
+            var filtered = TestFilters.Any(words);
+            var help = words.Any(w => w is "-h" or "--help" or "-?");
             if (!filtered && !help)
             {
                 return segment.Trim();
@@ -86,7 +81,7 @@ public static class CheckScope
         var how = suggestion is null
             ? "name the test classes the leg touches, as in --filter 'FullyQualifiedName~FooTests'"
             : $"filter it to the classes the flight touches: add --filter {suggestion}";
-        return $"the check `{segment}` runs a whole test project or solution with no --filter, and the whole suite is CI's, on the PR: " +
+        return $"the check `{segment}` runs a whole test project or solution with no filter (no --filter, and no --filter-class or its siblings for a Microsoft.Testing.Platform runner), and the whole suite is CI's, on the PR: " +
             $"a leg's check runs the tests of what it changes. {how[..1].ToUpperInvariant()}{how[1..]}. " +
             $"If this leg really needs the whole suite, say why with {WholeSuiteKey}=<why> (--whole-suite \"<why>\")";
     }

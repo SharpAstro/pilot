@@ -211,12 +211,12 @@ public static partial class Briefs
     /// <summary>The line the planner is told: a leg's check fits its change, and the whole suite is CI's on the PR (pilot #752).</summary>
     internal const string CheckScopeRule =
         "A leg's check filters `dotnet test` over the test classes of the files the flight touches plus the classes the leg names (`--filter 'FullyQualifiedName~FooTests|FullyQualifiedName~BarTests'`). " +
-        "The whole suite is CI's, on the PR: `leg plan` refuses a `dotnet test` with no --filter, suggesting one, unless it is given `--whole-suite \"<why>\"`.";
+        "The whole suite is CI's, on the PR: `leg plan` refuses a `dotnet test` with no filter (--filter, or --filter-class and its siblings for a Microsoft.Testing.Platform runner), suggesting one, unless it is given `--whole-suite \"<why>\"`.";
 
     /// <summary>The line the worker is told: run the check and the classes touched, never the whole suite, which CI runs on the PR.</summary>
     internal const string WorkerScopeRule =
         "Run the check and the test classes you touch, never the whole suite: CI runs the whole suite on the PR, and an unrelated failure in it is not this leg's. " +
-        "The node refuses a `pilot run` of a `dotnet test` with no --filter (it names the filter it suggests); only `pilot run --whole-suite \"<why>\" -- <command>` runs one, and the why is kept on the job. " +
+        "The node refuses a `pilot run` of a `dotnet test` with no filter (--filter, or --filter-class and its siblings; it names the filter it suggests); only `pilot run --whole-suite \"<why>\" -- <command>` runs one, and the why is kept on the job. " +
         "A check that fails only in tests your change does not touch (their test file, the class of a source you changed, or a name in the check's filter) is passed by the node, which matches each to an open issue or files one and reports it as not this flight's: do not chase it.";
 
     /// <summary>The line the planner is told: a check runs in the plane's root, so write it as CI runs it, working-directory included.</summary>
