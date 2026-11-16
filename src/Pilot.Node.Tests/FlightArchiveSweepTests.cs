@@ -224,7 +224,7 @@ public sealed class FlightArchiveSweepTests : IDisposable
 
         (await sweep.SweepAsync(Ct)).ShouldBe(1);
 
-        Summaries(state).Single().Title.ShouldBe("archived 1, held back 3: 2 a plane folder on disk, 1 an open card");
+        state.Cards().Single(c => c.Kind == FlightArchiveSweep.SummaryKind && c.Subject == "archive").Title.ShouldBe("archived 1, held back 3: 2 a plane folder on disk, 1 an open card");
     }
 
     [Fact]
