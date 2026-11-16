@@ -155,18 +155,22 @@ public static partial class UnrelatedFailures
     /// <summary>
     /// The check with each <c>dotnet test</c> segment told to run only <paramref name="test"/> (<c>Class.Method</c>): its filter becomes
     /// <c>'FullyQualifiedName~Class.Method'</c>. The run on the base that shows a failure is not the flight's. Null when no segment could
-    /// be rewritten.
+    /// be rewritten. A segment on the Microsoft.Testing.Platform filters instead loses its filters (VSTest's and the platform's) and gets
+    /// <c>--filter-method *.Class.Method</c>; the dot keeps the wildcard to a whole class name, so <c>FooTests</c> never selects
+    /// <c>BarFooTests</c>. A test whose name has characters outside letters, digits, <c>_</c>, <c>.</c> and <c>+</c> leaves that segment as it is.
     /// </summary>
     public static string? Only(string check, string test) =>
         test.Contains('\'') ? null : Refilter(
             check,
             _ => $"FullyQualifiedName~{test}",
-            segment => Plain(test) ? TestFilters.Append(TestFilters.Remove(segment, includeVsTest: true), $"{TestFilters.Method} *{test}") : segment);
+            segment => Plain(test) ? TestFilters.Append(TestFilters.Remove(segment, includeVsTest: true), $"{TestFilters.Method} *.{test}") : segment);
 
     /// <summary>
     /// The check with each <c>dotnet test</c> segment told to leave out <paramref name="classes"/>: its filter becomes
     /// <c>'(&lt;expr&gt;)&amp;FullyQualifiedName!~A&amp;...'</c>, or a segment with none gets <c>--filter 'FullyQualifiedName!~A&amp;...'</c>.
-    /// Null when no segment could be rewritten (a filter holding a single quote, or no <c>dotnet test</c> at all).
+    /// A segment on the Microsoft.Testing.Platform filters gets <c>--filter-not-class *.A</c> for each class instead (the dot keeps the
+    /// wildcard to a whole class name, so <c>A</c> never leaves out <c>BA</c>); one with a <c>--filter-query</c>, or a class name with odd
+    /// characters, stays as it is. Null when no segment could be rewritten (a filter holding a single quote, or no <c>dotnet test</c> at all).
     /// </summary>
     public static string? Excluding(string check, IReadOnlyCollection<string> classes)
     {
@@ -175,8 +179,8 @@ public static partial class UnrelatedFailures
             return check;
         }
         var without = string.Join('&', classes.Order(StringComparer.Ordinal).Select(c => "FullyQualifiedName!~" + c));
-        var platform = string.Join(' ', classes.Order(StringComparer.Ordinal).Select(c => $"{TestFilters.NotClass} *{c}"));
-        // xunit v3 takes fully qualified names, so a leading * matches whatever namespace the class sits in; a query filter cannot be
+        var platform = string.Join(' ', classes.Order(StringComparer.Ordinal).Select(c => $"{TestFilters.NotClass} *.{c}"));
+        // xunit v3 takes fully qualified names, so a leading *. matches whatever namespace the class sits in, and only at a name boundary; a query filter cannot be
         // combined with simple filters, and a name outside [\w.+] cannot be put on a command line unquoted: those segments stay as they are.
         return Refilter(
             check,

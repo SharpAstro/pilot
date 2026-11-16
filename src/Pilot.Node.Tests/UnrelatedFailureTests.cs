@@ -465,10 +465,10 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
     {
         var check = "dotnet test T -c Release --filter-class FooTests -- --report-trx";
         UnrelatedFailures.Excluding(check, ["B", "A"]).ShouldBe(
-            "dotnet test T -c Release --filter-class FooTests --filter-not-class *A --filter-not-class *B -- --report-trx");
+            "dotnet test T -c Release --filter-class FooTests --filter-not-class *.A --filter-not-class *.B -- --report-trx");
         UnrelatedFailures.Only(check, "EphemerisTests.Loads").ShouldBe(
-            "dotnet test T -c Release --filter-method *EphemerisTests.Loads -- --report-trx");
-        UnrelatedFailures.Only("dotnet test T --filter-class A --filter-method B.C", "X.Y").ShouldBe("dotnet test T --filter-method *X.Y");
+            "dotnet test T -c Release --filter-method *.EphemerisTests.Loads -- --report-trx");
+        UnrelatedFailures.Only("dotnet test T --filter-class A --filter-method B.C", "X.Y").ShouldBe("dotnet test T --filter-method *.X.Y");
         UnrelatedFailures.Excluding(check, ["A"])!.Replace("--filter-", "").ShouldNotContain("--filter");
     }
 
@@ -478,5 +478,27 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
         UnrelatedFailures.Excluding("dotnet test T --filter-query /*/*/Foo/*", ["A"]).ShouldBeNull();
         UnrelatedFailures.Excluding("dotnet test T --filter-class F", ["A b"]).ShouldBeNull();
         UnrelatedFailures.Only("dotnet test T --filter-class F", "A.B(x;y)").ShouldBeNull();
+    }
+
+    [Fact]
+    public void ThePlatformWildcardStopsAtANameBoundary()
+    {
+        // *.A matches Ns.A but not Ns.BA, which a bare *A would
+        UnrelatedFailures.Excluding("dotnet test T --filter-class F", ["A"]).ShouldContain("--filter-not-class *.A");
+        UnrelatedFailures.Excluding("dotnet test T --filter-class F", ["A"]).ShouldNotContain(" *A");
+    }
+
+    [Fact]
+    public void OnlyLeavesAPlatformSegmentWithAnOddTestNameAsItIs()
+    {
+        UnrelatedFailures.Only("dotnet test T --filter-class F", "A.B(x;y)").ShouldBeNull();
+    }
+
+    [Fact]
+    public void ExcludingRewritesAVsTestSegmentAndAPlatformSegmentOfOneCheckEachInItsOwnTerms()
+    {
+        var check = "dotnet test A --filter 'FullyQualifiedName~X' && dotnet test B --filter-class Y";
+        UnrelatedFailures.Excluding(check, ["Z"]).ShouldBe(
+            "dotnet test A --filter '(FullyQualifiedName~X)&FullyQualifiedName!~Z' && dotnet test B --filter-class Y --filter-not-class *.Z");
     }
 }
