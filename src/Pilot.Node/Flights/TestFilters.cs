@@ -19,6 +19,14 @@ public static class TestFilters
         "--filter-trait", "--filter-not-trait", "--filter-query",
     ];
 
+    /// <summary>The Platform options the node reads or writes by name.</summary>
+    public const string Class = "--filter-class";
+    public const string NotClass = "--filter-not-class";
+    public const string Method = "--filter-method";
+    public const string Namespace = "--filter-namespace";
+    public const string Trait = "--filter-trait";
+    public const string Query = "--filter-query";
+
     private static readonly HashSet<string> Names = new([VsTest, .. Platform], StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Whether <paramref name="word"/> is a filter option, as <c>--opt</c> or <c>--opt=value</c>, in any case.</summary>

@@ -465,10 +465,18 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
     {
         var check = "dotnet test T -c Release --filter-class FooTests -- --report-trx";
         UnrelatedFailures.Excluding(check, ["B", "A"]).ShouldBe(
-            "dotnet test T -c Release --filter-class FooTests --filter-not-class A --filter-not-class B -- --report-trx");
+            "dotnet test T -c Release --filter-class FooTests --filter-not-class *A --filter-not-class *B -- --report-trx");
         UnrelatedFailures.Only(check, "EphemerisTests.Loads").ShouldBe(
-            "dotnet test T -c Release --filter-method EphemerisTests.Loads -- --report-trx");
-        UnrelatedFailures.Only("dotnet test T --filter-class A --filter-method B.C", "X.Y").ShouldBe("dotnet test T --filter-method X.Y");
+            "dotnet test T -c Release --filter-method *EphemerisTests.Loads -- --report-trx");
+        UnrelatedFailures.Only("dotnet test T --filter-class A --filter-method B.C", "X.Y").ShouldBe("dotnet test T --filter-method *X.Y");
         UnrelatedFailures.Excluding(check, ["A"])!.Replace("--filter-", "").ShouldNotContain("--filter");
+    }
+
+    [Fact]
+    public void ExcludingLeavesAQueryCheckAndANameWithOddCharactersAsTheyAre()
+    {
+        UnrelatedFailures.Excluding("dotnet test T --filter-query /*/*/Foo/*", ["A"]).ShouldBeNull();
+        UnrelatedFailures.Excluding("dotnet test T --filter-class F", ["A b"]).ShouldBeNull();
+        UnrelatedFailures.Only("dotnet test T --filter-class F", "A.B(x;y)").ShouldBeNull();
     }
 }

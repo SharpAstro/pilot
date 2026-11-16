@@ -52,9 +52,9 @@ public static class InvariantChecks
         var filters = TestFilters.Read(tokens.Skip(start + 2).Select(t => t.Value));
         if (filters.Any(f => TestFilters.IsPlatform(f.Option)))
         {
-            var traitOnly = filters.All(f => f.Option == "--filter-trait");
+            var traitOnly = filters.All(f => f.Option == TestFilters.Trait);
             var named = filters.Any(f => f.Value.Equals("Category=" + Category, StringComparison.OrdinalIgnoreCase));
-            return traitOnly && !named ? TestFilters.Append(segment, "--filter-trait Category=" + Category) : segment;
+            return traitOnly && !named ? TestFilters.Append(segment, TestFilters.Trait + " Category=" + Category) : segment;
         }
 
         for (var i = start + 2; i < tokens.Count; i++)

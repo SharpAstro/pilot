@@ -82,7 +82,7 @@ public static partial class UnrelatedFailures
                     }
                 }
             }
-            else if (option is "--filter-class" or "--filter-method" or "--filter-namespace" && text.Trim('*', ' ') is { Length: > 0 } name)
+            else if (option is TestFilters.Class or TestFilters.Method or TestFilters.Namespace && text.Trim('*', ' ') is { Length: > 0 } name)
             {
                 names.Add(name);
             }
@@ -161,7 +161,7 @@ public static partial class UnrelatedFailures
         test.Contains('\'') ? null : Refilter(
             check,
             _ => $"FullyQualifiedName~{test}",
-            segment => TestFilters.Append(TestFilters.Remove(segment, includeVsTest: true), $"--filter-method {test}"));
+            segment => Plain(test) ? TestFilters.Append(TestFilters.Remove(segment, includeVsTest: true), $"{TestFilters.Method} *{test}") : segment);
 
     /// <summary>
     /// The check with each <c>dotnet test</c> segment told to leave out <paramref name="classes"/>: its filter becomes
@@ -175,8 +175,15 @@ public static partial class UnrelatedFailures
             return check;
         }
         var without = string.Join('&', classes.Order(StringComparer.Ordinal).Select(c => "FullyQualifiedName!~" + c));
-        var platform = string.Join(' ', classes.Order(StringComparer.Ordinal).Select(c => "--filter-not-class " + c));
-        return Refilter(check, expression => expression is null ? without : $"({expression})&{without}", segment => TestFilters.Append(segment, platform));
+        var platform = string.Join(' ', classes.Order(StringComparer.Ordinal).Select(c => $"{TestFilters.NotClass} *{c}"));
+        // xunit v3 takes fully qualified names, so a leading * matches whatever namespace the class sits in; a query filter cannot be
+        // combined with simple filters, and a name outside [\w.+] cannot be put on a command line unquoted: those segments stay as they are.
+        return Refilter(
+            check,
+            expression => expression is null ? without : $"({expression})&{without}",
+            segment => classes.All(Plain) && !TestFilters.Read(CheckPaths.Tokenize(segment).Select(t => t.Value)).Any(f => f.Option == TestFilters.Query)
+                ? TestFilters.Append(segment, platform)
+                : segment);
     }
 
     // Each dotnet test segment's filter replaced by what `filter` makes of it (null: the segment had none); a segment carrying Platform
@@ -262,6 +269,9 @@ public static partial class UnrelatedFailures
             }
         }
     }
+
+    // Whether a name is safe unquoted on a command line.
+    private static bool Plain(string name) => name.Length > 0 && name.All(c => char.IsLetterOrDigit(c) || c is '_' or '.' or '+');
 
     // Whether the segment is a dotnet test carrying a Microsoft.Testing.Platform filter option.
     private static bool HasPlatformFilter(string segment)
