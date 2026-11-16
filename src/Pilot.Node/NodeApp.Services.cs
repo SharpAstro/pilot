@@ -109,7 +109,7 @@ public static partial class NodeApp
     private static void AddPlanes(WebApplicationBuilder builder, NodeOptions options, LogWriter logWriter)
     {
         builder.Services.AddSingleton<IGit, GitCli>();
-        builder.Services.AddSingleton(services => new FlightArchiver(services.GetRequiredService<NodeState>(), services.GetRequiredService<IGit>(), services.GetRequiredService<RemovalQueue>()));
+        builder.Services.AddSingleton(services => new FlightArchiver(services.GetRequiredService<NodeState>(), services.GetRequiredService<RemovalQueue>()));
         builder.Services.AddSingleton(services => new RemovalQueue(RemovalQueue.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         // First: tried once at the start, before any service touches the paths it holds.
         builder.Services.AddHostedService(services => new RemovalQueueStart(services.GetRequiredService<RemovalQueue>(), services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));

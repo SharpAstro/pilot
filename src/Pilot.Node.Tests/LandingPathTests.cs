@@ -59,6 +59,19 @@ public sealed class LandingPathTests : ReviewTestsBase
         return (F(flight.Code), old);
     }
 
+    [Fact]
+    public async Task LandingAFlightLeavesNoMergeQueueNote()
+    {
+        var (flight, _) = await Passed("1");
+        _state.UpdateFlight(flight.Code, f => f with { MergeQueue = "in the merge queue, position 1" });
+
+        var result = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head);
+
+        result.Error.ShouldBeNull();
+        F(flight.Code).State.ShouldBe(FlightState.Landed);
+        F(flight.Code).MergeQueue.ShouldBeNull();
+    }
+
     [Theory]
     [MemberData(nameof(Cases))]
     public async Task EveryPathEndsMergedRetriedOrInOneCardWithGitHubsWholeText(Path path, string answer, LandingAnswers.Shape shape)

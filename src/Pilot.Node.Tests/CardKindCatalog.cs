@@ -173,6 +173,7 @@ internal static class CardKindCatalog
         new("routed", "Handled", [FlightCommanderRoute], "FleetRoutingTests.ARoutedFlightIsMadeOnTheWillingPeerWithItsOwnCheckoutAndSaysWhere"),
         new("connection-released", "Handled", [FlightCommanderConnect], "ConnectReleaseTests.ALandWithoutAPrReleasesTheWaiterFromThatFlightOnly"),
         new("archive-held", "Handled", ["Flights/FlightArchiveSweep.cs"], "FlightArchiveSweepTests.AFlightWhoseWorktreeExistsOrWhichHasAnOpenCardIsHeldBackAndTheLineSaysWhyExactlyOnce"),
+        new("archive-sweep", "Handled", ["Flights/FlightArchiveSweep.cs"], "FlightArchiveSweepTests.AMixedSweepRaisesOneSummaryWithTheCountsByReason"),
         new("disconnected", "Handled", [FlightCommanderConnect], "DisconnectTests.TheDroppedConnectionStaysDroppedWhenTheJournalIsReplayed"),
         new("received", "Handled", [FlightCommanderReceive], "FlightMoveTests.AHandedFlightArrivesWithItsLegsReportsPrReviewAndOpenCardsOnAPlaneAtThePushedHead"),
         new("adopted", "Handled", [FlightCommanderAdopt], "AdoptTests.AFlightOfANodeSilentPastAdoptAfterIsTakenFromTheCopyWithItsPlaneLegsLabelCommentsAndAnAtRiskCard"),
