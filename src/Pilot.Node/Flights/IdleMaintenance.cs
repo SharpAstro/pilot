@@ -423,7 +423,6 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
         }
     }
 
-    /// <summary>Bytes as gigabytes with one decimal (<c>9.2 GB</c>), or just the number (<c>7.0</c>) when <paramref name="unit"/> is false.</summary>
     /// <summary>Bytes as B, KB, MB or GB, so a small item does not read as 0.0 GB.</summary>
     public static string Scaled(long bytes)
     {
@@ -438,5 +437,6 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
         return unit == 0 ? $"{bytes.ToString(CultureInfo.InvariantCulture)} B" : $"{value.ToString("0.0", CultureInfo.InvariantCulture)} {units[unit]}";
     }
 
+    /// <summary>Bytes as gigabytes with one decimal (<c>9.2 GB</c>), or just the number (<c>7.0</c>) when <paramref name="unit"/> is false.</summary>
     public static string Gb(long bytes, bool unit = true) => (bytes / (double)(1L << 30)).ToString("0.0", CultureInfo.InvariantCulture) + (unit ? " GB" : "");
 }
