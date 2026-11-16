@@ -155,7 +155,8 @@ public sealed class FlightArchiveTests : IDisposable
         var state = Open(journal);
         Land(state, "TIA1");
         Directory.CreateDirectory(Path.Combine(_root, "plane"));
-        state.PutFlight(Flight("TIA1") with { Worktree = Path.Combine(_root, "plane") });
+        // The repo folder must exist for git to be asked about the branch (a gone folder has no branch to wait for).
+        state.PutFlight(Flight("TIA1") with { Worktree = Path.Combine(_root, "plane"), RepoPath = _root });
 
         (await Archiver(state).RunAsync(Archive("TIA1"), Ct)).Error.ShouldNotBeNull().ShouldContain("still on disk");
 
