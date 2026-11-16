@@ -404,7 +404,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
             var marked = named.Contains(target.Name);
             var name = target.Name;
             return Layout.Builder.Text(marked ? name + "*" : name, 12f, Bright, TextAlign.Center)
-                .Pad(8f, 4f).WAuto()
+                .Pad(4f, 4f).WStar()
                 .Bg(chosen ? Active : Button)
                 .BgHover(ButtonHover)
                 .WithTooltip($"{name} {target.Width}x{target.Height} at {target.Scale.ToString(CultureInfo.InvariantCulture)}x{(marked ? ", named by the design" : "")}")
@@ -425,9 +425,11 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         var custom = Layout.Builder.TextInput(CustomInput, 12f, Palette.Input).WFixed(150f).RowH(26f);
         var scale = surface.Scale.ToString("0.##", CultureInfo.InvariantCulture);
         var caption = _customProblem ?? $"{surface.Name}: {surface.Width} x {surface.Height} at {scale}x";
+        // Three rows, the chips sharing the column's width: one row of chips, swap and input overran a narrow column onto the versions beside it.
         return Layout.Builder.VStack(
-            Layout.Builder.HStack([.. chips, swap]).WithGap(6f).RowH(26f),
-            Layout.Builder.HStack(custom, WrappedProse.OneLine(caption, 12f, _customProblem is null ? Dim : Bright, selectable: false).RowH(26f).WStar()).WithGap(8f).RowH(26f)).WithGap(4f).RowH(56f);
+            Layout.Builder.HStack([.. chips]).WithGap(4f).RowH(26f),
+            Layout.Builder.HStack(swap, custom).WithGap(8f).RowH(26f),
+            WrappedProse.OneLine(caption, 12f, _customProblem is null ? Dim : Bright, selectable: false).RowH(22f).Whole(caption)).WithGap(4f).RowH(86f);
     }
 
     private Layout.Node Strip(DesignPage page)
