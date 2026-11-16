@@ -206,15 +206,16 @@ public sealed class LandedBranches(IGit git)
     private async Task<HashSet<string>?> ReadCheckedOutAsync(string repoPath, CancellationToken cancellationToken)
     {
         var run = await git.RunAsync(["worktree", "list", "--porcelain"], repoPath, cancellationToken);
-        var set = new HashSet<string>();
-        if (run.Ok)
+        if (!run.Ok)
         {
-            foreach (var line in run.Output.Split('\n', StringSplitOptions.TrimEntries))
+            return null;
+        }
+        var set = new HashSet<string>();
+        foreach (var line in run.Output.Split('\n', StringSplitOptions.TrimEntries))
+        {
+            if (line.StartsWith("branch refs/heads/", StringComparison.Ordinal))
             {
-                if (line.StartsWith("branch refs/heads/", StringComparison.Ordinal))
-                {
-                    set.Add(line["branch refs/heads/".Length..]);
-                }
+                set.Add(line["branch refs/heads/".Length..]);
             }
         }
         return set;
