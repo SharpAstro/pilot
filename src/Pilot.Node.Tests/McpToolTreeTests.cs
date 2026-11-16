@@ -73,8 +73,8 @@ public sealed class McpToolTreeTests(ITestOutputHelper output)
 
         var schema = McpServer.Describe("job_artifact", path, chain).InputSchema;
         schema.Required.ShouldContain("job");
-        // Left out, the CLI itself reports the missing job.
-        root.Parse(McpServer.Spell(path, chain, Arguments("""{"name":"shot.png"}"""))).Errors.ShouldNotBeEmpty();
+        // Left out, the parse of the leaf would not notice, so the spelling refuses.
+        Should.Throw<PilotCommand.UsageException>(() => McpServer.Spell(path, chain, Arguments("""{"name":"shot.png"}"""))).Message.ShouldContain("job");
     }
 
     [Fact]
@@ -122,15 +122,21 @@ public sealed class McpToolTreeTests(ITestOutputHelper output)
         broken.ShouldBe(["job_artifact: job"]);
     }
 
+    /// <summary>job's id is one Argument object shared by job and its subcommands (cancel, pause, resume), so it is the same value, not a clash.</summary>
     [Fact]
     public void ANameAParentSharesWithItsLeafIsNamed()
     {
-        var clashes = McpServer.Tools(Root())
-            .SelectMany(t => AncestorKeys(t.Value.Chain).Select(a => a.Name).Intersect(
-                t.Value.Chain[^1].Arguments.Where(a => !a.Hidden).Select(a => a.Name)
-                    .Concat(t.Value.Chain[^1].Options.Where(o => !o.Hidden).Select(Key)), StringComparer.Ordinal)
-                .Select(k => $"{t.Key}: {k}"))
-            .ToList();
+        var clashes = new List<string>();
+        foreach (var (tool, (_, chain)) in McpServer.Tools(Root()))
+        {
+            var leaf = chain[^1];
+            foreach (var ancestor in chain[..^1])
+            {
+                clashes.AddRange(ancestor.Arguments.Where(a => !a.Hidden && !leaf.Arguments.Contains(a) && leaf.Arguments.Any(l => l.Name == a.Name)).Select(a => $"{tool}: {a.Name}"));
+                clashes.AddRange(ancestor.Options.Where(o => o.Name is not ("--help" or "--version") && !o.Hidden && !leaf.Options.Contains(o) && leaf.Options.Any(l => l.Name == o.Name)).Select(o => $"{tool}: {Key(o)}"));
+                clashes.AddRange(ancestor.Arguments.Where(a => !a.Hidden && !leaf.Arguments.Contains(a) && leaf.Options.Any(l => Key(l) == a.Name)).Select(a => $"{tool}: {a.Name}"));
+            }
+        }
 
         clashes.ShouldBeEmpty();
     }

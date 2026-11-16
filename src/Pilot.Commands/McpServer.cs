@@ -706,6 +706,15 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
             {
                 // No "--" can protect an ancestor's value (words after it are all values, and the next command word would be one),
                 // so a value that starts with a dash would parse as an option: refuse it.
+                // An ancestor's required argument or option is not checked by the parse of the leaf, so a call without it is refused here.
+                if (arguments.FirstOrDefault(x => x.Arity.MinimumNumberOfValues > 0 && !given.ContainsKey(x.Name)) is { } missing)
+                {
+                    throw new PilotCommand.UsageException($"{string.Join(' ', path)} needs {missing.Name}");
+                }
+                if (options.FirstOrDefault(x => x.Required && !given.ContainsKey(Key(x))) is { } missingOption)
+                {
+                    throw new PilotCommand.UsageException($"{string.Join(' ', path)} needs {Key(missingOption)}");
+                }
                 if (words.FirstOrDefault(w => w.StartsWith('-')) is { } dashed)
                 {
                     throw new PilotCommand.UsageException($"{string.Join(' ', path)}: {string.Join('/', arguments.Select(a => a.Name))} of {command.Name} cannot start with a dash ({dashed})");
