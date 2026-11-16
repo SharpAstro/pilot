@@ -71,23 +71,10 @@ internal sealed class PageData
         {
             Row = first,
             Folder = "designs/DSN-1",
-            Brief = lengthen ? "## 2026-11-16T09:00:00Z
-
-" + LongReport + "
-
-" + LongPath : "## 2026-11-16T09:00:00Z
-
-A home screen with two tabs and a settings screen.",
+            Brief = lengthen ? "## 2026-11-16T09:00:00Z\n\n" + LongReport + "\n\n" + LongPath : "## 2026-11-16T09:00:00Z\n\nA home screen with two tabs and a settings screen.",
             Versions = [new DesignVersionRow { Number = 1, At = now.AddDays(-1), Why = "brief" }, new DesignVersionRow { Number = 2, At = now, Why = lengthen ? LongTitle : "fix" }],
         };
-        var notes = lengthen ? "# Notes
-
-" + LongReport + "
-
-" + LongPath : "# Notes
-
-- the home screen has two tabs
-- Settings is one goto away";
+        var notes = lengthen ? "# Notes\n\n" + LongReport + "\n\n" + LongPath : "# Notes\n\n- the home screen has two tabs\n- Settings is one goto away";
         var page = new DesignPage(detail, 2, document, notes, [.. document.Screens.Select(s => new DesignRender(s.Id, s.Title ?? s.Id, null))]);
         return new DesignsScreen(rows, "test", now, page);
     }
