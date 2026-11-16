@@ -42,15 +42,17 @@ public sealed class GuiLaneTests : JobTestsBase
 
     private JobRow Row(string id) => _state.Jobs().Single(j => j.Id == id);
 
-    private JobRunner Lane(string? desktopRefusal = null, int slots = 1)
+    private JobRunner Lane(string? desktopRefusal = null, int slots = 1) => LaneAndGone(desktopRefusal, slots).Jobs;
+
+    private (JobRunner Jobs, Func<string, Task> Gone) LaneAndGone(string? desktopRefusal = null, int slots = 1)
     {
-        var (jobs, _, _, _) = Idle();
+        var (jobs, _, _, gone) = Idle();
         jobs.MaxRunning = 4;
         jobs.SiblingsOf = _ => [];
         jobs.OneHeavyAtATime = false;
         jobs.GuiSlots = slots;
         jobs.DesktopProbe = () => desktopRefusal;
-        return jobs;
+        return (jobs, gone);
     }
 
     [Fact]
@@ -83,13 +85,15 @@ public sealed class GuiLaneTests : JobTestsBase
     [Fact]
     public async Task TheGuiSlotIsFreedWhenTheGuiJobEndsAndTheWaitingOneStarts()
     {
-        var jobs = Lane();
+        var (jobs, gone) = LaneAndGone();
         var first = HandIn(jobs, Repo("tianwen"), Sleep(30), gui: true);
         await Until(first, j => j.State == JobState.Running);
         var second = HandIn(jobs, Repo("pilot"), Sleep(30), gui: true);
         Row(second).State.ShouldBe(JobState.Queued);
 
         Fake!.Finish(first);
+        await gone(first);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
 
         await Until(second, j => j.State == JobState.Running);
     }
