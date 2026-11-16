@@ -292,8 +292,9 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             var queue = await github.MergeQueueAsync(flight.RepoPath, number, cancellationToken);
             var said = queue is { State: "OPEN", Queued: true } ? queue.Position is { } position ? $"in the merge queue, position {position}" : "in the merge queue"
                 : state.Flights().FirstOrDefault(f => f.Code == flight.Code)?.MergeWhenGreen is not null ? "merges once its checks pass" : null;
-            if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is { } now && now.MergeQueue != said)
+            if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is { State: FlightState.Flying } now && now.MergeQueue != said)
             {
+                // Only a flying flight takes the note: one that landed while the question was out must not get a stale note back.
                 state.PutFlight(now with { MergeQueue = said });
             }
             if (queue is { State: "CLOSED" })

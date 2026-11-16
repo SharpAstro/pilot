@@ -283,6 +283,56 @@ public sealed class FlightArchiveSweepTests : IDisposable
         Summaries(state).Single().Title.ShouldBe("archived 20, held back 6: 2 a live session, 2 a plane folder on disk, 2 an open card");
     }
 
+    [Fact]
+    public async Task TheSameHeldFlightsDoNotRaiseTheSummaryAgainAtTheNextSweepButAChangeDoes()
+    {
+        using var journal = Journal();
+        var state = Open(journal);
+        var plane = Path.Combine(_root, "plane");
+        Directory.CreateDirectory(plane);
+        state.PutFlight(Flight("TIA1", FlightState.Landed, Now.AddDays(-8), plane));
+        var (sweep, _) = Sweeper(state);
+
+        await sweep.SweepAsync(Ct);
+        await sweep.SweepAsync(Ct);
+        Summaries(state).Count().ShouldBe(1);
+
+        state.PutFlight(Flight("TIA2", FlightState.Landed, Now.AddDays(-8), plane));
+        await sweep.SweepAsync(Ct);
+        Summaries(state).Count().ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task AFlightThatCannotBeArchivedIsToldAndCountedAsAnErrorAndTheSweepGoesOn()
+    {
+        using var journal = Journal();
+        var state = Open(journal);
+        state.Archive = null;
+        state.PutFlight(Flight("TIA1", FlightState.Landed, Now.AddDays(-8)));
+        var (sweep, _) = Sweeper(state);
+        var error = new StringWriter();
+        sweep.Error = error;
+
+        (await sweep.SweepAsync(Ct)).ShouldBe(0);
+
+        error.ToString().ShouldContain("TIA1 not archived");
+        state.Flights().Select(f => f.Code).ShouldBe(["TIA1"]);
+        Summaries(state).Single().Title.ShouldBe("archived 0, held back 1: 1 an error");
+    }
+
+    [Fact]
+    public async Task AStaleNoteOnALandedFlightWithAnUnmergedLookingPrIsHealedAndTheFlightIsArchivedInOneSweep()
+    {
+        using var journal = Journal();
+        var state = Open(journal);
+        state.PutFlight(Flight("TIA1", FlightState.Landed, Now.AddDays(-8)) with { PullRequest = 7, MergeQueue = "in the merge queue, position 1" });
+        var (sweep, _) = Sweeper(state);
+
+        (await sweep.SweepAsync(Ct)).ShouldBe(1);
+
+        state.ArchivedFlightRows().Select(r => r.Code).ShouldBe(["TIA1"]);
+    }
+
     /// <summary>A clock a test moves.</summary>
     private sealed class MovingTime(DateTimeOffset now) : TimeProvider
     {

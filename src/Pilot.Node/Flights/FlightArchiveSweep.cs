@@ -38,6 +38,7 @@ public sealed class FlightArchiveSweep(NodeState state, FlightArchiver archiver,
     public TextWriter Error { get; set; } = TextWriter.Null;
 
     // What each held-back flight was last told, so a sweep repeats a line only when its reason changes.
+    private string? _lastSummary;
     private readonly Dictionary<string, string> _told = new(StringComparer.OrdinalIgnoreCase);
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
@@ -140,7 +141,13 @@ public sealed class FlightArchiveSweep(NodeState state, FlightArchiver archiver,
         if (archived + held > 0)
         {
             var groups = string.Join(", ", heldBy.OrderByDescending(g => g.Value).ThenBy(g => g.Key, StringComparer.Ordinal).Select(g => $"{g.Value} {g.Key}"));
-            state.RaiseCard(CardBin.Handled, SummaryKind, "archive", $"archived {archived}, held back {held}{(held > 0 ? ": " + groups : "")}");
+            var title = $"archived {archived}, held back {held}{(held > 0 ? ": " + groups : "")}";
+            // The same held flights every 10 minutes say nothing new: a summary that archived nothing and reads as the last one is not raised again.
+            if (archived > 0 || _lastSummary != title)
+            {
+                state.RaiseCard(CardBin.Handled, SummaryKind, "archive", title);
+            }
+            _lastSummary = title;
         }
         return archived;
     }
