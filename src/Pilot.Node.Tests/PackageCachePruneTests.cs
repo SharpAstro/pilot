@@ -294,9 +294,7 @@ public sealed class PackageCachePruneTests : IDisposable
             {
                 "gh" => "[{\"number\":7,\"headRefName\":\"feature/x\"}]",
                 "fsutil" => "DisableLastAccess = 0 (User Managed, Last Access Updates Enabled)",
-                _ when args[0] == "ls-tree" => "Directory.Packages.props
-src/App/App.csproj
-README.md",
+                _ when args[0] == "ls-tree" => "Directory.Packages.props\nsrc/App/App.csproj\nREADME.md",
                 _ when args[0] == "show" && args[1].EndsWith("Directory.Packages.props", StringComparison.Ordinal) => "<Project><ItemGroup><PackageVersion Include=\"Pinned\" Version=\"1.0.0\" /></ItemGroup></Project>",
                 _ when args[0] == "show" => "<Project />",
                 _ => "",
