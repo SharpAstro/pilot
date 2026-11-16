@@ -10,6 +10,8 @@ namespace Pilot.Node.Flights;
 /// neither restart nor ring per session; the window it covered is kept in <see cref="LastWindow"/> for what redoes the work.
 /// </summary>
 // The outage is kept in memory only, on purpose: a node restart forgets it, and the next stalled sessions or account change open it again.
+// The one thing that is not: when the login changed (or a person lifted a limit) is stored with the usage (#1123), since a restart that
+// forgot it took the old login's usage limit for this one's and held every start until that limit's reset.
 public sealed class TurnOutage(NodeState state)
 {
     /// <summary>The kind of the one card an outage raises.</summary>
@@ -108,6 +110,7 @@ public sealed class TurnOutage(NodeState state)
                 limitEnded = true;
             }
         }
+        state.PutLoginChanged(at);
         if (limitEnded)
         {
             LimitEnded?.Invoke();
@@ -116,12 +119,45 @@ public sealed class TurnOutage(NodeState state)
         Open(at, "the account changed");
     }
 
+    /// <summary>
+    /// A person says the open usage limit does not hold (#1123): it is another login's, read from a session that began before the login
+    /// changed and that the node no longer knows to be older (the node restarted since). The limit ends as at an account change: its
+    /// window is kept for the redo, the held says go, and rows that began before <paramref name="at"/> no longer count toward a limit.
+    /// False when no limit is open, and then nothing changes.
+    /// </summary>
+    public bool Lift(DateTimeOffset at, string who, string? why)
+    {
+        lock (_gate)
+        {
+            if (_since is not { } since || _limitUntil is null)
+            {
+                return false;
+            }
+            _loginChangedAt = at;
+            Close(since, at, $"lifted by {who}: {(string.IsNullOrWhiteSpace(why) ? "the limit is not this login's" : why.Trim())}");
+        }
+        state.PutLoginChanged(at);
+        LimitEnded?.Invoke();
+        return true;
+    }
+
     private DateTimeOffset? _loginChangedAt;
 
-    /// <summary>When the login last changed, or null; a limit read from a session that began before it is the old login's.</summary>
+    /// <summary>
+    /// When the login last changed or a person lifted a limit, or null; a limit read from a session that began before it is the old
+    /// login's. The later of what this run saw and what is stored with the usage, so it outlives a restart of the node.
+    /// </summary>
     public DateTimeOffset? LoginChangedAt
     {
-        get { lock (_gate) { return _loginChangedAt; } }
+        get
+        {
+            DateTimeOffset? seen;
+            lock (_gate)
+            {
+                seen = _loginChangedAt;
+            }
+            return UsageRow.Later(seen, state.Usage()?.LoginChangedAt);
+        }
     }
 
     /// <summary>
@@ -239,6 +275,24 @@ public sealed class TurnOutage(NodeState state)
     /// The account is on a usage or spend limit until <paramref name="until"/>, seen at <paramref name="at"/>. Opens the outage with a known end
     /// (or extends an open limit to a later end); an open plain outage is turned into the limit. A reset not after <paramref name="at"/> opens nothing.
     /// </summary>
+    /// <summary>
+    /// <see cref="OpenLimit"/> for a limit judged from the session rows against
+    /// <paramref name="loginChangedWhenJudged"/>: when the login changed, or a person lifted the limit, between that judgement and now,
+    /// the judgement is stale (it counted rows that no longer count) and nothing opens. Without this a look already under way reopened a
+    /// limit a moment after it was lifted, and it then held until its reset (#1123).
+    /// </summary>
+    public void OpenJudgedLimit(DateTimeOffset until, string why, DateTimeOffset at, DateTimeOffset? loginChangedWhenJudged)
+    {
+        lock (_gate)
+        {
+            if (UsageRow.Later(_loginChangedAt, state.Usage()?.LoginChangedAt) != loginChangedWhenJudged)
+            {
+                return;
+            }
+            OpenLimit(until, why, at);
+        }
+    }
+
     public void OpenLimit(DateTimeOffset until, string why, DateTimeOffset at)
     {
         lock (_gate)
@@ -280,8 +334,11 @@ public sealed class TurnOutage(NodeState state)
         }
         var card = state.RaiseCard(CardBin.ForYou, LimitCardKind, Verbs.NodeTarget, $"On the usage limit until {until.ToLocalTime():HH:mm}",
             $"limit seen at {at:O}: {why}; resets {until:O}; the node starts no session of its own and rings nothing for a session that took no turn until then",
-            [new CardChoice { Label = "Mark it read", Verb = Verbs.Dismiss, Target = "" }],
-            summary: $"The account is on its usage limit until {until.ToLocalTime():HH:mm} ({why}). The node starts nothing and rings nothing for a session that took no turn; what waited starts then, and this card closes by itself.");
+            [
+                new CardChoice { Label = "Mark it read", Verb = Verbs.Dismiss, Target = "" },
+                new CardChoice { Label = "Lift the limit", Verb = Verbs.LiftLimit, Target = Verbs.NodeTarget },
+            ],
+            summary: $"The account is on its usage limit until {until.ToLocalTime():HH:mm} ({why}). The node starts nothing and rings nothing for a session that took no turn; what waited starts then, and this card closes by itself. Marking it read leaves the hold. If the limit is another login's (you logged in again and sessions take turns), lift it.");
         _cardId = card.Id;
     }
 
