@@ -19,8 +19,8 @@ public sealed class McpToolTreeTests(ITestOutputHelper output)
     /// <summary>The visible arguments and own options of every ancestor of the leaf that scope its subcommands (McpServer.ScopingKeys), as (name, required).</summary>
     private static IEnumerable<(string Name, bool Required)> AncestorKeys(Command[] chain) =>
         chain[..^1].SelectMany(c =>
-            c.Arguments.Where(a => !a.Hidden && McpServer.ScopingKeys.Contains($"{c.Name}:{a.Name}")).Select(a => (a.Name, a.Arity.MinimumNumberOfValues > 0))
-                .Concat(c.Options.Where(o => !o.Hidden && o.Name is not ("--help" or "--version") && McpServer.ScopingKeys.Contains($"{c.Name}:{Key(o)}")).Select(o => (Key(o), o.Required))));
+            c.Arguments.Where(a => !a.Hidden && !chain[^1].Arguments.Contains(a) && McpServer.ScopingKeys.Contains($"{c.Name}:{a.Name}")).Select(a => (a.Name, a.Arity.MinimumNumberOfValues > 0))
+                .Concat(c.Options.Where(o => !o.Hidden && !chain[^1].Options.Contains(o) && o.Name is not ("--help" or "--version") && McpServer.ScopingKeys.Contains($"{c.Name}:{Key(o)}")).Select(o => (Key(o), o.Required))));
 
     /// <summary>The tools whose schema lacks (or does not require) a key of an ancestor command; the check a second test feeds a broken schema.</summary>
     internal static List<string> Lacking(Dictionary<string, (string[] Path, Command[] Chain)> tools, Func<string, string[], Command[], ToolSchema> schemaOf)
