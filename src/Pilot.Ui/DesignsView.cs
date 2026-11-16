@@ -201,8 +201,8 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         // Two lines of one string each: columns of a row squeezed each other's ellipses at a narrow window.
         var detail = string.Join(" · ", new[] { version, repo, when }.Where(t => t.Length > 0));
         var line = Layout.Builder.VStack(
-            WrappedProse.OneLine($"{row.Id}  {title}", 13f, Bright).RowH(22f).Whole($"{row.Id}  {title}"),
-            WrappedProse.OneLine(detail, 12f, Dim).RowH(20f).Whole(detail)).WithGap(0f).Pad(4f, 2f).RowH(RowH);
+            WrappedProse.OneLine($"{row.Id}  {title}", 13f, Bright, selectable: false).RowH(22f).Whole($"{row.Id}  {title}"),
+            WrappedProse.OneLine(detail, 12f, Dim, selectable: false).RowH(20f).Whole(detail)).WithGap(0f).Pad(4f, 2f).RowH(RowH);
         var id = row.Id;
         return (index % 2 == 1 ? line.Bg(RowAltBg) : line)
             .BgHover(RowHoverBg)
@@ -253,7 +253,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
             var number = version.Number;
             var when = version.At is { } at ? at.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) : "";
             var label = $"v{number}{(number == row.Current ? " (current)" : "")}{(version.Why is { Length: > 0 } why ? $" · {why}" : "")}{(when.Length > 0 ? $" · {when}" : "")}";
-            yield return WrappedProse.OneLine(label, 12f, Bright).Selectable().Pad(8f, 4f)
+            yield return WrappedProse.OneLine(label, 12f, Bright, selectable: false).Pad(8f, 4f)
                 .Bg(number == page.Version ? Active : Button)
                 .BgHover(ButtonHover)
                 .WithTooltip($"Play v{number}")
@@ -268,7 +268,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         {
             var screen = render.Screen;
             var picture = Layout.Builder.Fill(key: RenderKeyPrefix + (render.File ?? "")).Bg(Well).Stretch();
-            var caption = WrappedProse.OneLine(render.Title, 11f, Player?.CurrentScreen.Id == screen ? Bright : Dim, TextAlign.Center).RowH(20f).Whole(render.Title);
+            var caption = WrappedProse.OneLine(render.Title, 11f, Player?.CurrentScreen.Id == screen ? Bright : Dim, TextAlign.Center, selectable: false).RowH(20f).Whole(render.Title);
             return Layout.Builder.VStack(picture, caption).WithGap(2f)
                 .Bg(Player?.CurrentScreen.Id == screen ? Active : Button)
                 .BgHover(ButtonHover)
