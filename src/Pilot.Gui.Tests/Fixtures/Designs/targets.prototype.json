@@ -1,0 +1,35 @@
+{
+  "width": 1280,
+  "height": 720,
+  "entry": "home",
+  "targets": [
+    { "name": "Desktop", "width": 1440, "height": 900, "scale": 1 },
+    { "name": "Phone", "width": 390, "height": 844, "scale": 3 }
+  ],
+  "screens": [
+    {
+      "id": "home",
+      "title": "Home",
+      "root": {
+        "kind": "vstack", "gap": 12, "padding": 16,
+        "children": [
+          { "kind": "text", "text": "Fleet", "fontSize": 20, "color": "HeaderText" },
+          { "kind": "text", "text": "Side rail: Home, Flights, Jobs", "when": "target=regular" },
+          { "kind": "text", "text": "Bottom bar: Home, Flights, Jobs", "when": "target=compact" },
+          { "kind": "text", "text": "Open settings", "color": "Accent", "action": "goto:settings" }
+        ]
+      }
+    },
+    {
+      "id": "settings",
+      "title": "Settings",
+      "root": {
+        "kind": "vstack", "gap": 12, "padding": 16,
+        "children": [
+          { "kind": "text", "text": "Settings", "fontSize": 20, "color": "HeaderText" },
+          { "kind": "text", "text": "Back", "color": "Accent", "action": "goto:home" }
+        ]
+      }
+    }
+  ]
+}

@@ -79,6 +79,24 @@ internal sealed class PageData
         return new DesignsScreen(rows, "test", now, page);
     }
 
+    internal static string TargetsPrototypePath => Path.Combine(AppContext.BaseDirectory, "Fixtures", "Designs", "targets.prototype.json");
+
+    /// <summary>One design whose prototype names Desktop and Phone and has a rail for a regular target and a bottom bar for a compact one.</summary>
+    internal static DesignsScreen TargetsDesigns(DateTimeOffset now)
+    {
+        var row = new DesignRow { Id = "DSN-7", Title = "Targets", Repo = "SharpAstro/pilot", Current = 1, Versions = 1, At = now, Why = "brief", PrototypeSha256 = "cd" };
+        var document = DIR.Lib.Prototyping.Prototype.Load(File.ReadAllText(TargetsPrototypePath)).Document ?? throw new InvalidDataException("the targets prototype does not load");
+        var detail = new DesignDetail
+        {
+            Row = row,
+            Folder = "designs/DSN-7",
+            Brief = "A home screen with a rail on a regular target and a bottom bar on a compact one.",
+            Versions = [new DesignVersionRow { Number = 1, At = now, Why = "brief" }],
+        };
+        var page = new DesignPage(detail, 1, document, "# Notes", [.. document.Screens.Select(s => new DesignRender(s.Id, s.Title ?? s.Id, null))]);
+        return new DesignsScreen([row], "test", now, page);
+    }
+
     private static readonly NodeMark Here = new("node.sock", "node.sock", "SE1", true);
     private static readonly NodeMark Other = new("10.0.0.9:47731", "10.0.0.9:47731", "LE1", false);
 

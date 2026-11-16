@@ -31,7 +31,7 @@ public static class WireframeSweepTests
 
     internal static readonly string[] Pages =
     [
-        "home", "sessions", "flights table", "flights canvas", "flight page", "jobs", "fleet", "settings", "repos", "pull requests", "chat", "spend", "designs", "design page", "design cells",
+        "home", "sessions", "flights table", "flights canvas", "flight page", "jobs", "fleet", "settings", "repos", "pull requests", "chat", "spend", "designs", "design page", "design cells", PageTextOverlapTests.DesignPagePhone, PageTextOverlapTests.DesignPageDesktop,
         PageTextOverlapTests.IdeasPage, "transcript", "cards panel", PageTextOverlapTests.CardDetailPage,
     ];
 
@@ -106,7 +106,7 @@ public static class WireframeSweepTests
         var data = prepared.Data;
         renderer.Begin();
         prepared.Chrome.Render(data.Sessions, data.Flights, PageTextOverlapTests.CardsOf(data, page), data.Jobs, data.Fleet, data.Repos, data.PullRequests,
-            new RectF32(0, 0, width, height), data.Machines, null, data.Spend, data.Designs);
+            new RectF32(0, 0, width, height), data.Machines, null, data.Spend, PageTextOverlapTests.DesignsOf(data, page));
         return Wireframe.Check(renderer.Frame, OptionsFor(page, renderer.Frame));
     }
 }

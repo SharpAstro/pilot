@@ -5,7 +5,7 @@ using Pilot.Contracts;
 namespace Pilot.Ui;
 
 /// <summary>One screen of a version's renders: its id, its title and the PNG the node drew of it (<c>renders/&lt;id&gt;.png</c>).</summary>
-internal sealed record DesignRender(string Screen, string Title, string? File);
+internal sealed record DesignRender(string Screen, string Title, string? File, IReadOnlyDictionary<string, string>? ByTarget = null);
 
 /// <summary>
 /// A design's page as the host read it: the design whole, the version shown (the current one unless a version was picked), and that version's files,
@@ -57,7 +57,17 @@ internal static class DesignPages
         var renders = document.Screens.Select(s =>
         {
             var file = Path.Combine(folder, "renders", s.Id + ".png");
-            return new DesignRender(s.Id, string.IsNullOrEmpty(s.Title) ? s.Id : s.Title, File.Exists(file) ? file : null);
+            if (!File.Exists(file) && document.Targets.Length > 0)
+            {
+                // A design that names targets has a PNG per target and none at the design size: the first target's stands for the screen.
+                file = Path.Combine(folder, "renders", DesignTargets.RenderFile(s.Id, document.Targets[0].Name));
+            }
+            // Each target's own PNG, where the node rendered one: the strip follows the target the page is shown at.
+            var byTarget = document.Targets
+                .Select(t => (t.Name, File: Path.Combine(folder, "renders", DesignTargets.RenderFile(s.Id, t.Name))))
+                .Where(t => File.Exists(t.File))
+                .ToDictionary(t => t.Name, t => t.File, StringComparer.OrdinalIgnoreCase);
+            return new DesignRender(s.Id, string.IsNullOrEmpty(s.Title) ? s.Id : s.Title, File.Exists(file) ? file : null, byTarget.Count > 0 ? byTarget : null);
         }).ToList();
         return new DesignPage(detail, n, document, notes, renders);
     }

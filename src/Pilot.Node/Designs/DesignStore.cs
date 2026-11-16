@@ -338,10 +338,11 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             {
                 throw new DesignException($"{row.Id} renders are not of the draft as it stands (prototype.json changed or was never rendered); pilot design render {row.Id} draws them again");
             }
-            var pngs = document!.Screens.Select(s => Path.Combine(renders, s.Id + ".png")).ToArray();
-            if (pngs.FirstOrDefault(p => !File.Exists(p)) is { } missing)
+            var pngs = DesignChecker.RenderFiles(document!).Select(r => (Path: Path.Combine(renders, r.File), r.Target)).ToArray();
+            if (pngs.FirstOrDefault(p => !File.Exists(p.Path)) is { Path: not null } missing)
             {
-                throw new DesignException($"{row.Id} has no render {Path.GetFileName(missing)}; pilot design render {row.Id} draws them again");
+                var atTarget = missing.Target.Length > 0 ? $" at target {missing.Target}" : "";
+                throw new DesignException($"{row.Id} has no render {Path.GetFileName(missing.Path)}{atTarget}; pilot design render {row.Id} draws them again");
             }
 
             var versions = Path.Combine(FolderOf(row.Id), VersionsFolderName);
@@ -358,7 +359,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             {
                 File.Copy(prototype, Path.Combine(building, PrototypeFile));
                 File.Copy(notes, Path.Combine(building, NotesFile));
-                foreach (var png in pngs)
+                foreach (var (png, _) in pngs)
                 {
                     File.Copy(png, Path.Combine(building, DesignChecker.RendersFolderName, Path.GetFileName(png)));
                 }

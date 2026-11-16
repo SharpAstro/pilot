@@ -118,6 +118,99 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
     // What the player was made for: the design, version and the version's prototype hash, so a re-read of the same version keeps the screen the person is on.
     private (string Id, int? Version, string? Sha, string Font)? _playerFor;
 
+    // The window's choice of target per design (PIL1097): kept in gui-settings.json by the host, never sent to the node.
+    private readonly Dictionary<string, DesignTargetChoice> _choices = new(StringComparer.Ordinal);
+    private DesignSurface? _shownTarget;
+    private string? _customProblem;
+
+    /// <summary>The box a custom size is typed in (<c>1024x768@2</c>); Enter reads it.</summary>
+    public TextInputState CustomInput { get; } = new() { Placeholder = "WxH@S" };
+
+    /// <summary>Raised after the choice of target of a design changed, for the host to keep it.</summary>
+    public event Action? TargetChanged;
+
+    /// <summary>The choice of target of the open design: the saved one, else the first target its document names, else Desktop.</summary>
+    internal DesignTargetChoice Choice => OpenId is { } id && _choices.TryGetValue(id, out var c) ? c : Named(Player?.Document) is { } first ? DesignTargetChoice.Of(first) : DesignTargetChoice.Default;
+
+    /// <summary>The surface the open design is shown at.</summary>
+    internal DesignSurface Surface => Choice.Surface();
+
+    /// <summary>What went wrong with the last custom size typed, or null.</summary>
+    internal string? CustomProblem => _customProblem;
+
+    private static DesignSurface? Named(PrototypeDocument? document) =>
+        document is { Targets.Length: > 0 } && DesignTargets.Named(document.Targets[0].Name) is { } known ? known : null;
+
+    /// <summary>The choices the file held: each design's, replacing any made so far.</summary>
+    internal void RestoreTargets(IReadOnlyDictionary<string, SavedDesignTarget>? saved)
+    {
+        _choices.Clear();
+        foreach (var (id, entry) in saved ?? new Dictionary<string, SavedDesignTarget>())
+        {
+            if (entry?.ToChoice() is { } choice)
+            {
+                _choices[id] = choice;
+            }
+        }
+    }
+
+    /// <summary>The choices as the file keeps them.</summary>
+    internal Dictionary<string, SavedDesignTarget> SnapshotTargets() =>
+        _choices.ToDictionary(c => c.Key, c => SavedDesignTarget.Of(c.Value), StringComparer.Ordinal);
+
+    /// <summary>Shows the open design at built-in target <paramref name="name"/>, keeping the orientation.</summary>
+    public bool PickTarget(string name)
+    {
+        if (OpenId is not { } id || DesignTargets.Named(name) is not { } surface)
+        {
+            return false;
+        }
+        // The orientation the person is in carries over, not the swap flag: the flag means the opposite on a portrait-native target and a landscape-native one.
+        // An unrotated view shows each target in its own shape; a rotated one keeps the orientation it is in.
+        var now = Choice.Surface();
+        // A square has no orientation to keep (rotating it changes nothing), so it shows the target's own shape too.
+        var swapped = Choice.Swapped && now.Width != now.Height && now.Width > now.Height != surface.Width > surface.Height;
+        Set(id, DesignTargetChoice.Of(surface) with { Swapped = swapped });
+        return true;
+    }
+
+    /// <summary>Swaps width and height of the open design's target (portrait to landscape and back).</summary>
+    public void SwapSides()
+    {
+        if (OpenId is { } id)
+        {
+            Set(id, Choice.Swap());
+        }
+    }
+
+    /// <summary>Reads the box as a custom size: a bad entry says why and keeps the last target.</summary>
+    public bool CommitCustom()
+    {
+        if (OpenId is not { } id)
+        {
+            return false;
+        }
+        var parsed = DesignTargetChoice.Parse(CustomInput.Text, false, out var problem);
+        _customProblem = problem;
+        if (parsed is null)
+        {
+            return false;
+        }
+        Set(id, parsed);
+        return true;
+    }
+
+    private void Set(string id, DesignTargetChoice choice)
+    {
+        _customProblem = null;
+        if (_choices.TryGetValue(id, out var held) && held == choice)
+        {
+            return;
+        }
+        _choices[id] = choice;
+        TargetChanged?.Invoke();
+    }
+
     /// <summary>Opens design <paramref name="id"/>'s page.</summary>
     public void Open(string id)
     {
@@ -164,7 +257,11 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         if (key == PlayerKey)
         {
             // Painted where the page arranged its leaf, so what the page lays over it (the ? card) is over it.
-            Player?.Render(rect);
+            if (Player is { } player)
+            {
+                player.Render(rect);
+                DrawFrame(rect, player.DesignSize);
+            }
         }
         else if (key == CellsKey)
         {
@@ -177,6 +274,25 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         else if (key.StartsWith(RenderKeyPrefix, StringComparison.Ordinal) && DrawPicture is { } draw && PictureOf?.Invoke(key[RenderKeyPrefix.Length..]) is { } picture)
         {
             draw(picture, FitPicture(picture, rect));
+        }
+    }
+
+    // A plain frame of the target's shape around where the player drew it: no device chrome, notch or status bar.
+    private void DrawFrame(RectF32 rect, (float Width, float Height) size)
+    {
+        if (size.Width <= 0 || size.Height <= 0)
+        {
+            return;
+        }
+        var s = MathF.Min(rect.Width / size.Width, rect.Height / size.Height);
+        var w = size.Width * s;
+        var h = size.Height * s;
+        var x = rect.X + (rect.Width - w) / 2f;
+        var y = rect.Y + (rect.Height - h) / 2f;
+        const float t = 2f;
+        foreach (var edge in new[] { new RectF32(x - t, y - t, w + 2 * t, t), new RectF32(x - t, y + h, w + 2 * t, t), new RectF32(x - t, y, t, h), new RectF32(x + w, y, t, h) })
+        {
+            Renderer.FillRectangle(new RectInt(new PointInt((int)MathF.Ceiling(edge.X + edge.Width), (int)MathF.Ceiling(edge.Y + edge.Height)), new PointInt((int)MathF.Floor(edge.X), (int)MathF.Floor(edge.Y))), Dim);
         }
     }
 
@@ -201,6 +317,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         else if (open is not null)
         {
             EnsurePlayer(open);
+            ApplyTarget();
         }
         var buttons = OpenId is { } ? new[] { BackButton() } : [];
         var header = TopBar.Build(new PageHeader("designs")
@@ -231,6 +348,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
             return;
         }
         _playerFor = key;
+        _shownTarget = null;
         Player = new PrototypePlayer<TSurface>(Renderer, document, Prototype.DefaultTheme, FontPath ?? "");
         CellGrid = new PrototypeCellGrid<TSurface>(Renderer, Player);
         // A design that names terminal targets is first arranged for its first one.
@@ -239,6 +357,22 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
             TerminalSize = first;
         }
         PickSize(TerminalSize);
+    }
+
+    // The player lays the prototype out at the chosen target's size and scale, which sets its read-only 'target' state (compact under 600 wide).
+    private void ApplyTarget()
+    {
+        if (Player is null)
+        {
+            return;
+        }
+        var surface = Surface;
+        if (_shownTarget == surface)
+        {
+            return;
+        }
+        _shownTarget = surface;
+        Player.Target = new PrototypeTarget { Name = surface.Name, Width = surface.Width, Height = surface.Height, Scale = (float)surface.Scale };
     }
 
     private Layout.Node BackButton() =>
@@ -299,7 +433,8 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
             left.Add(Layout.Builder.Fill(key: CellsShown ? CellsKey : PlayerKey).Bg(Well).Stretch());
             left.Add(Strip(page));
         }
-        List<Layout.Node> right = [Heading("Versions")];
+        // The target switcher sits above the versions, in the column that has the width for it: in the player's column it was squeezed at a narrow window and drew over the version line beside it.
+        List<Layout.Node> right = page.Version is not null && Player is not null ? [TargetBar(page), Heading("Versions")] : [Heading("Versions")];
         right.AddRange(Versions(page));
         if (page.Notes is { Length: > 0 } notes)
         {
@@ -426,12 +561,54 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         }
     }
 
+    // The target switcher: the built-in targets (the ones the document names marked), the orientation swap and a custom size typed on the page.
+    private Layout.Node TargetBar(DesignPage page)
+    {
+        var named = page.Document?.Targets.Select(t => t.Name).ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+        var choice = Choice;
+        var surface = choice.Surface();
+        var chips = DesignTargets.BuiltIn.Select(target =>
+        {
+            var chosen = choice.Name is { } n && string.Equals(n, target.Name, StringComparison.OrdinalIgnoreCase);
+            var marked = named.Contains(target.Name);
+            var name = target.Name;
+            return Layout.Builder.Text(marked ? name + "*" : name, 12f, Bright, TextAlign.Center)
+                .Pad(4f, 4f).WStar()
+                .Bg(chosen ? Active : Button)
+                .BgHover(ButtonHover)
+                .WithTooltip($"{name} {target.Width}x{target.Height} at {target.Scale.ToString(CultureInfo.InvariantCulture)}x{(marked ? ", named by the design" : "")}")
+                .Follows(new HitResult.ButtonHit($"designs:target:{name}"), _ => PickTarget(name));
+        });
+        var landscape = surface.Width >= surface.Height;
+        var swap = Layout.Builder.Text("Rotate", 12f, Bright, TextAlign.Center)
+            .Pad(4f, 4f).WAuto()
+            .Bg(Button)
+            .BgHover(ButtonHover)
+            .WithTooltip(landscape ? "Landscape: swap width and height for portrait" : "Portrait: swap width and height for landscape")
+            .Follows(new HitResult.ButtonHit("designs:swap"), _ => SwapSides());
+        CustomInput.OnCommit = _ =>
+        {
+            CommitCustom();
+            return Task.CompletedTask;
+        };
+        var custom = Layout.Builder.TextInput(CustomInput, 12f, Palette.Input).WStar().RowH(26f);
+        var scale = surface.Scale.ToString("0.##", CultureInfo.InvariantCulture);
+        var caption = _customProblem ?? $"{surface.Name}: {surface.Width} x {surface.Height} at {scale}x";
+        // Three rows, the chips sharing the column's width: one row of chips, swap and input overran a narrow column onto the versions beside it.
+        return Layout.Builder.VStack(
+            Layout.Builder.HStack([.. chips]).WithGap(4f).RowH(26f),
+            Layout.Builder.HStack(swap).RowH(26f),
+            custom,
+            WrappedProse.OneLine(caption, 12f, _customProblem is null ? Dim : Bright).RowH(22f).Whole(caption)).WithGap(4f).RowH(116f);
+    }
+
     private Layout.Node Strip(DesignPage page)
     {
         var tiles = page.Renders.Select(render =>
         {
             var screen = render.Screen;
-            var picture = Layout.Builder.Fill(key: RenderKeyPrefix + (render.File ?? "")).Bg(Well).Stretch();
+            var file = render.ByTarget is { } by && by.TryGetValue(Surface.Name, out var forTarget) ? forTarget : render.File;
+            var picture = Layout.Builder.Fill(key: RenderKeyPrefix + (file ?? "")).Bg(Well).Stretch();
             var caption = WrappedProse.OneLine(render.Title, 11f, Player?.CurrentScreen.Id == screen ? Bright : Dim, TextAlign.Center, selectable: false).RowH(20f).Whole(render.Title);
             return Layout.Builder.VStack(picture, caption).WithGap(2f)
                 .Bg(Player?.CurrentScreen.Id == screen ? Active : Button)
