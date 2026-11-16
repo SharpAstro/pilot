@@ -28,7 +28,7 @@ internal enum PilotPage
     /// <summary>Last in the enum for the same reason; the rail lists it after Ideas.</summary>
     Spend,
 
-    /// <summary>Last in the enum for the same reason; the rail lists it after Ideas.</summary>
+    /// <summary>Last in the enum for the same reason; the rail lists it after Spend.</summary>
     Designs,
 
     /// <summary>

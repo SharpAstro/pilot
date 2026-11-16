@@ -29,7 +29,7 @@ public static class DesignChecker
     /// Every problem of the prototype at <paramref name="prototypeFile"/>, a line each: a loader problem as <c>&lt;json path&gt;: &lt;message&gt;</c>, a finding as
     /// <c>&lt;screen&gt; | &lt;width&gt;x&lt;height&gt; | &lt;rule&gt;: &lt;message&gt;</c>. Empty when the prototype is clean at every <see cref="DesignSizes"/>.
     /// </summary>
-    public static string[] Problems(string prototypeFile)
+    public static string[] Problems(string prototypeFile, string? fontPath = null)
     {
         var loaded = Load(prototypeFile, out var problems);
         if (loaded is null)
@@ -38,7 +38,7 @@ public static class DesignChecker
         }
         try
         {
-            return [.. Prototype.Check(loaded, DesignSizes.All, fontPath: FontPath).Select(Line).Distinct(StringComparer.Ordinal)];
+            return [.. Prototype.Check(loaded, DesignSizes.All, fontPath: fontPath ?? FontPath).Select(Line).Distinct(StringComparer.Ordinal)];
         }
         catch (FileNotFoundException ex)
         {
@@ -81,7 +81,7 @@ public static class DesignChecker
     /// Draws every screen of <paramref name="document"/> at its design size into <paramref name="rendersFolder"/> as <c>&lt;screen id&gt;.png</c>, after clearing
     /// the PNGs of an earlier render, and stamps the folder with <paramref name="prototypeSha256"/>. Returns the screens' ids.
     /// </summary>
-    public static string[] Render(PrototypeDocument document, string rendersFolder, string prototypeSha256)
+    public static string[] Render(PrototypeDocument document, string rendersFolder, string prototypeSha256, string? fontPath = null)
     {
         Directory.CreateDirectory(rendersFolder);
         foreach (var old in Directory.EnumerateFiles(rendersFolder, "*.png"))
@@ -94,7 +94,7 @@ public static class DesignChecker
             // A stamp is of what was drawn: while the PNGs are being remade there is none to trust.
             File.Delete(stamp);
         }
-        var images = Prototype.Render(document, ((uint)document.Width, (uint)document.Height), fontPath: FontPath);
+        var images = Prototype.Render(document, ((uint)document.Width, (uint)document.Height), fontPath: fontPath ?? FontPath);
         foreach (var (screen, image) in images)
         {
             File.WriteAllBytes(Path.Combine(rendersFolder, screen + ".png"), PngWriter.Encode(image.Pixels, image.Width, image.Height));

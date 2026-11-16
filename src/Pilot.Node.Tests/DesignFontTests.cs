@@ -23,4 +23,32 @@ public sealed class DesignFontTests
         var gui = Path.Combine(dir.FullName, "src", "Pilot.Gui", "Fonts", "DejaVuSans.ttf");
         File.ReadAllBytes(DesignChecker.FontPath).ShouldBe(File.ReadAllBytes(gui), "the node's face is the file Pilot.Gui ships");
     }
+
+    private static string Sample() => Path.Combine(AppContext.BaseDirectory, "Fixtures", "Designs", "sample.prototype.json");
+
+    [Fact]
+    public void TheCheckDrawsWithTheFontItIsGiven()
+    {
+        // With the node's face the sample is clean; with a font that is not there the check says it cannot run, so it uses the path it is handed.
+        DesignChecker.Problems(Sample()).ShouldBeEmpty();
+        var missing = Path.Combine(Path.GetTempPath(), "no-such-font-" + Guid.NewGuid().ToString("N") + ".ttf");
+        DesignChecker.Problems(Sample(), missing).ShouldHaveSingleItem().ShouldStartWith("the check cannot run");
+    }
+
+    [Fact]
+    public void TheRenderDrawsWithTheFontItIsGiven()
+    {
+        var document = DesignChecker.Load(Sample(), out _);
+        document.ShouldNotBeNull();
+        var folder = Path.Combine(Path.GetTempPath(), "design-font-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            DesignChecker.Render(document, folder, "sha").ShouldNotBeEmpty();
+            Should.Throw<FileNotFoundException>(() => DesignChecker.Render(document, folder, "sha", Path.Combine(folder, "no-such-font.ttf")));
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
 }
