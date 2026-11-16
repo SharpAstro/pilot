@@ -25,18 +25,7 @@ public sealed class MaintenanceGitTests : IDisposable
 
     public void Dispose()
     {
-        try
-        {
-            foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(_root, recursive: true);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Left in the temp folder.
-        }
+        TestDirs.DeleteTree(_root);
     }
 
     /// <summary>Records every command it is asked for and answers success.</summary>
