@@ -149,7 +149,7 @@ public sealed class FlightArchiveSweepTests : IDisposable
 
         // Starting the service returns at once: its first sweep waits for the start delay, so nothing is archived by then.
         await sweep.StartAsync(Ct);
-        state.Flights().Count.ShouldBe(352);
+        state.Flights().Length.ShouldBe(352);
         var before = JsonSerializer.SerializeToUtf8Bytes<NodeEvent>(state.Snapshot(), PilotJsonContext.Default.NodeEvent).Length;
 
         (await sweep.SweepAsync(Ct)).ShouldBe(350);
