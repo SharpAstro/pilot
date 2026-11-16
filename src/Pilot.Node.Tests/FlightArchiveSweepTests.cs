@@ -109,7 +109,7 @@ public sealed class FlightArchiveSweepTests : IDisposable
         Directory.Delete(plane);
         (await sweep.SweepAsync(Ct)).ShouldBe(1);
         state.Flights().Select(f => f.Code).ShouldBe(["TIA2"]);
-        state.Cards().Count(c => c.Kind == FlightArchiveSweep.HeldKind && c.Subject == "flight/TIA2").ShouldBe(1);
+        state.Cards().Where(c => c.Kind == FlightArchiveSweep.HeldKind && c.Subject == "flight/TIA2").ToList().Count.ShouldBe(1);
     }
 
     [Fact]
