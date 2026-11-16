@@ -175,6 +175,7 @@ public sealed class ButtonFeedbackTests
         (@"^nodes:", "the node filter of the rail: which nodes the pages show"),
         (@"^play:", "the in-play filter of a list: what the page shows"),
         (@":table:divider:\d+$", "a column divider dragged in a table"),
+        (@"^designs:(mode:(cells|pixels)|size:\d+x\d+)$", "a design's Pixels or Cells switch and its terminal size pills only change which view of the prototype the page shows: local state, no command on the node"),
         (@"^flights:view:", "the Flights page's view switch"),
         (@"^spend:window:", "the Spend page's timeframe tab: the page switches at once and asks a read, no command on the node"),
         (@"^flight:(back|[^:]+:open)$", "navigation to and from the flight page"),
@@ -194,6 +195,8 @@ public sealed class ButtonFeedbackTests
         (@"^FlightMapLayer|^map:", "the flight map's layer switches, grip and nodes: what the canvas shows and where its cursor is"),
         (@"^cards:chat$", "opens the chat with the watchtower"),
         (@"^job:[^:]+:(cancel|force|cancel-no|force-no)$", "a job's Cancel… and Force cancel… only ask the question, and Keep running drops it; the answer that cancels goes through its Presses"),
+        (@"^designs:(list|open:.+|screen:.+|version:\d+)$", "the Designs page's way to and from a design, and its pick of the screen or version the player shows: navigation, no command on the node"),
+        (@"^designs:(swap|target:.+)$", "the Designs page's target switcher and Rotate: the window's own pick of the size the prototype is laid out at, kept in the GUI's settings, no command on the node"),
         (@"^chat:(end|back|restart|restart-no|drop-card)$", "the chat's jump to end, way back, the Restart ask and its Keep it, and Drop of a quote: no command on the node; its choices and Stop it and start fresh go through its Presses"),
     ];
 

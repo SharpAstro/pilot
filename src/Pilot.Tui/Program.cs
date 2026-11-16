@@ -9,11 +9,11 @@ using Pilot.Contracts;
 // Console.Lib rather than painted on pixels: every page of the bar, and the watchtower's panel with its cards, all live from
 // this machine's node or one on the LAN. A bar of pages runs along the top, each with its key: the GUI's Ctrl+digit order as
 // plain digits, 1 Home, 2 Chat, 3 Sessions, 4 Flights, 5 Repos, 6 Background tasks, 7 Fleet, 8 Settings, 9 Pull requests,
-// 0 Ideas, and $ Spend.
+// 0 Ideas, $ Spend and d Designs.
 var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN: host:port, or its name (SE1) or host; else PILOT_NODE, else this machine's" };
 var socketOption = new Option<string?>("--node-socket") { Description = "This machine's node's socket; else PILOT_NODE_SOCKET, else this user's default" };
 var glyphsOption = new Option<string?>("--glyphs") { Description = $"The bar's glyphs: auto (emoji where the terminal draws them two cells wide), emoji or initials; else {TerminalRail.GlyphsVariable}, else auto" };
-var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 chat, 3 sessions, 4 flights, 5 repos, 6 background tasks, 7 fleet, 8 settings, 9 pull requests, 0 ideas, $ spend, Alt+Left or Backspace back and Alt+Right forward, Ctrl+T the chat with the watchtower, q quits")
+var root = new RootCommand("pilot v2's dashboard in a terminal: 1 home, 2 chat, 3 sessions, 4 flights, 5 repos, 6 background tasks, 7 fleet, 8 settings, 9 pull requests, 0 ideas, $ spend, d designs, Alt+Left or Backspace back and Alt+Right forward, Ctrl+T the chat with the watchtower, q quits")
 {
     Options = { nodeOption, socketOption, glyphsOption },
 };
@@ -269,6 +269,11 @@ chrome.Ideas.Changed = Redraw;
 // The Spend page and a flight's spend: read from the node's spend routes, again once 30 s old (see SpendReads).
 var spendReads = new SpendReads(client, Redraw);
 chrome.Spend.OnWindow = window => spendReads.Ask(window, feed.Screen(DateTimeOffset.UtcNow).Source, force: true);
+// The Designs page: the list and an open design read through the node's designs and design-show commands, as the GUI reads them. Its prototype is played in
+// this terminal's own cells (a node of the page's tree), so there are no renders to decode.
+var designReads = new DesignReads(client, Who, Redraw);
+chrome.Designs.OnOpen = id => designReads.AskDesign(id, null, force: true);
+chrome.Designs.OnVersion = (id, number) => designReads.AskDesign(id, number, force: true);
 chrome.Flights.OnSpend = code => spendReads.AskFlight(code, force: true);
 chat.OnAnswerNow = async sendId =>
 {
@@ -484,6 +489,15 @@ while (!stop.IsCancellationRequested)
         {
             spendReads.Ask(chrome.Spend.Window, pages.Sessions.Source);
         }
+        if (page == PilotPage.Designs)
+        {
+            designReads.AskList();
+            if (chrome.Designs.OpenId is { } openDesign)
+            {
+                designReads.AskDesign(openDesign, designReads.Page?.Detail.Row.Id == openDesign ? designReads.Page.Version : null);
+            }
+            chrome.Designs.Terminal = (columns, rows);
+        }
         if (page == PilotPage.Flights && chrome.Flights.OpenCode is { } openCode)
         {
             spendReads.AskFlight(openCode);
@@ -518,6 +532,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, held.Entries, now)),
             PilotPage.Ideas => chrome.Ideas.Tree(pages.Ideas ?? new IdeasScreen([], [], [], pages.Sessions.Source, now)),
             PilotPage.Spend => chrome.Spend.Tree(spendReads.Screen ?? new SpendScreen(chrome.Spend.Window, null, null, pages.Sessions.Source, now)),
+            PilotPage.Designs => chrome.Designs.Tree(designReads.Screen(pages.Sessions.Source, now, chrome.Designs.OpenId) ?? DesignsScreen.Empty(pages.Sessions.Source, now)),
             PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };

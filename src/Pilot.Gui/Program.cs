@@ -21,7 +21,7 @@ void LogLine(string line)
 {
     if (!guiLog.Write(line))
     {
-        Console.Error.WriteLine(line);
+        System.Console.Error.WriteLine(line);
     }
 }
 // What the window says (a press and its answer, a restart, its start and close): kept in gui.log, and on stdout too when it
@@ -29,7 +29,7 @@ void LogLine(string line)
 void Note(string line)
 {
     LogLine(line);
-    Console.WriteLine(line);
+    System.Console.WriteLine(line);
 }
 
 AppDomain.CurrentDomain.UnhandledException += (_, e) => LogLine($"pilot-gui: unhandled exception: {e.ExceptionObject}");
@@ -39,7 +39,7 @@ if (GuiOptions.Parse(args, out var error, out var isHelp) is not { } options)
     if (isHelp)
     {
         // Help is a result, not an error: it goes to stdout.
-        Console.Out.Write(error);
+        System.Console.Out.Write(error);
         return 0;
     }
 
@@ -87,7 +87,7 @@ if (options.SayTo is { } sayTo)
 {
     await EnsureNodeAsync();
     using var oneShot = NewClient();
-    return await GuiSay.RunAsync(oneShot, sayTo, options.SayText ?? "", Console.Out, LogLine, CancellationToken.None);
+    return await GuiSay.RunAsync(oneShot, sayTo, options.SayText ?? "", System.Console.Out, LogLine, CancellationToken.None);
 }
 
 string? capturedNodeCode = null;
@@ -210,8 +210,8 @@ if (options.Capture is { } capturePath)
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
         jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)],
         hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, layers: options.Layers, night: options.Night, fold: options.Fold, spend: snapshot?.Spend, summaries: snapshot?.Summaries, accent: options.Accent);
-    Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
-    Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
+    System.Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
+    System.Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;
 }
 
@@ -324,6 +324,7 @@ using var client = snapshot is null ? NewClient() : null;
 // with the loop pumping instead (ShutdownDrain), so the teardown stays on this thread.
 var feed = client is null ? null : NodeFeed.For(client);
 SpendReads? spendReads = null;
+DesignReads? designReads = null;
 DecisionReads? decisionReads = null;
 if (feed is not null)
 {
@@ -552,7 +553,7 @@ if (feed is not null && client is not null && clients is not null)
     chrome.TextCheck.Send = request => tracker.Run(async () =>
     {
         var result = await client.SendAsync(request, cts.Token);
-        Console.WriteLine($"pilot-gui: raised '{request.Args?[1]}': {(!result.Success ? result.Error : result.Response is { Ok: false } answer ? answer.Error : "done")}");
+        System.Console.WriteLine($"pilot-gui: raised '{request.Args?[1]}': {(!result.Success ? result.Error : result.Response is { Ok: false } answer ? answer.Error : "done")}");
     }, "raise a text-overlap card");
 
     // The watchtower, from its panel: its Remote Control link one click away, and a shortcut to the Chat page.
@@ -657,7 +658,7 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Ideas.Send = async (verb, target, args, ct) =>
     {
         var reply = await IdeaCommands.SendAsync(client, verb, target, args, GuiSay.Who, ct);
-        Console.WriteLine($"pilot-gui: {verb} {target}: {(reply.Ok ? reply.Way ?? "done" : reply.Error)}");
+        System.Console.WriteLine($"pilot-gui: {verb} {target}: {(reply.Ok ? reply.Way ?? "done" : reply.Error)}");
         return reply;
     };
     chrome.Ideas.LoadRepos = async ct => (await client.GetReposAsync(ct)) is { Success: true, Response: { } repos }
@@ -813,6 +814,12 @@ if (feed is not null && client is not null && clients is not null)
     spendReads = new SpendReads(client, loop.RequestRedraw);
     chrome.Spend.OnWindow = window => spendReads.Ask(window, screen.Source, force: true);
     chrome.Flights.OnSpend = code => spendReads.AskFlight(code, force: true);
+    // The Designs page: the list and an open design read through the node's designs and design-show commands, a version's files from the paths it gives.
+    designReads = new DesignReads(client, "gui", loop.RequestRedraw);
+    var designPictures = new DesignPictures(loop.RequestRedraw);
+    chrome.Designs.PictureOf = designPictures.Lookup;
+    chrome.Designs.OnOpen = id => designReads.AskDesign(id, null, force: true);
+    chrome.Designs.OnVersion = (id, number) => designReads.AskDesign(id, number, force: true);
     decisionReads = new DecisionReads(client, loop.RequestRedraw);
     // The Background tasks page: a job's log followed while it is selected, Cancel a verb on the node.
     chrome.Jobs.CanCommand = true;
@@ -1161,6 +1168,14 @@ void RenderFrame()
     }
 
     view.Ui.FrameId++;
+    if (designReads is not null && chrome.Page == PilotPage.Designs)
+    {
+        designReads.AskList();
+        if (chrome.Designs.OpenId is { } openDesign)
+        {
+            designReads.AskDesign(openDesign, designReads.Page?.Detail.Row.Id == openDesign ? designReads.Page.Version : null);
+        }
+    }
     // With the pull requests: without them the page said "not read yet" whatever the node had read, Refresh included (SE1, 2026-10-28).
     if (spendReads is not null)
     {
@@ -1199,7 +1214,7 @@ void RenderFrame()
         decisionReads.Saw(feed?.LastDecision, shown);
         chrome.Flights.Decisions = decisionReads.Flights;
     }
-    chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines, ideas, spendReads?.Screen ?? fileSpend);
+    chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines, ideas, spendReads?.Screen ?? fileSpend, designReads?.Screen(screen.Source, screen.AsOf, chrome.Designs.OpenId));
     // The hover text the router says is due, last, over everything.
     chrome.Tooltips.Render(router.Tooltip, new RectF32(0, 0, width, height));
     router.AfterPaint();

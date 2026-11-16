@@ -42,6 +42,61 @@ internal sealed class PageData
     public required SpendScreen Spend { get; init; }
     public required SpendFlightReport[] FlightSpend { get; init; }
 
+    /// <summary>The Designs page's list and, with it, the page of the first design (the sample prototype, played): "designs" shows the list, "design page" opens it.</summary>
+    public required DesignsScreen Designs { get; init; }
+
+    /// <summary>The sample prototype the node's design tests use, linked into this project's output.</summary>
+    internal static string SamplePrototypePath => Path.Combine(AppContext.BaseDirectory, "Fixtures", "Designs", "sample.prototype.json");
+
+    /// <summary>The designs a state lists: none when empty, forty when many, three otherwise, the long state with long titles, repos and notes; the first has two versions and plays the sample prototype.</summary>
+    internal static DesignsScreen DesignsFor(string state, DateTimeOffset now)
+    {
+        var count = state == "empty" ? 0 : state == "many" ? 40 : 3;
+        var lengthen = state == "long";
+        DesignRow Row(int i) => new()
+        {
+            Id = $"DSN-{i + 1}",
+            Title = lengthen ? $"Design {i}: {LongTitle}" : $"Design {i}",
+            Repo = lengthen ? $"SharpAstro/{LongWord}" : "SharpAstro/pilot",
+            Current = 2,
+            Versions = 2,
+            At = now.AddHours(-i),
+            Why = "brief",
+            PrototypeSha256 = "ab",
+        };
+        var first = Row(0);
+        var rows = Enumerable.Range(0, count).Select(Row).ToArray();
+        var document = DIR.Lib.Prototyping.Prototype.Load(File.ReadAllText(SamplePrototypePath)).Document ?? throw new InvalidDataException("the sample prototype does not load");
+        var detail = new DesignDetail
+        {
+            Row = first,
+            Folder = "designs/DSN-1",
+            Brief = lengthen ? "## 2026-11-16T09:00:00Z\n\n" + LongReport + "\n\n" + LongPath : "## 2026-11-16T09:00:00Z\n\nA home screen with two tabs and a settings screen.",
+            Versions = [new DesignVersionRow { Number = 1, At = now.AddDays(-1), Why = "brief" }, new DesignVersionRow { Number = 2, At = now, Why = lengthen ? LongTitle : "fix" }],
+        };
+        var notes = lengthen ? "# Notes\n\n" + LongReport + "\n\n" + LongPath : "# Notes\n\n- the home screen has two tabs\n- Settings is one goto away";
+        var page = new DesignPage(detail, 2, document, notes, [.. document.Screens.Select(s => new DesignRender(s.Id, s.Title ?? s.Id, null))]);
+        return new DesignsScreen(rows, "test", now, page);
+    }
+
+    internal static string TargetsPrototypePath => Path.Combine(AppContext.BaseDirectory, "Fixtures", "Designs", "targets.prototype.json");
+
+    /// <summary>One design whose prototype names Desktop and Phone and has a rail for a regular target and a bottom bar for a compact one.</summary>
+    internal static DesignsScreen TargetsDesigns(DateTimeOffset now)
+    {
+        var row = new DesignRow { Id = "DSN-7", Title = "Targets", Repo = "SharpAstro/pilot", Current = 1, Versions = 1, At = now, Why = "brief", PrototypeSha256 = "cd" };
+        var document = DIR.Lib.Prototyping.Prototype.Load(File.ReadAllText(TargetsPrototypePath)).Document ?? throw new InvalidDataException("the targets prototype does not load");
+        var detail = new DesignDetail
+        {
+            Row = row,
+            Folder = "designs/DSN-7",
+            Brief = "A home screen with a rail on a regular target and a bottom bar on a compact one.",
+            Versions = [new DesignVersionRow { Number = 1, At = now, Why = "brief" }],
+        };
+        var page = new DesignPage(detail, 1, document, "# Notes", [.. document.Screens.Select(s => new DesignRender(s.Id, s.Title ?? s.Id, null))]);
+        return new DesignsScreen([row], "test", now, page);
+    }
+
     private static readonly NodeMark Here = new("node.sock", "node.sock", "SE1", true);
     private static readonly NodeMark Other = new("10.0.0.9:47731", "10.0.0.9:47731", "LE1", false);
 
@@ -143,6 +198,7 @@ internal sealed class PageData
         WizardIssues = [],
         Spend = new SpendScreen("today", empty.Reports[0] with { Flights = [], Roles = [], Messages = 0, Tokens = 0, Weighted = 0 }, empty.Waste[0] with { Rows = [], WasteTokens = 0, WasteWeighted = 0, WasteShare = 0 }, "test", Now),
         FlightSpend = [],
+        Designs = DesignsFor("empty", Now),
     };
 
     private static PageData Sample()
@@ -171,6 +227,7 @@ internal sealed class PageData
             WizardIssues = built.WizardIssues,
             Spend = SpendScreen.From(snapshot.Spend!, "today", "sample", snapshot.At),
             FlightSpend = built.FlightSpend,
+            Designs = DesignsFor("sample", snapshot.At),
         };
     }
 
@@ -362,6 +419,7 @@ internal sealed class PageData
             WizardIssues = wizardIssues,
             Spend = SpendScreen.From(spendData, "today", "test", now),
             FlightSpend = spendData.Flights,
+            Designs = DesignsFor(state, now),
         };
     }
 

@@ -27,7 +27,7 @@ public sealed class PageTextOverlapTests
 
     internal static readonly string[] Pages =
     [
-        "home", "sessions", "flights table", "flights canvas", "flight page", "jobs", "fleet", "settings", "repos", "pull requests", "chat", "spend",
+        "home", "sessions", "flights table", "flights canvas", "flight page", "jobs", "fleet", "settings", "repos", "pull requests", "chat", "spend", "designs", "design page", "design cells",
         "cards panel", "transcript", "wizard repos", "wizard issues",
     ];
 
@@ -36,6 +36,14 @@ public sealed class PageTextOverlapTests
 
     /// <summary>The cards panel with every card's detail fold opened (a click on each card's painted toggle), the detail long.</summary>
     internal const string CardDetailPage = "card detail";
+
+    /// <summary>A design's page at the Phone target and at the Desktop target, each playing the targets fixture (a rail for regular, a bottom bar for compact).</summary>
+    internal const string DesignPagePhone = "design page phone";
+    internal const string DesignPageDesktop = "design page desktop";
+
+    /// <summary>The Designs data a page is drawn from: the targets fixture for the two target pages, the sample's otherwise.</summary>
+    internal static DesignsScreen DesignsOf(PageData data, string page) =>
+        page is DesignPagePhone or DesignPageDesktop ? PageData.TargetsDesigns(PageData.Now) : data.Designs;
 
     /// <summary>Every page the sweep walks: <see cref="Pages"/> and the two the issue adds.</summary>
     internal static readonly string[] SweptPages = [.. Pages, IdeasPage, CardDetailPage];
@@ -137,7 +145,7 @@ public sealed class PageTextOverlapTests
         var path = Path.Combine(folder, string.Concat(key.Select(c => char.IsLetterOrDigit(c) || c is '.' or '-' ? c : '_')) + ".png");
         using var prepared = await Prepare(page, state, width, dpi, null, height);
         var data = prepared.Data;
-        prepared.Chrome.Render(data.Sessions, data.Flights, CardsOf(data, page), data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend);
+        prepared.Chrome.Render(data.Sessions, data.Flights, CardsOf(data, page), data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, DesignsOf(data, page));
         File.WriteAllBytes(path, PngWriter.Encode(prepared.Renderer.Surface.Pixels, width, height));
         return path;
     }
@@ -198,6 +206,7 @@ public sealed class PageTextOverlapTests
         "chat" => PilotPage.Chat,
         "ideas" => PilotPage.Ideas,
         "spend" => PilotPage.Spend,
+        "designs" or "design page" or "design cells" or DesignPagePhone or DesignPageDesktop => PilotPage.Designs,
         _ => PilotPage.Home,
     };
 
@@ -254,12 +263,21 @@ public sealed class PageTextOverlapTests
             chrome.Settings.LoadRepos ??= _ => Task.FromResult<RepoInfo[]>(data.WizardRepos.Length > 0 ? data.WizardRepos : [new RepoInfo { Name = "pilot", Path = @"C:\work\pilot" }]);
         }
         chrome.Show(PageOf(page));
+        if (page is "design page" or "design cells" or DesignPagePhone or DesignPageDesktop)
+        {
+            chrome.Designs.Open(DesignsOf(data, page).Open!.Detail.Row.Id);
+            if (page is DesignPagePhone or DesignPageDesktop)
+            {
+                chrome.Designs.PickTarget(page == DesignPagePhone ? "Phone" : "Desktop");
+            }
+            chrome.Designs.ShowCells(page == "design cells");
+        }
 
         // The room the chrome gives the page is the chrome's own: one frame arranges the window (rail, page and the cards panel, which
         // it shows beside the page, drops for want of room, or cues on the rail) and says where each leaf went.
         var cards = CardsOf(data, page);
         var panelPage = page is "cards panel" or CardDetailPage;
-        void Frame() => chrome.Render(data.Sessions, data.Flights, cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend);
+        void Frame() => chrome.Render(data.Sessions, data.Flights, cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, DesignsOf(data, page));
         Frame();
         if (panelPage && chrome.CardsDropped)
         {
@@ -329,6 +347,13 @@ public sealed class PageTextOverlapTests
                 break;
             case "spend":
                 tree = chrome.Spend.Tree(data.Spend);
+                break;
+            case "designs":
+            case "design page":
+            case "design cells":
+            case DesignPagePhone:
+            case DesignPageDesktop:
+                tree = chrome.Designs.Tree(DesignsOf(data, page));
                 break;
             case "chat":
                 tree = await OpenChat(chrome, data);
@@ -403,7 +428,7 @@ public sealed class PageTextOverlapTests
                 using var prepared = await Prepare(page, Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_STATE") is { Length: > 0 } state ? state : "long", width, dpi);
                 var chrome = prepared.Chrome;
                 var data = prepared.Data;
-                chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, Height), data.Machines, null, data.Spend);
+                chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, Height), data.Machines, null, data.Spend, data.Designs);
                 File.WriteAllBytes(Path.Combine(capture, $"{page.Replace(' ', '-')}-{width}.png"), PngWriter.Encode(prepared.Renderer.Surface.Pixels, width, Height));
             }
         }

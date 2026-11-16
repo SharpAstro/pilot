@@ -1,0 +1,59 @@
+{
+  "width": 1280,
+  "height": 720,
+  "entry": "home",
+  "screens": [
+    {
+      "id": "home",
+      "title": "Home",
+      "root": {
+        "kind": "vstack", "gap": 12, "padding": 16,
+        "children": [
+          { "kind": "text", "text": "Fleet", "fontSize": 20, "color": "HeaderText" },
+          { "kind": "buttonGroup", "bind": "tab", "options": ["Flights", "Jobs"] },
+          { "kind": "text", "text": "Three flights are in the air", "when": "tab=Flights" },
+          { "kind": "text", "text": "Two jobs are queued", "when": "tab=Jobs" },
+          { "kind": "text", "text": "Open settings", "color": "Accent", "action": "goto:settings" }
+        ]
+      }
+    },
+    {
+      "id": "settings",
+      "title": "Settings",
+      "root": {
+        "kind": "vstack", "gap": 12, "padding": 16,
+        "children": [
+          { "kind": "text", "text": "Settings", "fontSize": 20, "color": "HeaderText" },
+          { "kind": "textInput", "bind": "name", "placeholder": "Node name" },
+          { "kind": "text", "text": "Delete this node", "color": "Warn", "action": "goto:confirm" },
+          { "kind": "text", "text": "Back", "color": "Accent", "action": "goto:home" }
+        ]
+      }
+    },
+    {
+      "id": "confirm",
+      "title": "Confirm",
+      "root": {
+        "kind": "modal",
+        "action": "goto:settings",
+        "children": [
+          {
+            "kind": "vstack", "gap": 12, "padding": 16,
+            "children": [
+              { "kind": "text", "text": "Settings", "fontSize": 20, "color": "HeaderText" },
+              { "kind": "text", "text": "The node keeps its name until you change it" }
+            ]
+          },
+          {
+            "kind": "vstack", "gap": 12, "padding": 16, "background": "PanelBg", "width": 360,
+            "children": [
+              { "kind": "text", "text": "Delete this node?", "fontSize": 18 },
+              { "kind": "text", "text": "Yes, delete it", "color": "Error", "action": "goto:home" },
+              { "kind": "text", "text": "No, keep it", "color": "Accent", "action": "goto:settings" }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -19,7 +19,7 @@ public static class WireframeSweepTests
     /// state only), the widths 1280 and 2560 at both scales. Every width, both heights and both scales are drawn, not their full product: the whole
     /// product (640 cases) took about a minute, past the 30 s the class has (the repo's runner uses two threads); this is 320.
     /// </summary>
-    private static readonly (int Width, float Dpi, int Height)[] LongSizes =
+    internal static readonly (int Width, float Dpi, int Height)[] LongSizes =
     [
         (1000, 1f, 900), (1400, 1f, 900), (2560, 1f, 900),
         (1000, 1.5f, 900), (1280, 1.5f, 900), (1400, 1.5f, 900), (1920, 1.5f, 900), (2560, 1.5f, 900),
@@ -31,7 +31,7 @@ public static class WireframeSweepTests
 
     internal static readonly string[] Pages =
     [
-        "home", "sessions", "flights table", "flights canvas", "flight page", "jobs", "fleet", "settings", "repos", "pull requests", "chat", "spend",
+        "home", "sessions", "flights table", "flights canvas", "flight page", "jobs", "fleet", "settings", "repos", "pull requests", "chat", "spend", "designs", "design page", "design cells", PageTextOverlapTests.DesignPagePhone, PageTextOverlapTests.DesignPageDesktop,
         PageTextOverlapTests.IdeasPage, "transcript", "cards panel", PageTextOverlapTests.CardDetailPage,
     ];
 
@@ -106,7 +106,7 @@ public static class WireframeSweepTests
         var data = prepared.Data;
         renderer.Begin();
         prepared.Chrome.Render(data.Sessions, data.Flights, PageTextOverlapTests.CardsOf(data, page), data.Jobs, data.Fleet, data.Repos, data.PullRequests,
-            new RectF32(0, 0, width, height), data.Machines, null, data.Spend);
+            new RectF32(0, 0, width, height), data.Machines, null, data.Spend, PageTextOverlapTests.DesignsOf(data, page));
         return Wireframe.Check(renderer.Frame, OptionsFor(page, renderer.Frame));
     }
 }

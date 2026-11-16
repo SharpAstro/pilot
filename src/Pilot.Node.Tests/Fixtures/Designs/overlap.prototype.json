@@ -1,0 +1,18 @@
+{
+  "width": 1280,
+  "height": 720,
+  "entry": "home",
+  "screens": [
+    {
+      "id": "home",
+      "title": "Home",
+      "root": {
+        "kind": "overlay",
+        "children": [
+          { "kind": "text", "text": "The first line of the title" },
+          { "kind": "text", "text": "A second line drawn on the same spot" }
+        ]
+      }
+    }
+  ]
+}

@@ -110,6 +110,9 @@ public static partial class NodeApp
     {
         builder.Services.AddSingleton<IGit, GitCli>();
         builder.Services.AddSingleton(services => new FlightArchiver(services.GetRequiredService<NodeState>(), services.GetRequiredService<RemovalQueue>()));
+        // The designs (PIL1096): the node is the one writer of <data>/designs/.
+        builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignStore(options.DataFolder, services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignCommands(services.GetRequiredService<NodeState>(), services.GetRequiredService<Pilot.Node.Designs.DesignStore>()));
         builder.Services.AddSingleton(services => new RemovalQueue(RemovalQueue.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         // First: tried once at the start, before any service touches the paths it holds.
         builder.Services.AddHostedService(services => new RemovalQueueStart(services.GetRequiredService<RemovalQueue>(), services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));

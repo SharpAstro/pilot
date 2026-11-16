@@ -22,11 +22,11 @@ internal static class TerminalRail
     /// <summary>The cells one entry takes: a space, the glyph's area, its key and a space.</summary>
     public const int EntryCells = 8;
 
-    /// <summary>The cells one entry takes in a narrow terminal: the glyph's area is one cell less, so 11 entries fit 80 columns.</summary>
-    public const int NarrowEntryCells = 7;
+    /// <summary>The cells one entry takes in a narrow terminal: the glyph's area is one cell less, so 12 entries fit 80 columns.</summary>
+    public const int NarrowEntryCells = 6;
 
-    /// <summary>The columns the 11 full entries need; a terminal with fewer gets narrow entries.</summary>
-    public const int FullColumns = 88;
+    /// <summary>The columns the 12 full entries need; a terminal with fewer gets narrow entries.</summary>
+    public const int FullColumns = 96;
 
     /// <summary>An entry's width in the layout's units, where one terminal cell is 8 wide: declared once, so the tree holds no sum.</summary>
     private const float EntryWidth = EntryCells * 8f;
@@ -34,7 +34,7 @@ internal static class TerminalRail
     private const float NarrowEntryWidth = NarrowEntryCells * 8f;
 
     /// <summary>The glyph's cells in a narrow entry.</summary>
-    private const int NarrowGlyphCells = 4;
+    private const int NarrowGlyphCells = 3;
 
     /// <summary>Whether a terminal this many columns wide gets narrow entries.</summary>
     public static bool IsNarrow(int columns) => columns < FullColumns;
@@ -44,6 +44,9 @@ internal static class TerminalRail
 
     /// <summary>The key of Spend: Ctrl+Shift+S is not told apart from Ctrl+S in most terminals, so it has a plain key.</summary>
     public const char SpendKey = '$';
+
+    /// <summary>The key of Designs: every digit is taken and Ctrl+Shift+D is not told apart from Ctrl+D in most terminals, so it has a plain letter, which a field that has the keyboard types instead.</summary>
+    public const char DesignsKey = 'd';
 
     /// <summary>The environment variable with the same meaning as the <c>--glyphs</c> option.</summary>
     public const string GlyphsVariable = "PILOT_TUI_GLYPHS";
@@ -56,14 +59,14 @@ internal static class TerminalRail
         [.. PilotChrome<DIR.Lib.RgbaImage>.Pages.Select(p => (p.Page, p.Label, KeyOf(p.Shortcut)))];
 
     private static char KeyOf(KeyChord chord) =>
-        chord.Key is >= InputKey.D0 and <= InputKey.D9 ? (char)('0' + (chord.Key - InputKey.D0)) : SpendKey;
+        chord.Key is >= InputKey.D0 and <= InputKey.D9 ? (char)('0' + (chord.Key - InputKey.D0)) : chord.Key == InputKey.D ? DesignsKey : SpendKey;
 
     /// <summary>The key a page has on the bar.</summary>
     public static char KeyFor(PilotPage page) => Keys.First(k => k.Page == page).Key;
 
     /// <summary>The plain key of a page's bar key, as a declared chord: the digit, or Shift+4 for '$' (a terminal that reports only the character is mapped to it by the input).</summary>
     public static KeyChord PlainChord(char key) =>
-        key == SpendKey ? new KeyChord(InputKey.D4, InputModifier.Shift) : new KeyChord(InputKey.D0 + (key - '0'), InputModifier.None);
+        key == SpendKey ? new KeyChord(InputKey.D4, InputModifier.Shift) : key == DesignsKey ? new KeyChord(InputKey.D, InputModifier.None) : new KeyChord(InputKey.D0 + (key - '0'), InputModifier.None);
 
     /// <summary>The chord the GUI's rail gives a page (Ctrl+digit), declared on the page's bar entry.</summary>
     public static KeyChord ChordFor(PilotPage page) => PilotChrome<DIR.Lib.RgbaImage>.Pages.First(p => p.Page == page).Shortcut;
