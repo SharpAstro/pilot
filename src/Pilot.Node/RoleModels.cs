@@ -156,6 +156,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>How long a landed flight stays live before it is archived (<see cref="NodeSettings.ArchiveLandedAfterKey"/>); the default unless set, null when off.</summary>
+    public TimeSpan? ArchiveLandedAfter
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.ArchiveLandedAfter is { } set ? (set == TimeSpan.Zero ? null : set) : NodeSettings.DefaultArchiveLandedAfter;
+            }
+        }
+    }
+
     /// <summary>The model a session of <paramref name="role"/> starts on, or null for Claude Code's own default.</summary>
     public string? Model(string role) => _defaults ? Range(role).Default.Model : null;
 

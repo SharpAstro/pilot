@@ -28,6 +28,10 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
     /// <summary>The start of the message it puts in the chat's box, for the person to finish; null when it is not said in the chat.</summary>
     public string? ChatMessage { get; init; }
 
+    /// <summary>Brings an archived flight back into the flights.</summary>
+    public static FlightAction BringBack(string code, NodeMark? node) =>
+        new("Bring back", Verbs.ArchiveFlight, Verbs.FlightTarget(code), ["undo"]) { Node = node };
+
     /// <summary>The words of the button that sends <see cref="Verbs.MoveFlight"/> again after a move failed.</summary>
     public const string RetryMove = "Retry move";
 
@@ -40,7 +44,8 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
         var actions = new List<FlightAction>();
         if (flight.State == FlightState.Landed)
         {
-            return actions;
+            // A landed flight can be put away into the node's archive (PIL1083); the node refuses it while something about it is open.
+            return [new FlightAction("Archive", Verbs.ArchiveFlight, target, []) { Node = line.Node }];
         }
         // On the owner's hold (#771) the node refuses everything but the release, so that is all that is offered, and the waits it may drop.
         if (flight.OnHold is not null)

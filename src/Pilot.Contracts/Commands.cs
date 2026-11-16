@@ -135,6 +135,14 @@ public sealed record CommandResult
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IdeaRow? Idea { get; init; }
 
+    /// <summary>An <c>archived-flights</c>'s page of the archive's index; null for any other command.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ArchivedFlightsPage? ArchivedFlights { get; init; }
+
+    /// <summary>An <c>archived-flight</c>'s flight, whole; null for any other command.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ArchivedFlight? ArchivedFlight { get; init; }
+
     /// <summary>The setting's row as it stands after a <c>set node</c> that saved it, so a page shows it from the answer; null for any other command or a refusal.</summary>
     public SettingRow? Setting { get; init; }
 
@@ -873,6 +881,25 @@ public static class Verbs
 
     /// <summary>Every session, as a target: <c>archive sessions</c>.</summary>
     public const string SessionsTarget = "sessions";
+
+    /// <summary>
+    /// <c>archive-flight flight/&lt;code&gt; [undo]</c> (PIL1083): moves a landed flight (its row, legs and Handled cards) out of the node's
+    /// live state into its archive store, where it stays readable; <c>undo</c> puts it all back. A flight that cannot be archived yet is
+    /// refused with why (its PR not merged, a card open about it, a session of it live, its plane folder or branch still there).
+    /// </summary>
+    public const string ArchiveFlight = "archive-flight";
+
+    /// <summary>
+    /// <c>archived-flights node [offset] [count]</c>: reads the archive's index, newest landed first, as <see cref="CommandResult.ArchivedFlights"/>
+    /// with the total. Changes nothing.
+    /// </summary>
+    public const string ArchivedFlights = "archived-flights";
+
+    /// <summary>
+    /// <c>archived-flight flight/&lt;code&gt;</c>: reads one archived flight whole, as <see cref="CommandResult.ArchivedFlight"/>. Changes nothing;
+    /// a peer asks it of the node that archived a flight its own snapshot no longer lists.
+    /// </summary>
+    public const string ArchivedFlight = "archived-flight";
 
     /// <summary><c>tell watchtower &lt;text&gt;</c>: says the text to the node's watchtower, whichever session it is now.</summary>
     public const string Tell = "tell";

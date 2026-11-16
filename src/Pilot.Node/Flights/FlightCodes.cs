@@ -16,14 +16,16 @@ public static class FlightCodes
     /// The prefix of <paramref name="repo"/>: the one its earlier flights have, else its first three letters in capitals
     /// (tianwen TIA, pilot PIL), lengthened while another repo has it (DIR.Lib DIR, then dirsync DIRS).
     /// </summary>
-    public static string PrefixFor(string repo, IReadOnlyCollection<FlightRow> flights)
+    public static string PrefixFor(string repo, IReadOnlyCollection<FlightRow> flights, IReadOnlyCollection<ArchivedFlightRow>? archived = null)
     {
-        if (flights.FirstOrDefault(f => string.Equals(f.Repo, repo, StringComparison.OrdinalIgnoreCase)) is { } earlier)
+        // An archived flight keeps its code for good: its repo's prefix and its code are as taken as a live one's.
+        var all = flights.Select(f => (f.Repo, f.Code)).Concat((archived ?? []).Select(a => (a.Repo, a.Code))).ToList();
+        if (all.FirstOrDefault(f => string.Equals(f.Repo, repo, StringComparison.OrdinalIgnoreCase)) is { Code: { } earlierCode })
         {
-            return PrefixOf(earlier.Code);
+            return PrefixOf(earlierCode);
         }
 
-        var taken = flights.Select(f => PrefixOf(f.Code)).ToHashSet(StringComparer.Ordinal);
+        var taken = all.Select(f => PrefixOf(f.Code)).ToHashSet(StringComparer.Ordinal);
         var letters = new string([.. repo.Where(char.IsAsciiLetter).Select(char.ToUpperInvariant)]);
         if (letters.Length < 2)
         {
@@ -46,9 +48,9 @@ public static class FlightCodes
     }
 
     /// <summary>The code for a new flight on <paramref name="issue"/>, or null when it and its five suffixes are all taken.</summary>
-    public static string? Next(string prefix, int issue, IReadOnlyCollection<FlightRow> flights)
+    public static string? Next(string prefix, int issue, IReadOnlyCollection<FlightRow> flights, IReadOnlyCollection<ArchivedFlightRow>? archived = null)
     {
-        var codes = flights.Select(f => f.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var codes = flights.Select(f => f.Code).Concat((archived ?? []).Select(a => a.Code)).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var plain = $"{prefix}{issue}";
         if (!codes.Contains(plain))
         {

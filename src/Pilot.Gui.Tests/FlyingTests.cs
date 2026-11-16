@@ -45,7 +45,7 @@ public sealed class FlyingTests
         Labels(Line(Flight(pr: 7, review: new ReviewRow { State = ReviewState.Changes, Reviewer = "r", StartedAt = Live.At }), Leg("parser", 1, LegState.Done)))
             .ShouldBe(["Review again", "Plan a leg", "Hold"]);
         Labels(Line(Flight(FlightState.Held), Leg("parser", 1, LegState.Planned))).ShouldBe(["Remove parser", "Plan a leg", "Hold"]);
-        Labels(Line(Flight(FlightState.Landed), Leg("parser", 1, LegState.Done))).ShouldBeEmpty();
+        Labels(Line(Flight(FlightState.Landed), Leg("parser", 1, LegState.Done))).ShouldBe(["Archive"]);
 
         // What needs words asks for them: a why under its button (Go around, Remove), the chat's box (Plan a leg); what does not is a verb at once.
         var actions = FlightAction.For(Line(Flight(), Leg("parser", 1, LegState.Flying)));

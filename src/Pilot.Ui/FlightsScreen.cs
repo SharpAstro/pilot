@@ -3,6 +3,9 @@ using Pilot.Contracts;
 
 namespace Pilot.Ui;
 
+/// <summary>The landed flights one node has archived: how many, for the quiet count and for reading its archive. A null node is this window's.</summary>
+internal sealed record ArchivedNode(NodeMark? Node, int Count);
+
 /// <summary>What the Flights page shows: the flights, and where they come from.</summary>
 internal sealed record FlightsScreen(IReadOnlyList<FlightLine> Lines, string Source, DateTimeOffset AsOf)
 {
@@ -18,6 +21,12 @@ internal sealed record FlightsScreen(IReadOnlyList<FlightLine> Lines, string Sou
 
     /// <summary>What In play left out, named (<c>29 landed hidden</c>); null while nothing is hidden.</summary>
     public string? Hidden { get; init; }
+
+    /// <summary>The archived flights of each node shown (archived ones are not in <see cref="Lines"/>); empty when none.</summary>
+    public IReadOnlyList<ArchivedNode> Archived { get; init => field = value ?? []; } = [];
+
+    /// <summary>How many flights are archived over every node shown.</summary>
+    public int ArchivedCount => Archived.Sum(a => a.Count);
 
     /// <summary>The flight a jump opened that In play would have left out, named; null while there is none.</summary>
     public string? Outside { get; init; }

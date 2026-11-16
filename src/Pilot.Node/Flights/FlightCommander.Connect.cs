@@ -13,11 +13,36 @@ public sealed partial class FlightCommander
         var flight = Find(command.Target);
         var given = (command.Args ?? []) is [{ } code, ..] ? code : null;
         var other = given is null ? null : state.Flights().FirstOrDefault(f => string.Equals(f.Code, given, StringComparison.OrdinalIgnoreCase));
+        if (other is null && given is not null && ConnectArchived(flight, given))
+        {
+            return null;
+        }
         if (other is null && given is not null)
         {
             return await ConnectPeerAsync(flight, given, null, cancellationToken);
         }
         return Connect(flight, other);
+    }
+
+    /// <summary>
+    /// Connects <paramref name="flight"/> to the flight <paramref name="code"/> when it is archived: an archived flight is a landed one, so the
+    /// connection is made as to any landed flight (settled as not held, released by the sweep). False when the code is not archived here.
+    /// </summary>
+    private bool ConnectArchived(FlightRow flight, string code)
+    {
+        if (state.ArchivedRow(code) is not { } archived)
+        {
+            return false;
+        }
+        if (string.Equals(archived.Code, flight.Code, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException($"{flight.Code} cannot wait for {archived.Code}: {archived.Code} already waits for {flight.Code}, so neither would leave");
+        }
+        if (!flight.Connections.Contains(archived.Code, StringComparer.Ordinal))
+        {
+            state.PutFlight(Settle(flight with { Connections = [.. flight.Connections, archived.Code] }));
+        }
+        return true;
     }
 
     private string? Connect(FlightRow flight, FlightRow? other)
@@ -104,6 +129,10 @@ public sealed partial class FlightCommander
             var flight = Find(Verbs.FlightTarget(code));
             if (node is null)
             {
+                if (ConnectArchived(flight, other))
+                {
+                    return null;
+                }
                 return Connect(flight, state.Flights().FirstOrDefault(f => string.Equals(f.Code, other, StringComparison.OrdinalIgnoreCase)));
             }
             return await ConnectPeerAsync(flight, other, node, cancellationToken);
@@ -147,7 +176,9 @@ public sealed partial class FlightCommander
                 foreach (var code in waitingRow.Connections)
                 {
                     var other = state.Flights().FirstOrDefault(f => f.Code == code);
-                    if (other is { State: FlightState.Landed, MovedTo: null, FoldedInto: null })
+                    // An archived flight is a landed one that left the state: its row says whether it moved away or was folded.
+                    var archived = other is null ? state.ArchivedRow(code) : null;
+                    if (other is { State: FlightState.Landed, MovedTo: null, FoldedInto: null } || archived is { MovedTo: null, FoldedInto: null })
                     {
                         ReleaseConnection(waiting, code);
                         waiting = state.Flights().First(f => f.Code == waiting.Code);

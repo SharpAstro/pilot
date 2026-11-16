@@ -76,6 +76,7 @@ public static partial class NodeApp
                     {
                         Error = logWriter,
                         TokensByFlight = () => services.GetRequiredService<SpendLedger>().TokensByFlight(),
+                        Archive = new FlightArchive(options.DataFolder) { Error = logWriter },
                     };
                     // A card about to ring goes to the brain first (PIL855); resolved at the first ring, as the brain needs the watchtower, which needs this state.
                     state.RingJudge = new RingJudge(state, () => services.GetRequiredService<IBrain>()) { Log = line => logWriter.WriteLine(line) };
@@ -108,6 +109,7 @@ public static partial class NodeApp
     private static void AddPlanes(WebApplicationBuilder builder, NodeOptions options, LogWriter logWriter)
     {
         builder.Services.AddSingleton<IGit, GitCli>();
+        builder.Services.AddSingleton(services => new FlightArchiver(services.GetRequiredService<NodeState>(), services.GetRequiredService<IGit>(), services.GetRequiredService<RemovalQueue>()));
         builder.Services.AddSingleton(services => new RemovalQueue(RemovalQueue.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         // First: tried once at the start, before any service touches the paths it holds.
         builder.Services.AddHostedService(services => new RemovalQueueStart(services.GetRequiredService<RemovalQueue>(), services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
@@ -548,7 +550,7 @@ public static partial class NodeApp
             builder.Services.AddSingleton(services => new PollerSweep(services.GetRequiredService<NodeState>(), services.GetRequiredService<CommandCallers>(), OsProcessTable.Instance, services.GetRequiredService<TimeProvider>()) { LivePids = () => services.GetRequiredService<SessionTracker>().LivePids().Select(p => p.Pid).ToList(), KnownOf = services.GetRequiredService<JobRunner>().KnownOf });
             builder.Services.AddHostedService(services => services.GetRequiredService<PollerSweep>());
             // The node's own row rides the same tick of the clock (a settings change has no event to hook).
-            builder.Services.AddHostedService(services =>
+            builder.Services.AddSingleton(services =>
             {
                 var state = services.GetRequiredService<NodeState>();
                 var models = services.GetRequiredService<RoleModels>();
@@ -561,11 +563,20 @@ public static partial class NodeApp
                     Account = state.Usage()?.Account,
                     CanRunGui = services.GetRequiredService<JobRunner>().GuiWhy() is null,
                     GuiReason = services.GetRequiredService<JobRunner>().GuiWhy(),
+                    ArchivedFlights = state.ArchivedFlightRows().Length,
                     Watchtower = watchtower.Health(),
                 }, services.GetRequiredService<TimeProvider>())
                 {
                     Logger = services.GetService<ILogger<NodeRowPublisher>>(),
                 };
+            });
+            builder.Services.AddHostedService(services => services.GetRequiredService<NodeRowPublisher>());
+            // Landed flights past archive-landed-after are archived in small batches, off the start path (PIL1083).
+            builder.Services.AddHostedService(services => new FlightArchiveSweep(services.GetRequiredService<NodeState>(), services.GetRequiredService<FlightArchiver>(), services.GetRequiredService<FlightCommander>(), services.GetRequiredService<TimeProvider>())
+            {
+                After = () => services.GetRequiredService<RoleModels>().ArchiveLandedAfter,
+                Archived = () => services.GetRequiredService<NodeRowPublisher>().Tick(),
+                Error = services.GetRequiredService<LogWriter>(),
             });
         }
     }

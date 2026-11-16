@@ -44,16 +44,26 @@ public sealed class AccentCaptureTests
         using var scope = Palette.StandardForCapture(accent);
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         var data = PageData.For("long");
+        var flights = data.Flights;
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Play.ShowEverything();
         chrome.Flights.CanCommand = true;
         chrome.Night.On = night;
+        if (page == "flights-archive")
+        {
+            // The archive's own elements: Archive landed (needs OnAction), the quiet count (needs archived flights) and the Archive button of a landed row's panel.
+            chrome.Flights.OnAction = Taken.By<FlightAction>(_ => { });
+            var landed = flights.Lines.ToList().FindIndex(l => l.Row.State == FlightState.Landed);
+            landed.ShouldBeGreaterThanOrEqualTo(0, "the long data has a landed flight");
+            flights = flights with { Archived = [new ArchivedNode(new NodeMark("node.sock", "node.sock", "DE1", true), 520)] };
+            chrome.Flights.ListCursor.Open(FlightsView<RgbaImage>.ListId, landed, flights.Lines.Count);
+        }
         chrome.Show(page == "home" ? PilotPage.Home : PilotPage.Flights);
         if (page == "wizard")
         {
             await PageTextOverlapTests.OpenWizard(chrome, data, toIssues: false);
         }
-        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend);
+        chrome.Render(data.Sessions, flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend);
         return ([.. renderer.Surface.Pixels], width, height);
     }
 
@@ -203,6 +213,7 @@ public sealed class AccentCaptureTests
 
     [Theory]
     [InlineData("flights")]
+    [InlineData("flights-archive")]
     [InlineData("home")]
     [InlineData("wizard")]
     public async Task NightIsTheSamePixelsWithOrWithoutAnAccent(string page)
@@ -212,7 +223,23 @@ public sealed class AccentCaptureTests
         foreach (var accent in new[] { Navy, Red })
         {
             var (with, _, _) = await Draw(page, accent, night: true);
-            with.SequenceEqual(none).ShouldBeTrue($"{page}: Night with accent {accent}");
+            if (!with.SequenceEqual(none))
+            {
+                // Name the element on a mismatch: the differing pixels' count and box, and both captures saved beside each other.
+                int count = 0, x0 = int.MaxValue, y0 = int.MaxValue, x1 = -1, y1 = -1;
+                for (var i = 0; i + 3 < none.Length && i + 3 < with.Length; i += 4)
+                {
+                    if (none[i] != with[i] || none[i + 1] != with[i + 1] || none[i + 2] != with[i + 2] || none[i + 3] != with[i + 3])
+                    {
+                        count++;
+                        var px = i / 4;
+                        x0 = Math.Min(x0, px % width); x1 = Math.Max(x1, px % width);
+                        y0 = Math.Min(y0, px / width); y1 = Math.Max(y1, px / width);
+                    }
+                }
+                var saved = Save($"{page}-night-accent-{accent.Red:x2}{accent.Green:x2}{accent.Blue:x2}", with, width, height);
+                false.ShouldBeTrue($"{page}: Night with accent {accent} draws {count} different pixels in x {x0}..{x1}, y {y0}..{y1} (capture {saved})");
+            }
         }
     }
 }

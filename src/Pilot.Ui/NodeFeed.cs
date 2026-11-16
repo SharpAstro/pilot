@@ -82,6 +82,9 @@ internal sealed class NodeFeed : IAsyncDisposable
         new(async (since, stream, ct) => new ClientEvents(await client.OpenEventsAsync(since, stream, ct).ConfigureAwait(false)), client.SocketPath,
             nodeInfo: client.GetNodeAsync);
 
+    /// <summary>How many landed flights the node has archived, from its node row; 0 from an older node or before the row is in.</summary>
+    public int ArchivedFlights => Volatile.Read(ref _view).Said?.ArchivedFlights ?? 0;
+
     /// <summary>The node's machine as it last sampled it (as <see cref="View.Usage"/> is carried); null from a node that sends none, and until its snapshot is in.</summary>
     public MachineRow? Machine => Volatile.Read(ref _view).Machine;
 
@@ -227,7 +230,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     public FlightsScreen Flights(DateTimeOffset now)
     {
         var view = Volatile.Read(ref _view);
-        return new FlightsScreen(FlightLine.Build(view.Flights, view.Sessions, now, view.Legs, view.Admission), view.Status + UpdateNoteOf(view), now) { Admission = view.Admission, Rounds = PrRoundLine.Build(view.PrReviews ?? [], view.Sessions) };
+        return new FlightsScreen(FlightLine.Build(view.Flights, view.Sessions, now, view.Legs, view.Admission), view.Status + UpdateNoteOf(view), now) { Admission = view.Admission, Rounds = PrRoundLine.Build(view.PrReviews ?? [], view.Sessions), Archived = view.Said?.ArchivedFlights is > 0 and var archived ? [new ArchivedNode(null, archived)] : [] };
     }
 
     /// <summary>

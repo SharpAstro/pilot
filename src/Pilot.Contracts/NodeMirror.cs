@@ -202,6 +202,17 @@ public sealed class NodeMirror
                     ? changed.Flight with { Tokens = before.Tokens }
                     : changed.Flight;
                 break;
+            case FlightArchivedEvent archived:
+                _flights.Remove(archived.Code);
+                foreach (var key in _legs.Keys.Where(k => string.Equals(k.Item1, archived.Code, StringComparison.Ordinal)).ToList())
+                {
+                    _legs.Remove(key);
+                }
+                foreach (var id in _cards.Values.Where(c => Archiving.IsHandledAbout(c, archived.Code)).Select(c => c.Id).ToList())
+                {
+                    _cards.Remove(id);
+                }
+                break;
             case LegAddedEvent added:
                 _legs[(added.Leg.Flight, added.Leg.Name)] = added.Leg;
                 break;

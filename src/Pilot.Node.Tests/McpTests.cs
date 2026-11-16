@@ -96,6 +96,7 @@ public sealed class McpTests : IAsyncLifetime
         Walk(root, "");
         tools.Keys.Order().ShouldBe(expected.Order());
         tools.Keys.ShouldContain("flight_review");
+        tools.Keys.ShouldContain("flight_archive");
         tools.Keys.ShouldContain("leg_go-around");
         tools.Keys.ShouldContain("leg_remove");
         tools.Keys.ShouldContain("leg_validate");

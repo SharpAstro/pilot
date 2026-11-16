@@ -33,7 +33,7 @@ public static class StoreFixtureWriter
 
         using (var journal = new FileJournal(folder, version: version))
         {
-            var state = new NodeState(journal, new StepClock(Start));
+            var state = new NodeState(journal, new StepClock(Start)) { Archive = new Pilot.Node.Flights.FlightArchive(folder) };
 
             // The snapshot: every kind of record, put as the node puts it.
             FillSnapshot(state, sample);
@@ -125,6 +125,12 @@ public static class StoreFixtureWriter
         state.PutLeg(Leg("PIL3", "only", 1, LegState.Planned));
         state.PutLeg(Leg("PIL1", "second", 2, LegState.Done));
         state.RemoveLeg("PIL1", "third");
+
+        // A landed flight with a leg and a Handled card, archived: its file lands beside the journal (contract 4).
+        state.PutFlight(Flight("PIL4", FlightState.Landed, 4) with { LandedAt = Start.AddHours(3) });
+        state.PutLeg(Leg("PIL4", "only", 1, LegState.Done));
+        state.RaiseCard(CardBin.Handled, "plane-left", "flight/PIL4", "PIL4 landed", "left the plane");
+        state.ArchiveFlight("PIL4");
 
         // Cards: one raised, one changed.
         var raised = state.RaiseCard(CardBin.Ring, "worker", "flight/PIL3/only", "a worker stopped", "in the journal");
