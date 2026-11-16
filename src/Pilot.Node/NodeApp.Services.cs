@@ -120,6 +120,10 @@ public static partial class NodeApp
             Every = () => services.GetRequiredService<RoleModels>().MaintenanceEvery,
             DrivePath = () => services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path).FirstOrDefault(),
         });
+        builder.Services.AddSingleton<IMaintenanceStep>(services => MaintenanceGit.ForGit(services.GetRequiredService<NodeState>(),
+            () => [.. services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path)]));
+        builder.Services.AddSingleton<IMaintenanceStep>(services => MaintenanceGit.ForLfs(services.GetRequiredService<NodeState>(),
+            () => [.. services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path)]));
         builder.Services.AddHostedService(services => services.GetRequiredService<IdleMaintenance>());
         builder.Services.AddHostedService(services => new DiskSweep(
             Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs"), Path.GetTempPath(),
