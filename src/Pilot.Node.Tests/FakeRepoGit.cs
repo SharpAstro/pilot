@@ -358,6 +358,7 @@ internal sealed class FakeRepoGit : IGit
             "rebase" => Rebase(a, wt),
             "config" => Config(a),
             "ls-remote" => LsRemote(a),
+            "for-each-ref" => ForEachRef(a),
             "switch" => Switch(a, wt),
             "checkout" => Checkout(a, wt),
             "ls-tree" => LsTree(a, wt),
@@ -792,6 +793,19 @@ internal sealed class FakeRepoGit : IGit
     {
         // A branch made at a start point, tracking it when that is a remote-tracking branch (git branch --track <name> origin/<name>).
         a.Remove("--track");
+        // git branch -D a b c: each local branch is removed; a missing one is reported and the others still go, as git does.
+        if (a is ["-D", ..] && a.Count > 1)
+        {
+            var errors = new StringBuilder();
+            foreach (var name in a.Skip(1))
+            {
+                if (!Refs.Remove("refs/heads/" + name))
+                {
+                    errors.Append($"error: branch '{name}' not found\n");
+                }
+            }
+            return errors.Length == 0 ? Ok("") : Fail(errors.ToString().TrimEnd(), 1);
+        }
         // git branch <name>: a branch at HEAD, which stays checked out as it is.
         if (wt is not null && a is [var atHead] && !atHead.StartsWith('-'))
         {
@@ -862,6 +876,16 @@ internal sealed class FakeRepoGit : IGit
         File.WriteAllText(Path.Combine(repo.Path, ".git", "config"), text.ToString());
     }
 
+    /// <summary><c>git for-each-ref --format=%(objectname) %(refname) &lt;prefix&gt;</c>: the refs under the prefix, one per line.</summary>
+    private GitRun ForEachRef(List<string> a)
+    {
+        if (a is not ["--format=%(objectname) %(refname)", var prefix] || !prefix.StartsWith("refs/", StringComparison.Ordinal))
+        {
+            throw new NotSupportedException("for-each-ref form");
+        }
+        return Ok(string.Concat(Refs.Where(r => r.Key.StartsWith(prefix, StringComparison.Ordinal)).OrderBy(r => r.Key, StringComparer.Ordinal).Select(r => $"{r.Value} {r.Key}\n")));
+    }
+
     /// <summary><c>git ls-remote origin &lt;pattern&gt;</c>: the origin's branches whose name ends with the pattern.</summary>
     private GitRun LsRemote(List<string> a)
     {
@@ -871,6 +895,11 @@ internal sealed class FakeRepoGit : IGit
             throw new NotSupportedException("ls-remote form");
         }
         var pattern = a.Count == 2 ? a[1] : null;
+        if (pattern is not null && pattern.EndsWith('*'))
+        {
+            var prefix = pattern[..^1];
+            return Ok(string.Concat(OriginRefs.Where(o => o.Key.StartsWith(prefix, StringComparison.Ordinal)).OrderBy(o => o.Key, StringComparer.Ordinal).Select(o => $"{o.Value}\t{o.Key}\n")));
+        }
         return Ok(string.Concat(OriginRefs.Where(o => o.Key.StartsWith("refs/heads/", StringComparison.Ordinal) && (pattern is null || o.Key == pattern || o.Key.EndsWith("/" + pattern, StringComparison.Ordinal)))
             .OrderBy(o => o.Key, StringComparer.Ordinal).Select(o => $"{o.Value}\t{o.Key}\n")));
     }
@@ -971,6 +1000,26 @@ internal sealed class FakeRepoGit : IGit
 
     private GitRun Push(List<string> a, Worktree? wt)
     {
+        // git push origin --delete a b c: each branch is removed from origin (and its remote-tracking ref here); a missing one is refused.
+        if (a.Remove("--delete"))
+        {
+            a.RemoveAll(x => x is "-q" or "--quiet");
+            if (a is not ["origin", _, ..] || a.Any(x => x.StartsWith('-')))
+            {
+                throw new NotSupportedException("push --delete form");
+            }
+            GitRun deleted = Ok("");
+            foreach (var name in a.Skip(1))
+            {
+                if (!OriginRefs.Remove("refs/heads/" + name))
+                {
+                    deleted = Fail($"error: unable to delete '{name}': remote ref does not exist", 1);
+                    continue;
+                }
+                Refs.Remove("refs/remotes/origin/" + name);
+            }
+            return deleted;
+        }
         var force = a.Any(x => x is "--force" or "-f") || a.Any(x => x.StartsWith('+'));
         string? lease = a.FirstOrDefault(x => x.StartsWith("--force-with-lease=", StringComparison.Ordinal));
         // Anything else starting with a dash (--delete, --tags, --mirror, --all, ...) changes what the push does: the model must not read it as a plain push.

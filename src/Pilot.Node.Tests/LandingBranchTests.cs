@@ -26,8 +26,9 @@ public sealed class LandingBranchTests : ReviewTestsBase
     private async Task<(FlightRow Flight, string Head)> Merged(string issue)
     {
         var (flight, _) = await Passed(issue);
-        var head = _github.Pr!.Head;
-        (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head)).Error.ShouldBeNull();
+        // The fake GitHub's head is a made-up id; the node records the branch's real tip, which is what the tests compare with.
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        await LandMerged(flight);
         F(flight.Code).State.ShouldBe(FlightState.Landed);
         return (F(flight.Code), head);
     }
@@ -37,11 +38,11 @@ public sealed class LandingBranchTests : ReviewTestsBase
     {
         var (flight, _) = await Passed(issue);
         Git(flight.Worktree, "checkout", "-q", "--detach");
-        return (flight, _github.Pr!.Head);
+        return (flight, Git(flight.Worktree, "rev-parse", "HEAD"));
     }
 
-    private async Task LandMerged(FlightRow flight, string head) =>
-        (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head)).Error.ShouldBeNull();
+    private async Task LandMerged(FlightRow flight) =>
+        (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head)).Error.ShouldBeNull();
 
     [Fact]
     public async Task AFlightLandedAfterAMergeHasNoLocalAndNoOriginBranchAndItsRowAndStatusStillSayWhatItWas()
@@ -68,7 +69,7 @@ public sealed class LandingBranchTests : ReviewTestsBase
         var ahead = CommitPast(head);
         Git(Repo, "update-ref", $"refs/heads/{flight.Branch}", ahead);
 
-        await LandMerged(flight, head);
+        await LandMerged(flight);
 
         Local(flight.Branch).ShouldNotBeEmpty();
         var card = Open().Single(c => c.Kind == FlightCommander.BranchKeptKind);
@@ -88,7 +89,7 @@ public sealed class LandingBranchTests : ReviewTestsBase
         var (flight, head) = await PassedDetached("1");
         Git(Repo, "push", "-q", "origin", $"{CommitPast(head)}:refs/heads/{flight.Branch}");
 
-        await LandMerged(flight, head);
+        await LandMerged(flight);
 
         OnOrigin(flight.Branch).ShouldNotBeEmpty();
         var card = Open().Single(c => c.Kind == FlightCommander.BranchKeptKind);
@@ -107,7 +108,7 @@ public sealed class LandingBranchTests : ReviewTestsBase
         F(folded.Code).BranchKept.ShouldNotBeNull().ShouldContain($"waiting for {lander.Code}");
         Local(folded.Branch).ShouldNotBeEmpty();
 
-        await LandMerged(lander, _github.Pr!.Head);
+        await LandMerged(lander);
 
         Local(folded.Branch).ShouldBeEmpty();
         F(folded.Code).BranchDeletedAt.ShouldNotBeNull();
@@ -118,7 +119,7 @@ public sealed class LandingBranchTests : ReviewTestsBase
     public async Task AFoldedBranchWhoseTipIsTheLandersMergedHeadGoesAndOneWithWorkInNeitherIsKeptWithACard()
     {
         var (lander, _) = await Passed("1");
-        var head = _github.Pr!.Head;
+        var head = Git(lander.Worktree, "rev-parse", "HEAD");
         var inLander = await NewFlight("2", "parser");
         var loose = await NewFlight("3", "parser");
         await _flights.RetireFoldedAsync(F(inLander.Code), lander.Code, Ct);
@@ -126,7 +127,7 @@ public sealed class LandingBranchTests : ReviewTestsBase
         Git(Repo, "branch", "-f", inLander.Branch, head);
         Git(Repo, "update-ref", $"refs/heads/{loose.Branch}", CommitPast(Git(Repo, "rev-parse", "origin/main")));
 
-        await LandMerged(lander, head);
+        await LandMerged(lander);
 
         Local(inLander.Branch).ShouldBeEmpty();
         F(inLander.Code).BranchDeletedAt.ShouldNotBeNull();
