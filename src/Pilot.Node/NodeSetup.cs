@@ -41,16 +41,14 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     /// <summary>The response file that turns MSBuild node reuse off, as runaway-agent's <c>machine/</c> folder and install.sh name it.</summary>
     public const string BuildRsp = "Directory.Build.rsp";
 
-    /// <summary>The firewall rule's name, which the check looks for and the fix replaces: one rule of it per binary.</summary>
-    public const string FirewallRule = "pilot-node";
+    /// <summary>The earlier installs' per-program rule name: the fix deletes every rule of it.</summary>
+    public const string OldFirewallRule = "pilot-node";
 
-    /// <summary>
-    /// The binaries beside the node that listen for the LAN's beacons, each let in on the discovery port alone: the
-    /// Fleet page and <c>pilot nodes</c> hear other nodes through them. Without a rule of its own, a binary is let in on
-    /// whatever its first firewall prompt was answered for, often Public only, so on a Private network it heard this
-    /// machine's own beacons and no other node's (SE1 and DE1, 2026-10-24).
-    /// </summary>
-    public static readonly string[] LanListeners = ["pilot", "pilot-gui", "pilot-tui"];
+    /// <summary>The UDP rule on the discovery port: the Fleet page and <c>pilot nodes</c> hear other nodes' beacons through it, in any binary at any path.</summary>
+    public const string DiscoveryRule = "pilot2 LAN discovery";
+
+    /// <summary>The TCP rule on the node's LAN port, no program named.</summary>
+    public const string NodeRule = "pilot2 node";
 
     /// <summary>The Claude Code settings file the hook checks read and the fixes write; a test points it elsewhere.</summary>
     public string SettingsFile { get; init; } = HookCommands.DefaultSettings();
@@ -236,21 +234,17 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                 {
                     return "the node makes a firewall rule on Windows only";
                 }
-                // One elevated pwsh script for all, so one prompt: the old rules out (an earlier install's paths) and these
-                // in. The node takes anything in; a listener only the discovery port's beacons. --% hands netsh the rest of
-                // its line as written, so program="<path>" reaches it with its quotes.
-                var add = $"netsh --% advfirewall firewall add rule name={FirewallRule} dir=in action=allow profile=private enable=yes";
-                var netsh = string.Join('\n', FirewallPrograms().Select((program, i) => i == 0
-                        ? $"{add} program=\"{program}\""
-                        : $"{add} program=\"{program}\" protocol=udp localport={LAN.Lib.LanProtocol.DiscoveryPort}")
-                    .Prepend($"netsh advfirewall firewall delete rule name={FirewallRule} | Out-Null"));
+                if (FirewallScript() is not { } netsh)
+                {
+                    return FirewallWhyNone();
+                }
                 using var script = Flights.ShellScript.For(netsh, Path.GetTempPath());
                 if (!RunElevated(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe"),
                         $"--headless pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{script.Script}\""))
                 {
                     return "the elevation prompt was refused or did not open";
                 }
-                return FirewallAllows() is (true, _) ? null : "the rule is still not there";
+                return FirewallAllows() is (true, _) ? null : "the rules are still not right";
             }
             case DefenderKey:
                 // The walk over the repo roots is slow on a cold disk: off the command thread.
@@ -634,50 +628,90 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         }
     }
 
-    /// <summary>The node's binary, then each <see cref="LanListeners"/> binary that is installed beside it.</summary>
-    private IEnumerable<string> FirewallPrograms()
+    /// <summary>Why the node makes no firewall rule, or null when it wants them: a local-only node or one with the LAN off listens beyond loopback on nothing.</summary>
+    public string? FirewallWhyNone() =>
+        options.LocalOnly ? "this node is local-only: it listens on no LAN port, so it needs no firewall rule"
+        : !(options.Saved?.Lan ?? options.Lan) ? "the LAN is off: the node listens on no LAN port, so it needs no firewall rule"
+        : null;
+
+    /// <summary>
+    /// The pwsh script of the firewall fix, null when none is wanted (<see cref="FirewallWhyNone"/>): the earlier per-program
+    /// rules and these two out, then the UDP discovery rule and the TCP node rule in, by port, no program, Private and Domain only.
+    /// </summary>
+    public string? FirewallScript()
     {
-        yield return nodePath;
-        var folder = Path.GetDirectoryName(Path.GetFullPath(nodePath)) ?? "";
-        foreach (var name in LanListeners)
+        if (FirewallWhyNone() is not null)
         {
-            var program = Path.Combine(folder, name + Path.GetExtension(nodePath));
-            if (File.Exists(program))
-            {
-                yield return program;
-            }
+            return null;
         }
+        const string profile = "profile=private,domain enable=yes";
+        return string.Join('\n',
+            $"netsh advfirewall firewall delete rule name={OldFirewallRule} | Out-Null",
+            $"netsh advfirewall firewall delete rule name=\"{DiscoveryRule}\" | Out-Null",
+            $"netsh advfirewall firewall delete rule name=\"{NodeRule}\" | Out-Null",
+            $"netsh --% advfirewall firewall add rule name=\"{DiscoveryRule}\" dir=in action=allow protocol=UDP localport={LAN.Lib.LanProtocol.DiscoveryPort} {profile}",
+            $"netsh --% advfirewall firewall add rule name=\"{NodeRule}\" dir=in action=allow protocol=TCP localport={options.LanPort} {profile}");
     }
 
-    /// <summary>Whether a rule lets this node's binary in, and each LAN listener beside it, and how it stands, in a line.</summary>
+    /// <summary>Whether the two port rules are in, and how they stand, in a line that says what is missing or wrong.</summary>
     public (bool Allows, string Line) FirewallAllows()
     {
-        var (exit, output) = Run("netsh", ["advfirewall", "firewall", "show", "rule", $"name={FirewallRule}", "verbose"], TimeSpan.FromSeconds(15));
-        if (exit != 0)
+        if (FirewallWhyNone() is { } why)
         {
-            return (false, $"no rule named {FirewallRule}: other machines' connections are dropped before they reach the node");
+            return (true, why);
         }
-        // A rule is a block of "Name: value" lines; one for a binary, enabled and allowing, is the one that counts.
-        var allowed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var rule in output.Replace("\r", "").Split("\n\n", StringSplitOptions.RemoveEmptyEntries))
+        var problems = new List<string>();
+        var done = new List<string>();
+        foreach (var (name, protocol, port) in new[] { (DiscoveryRule, "UDP", LAN.Lib.LanProtocol.DiscoveryPort), (NodeRule, "TCP", options.LanPort) })
         {
-            var fields = rule.Split('\n').Select(l => l.Split(':', 2)).Where(p => p.Length == 2)
-                .GroupBy(p => p[0].Trim(), StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First()[1].Trim(), StringComparer.OrdinalIgnoreCase);
-            if (fields.TryGetValue("Program", out var program)
-                && fields.TryGetValue("Enabled", out var enabled) && enabled.Equals("Yes", StringComparison.OrdinalIgnoreCase)
-                && fields.TryGetValue("Action", out var action) && action.Equals("Allow", StringComparison.OrdinalIgnoreCase))
+            var (exit, output) = Run("netsh", ["advfirewall", "firewall", "show", "rule", $"name={name}", "verbose"], TimeSpan.FromSeconds(15));
+            var fields = exit != 0 ? null : output.Replace("\r", "").Split("\n\n", StringSplitOptions.RemoveEmptyEntries)
+                .Select(rule => rule.Split('\n').Select(l => l.Split(':', 2)).Where(p => p.Length == 2)
+                    .GroupBy(p => p[0].Trim(), StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First()[1].Trim(), StringComparer.OrdinalIgnoreCase))
+                .FirstOrDefault(f => f.ContainsKey("Enabled"));
+            if (fields is null)
             {
-                allowed.TryAdd(Path.GetFullPath(program), fields.TryGetValue("Profiles", out var profiles) ? profiles : "its");
+                problems.Add($"no rule {name} ({protocol} {port})");
+                continue;
+            }
+            string Field(string key) => fields.TryGetValue(key, out var v) ? v : "";
+            var wrong = new List<string>();
+            if (!Field("Enabled").Equals("Yes", StringComparison.OrdinalIgnoreCase))
+            {
+                wrong.Add("disabled");
+            }
+            if (!Field("Action").Equals("Allow", StringComparison.OrdinalIgnoreCase))
+            {
+                wrong.Add("not Allow");
+            }
+            if (Field("Program") is { Length: > 0 } program && !program.Equals("Any", StringComparison.OrdinalIgnoreCase))
+            {
+                wrong.Add($"names a program ({program}): another path is not let in");
+            }
+            if (Field("Profiles").Contains("Public", StringComparison.OrdinalIgnoreCase) || Field("Profiles").Equals("Any", StringComparison.OrdinalIgnoreCase))
+            {
+                wrong.Add("includes the Public profile");
+            }
+            if (!Field("Protocol").Equals(protocol, StringComparison.OrdinalIgnoreCase))
+            {
+                wrong.Add($"protocol {Field("Protocol")}, wanted {protocol}");
+            }
+            if (Field("LocalPort") != port.ToString(CultureInfo.InvariantCulture))
+            {
+                wrong.Add($"port {Field("LocalPort")}, wanted {port}");
+            }
+            if (wrong.Count > 0)
+            {
+                problems.Add($"rule {name}: {string.Join(", ", wrong)}");
+            }
+            else
+            {
+                done.Add($"{protocol} {port}");
             }
         }
-        if (!allowed.TryGetValue(Path.GetFullPath(nodePath), out var on))
-        {
-            return (false, $"rule {FirewallRule} is there but not for {nodePath}, or not enabled: an earlier install's");
-        }
-        var missing = FirewallPrograms().Skip(1).Where(p => !allowed.ContainsKey(Path.GetFullPath(p))).Select(Path.GetFileName).ToList();
-        return missing.Count > 0
-            ? (false, $"rule {FirewallRule} lets {Path.GetFileName(nodePath)} in, but not {string.Join(", ", missing)}: the Fleet page and pilot nodes hear no other node")
-            : (true, $"rule {FirewallRule} allows {Path.GetFileName(nodePath)} in, on {on} networks");
+        return problems.Count > 0
+            ? (false, $"{string.Join("; ", problems)}: other machines' connections are dropped before they reach the node")
+            : (true, $"rules {DiscoveryRule} and {NodeRule} allow {string.Join(" and ", done)} in, on Private and Domain networks");
     }
 
     /// <summary>

@@ -22,8 +22,12 @@ public static class NodeSetupCommand
         : $"\nsetup: {left} left for you, above; the Settings page (Ctrl+8) has a button for those the node can fix.";
 
     public static async Task<int> RunAsync(string socketPath, string dataFolder, string? machine, string[]? repoRoots, string? channel, bool firewall,
-        string nodePath, TextWriter output, TextWriter error, CancellationToken cancellationToken)
+        string nodePath, TextWriter output, TextWriter error, CancellationToken cancellationToken, bool checkOnly = false)
     {
+        if (checkOnly)
+        {
+            return await CheckAsync(socketPath, dataFolder, nodePath, output);
+        }
         var file = NodeSettings.PathIn(dataFolder);
         var settings = NodeSettings.Read(file) with { Lan = true };
         foreach (var (key, values) in new (string, string[]?)[]
@@ -68,21 +72,22 @@ public static class NodeSetupCommand
             var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.LanKey, "on"], Who = "setup" }, cancellationToken);
             await output.WriteLineAsync($"setup: the running node: {envelope.Response?.Way ?? envelope.Response?.Error ?? envelope.Error}");
         }
-        if (firewall && OperatingSystem.IsWindows() && setup.FirewallAllows() is (false, _))
+        if (firewall && OperatingSystem.IsWindows())
         {
-            await output.WriteLineAsync("setup: asking Windows for elevation, to let pilot-node in on private networks...");
-            await Step(NodeSetup.FirewallKey, "firewall rule made");
+            if (setup.FirewallScript() is not { } script)
+            {
+                await output.WriteLineAsync($"setup: firewall: {setup.FirewallWhyNone()}");
+            }
+            else if (setup.FirewallAllows() is (false, _))
+            {
+                await output.WriteLineAsync($"setup: asking Windows for elevation, to allow the node's ports (Private and Domain networks only, no program). The elevated script:\n{script}");
+                await Step(NodeSetup.FirewallKey, "firewall rules made");
+            }
         }
         Directory.CreateDirectory(options.WatchtowerFolder);
 
         await output.WriteLineAsync();
-        var left = 0;
-        foreach (var check in setup.Checks())
-        {
-            await output.WriteLineAsync($"  {(check.Ok ? "ok  " : check.Optional ? "--  " : "TODO")} {check.Title}: {check.Line}");
-            left += check.Ok || check.Optional ? 0 : 1;
-        }
-        await output.WriteLineAsync(ClosingLine(left));
+        await output.WriteLineAsync(ClosingLine(await PrintChecklistAsync(setup, output)));
         return 0;
 
         async Task Step(string key, string done)
@@ -90,5 +95,28 @@ public static class NodeSetupCommand
             var problem = await setup.FixAsync(key, cancellationToken);
             await output.WriteLineAsync(problem is null ? $"setup: {done}" : $"setup: {key}: {problem}");
         }
+    }
+
+    /// <summary>The checklist, one line each; how many are left for a person.</summary>
+    private static async Task<int> PrintChecklistAsync(NodeSetup setup, TextWriter output)
+    {
+        var left = 0;
+        foreach (var check in setup.Checks())
+        {
+            await output.WriteLineAsync($"  {(check.Ok ? "ok  " : check.Optional ? "--  " : "TODO")} {check.Title}: {check.Line}");
+            left += check.Ok || check.Optional ? 0 : 1;
+        }
+        return left;
+    }
+
+    /// <summary><c>setup --check</c>: the checklist over the saved settings, changing nothing and asking for no elevation.</summary>
+    private static async Task<int> CheckAsync(string socketPath, string dataFolder, string nodePath, TextWriter output)
+    {
+        var settings = NodeSettings.Read(NodeSettings.PathIn(dataFolder));
+        var options = settings.Over(new NodeOptions(socketPath, dataFolder, UpdatePolicy: UpdatePolicy.Auto), new HashSet<string>());
+        var setup = new NodeSetup(options, nodePath, SessionTrackerOptions.FromEnvironment().Profile.Root);
+        await output.WriteLineAsync($"setup --check: the checklist as it stands, nothing changed ({NodeSettings.PathIn(dataFolder)})");
+        await PrintChecklistAsync(setup, output);
+        return 0;
     }
 }
