@@ -24,8 +24,15 @@ is neither built nor tested by CI.
   opens must show what it is. Local-only starts (the GUI, the node, anything needing the real machine) are not planned
   as a step, or are planned with the way round named: the CPU-rendered tests (`Pilot.Gui.Tests`) draw a page from a
   sample snapshot with no display and no GPU.
-- The inspector (the debug layer of `DIR.Lib.Diagnostics` and its renderers) exists only in a Debug build. A Release
-  build, which is what CI and the checks use, does not have it, so nothing here may measure through it.
+- The inspector (the debug layer of `DIR.Lib.Diagnostics` and its renderers) exists only in a Debug build, so a Release
+  build, which CI and the checks use, cannot be measured through it. A measurement through the inspector is made only
+  through the `DIR_INSPECTOR` opt-in, in the GUI lane (below).
+- **The GUI lane.** A leg that must see a window asks for it as `pilot run --gui -- <plain command>`: one GUI job runs per
+  machine at a time (the node's `gui-slots`), at Normal priority, and may open windows. Its environment carries
+  `DIR_INSPECTOR=1`, a fresh `DIR_INSPECTOR_TOKEN` and `PILOT_JOB_ARTIFACTS`, a new empty folder; the files it leaves
+  there (screenshots, captures) are attached to the job, listed by `pilot job <id>` and fetched with
+  `pilot job <id> artifact <name> [--out <path>]`. A node with no desktop refuses it. Prove what a test can headless
+  first (the CPU-rendered tests); the GUI lane is for what only a real window shows.
 - Never wait with a job that sleeps or polls: it holds a slot of the queue and blocks every job behind it. Use
   `pilot leg wait --for-file <path> [--until <time>]` and end the turn; the node wakes the leg once. Long builds and
   test runs go through `pilot run -- <command>`.

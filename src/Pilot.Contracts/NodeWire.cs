@@ -75,6 +75,12 @@ public static class NodeWire
     /// </summary>
     public static string JobLogRoute(string jobId) => $"{JobsRoute}/{Uri.EscapeDataString(jobId)}/log";
 
+    /// <summary>One file a job left in its artifacts directory: <c>/api/v1/jobs/&lt;id&gt;/artifacts/&lt;name&gt;</c>, the file itself. A grant's on the LAN, like the log.</summary>
+    public static string JobArtifactRoute(string jobId, string name) => $"{JobsRoute}/{Uri.EscapeDataString(jobId)}/artifacts/{Uri.EscapeDataString(name)}";
+
+    /// <summary>The route pattern of <see cref="JobArtifactRoute"/>, as the node maps it.</summary>
+    public const string JobArtifactPattern = JobsRoute + "/{id}/artifacts/{name}";
+
     /// <summary>The route pattern of <see cref="JobLogRoute"/>, as the node maps it.</summary>
     public const string JobLogPattern = JobsRoute + "/{id}/log";
 

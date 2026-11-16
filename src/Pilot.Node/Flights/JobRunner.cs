@@ -711,6 +711,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             Step = StepOf(last, job),
             EndedAt = EndOf(job, exitPath),
         };
+        ended = WithArtifacts(ended);
         _tried[job.Id] = 0;
         // A check ended while the node was down: the finish that comes back takes this result (nothing waits yet, so it is kept).
         lock (_checkEndLock)
@@ -1892,6 +1893,13 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     public const string InspectorTokenVariable = "DIR_INSPECTOR_TOKEN";
     public const string ArtifactsVariable = "PILOT_JOB_ARTIFACTS";
 
+    /// <summary>The row with what its artifacts directory holds, read as it ends; a job with no such directory is unchanged.</summary>
+    private static JobRow WithArtifacts(JobRow ended)
+    {
+        var (files, note) = JobArtifacts.Collect(ArtifactsOf(ended));
+        return files is null && note is null ? ended : ended with { Artifacts = files, ArtifactsNote = note };
+    }
+
     /// <summary>The artifacts directory of a job: beside its log, named by its id.</summary>
     internal static string ArtifactsOf(JobRow job) => Path.Combine(Path.GetDirectoryName(job.LogPath) ?? "", $"{job.Id}.artifacts");
 
@@ -2702,7 +2710,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             {
                 ended = latest with { State = JobState.Failed, Error = "its process ended without leaving an exit code" };
             }
-            ended = ended with { Step = StepOf(last, job), EndedAt = time.GetUtcNow() };
+            ended = WithArtifacts(ended with { Step = StepOf(last, job), EndedAt = time.GetUtcNow() });
             if (memory.Count > 0)
             {
                 ended = ended with { MemoryMedian = JobMemory.Median(memory), MemoryPeak = memory.Max() };

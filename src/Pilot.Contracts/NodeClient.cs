@@ -127,6 +127,14 @@ public sealed class NodeClient : IDisposable
         return ResponseEnvelope<T>.Fail($"status {status}: the node sent no answer; the command may have run: check pilot status{excerpt}", status);
     }
 
+    /// <summary><c>GET /api/v1/jobs/&lt;id&gt;/artifacts/&lt;name&gt;</c>: a file a job left: its status, content type and bytes (none unless 200).</summary>
+    public async Task<(System.Net.HttpStatusCode Status, string? ContentType, byte[] Bytes)> GetJobArtifactAsync(string jobId, string name, CancellationToken cancellationToken)
+    {
+        using var response = await _http.GetAsync(NodeWire.JobArtifactRoute(jobId, name), cancellationToken).ConfigureAwait(false);
+        var bytes = response.IsSuccessStatusCode ? await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false) : [];
+        return (response.StatusCode, response.Content.Headers.ContentType?.MediaType, bytes);
+    }
+
     /// <summary><c>GET /api/v1/attachments/&lt;id&gt;</c>: the copy the node keeps of an image: its status, content type and bytes (none unless 200).</summary>
     public async Task<(System.Net.HttpStatusCode Status, string? ContentType, byte[] Bytes)> GetAttachmentAsync(string id, CancellationToken cancellationToken)
     {

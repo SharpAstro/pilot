@@ -321,6 +321,14 @@ public static partial class PilotCommand
                 }
                 await output.WriteLineAsync(JobLine(job));
                 await output.WriteLineAsync($"  in {job.Cwd}, for {job.OwnerName ?? "a terminal"}; log {job.LogPath}");
+                if (job.ArtifactsNote is { } artifactsNote)
+                {
+                    await output.WriteLineAsync($"  artifacts: {artifactsNote}");
+                }
+                foreach (var artifact in job.Artifacts ?? [])
+                {
+                    await output.WriteLineAsync($"  artifact {artifact.Name} ({artifact.Bytes} bytes); pilot job {job.Id} artifact {artifact.Name} --out <path> fetches it");
+                }
                 // Through the node's job log route, as the GUI reads it: the node opens a running job's log alongside its
                 // writer, where a plain read of the file here was refused while the job ran, and it works from the LAN too.
                 if (await client.GetJobLogAsync(job.Id, ct) is { Success: true, Response: { } log })
@@ -354,6 +362,24 @@ public static partial class PilotCommand
             var resumeJob = Action(new Command("resume", "Let a paused job run on") { Arguments = { jobId } },
                 (p, client, ct) => Send(client, Verbs.ResumeJob, Verbs.JobTarget(p.GetValue(jobId)!), [], who, ct));
             jobShow.Subcommands.Add(resumeJob);
+            var artifactName = new Argument<string>("name") { Description = "The file's name in the job's artifacts directory" };
+            var artifactOut = new Option<string>("--out") { Description = "Where to write it (default: its name, in the current folder)" };
+            var artifactJob = Action(new Command("artifact", "Fetch one file a job left in its artifacts directory, from the node (works from the LAN)") { Arguments = { jobId, artifactName }, Options = { artifactOut } },
+                async (p, client, ct) =>
+                {
+                    var name = p.GetValue(artifactName)!;
+                    var (status, _, bytes) = await client.GetJobArtifactAsync(p.GetValue(jobId)!, name, ct);
+                    if (status != System.Net.HttpStatusCode.OK)
+                    {
+                        await output.WriteLineAsync($"refused: no artifact {name} on job {p.GetValue(jobId)} (status {(int)status})");
+                        return 1;
+                    }
+                    var target = Path.GetFullPath(p.GetValue(artifactOut) ?? name);
+                    await File.WriteAllBytesAsync(target, bytes, ct);
+                    await output.WriteLineAsync($"wrote {bytes.Length} bytes to {target}");
+                    return 0;
+                });
+            jobShow.Subcommands.Add(artifactJob);
 
             return (runCommand, jobsCommand, mergesCommand, spendCommand, decisionsCommand, jobShow, benchCommand);
         }
