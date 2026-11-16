@@ -13,19 +13,14 @@ public static class MaintenanceListing
     /// <summary>How many items of a step are printed unless <c>--all</c> is given.</summary>
     public const int Cap = 50;
 
+    /// <summary>How long the CLI waits for <c>node maintenance</c>: a dry run that runs to the end can take minutes on a large cache.</summary>
+    public static readonly TimeSpan Wait = TimeSpan.FromMinutes(30);
+
+    /// <summary>The deadline for <c>node maintenance</c>: <see cref="Wait"/>, or the CLI's own when that is longer.</summary>
+    public static TimeSpan Deadline(TimeSpan cli) => cli > Wait ? cli : Wait;
+
     /// <summary>Bytes as a short size (<c>1.5 GB</c>, <c>340 KB</c>).</summary>
-    public static string Size(long bytes)
-    {
-        string[] units = ["B", "KB", "MB", "GB", "TB"];
-        var value = (double)bytes;
-        var unit = 0;
-        while (value >= 1024 && unit < units.Length - 1)
-        {
-            value /= 1024;
-            unit++;
-        }
-        return unit == 0 ? $"{bytes.ToString(CultureInfo.InvariantCulture)} B" : $"{value.ToString("0.0", CultureInfo.InvariantCulture)} {units[unit]}";
-    }
+    public static string Size(long bytes) => MaintenanceItem.Size(bytes);
 
     /// <summary>The lines to print for a report; <paramref name="all"/> lifts the cap.</summary>
     public static IEnumerable<string> Lines(MaintenanceReport report, bool all)

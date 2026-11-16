@@ -112,7 +112,7 @@ public static partial class PilotCommand
 
         // A dry run that runs to the end can take minutes on a large cache (PIL1114), so node maintenance waits longer than the default; a longer
         // deadline given to the whole CLI (commandTimeout) still wins.
-        private TimeSpan MaintenanceDeadline => deadline > TimeSpan.FromMinutes(30) ? deadline : TimeSpan.FromMinutes(30);
+        private TimeSpan MaintenanceDeadline => MaintenanceListing.Deadline(deadline);
 
         // What an assistant says it acted on, for the commands that are the person's alone (merge, land, a setting, setup, an
         // update) and a card's answer or dismissal: the node keeps it in the black box and on the card it raises (autopilot off)

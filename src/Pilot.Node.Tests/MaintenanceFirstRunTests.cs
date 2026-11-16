@@ -111,6 +111,41 @@ public sealed class MaintenanceFirstRunTests
         card.Choices[1].Args.ShouldBe([NodeSettings.MaintenanceEveryKey, "off"]);
     }
 
+    /// <summary>A step whose items are 340 KB, 12 MB and 900 bytes, so sizes under a gigabyte show their own unit and not 0.0 GB.</summary>
+    private sealed class SmallStep : IMaintenanceStep
+    {
+        public string Name => "git";
+
+        public Task<MaintenanceMeasure> MeasureAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new MaintenanceMeasure([new MaintenanceItem("big", 12L << 20, "r1"), new MaintenanceItem("mid", 340L << 10, "r2"), new MaintenanceItem("tiny", 900, "r3")]));
+
+        public Task<MaintenanceResult> RunAsync(CancellationToken cancellationToken) => Task.FromResult(new MaintenanceResult(0));
+    }
+
+    [Fact]
+    public async Task ItemSizesOnTheCardScaleToTheirOwnUnitNotGigabytes()
+    {
+        var sweep = Sweep(new SmallStep());
+
+        await IdleTickAsync(sweep);
+
+        var detail = Open().ShouldHaveSingleItem().Detail.ShouldNotBeNull();
+        detail.ShouldContain("big: 12.0 MB (r1)");
+        detail.ShouldContain("mid: 340.0 KB (r2)");
+        detail.ShouldContain("tiny: 900 B (r3)");
+        detail.ShouldNotContain("0.0 GB");
+    }
+
+    [Fact]
+    public void TheCardAndTheCliListingShareOneSizeFormatter()
+    {
+        foreach (var bytes in new long[] { 0, 900, 1024, 340L << 10, 12L << 20, 3L << 30, 5L << 40 })
+        {
+            IdleMaintenance.Scaled(bytes).ShouldBe(Pilot.Commands.MaintenanceListing.Size(bytes));
+        }
+        IdleMaintenance.Scaled(1536).ShouldBe("1.5 KB");
+    }
+
     [Fact]
     public async Task LaterTicksAndARestartedServiceWhileTheCardIsOpenRaiseNoSecond()
     {
@@ -193,7 +228,7 @@ public sealed class MaintenanceFirstRunTests
     }
 
     [Fact]
-    public async Task NothingAnswersTheCardForThePersonEvenWithTheAutopilotOn()
+    public async Task NoTickOfTheSweepAnswersTheCardForThePersonEvenWithTheSettingForTheAutopilotOn()
     {
         _roles = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
         var step = new FakeStep("packages");

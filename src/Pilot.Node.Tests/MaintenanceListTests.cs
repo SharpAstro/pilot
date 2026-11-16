@@ -207,6 +207,61 @@ public sealed class MaintenanceListTests : IDisposable
     }
 
     [Fact]
+    public void ARealRunsListLineLeavesOffAZeroItemCountAndADryRunKeepsIt()
+    {
+        var steps = new[] { new MaintenanceStepList("jobs", 2048, [], []) };
+
+        MaintenanceListing.Lines(new MaintenanceReport(false, steps), all: false).First().ShouldBe("jobs: removed, 2.0 KB");
+        MaintenanceListing.Lines(new MaintenanceReport(true, steps), all: false).First().ShouldBe("jobs: 0 items would remove, 2.0 KB");
+        MaintenanceListing.Lines(new MaintenanceReport(false, [new MaintenanceStepList("jobs", 10, [new MaintenanceItem("a", 10, "r")], [])]), all: false)
+            .First().ShouldBe("jobs: 1 items removed, 10 B");
+    }
+
+    [Fact]
+    public void TheCliWaitsThirtyMinutesForMaintenanceUnlessItsOwnDeadlineIsLonger()
+    {
+        MaintenanceListing.Wait.ShouldBe(TimeSpan.FromMinutes(30));
+        MaintenanceListing.Deadline(TimeSpan.FromMinutes(2)).ShouldBe(TimeSpan.FromMinutes(30));
+        MaintenanceListing.Deadline(TimeSpan.FromHours(2)).ShouldBe(TimeSpan.FromHours(2));
+    }
+
+    [Fact]
+    public async Task TheLfsStepListsARepoWithPrunableFilesAndCountsNothingToPruneAndAMissingLfsAsKept()
+    {
+        var pruned = Path.Combine(_root, "pruned");
+        var clean = Path.Combine(_root, "clean");
+        var plain = Path.Combine(_root, "plain");
+        var nolfs = Path.Combine(_root, "nolfs");
+        foreach (var folder in new[] { pruned, clean, plain, nolfs })
+        {
+            Directory.CreateDirectory(folder);
+        }
+        Task<MaintenanceProcess.Outcome> Answer(string file, IReadOnlyList<string> args, string folder, CancellationToken ct)
+        {
+            var name = Path.GetFileName(folder);
+            if (args is ["lfs", "version"])
+            {
+                return Task.FromResult(new MaintenanceProcess.Outcome(name == "nolfs" ? 1 : 0, "", ""));
+            }
+            return Task.FromResult(new MaintenanceProcess.Outcome(0, "", name == "pruned" ? "prune: 3 files would be pruned (1.5 MB)\n" : "prune: 0 files would be pruned\n"));
+        }
+        var step = new MaintenanceGit(MaintenanceGit.Kind.Lfs, _state, () => [pruned, clean, plain, nolfs])
+        {
+            Run = Answer,
+            UsesLfs = repo => Path.GetFileName(repo) != "plain",
+        };
+
+        var measure = await step.MeasureAsync(Ct);
+
+        var item = measure.List.ShouldHaveSingleItem();
+        item.Name.ShouldBe("pruned");
+        item.Bytes.ShouldBe((long)(1.5 * 1024 * 1024));
+        item.Reason.ShouldContain("3 files would be pruned");
+        KeptOf(measure, "nothing for lfs prune to remove").ShouldBe(1);
+        KeptOf(measure, "git-lfs is not installed").ShouldBe(1);
+    }
+
+    [Fact]
     public void TheOutFileHasEveryItemAsTabSeparatedStepItemBytesReasonLines()
     {
         var report = new MaintenanceReport(true,

@@ -257,6 +257,27 @@ public sealed class AutopilotTests
     }
 
     [Fact]
+    public async Task WithAutopilotOnAnAssistantCannotPressEitherChoiceOfTheFirstRunMaintenanceCard()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        (await Send(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", args: ["autopilot", "on"]))).Error.ShouldBeNull();
+        var card = node.State.RaiseCard(CardBin.ForYou, IdleMaintenance.FirstRunKind, Verbs.NodeTarget, "Run the first idle disk sweep?", null,
+        [
+            new CardChoice { Label = IdleMaintenance.RunLabel, Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.MaintenanceEveryKey, "1d"] },
+            new CardChoice { Label = IdleMaintenance.KeepOffLabel, Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.MaintenanceEveryKey, "off"] },
+        ]);
+
+        foreach (var label in new[] { IdleMaintenance.RunLabel, IdleMaintenance.KeepOffLabel })
+        {
+            var pressed = await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), Assistant, agent: true, Why, label));
+            pressed.Ok.ShouldBeFalse();
+        }
+
+        node.State.Cards().Single(c => c.Id == card.Id).State.ShouldBe(CardState.Open);
+        node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.AutopilotRan);
+    }
+
+    [Fact]
     public async Task WithAutopilotOnTheSameMergeGoesThroughRecordedWithTheSessionAndMessageAndAHandledCardSaysIt()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
