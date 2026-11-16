@@ -123,6 +123,40 @@ public sealed class ConnectReleaseTests : OverlapTestsBase
     }
 
     [Fact]
+    public async Task AFlightConnectedToAnArchivedFlightIsReleasedAsForALandedOne()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "p2cr-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            await Three(_flights);
+            _state.Archive = new FlightArchive(folder);
+            // TIA1 landed and was archived while TIA3 still listed it (a row stuck that way).
+            _state.PutFlight(F("TIA1") with { State = FlightState.Landed, LandedAt = DateTimeOffset.UtcNow });
+            _state.ArchiveFlight("TIA1");
+            _state.Flights().ShouldNotContain(f => f.Code == "TIA1");
+
+            (await _flights.ReleaseLandedConnectionsAsync(Ct)).ShouldBe(1);
+
+            F("TIA3").Connections.ShouldBe(["TIA2"]);
+            Released("TIA3").ShouldHaveSingleItem().Title.ShouldContain("TIA1 landed");
+
+            // Connecting to an archived code is connecting to a landed flight: it holds nothing.
+            await Create(_flights, "4");
+            (await Run(_flights, Verbs.Connect, "flight/TIA4", "TIA1")).Ok.ShouldBeTrue();
+            F("TIA4").State.ShouldBe(FlightState.Flying);
+            (await _flights.ReleaseLandedConnectionsAsync(Ct)).ShouldBe(1);
+            F("TIA4").Connections.ShouldBeEmpty();
+        }
+        finally
+        {
+            if (Directory.Exists(folder))
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task AFlightMovedToAnotherNodeIsNotReleased()
     {
         await Three(_flights);

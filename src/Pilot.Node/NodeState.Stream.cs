@@ -166,6 +166,9 @@ public sealed partial class NodeState
             case FlightChangedEvent changed:
                 _flights[changed.Flight.Code] = changed.Flight;
                 break;
+            case FlightArchivedEvent archived:
+                RemoveArchived(archived.Code);
+                break;
             case LegAddedEvent added:
                 _legs[(added.Leg.Flight, added.Leg.Name)] = added.Leg;
                 break;
