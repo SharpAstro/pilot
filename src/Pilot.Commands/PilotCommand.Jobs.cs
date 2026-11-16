@@ -364,7 +364,7 @@ public static partial class PilotCommand
             jobShow.Subcommands.Add(resumeJob);
             var artifactName = new Argument<string>("name") { Description = "The file's name in the job's artifacts directory" };
             var artifactOut = new Option<string>("--out") { Description = "Where to write it (default: its name, in the current folder)" };
-            var artifactJob = Action(new Command("artifact", "Fetch one file a job left in its artifacts directory, from the node (works from the LAN)") { Arguments = { jobId, artifactName }, Options = { artifactOut } },
+            var artifactJob = Action(new Command("artifact", "Fetch one file a job left in its artifacts directory, from the node (works from the LAN)") { Arguments = { artifactName }, Options = { artifactOut } },
                 async (p, client, ct) =>
                 {
                     var name = p.GetValue(artifactName)!;
