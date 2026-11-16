@@ -7,6 +7,9 @@ using Pilot.Node.Sessions;
 
 namespace Pilot.Node.Flights;
 
+/// <summary>A merged PR as <c>gh pr list --state merged</c> names it: its number, its head branch and the commit that branch was at when it merged (PIL1101).</summary>
+public sealed record MergedPullRequest(int Number, string HeadRef, string HeadOid);
+
 /// <summary>A flight's PR on GitHub: its number, state and head.</summary>
 /// <param name="Mergeable">GitHub's word on whether it merges into its base: MERGEABLE, CONFLICTING, or UNKNOWN while it works it out.</param>
 /// <param name="Title">Its title, as read by repo and number; empty otherwise.</param>
@@ -192,6 +195,12 @@ public interface IGitHub
 
     /// <summary>Whether issue <paramref name="number"/> is closed (true), open (false), or null when GitHub would not say (#753).</summary>
     Task<bool?> IssueClosedAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<bool?>(null);
+
+    /// <summary>
+    /// The latest merged PRs of the repo at <paramref name="repoPath"/> (<c>gh pr list --state merged</c>, up to <paramref name="limit"/>), one call
+    /// for all of them, so the branch sweep reads GitHub once per repo and not once per flight (PIL1101). Null when GitHub would not say.
+    /// </summary>
+    Task<MergedPullRequest[]?> MergedPullRequestsAsync(string repoPath, int limit, CancellationToken cancellationToken) => Task.FromResult<MergedPullRequest[]?>(null);
 
     /// <summary>
     /// Where PR <paramref name="number"/>'s checks stand: <see cref="ChoiceStatus.Failing"/> when any failed,

@@ -113,6 +113,26 @@ public sealed partial class GhCli
         }
     }
 
+    public async Task<MergedPullRequest[]?> MergedPullRequestsAsync(string repoPath, int limit, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var (exit, output, _) = await RunAsync(["pr", "list", "--state", "merged", "--limit", limit.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "number,headRefName,headRefOid"], repoPath, cancellationToken);
+            if (exit != 0)
+            {
+                return null;
+            }
+            using var doc = JsonDocument.Parse(output);
+            return [.. doc.RootElement.EnumerateArray()
+                .Select(p => new MergedPullRequest(p.GetProperty("number").GetInt32(), p.GetProperty("headRefName").GetString() ?? "", p.GetProperty("headRefOid").GetString() ?? ""))
+                .Where(p => p.HeadRef.Length > 0 && p.HeadOid.Length > 0)];
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or System.ComponentModel.Win32Exception or FlightException)
+        {
+            return null;
+        }
+    }
+
     public async Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken)
     {
         var (exit, output, error) = await RunAsync(["pr", "list", "--state", "open", "--limit", "100", "--json", "number,title,isDraft,headRefName,url,statusCheckRollup,labels"], repoPath, cancellationToken);

@@ -37,11 +37,11 @@ is neither built nor tested by CI.
 
 ## How a flight merges
 
-- main is protected by a merge queue that **squashes** each PR into one commit (the ruleset's `merge_method` is
-  `SQUASH`). So a branch's own history never matters here: merge commits on it, a merge of main that resolved
-  conflicts, many small commits, all land as one commit. A rebase that would conflict is no reason to hold a PR.
+- main's merge queue **squashes** each PR into one commit (the ruleset's `merge_method` is `SQUASH`), so a branch's own history
+  never matters: merge commits, a conflict-resolving merge of main, many small commits all land as one. A rebase that would conflict is no reason to hold a PR.
 - Take main by a merge (`git fetch origin`, then `git merge origin/main`), never by a rebase, and never push with
   `--force`. A repo whose queue rebases says so in its own PILOT.md; tianwen's squashes too since 2026-11-08.
+- The node deletes a landed flight's branch, locally and on origin, once its PR merged and the plane is gone; one holding commits past the merge is kept with a card.
 
 ## Sessions and the watchtower
 

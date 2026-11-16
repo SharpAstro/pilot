@@ -581,6 +581,12 @@ public static partial class NodeApp
                 Archived = () => services.GetRequiredService<NodeRowPublisher>().Tick(),
                 Error = services.GetRequiredService<LogWriter>(),
             });
+            // Branches of flights that landed before the node deleted them at landing go in small batches, off the start path (PIL1101).
+            builder.Services.AddHostedService(services => new LandedBranchSweep(services.GetRequiredService<NodeState>(), new LandedBranches(services.GetRequiredService<Planes>().Git), services.GetService<IGitHub>(), services.GetRequiredService<TimeProvider>())
+            {
+                Enabled = () => services.GetRequiredService<RoleModels>().DeleteLandedBranches,
+                Error = services.GetRequiredService<LogWriter>(),
+            });
         }
     }
 

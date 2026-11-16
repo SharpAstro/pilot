@@ -29,6 +29,10 @@ public sealed record ArchivedFlightRow
 
     /// <summary>The node it moved to, when it landed that way; null otherwise.</summary>
     public string? MovedTo { get; init; }
+
+    /// <summary>When the node deleted the flight's branch (PIL1101); null until then, and for an archive file written before the field, which the branch sweep reads whole.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? BranchDeletedAt { get; init; }
 }
 
 /// <summary>One archived flight, whole: its row (with its review and review rounds), its legs and its Handled cards about it. What an archive file holds.</summary>
