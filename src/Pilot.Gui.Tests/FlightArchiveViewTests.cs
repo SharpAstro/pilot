@@ -105,7 +105,8 @@ public sealed class FlightArchiveViewTests
         using var renderer = NewRenderer();
         var play = new PlayFilter();
         play.ShowEverything();
-        var asked = new List<(string? Node, int Offset, int Count)>();
+        // Each node's read runs on its own task, so the record is thread-safe.
+        var asked = new System.Collections.Concurrent.ConcurrentBag<(string? Node, int Offset, int Count)>();
         var view = View(renderer, play);
         var changes = 0;
         var loaded = new TaskCompletionSource();
