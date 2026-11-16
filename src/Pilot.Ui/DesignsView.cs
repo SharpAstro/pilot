@@ -371,8 +371,8 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         right.Add(Heading("Brief"));
         right.Add(Markdown(string.IsNullOrWhiteSpace(page.Detail.Brief) ? "(no brief)" : page.Detail.Brief!));
         return Layout.Builder.HStack(
-            Layout.Builder.VStack([.. left]).WithGap(8f).WStar(2.2f).HStar(),
-            Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).Pad(Gutter, 8f);
+            Layout.Builder.VStack([.. left]).WithGap(8f).WStar(2.2f, 180f).HStar(),
+            Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 110f, 520f).HStar()).WithGap(Gutter).Pad(Gutter, 8f);
     }
 
     private IEnumerable<Layout.Node> Versions(DesignPage page)
@@ -430,12 +430,13 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         var custom = Layout.Builder.TextInput(CustomInput, 12f, Palette.Input).WStar().RowH(26f);
         var scale = surface.Scale.ToString("0.##", CultureInfo.InvariantCulture);
         var caption = _customProblem ?? $"{surface.Name}: {surface.Width} x {surface.Height} at {scale}x";
-        // Three rows, the chips sharing the column's width: one row of chips, swap and input overran a narrow column onto the versions beside it.
+        // Two rows of two chips, then swap, input and caption: a narrow window leaves this column little width, and a row of four chips or a wider swap overran it onto the versions beside it.
         return Layout.Builder.VStack(
-            Layout.Builder.HStack([.. chips]).WithGap(4f).RowH(26f),
+            Layout.Builder.HStack([.. chips.Take(2)]).WithGap(4f).RowH(26f),
+            Layout.Builder.HStack([.. chips.Skip(2)]).WithGap(4f).RowH(26f),
             Layout.Builder.HStack(swap).RowH(26f),
             custom,
-            WrappedProse.OneLine(caption, 12f, _customProblem is null ? Dim : Bright, selectable: false).RowH(22f).Whole(caption)).WithGap(4f).RowH(116f);
+            WrappedProse.OneLine(caption, 12f, _customProblem is null ? Dim : Bright, selectable: false).RowH(22f).Whole(caption)).WithGap(4f).RowH(142f);
     }
 
     private Layout.Node Strip(DesignPage page)
