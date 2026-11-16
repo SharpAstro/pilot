@@ -53,6 +53,26 @@ public sealed class GuiOverlapsTests : IAsyncDisposable
         return (exit, output.ToString(), error.ToString());
     }
 
+    [Fact]
+    public async Task AFakeDisposedRightAfterStartDisposesCleanly()
+    {
+        var fake = new FakeInspector(_registry);
+        fake.Start();
+
+        await Should.NotThrowAsync(async () => await fake.DisposeAsync());
+    }
+
+    [Fact]
+    public async Task AFakeDisposedWithAClientConnectedAndSilentDisposesCleanly()
+    {
+        var fake = new FakeInspector(_registry);
+        fake.Start();
+        using var client = new TcpClient();
+        await client.ConnectAsync(IPAddress.Loopback, fake.Port, Ct);
+
+        await Should.NotThrowAsync(async () => await fake.DisposeAsync());
+    }
+
     private static readonly string[] Pages = ["home", "flights", "settings"];
 
     [Fact]
@@ -271,6 +291,10 @@ public sealed class GuiOverlapsTests : IAsyncDisposable
             catch (OperationCanceledException)
             {
             }
+            catch (Exception ex) when (ex is SocketException or ObjectDisposedException && _stop.IsCancellationRequested)
+            {
+                // DisposeAsync stopped the listener under a pending accept; Windows reports that as OperationAborted, not as a cancellation.
+            }
         }
 
         private async Task ServeAsync(TcpClient client)
@@ -370,14 +394,20 @@ public sealed class GuiOverlapsTests : IAsyncDisposable
 
         public async ValueTask DisposeAsync()
         {
-            await _stop.CancelAsync();
-            _listener.Stop();
-            await _accepting;
-            if (_descriptor is not null)
+            try
             {
-                File.Delete(_descriptor);
+                await _stop.CancelAsync();
+                _listener.Stop();
+                await _accepting;
             }
-            _stop.Dispose();
+            finally
+            {
+                if (_descriptor is not null)
+                {
+                    File.Delete(_descriptor);
+                }
+                _stop.Dispose();
+            }
         }
     }
 }
