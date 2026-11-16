@@ -3,13 +3,15 @@ using Pilot.Contracts;
 namespace Pilot.Node.Designs;
 
 /// <summary>
-/// The design verbs (PIL1096): <c>design-new</c>, <c>design-brief</c>, <c>design-draft</c>, <c>design-show</c> and <c>designs</c>. They go through
-/// <see cref="DesignStore"/>, the node its one writer; none writes under a design's <c>versions/</c>.
+/// The design verbs (PIL1096): <c>design-new</c>, <c>design-brief</c>, <c>design-draft</c>, <c>design-check</c>, <c>design-render</c>, <c>design-publish</c>,
+/// <c>design-show</c> and <c>designs</c>. They go through <see cref="DesignStore"/>, the node its one writer; only <c>design-publish</c> writes under a
+/// design's <c>versions/</c>, and only to a version folder that is not there yet.
 /// </summary>
 public sealed class DesignCommands(NodeState state, DesignStore store)
 {
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
-    public static bool Handles(string verb) => verb is Verbs.DesignNew or Verbs.DesignBrief or Verbs.DesignDraft or Verbs.DesignShow or Verbs.Designs;
+    public static bool Handles(string verb) => verb is Verbs.DesignNew or Verbs.DesignBrief or Verbs.DesignDraft or Verbs.DesignShow or Verbs.Designs
+        or Verbs.DesignCheck or Verbs.DesignRender or Verbs.DesignPublish;
 
     public CommandResult Run(CommandRequest command)
     {
@@ -29,6 +31,18 @@ public sealed class DesignCommands(NodeState state, DesignStore store)
                     var id = DesignStore.Normalise(IdOf(command));
                     var folder = store.Draft(id, args.Contains("replace", StringComparer.Ordinal));
                     return state.Complete(command, null, made: $"{id} draft: {folder}");
+                case Verbs.DesignCheck:
+                    var problems = store.Check(IdOf(command));
+                    return problems.Length == 0
+                        ? state.Complete(command, null, made: "clean")
+                        : state.Complete(command, $"{problems.Length} problem{(problems.Length == 1 ? "" : "s")}:\n{string.Join('\n', problems)}");
+                case Verbs.DesignRender:
+                    var rendered = store.Render(IdOf(command));
+                    return state.Complete(command, null, made: $"{rendered.Length} render{(rendered.Length == 1 ? "" : "s")}: {string.Join(", ", rendered)}");
+                case Verbs.DesignPublish:
+                    // args: the why.
+                    var published = store.Publish(IdOf(command), args.Length > 0 ? args[0] : "");
+                    return state.Complete(command, null, made: $"{published.Id} v{published.Current}");
                 case Verbs.DesignShow:
                     return state.Complete(command, null) with { Design = store.Detail(IdOf(command)) };
                 default:

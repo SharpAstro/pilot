@@ -139,11 +139,11 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             var from = row.Current is { } current ? Path.Combine(folder, VersionsFolderName, "v" + current.ToString(CultureInfo.InvariantCulture)) : null;
             if (from is not null && File.Exists(Path.Combine(from, PrototypeFile)))
             {
-                File.Copy(Path.Combine(from, PrototypeFile), Path.Combine(draft, PrototypeFile));
+                CopyWritable(Path.Combine(from, PrototypeFile), Path.Combine(draft, PrototypeFile));
                 var notes = Path.Combine(from, NotesFile);
                 if (File.Exists(notes))
                 {
-                    File.Copy(notes, Path.Combine(draft, NotesFile));
+                    CopyWritable(notes, Path.Combine(draft, NotesFile));
                 }
                 else
                 {
@@ -214,7 +214,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             {
                 Row = row,
                 Brief = File.Exists(briefFile) ? File.ReadAllText(briefFile) : null,
-                Versions = [.. numbers.Select(n => new DesignVersionRow
+                Versions = [.. numbers.Select(n => row.History.FirstOrDefault(v => v.Number == n) ?? new DesignVersionRow
                 {
                     Number = n,
                     At = n == row.Current ? row.At : null,
@@ -236,8 +236,141 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             var folder = FolderOf(id);
             if (Directory.Exists(folder))
             {
+                // A version's files are read-only, which Windows will not delete.
+                foreach (var file in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
+                {
+                    File.SetAttributes(file, FileAttributes.Normal);
+                }
                 Directory.Delete(folder, recursive: true);
             }
+        }
+    }
+
+    private static void CopyWritable(string from, string to)
+    {
+        File.Copy(from, to);
+        // A file copied from a version is read-only too; the draft is the one place a design is edited.
+        File.SetAttributes(to, FileAttributes.Normal);
+    }
+
+    /// <summary>The prototype of <paramref name="id"/>'s draft, <c>draft/prototype.json</c>; throws when the design or the draft is not there.</summary>
+    private string DraftPrototypeOf(string id, out DesignRow row)
+    {
+        row = Find(id) ?? throw new DesignException($"There is no design {id}");
+        var file = Path.Combine(FolderOf(row.Id), DraftFolderName, PrototypeFile);
+        return File.Exists(file) ? file : throw new DesignException($"{row.Id} has no draft prototype ({file}); pilot design draft {row.Id} makes one");
+    }
+
+    /// <summary>
+    /// Checks the draft of <paramref name="id"/>: every problem found, a line each (a loader problem with its JSON path, a finding as
+    /// <c>screen | width x height | rule: message</c>); empty when it is clean at every <see cref="DesignSizes"/>.
+    /// </summary>
+    public string[] Check(string id)
+    {
+        lock (_lock)
+        {
+            return DesignChecker.Problems(DraftPrototypeOf(id, out _));
+        }
+    }
+
+    /// <summary>Draws every screen of the draft at the design size into <c>draft/renders/</c> and stamps them with the hash of the prototype drawn. Refused while the prototype does not load. Returns the screen ids.</summary>
+    public string[] Render(string id)
+    {
+        lock (_lock)
+        {
+            var file = DraftPrototypeOf(id, out var row);
+            var document = DesignChecker.Load(file, out var problems)
+                ?? throw new DesignException($"{row.Id} draft does not load, so there is nothing to render:\n{string.Join('\n', problems)}");
+            return DesignChecker.Render(document, Path.Combine(FolderOf(row.Id), DraftFolderName, DesignChecker.RendersFolderName), Sha256Of(file));
+        }
+    }
+
+    /// <summary>
+    /// Makes version k+1 (k the current, 0 for none) from the draft of <paramref name="id"/>: <c>prototype.json</c>, <c>NOTES.md</c> and <c>renders/</c>, every file
+    /// read-only, and adds it to the record. Refused when the draft or its <c>NOTES.md</c> is missing or empty, when the check finds anything, when the renders are
+    /// not of the prototype as it stands, or when <paramref name="why"/> is not one of <see cref="DesignWhys"/>. A version folder that exists is never written again.
+    /// </summary>
+    public DesignRow Publish(string id, string why)
+    {
+        if (!DesignWhys.All.Contains(why, StringComparer.Ordinal))
+        {
+            throw new DesignException($"publish takes --why {string.Join("|", DesignWhys.All)}, not '{why}'");
+        }
+        lock (_lock)
+        {
+            var prototype = DraftPrototypeOf(id, out var row);
+            var draft = Path.GetDirectoryName(prototype)!;
+            var notes = Path.Combine(draft, NotesFile);
+            if (!File.Exists(notes) || string.IsNullOrWhiteSpace(File.ReadAllText(notes)))
+            {
+                throw new DesignException($"{row.Id} has no notes: {NotesFile} in the draft is missing or empty, and a version says in it what it is");
+            }
+            var document = DesignChecker.Load(prototype, out var problems);
+            var found = document is null ? problems : DesignChecker.Problems(prototype);
+            if (found.Length > 0)
+            {
+                throw new DesignException($"{row.Id} draft is not clean, so there is no version to make:\n{string.Join('\n', found)}");
+            }
+            var hash = Sha256Of(prototype);
+            var renders = Path.Combine(draft, DesignChecker.RendersFolderName);
+            if (DesignChecker.StampOf(renders) != hash)
+            {
+                throw new DesignException($"{row.Id} renders are not of the draft as it stands (prototype.json changed or was never rendered); pilot design render {row.Id} draws them again");
+            }
+            var pngs = document!.Screens.Select(s => Path.Combine(renders, s.Id + ".png")).ToArray();
+            if (pngs.FirstOrDefault(p => !File.Exists(p)) is { } missing)
+            {
+                throw new DesignException($"{row.Id} has no render {Path.GetFileName(missing)}; pilot design render {row.Id} draws them again");
+            }
+
+            var versions = Path.Combine(FolderOf(row.Id), VersionsFolderName);
+            var number = (row.Current ?? 0) + 1;
+            var target = Path.Combine(versions, "v" + number.ToString(CultureInfo.InvariantCulture));
+            if (Directory.Exists(target) || File.Exists(target))
+            {
+                throw new DesignException($"{row.Id} v{number} exists already ({target}); a version is never written again");
+            }
+            // Built beside, then moved into place whole: a crash leaves no half version under a name a reader trusts.
+            var building = Path.Combine(versions, ".publishing-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(Path.Combine(building, DesignChecker.RendersFolderName));
+            try
+            {
+                File.Copy(prototype, Path.Combine(building, PrototypeFile));
+                File.Copy(notes, Path.Combine(building, NotesFile));
+                foreach (var png in pngs)
+                {
+                    File.Copy(png, Path.Combine(building, DesignChecker.RendersFolderName, Path.GetFileName(png)));
+                }
+                foreach (var file in Directory.EnumerateFiles(building, "*", SearchOption.AllDirectories))
+                {
+                    File.SetAttributes(file, FileAttributes.ReadOnly);
+                }
+                Directory.Move(building, target);
+            }
+            catch
+            {
+                if (Directory.Exists(building))
+                {
+                    foreach (var file in Directory.EnumerateFiles(building, "*", SearchOption.AllDirectories))
+                    {
+                        File.SetAttributes(file, FileAttributes.Normal);
+                    }
+                    Directory.Delete(building, recursive: true);
+                }
+                throw;
+            }
+
+            var at = _time.GetUtcNow();
+            var made = row with
+            {
+                Current = number,
+                Versions = number,
+                Why = why,
+                PrototypeSha256 = hash,
+                History = [.. row.History, new DesignVersionRow { Number = number, At = at, Why = why, PrototypeSha256 = hash }],
+            };
+            WriteRecord(made);
+            return made;
         }
     }
 

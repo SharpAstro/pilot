@@ -41,6 +41,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(DesignDetail))]
 [JsonSerializable(typeof(DesignList))]
 [JsonSerializable(typeof(DesignIds))]
+[JsonSerializable(typeof(DesignRenderStamp))]
 [JsonSerializable(typeof(OverlapRow))]
 [JsonSerializable(typeof(FoldedIssue))]
 [JsonSerializable(typeof(PackageWait))]

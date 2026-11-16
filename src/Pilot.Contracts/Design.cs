@@ -29,6 +29,40 @@ public sealed record DesignRow
 
     /// <summary>The SHA-256 (hex) of the current version's <c>prototype.json</c>; null while there is none.</summary>
     public string? PrototypeSha256 { get; init; }
+
+    /// <summary>Every version made, oldest first: number, time, why and hash of each. Empty while there is none, and in a record an older release wrote.</summary>
+    public DesignVersionRow[] History { get; init => field = value ?? []; } = [];
+}
+
+/// <summary>
+/// The sizes, in pixels, a prototype is checked at (<c>pilot design check</c>): the distinct width and height pairs of the GUI's wireframe sweep
+/// (<c>WireframeSweepTests.LongSizes</c>), so a design that passes here fits the screens the GUI itself is held to. One list, read by the node's check
+/// and by the tests that hold it to the sweep.
+/// </summary>
+public static class DesignSizes
+{
+    /// <summary>Width and height pairs: 1000, 1280, 1400, 1920 and 2560 wide at 900 high, and 1280 and 2560 wide at 1440 high.</summary>
+    public static readonly System.Collections.Immutable.ImmutableArray<(uint Width, uint Height)> All =
+    [
+        (1000, 900), (1280, 900), (1400, 900), (1920, 900), (2560, 900),
+        (1280, 1440), (2560, 1440),
+    ];
+}
+
+/// <summary>Why a version was made, as <c>pilot design publish --why</c> takes it: the owner's <c>brief</c>, a <c>message</c> of theirs, or a <c>fix</c> of a finding.</summary>
+public static class DesignWhys
+{
+    public const string Brief = "brief";
+    public const string Message = "message";
+    public const string Fix = "fix";
+
+    public static readonly string[] All = [Brief, Message, Fix];
+}
+
+/// <summary>What <c>pilot design render</c> leaves in <c>draft/renders/render.json</c>: the hash of the <c>prototype.json</c> it drew, which publish compares with the draft as it stands.</summary>
+public sealed record DesignRenderStamp
+{
+    public string? PrototypeSha256 { get; init; }
 }
 
 /// <summary>One version of a design, <c>versions/v&lt;k&gt;/</c>: its number, when it was made, and the hash of its prototype.</summary>

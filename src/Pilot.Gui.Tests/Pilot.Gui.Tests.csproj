@@ -34,6 +34,11 @@
     <Content Include="Fixtures\cards-plain-after.jsonl" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- The design sample the node's design tests use (a prototype of three screens, clean at every design size): the Designs page plays it. -->
+  <ItemGroup>
+    <Content Include="..\Pilot.Node.Tests\Fixtures\Designs\sample.prototype.json" Link="Fixtures\Designs\sample.prototype.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <Using Include="Pilot.Ui" />
   </ItemGroup>

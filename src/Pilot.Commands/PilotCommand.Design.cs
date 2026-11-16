@@ -76,6 +76,19 @@ public static partial class PilotCommand
             var designDraft = Action(new Command("draft", "Make the design's draft/ folder: the current version's prototype.json and NOTES.md, or a starter prototype when there is no version; refused over an existing draft unless --replace") { Arguments = { draftId }, Options = { draftReplace } },
                 (p, client, ct) => Send(client, Verbs.DesignDraft, Verbs.DesignTarget(p.GetValue(draftId)!), p.GetValue(draftReplace) ? ["replace"] : [], who, ct));
 
+            var checkId = Arg("design", "The design's id, DSN-<n>");
+            var designCheck = Action(new Command("check", "Check the draft's prototype.json with DIR.Lib: every loader problem with its JSON path and every finding at the sweep's sizes, one a line; 'clean' when there are none, and a non-zero exit when there are") { Arguments = { checkId } },
+                (p, client, ct) => Send(client, Verbs.DesignCheck, Verbs.DesignTarget(p.GetValue(checkId)!), [], who, ct));
+
+            var renderId = Arg("design", "The design's id, DSN-<n>");
+            var designRender = Action(new Command("render", "Write draft/renders/<screen id>.png for every screen at the design size, stamped with the hash of the prototype drawn") { Arguments = { renderId } },
+                (p, client, ct) => Send(client, Verbs.DesignRender, Verbs.DesignTarget(p.GetValue(renderId)!), [], who, ct));
+
+            var publishId = Arg("design", "The design's id, DSN-<n>");
+            var publishWhy = new Option<string>("--why") { Description = "Why: brief, message or fix", Required = true };
+            var designPublish = Action(new Command("publish", "Make the next read-only version from the draft, when the check is clean and the renders are of the draft as it stands; prints the version") { Arguments = { publishId }, Options = { publishWhy } },
+                (p, client, ct) => Send(client, Verbs.DesignPublish, Verbs.DesignTarget(p.GetValue(publishId)!), [p.GetValue(publishWhy)!], who, ct));
+
             var showId = Arg("design", "The design's id, DSN-<n>");
             var designShow = Action(new Command("show", "Show a design: its record, its brief and the paths of its folders") { Arguments = { showId } },
                 async (p, client, ct) =>
@@ -90,7 +103,7 @@ public static partial class PilotCommand
                     return 1;
                 });
 
-            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, draft, show") { Subcommands = { designNew, designBrief, designDraft, designShow } };
+            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, draft, check, render, publish, show") { Subcommands = { designNew, designBrief, designDraft, designCheck, designRender, designPublish, designShow } };
 
             var designs = Action(new Command("designs", "Every design, newest first"),
                 async (p, client, ct) =>

@@ -52,6 +52,31 @@
     <PackageReference Include="LAN.Lib" />
   </ItemGroup>
 
+  <!-- DIR.Lib's Prototype (DIR249): the node loads, checks and renders a design's prototype itself, so publish re-runs the check
+       rather than trusting a file. Taken as Pilot.Ui takes it: the sibling clone's source when it is there, else the package
+       (DIR.Lib.Debug in Debug), so one DIR.Lib is in the graph. The prototype reader and the renderers are reflection free. -->
+  <PropertyGroup>
+    <UseLocalDirLib Condition="'$(UseLocalDirLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)DIR.Lib\src\DIR.Lib\DIR.Lib.csproj')">true</UseLocalDirLib>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalDirLib)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)DIR.Lib\src\DIR.Lib\DIR.Lib.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalDirLib)' != 'true'">
+    <PackageReference Include="DIR.Lib" Condition="'$(Configuration)' != 'Debug'" />
+    <PackageReference Include="DIR.Lib.Debug" Condition="'$(Configuration)' == 'Debug'" />
+  </ItemGroup>
+
+  <!-- The PNG encoder for a design's renders, taken as Pilot.Commands takes it. -->
+  <PropertyGroup>
+    <UseLocalSharpAstroPng Condition="'$(UseLocalSharpAstroPng)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)Codecs\src\SharpAstro.Png\SharpAstro.Png.csproj')">true</UseLocalSharpAstroPng>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalSharpAstroPng)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)Codecs\src\SharpAstro.Png\SharpAstro.Png.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalSharpAstroPng)' != 'true'">
+    <PackageReference Include="SharpAstro.Png" />
+  </ItemGroup>
+
   <!-- The lock and Kestrel on the socket (SharpAstro/Node.Lib.Hosting), by the same switch as Pilot.Contracts' Node.Lib. -->
   <PropertyGroup>
     <UseLocalNodeLib Condition="'$(UseLocalNodeLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)Node.Lib\src\Node.Lib.Hosting\Node.Lib.Hosting.csproj')">true</UseLocalNodeLib>

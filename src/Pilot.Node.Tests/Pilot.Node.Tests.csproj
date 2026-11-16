@@ -50,6 +50,12 @@
     <None Include="Fixtures\gh\*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- The sample prototype (clean at every design size) and one with a deliberate overlap, for the design check, render and publish tests;
+       Pilot.Gui.Tests links the sample too. -->
+  <ItemGroup>
+    <None Include="Fixtures\Designs\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- Stores written by the code of an older release, one folder per version (store.json, snapshot.json, journal.jsonl, decisions.jsonl):
        StoreCompatibilityTests starts a node on each. See PILOT.md for how a fixture is made and refreshed at each release. -->
   <ItemGroup>

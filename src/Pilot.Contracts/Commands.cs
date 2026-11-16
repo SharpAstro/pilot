@@ -924,6 +924,21 @@ public static class Verbs
     /// </summary>
     public const string DesignDraft = "design-draft";
 
+    /// <summary>
+    /// <c>design-check design/DSN-&lt;n&gt;</c> (PIL1096): loads the draft's <c>prototype.json</c> with DIR.Lib's Prototype and checks it at <see cref="DesignSizes"/>.
+    /// Says <c>clean</c>, or refuses with each problem on a line of its own.
+    /// </summary>
+    public const string DesignCheck = "design-check";
+
+    /// <summary><c>design-render design/DSN-&lt;n&gt;</c>: writes <c>draft/renders/&lt;screen&gt;.png</c> for every screen at the design size and stamps them with the hash of the prototype drawn.</summary>
+    public const string DesignRender = "design-render";
+
+    /// <summary>
+    /// <c>design-publish design/DSN-&lt;n&gt; why</c>: makes the next read-only version from the draft, when the check is clean and the renders are of the draft as it
+    /// stands. The one arg is the why, one of <see cref="DesignWhys"/>.
+    /// </summary>
+    public const string DesignPublish = "design-publish";
+
     /// <summary><c>design-show design/DSN-&lt;n&gt;</c>: reads one design whole, as <see cref="CommandResult.Design"/>. Changes nothing.</summary>
     public const string DesignShow = "design-show";
 
