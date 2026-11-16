@@ -93,6 +93,7 @@ public static partial class PilotCommand
         var (reposCommand, prsCommand) = tree.RepoCommands();
         var issueCommand = tree.IssueCommands();
         var (idea, ideas) = tree.IdeaCommands();
+        var (design, designs) = tree.DesignCommands();
         var flight = tree.FlightCommands();
         var (legCommand, checkCommand, artifact) = tree.LegCommands();
         var review = tree.ReviewCommands();
@@ -107,7 +108,7 @@ public static partial class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { tree.socket, tree.node, tree.outputFormat },
-            Subcommands = { status, attachments, sessions, sessionCommand,reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, order, orders, review, runCommand, benchCommand, jobsCommand, mergesCommand, spendCommand, decisionsCommand, jobShow, tell, chat, watchtower, digest, summary, summarise, reviewCost, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs, strays, gui },
+            Subcommands = { status, attachments, sessions, sessionCommand,reposCommand, prsCommand, issueCommand, idea, ideas, design, designs, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, order, orders, review, runCommand, benchCommand, jobsCommand, mergesCommand, spendCommand, decisionsCommand, jobShow, tell, chat, watchtower, digest, summary, summarise, reviewCost, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs, strays, gui },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host

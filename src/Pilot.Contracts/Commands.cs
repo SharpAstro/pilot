@@ -139,6 +139,14 @@ public sealed record CommandResult
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ArchivedFlightsPage? ArchivedFlights { get; init; }
 
+    /// <summary>A <c>designs</c>'s list, newest first; null for any other command.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DesignList? Designs { get; init; }
+
+    /// <summary>A <c>design-show</c>'s design, whole; null for any other command.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DesignDetail? Design { get; init; }
+
     /// <summary>An <c>archived-flight</c>'s flight, whole; null for any other command.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ArchivedFlight? ArchivedFlight { get; init; }
@@ -900,6 +908,37 @@ public static class Verbs
     /// a peer asks it of the node that archived a flight its own snapshot no longer lists.
     /// </summary>
     public const string ArchivedFlight = "archived-flight";
+
+    /// <summary>
+    /// <c>design-new node [repo] [title] brief</c> (PIL1096): makes a design from the owner's brief and says its id, <c>DSN-&lt;n&gt;</c>. The args are
+    /// the repo and the title (either may be empty) and the brief.
+    /// </summary>
+    public const string DesignNew = "design-new";
+
+    /// <summary><c>design-brief design/DSN-&lt;n&gt; text</c>: appends the owner's words to the design's brief, verbatim, under their time.</summary>
+    public const string DesignBrief = "design-brief";
+
+    /// <summary>
+    /// <c>design-draft design/DSN-&lt;n&gt; [replace]</c>: makes the design's <c>draft/</c> from its current version, or a starter prototype when there is
+    /// none; refused over an existing draft unless <c>replace</c>. Nothing writes under <c>versions/</c>.
+    /// </summary>
+    public const string DesignDraft = "design-draft";
+
+    /// <summary><c>design-show design/DSN-&lt;n&gt;</c>: reads one design whole, as <see cref="CommandResult.Design"/>. Changes nothing.</summary>
+    public const string DesignShow = "design-show";
+
+    /// <summary><c>designs node</c>: reads every design, newest first, as <see cref="CommandResult.Designs"/>. Changes nothing.</summary>
+    public const string Designs = "designs";
+
+    /// <summary>The prefix of a design target: <c>design/DSN-1</c>.</summary>
+    public const string DesignTargetPrefix = "design/";
+
+    /// <summary>The target of design <paramref name="id"/>.</summary>
+    public static string DesignTarget(string id) => DesignTargetPrefix + id;
+
+    /// <summary>The design id a target names, or null when it is not a design target.</summary>
+    public static string? DesignIdOf(string subject) =>
+        subject.StartsWith(DesignTargetPrefix, StringComparison.Ordinal) ? subject[DesignTargetPrefix.Length..] : null;
 
     /// <summary><c>tell watchtower &lt;text&gt;</c>: says the text to the node's watchtower, whichever session it is now.</summary>
     public const string Tell = "tell";
