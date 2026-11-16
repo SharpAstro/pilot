@@ -280,7 +280,7 @@ public sealed class LandedBranchSweepTests : IDisposable
 
         failing.Count("push").ShouldBe(1);
         Enumerable.Range(1, 3).ShouldAllBe(i => OriginHas($"PIL{i}") && LocalHas($"PIL{i}") && Live($"PIL{i}").BranchDeletedAt == null);
-        Summaries().Single().Title.ShouldContain("3 tried again next sweep");
+        Summaries().Single().Title.ShouldContain("3 tried again next sweep: 3 push-failed");
         failing.Count("push").ShouldBe(1);
 
         failing.FailPush = false;
@@ -306,7 +306,7 @@ public sealed class LandedBranchSweepTests : IDisposable
 
         Enumerable.Range(1, 2).ShouldAllBe(i => OriginHas($"PIL{i}") && LocalHas($"PIL{i}") && Live($"PIL{i}").BranchDeletedAt == null);
         git.Count("push").ShouldBe(0);
-        Summaries().Single().Title.ShouldContain("2 tried again next sweep");
+        Summaries().Single().Title.ShouldContain("2 tried again next sweep: 2 read-failed");
 
         git.FailVerb = null;
         (await Sweeper(git).SweepAsync(Ct)).ShouldBe(2);
@@ -325,9 +325,10 @@ public sealed class LandedBranchSweepTests : IDisposable
         Put(merged);
         Put(kept);
         Put(other);
-        _github.Prs["o/repo#7"] = new PullRequest(7, "MERGED", head1, "u", MergedAt: Now, HeadRef: "flight/pil1");
+        // As gh pr view answers: the state says merged, mergedAt is not read so it stays null.
+        _github.Prs["o/repo#7"] = new PullRequest(7, "MERGED", head1, "u", HeadRef: "flight/pil1");
         _github.Prs["o/repo#8"] = new PullRequest(8, "CLOSED", "x", "u", HeadRef: "flight/pil2");
-        _github.Prs["o/repo#9"] = new PullRequest(9, "MERGED", "x", "u", MergedAt: Now, HeadRef: "flight/other");
+        _github.Prs["o/repo#9"] = new PullRequest(9, "MERGED", "x", "u", HeadRef: "flight/other");
 
         (await Sweeper().SweepAsync(Ct)).ShouldBe(1);
 

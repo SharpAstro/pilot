@@ -68,7 +68,7 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
         }
         var entries = Candidates();
         var deleted = 0;
-        var retry = 0;
+        var retry = new Dictionary<string, int>(StringComparer.Ordinal);
         var kept = new Dictionary<string, int>(StringComparer.Ordinal);
         void Count(LandedBranchOutcome o)
         {
@@ -78,7 +78,7 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
                     deleted++;
                     break;
                 case LandedBranchResult.RetryLater:
-                    retry++;
+                    retry[o.Group ?? "retry"] = retry.GetValueOrDefault(o.Group ?? "retry") + 1;
                     break;
                 default:
                     kept[o.Group ?? "kept"] = kept.GetValueOrDefault(o.Group ?? "kept") + 1;
@@ -102,14 +102,17 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
         }
 
         var keptTotal = kept.Values.Sum();
-        if (deleted + retry + keptTotal > 0)
+        var retryTotal = retry.Values.Sum();
+        if (deleted + retryTotal + keptTotal > 0)
         {
             var parts = new List<string> { $"deleted {deleted}" };
-            if (retry > 0)
+            static string Groups(Dictionary<string, int> counts) =>
+                string.Join(", ", counts.OrderByDescending(g => g.Value).ThenBy(g => g.Key, StringComparer.Ordinal).Select(g => $"{g.Value} {g.Key}"));
+            if (retryTotal > 0)
             {
-                parts.Add($"{retry} tried again next sweep");
+                parts.Add($"{retryTotal} tried again next sweep: {Groups(retry)}");
             }
-            var groups = string.Join(", ", kept.OrderByDescending(g => g.Value).ThenBy(g => g.Key, StringComparer.Ordinal).Select(g => $"{g.Value} {g.Key}"));
+            var groups = Groups(kept);
             var title = $"branches: {string.Join(", ", parts)}, kept {keptTotal}{(keptTotal > 0 ? ": " + groups : "")}";
             if (deleted > 0 || _lastSummary != title)
             {
@@ -203,7 +206,8 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
                 {
                     var pr = await github.PullRequestOfAsync(flight.Repo, n, cancellationToken);
                     answered = true;
-                    if (pr.MergedAt is not null && pr.HeadRef == flight.Branch && pr.Head.Length > 0)
+                    // gh pr view is not asked for mergedAt, so merged-ness is the state, as the landing reads it.
+                    if (string.Equals(pr.State, "MERGED", StringComparison.OrdinalIgnoreCase) && pr.HeadRef == flight.Branch && pr.Head.Length > 0)
                     {
                         head = pr.Head;
                     }
