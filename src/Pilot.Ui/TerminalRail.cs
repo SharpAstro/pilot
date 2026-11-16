@@ -53,7 +53,7 @@ internal static class TerminalRail
 
     /// <summary>What a page is on the bar: its page, name and the key that reaches it, in the GUI rail's order.</summary>
     public static IReadOnlyList<(PilotPage Page, string Label, char Key)> Keys { get; } =
-        [.. PilotChrome<DIR.Lib.RgbaImage>.Pages.Select(p => (p.Page, p.Label, KeyOf(p.Shortcut)))];
+        [.. PilotChrome<DIR.Lib.RgbaImage>.Pages.Where(p => p.Page != PilotPage.Designs).Select(p => (p.Page, p.Label, KeyOf(p.Shortcut)))];
 
     private static char KeyOf(KeyChord chord) =>
         chord.Key is >= InputKey.D0 and <= InputKey.D9 ? (char)('0' + (chord.Key - InputKey.D0)) : SpendKey;

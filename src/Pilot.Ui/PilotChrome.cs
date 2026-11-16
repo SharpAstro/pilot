@@ -82,6 +82,8 @@ internal sealed class PilotChrome<TSurface>
         (PilotPage.Ideas, "\U0001F4A1", "Ideas", new KeyChord(InputKey.D0,InputModifier.Ctrl), null),
         // The digits are all taken, so Spend has Ctrl+Shift+S (Ctrl+S alone is Say).
         (PilotPage.Spend, "\U0001FA99", "Spend", new KeyChord(InputKey.S, InputModifier.Ctrl | InputModifier.Shift), null),
+        // Every digit, Ctrl+S and Ctrl+Shift+S are taken; Ctrl+Shift+D is free. pilot-tui has no Designs page, so its bar leaves it out.
+        (PilotPage.Designs, "🎨", "Designs", new KeyChord(InputKey.D, InputModifier.Ctrl | InputModifier.Shift), null),
     ];
 
     /// <summary>A rail entry's chord as its tooltip says it: <c>Ctrl+4</c>, <c>Ctrl+Shift+S</c>.</summary>
