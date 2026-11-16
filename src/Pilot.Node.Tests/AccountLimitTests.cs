@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Pilot.Node.Tests.Sessions;
@@ -192,6 +193,55 @@ public sealed class AccountLimitTests
 
     [Fact]
     public void TheLiftVerbIsThePersonsAlone() => Standing.YourOnlyVerbs.ShouldContain(Verbs.LiftLimit);
+
+    [Fact]
+    public async Task TheNodeVerbLiftsTheLimitAndWithNoneOpenItIsNotARefusal()
+    {
+        var until = Start.AddDays(3);
+        _state.PutSession(OldLoginsLimit(until));
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBe(until);
+        // The command route asks for the watchtower and the role models whatever the verb, so they are registered as the maintenance verb's test does.
+        var options = new NodeOptions(Path.Combine(Path.GetTempPath(), "lift-limit-node.sock"), Path.Combine(Path.GetTempPath(), "lift-limit-data"), MachinePrefix: "DU1");
+        var tower = new Watchtower(_state, new FakeWorkers(), (command, _) => Task.FromResult(_state.Complete(command, null)), options, TimeProvider.System);
+        var commands = new NodeCommands(new ServiceCollection()
+            .AddSingleton<TimeProvider>(_time).AddSingleton(_outage).AddSingleton(tower).AddSingleton(new RoleModels(null)).BuildServiceProvider(), _state);
+        _time.Advance(TimeSpan.FromMinutes(3));
+
+        var lifted = await commands.RunAsync(new CommandRequest { Verb = Verbs.LiftLimit, Target = Verbs.NodeTarget, Args = ["the", "watchtower", "began", "under", "the", "old", "login"], Who = "person" }, Ct);
+
+        lifted.Ok.ShouldBeTrue(lifted.Error);
+        lifted.Way.ShouldNotBeNull().ShouldContain("the usage limit is lifted");
+        _outage.LimitUntil.ShouldBeNull();
+        _state.Usage().ShouldNotBeNull().LoginChangedAt.ShouldBe(_time.GetUtcNow());
+        _state.Cards().Single(c => c.Kind == TurnOutage.LimitCardKind).Outcome.ShouldNotBeNull().ShouldContain("lifted by person: the watchtower began under the old login");
+
+        // Pressed again with no limit open (the card of a limit that ended at its reset between the press and the handler): not a refusal,
+        // since a refused choice reopens its card and nothing would close that one.
+        var again = await commands.RunAsync(new CommandRequest { Verb = Verbs.LiftLimit, Target = Verbs.NodeTarget, Who = "person" }, Ct);
+        again.Ok.ShouldBeTrue(again.Error);
+        again.Way.ShouldNotBeNull().ShouldContain("nothing to lift");
+    }
+
+    [Fact]
+    public void ALimitJudgedBeforeALiftDoesNotReopenAfterIt()
+    {
+        var until = Start.AddDays(3);
+        _outage.OpenLimit(until, "the old login's", Start);
+        // A look reads when the login changed and judges the rows against it...
+        var judgedAgainst = _outage.LoginChangedAt;
+        // ...the person lifts the limit meanwhile...
+        _time.Advance(TimeSpan.FromMinutes(1));
+        _outage.Lift(_time.GetUtcNow(), "you", null).ShouldBeTrue();
+
+        // ...and the look's stale judgement opens nothing.
+        _outage.OpenJudgedLimit(until, "the old login's", _time.GetUtcNow(), judgedAgainst);
+        _outage.LimitUntil.ShouldBeNull();
+
+        // A judgement made after the lift still opens a limit.
+        _outage.OpenJudgedLimit(until, "this login's", _time.GetUtcNow(), _outage.LoginChangedAt);
+        _outage.LimitUntil.ShouldBe(until);
+    }
 
     [Fact]
     public void TheStoredLoginChangeOutlivesFreshFiguresAndAnAccountSwitchAndNeverGoesBack()

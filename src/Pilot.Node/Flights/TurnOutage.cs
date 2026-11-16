@@ -275,6 +275,24 @@ public sealed class TurnOutage(NodeState state)
     /// The account is on a usage or spend limit until <paramref name="until"/>, seen at <paramref name="at"/>. Opens the outage with a known end
     /// (or extends an open limit to a later end); an open plain outage is turned into the limit. A reset not after <paramref name="at"/> opens nothing.
     /// </summary>
+    /// <summary>
+    /// <see cref="OpenLimit"/> for a limit judged from the session rows against
+    /// <paramref name="loginChangedWhenJudged"/>: when the login changed, or a person lifted the limit, between that judgement and now,
+    /// the judgement is stale (it counted rows that no longer count) and nothing opens. Without this a look already under way reopened a
+    /// limit a moment after it was lifted, and it then held until its reset (#1123).
+    /// </summary>
+    public void OpenJudgedLimit(DateTimeOffset until, string why, DateTimeOffset at, DateTimeOffset? loginChangedWhenJudged)
+    {
+        lock (_gate)
+        {
+            if (UsageRow.Later(_loginChangedAt, state.Usage()?.LoginChangedAt) != loginChangedWhenJudged)
+            {
+                return;
+            }
+            OpenLimit(until, why, at);
+        }
+    }
+
     public void OpenLimit(DateTimeOffset until, string why, DateTimeOffset at)
     {
         lock (_gate)
