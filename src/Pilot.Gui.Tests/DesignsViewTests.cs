@@ -69,6 +69,15 @@ public sealed class DesignsViewTests
         SentenceRuns.Texts(rig.View.Tree(rig.Screen) is { } tree ? Layout.Engine.Arrange(tree, new Rect<float>(0, 0, 1400, 900), new PixelMeasureContext<RgbaImage>(rig.Renderer, SessionsCapture.FontPath, 1f)).Select(a => a.Node) : []);
 
     [Fact]
+    public void ShowTakesTheWindowToTheDesignsPageAndRenderKeepsIt()
+    {
+        using var rig = new Rig(Sample());
+        rig.Chrome.Page.ShouldBe(PilotPage.Designs, "after Show");
+        rig.Paint();
+        rig.Chrome.Page.ShouldBe(PilotPage.Designs, "after Render");
+    }
+
+    [Fact]
     public void TheListShowsTheDesignsWithTheirVersionRepoAndTime()
     {
         using var rig = new Rig(Sample());
