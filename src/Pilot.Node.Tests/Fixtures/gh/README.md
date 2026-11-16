@@ -57,7 +57,7 @@ Compact the JSON to one line, as gh prints it when piped.
 overrides, edits only keys in the method's field list (a key outside it throws, naming the method and the list), and returns what the
 real `Parse*` makes of the edited JSON. `GhFakeGuardTests` (`Category=Invariant`) fails a direct `new PullRequest(`, `new MergedPullRequest(`,
 `new MergeQueueState(`, `new ChecksSummary(`, `new PullRequestStatus`, `new WorkflowRun(`, `new CiRun(` or a target-typed `new(` assigned to
-those types in `Pilot.Node.Tests`, naming file and line, outside an explicit not-yet-migrated list that later legs empty. `Pilot.Gui.Tests` is
+those types in `Pilot.Node.Tests`, naming file and line, outside `GhAnswers.cs`, the guard itself, `GhRecordingTests` and `MergeQueueTests` (parser expectations); `NoFileIsAddedToTheAllowedList` pins that list. `Pilot.Gui.Tests` is
 out of scope: its page data builds wire contracts, not gh reads.
 
 ## Fakes found impossible (PIL1106)
@@ -73,3 +73,25 @@ Later legs append here; the PR body is drawn from this section.
   back through `PullRequestAsync`); `LandedBranchSweepTests.ThePrIsAskedForByNumberWhenTheListLacksIt` (its fake set state, head and head branch,
   never `MergedAt`, all of which `PullRequestOfAsync` fills); `PackageWaitTests`' merged fake (`MergedAt` and `MergeCommit` are on the by-branch
   list); `PackageWaitTests` workflow runs (all seven fields are on `WorkflowRunsAsync`'s list).
+- **Merge-queue removal reasons** (`ConflictResolutionTests`, `FailureInvestigationTests`, `LandingPathTests`, `MergesTests`, `QueuedPushTests`, `RebaseLayFlightTests`,
+  `RetryAndHoldTests`, `ReviewTests`, `LegTests.FakeGitHub`): fakes set `RemovedReason` to free text ("failed checks", "merge conflict", "manually removed",
+  "a required check failed"). `RemovedFromMergeQueueEvent.reason` is a GraphQL enum (`FAILED_CHECKS`, `MERGE_CONFLICT`, `MANUALLY_REMOVED`, ...), so no gh
+  answer carries that text. `GhAnswers.MergeQueue` refuses anything but an upper-case enum value. Expectations that quoted the text now quote the enum value
+  (`ReviewTests` card details, `MergesTests` entry why). The code under test was not wrong: it passes the reason through and tests it for "conflict" and "merged" case-insensitively.
+- **Merge-queue state text** (`RebaseLayFlightTests`, `MergesTests`, `PullRequestsTests`): `new MergeQueueState("UNQUEUED", "", false)`, `("QUEUED", "", true, position)` and
+  `("CLOSED", head, false)` carried a state and an empty head that GraphQL never answers (state is the PR's OPEN, CLOSED or MERGED; the head is its commit). They are now
+  the idle, queued and (PR state CLOSED) recordings with the PR's head. No expectation changed. The code under test was not wrong.
+- **A queued PR with no position** (`PullRequestsTests.Of(queued: true)` with no position, expecting the label "In merge queue"): GitHub's `isInMergeQueue` comes with a
+  `mergeQueueEntry` and its position, so a queued PR always has a number. The helper now defaults the position to 1 and the expectation is "In merge queue #1". The
+  reader's unnumbered label is defensive code and stays; the code under test was not wrong.
+- **Check counts** (`ReviewTests`, `MergesTests`, `PrReviewTests`, `StaleCardTests`): `new ChecksSummary(Pending, 1, 3)` and the like are possible (`ChecksOf(status, done, total)` builds the
+  checks that give those counts), but `ChecksSummary(Passing, 3, 7)` (StaleCardTests passes `3, 7` for pending and failing only) and `ChecksSummary(status, 1, 1)` with status Pending
+  (`PrReviewTests.ReviewedWidget`, one check cannot be pending and done) are not: passing means every check done, pending means one is not. `ChecksOf` throws on such a count;
+  `ReviewedWidget` now gives pending as 0 of 1. No expectation changed. The code under test was not wrong.
+- **An open PR with no URL** (`CliTests.ReposWriteMarkdownWithTablesAndLeavePlainAsItWas`, PR #8): `new PullRequestStatus { ... }` with no `Url`; `gh pr list --json ... url` always
+  fills it. The PR now has a URL and its row is a link, `| [#8 wip](https://example.com/pull/8) | ...`. The code under test was not wrong (it links whatever URL it is given).
+- **Open PRs generally** (`RepoStatusTests`, `RepoWatchTests`, `LegEndOverlapTests`, `PrRecheckTests`): the builder gives an open PR the recording's URL and a rollup from its `checks` argument; no expectation changed.
+
+Across the whole flight (legs 1 to 4) the tests whose expectation changed are: `CliTests.ReposWriteMarkdownWithTablesAndLeavePlainAsItWas` (the PR #8 row),
+`PullRequestsTests` (the "In merge queue" label with no number), `ReviewTests` queue-card details and `MergesTests` entry why (enum text instead of free text). The
+code under test was wrong in none of them; the PIL1101 case (a by-number fake carrying `MergedAt`) is a fake the builders now refuse.

@@ -171,7 +171,7 @@ public sealed class MergesTests
 
         var left = Entry(node, "TIA1");
         (left.State, left.Place).ShouldBe((MergeEntryState.Dropped, null));
-        left.Why.ShouldNotBeNull().ShouldContain(how == "closed" ? "closed unmerged" : "out of the merge queue unmerged: a required check failed");
+        left.Why.ShouldNotBeNull().ShouldContain(how == "closed" ? "closed unmerged" : "out of the merge queue unmerged: FAILED_CHECKS");
         (Entry(node, "TIA2").State, Entry(node, "TIA2").Place).ShouldBe((MergeEntryState.Checks, 1));
     }
 
