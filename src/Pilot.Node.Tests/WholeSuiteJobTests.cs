@@ -64,6 +64,13 @@ public sealed class WholeSuiteJobTests : IDisposable
     }
 
     [Fact]
+    public void APlatformFilteredTestRunIsNotRefused()
+    {
+        Run("dotnet test Pilot.Node.Tests -c Release --filter-class A.B").Ok.ShouldBeTrue();
+        Run("dotnet test Pilot.Node.Tests -c Release --filter-not-trait Category=Slow").Ok.ShouldBeTrue();
+    }
+
+    [Fact]
     public void ARefusalWithNoFilterFoundStillSaysHowToFilter()
     {
         var error = Run("dotnet test src/Pilot.slnx -c Release --no-build").Error.ShouldNotBeNull();

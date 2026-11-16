@@ -54,6 +54,16 @@ public sealed class JobMemoryTests : IDisposable
     }
 
     [Fact]
+    public void APlatformFilterIsAFilterFlagAndItsValuesAreNotTheTarget()
+    {
+        var filtered = JobKey.Of("dotnet test src/Pilot.Node.Tests -c Release --filter-class A.B C.D", _clone);
+
+        filtered.Flags.ShouldBe("c=release,filter");
+        filtered.Target.ShouldBe(JobKey.Of("dotnet test src/Pilot.Node.Tests -c Release", _clone).Target);
+        JobKey.Of("dotnet test src/Pilot.Node.Tests -c Release --filter-trait=X=1", _clone).Flags.ShouldBe("c=release,filter");
+    }
+
+    [Fact]
     public void TheFilterTextTheLoggerAndTheVerbosityAreLeftOutButWhetherThereIsAFilterIsNot()
     {
         var plain = JobKey.Of("dotnet test src/Pilot.Node.Tests -c Release", _clone);

@@ -69,20 +69,6 @@ public sealed record CommandKey(string Repo, IReadOnlyList<string> Steps)
     /// <summary>The key of one of this command's steps run alone.</summary>
     public CommandKey Step(int index) => new(Repo, [Steps[index]]);
 
-    private static string FilterOf(List<string> words)
-    {
-        for (var i = 1; i < words.Count; i++)
-        {
-            var word = words[i];
-            if (word.Equals("--filter", StringComparison.OrdinalIgnoreCase))
-            {
-                return i + 1 < words.Count ? words[i + 1] : "";
-            }
-            if (word.StartsWith("--filter=", StringComparison.OrdinalIgnoreCase))
-            {
-                return word["--filter=".Length..];
-            }
-        }
-        return "";
-    }
+    /// <summary>Every filter the command carries (VSTest and Microsoft.Testing.Platform), in a stable order.</summary>
+    private static string FilterOf(List<string> words) => TestFilters.Key(words.Skip(1));
 }

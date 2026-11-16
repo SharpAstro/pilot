@@ -16,6 +16,15 @@ public class CommandKeyTests
     }
 
     [Fact]
+    public void APlatformFilterChangesTheKeyAndItsArgumentOrderDoesNot()
+    {
+        CommandKey.Of("dotnet test X --filter-class A", Repo).ShouldNotBe(CommandKey.Of("dotnet test X --filter-class B", Repo));
+        CommandKey.Of("dotnet test X --filter-class A", Repo).ShouldNotBe(CommandKey.Of("dotnet test X", Repo));
+        CommandKey.Of("dotnet test X --filter-class A --filter-trait T=1", Repo)
+            .ShouldBe(CommandKey.Of("dotnet test X --filter-trait=T=1 --filter-class=A", Repo));
+    }
+
+    [Fact]
     public void APlaneAndItsCloneMatch()
     {
         var plane = Path.Combine(Repo, ".claude", "worktrees", "pil1");
