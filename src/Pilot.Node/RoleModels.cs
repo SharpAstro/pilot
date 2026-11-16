@@ -180,6 +180,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>Whether a person has set <see cref="NodeSettings.MaintenanceEveryKey"/> (the saved value is not null); until then the first sweep waits for its card (PIL1114).</summary>
+    public bool MaintenanceEverySet
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.MaintenanceEvery is not null;
+            }
+        }
+    }
+
     /// <summary>How long the node must be idle before the idle-time disk sweep starts (<see cref="NodeSettings.MaintenanceIdleKey"/>); 15 minutes unless set.</summary>
     public TimeSpan MaintenanceIdle
     {

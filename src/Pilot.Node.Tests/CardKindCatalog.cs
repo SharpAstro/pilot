@@ -161,6 +161,7 @@ internal static class CardKindCatalog
         new("landed", "Handled", [FlightCommanderLand], "CliTests.ADirectFlightIsFlownFromTheCliAloneUpToItsLanding"),
         new("issue-left-open", "ForYou", [FlightCommanderLand], SourcePinned),
         new("maintenance-run", "Handled", ["Flights/IdleMaintenance.cs"], "IdleMaintenanceTests.TheHandledLineIsPinnedExactly"),
+        new("maintenance-first-run", "ForYou", ["Flights/IdleMaintenance.cs"], "MaintenanceFirstRunTests.AnUnsetSettingRaisesOneCardWithTheTotalsAndTheTopFivePerStepAndRunsNoRealStep"),
         new("disk-swept", "Handled", ["Flights/DiskSweep.cs"], "DiskSweepTests.ASweepThatFreedSomethingRaisesOneHandledLineNamingTheCountsAndTheUniqueBytes"),
         new("worktree-removed", "Handled", ["Flights/DiskSweep.cs"], "DiskSweepTests.AHandMadeWorktreeWhosePrMergedAndIsCleanIsRemovedWithAHandledLine"),
         new("worktree-dirty", "Handled", ["Flights/DiskSweep.cs"], "DiskSweepTests.ADirtyHandMadeWorktreeIsKeptWithOneHandledLineAndNoSecondOnTheNextSweep"),

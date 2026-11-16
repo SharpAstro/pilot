@@ -742,6 +742,12 @@ ends, the rest do not start). One Handled line says what each step freed, the fr
 touch. `pilot node maintenance [--dry-run]` runs it now through the node and prints the same report; `--dry-run` measures and
 removes nothing. This is not the `maintenance` switch of a reboot (see Settings).
 
+A node's first sweep waits for a look (#1114). While `maintenance-every` has never been set by a person, the idle sweep removes
+nothing: once idle, the node runs a dry run and raises one For-you card (`maintenance-first-run`) with its totals and the five
+largest items per step. **Run on schedule** saves `maintenance-every` as `1d`, so the schedule applies from then on; **Keep off**
+saves it as `off`. The card is looked up by kind among the open cards, so a later tick or a restart raises no second, and the
+autopilot never presses either choice. A node where a person has set `maintenance-every` (either value) never gets the card.
+
 The steps:
 
 - **git** and **lfs**: for each tracked repo, `git worktree prune`, `git fetch --prune`, `git gc --prune=<age>` (never `--aggressive`,

@@ -113,6 +113,18 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
     /// <summary>What the Handled card is.</summary>
     public const string Kind = "maintenance-run";
 
+    /// <summary>What the first-run For-you card is (PIL1114): the first sweep on a node waits for a person's look at a dry run.</summary>
+    public const string FirstRunKind = "maintenance-first-run";
+
+    /// <summary>The label of the first-run choice that saves maintenance-every as the default.</summary>
+    public const string RunLabel = "Run on schedule";
+
+    /// <summary>The label of the first-run choice that saves maintenance-every as off.</summary>
+    public const string KeepOffLabel = "Keep off";
+
+    /// <summary>How many of the largest items per step the first-run card lists.</summary>
+    public const int FirstRunTop = 5;
+
     private readonly IMaintenanceStep[] _steps = [.. steps];
     private readonly SemaphoreSlim _running = new(1, 1);
     private readonly object _gate = new();
@@ -131,6 +143,9 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
 
     /// <summary>How long between runs, or null for off; read at each look.</summary>
     public Func<TimeSpan?> Every { get; init; } = () => NodeSettings.DefaultMaintenanceEvery;
+
+    /// <summary>Whether a person has set maintenance-every (the saved value is not null); until then the first sweep waits for the first-run card (PIL1114).</summary>
+    public Func<bool> EverySet { get; init; } = () => true;
 
     /// <summary>A path on the drive the report counts free space of (a repo's); null reads none and the report leaves the drive out.</summary>
     public Func<string?> DrivePath { get; init; } = () => null;
@@ -192,7 +207,17 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
             since = _idleSince.Value;
         }
         var every = Every();
-        if (every is null || _steps.Length == 0 || now - since < IdleFor())
+        if (_steps.Length == 0 || now - since < IdleFor())
+        {
+            return null;
+        }
+        if (!EverySet())
+        {
+            // Nothing real runs until a person has answered the first-run card (or set maintenance-every by hand).
+            await RaiseFirstRunAsync(cancellationToken);
+            return null;
+        }
+        if (every is null)
         {
             return null;
         }
@@ -204,6 +229,47 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
             }
         }
         return await RunAsync(dryRun: false, cancellationToken);
+    }
+
+    /// <summary>
+    /// The first sweep on a node waits for a look (PIL1114): one dry run, and one For-you card with its totals and the largest items per step.
+    /// The open card is looked up by kind, so a later tick or a restarted service raises no second.
+    /// </summary>
+    private async Task RaiseFirstRunAsync(CancellationToken cancellationToken)
+    {
+        if (state.Cards(openOnly: true).Any(c => c.Kind == FirstRunKind))
+        {
+            return;
+        }
+        var run = await RunAsync(dryRun: true, cancellationToken);
+        if (run is null || state.Cards(openOnly: true).Any(c => c.Kind == FirstRunKind))
+        {
+            return;
+        }
+        var report = run.Report();
+        var detail = new System.Text.StringBuilder();
+        foreach (var step in report.Steps)
+        {
+            detail.Append(CultureInfo.InvariantCulture, $"{step.Name}: {Gb(step.Bytes)} in {step.Items.Length} item(s)").Append('\n');
+            foreach (var item in step.Items.Take(FirstRunTop))
+            {
+                detail.Append(CultureInfo.InvariantCulture, $"  {item.Name}: {Gb(item.Bytes)}{(item.Reason.Length > 0 ? $" ({item.Reason})" : "")}").Append('\n');
+            }
+            if (step.Items.Length > FirstRunTop)
+            {
+                detail.Append(CultureInfo.InvariantCulture, $"  and {step.Items.Length - FirstRunTop} more").Append('\n');
+            }
+        }
+        var every = NodeSettings.ArchiveDurationText(NodeSettings.DefaultMaintenanceEvery);
+        detail.Append(CultureInfo.InvariantCulture, $"Nothing was removed. Run on schedule saves maintenance-every as {every}; Keep off saves it as off.");
+        var items = report.Steps.Sum(s => s.Items.Length);
+        state.RaiseCard(CardBin.ForYou, FirstRunKind, Verbs.NodeTarget,
+            $"Run the first idle disk sweep? It would free {Gb(report.Bytes)} in {items} item(s)",
+            detail.ToString(),
+            [
+                new CardChoice { Label = RunLabel, Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.MaintenanceEveryKey, every] },
+                new CardChoice { Label = KeepOffLabel, Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.MaintenanceEveryKey, "off"] },
+            ]);
     }
 
     /// <summary>The sweep now, ignoring the idle wait and the period; a real run is refused while a leg flies or a job runs, a dry run is not; the run, or why it did not start.</summary>
