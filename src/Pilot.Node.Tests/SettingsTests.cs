@@ -234,6 +234,19 @@ public sealed class SettingsTests : IDisposable
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task SettingTheLanPortSaysTheFirewallRuleFollowsOnSetup()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "the firewall rule is Windows only");
+        await using var node = await NodeHarness.StartAsync(Ct);
+
+        var result = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["lan-port", "47801"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+
+        result.Ok.ShouldBeTrue();
+        result.Way.ShouldNotBeNull().ShouldContain("pilot-node setup");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task SetSavesASettingAndThePageShowsItSavedForTheNextStart()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -440,47 +453,179 @@ public sealed class SettingsTests : IDisposable
         refused.Setting.ShouldBeNull();
     }
 
-    [Fact]
-    public void TheFirewallCheckFindsTheRuleForThisBinaryOnly()
-    {
-        var node = Path.Combine(_root, "pilot-node.exe");
-        string netsh = "";
-        var setup = new NodeSetup(new NodeOptions("/tmp/n.sock", _root), node, _root) { Run = (_, _, _) => (netsh.Length == 0 ? 1 : 0, netsh) };
+    private static string FirewallRule(string name, string protocol, int port, string profiles = "Private,Domain", string program = "Any", string enabled = "Yes") =>
+        $"\r\nRule Name:                            {name}\r\n----------\r\nEnabled:                              {enabled}\r\nDirection:                            In\r\nProfiles:                             {profiles}\r\n"
+        + $"Program:                              {program}\r\nAction:                               Allow\r\nProtocol:                             {protocol}\r\nLocalPort:                            {port}\r\n\r\n";
 
+    private NodeSetup FirewallSetup(Func<string, string?> netshFor, bool lan = true, int port = 47731, bool localOnly = false) =>
+        new(new NodeOptions("/tmp/n.sock", _root, Lan: lan, LanPort: port, LocalOnly: localOnly), Path.Combine(_root, "pilot-node.exe"), _root)
+        {
+            Run = (_, args, _) => netshFor(args.First(a => a.StartsWith("name=", StringComparison.Ordinal))[5..]) is { } text ? (0, text) : (1, ""),
+        };
+
+    [Fact]
+    public void TheFirewallCheckReadsBothPortRulesAndSaysWhatIsWrong()
+    {
+        var discovery = LAN.Lib.LanProtocol.DiscoveryPort;
+        string? udp = null, tcp = null;
+        var setup = FirewallSetup(name => name == NodeSetup.DiscoveryRule ? udp : tcp);
+
+        setup.FirewallAllows().Line.ShouldContain($"no rule {NodeSetup.DiscoveryRule}");
         setup.FirewallAllows().Allows.ShouldBeFalse();
-        netsh = $"\r\nRule Name:                            pilot-node\r\n----------\r\nEnabled:                              Yes\r\nAction:                               Allow\r\nProfiles:                             Private\r\nProgram:                              {Path.Combine(_root, "old", "pilot-node.exe")}\r\n\r\n";
-        setup.FirewallAllows().ShouldBe((false, $"rule pilot-node is there but not for {node}, or not enabled: an earlier install's"));
-        netsh += $"Rule Name:                            pilot-node\r\nEnabled:                              Yes\r\nAction:                               Allow\r\nProfiles:                             Private\r\nProgram:                              {node}\r\n";
-        setup.FirewallAllows().ShouldBe((true, "rule pilot-node allows pilot-node.exe in, on Private networks"));
+
+        udp = FirewallRule(NodeSetup.DiscoveryRule, "UDP", discovery);
+        tcp = FirewallRule(NodeSetup.NodeRule, "TCP", 47731);
+        setup.FirewallAllows().ShouldBe((true, $"rules pilot2 LAN discovery and pilot2 node allow UDP {discovery} and TCP 47731 in, on Private and Domain networks"));
+
+        // A rule of an earlier install's, named for a program.
+        tcp = FirewallRule(NodeSetup.NodeRule, "TCP", 47731, program: @"C:\old\pilot-node.exe");
+        var named = setup.FirewallAllows();
+        named.Allows.ShouldBeFalse();
+        named.Line.ShouldContain("names a program");
+
+        // The Public profile.
+        tcp = FirewallRule(NodeSetup.NodeRule, "TCP", 47731, profiles: "Private,Domain,Public");
+        setup.FirewallAllows().Line.ShouldContain("includes the Public profile");
     }
 
     [Fact]
-    public async Task TheFirewallLetsInTheLanListenersBesideTheNodeOnTheDiscoveryPortAlone()
+    public void ARuleWithAnotherPortThanTheNodesReadsNotOkNamingBoth()
     {
-        var node = Path.Combine(_root, "pilot-node.exe");
-        var gui = Path.Combine(_root, "pilot-gui.exe");
-        File.WriteAllText(node, "");
-        File.WriteAllText(gui, "");
-        string Rule(string program) => $"Rule Name:                            pilot-node\r\nEnabled:                              Yes\r\nAction:                               Allow\r\nProfiles:                             Private\r\nProgram:                              {program}\r\n\r\n";
-        var netsh = Rule(node);
+        var udp = FirewallRule(NodeSetup.DiscoveryRule, "UDP", LAN.Lib.LanProtocol.DiscoveryPort);
+        var setup = FirewallSetup(name => name == NodeSetup.DiscoveryRule ? udp : FirewallRule(NodeSetup.NodeRule, "TCP", 47000), port: 47731);
+        var (ok, line) = setup.FirewallAllows();
+        ok.ShouldBeFalse();
+        line.ShouldContain("port 47000, wanted 47731");
+    }
+
+    [Fact]
+    public void ADisabledRuleReadsNotOk()
+    {
+        var udp = FirewallRule(NodeSetup.DiscoveryRule, "UDP", LAN.Lib.LanProtocol.DiscoveryPort, enabled: "No");
+        var setup = FirewallSetup(name => name == NodeSetup.DiscoveryRule ? udp : FirewallRule(NodeSetup.NodeRule, "TCP", 47731));
+        setup.FirewallAllows().Line.ShouldContain("disabled");
+    }
+
+    [Fact]
+    public async Task TheFirewallFixDeletesTheOldRulesAndAddsTheTwoPortRulesWithNoProgramOrPublic()
+    {
         string? elevated = null;
-        var setup = new NodeSetup(new NodeOptions("/tmp/n.sock", _root), node, _root)
+        var setup = new NodeSetup(new NodeOptions("/tmp/n.sock", _root, Lan: true, LanPort: 47800), Path.Combine(_root, "pilot-node.exe"), _root)
         {
-            Run = (_, _, _) => (0, netsh),
-            // The elevated pwsh runs a script: what it says is read while it is there.
-            RunElevated = (_, args) => { elevated = File.ReadAllText(args.Split("-File \"")[1].TrimEnd('"')); netsh += Rule(gui); return true; },
+            Run = (_, _, _) => (1, ""),
+            RunElevated = (_, args) => { elevated = File.ReadAllText(args.Split("-File \"")[1].TrimEnd('"')); return true; },
         };
 
-        // pilot-gui.exe is beside the node with no rule of its own; pilot.exe and pilot-tui.exe are not installed here.
-        setup.FirewallAllows().ShouldBe((false, "rule pilot-node lets pilot-node.exe in, but not pilot-gui.exe: the Fleet page and pilot nodes hear no other node"));
+        var script = setup.FirewallScript().ShouldNotBeNull();
+        script.ShouldBe(string.Join('\n',
+            "netsh advfirewall firewall delete rule name=pilot-node | Out-Null",
+            "netsh advfirewall firewall delete rule name=\"pilot2 LAN discovery\" | Out-Null",
+            "netsh advfirewall firewall delete rule name=\"pilot2 node\" | Out-Null",
+            $"netsh --% advfirewall firewall add rule name=\"pilot2 LAN discovery\" dir=in action=allow protocol=UDP localport={LAN.Lib.LanProtocol.DiscoveryPort} profile=private,domain enable=yes",
+            "netsh --% advfirewall firewall add rule name=\"pilot2 node\" dir=in action=allow protocol=TCP localport=47800 profile=private,domain enable=yes"));
+        script.ShouldNotContain("program=");
+        script.ShouldNotContain("public");
+        script.ShouldNotContain("-EncodedCommand");
 
         Assert.SkipUnless(OperatingSystem.IsWindows(), "the node makes a firewall rule on Windows only");
-        (await setup.FixAsync(NodeSetup.FirewallKey, Ct)).ShouldBeNull();
-        elevated.ShouldNotBeNull().ShouldContain($"program=\"{node}\"\n");
-        elevated.ShouldContain("netsh --% advfirewall");
-        elevated.ShouldContain($"program=\"{gui}\" protocol=udp localport={LAN.Lib.LanProtocol.DiscoveryPort}");
-        elevated.ShouldNotContain("pilot-tui.exe");
-        setup.FirewallAllows().Allows.ShouldBeTrue();
+        // Still not right afterwards (the fake Run finds no rules), but the script went to the one elevated run.
+        (await setup.FixAsync(NodeSetup.FirewallKey, Ct)).ShouldBe("the rules are still not right");
+        elevated.ShouldNotBeNull().ShouldContain("add rule name=\"pilot2 node\"");
+    }
+
+    [Fact]
+    public async Task ALocalOnlyNodeOrOneWithTheLanOffMakesNoRuleAndElevatesNothing()
+    {
+        var elevations = 0;
+        foreach (var options in new[]
+        {
+            new NodeOptions("/tmp/n.sock", _root, Lan: true, LocalOnly: true),
+            new NodeOptions("/tmp/n.sock", _root, Lan: false),
+        })
+        {
+            var setup = new NodeSetup(options, Path.Combine(_root, "pilot-node.exe"), _root)
+            {
+                Run = (_, _, _) => throw new InvalidOperationException("netsh must not run"),
+                RunElevated = (_, _) => { elevations++; return true; },
+            };
+            setup.FirewallScript().ShouldBeNull();
+            var (ok, line) = setup.FirewallAllows();
+            ok.ShouldBeTrue();
+            line.ShouldContain("needs no firewall rule");
+            if (OperatingSystem.IsWindows())
+            {
+                (await setup.FixAsync(NodeSetup.FirewallKey, Ct)).ShouldNotBeNull().ShouldContain("needs no firewall rule");
+            }
+        }
+        elevations.ShouldBe(0);
+    }
+
+    /// <summary>
+    /// <c>setup --check</c> over a setup on fakes, with the LAN on and netsh finding both port rules missing and one leftover rule: the
+    /// checklist says so, and nothing is written, elevated or opened. On the real setup this test ran netsh three times, pwsh, gh and dotnet, and took 31 s
+    /// on the Windows runner; the guard now fails a unit test that reaches any of them.
+    /// </summary>
+    [Fact]
+    public async Task SetupCheckChangesNothingAndAsksForNoElevation()
+    {
+        var data = Path.Combine(_root, "check-data");
+        Directory.CreateDirectory(data);
+        // The LAN on, so the firewall check is wanted and finds what a full setup would elevate for.
+        var settingsFile = NodeSettings.PathIn(data);
+        new NodeSettings { Lan = true }.Write(settingsFile);
+        var saved = File.ReadAllText(settingsFile);
+        var leftover = Path.Combine(data, "jobs", "j1", "pilot-node.exe");
+        var claudeSettings = Path.Combine(_root, ".claude", "settings.json");
+        var skills = Path.Combine(_root, "skills");
+        var runs = new List<string>();
+        var elevations = 0;
+        var windows = 0;
+        NodeSetup? made = null;
+        NodeSetup SetupFor(NodeOptions options) => made = new NodeSetup(options, Path.Combine(_root, "pilot-node.exe"), _root)
+        {
+            SettingsFile = claudeSettings,
+            SkillsFolder = skills,
+            MachineFolder = Path.Combine(_root, "home"),
+            FindRunawayAgent = () => null,
+            AutostartEntry = () => null,
+            UnitText = () => null,
+            ShortcutToken = () => null,
+            DefenderFolders = () => [],
+            ProgramExists = _ => false,
+            Run = (program, args, _) =>
+            {
+                lock (runs)
+                {
+                    runs.Add($"{program} {string.Join(' ', args)}");
+                }
+                return program == "netsh" && args.Contains("name=all")
+                    ? (0, $"Rule Name:                            pilot-node\r\n----------\r\nEnabled:                              Yes\r\nDirection:                            In\r\nProfiles:                             Private\r\nProgram:                              {leftover}\r\nAction:                               Allow\r\n\r\n")
+                    : (1, "No rules match the specified criteria.");
+            },
+            RunElevated = (_, _) => { Interlocked.Increment(ref elevations); return true; },
+            OpenWindow = (_, _) => { Interlocked.Increment(ref windows); return true; },
+        };
+
+        var output = new StringWriter();
+        var code = await NodeSetupCommand.RunAsync(Path.Combine(_root, "n.sock"), data, null, null, null, true, Path.Combine(_root, "pilot-node.exe"),
+            output, TextWriter.Null, Ct, checkOnly: true, setupFor: SetupFor);
+
+        code.ShouldBe(0);
+        made.ShouldNotBeNull("--check reads the checklist through the setup it was given");
+        var text = output.ToString();
+        text.ShouldContain("nothing changed");
+        if (OperatingSystem.IsWindows())
+        {
+            text.ShouldContain($"no rule {NodeSetup.DiscoveryRule}");
+            text.ShouldContain("1 firewall rules for programs that no longer exist (worktree builds)");
+        }
+        // Every program it ran only reads: netsh's show, gh's status, dotnet's SDK list and pwsh's Defender query.
+        runs.ShouldNotBeEmpty();
+        runs.ShouldAllBe(r => r.StartsWith("netsh advfirewall firewall show rule ") || r.StartsWith("gh auth status") || r == "dotnet --list-sdks" || r.StartsWith("pwsh -NoLogo -NoProfile -NonInteractive -EncodedCommand "));
+        (elevations, windows).ShouldBe((0, 0));
+        File.ReadAllText(settingsFile).ShouldBe(saved, "--check writes no settings");
+        File.Exists(claudeSettings).ShouldBeFalse("--check installs no hooks");
+        Directory.Exists(skills).ShouldBeFalse("--check installs no skills");
     }
 
     [Fact]

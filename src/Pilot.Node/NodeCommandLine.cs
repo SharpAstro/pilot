@@ -161,14 +161,15 @@ public static class NodeCommandLine
         var setupChannel = new Option<string?>("--update-channel") { Description = "stable (the tagged releases) or beta (main's every push)" };
         setupChannel.AcceptOnlyFromAmong([.. UpdateChannels.Names]);
         var noFirewall = new Option<bool>("--no-firewall") { Description = "Make no firewall rule (Windows asks for elevation to make one)" };
-        var setup = new Command("setup", "Put this machine's node in the fleet: the LAN on, hooks, start at logon, the firewall; then what is left for you")
+        var setupCheck = new Option<bool>("--check") { Description = "Print the checklist and change nothing (no elevation, no settings written)" };
+        var setup = new Command("setup", "Put this machine's node in the fleet: the LAN on, hooks, start at logon, the firewall (UDP 'pilot2 LAN discovery' and TCP 'pilot2 node' by port, Private and Domain only); then what is left for you")
         {
-            Options = { data, setupMachine, setupRepoRoot, setupChannel, noFirewall },
+            Options = { data, setupMachine, setupRepoRoot, setupChannel, noFirewall, setupCheck },
         };
         setup.SetAction((parseResult, ct) => NodeSetupCommand.RunAsync(
             NodeSocket.Resolve(parseResult.GetValue(socket)), Path.GetFullPath(parseResult.GetValue(data) ?? NodeSocket.DefaultDataFolder),
             parseResult.GetValue(setupMachine), parseResult.GetValue(setupRepoRoot), parseResult.GetValue(setupChannel), !parseResult.GetValue(noFirewall),
-            nodePath, output, error, ct));
+            nodePath, output, error, ct, parseResult.GetValue(setupCheck)));
 
         // review-cost: the same report as `pilot review-cost`, read from a data folder with no node running (nothing is written).
         var costSince = new Option<string?>("--since") { Description = "Flights landed on or after this date (2026-10-22)" };
