@@ -14,7 +14,7 @@ namespace Pilot.Ui;
 internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     private const float Gutter = 16f;
-    private const float RowH = 30f;
+    private const float RowH = 48f;
     private const float StripH = 128f;
     private const string PlayerKey = "design-player";
     private const string RenderKeyPrefix = "design-render:";
@@ -198,12 +198,11 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         var version = row.Current is { } v ? "v" + v.ToString(CultureInfo.InvariantCulture) : "no version";
         var when = row.At is { } at ? at.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) : "";
         var repo = row.Repo ?? "";
-        var line = Layout.Builder.HStack(
-            WrappedProse.OneLine(row.Id, 12f, Dim).WFixed(80f).Whole(row.Id),
-            WrappedProse.OneLine(title, 13f, Bright).WStar(3f).Whole(title),
-            WrappedProse.OneLine(repo, 12f, Body).WStar(1.5f).Whole(repo),
-            WrappedProse.OneLine(version, 12f, Body).WFixed(76f),
-            WrappedProse.OneLine(when, 12f, Dim, TextAlign.Far).WFixed(120f)).WithGap(10f).RowH(RowH);
+        // Two lines of one string each: columns of a row squeezed each other's ellipses at a narrow window.
+        var detail = string.Join(" · ", new[] { version, repo, when }.Where(t => t.Length > 0));
+        var line = Layout.Builder.VStack(
+            WrappedProse.OneLine($"{row.Id}  {title}", 13f, Bright).RowH(22f).Whole($"{row.Id}  {title}"),
+            WrappedProse.OneLine(detail, 12f, Dim).RowH(20f).Whole(detail)).WithGap(0f).Pad(4f, 2f).RowH(RowH);
         var id = row.Id;
         return (index % 2 == 1 ? line.Bg(RowAltBg) : line)
             .BgHover(RowHoverBg)
