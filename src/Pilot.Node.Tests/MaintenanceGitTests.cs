@@ -119,6 +119,7 @@ public sealed class MaintenanceGitTests : IDisposable
         var result = await Step(MaintenanceGit.Kind.Git, [busy], recorder).RunAsync(Ct);
 
         recorder.Commands.ShouldBeEmpty();
+        result.Untouched.ShouldNotBeNull();
         result.Untouched.ShouldContain("running or queued job");
     }
 
