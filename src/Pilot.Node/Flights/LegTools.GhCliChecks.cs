@@ -9,14 +9,23 @@ public sealed partial class GhCli
 {
     public async Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(["pr", "view", branch, "--json", "number,state,headRefOid,url,mergeable,labels,mergeCommit,mergedAt,isDraft"], repoPath, cancellationToken);
+        var (exit, output, error) = await RunAsync(["pr", "view", branch, "--json", PullRequestByBranchFields], repoPath, cancellationToken);
         if (exit != 0)
         {
             return error.Contains("no pull requests found", StringComparison.OrdinalIgnoreCase)
                 ? null
                 : throw new FlightException($"gh could not read {branch}'s PR: {error.Trim()}");
         }
-        using var doc = JsonDocument.Parse(output);
+        return ParsePullRequestByBranch(output);
+    }
+
+    /// <summary>The <c>--json</c> list of <c>gh pr view &lt;branch&gt;</c> (<see cref="PullRequestAsync"/>).</summary>
+    internal const string PullRequestByBranchFields = "number,state,headRefOid,url,mergeable,labels,mergeCommit,mergedAt,isDraft";
+
+    /// <summary><see cref="PullRequestByBranchFields"/>' answer as a <see cref="PullRequest"/>.</summary>
+    internal static PullRequest ParsePullRequestByBranch(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
         return new PullRequest(root.GetProperty("number").GetInt32(), root.GetProperty("state").GetString() ?? "",
             root.GetProperty("headRefOid").GetString() ?? "", root.GetProperty("url").GetString() ?? "",
@@ -32,12 +41,21 @@ public sealed partial class GhCli
     public async Task<WorkflowRun[]> WorkflowRunsAsync(string repoPath, string commit, CancellationToken cancellationToken)
     {
         var (exit, output, error) = await RunAsync(
-            ["run", "list", "--commit", commit, "--limit", "30", "--json", "databaseId,workflowName,status,conclusion,url,event,updatedAt"], repoPath, cancellationToken);
+            ["run", "list", "--commit", commit, "--limit", "30", "--json", WorkflowRunFields], repoPath, cancellationToken);
         if (exit != 0)
         {
             throw new FlightException($"gh could not list the workflow runs of {CommitRefs.Short(commit)}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
-        using var doc = JsonDocument.Parse(output);
+        return ParseWorkflowRuns(output);
+    }
+
+    /// <summary>The <c>--json</c> list of <c>gh run list --commit</c> (<see cref="WorkflowRunsAsync"/>).</summary>
+    internal const string WorkflowRunFields = "databaseId,workflowName,status,conclusion,url,event,updatedAt";
+
+    /// <summary><see cref="WorkflowRunFields"/>' answer as <see cref="WorkflowRun"/>s, newest first.</summary>
+    internal static WorkflowRun[] ParseWorkflowRuns(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
         return [.. doc.RootElement.EnumerateArray()
             .Select(r => new WorkflowRun(
                 r.TryGetProperty("databaseId", out var id) && id.TryGetInt64(out var number) ? number : 0,
@@ -133,9 +151,12 @@ public sealed partial class GhCli
     public async Task<ChecksSummary?> ChecksSummaryAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
         // gh exits non-zero while checks run or after one failed, and prints the JSON all the same: read it either way.
-        var (_, output, _) = await RunAsync(["pr", "checks", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "bucket,name,link"], repoPath, cancellationToken);
+        var (_, output, _) = await RunAsync(["pr", "checks", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", ChecksFields], repoPath, cancellationToken);
         return ParseChecks(output);
     }
+
+    /// <summary>The <c>--json</c> list of <c>gh pr checks</c> (<see cref="ChecksSummaryAsync"/>).</summary>
+    internal const string ChecksFields = "bucket,name,link";
 
     /// <summary><c>gh pr checks --json bucket,name,link</c>'s answer as a <see cref="ChecksSummary"/>; null with no checks or no answer.</summary>
     internal static ChecksSummary? ParseChecks(string json)
@@ -161,11 +182,14 @@ public sealed partial class GhCli
     public async Task<MergeState?> MergeStateAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
         var (exit, output, _) = await RunAsync(
-            ["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "state,isDraft,mergeStateStatus,mergeable,reviewDecision,autoMergeRequest,statusCheckRollup"],
+            ["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", MergeStateFields],
             repoPath, cancellationToken);
         // gh pr view has no merge queue field: its place in the queue is the GraphQL entry's.
         return exit == 0 ? ParseMergeState(output, await MergeQueueAsync(repoPath, number, cancellationToken)) : null;
     }
+
+    /// <summary>The <c>--json</c> list of <c>gh pr view</c> for <see cref="MergeStateAsync"/>.</summary>
+    internal const string MergeStateFields = "state,isDraft,mergeStateStatus,mergeable,reviewDecision,autoMergeRequest,statusCheckRollup";
 
     /// <summary>
     /// <c>gh pr view --json state,isDraft,mergeStateStatus,mergeable,reviewDecision,autoMergeRequest,statusCheckRollup</c>'s answer, and

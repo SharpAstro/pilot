@@ -117,15 +117,12 @@ public sealed partial class GhCli
     {
         try
         {
-            var (exit, output, _) = await RunAsync(["pr", "list", "--state", "merged", "--limit", limit.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "number,headRefName,headRefOid"], repoPath, cancellationToken);
+            var (exit, output, _) = await RunAsync(["pr", "list", "--state", "merged", "--limit", limit.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", MergedPullRequestFields], repoPath, cancellationToken);
             if (exit != 0)
             {
                 return null;
             }
-            using var doc = JsonDocument.Parse(output);
-            return [.. doc.RootElement.EnumerateArray()
-                .Select(p => new MergedPullRequest(p.GetProperty("number").GetInt32(), p.GetProperty("headRefName").GetString() ?? "", p.GetProperty("headRefOid").GetString() ?? ""))
-                .Where(p => p.HeadRef.Length > 0 && p.HeadOid.Length > 0)];
+            return ParseMergedPullRequests(output);
         }
         catch (Exception ex) when (ex is JsonException or IOException or System.ComponentModel.Win32Exception or FlightException)
         {
@@ -133,14 +130,35 @@ public sealed partial class GhCli
         }
     }
 
+    /// <summary>The <c>--json</c> list of <c>gh pr list --state merged</c> (<see cref="MergedPullRequestsAsync"/>).</summary>
+    internal const string MergedPullRequestFields = "number,headRefName,headRefOid";
+
+    /// <summary><see cref="MergedPullRequestFields"/>' answer; a PR with no head name or commit is left out.</summary>
+    internal static MergedPullRequest[] ParseMergedPullRequests(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return [.. doc.RootElement.EnumerateArray()
+            .Select(p => new MergedPullRequest(p.GetProperty("number").GetInt32(), p.GetProperty("headRefName").GetString() ?? "", p.GetProperty("headRefOid").GetString() ?? ""))
+            .Where(p => p.HeadRef.Length > 0 && p.HeadOid.Length > 0)];
+    }
+
     public async Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(["pr", "list", "--state", "open", "--limit", "100", "--json", "number,title,isDraft,headRefName,url,statusCheckRollup,labels"], repoPath, cancellationToken);
+        var (exit, output, error) = await RunAsync(["pr", "list", "--state", "open", "--limit", "100", "--json", OpenPullRequestFields], repoPath, cancellationToken);
         if (exit != 0)
         {
             throw new FlightException($"gh could not list the PRs: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
-        using var doc = JsonDocument.Parse(output);
+        return ParseOpenPullRequests(output);
+    }
+
+    /// <summary>The <c>--json</c> list of <c>gh pr list --state open</c> (<see cref="OpenPullRequestsAsync"/>).</summary>
+    internal const string OpenPullRequestFields = "number,title,isDraft,headRefName,url,statusCheckRollup,labels";
+
+    /// <summary><see cref="OpenPullRequestFields"/>' answer, newest PR first.</summary>
+    internal static PullRequestStatus[] ParseOpenPullRequests(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
         return [.. doc.RootElement.EnumerateArray()
             .Select(p => new PullRequestStatus
             {
@@ -206,13 +224,22 @@ public sealed partial class GhCli
     public async Task<PullRequest> PullRequestOfAsync(string repo, int number, CancellationToken cancellationToken)
     {
         var (exit, output, error) = await RunAsync(
-            ["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "-R", repo, "--json", "number,state,headRefOid,url,title,author,baseRefName,headRefName,isDraft,isCrossRepository"],
+            ["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "-R", repo, "--json", PullRequestByNumberFields],
             Path.GetTempPath(), cancellationToken);
         if (exit != 0)
         {
             throw new FlightException($"gh could not read {repo}#{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
-        using var doc = JsonDocument.Parse(output);
+        return ParsePullRequestByNumber(output);
+    }
+
+    /// <summary>The <c>--json</c> list of <c>gh pr view &lt;number&gt; -R</c> (<see cref="PullRequestOfAsync"/>).</summary>
+    internal const string PullRequestByNumberFields = "number,state,headRefOid,url,title,author,baseRefName,headRefName,isDraft,isCrossRepository";
+
+    /// <summary><see cref="PullRequestByNumberFields"/>' answer as a <see cref="PullRequest"/>; its list never asks for mergedAt.</summary>
+    internal static PullRequest ParsePullRequestByNumber(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
         return new PullRequest(root.GetProperty("number").GetInt32(), root.GetProperty("state").GetString() ?? "",
             root.GetProperty("headRefOid").GetString() ?? "", root.GetProperty("url").GetString() ?? "",
