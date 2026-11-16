@@ -1,0 +1,146 @@
+using System.CommandLine;
+using System.Text.Json;
+using Pilot.Commands;
+using Shouldly;
+using Xunit;
+
+namespace Pilot.Node.Tests;
+
+/// <summary>PIL1087: a subcommand's MCP tool carries the arguments and options of its parent commands, and a call spells them where the CLI parses them.</summary>
+public sealed class McpToolTreeTests(ITestOutputHelper output)
+{
+    private static RootCommand Root() => PilotCommand.Build(Path.GetTempPath(), TextWriter.Null, TextWriter.Null, "mcp", agent: true);
+
+    private static Dictionary<string, JsonElement> Arguments(string json) =>
+        JsonDocument.Parse(json).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.Clone());
+
+    private static string Key(Option option) => option.Name.TrimStart('-');
+
+    /// <summary>The visible arguments and own options of every ancestor of the leaf, as (name, required).</summary>
+    private static IEnumerable<(string Name, bool Required)> AncestorKeys(Command[] chain) =>
+        chain[..^1].SelectMany(c =>
+            c.Arguments.Where(a => !a.Hidden).Select(a => (a.Name, a.Arity.MinimumNumberOfValues > 0))
+                .Concat(c.Options.Where(o => !o.Hidden && o is not (HelpOption or VersionOption)).Select(o => (Key(o), o.Required))));
+
+    /// <summary>The tools whose schema lacks (or does not require) a key of an ancestor command; the check a second test feeds a broken schema.</summary>
+    internal static List<string> Lacking(Dictionary<string, (string[] Path, Command[] Chain)> tools, Func<string, string[], Command[], ToolSchema> schemaOf)
+    {
+        var lacking = new List<string>();
+        foreach (var (name, (path, chain)) in tools)
+        {
+            var schema = schemaOf(name, path, chain);
+            foreach (var (key, required) in AncestorKeys(chain))
+            {
+                // A name the leaf shares is the leaf's own; the clash test names it.
+                if (!schema.Properties.ContainsKey(key) || (required && !schema.Required.Contains(key)))
+                {
+                    lacking.Add($"{name}: {key}");
+                }
+            }
+        }
+        return lacking;
+    }
+
+    [Fact]
+    public void JobArtifactTakesTheJobItsParentTakes()
+    {
+        var tools = McpServer.Tools(Root());
+        var (path, chain) = tools["job_artifact"];
+        var schema = McpServer.Describe("job_artifact", path, chain).InputSchema;
+
+        schema.Properties.Keys.ShouldBe(["job", "name", "out", "node"], ignoreOrder: true);
+        schema.Required.ShouldBe(["job", "name"], ignoreOrder: true);
+        schema.Properties["job"].Description.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public void JobArtifactIsSpelledWhereTheCliParsesIt_AndACallWithoutTheJobIsRefused()
+    {
+        var root = Root();
+        var (path, chain) = McpServer.Tools(root)["job_artifact"];
+
+        var spelled = McpServer.Spell(path, chain, Arguments("""{"job":"j6006","name":"shot.png","out":"x"}"""));
+        spelled.ShouldBe(["job", "j6006", "artifact", "--out=x", "--", "shot.png"]);
+        var parsed = root.Parse(spelled);
+        parsed.Errors.ShouldBeEmpty();
+        parsed.CommandResult.Command.Name.ShouldBe("artifact");
+        parsed.GetValue<string>("name").ShouldBe("shot.png");
+        parsed.GetValue<string>("job").ShouldBe("j6006");
+
+        var plain = root.Parse(McpServer.Spell(path, chain, Arguments("""{"job":"j6006","name":"shot.png"}""")));
+        plain.Errors.ShouldBeEmpty();
+        plain.GetValue<string>("name").ShouldBe("shot.png");
+
+        var schema = McpServer.Describe("job_artifact", path, chain).InputSchema;
+        schema.Required.ShouldContain("job");
+        // Left out, the CLI itself reports the missing job.
+        root.Parse(McpServer.Spell(path, chain, Arguments("""{"name":"shot.png"}"""))).Errors.ShouldNotBeEmpty();
+    }
+
+    [Fact]
+    public void AParentValueThatStartsWithADashIsRefused()
+    {
+        var (path, chain) = McpServer.Tools(Root())["job_artifact"];
+
+        Should.Throw<PilotCommand.UsageException>(() => McpServer.Spell(path, chain, Arguments("""{"job":"--x","name":"shot.png"}""")));
+    }
+
+    [Fact]
+    public void AKeyOnNoCommandOfTheChainIsRefusedNamingTheKeysOfAll()
+    {
+        var (path, chain) = McpServer.Tools(Root())["job_artifact"];
+
+        var ex = Should.Throw<PilotCommand.UsageException>(() => McpServer.Spell(path, chain, Arguments("""{"nope":"x"}""")));
+        ex.Message.ShouldContain("job");
+        ex.Message.ShouldContain("name");
+    }
+
+    [Fact]
+    public void EveryToolCarriesTheArgumentsAndOptionsOfItsParents()
+    {
+        var tools = McpServer.Tools(Root());
+
+        Lacking(tools, (name, path, chain) => McpServer.Describe(name, path, chain).InputSchema).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AToolWhoseSchemaLacksAParentArgumentIsReported()
+    {
+        var tools = McpServer.Tools(Root());
+        var broken = Lacking(tools, (name, path, chain) =>
+        {
+            var schema = McpServer.Describe(name, path, chain).InputSchema;
+            if (name != "job_artifact")
+            {
+                return schema;
+            }
+            var properties = new Dictionary<string, PropertySchema>(schema.Properties);
+            properties.Remove("job");
+            return new ToolSchema(properties, [.. schema.Required.Where(r => r != "job")]);
+        });
+
+        broken.ShouldBe(["job_artifact: job"]);
+    }
+
+    [Fact]
+    public void ANameAParentSharesWithItsLeafIsNamed()
+    {
+        var clashes = McpServer.Tools(Root())
+            .SelectMany(t => AncestorKeys(t.Value.Chain).Select(a => a.Name).Intersect(
+                t.Value.Chain[^1].Arguments.Where(a => !a.Hidden).Select(a => a.Name)
+                    .Concat(t.Value.Chain[^1].Options.Where(o => !o.Hidden).Select(Key)), StringComparer.Ordinal)
+                .Select(k => $"{t.Key}: {k}"))
+            .ToList();
+
+        clashes.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void TheToolsWithParentArgumentsAreListed()
+    {
+        var withParents = McpServer.Tools(Root()).Where(t => AncestorKeys(t.Value.Chain).Any()).Select(t => t.Key).Order().ToList();
+
+        output.WriteLine("tools with parent arguments or options: " + string.Join(", ", withParents));
+        withParents.ShouldContain("job_artifact");
+    }
+}
