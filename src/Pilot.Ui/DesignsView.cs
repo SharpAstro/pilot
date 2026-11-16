@@ -267,18 +267,16 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         var tiles = page.Renders.Select(render =>
         {
             var screen = render.Screen;
-            var picture = Layout.Builder.Fill(key: RenderKeyPrefix + (render.File ?? "")).Bg(Well).HFixed(StripH - 28f).WFixed(150f);
-            var caption = WrappedProse.OneLine(render.Title, 11f, Player?.CurrentScreen.Id == screen ? Bright : Dim, TextAlign.Center).RowH(20f).WFixed(150f).Whole(render.Title);
+            var picture = Layout.Builder.Fill(key: RenderKeyPrefix + (render.File ?? "")).Bg(Well).HFixed(StripH - 28f);
+            var caption = WrappedProse.OneLine(render.Title, 11f, Player?.CurrentScreen.Id == screen ? Bright : Dim, TextAlign.Center).RowH(20f).Whole(render.Title);
             return Layout.Builder.VStack(picture, caption).WithGap(2f)
                 .Bg(Player?.CurrentScreen.Id == screen ? Active : Button)
                 .BgHover(ButtonHover)
                 .WithTooltip($"Show {render.Title} in the player")
-                .Follows(new HitResult.ButtonHit($"designs:screen:{screen}"), _ => ShowScreen(screen));
+                .Follows(new HitResult.ButtonHit($"designs:screen:{screen}"), _ => ShowScreen(screen)).WStar();
         }).ToArray();
-        return Layout.Builder.HStack([.. tiles]).WithGap(8f).WithScroll(_stripScroll).HFixed(StripH).WStar();
+        return Layout.Builder.HStack([.. tiles]).WithGap(8f).HFixed(StripH).WStar();
     }
-
-    private readonly ListScrollController _stripScroll = new() { Mode = ScrollBarMode.Interactive };
 
     private static Layout.Node Heading(string text) => WrappedProse.OneLine(text, 14f, Bright).RowH(26f);
 
