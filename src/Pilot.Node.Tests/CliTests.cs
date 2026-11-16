@@ -957,8 +957,8 @@ public sealed class CliTests : IAsyncLifetime
                 Worktrees = [new WorktreeStatus { Path = "C:/r/pilot/.claude/worktrees/x", Branch = "flight/X1", Flight = "X1", Dirty = true, Files = 2, Added = 5, Removed = 1 }],
                 PullRequests =
                 [
-                    new PullRequestStatus { Number = 7, Title = "A|B is *ready*", Head = "flight/X1", Url = "https://example.com/pull/7", Flight = "X1", Checks = "passing", Labels = ["pilot node: SE1", "bug"] },
-                    new PullRequestStatus { Number = 8, Title = "wip", Head = "wip", Draft = true },
+                    GhAnswers.OpenPullRequest(number: 7, title: "A|B is *ready*", head: "flight/X1", url: "https://example.com/pull/7", checks: "passing", labels: ["pilot node: SE1", "bug"]) with { Flight = "X1" },
+                    GhAnswers.OpenPullRequest(number: 8, title: "wip", head: "wip", draft: true),
                 ],
                 Errors = ["gh offline"],
             },

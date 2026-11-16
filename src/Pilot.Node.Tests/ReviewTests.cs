@@ -193,7 +193,7 @@ public abstract class ReviewTestsBase : IDisposable
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "fine")).Ok.ShouldBeTrue();
         var pr = _github.Pr.ShouldNotBeNull();
         _github.AutoMergeAllowed = true;
-        _github.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
         (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", pr.Head)).Error.ShouldBeNull();
         F(flight.Code).MergeWhenGreen.ShouldNotBeNull().ShouldContain(LegCommander.ArmedByGitHub);
         _github.AutoMergeArmed.ShouldHaveSingleItem();
@@ -409,13 +409,13 @@ public sealed class ReviewTests1 : ReviewTestsBase
         var checks = new PrChecks(_state, _github, TimeProvider.System, _flights);
 
         // While it waits, the flight says where; nothing is carded.
-        _github.Queue = new MergeQueueState("OPEN", head, Queued: true, Position: 2);
+        _github.Queue = GhAnswers.MergeQueue("queued", head, 2);
         await checks.LookAsync(Ct);
         F("TIA20").MergeQueue.ShouldBe("in the merge queue, position 2");
         Open().ShouldBeEmpty();
 
         // The queue's checks failed: out of the queue, still open, and a card says so with the merge again.
-        _github.Queue = new MergeQueueState("OPEN", head, Queued: false, RemovedAt: DateTimeOffset.UtcNow.AddSeconds(-5), RemovedReason: "failed checks");
+        _github.Queue = GhAnswers.MergeQueue("dropped", head, removedAt: DateTimeOffset.UtcNow.AddSeconds(-5), removedReason: "failed checks");
         await checks.LookAsync(Ct);
         F("TIA20").MergeQueue.ShouldBeNull();
         var card = Open().ShouldHaveSingleItem();
@@ -433,11 +433,11 @@ public sealed class ReviewTests1 : ReviewTestsBase
         Open().ShouldBeEmpty();
 
         // Queued again and dropped again: a new removal, a new card, closed by itself once it is back in the queue.
-        _github.Queue = new MergeQueueState("OPEN", head, Queued: false, RemovedAt: DateTimeOffset.UtcNow.AddSeconds(1), RemovedReason: "merge conflict");
+        _github.Queue = GhAnswers.MergeQueue("dropped", head, removedAt: DateTimeOffset.UtcNow.AddSeconds(1), removedReason: "merge conflict");
         await checks.LookAsync(Ct);
         var again = Open().ShouldHaveSingleItem();
         again.Detail.ShouldNotBeNull().ShouldContain("merge conflict");
-        _github.Queue = new MergeQueueState("OPEN", head, Queued: true, Position: 1);
+        _github.Queue = GhAnswers.MergeQueue("queued", head, 1);
         await checks.LookAsync(Ct);
         Open().ShouldBeEmpty();
         _state.Cards().Single(c => c.Id == again.Id).Outcome.ShouldBe("queued again");
@@ -630,7 +630,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
 
         var startedBefore = _workers.Started.Count;
-        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: false, RemovedAt: DateTimeOffset.UtcNow.AddSeconds(-5), RemovedReason: "merge_conflict");
+        _github.Queue = GhAnswers.MergeQueue("dropped", _github.Pr!.Head, removedAt: DateTimeOffset.UtcNow.AddSeconds(-5), removedReason: "merge_conflict");
         await checks.LookAsync(Ct);
 
         // The Handled card is the update's success: a failed update rings with a card of the same words in a different bin and kind.
@@ -658,7 +658,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         PilotLabels(_github.Labels[number]).ShouldBe(["pilot: passed"]);
 
         // Joining the queue is a label, and GitHub refusing it is a card, not a failed look.
-        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: true, Position: 2);
+        _github.Queue = GhAnswers.MergeQueue("queued", _github.Pr!.Head, 2);
         _github.LabelFails = "GitHub refused the label: rate limited";
         await checks.LookAsync(Ct);
         var refused = _state.Cards().Single(c => c.Kind == PrMarks.RefusedKind);
@@ -678,7 +678,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         _github.Statuses.Last().State.ShouldBe("success");
 
         // Out of the queue (dropped, and carded for that): the review's own label again.
-        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: false);
+        _github.Queue = GhAnswers.MergeQueue("idle", _github.Pr!.Head);
         await checks.LookAsync(Ct);
         PilotLabels(_github.Labels[number]).ShouldBe(["pilot: passed"]);
         F(flight.Code).Review!.LabelOverride.ShouldBeNull();
@@ -799,7 +799,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
         var checks = new PrChecks(_state, _github, TimeProvider.System, _flights);
 
         // Taken out of the queue while its PR-ready card is open: that card offers the merge already.
-        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: false, RemovedAt: DateTimeOffset.UtcNow, RemovedReason: "manually removed");
+        _github.Queue = GhAnswers.MergeQueue("dropped", _github.Pr!.Head, removedAt: DateTimeOffset.UtcNow, removedReason: "manually removed");
         await checks.LookAsync(Ct);
         Open().ShouldHaveSingleItem().Kind.ShouldBe(LegCommander.PrReady);
 
@@ -1526,7 +1526,7 @@ public sealed class ReviewTests4 : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AMergeOnAPrBehindMainUpdatesItKeepsItsPassedReviewAndDoesNotCallMerge()
     {
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         var (flight, _) = await Passed("14");
         var head = Git(flight.Worktree, "rev-parse", "HEAD");
         MainMoves();
@@ -1554,10 +1554,10 @@ public sealed class ReviewTests4 : ReviewTestsBase
     {
         // pilot #507 and #509, 2026-10-30: main merged into each waiting PR at every landing, its checks run again before it joined
         // the queue, which builds it on the latest main anyway.
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         var (flight, _) = await Passed("39");
         var head = Git(flight.Worktree, "rev-parse", "HEAD");
-        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: false);
+        _github.Queue = GhAnswers.MergeQueue("idle", _github.Pr!.Head);
         MainMoves();
 
         var result = await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8]);
@@ -1575,7 +1575,7 @@ public sealed class ReviewTests4 : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AMergeOnAnUpToDatePrWithGreenChecksIsQueuedAsBefore()
     {
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         var (flight, _) = await Passed("15");
 
         (await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8])).Error.ShouldBeNull();
@@ -1587,7 +1587,7 @@ public sealed class ReviewTests4 : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AnUpdatedHeadWithPendingChecksIsNotQueuedByTheMergeOfferedAgain()
     {
-        _github.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
         var (flight, _) = await Passed("16");
         MainMoves();
         (await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8])).Error.ShouldNotBeNull().ShouldContain("is behind its base");
@@ -1606,7 +1606,7 @@ public sealed class ReviewTests4 : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AMergeOnABehindPrWhosePlaneHoldsAnUncommittedFileIsRefusedWithThatSaidAndNoLegGoesRound()
     {
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         var (flight, _) = await Passed("38");
         File.WriteAllText(Path.Combine(flight.Worktree, "scratch.txt"), "not committed");
         MainMoves();
@@ -1624,12 +1624,12 @@ public sealed class ReviewTests4 : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AMergeOnAPrAlreadyInTheQueueIsNotUpdatedWhenMainMovedOn()
     {
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         var (flight, _) = await Passed("37");
         var head = Git(flight.Worktree, "rev-parse", "HEAD");
         _github.Merge = new MergeState(MergeKinds.Queued, Position: 1);
         // A PR GitHub has queued is one whose base has a merge queue, as GitHub reads both.
-        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: true, Position: 1);
+        _github.Queue = GhAnswers.MergeQueue("queued", _github.Pr!.Head, 1);
         MainMoves();
 
         var result = await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8]);
@@ -1943,7 +1943,7 @@ public sealed class ReviewTests5 : ReviewTestsBase
         var (flight, pr, checks) = await ArmedPassedFlight("31");
         var code = flight.Code;
 
-        _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3, "build (linux)", "https://github.com/x/tianwen/actions/runs/1/job/2");
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 2, 3, "build (linux)", "https://github.com/x/tianwen/actions/runs/1/job/2");
         await checks.LookAsync(Ct);
         var card = Open().ShouldHaveSingleItem();
         card.Kind.ShouldBe(LegCommander.MergeFailed);
@@ -1981,7 +1981,7 @@ public sealed class ReviewTests5 : ReviewTestsBase
         var code = flight.Code;
 
         // GitHub shows it conflicting; turning its auto-merge off fails.
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         _github.Merge = new MergeState(MergeKinds.Conflicts, 3, 3);
         _github.DisarmFails = "gh could not turn auto-merge off on #71: HTTP 502";
         await checks.LookAsync(Ct);
@@ -2009,7 +2009,7 @@ public sealed class ReviewTests5 : ReviewTestsBase
     {
         var (flight, pr, checks) = await ArmedPassedFlight("34");
 
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         _github.Merge = new MergeState(kind, 3, 3, Reason: kind == MergeKinds.Blocked ? "a review is required" : null);
         await checks.LookAsync(Ct);
 
@@ -2025,7 +2025,7 @@ public sealed class ReviewTests5 : ReviewTestsBase
         var code = flight.Code;
 
         // The failed-check path cleared the arm here although GitHub would not turn its auto-merge off.
-        _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3, "build (linux)", null);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 2, 3, "build (linux)", null);
         _github.DisarmFails = "gh could not turn auto-merge off on #71: HTTP 502";
         await checks.LookAsync(Ct);
         F(code).MergeWhenGreen.ShouldBeNull();

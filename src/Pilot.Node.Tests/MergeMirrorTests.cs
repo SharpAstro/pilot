@@ -114,7 +114,7 @@ public sealed class MergeMirrorTests
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
         node.GitHub.Merge = new MergeState(MergeKinds.Queued, Position: 3);
-        node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: true, Position: 3);
+        node.GitHub.Queue = GhAnswers.MergeQueue("queued", PrHead, 3);
 
         (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
 
@@ -226,7 +226,7 @@ public sealed class MergeMirrorTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
 
         (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
 
@@ -243,7 +243,7 @@ public sealed class MergeMirrorTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
 
         (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
 
@@ -257,11 +257,11 @@ public sealed class MergeMirrorTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         node.GitHub.Queues = true;
 
         (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
-        node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: true, Position: 4);
+        node.GitHub.Queue = GhAnswers.MergeQueue("queued", PrHead, 4);
         await Look(node, null);
 
         var card = Card(node, ready);

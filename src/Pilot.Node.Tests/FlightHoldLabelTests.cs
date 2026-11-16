@@ -275,7 +275,7 @@ public sealed class FlightHoldLabelTests : ReviewTestsBase
             var pr = GhAnswers.PullRequestByBranch(number: 7, head: "abc12345abc12345", url: "https://github.com/SharpAstro/tianwen/pull/7");
             _github.PrOf[flight.Branch] = pr;
             _github.AutoMergeArmed.Enqueue((7, pr.Head, "squash"));
-            _github.Queue = new MergeQueueState("OPEN", pr.Head, Queued: true, Position: 1);
+            _github.Queue = GhAnswers.MergeQueue("queued", pr.Head, 1);
             _state.PutFlight(F(1) with { PullRequest = 7, MergeWhenGreen = ["abc12345", "now", LegCommander.ArmedByGitHub] });
 
             await Look(repo);

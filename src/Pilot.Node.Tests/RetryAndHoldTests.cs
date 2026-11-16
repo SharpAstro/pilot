@@ -95,7 +95,7 @@ public sealed class RetryAndHoldTests : IDisposable
         Flight(code, pr, armed: [Head(head), "squash", LegCommander.ArmedByAutopilot]);
         _github.PrFiles[pr] = files ?? ["src/Pilot.Node/Flights/PrChecks.cs"];
         _github.PrOf[Branch(code)] = GhAnswers.PullRequestByBranch(number: pr, head: Head(head), url: $"https://github.com/x/tianwen/pull/{pr}");
-        _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 1, 2, "build", $"https://github.com/x/tianwen/actions/runs/{run}");
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 1, 2, "build", $"https://github.com/x/tianwen/actions/runs/{run}");
         _github.Merge = new MergeState(MergeKinds.Blocked, 1, 2, Reason: "build failed", FailedName: "build");
         FailedRun(pr, queue: false, run, log);
     }
@@ -104,7 +104,7 @@ public sealed class RetryAndHoldTests : IDisposable
         _github.FailedRuns[(pr, queue)] = new FailedRun(id, $"https://github.com/x/tianwen/actions/runs/{id}", ["build"], log ?? Log());
 
     private void QueueRemoval(string head, string reason = "failed checks") =>
-        _github.Queue = new MergeQueueState("OPEN", head, Queued: false, RemovedAt: _time.GetUtcNow().AddSeconds(-5), RemovedReason: reason);
+        _github.Queue = GhAnswers.MergeQueue("dropped", head, removedAt: _time.GetUtcNow().AddSeconds(-5), removedReason: reason);
 
     // A flight whose queue entry was taken out on the failed test, looked at.
     private async Task QueueFlight(string code, int pr, char head, long run)

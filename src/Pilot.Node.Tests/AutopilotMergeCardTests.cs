@@ -39,7 +39,7 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
         _github.Checks = ChoiceStatus.Passing;
         await checks.LookAsync(Ct);
         NoMergeCardRings();
-        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: true, Position: 1);
+        _github.Queue = GhAnswers.MergeQueue("queued", _github.Pr!.Head, 1);
         await checks.LookAsync(Ct);
         NoMergeCardRings();
         _github.Pr = _github.Pr! with { State = "MERGED" };

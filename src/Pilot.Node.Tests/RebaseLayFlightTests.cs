@@ -86,7 +86,7 @@ public sealed class RebaseLayFlightTests() : ReviewTestsBase(realGit: true)
     {
         _github.MergeQueueMethod = "REBASE";
         // The base is not merged into the branch (a queued PR may be behind): main and the branch both rewrite README.md.
-        _github.Queue = new MergeQueueState("UNQUEUED", "", Queued: false);
+        _github.Queue = GhAnswers.MergeQueue("idle");
         var (flight, _) = await Passed("1");
         File.WriteAllText(Path.Combine(Repo, "README.md"), "main\n");
         Commit(Repo, "main rewrites");
@@ -112,7 +112,7 @@ public sealed class RebaseLayFlightTests() : ReviewTestsBase(realGit: true)
     {
         // The PR-ready card offers the merge itself while it is open; a dropped PR is looked at once it is closed.
         _state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "test", LegCommander.PrReady);
-        _github.Queue = new MergeQueueState("OPEN", head, Queued: false, RemovedAt: DateTimeOffset.UtcNow, RemovedReason: "merge conflict");
+        _github.Queue = GhAnswers.MergeQueue("dropped", head, removedAt: DateTimeOffset.UtcNow, removedReason: "merge conflict");
     }
 
     [Fact]
@@ -128,7 +128,7 @@ public sealed class RebaseLayFlightTests() : ReviewTestsBase(realGit: true)
         var laid = Git(flight.Worktree, "rev-parse", "HEAD");
         laid.ShouldNotBe(old);
         _github.Merged.ShouldHaveSingleItem().Head.ShouldBe(laid);
-        _github.Queue = new MergeQueueState("OPEN", laid, Queued: true, Position: 1);
+        _github.Queue = GhAnswers.MergeQueue("queued", laid, 1);
         await checks.LookAsync(Ct);
         await checks.LookAsync(Ct);
 
@@ -208,7 +208,7 @@ public sealed class RebaseLayFlightTests() : ReviewTestsBase(realGit: true)
     public async Task ADroppedHeadWhoseChecksArePendingIsNotReportedAsDroppedForAConflict()
     {
         var (flight, head) = await DroppedUnexplained();
-        _github.Summary = new ChecksSummary(ChoiceStatus.Pending, 0, 0);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 0, 0);
 
         var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head);
 

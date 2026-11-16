@@ -224,7 +224,7 @@ public static class StoreFixtureWriter
             {
                 Name = "pilot", Path = "/repos/pilot", GitHub = "SharpAstro/pilot", Tracked = true, Flights = flights, DefaultBranch = "main", Branch = "main",
                 Worktrees = [new WorktreeStatus { Path = "/repos/pilot/.claude/worktrees/pil1" }],
-                PullRequests = [new PullRequestStatus { Number = 11, Title = "A PR", Head = "flight/pil1" }],
+                PullRequests = [GhAnswers.OpenPullRequest(number: 11, title: "A PR", head: "flight/pil1")],
                 UpdatedAt = Start.AddHours(2),
             },
         ],

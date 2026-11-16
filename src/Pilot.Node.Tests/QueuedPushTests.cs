@@ -44,7 +44,7 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
             Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", ReviewedHead = old, StartedAt = DateTimeOffset.UtcNow },
         });
         _github.Pr = GhAnswers.PullRequestByBranch(number: 63, head: old, url: PrUrl);
-        _github.Queue = new MergeQueueState("OPEN", old, Queued: true, Position: 1);
+        _github.Queue = GhAnswers.MergeQueue("queued", old, 1);
 
         File.WriteAllText(Path.Combine(flight.Worktree, "parser.cs"), "class Parser {}\n");
         Git(flight.Worktree, "add", ".");

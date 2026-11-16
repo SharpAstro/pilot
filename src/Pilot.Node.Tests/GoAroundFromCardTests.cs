@@ -70,9 +70,9 @@ public sealed class GoAroundFromCardTests : IDisposable
     {
         await using var node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
         var ready = Ready(node, LegCommander.PrReady, new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Subject, Args = [PrHead] });
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
         (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3, "build (linux)", CheckLink);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 2, 3, "build (linux)", CheckLink);
         await node.App.Services.GetRequiredService<PrChecks>().LookAsync(Ct);
         var failed = node.State.Cards(openOnly: true).ShouldHaveSingleItem();
         failed.Kind.ShouldBe(LegCommander.MergeFailed);

@@ -116,8 +116,8 @@ public sealed class MergeBatchTests
         {
             node.App.Services.GetRequiredService<RoleModels>().Apply(new NodeSettings { MergeBatch = true });
         }
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
-        node.GitHub.Runs[BatchHead] = [new WorkflowRun(1, "CI", "completed", ci, "https://github.com/x/tianwen/actions/runs/1", "push", DateTimeOffset.UtcNow)];
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
+        node.GitHub.Runs[BatchHead] = [GhAnswers.WorkflowRun(1, "CI", "completed", ci, "https://github.com/x/tianwen/actions/runs/1", "push", DateTimeOffset.UtcNow)];
         var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var first = 0;
@@ -207,7 +207,7 @@ public sealed class MergeBatchTests
         await using var disposing = node;
         if (why == "queue")
         {
-            node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: false);
+            node.GitHub.Queue = GhAnswers.MergeQueue("idle", PrHead);
             node.GitHub.Queues = true;
         }
         if (why == "protected")
@@ -311,7 +311,7 @@ public sealed class MergeBatchTests
     {
         // An empty head would make the base's push "<nothing>:refs/heads/main", a delete of main: nothing is pushed at all.
         var git = new BatchGit { Head = answer, HeadFails = fails };
-        var github = new FakeGitHub { Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1) };
+        var github = new FakeGitHub { Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1) };
 
         var result = await Batcher(git, github).RunAsync("tianwen", "repo", "main", [new BatchEntry("TIA1", 10, "aaaa"), new BatchEntry("TIA2", 11, "bbbb")], Ct);
 
@@ -326,8 +326,8 @@ public sealed class MergeBatchTests
     [Fact]
     public async Task TwoNodesAndTwoStartsOfOneNodeNeverMakeOrDeleteEachOthersBatchBranch()
     {
-        var github = new FakeGitHub { Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1) };
-        github.Runs[BatchHead] = [new WorkflowRun(1, "CI", "completed", "success", "https://github.com/x/tianwen/actions/runs/1", "pull_request", DateTimeOffset.UtcNow)];
+        var github = new FakeGitHub { Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1) };
+        github.Runs[BatchHead] = [GhAnswers.WorkflowRun(1, "CI", "completed", "success", "https://github.com/x/tianwen/actions/runs/1", "pull_request", DateTimeOffset.UtcNow)];
         BatchEntry[] entries = [new("TIA1", 10, "aaaa"), new("TIA2", 11, "bbbb")];
         // DE1 and SE1 of one fleet, and DE1 again after a restart: a new start, so a new part of the name.
         var gits = new[] { new BatchGit(), new BatchGit(), new BatchGit() };
@@ -372,7 +372,7 @@ public sealed class MergeBatchTests
     {
         var (node, _, release, held, _) = await QueueAsync(batch: true, ["TIA1", "TIA2"], "success");
         await using var disposing = node;
-        node.GitHub.Runs[BatchHead] = [new WorkflowRun(1, "CI", "in_progress", null, "https://github.com/x/tianwen/actions/runs/1", "push", DateTimeOffset.UtcNow)];
+        node.GitHub.Runs[BatchHead] = [GhAnswers.WorkflowRun(1, "CI", "in_progress", null, "https://github.com/x/tianwen/actions/runs/1", "push", DateTimeOffset.UtcNow)];
 
         release.TrySetResult();
         await held;
@@ -428,8 +428,8 @@ public sealed class MergeBatchTests
         var legs = node.App.Services.GetRequiredService<LegCommander>();
         legs.Batcher = Batcher(git, node.GitHub);
         node.App.Services.GetRequiredService<RoleModels>().Apply(new NodeSettings { MergeBatch = true });
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
-        node.GitHub.Runs[BatchHead] = [new WorkflowRun(1, "CI", "completed", "success", "https://github.com/x/tianwen/actions/runs/1", "push", DateTimeOffset.UtcNow)];
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
+        node.GitHub.Runs[BatchHead] = [GhAnswers.WorkflowRun(1, "CI", "completed", "success", "https://github.com/x/tianwen/actions/runs/1", "push", DateTimeOffset.UtcNow)];
         var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var first = 0;
@@ -491,7 +491,7 @@ public sealed class MergeBatchTests
                 heads.Add(Git(repo, "rev-parse", "HEAD"));
             }
             Git(repo, "checkout", "-q", "main");
-            var github = new FakeGitHub { Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1) };
+            var github = new FakeGitHub { Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1) };
             var batcher = new MergeBatcher(new GitCli(), github, "de1") { Start = "s1", PollEvery = TimeSpan.FromMilliseconds(5) };
 
             var result = await batcher.RunAsync("tianwen", repo, "main", [new BatchEntry("TIA1", 10, heads[0]), new BatchEntry("TIA2", 11, heads[1])], Ct);
@@ -527,7 +527,7 @@ public sealed class MergeBatchTests
         var (node, git, release, held, _) = await QueueAsync(batch: true, ["TIA1", "TIA2", "TIA3"], "success", (on, code) => code != "TIA1" ? Merge(on, code)
             : (leader = on.App.Services.GetRequiredService<LegCommander>().RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = Verbs.FlightTarget(code), Args = [PrHead, "merge"], Who = "tests" }, giveUp.Token)));
         await using var disposing = node;
-        node.GitHub.Runs[BatchHead] = [new WorkflowRun(1, "CI", "in_progress", null, "https://github.com/x/tianwen/actions/runs/1", "push", DateTimeOffset.UtcNow)];
+        node.GitHub.Runs[BatchHead] = [GhAnswers.WorkflowRun(1, "CI", "in_progress", null, "https://github.com/x/tianwen/actions/runs/1", "push", DateTimeOffset.UtcNow)];
         node.App.Services.GetRequiredService<LegCommander>().Batcher.CiBudget = TimeSpan.FromHours(1);
 
         release.TrySetResult();
@@ -552,7 +552,7 @@ public sealed class MergeBatchTests
     {
         var node = await NodeHarness.StartOnModelAsync(Ct);
         await using var disposing = node;
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         node.GitHub.Queues = true;
         var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

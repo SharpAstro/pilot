@@ -52,7 +52,7 @@ public sealed class MergesTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1");
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         node.GitHub.Queues = true;
 
         (await Merge(node, "TIA1")).Error.ShouldBeNull();
@@ -85,7 +85,7 @@ public sealed class MergesTests
         Flight(node, "TIA1");
         Flight(node, "TIA2");
         Flight(node, "MOO3", repo: "moons");
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         node.GitHub.Queues = true;
         var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var open = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -128,7 +128,7 @@ public sealed class MergesTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1");
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
 
         (await Merge(node, "TIA1")).Error.ShouldBeNull();
 
@@ -137,7 +137,7 @@ public sealed class MergesTests
         waiting.Why.ShouldNotBeNull().ShouldContain("checks pass");
         node.GitHub.Merged.ShouldBeEmpty();
 
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         node.GitHub.Queues = true;
         (await Merge(node, "TIA1", by: "node")).Error.ShouldBeNull();
 
@@ -164,8 +164,8 @@ public sealed class MergesTests
         node.State.Renumber("tianwen");
         Entry(node, "TIA2").Place.ShouldBe(2);
         node.GitHub.Queue = how == "closed"
-            ? new MergeQueueState("CLOSED", PrHead, Queued: false)
-            : new MergeQueueState("OPEN", PrHead, Queued: false, RemovedAt: at.AddMinutes(1), RemovedReason: "a required check failed");
+            ? GhAnswers.MergeQueue("idle", PrHead, prState: "CLOSED")
+            : GhAnswers.MergeQueue("dropped", PrHead, removedAt: at.AddMinutes(1), removedReason: "FAILED_CHECKS");
 
         await node.App.Services.GetRequiredService<PrChecks>().LookAsync(Ct);
 
@@ -181,7 +181,7 @@ public sealed class MergesTests
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1");
         node.State.PutMerge(new MergeRow { Flight = "TIA1", Repo = "tianwen", Pr = 63, Head = PrHead, Method = "rebase", State = MergeEntryState.Merging, AddedAt = DateTimeOffset.UtcNow });
-        node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: true, Position: 2);
+        node.GitHub.Queue = GhAnswers.MergeQueue("queued", PrHead, 2);
 
         await node.App.Services.GetRequiredService<PrChecks>().LookAsync(Ct);
 
@@ -193,7 +193,7 @@ public sealed class MergesTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var flight = Flight(node, "TIA1", review: ReviewState.Reviewing);
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         node.GitHub.Queues = true;
         node.State.PutMerge(new MergeRow
         {
@@ -238,7 +238,7 @@ public sealed class MergesTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1");
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 2, 3);
 
         (await Merge(node, "TIA1")).Error.ShouldNotBeNull().ShouldContain("checks fail");
 
@@ -254,7 +254,7 @@ public sealed class MergesTests
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1");
         Flight(node, "TIA2");
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         node.GitHub.Pr = node.GitHub.Pr! with { Mergeable = "CONFLICTING" };
 
         (await Merge(node, "TIA1")).Error.ShouldNotBeNull().ShouldContain("conflicts");
@@ -274,7 +274,7 @@ public sealed class MergesTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1");
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
         (await Merge(node, "TIA1")).Error.ShouldBeNull();
         Entry(node, "TIA1").State.ShouldBe(MergeEntryState.Checks);
 
@@ -349,7 +349,7 @@ public sealed class MergesTests
         // The landing asks git in the repo's folder.
         Directory.CreateDirectory(Flight(node, "TIA1").RepoPath);
         node.GitHub.AutoMergeAllowed = true;
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
         (await Merge(node, "TIA1")).Error.ShouldBeNull();
         Entry(node, "TIA1").State.ShouldBe(MergeEntryState.Checks);
 
@@ -418,7 +418,7 @@ public sealed class MergesTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node, "TIA1");
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         // The merge call goes past its time budget (gh's own, an OperationCanceledException) or gh does not start at all; GitHub may
         // have merged the PR all the same.
         node.GitHub.OnCall = call =>
@@ -461,7 +461,7 @@ public sealed class MergesTests
         // Armed at an earlier merge: its entry is open, so the repo's turn would be held for as long as the flight counts as under way.
         node.State.PutFlight(flight with { MergeWhenGreen = [PrHead, "rebase", LegCommander.ArmedByNode] });
         node.State.PutMerge(new MergeRow { Flight = "TIA1", Repo = "tianwen", Pr = 63, Head = PrHead, Method = "rebase", State = MergeEntryState.Checks, Why = "merging when checks pass", AddedAt = DateTimeOffset.UtcNow });
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
         var legs = node.App.Services.GetRequiredService<LegCommander>();
 
         journal.Fail = true;

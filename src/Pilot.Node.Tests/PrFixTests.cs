@@ -325,8 +325,8 @@ public sealed class PrFixTests2 : PrFixTestsBase
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
         var head = FixerPushes("fixed");
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
-        _github.Queue = new MergeQueueState("OPEN", head, false);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
+        _github.Queue = GhAnswers.MergeQueue("idle", head);
 
         await Round(head, "approve");
         await _reviews.SweepAsync(Ct);

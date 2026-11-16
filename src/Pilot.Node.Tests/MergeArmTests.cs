@@ -480,7 +480,7 @@ public sealed class MergeArmTests
         // SharpAstro/pilot: merge queue, auto-merge off, the node polls; the only required check, gate, is created after both builds
         // finish, so a look in the gap reads every check green with GitHub saying BLOCKED (Fixtures/gh/gate-absent.json).
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
-        node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: false);
+        node.GitHub.Queue = GhAnswers.MergeQueue("idle", PrHead);
         node.GitHub.Queues = true;
         var ready = Ready(node);
         node.GitHub.Summary = Passing(5);
@@ -520,7 +520,7 @@ public sealed class MergeArmTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         node.GitHub.AutoMergeAllowed = true;
-        node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: false);
+        node.GitHub.Queue = GhAnswers.MergeQueue("idle", PrHead);
         node.GitHub.Queues = true;
         var ready = Ready(node);
         node.GitHub.Summary = Pending(1);

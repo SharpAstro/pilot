@@ -29,22 +29,7 @@ public sealed partial class GhFakeGuardTests
         "GhAnswers.cs",         // the builders
         "GhFakeGuardTests.cs",  // holds the snippets the scanner is proven on
         "GhRecordingTests.cs",  // compares the real parser's result with the expected record
-    ];
-
-    /// <summary>
-    /// Files that still build them directly and have not been migrated to <see cref="GhAnswers"/>. Later legs of pilot #1106 empty it;
-    /// the guard fails on a file not listed (a new direct construction) and on a listed file that no longer has one (take it off).
-    /// </summary>
-    private static readonly string[] NotYetMigrated =
-    [
-        "AutopilotMergeCardTests.cs", "AutopilotMergeRefusalTests.cs", "CardSummaryRaiserTests.cs",
-        "CliTests.cs", "ConflictResolutionTests.cs", "DesignQueueTests.cs",
-        "FailureInvestigationTests.cs", "FlightHoldLabelTests.cs", "FlightHoldTests.cs", "GoAroundFromCardTests.cs",
-        "HandPrLandingTests.cs", "LandingPathTests.cs", "LegEndOverlapTests.cs", "LegHoldTests.cs", "LockFreeGitTests.cs", "MergeArmTests.cs",
-        "MergeBatchTests.cs", "MergeMirrorTests.cs", "MergeQueueTests.cs", "MergeRefusalTests.cs", "MergeTakeBackTests.cs",
-        "MergesTests.cs", "MergingCardTests.cs", "PrFixTests.cs", "PrRecheckTests.cs",
-        "PrReviewTests.cs", "PullRequestsTests.cs", "QueuedPushTests.cs", "RebaseLayFlightTests.cs",
-        "RepoStatusTests.cs", "RepoWatchTests.cs", "RetryAndHoldTests.cs", "ReviewTests.cs", "StaleCardTests.cs", "StoreFixtureWriter.cs",
+        "MergeQueueTests.cs",   // parses GraphQL text with the real parser and compares with the expected record, the same job as GhRecordingTests
     ];
 
     private static string TestsFolder()
@@ -83,18 +68,16 @@ public sealed partial class GhFakeGuardTests
     public void NoTestBuildsAGhReadRecordByHandOutsideTheBuilders()
     {
         var offenders = Offenders();
-        var fresh = offenders.Where(o => !NotYetMigrated.Contains(o.Key)).ToList();
+        var fresh = offenders.ToList();
         fresh.ShouldBeEmpty("build these through GhAnswers (it parses a recorded gh answer):\n" +
             string.Join("\n", fresh.SelectMany(o => o.Value.Select(h => $"{o.Key}:{h.Line}: {h.Text.Trim()}"))));
     }
 
     [Fact]
     [Trait("Category", "Invariant")]
-    public void AFileMigratedToTheBuildersIsTakenOffTheNotYetMigratedList()
-    {
-        var offenders = Offenders();
-        NotYetMigrated.Where(f => !offenders.ContainsKey(f)).ShouldBeEmpty("these no longer build a record by hand (or are gone): remove them from NotYetMigrated");
-    }
+    public void NoFileIsAddedToTheAllowedList() =>
+        Allowed.ShouldBe(["GhAnswers.cs", "GhFakeGuardTests.cs", "GhRecordingTests.cs", "MergeQueueTests.cs"],
+            "a test that needs a gh-read record builds it through GhAnswers; only the builders, this guard and the parser's own expectations construct one");
 
     [Theory]
     [InlineData("var pr = new PullRequest(7, \"MERGED\", h, \"u\", MergedAt: Now);")]

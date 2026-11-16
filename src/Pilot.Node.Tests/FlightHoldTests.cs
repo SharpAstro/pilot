@@ -150,7 +150,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     public async Task HoldDisarmsAMergeWhenGreenAndTakesAQueuedPrOutOfTheQueue()
     {
         _github.AutoMergeAllowed = true;
-        _github.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
         var flight = await Reviewed("5");
         var head = _github.Pr!.Head[..8];
         (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head)).Error.ShouldBeNull();
@@ -158,7 +158,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
         var number = F(flight.Code).PullRequest!.Value;
         _github.AutoMergeArmed.ShouldHaveSingleItem();
 
-        _github.Queue = new MergeQueueState("OPEN", _github.Pr.Head, Queued: true, Position: 1);
+        _github.Queue = GhAnswers.MergeQueue("queued", _github.Pr.Head, 1);
         (await Hold(flight)).Error.ShouldBeNull();
 
         F(flight.Code).MergeWhenGreen.ShouldBeNull();

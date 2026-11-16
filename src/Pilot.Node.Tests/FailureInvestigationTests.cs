@@ -65,7 +65,7 @@ public sealed class FailureInvestigationTests
         _github.FailedRuns[(pr, queue)] = new FailedRun(id, $"https://github.com/x/tianwen/actions/runs/{id}", ["build"], log ?? Log());
 
     private void QueueRemoval(string head, string reason = "failed checks") =>
-        _github.Queue = new MergeQueueState("OPEN", head, Queued: false, RemovedAt: DateTimeOffset.UtcNow.AddSeconds(-5), RemovedReason: reason);
+        _github.Queue = GhAnswers.MergeQueue("dropped", head, removedAt: DateTimeOffset.UtcNow.AddSeconds(-5), removedReason: reason);
 
     private (string Repo, string Title, string? Body) OneIssue() => _github.IssuesCreated.ShouldHaveSingleItem();
 
@@ -119,7 +119,7 @@ public sealed class FailureInvestigationTests
         Flight("TIA72", 72, armed: [Head('b'), "squash"]);
         _github.PrFiles[72] = ["README.md"];
         _github.Pr = GhAnswers.PullRequestByBranch(number: 72, head: Head('b'), url: "https://github.com/x/tianwen/pull/72");
-        _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 1, 2, "build", "https://github.com/x/tianwen/actions/runs/5002");
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 1, 2, "build", "https://github.com/x/tianwen/actions/runs/5002");
         FailedRun(72, queue: false, id: 5002);
 
         await Checks().LookAsync(Ct);
@@ -161,7 +161,7 @@ public sealed class FailureInvestigationTests
         Flight("TIA74", 74, armed: [Head('d'), "squash"]);
         _github.Queue = null;
         _github.Pr = GhAnswers.PullRequestByBranch(number: 74, head: Head('d'), url: "https://github.com/x/tianwen/pull/74");
-        _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 1, 2, "build", null);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 1, 2, "build", null);
         FailedRun(74, queue: false, id: 5003, Log().Replace("10s", "12s"));
         await Checks().LookAsync(Ct);
 
@@ -212,7 +212,7 @@ public sealed class FailureInvestigationTests
         Flight("TIA74", 74, armed: [Head('d'), "squash"]);
         _github.Queue = null;
         _github.Pr = GhAnswers.PullRequestByBranch(number: 74, head: Head('d'), url: "https://github.com/x/tianwen/pull/74");
-        _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 1, 2, "build", null);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 1, 2, "build", null);
         _github.PrFiles[74] = ["b.cs"];
         _github.FailedRuns[(74, false)] = new FailedRun(5003, "https://github.com/x/tianwen/actions/runs/5003", ["test (ubuntu-latest)", "gate"],
             Log().Replace("[xUnit.net 00:00:41.52]     ", "test (ubuntu-latest)\tTest\t2026-11-09T09:00:00.0000000Z [xUnit.net 00:00:41.52]     "));

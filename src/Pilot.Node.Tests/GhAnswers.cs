@@ -91,18 +91,28 @@ internal static class GhAnswers
 
     /// <summary>One entry of <c>OpenPullRequestsAsync</c>: the open recording with the named fields changed.</summary>
     public static PullRequestStatus OpenPullRequest(int? number = null, string? title = null, string? head = null, string? url = null, bool? draft = null,
-        IReadOnlyList<string>? labels = null)
+        IReadOnlyList<string>? labels = null, string? checks = null)
     {
         var o = First("open-pull-requests", "draft", GhCli.OpenPullRequestFields, "OpenPullRequestsAsync (GhCli.OpenPullRequestFields)");
         o.Set("number", number);
         o.Set("title", title);
         o.Set("headRefName", head);
         o.Set("url", url);
-        o.Set("isDraft", draft);
-        if (labels is not null)
+        // The one recording is a draft with labels and failing checks; a PR the test does not say more of is a plain one: ready, unlabelled, no checks.
+        o.Put("isDraft", JsonValue.Create(draft ?? false));
+        o.Put("labels", new JsonArray([.. (labels ?? []).Select(l => (JsonNode?)new JsonObject { ["name"] = l })]));
+        o.Put("statusCheckRollup", new JsonArray([.. (checks switch
         {
-            o.Put("labels", new JsonArray([.. labels.Select(l => (JsonNode?)new JsonObject { ["name"] = l })]));
-        }
+            null => Array.Empty<(string, string)>(),
+            ChoiceStatus.Passing => [("COMPLETED", "SUCCESS")],
+            ChoiceStatus.Pending => [("IN_PROGRESS", "")],
+            ChoiceStatus.Failing => [("COMPLETED", "FAILURE")],
+            _ => throw new ArgumentOutOfRangeException(nameof(checks), checks, "no recorded check run says that"),
+        }).Select(c => (JsonNode?)new JsonObject
+        {
+            ["__typename"] = "CheckRun", ["name"] = "gate", ["status"] = c.Item1, ["conclusion"] = c.Item2,
+            ["workflowName"] = "v2 (.NET)", ["detailsUrl"] = "https://github.com/SharpAstro/pilot/actions/runs/1/job/1",
+        })]));
         return GhCli.ParseOpenPullRequests($"[{o.Json}]").Single();
     }
 
@@ -130,6 +140,39 @@ internal static class GhAnswers
             ["name"] = c.Name,
         })]).ToJsonString());
 
+    /// <summary>
+    /// What <c>ChecksSummaryAsync</c> returns for <paramref name="total"/> checks of which <paramref name="done"/> have finished (the parser counts every
+    /// check not pending as done): passing is all passes (done = total); pending needs a pending check, so done &lt; total; failing is one failed check named
+    /// <paramref name="failedName"/> (linking to <paramref name="failedLink"/>) among the finished ones. A count no gh answer can give throws.
+    /// </summary>
+    public static ChecksSummary ChecksOf(string status, int done, int total, string? failedName = null, string? failedLink = null)
+    {
+        var checks = new List<(string Bucket, string Name, string? Link)>();
+        switch (status)
+        {
+            case ChoiceStatus.Passing when done == total && total > 0 && failedName is null:
+                checks.AddRange(Enumerable.Range(1, total).Select(i => ("pass", $"check {i}", (string?)null)));
+                break;
+            case ChoiceStatus.Pending when done < total && done >= 0 && failedName is null:
+                checks.AddRange(Enumerable.Range(1, done).Select(i => ("pass", $"check {i}", (string?)null)));
+                checks.AddRange(Enumerable.Range(done + 1, total - done).Select(i => ("pending", $"check {i}", (string?)null)));
+                break;
+            case ChoiceStatus.Failing when done >= 1 && done <= total:
+                checks.Add(("fail", failedName ?? "gate", failedLink));
+                checks.AddRange(Enumerable.Range(2, done - 1).Select(i => ("pass", $"check {i}", (string?)null)));
+                checks.AddRange(Enumerable.Range(done + 1, total - done).Select(i => ("pending", $"check {i}", (string?)null)));
+                break;
+            default:
+                throw new ArgumentException($"No gh pr checks answer is {status} with {done} of {total} done (failed check: {failedName ?? "none"}).");
+        }
+        return GhCli.ParseChecks(new JsonArray([.. checks.Select(c => (JsonNode?)new JsonObject
+        {
+            ["bucket"] = c.Bucket,
+            ["link"] = c.Link ?? $"https://github.com/SharpAstro/pilot/actions/runs/1/job/{c.Name.Length}",
+            ["name"] = c.Name,
+        })]).ToJsonString())!;
+    }
+
     /// <summary>What <c>ChecksSummaryAsync</c> returns when one check, named gate, has the <see cref="ChoiceStatus"/> given.</summary>
     public static ChecksSummary ChecksOf(string status) => Checks((status switch
     {
@@ -140,13 +183,38 @@ internal static class GhAnswers
     }, "gate"))!;
 
     /// <summary>What <c>MergeQueueAsync</c> returns: the queue recording of <paramref name="state"/> (queued, idle, dropped), for the PR head <paramref name="head"/>, at <paramref name="position"/> when queued.</summary>
-    public static MergeQueueState MergeQueue(string state = "idle", string? head = null, int? position = null)
+    public static MergeQueueState MergeQueue(string state = "idle", string? head = null, int? position = null, string? prState = null,
+        DateTimeOffset? removedAt = null, string? removedReason = null)
     {
         var o = JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "gh", "queue-" + state + ".json")))!;
         var pr = o["data"]!["repository"]!["pullRequest"]!.AsObject();
         if (head is not null)
         {
             pr["headRefOid"] = head;
+        }
+        if (prState is not null)
+        {
+            pr["state"] = prState;
+        }
+        if (removedAt is not null || removedReason is not null)
+        {
+            if (state != "dropped")
+            {
+                throw new ArgumentException($"Only the 'dropped' queue recording has a removal to change, not '{state}'.", nameof(removedAt));
+            }
+            var last = pr["timelineItems"]!["nodes"]!.AsArray().Last()!.AsObject();
+            if (removedAt is not null)
+            {
+                last["createdAt"] = Utc(removedAt.Value);
+            }
+            if (removedReason is not null)
+            {
+                if (!System.Text.RegularExpressions.Regex.IsMatch(removedReason, "^[A-Z_]+$"))
+                {
+                    throw new ArgumentException($"GitHub's RemovedFromMergeQueueEvent.reason is an enum (FAILED_CHECKS, MERGE_CONFLICT, ...), not '{removedReason}'.", nameof(removedReason));
+                }
+                last["reason"] = removedReason;
+            }
         }
         if (position is not null)
         {

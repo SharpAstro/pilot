@@ -154,7 +154,7 @@ public sealed class MergeRefusalTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
 
         var result = await Merge(node);
 
@@ -244,7 +244,7 @@ public sealed class MergeRefusalTests
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
         Flight(node);
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 2, 3);
 
         Refused(await Merge(node), Persons(MergeAction.RerunFailedCheck), "checks fail");
     }

@@ -96,7 +96,7 @@ public sealed class MergeTakeBackTests : IDisposable
 
     private static async Task ArmNodeMerge(NodeHarness node, CardRow ready)
     {
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
         (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
         node.State.Flights().Single().MergeWhenGreen.ShouldNotBeNull();
     }
@@ -110,8 +110,8 @@ public sealed class MergeTakeBackTests : IDisposable
 
     private static async Task Queue(NodeHarness node, CardRow ready)
     {
-        node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: true, Position: 2);
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        node.GitHub.Queue = GhAnswers.MergeQueue("queued", PrHead, 2);
+        node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         (await Answer(node, ready, "Merge")).Error.ShouldBeNull();
     }
 

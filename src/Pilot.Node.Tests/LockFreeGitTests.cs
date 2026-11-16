@@ -320,7 +320,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         var (flight, _) = await Passed("1");
         var gate = new Gate();
         _github.AutoMergeAllowed = true;
-        _github.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
         _github.OnCall = call => call == nameof(IGitHub.PullRequestAsync) ? gate.PassAsync() : Task.CompletedTask;
         var head = _github.Pr!.Head;
 

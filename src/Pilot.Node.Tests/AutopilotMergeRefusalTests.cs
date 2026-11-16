@@ -228,7 +228,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         {
             if (call == nameof(IGitHub.PullRequestAsync) && _state.Merges().Any(m => m.Open))
             {
-                _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3);
+                _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 2, 3);
             }
             return Task.CompletedTask;
         };

@@ -213,8 +213,8 @@ public abstract class PrReviewTestsBase : IDisposable
     private protected async Task ReviewedWidget(string verdict, string checks = ChoiceStatus.Passing, bool queue = true)
     {
         _github.Login = "ada";
-        _github.Queue = queue ? new MergeQueueState("OPEN", _widgetHead, false) : null;
-        _github.Summary = new ChecksSummary(checks, 1, 1);
+        _github.Queue = queue ? GhAnswers.MergeQueue("idle", _widgetHead) : null;
+        _github.Summary = checks == ChoiceStatus.Pending ? GhAnswers.ChecksOf(checks, 0, 1) : GhAnswers.ChecksOf(checks, 1, 1);
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
         (await Run(Verbs.PrVerdict, "pr/acme/widget#7", Row("acme/widget", 7).Reviewer, verdict, "Fine.")).Error.ShouldBeNull();
         await _reviews.SweepAsync(Ct);
@@ -639,7 +639,7 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     {
         await ReviewedWidget("approve", checks: ChoiceStatus.Pending);
         _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Head = new string('a', 40) };
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
         await _reviews.SweepAsync(Ct);
         _github.Merged.ShouldBeEmpty();
         Row("acme/widget", 7).QueueNote.ShouldNotBeNull().ShouldContain("newer than the review");
@@ -655,7 +655,7 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
         _github.Merged.ShouldBeEmpty();
         Row("acme/widget", 7).State.ShouldBe(PrReviewState.Closed);
 
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
         await _reviews.SweepAsync(Ct);
         _github.Merged.ShouldBe([(7, _widgetHead, "squash")]);
         await _reviews.SweepAsync(Ct);
@@ -705,8 +705,8 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     public async Task ADraftQueuesNothing()
     {
         _github.Login = "ada";
-        _github.Queue = new MergeQueueState("OPEN", _widgetHead, false);
-        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
+        _github.Queue = GhAnswers.MergeQueue("idle", _widgetHead);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
         // A review's start marks a draft ready (PIL483); a PR made a draft again meanwhile is still not queued.
         _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Draft = true };
