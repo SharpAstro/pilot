@@ -33,6 +33,10 @@ public sealed class FlightArchiver(NodeState state, IGit? git = null, RemovalQue
         {
             return state.Complete(command, ex.Message);
         }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException)
+        {
+            return state.Complete(command, $"{command.Verb} failed: {ex.Message}");
+        }
     }
 
     private static string CodeOf(CommandRequest command) =>
@@ -116,7 +120,8 @@ public sealed class FlightArchiver(NodeState state, IGit? git = null, RemovalQue
         {
             return $"its plane folder {flight.Worktree} waits in the removal queue";
         }
-        if (git is not null)
+        // A repo folder that is gone has no branch to wait for (and git cannot start in it).
+        if (git is not null && Directory.Exists(flight.RepoPath))
         {
             foreach (var reference in new[] { $"refs/heads/{flight.Branch}", $"refs/remotes/origin/{flight.Branch}" })
             {

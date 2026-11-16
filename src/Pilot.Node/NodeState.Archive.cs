@@ -74,7 +74,8 @@ public sealed partial class NodeState
             }
             var whole = archive.Read(found.Code) ?? throw new FlightException($"the archive's file of {found.Code} cannot be read");
             var now = _time.GetUtcNow();
-            Publish(new FlightAddedEvent { Seq = _seq + 1, At = now, Flight = whole.Flight });
+            var restored = whole.Flight with { RestoredAt = now };
+            Publish(new FlightAddedEvent { Seq = _seq + 1, At = now, Flight = restored });
             foreach (var leg in whole.Legs)
             {
                 Publish(new LegAddedEvent { Seq = _seq + 1, At = now, Leg = leg });
@@ -89,7 +90,7 @@ public sealed partial class NodeState
                 Publish(new CardAddedEvent { Seq = _seq + 1, At = now, Card = back });
             }
             archive.Delete(found.Code);
-            return whole.Flight;
+            return restored;
         }
     }
 

@@ -107,9 +107,9 @@ internal sealed partial class FlightsView<TSurface>
         if (CanCommand && OnAction is not null && ArchivableLanded(screen) is { Count: > 0 } landed)
         {
             yield return Presses.Button(ArchiveLandedKey, ArchiveLandedHit,
-                () => CardsView<TSurface>.HeaderPill($"Archive landed ({landed.Count})", ArchiveLandedHit, () => _ = ArchiveLanded(landed))
+                () => CardsView<TSurface>.HeaderPill($"Archive landed ({landed.Count})", ArchiveLandedHit, () => _ = ArchiveLanded(landed), (P.Button, P.ButtonHover), P.Bright)
                     .WithTooltip("Archive the landed flights shown, each on its own node"),
-                pressed => CardsView<TSurface>.Dead(pressed ? $"Archive landed ({landed.Count}) …" : $"Archive landed ({landed.Count})"));
+                pressed => CardsView<TSurface>.DeadHeaderPill(pressed ? $"Archive landed ({landed.Count}) …" : $"Archive landed ({landed.Count})", (P.Button, P.ButtonHover)));
         }
         if (screen.ArchivedCount > 0)
         {

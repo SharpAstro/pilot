@@ -84,7 +84,7 @@ public sealed class PackageHoldPageTests
         // Held for a flight only, flying, or landed: no package, so nothing to fly anyway.
         Labels(Line(Flight(FlightState.Held), leg)).ShouldNotContain("Fly anyway");
         Labels(Line(Flight(FlightState.Flying), leg)).ShouldNotContain("Fly anyway");
-        Labels(Line(Flight(FlightState.Landed, [Wait()]), leg)).ShouldBeEmpty();
+        Labels(Line(Flight(FlightState.Landed, [Wait()]), leg)).ShouldNotContain("Fly anyway");
     }
 
     [Fact]

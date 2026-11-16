@@ -69,8 +69,8 @@ public sealed class FlightArchiveSweep(NodeState state, FlightArchiver archiver,
         }
         var cutoff = time.GetUtcNow() - after;
         var due = state.Flights()
-            .Where(f => f.State == FlightState.Landed && (f.LandedAt ?? DateTimeOffset.MinValue) <= cutoff)
-            .OrderBy(f => f.LandedAt)
+            .Where(f => f.State == FlightState.Landed && AgeFrom(f) <= cutoff)
+            .OrderBy(AgeFrom)
             .Select(f => f.Code)
             .ToList();
         var archived = 0;
@@ -83,19 +83,20 @@ public sealed class FlightArchiveSweep(NodeState state, FlightArchiver archiver,
             {
                 continue;
             }
-            if (await archiver.WhyNotAsync(flight, cancellationToken) is { } why)
-            {
-                Say(flight, why);
-                continue;
-            }
             try
             {
+                if (await archiver.WhyNotAsync(flight, cancellationToken) is { } why)
+                {
+                    Say(flight, why);
+                    continue;
+                }
                 state.ArchiveFlight(code);
                 _told.Remove(code);
                 archived++;
             }
-            catch (FlightException ex)
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
+                // One flight that cannot be judged or archived (a vanished repo folder, a store fault) never stops the ones after it.
                 await Error.WriteLineAsync($"flight archive sweep: {code} not archived: {ex.Message}");
                 continue;
             }
@@ -120,6 +121,10 @@ public sealed class FlightArchiveSweep(NodeState state, FlightArchiver archiver,
         }
         return archived;
     }
+
+    // A brought-back flight is as old as its restoring, so the sweep does not take it away again at the next tick.
+    private static DateTimeOffset AgeFrom(FlightRow f) =>
+        f.RestoredAt is { } restored && restored > (f.LandedAt ?? DateTimeOffset.MinValue) ? restored : f.LandedAt ?? DateTimeOffset.MinValue;
 
     private void Say(FlightRow flight, string why)
     {

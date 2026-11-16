@@ -83,6 +83,13 @@ public sealed record FlightRow
     public DateTimeOffset? LandedAt { get; init; }
 
     /// <summary>
+    /// When it was brought back from the archive (PIL1083); null if it never was. The archive sweep counts a landed flight's age from the
+    /// later of this and <see cref="LandedAt"/>, so a flight brought back stays live for the whole archive-landed-after period.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? RestoredAt { get; init; }
+
+    /// <summary>
     /// The head its PR merged at while a leg was planned or flying (#342): the merge went without that leg's work, so the flight
     /// is not landed as merged, and when its legs are done the base, which holds this head, is merged into the plane and it goes up
     /// as a new PR. Null otherwise.
