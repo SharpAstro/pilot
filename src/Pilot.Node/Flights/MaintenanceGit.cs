@@ -171,8 +171,7 @@ public sealed partial class MaintenanceGit : IMaintenanceStep
                 var dry = await TryAsync("git", [.. LfsCommand, "--dry-run"], repo, cancellationToken);
                 if (dry is { ExitCode: 0 })
                 {
-                    var (count, size) = ParseLfsDryRun(dry.Output + "
-" + dry.Error);
+                    var (count, size) = ParseLfsDryRun(dry.Output + "\n" + dry.Error);
                     if (count > 0 || size > 0)
                     {
                         list.Add(new MaintenanceItem(name, size, $"git lfs prune --dry-run: {count.ToString(CultureInfo.InvariantCulture)} files would be pruned"));

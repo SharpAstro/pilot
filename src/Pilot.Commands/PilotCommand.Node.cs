@@ -54,7 +54,23 @@ public static partial class PilotCommand
             var maintenanceOut = new Option<string?>("--out") { Description = "Write every item to this file as tab-separated lines (step, item, bytes, reason)" };
             var maintenance = Action(new Command("maintenance", "Run the idle-time disk sweep now (git, LFS, old packages, job folders) and print what each step freed and the free space before and after; refused while a leg flies or a job runs")
                 { Options = { maintenanceDry, maintenanceAll, maintenanceOut, actingOn } },
-                (p, client, ct) => Send(client, Verbs.Maintenance, Verbs.NodeTarget, [.. p.GetValue(maintenanceDry) ? ["--dry-run"] : [], .. p.GetValue(maintenanceAll) ? ["--all"] : [], .. p.GetValue(maintenanceOut) is { Length: > 0 } outFile ? ["--out", outFile] : []], who, ct, p.GetValue(actingOn)));
+                (p, client, ct) =>
+                {
+                    var flags = new List<string>();
+                    if (p.GetValue(maintenanceDry))
+                    {
+                        flags.Add("--dry-run");
+                    }
+                    if (p.GetValue(maintenanceAll))
+                    {
+                        flags.Add("--all");
+                    }
+                    if (p.GetValue(maintenanceOut) is { Length: > 0 } outFile)
+                    {
+                        flags.AddRange(["--out", outFile]);
+                    }
+                    return Send(client, Verbs.Maintenance, Verbs.NodeTarget, [.. flags], who, ct, p.GetValue(actingOn));
+                });
             // node lift-limit: a usage limit that is another login's (#1123). The card has the same choice; this is for a card marked read.
             var liftWhy = Words("why", "Why the limit does not hold, for the record", required: false);
             var liftLimit = Action(new Command("lift-limit", "End the usage limit the node holds its starts for, when the limit is not this login's (you logged in again and sessions take turns): the node starts sessions again, and a limit of a session that began before now no longer counts")
