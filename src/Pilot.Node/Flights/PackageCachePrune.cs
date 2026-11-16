@@ -52,7 +52,7 @@ public sealed class PackageCachePrune : IMaintenanceStep
 
     /// <summary>
     /// Whether the volume of the packages folder records last access, asked once per run. Where it does not, the age rule proves nothing and only
-    /// versions that no assets file names go. Defaults to <see cref="ProbeLastAccess"/>; a seam for tests.
+    /// versions that no assets file names go. Defaults to <see cref="ProbeLastAccessAsync"/>; a seam for tests.
     /// </summary>
     public Func<string, CancellationToken, Task<bool>>? RecordsLastAccess { get; init; }
 
