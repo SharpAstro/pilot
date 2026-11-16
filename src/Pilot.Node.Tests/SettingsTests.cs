@@ -127,7 +127,7 @@ public sealed class SettingsTests : IDisposable
         days.ArchiveLandedAfter.ShouldBe(TimeSpan.FromDays(3));
         days.Get("archive-landed-after").ShouldBe(["3d"]);
         NodeSettings.With(new NodeSettings(), "archive-landed-after", ["12h"]).Settings!.ArchiveLandedAfter.ShouldBe(TimeSpan.FromHours(12));
-        NodeSettings.With(new NodeSettings(), "archive-landed-after", ["90"]).Error.ShouldNotBeNull();
+        NodeSettings.With(new NodeSettings(), "archive-landed-after", ["30"]).Error.ShouldNotBeNull();
 
         var off = NodeSettings.With(new NodeSettings(), "archive-landed-after", ["off"]).Settings!;
         off.Get("archive-landed-after").ShouldBe(["off"]);
