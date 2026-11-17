@@ -395,7 +395,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     /// <summary>
     /// A told, non-check row whose owner (or its replacement) sits idle and has not acted on the tell for <see cref="RetellAfter"/> is
     /// told once more, with a lead saying it is a repeat; a further <see cref="RetellAfter"/> of silence rings once. "Acted" is a turn
-    /// after the tell: <see cref="SessionRow.LastResponseAt"/> later than <see cref="JobRow.ToldAt"/>. A tell relayed into a session that
+    /// after the tell: <see cref="SessionRow.LastResponseAt"/> later than <see cref="JobRow.ToldAt"/>, a context that grew since the tell, or a
+    /// command the session sent since (#1137). Only a job something still waits on (<see cref="WhatWaits"/>) is retold, or a failed one of a
+    /// worker, reviewer or fixer. A tell relayed into a session that
     /// was mid-turn is only acted on by a turn after that busy turn, whose end is the first response seen after the tell (the node holds
     /// no per-line transcript here). Owners that ended for good are not retold. Returns whether any row was retold (#756).
     /// </summary>
@@ -437,9 +439,11 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 continue;
             }
             var waits = WhatWaits(row, ownerRow);
-            if (waits is null && row.RetoldAt is null)
+            if (waits is null && row.RetoldAt is null && !FailedOfLeggedOwner(row, ownerRow))
             {
-                // Nothing the node knows waits on this job (an ad hoc session's, or a leg that ended): the first tell stands, no repeat.
+                // Nothing the node knows waits on this job (an ad hoc session's, or a leg that ended) and it did not fail: the first tell
+                // stands, no repeat. A cancelled job is told once like a succeeded one; only a failure of a worker, reviewer or fixer is
+                // retold after what waited on it ended.
                 continue;
             }
             var lastTold = row.RetoldAt ?? row.ToldAt!.Value;
@@ -475,9 +479,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             if (row.RetoldAt is not null)
             {
                 state.PutJob(row with { RetellRung = true });
-                if (row.State == JobState.Succeeded && WhatWaits(row, ownerRow) is null)
+                if (row.State != JobState.Failed && WhatWaits(row, ownerRow) is null)
                 {
-                    // A succeeded job whose leg has finished waits on nothing: no card, and the row is not looked at again.
+                    // A succeeded or cancelled job whose leg has finished waits on nothing: no card, and the row is not looked at again.
                     continue;
                 }
                 state.RaiseCard(CardBin.Ring, UnansweredKind, Verbs.JobTarget(row.Id),
@@ -515,8 +519,11 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     /// <summary>
     /// What still waits on a job's ending, as a short phrase for the retell, or null when nothing the node knows does: a worker's job
     /// whose leg is still flying, a reviewer's job while its PR review is open, a fixer's while its fix round is open. An ad hoc,
-    /// planner or watchtower session, and a leg that is done, failed or gone, wait on nothing (#1137).
+    /// planner, leg validator or watchtower session (told once, as the issue lists only the three above), and a leg that is done, failed or gone, wait on nothing (#1137).
     /// </summary>
+    private static bool FailedOfLeggedOwner(JobRow row, SessionRow owner) =>
+        row.State == JobState.Failed && owner.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Fixer;
+
     private string? WhatWaits(JobRow row, SessionRow owner)
     {
         switch (owner.Role)
@@ -532,8 +539,12 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                     ? $"leg {flight}/{leg} is still flying and this job was started by its worker"
                     : null;
             case SessionRole.Reviewer:
-                return state.PrReviews().FirstOrDefault(r => r.State == PrReviewState.Reviewing && string.Equals(r.Reviewer, owner.Name, StringComparison.Ordinal)) is { } open
-                    ? $"the review of {open.Repo}#{open.Number} is still open and this job was started by its reviewer"
+                if (state.PrReviews().FirstOrDefault(r => r.State == PrReviewState.Reviewing && string.Equals(r.Reviewer, owner.Name, StringComparison.Ordinal)) is { } open)
+                {
+                    return $"the review of {open.Repo}#{open.Number} is still open and this job was started by its reviewer";
+                }
+                return state.Flights().FirstOrDefault(f => f.Review is { State: ReviewState.Reviewing } r && string.Equals(r.Reviewer, owner.Name, StringComparison.Ordinal)) is { } reviewed
+                    ? $"the review of flight {reviewed.Code} is still open and this job was started by its reviewer"
                     : null;
             default:
                 return state.PrReviews().FirstOrDefault(r => r.State != PrReviewState.Closed && r.Fixer is not null && string.Equals(r.Fixer, owner.Name, StringComparison.Ordinal)) is { } fixing

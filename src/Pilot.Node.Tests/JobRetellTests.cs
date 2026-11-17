@@ -38,7 +38,7 @@ public sealed class JobRetellTests : IDisposable
                 return Task.FromResult(_state.Complete(command, null, way: SayWays.Relayed));
             },
             EndedForGood = _ => _endedForGood,
-            LastCommandAt = name => name == "de1-retell-w1" ? _commandAt : null,
+            LastCommandAt = name => name == _name ? _commandAt : null,
         };
         _state.PutFlight(new FlightRow
         {
@@ -64,14 +64,16 @@ public sealed class JobRetellTests : IDisposable
     }
 
     private bool _adHoc;
+    private SessionRole? _role;
+    private string _name = "de1-retell-w1";
     private int _context;
     private DateTimeOffset? _commandAt;
 
     private void Session(SessionState sessionState, DateTimeOffset? lastResponse) =>
         _state.PutSession(new SessionRow
         {
-            Id = "w0000001", SessionId = "w0000001-0000-4000-8000-000000000000", Name = "de1-retell-w1", Kind = SessionKind.Background, Cwd = _root,
-            Role = _adHoc ? SessionRole.AdHoc : SessionRole.Worker, Flight = _adHoc ? null : "RTL1", Leg = _adHoc ? null : "one", ContextTokens = _context, ContextWindow = 200_000, SpendWeighted = 0, State = sessionState,
+            Id = "w0000001", SessionId = "w0000001-0000-4000-8000-000000000000", Name = _name, Kind = SessionKind.Background, Cwd = _root,
+            Role = _role ?? (_adHoc ? SessionRole.AdHoc : SessionRole.Worker), Flight = _adHoc || _role is not null ? null : "RTL1", Leg = _adHoc || _role is not null ? null : "one", ContextTokens = _context, ContextWindow = 200_000, SpendWeighted = 0, State = sessionState,
             LastResponseAt = lastResponse, StartedAt = _clock.GetUtcNow().AddHours(-2),
         });
 
@@ -184,6 +186,123 @@ public sealed class JobRetellTests : IDisposable
         _clock.Advance(After);
         await Sweep();
         _state.Cards().ShouldHaveSingleItem().Kind.ShouldBe(JobRunner.UnansweredKind);
+    }
+
+    // #1137 review: every WhatWaits branch, and what happens to a failed or cancelled job once what waited on it has ended.
+
+    private async Task TellAsAsync(SessionRole role, string name)
+    {
+        _role = role;
+        _name = name;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+        await TellNowAsync();
+    }
+
+    private void PutPrReview(PrReviewState reviewState, string? fixer = null) =>
+        _state.PutPrReview(new PrReviewRow
+        {
+            Repo = "x/r", Number = 7, Url = "u", Base = "main", Head = "h", ClonePath = _root, Worktree = _root, Reviewer = "de1-review-r-7",
+            Author = "ada", State = reviewState, StartedAt = _clock.GetUtcNow(), Fixer = fixer,
+        });
+
+    private void SetFlightReview(ReviewState reviewState) =>
+        _state.PutFlight(_state.Flights().Single() with { Review = new ReviewRow { State = reviewState, Reviewer = "de1-rtl1-review" } });
+
+    private async Task ShouldStayToldOnceAsync()
+    {
+        _clock.Advance(After * 3);
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _state.Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AWithdrawnFlightsSucceededJobIsNeitherRetoldNorRungFor()
+    {
+        await TellNowAsync();
+        _state.WithdrawFlight("RTL1");
+        await ShouldStayToldOnceAsync();
+    }
+
+    [Fact]
+    public async Task AFailedJobOfAWorkerWhoseLegHasEndedIsStillRetoldAndRings()
+    {
+        await TellNowAsync();
+        _state.PutJob(_state.Jobs().Single() with { State = JobState.Failed, Error = "boom" });
+        SetLeg(LegState.Done);
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+        _clock.Advance(After);
+        await Sweep();
+        _state.Cards().ShouldHaveSingleItem().Kind.ShouldBe(JobRunner.UnansweredKind);
+    }
+
+    [Fact]
+    public async Task ACancelledJobOfAWorkerWhoseLegHasEndedIsToldOnceLikeASucceededOne()
+    {
+        await TellNowAsync();
+        _state.PutJob(_state.Jobs().Single() with { State = JobState.Cancelled });
+        SetLeg(LegState.Done);
+        await ShouldStayToldOnceAsync();
+    }
+
+    [Fact]
+    public async Task APrReviewersJobIsRetoldWhileItsReviewIsOpen()
+    {
+        PutPrReview(PrReviewState.Reviewing);
+        await TellAsAsync(SessionRole.Reviewer, "de1-review-r-7");
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldContain("and the review of x/r#7 is still open and this job was started by its reviewer.");
+    }
+
+    [Fact]
+    public async Task APrReviewersJobIsNotRetoldOnceItsReviewIsNoLongerOpen()
+    {
+        PutPrReview(PrReviewState.Reviewed);
+        await TellAsAsync(SessionRole.Reviewer, "de1-review-r-7");
+        await ShouldStayToldOnceAsync();
+    }
+
+    [Fact]
+    public async Task AFlightReviewersJobIsRetoldWhileItsFlightReviewIsOpenThenRings()
+    {
+        SetFlightReview(ReviewState.Reviewing);
+        await TellAsAsync(SessionRole.Reviewer, "de1-rtl1-review");
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldContain("and the review of flight RTL1 is still open and this job was started by its reviewer.");
+
+        _clock.Advance(After);
+        await Sweep();
+        _state.Cards().ShouldHaveSingleItem().Kind.ShouldBe(JobRunner.UnansweredKind);
+    }
+
+    [Fact]
+    public async Task AFlightReviewersJobIsNotRetoldOnceItsFlightReviewPassed()
+    {
+        SetFlightReview(ReviewState.Passed);
+        await TellAsAsync(SessionRole.Reviewer, "de1-rtl1-review");
+        await ShouldStayToldOnceAsync();
+    }
+
+    [Fact]
+    public async Task AFixersJobIsRetoldWhileItsFixRoundIsOpen()
+    {
+        PutPrReview(PrReviewState.Reviewed, fixer: "de1-fix-r-7");
+        await TellAsAsync(SessionRole.Fixer, "de1-fix-r-7");
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldContain("and the fix round of x/r#7 is still open and this job was started by its fixer.");
+    }
+
+    [Fact]
+    public async Task AFixersJobIsNotRetoldOnceItsFixRoundIsClosed()
+    {
+        PutPrReview(PrReviewState.Closed, fixer: "de1-fix-r-7");
+        await TellAsAsync(SessionRole.Fixer, "de1-fix-r-7");
+        await ShouldStayToldOnceAsync();
     }
 
     [Fact]
