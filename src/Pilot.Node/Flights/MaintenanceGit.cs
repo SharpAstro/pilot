@@ -25,19 +25,12 @@ public sealed partial class MaintenanceGit : IMaintenanceStep
         Lfs,
     }
 
-    /// <summary>How many days old an unreachable object must be before <c>git gc</c> removes it, unless <see cref="PruneDays"/> says otherwise (PIL1149).</summary>
-    public const int DefaultPruneDays = NodeSettings.DefaultGitPruneDays;
-
     /// <summary>The age the gc keeps unreachable objects at while a short prune is not safe (PIL1149); git's own default.</summary>
     public const string PruneAge = "2.weeks.ago";
 
     private readonly Kind _kind;
     private readonly NodeState _state;
     private readonly Func<IReadOnlyList<string>> _repos;
-
-    internal NodeState State => _state;
-
-    internal Func<IReadOnlyList<string>> Repos => _repos;
 
     /// <summary>The git step.</summary>
     public static MaintenanceGit ForGit(NodeState state, Func<IReadOnlyList<string>> repos) => new(Kind.Git, state, repos);
@@ -72,7 +65,7 @@ public sealed partial class MaintenanceGit : IMaintenanceStep
         Run is { } run ? run(file, args, folder, cancellationToken) : MaintenanceProcess.RunAsync(file, args, folder, Priority, cancellationToken);
 
     /// <summary>Days an unreachable object may sit before the gc prunes it (the <c>git-prune-days</c> setting); read each run.</summary>
-    public Func<int> PruneDays { get; init; } = () => DefaultPruneDays;
+    public Func<int> PruneDays { get; init; } = () => NodeSettings.DefaultGitPruneDays;
 
     /// <summary>The <c>maintenance-prune-hours</c> window text, or null for always; read each run.</summary>
     public Func<string?> PruneHours { get; init; } = () => null;

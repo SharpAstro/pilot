@@ -758,9 +758,11 @@ The steps:
 
 - **git** and **lfs**: for each tracked repo, `git config --local gc.auto 0`, `git worktree prune`, `git fetch --prune`,
   `git gc --prune=<N>.days.ago` (never `--aggressive`, nothing that rewrites refs; N is the `git-prune-days` setting, 1 by default, at
-  least 1). A squash-merged landed branch leaves every one of its commits unreachable, so git's own two-week keep piled up thousands of
-  loose objects and every fetch warned "too many unreachable loose objects"; gc.auto is set to 0 so a fetch starts no auto gc, because
-  the node collects the repo itself on this schedule and, where the repo uses LFS, `git lfs prune`. A repo is skipped while a flight of it has a plane with a
+  least 1) and, where the repo uses LFS, `git lfs prune`. A squash-merged landed branch leaves every one of its commits unreachable, so
+  git's own two-week keep piled up thousands of loose objects and every fetch warned "too many unreachable loose objects"; gc.auto is
+  set to 0 so a fetch starts no auto gc, because the node collects the repo itself on this schedule. That setting is permanent (it also
+  covers the pack-count limit): if `maintenance` is turned off, or a repo is skipped for good as busy, nothing collects that repo but
+  the node's own sweep, and `gc.auto` is not restored. A repo is skipped while a flight of it has a plane with a
   live session or a running or queued job. Freed bytes are the `.git` folder's size before and after.
   The short age runs in a repo only while none of three conditions holds; otherwise that repo's gc runs at git's safe
   `--prune=2.weeks.ago`, and the run's note and the dry run's kept reasons say `short prune skipped: <why>`: (1) a flight of the

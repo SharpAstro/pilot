@@ -69,9 +69,11 @@ public sealed class MaintenanceGitTests : IDisposable
         }
     }
 
-    private MaintenanceGit Step(MaintenanceGit.Kind kind, IReadOnlyList<string> repos, Recorder recorder, bool usesLfs = false, Func<IReadOnlyList<string>, MaintenanceProcess.Outcome?>? answer = null) =>
+    private MaintenanceGit Step(MaintenanceGit.Kind kind, IReadOnlyList<string> repos, Recorder recorder, bool usesLfs = false, Func<IReadOnlyList<string>, MaintenanceProcess.Outcome?>? answer = null, string? hours = null, int hour = 12) =>
         new(kind, _state, () => repos)
         {
+            PruneHours = () => hours,
+            Time = new FixedClock(new DateTimeOffset(2026, 11, 16, hour, 30, 0, TimeSpan.Zero)),
             Run = (file, args, folder, ct) =>
             {
                 var task = recorder.Run(file, args, folder, ct);
@@ -118,13 +120,6 @@ public sealed class MaintenanceGitTests : IDisposable
 
         public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
     }
-
-    private static MaintenanceGit WithHours(MaintenanceGit step, string? hours, int hour) =>
-        new(MaintenanceGit.Kind.Git, step.State, step.Repos)
-        {
-            Run = step.Run, GitSize = _ => 0, UsesLfs = _ => false, PruneHours = () => hours,
-            Time = new FixedClock(new DateTimeOffset(2026, 11, 16, hour, 30, 0, TimeSpan.Zero)),
-        };
 
     [Fact]
     public async Task AFlightWithALegFlyingKeepsTheTwoWeekAgeAndTheNoteNamesTheFlight()
@@ -208,7 +203,7 @@ public sealed class MaintenanceGitTests : IDisposable
     {
         var repo = Repo("r");
         var recorder = new Recorder();
-        var outside = WithHours(Step(MaintenanceGit.Kind.Git, [repo], recorder), "22-06", 12);
+        var outside = Step(MaintenanceGit.Kind.Git, [repo], recorder, hours: "22-06", hour: 12);
 
         var result = await outside.RunAsync(Ct);
 
@@ -217,12 +212,12 @@ public sealed class MaintenanceGitTests : IDisposable
         result.Untouched.ShouldContain("short prune skipped: outside maintenance-prune-hours 22:00-06:00");
 
         recorder.Commands.Clear();
-        var inside = await WithHours(Step(MaintenanceGit.Kind.Git, [repo], recorder), "22-06", 23).RunAsync(Ct);
+        var inside = await Step(MaintenanceGit.Kind.Git, [repo], recorder, hours: "22-06", hour: 23).RunAsync(Ct);
         recorder.Commands.ShouldContain("git gc --prune=1.days.ago @r");
         inside.Untouched.ShouldBeNull();
 
         recorder.Commands.Clear();
-        await WithHours(Step(MaintenanceGit.Kind.Git, [repo], recorder), "22-06", 5).RunAsync(Ct);
+        await Step(MaintenanceGit.Kind.Git, [repo], recorder, hours: "22-06", hour: 5).RunAsync(Ct);
         recorder.Commands.ShouldContain("git gc --prune=1.days.ago @r");
     }
 
@@ -232,7 +227,7 @@ public sealed class MaintenanceGitTests : IDisposable
         var repo = Repo("r");
         var recorder = new Recorder();
 
-        var measure = await WithHours(Step(MaintenanceGit.Kind.Git, [repo], recorder), "22-06", 12).MeasureAsync(Ct);
+        var measure = await Step(MaintenanceGit.Kind.Git, [repo], recorder, hours: "22-06", hour: 12).MeasureAsync(Ct);
 
         measure.Kept.ShouldContain(k => k.Rule.StartsWith("short prune skipped: outside maintenance-prune-hours", StringComparison.Ordinal));
     }
@@ -288,9 +283,11 @@ public sealed class MaintenanceGitTests : IDisposable
         MaintenanceGit.ParseLfsDryRun("nothing").ShouldBe((0, 0L));
     }
 
-    private static (int Exit, string Output, string Error) RunGit(string folder, params string[] args)
+    private static (int Exit, string Output, string Error) RunGit(string folder, params string[] args) => RunGitWithInput(folder, null, args);
+
+    private static (int Exit, string Output, string Error) RunGitWithInput(string folder, string? input, params string[] args)
     {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = folder, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
+        var start = new ProcessStartInfo("git") { WorkingDirectory = folder, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = input is not null, UseShellExecute = false, CreateNoWindow = true };
         foreach (var a in new[] { "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false" }.Concat(args))
         {
             start.ArgumentList.Add(a);
@@ -298,6 +295,11 @@ public sealed class MaintenanceGitTests : IDisposable
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
+        if (input is not null)
+        {
+            process.StandardInput.Write(input);
+            process.StandardInput.Close();
+        }
         process.WaitForExit();
         return (process.ExitCode, output.Result, error.Result);
     }
@@ -445,14 +447,34 @@ public sealed class MaintenanceGitTests : IDisposable
         }
         old.ForEach(sha => Has(work, sha).ShouldBeTrue());
 
+        // Git's auto gc samples only .git/objects/17 and counts its loose files, so ~1200 young unreachable blobs (3 files there) are written in one
+        // process, and gc.auto is lowered to 1 (autoDetach off, so the warning reaches stderr): at git's default of 6700 no fetch could ever warn,
+        // with or without the step's gc.auto=0. Real blobs, since junk files in the object directory make gc fail.
+        var blobs = Path.Combine(_root, "blobs");
+        Directory.CreateDirectory(blobs);
+        var paths = new List<string>();
+        for (var i = 0; i < 1200; i++)
+        {
+            var path = Path.Combine(blobs, $"b{i}.txt");
+            File.WriteAllText(path, "young unreachable " + i);
+            paths.Add(path);
+        }
+        var hashed = RunGitWithInput(work, string.Join('\n', paths) + "\n", "hash-object", "-w", "--stdin-paths");
+        hashed.Exit.ShouldBe(0, hashed.Error);
+        Git(work, "config", "--local", "gc.auto", "1");
+        Git(work, "config", "--local", "gc.autoDetach", "false");
+        var before = RunGit(work, "fetch", "origin");
+        before.Exit.ShouldBe(0, before.Error);
+        (before.Output + before.Error).ShouldContain("unreachable loose objects"); // the precondition: without the step's gc.auto=0 the fetch warns
+
         var result = await new MaintenanceGit(MaintenanceGit.Kind.Git, _state, () => [work]) { PruneDays = () => 1 }.RunAsync(Ct);
 
         result.Untouched.ShouldBeNull();
         old.ShouldAllBe(sha => !Has(work, sha));
         young.ShouldAllBe(sha => Has(work, sha));
         Git(work, "config", "--local", "gc.auto").Trim().ShouldBe("0");
-        var (exit, _, error) = RunGit(work, "fetch", "origin");
+        var (exit, fetched, error) = RunGit(work, "fetch", "origin");
         exit.ShouldBe(0, error);
-        error.ShouldNotContain("unreachable loose objects");
+        (fetched + error).ShouldNotContain("unreachable loose objects");
     }
 }

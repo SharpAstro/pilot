@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace Pilot.Node.Flights;
+namespace Pilot.Node;
 
 /// <summary>A daily local-time window, <c>HH-HH</c> or <c>HH:MM-HH:MM</c>, that may wrap midnight (<c>22-06</c>). The start is in, the end is out.</summary>
 public readonly record struct PruneWindow(TimeSpan Start, TimeSpan End)
