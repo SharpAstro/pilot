@@ -101,7 +101,7 @@ internal static class LabelHold
             why = said;
             by = CommentBy(newest[..colon]) ?? by;
         }
-        var hold = new FlightOnHold { Reason = why, Since = time.GetUtcNow(), By = by, Labelled = true };
+        var hold = new FlightOnHold { Reason = why, Since = time.GetUtcNow(), By = by, Labelled = true, FromLabel = true };
         var held = state.UpdateFlight(code, f => f.State != FlightState.Landed && f.OnHold is null ? f with { OnHold = hold } : null);
         if (held is null)
         {
