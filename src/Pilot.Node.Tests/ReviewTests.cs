@@ -149,6 +149,12 @@ public abstract class ReviewTestsBase : IDisposable
         (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, leg), worker, "done", "did it")).Error.ShouldBeNull();
     }
 
+    /// <summary>The table a re-review opens with, answering every earlier point addressed (pilot #1107); empty before any round.</summary>
+    private protected string Answered(string code) =>
+        ReviewPoints.Number(F(code).ReviewRounds ?? []) is { Count: > 0 } points
+            ? "## Earlier points\n" + string.Join("\n", points.Select(p => $"| {p.Id} | addressed | fix.txt:1 |")) + "\n\n"
+            : "";
+
     private protected string Reviewer(string code) => $"du1-{code.ToLowerInvariant()}-review";
 
     private protected void Usage(double fiveHour, double sevenDay = 10) =>
@@ -1844,9 +1850,10 @@ public sealed class ReviewTests5 : ReviewTestsBase
         Git(Repo, "ls-remote", "origin", "flight/tia2").ShouldContain(Git(flight.Worktree, "rev-parse", "HEAD"));
 
         // Asked for changes again, the controller may pass it anyway, from the command line only (#797: no card offers it).
-        await Run(Verbs.Review, "flight/TIA2", Reviewer("TIA2"), "changes", "naming");
+        await Run(Verbs.Review, "flight/TIA2", Reviewer("TIA2"), "changes", Answered("TIA2") + "naming");
         (await Run(Verbs.Review, "flight/TIA2", "controller", "pass", "ready anyway")).Ok.ShouldBeTrue();
-        F("TIA2").Review!.Report.ShouldBe("ready anyway (passed by controller over: naming)");
+        F("TIA2").Review!.Report.ShouldStartWith("ready anyway (passed by controller over: ");
+        F("TIA2").Review!.Report.ShouldContain("naming");
         Open().ShouldHaveSingleItem().Kind.ShouldBe(LegCommander.PrReady);
     }
 

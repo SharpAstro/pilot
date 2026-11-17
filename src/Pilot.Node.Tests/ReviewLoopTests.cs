@@ -31,7 +31,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
                 (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
                 await Started(_legs, flight.Code);
             }
-            (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", $"## Blocking\n- finding of round {round}")).Error.ShouldBeNull();
+            (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", Answered(flight.Code) + $"## Blocking\n- finding of round {round}")).Error.ShouldBeNull();
         }
         return flight.Code;
     }
@@ -147,7 +147,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         Commit(F(code).Worktree, "fix4.txt");
         (await Run(Verbs.StartReview, Verbs.FlightTarget(code), Tower)).Error.ShouldBeNull();
         await Started(_legs, code);
-        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", "## Blocking\n- finding of round 4")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", Answered(code) + "## Blocking\n- finding of round 4")).Error.ShouldBeNull();
 
         // The fourth round with changes holds the loop again: a fifth needs another word.
         Open().ShouldContain(c => c.Kind == LegCommander.ReviewLoopKind);
@@ -182,7 +182,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         Commit(F(code).Worktree, "fix3.txt");
         (await Run(Verbs.StartReview, Verbs.FlightTarget(code), "controller")).Error.ShouldBeNull();
         await Started(_legs, code);
-        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass", "read the fixes")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass", Answered(code) + "read the fixes")).Error.ShouldBeNull();
         return code;
     }
 
@@ -220,7 +220,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         (await Run(Verbs.StartReview, Verbs.FlightTarget(code), "controller")).Error.ShouldBeNull();
         await Started(_legs, code);
 
-        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", "## Blocking\n- finding of round 4")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", Answered(code) + "## Blocking\n- finding of round 4")).Error.ShouldBeNull();
 
         // Changes, changes, pass, changes: three rounds asked for changes, so the loop is held at the fourth round.
         Open().ShouldContain(c => c.Kind == LegCommander.ReviewLoopKind);
