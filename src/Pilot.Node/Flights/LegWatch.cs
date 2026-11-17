@@ -204,7 +204,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             Outage.OpenJudgedLimit(limit.Until, limit.Why, now, loginChanged, limit.Family);
         }
-        Outage.Look(sessions, now);
+        Outage.Look(sessions, now, state.Usage());
         if (Outage.LastWindow is { } ended && ended != _seenWindow)
         {
             // An outage ended since the last look: every start that fell in it is redone once, before any ladder of its own.
