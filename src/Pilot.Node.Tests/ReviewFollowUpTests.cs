@@ -77,9 +77,11 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         body.ShouldContain("merged without being made");
         F(code).FollowUpPoints.ShouldNotBeNull().Length.ShouldBe(3);
 
-        // A second ask files nothing more.
-        (await Merge(code)).Error.ShouldBeNull();
+        // A second ask (the flight has landed) files nothing more.
+        var commentsBefore = _github.IssueComments.Count;
+        (await Merge(code)).Error.ShouldNotBeNull().ShouldContain("landed");
         _github.IssuesCreated.ShouldHaveSingleItem();
+        _github.IssueComments.Count.ShouldBe(commentsBefore);
     }
 
     [Fact]
