@@ -275,6 +275,19 @@ public sealed class DesignerTests : IDisposable
     }
 
     [Theory]
+    // The node's CLI where the path holds no space: Briefs.Run writes it unquoted, backslashes and all, and in PowerShell that runs as it is.
+    [InlineData("PowerShell", "C:\\Users\\JohnSmith\\pilot2\\pilot.exe design draft DSN-1")]
+    [InlineData("PowerShell", "C:\\Users\\JohnSmith\\pilot2\\pilot.exe --node-socket \"C:\\tmp\\n.sock\" design show DSN-1")]
+    [InlineData("Bash", "C:/Users/JohnSmith/pilot2/pilot.exe design check DSN-1")]
+    public void TheNodesOwnCliWithNoSpaceUnquotedIsLetThrough(string tool, string command)
+    {
+        Briefs.Run("C:\\Users\\JohnSmith\\pilot2\\pilot.exe", null).ShouldBe("C:\\Users\\JohnSmith\\pilot2\\pilot.exe");
+        var id = New("words");
+        ListedAs("job00001", "de1-dsn1-designer");
+        Decide(ShellHook("job00001-0000-4000-8000-000000000000", tool, _store.FolderOf(id), command), cli: "C:\\Users\\JohnSmith\\pilot2\\pilot.exe").ShouldBeNull();
+    }
+
+    [Theory]
     [InlineData("Bash", "pilot design check DSN-1")]
     [InlineData("Bash", "\"/opt/pilot dir/pilot\" --node-socket \"/tmp/n.sock\" design publish DSN-1 --why message")]
     [InlineData("Bash", "ls draft")]
