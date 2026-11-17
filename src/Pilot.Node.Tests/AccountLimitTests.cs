@@ -562,6 +562,57 @@ public sealed class AccountLimitTests
     }
 
     [Fact]
+    public async Task ALimitSeenWhileItsWindowAlreadyReadUnderNinetyIsEndedByTheNextRewriteOfThoseFigures()
+    {
+        var until = Start.AddHours(1.5);
+        _state.PutUsage(Figures(Start.AddMinutes(-1), 1, Start.AddHours(5)));
+        _state.PutSession(LimitRow(Mail, until));
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBe(until);
+
+        // The same figures written again 3 minutes later (inside the journal's 10 minutes): nothing changed, but they were rewritten.
+        _time.Advance(TimeSpan.FromMinutes(3));
+        var rewrite = _time.GetUtcNow();
+        _state.PutUsage(Figures(rewrite, 1, Start.AddHours(5)));
+        await _watch.LookAsync(Ct);
+
+        _outage.LimitUntil.ShouldBeNull();
+        _state.Cards().Single(c => c.Kind == TurnOutage.LimitCardKind).Outcome.ShouldBe(
+            $"the account's usage reads 1% since {rewrite.ToLocalTime():HH:mm} (figures 0 min old), so the usage limit no longer holds");
+    }
+
+    [Fact]
+    public async Task ALimitFirstSeenAfterTheResetFiguresWereWrittenIsNeverEndedByThem()
+    {
+        var until = Start.AddHours(1.5);
+        _state.PutUsage(Figures(Start.AddMinutes(-10), 1, Start.AddHours(5)));
+        _time.Advance(TimeSpan.FromMinutes(5));
+        _state.PutSession(LimitRow(Mail, until));
+        await _watch.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromMinutes(20));
+        await _watch.LookAsync(Ct);
+
+        _outage.LimitUntil.ShouldBe(until);
+    }
+
+    [Fact]
+    public async Task AnExtensionRejudgesTheWindowButKeepsTheFirstSighting()
+    {
+        var until = await OpenFiveHourLimitAsync();
+        var later = until.AddHours(5);
+        _time.Advance(TimeSpan.FromMinutes(1));
+        // Figures for the later window, written after the first sighting but before the extension.
+        _state.PutUsage(Figures(_time.GetUtcNow().AddSeconds(-30), 1, later));
+        _outage.OpenLimit(later, "again", _time.GetUtcNow());
+        _outage.LimitUntil.ShouldBe(later);
+
+        // The window is judged again (the 5-hour one at the later reset), and the sighting was not moved, so those figures end it.
+        _time.Advance(TimeSpan.FromMinutes(1));
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task AHundredPercentWithTheSameResetEndsNothing()
     {
         var until = await OpenFiveHourLimitAsync();

@@ -6,6 +6,17 @@ namespace Pilot.Node;
 
 public sealed partial class NodeState
 {
+    private DateTimeOffset? _usageWrittenAt;
+
+    /// <summary>When the held figures were last written, rewrites that changed nothing included (<see cref="UsageRow.ReadAt"/> is when they last changed); null before any.</summary>
+    public DateTimeOffset? UsageWrittenAt()
+    {
+        lock (_gate)
+        {
+            return _usage is { } u ? (_usageWrittenAt is { } w && w > u.ReadAt ? w : u.ReadAt) : null;
+        }
+    }
+
     /// <summary>The account's usage as last read; null before any.</summary>
     public UsageRow? Usage()
     {
@@ -25,9 +36,15 @@ public sealed partial class NodeState
         lock (_gate)
         {
             var usage = UsageRow.Newest(_usage, read);
+            _usageWrittenAt = null;
             if (_usage is { } held && held.Account == usage.Account && held.FiveHour == usage.FiveHour && held.SevenDay == usage.SevenDay
                 && held.LoginChangedAt == usage.LoginChangedAt && usage.ReadAt - held.ReadAt < TimeSpan.FromMinutes(10))
             {
+                // Not journalled, but the write itself is remembered: a limit seen after the first write is ended by a rewrite (#1141).
+                if (_usageWrittenAt is not { } w || usage.ReadAt > w)
+                {
+                    _usageWrittenAt = usage.ReadAt;
+                }
                 return;
             }
             Publish(new UsageChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Usage = usage });

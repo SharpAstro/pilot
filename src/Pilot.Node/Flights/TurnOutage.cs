@@ -283,9 +283,11 @@ public sealed class TurnOutage(NodeState state)
 
     private (double UsedPercent, DateTimeOffset ReadAt)? FiguresEnd(UsageRow? usage, DateTimeOffset until)
     {
+        // The write time of the figures, rewrites included: the held row's ReadAt moves only when they change.
+        var written = state.UsageWrittenAt() ?? usage?.ReadAt;
         if (_limitWindowFiveHour is not { } fiveHour || _limitSeenAt is not { } seen || _limitAccount is not { } account
-            || usage is not { HasFigures: true, Account: { } who }
-            || !string.Equals(who.Email, account, StringComparison.OrdinalIgnoreCase) || usage.ReadAt <= seen)
+            || usage is not { HasFigures: true, Account: { } who } || written is not { } wroteAt
+            || !string.Equals(who.Email, account, StringComparison.OrdinalIgnoreCase) || wroteAt <= seen)
         {
             return null;
         }
@@ -294,7 +296,7 @@ public sealed class TurnOutage(NodeState state)
         {
             return null;
         }
-        return (window.UsedPercent, usage.ReadAt);
+        return (window.UsedPercent, wroteAt);
     }
 
     private void NoteWindow(DateTimeOffset until)
@@ -392,6 +394,7 @@ public sealed class TurnOutage(NodeState state)
                 {
                     _limitUntil = until;
                     _limitFamily ??= family;
+                    // The window is judged again for the later reset; _limitSeenAt stays at the first sighting, so figures written since still count.
                     NoteWindow(until);
                     RaiseLimitCard(at, until, why);
                 }
