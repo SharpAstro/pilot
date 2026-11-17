@@ -471,7 +471,7 @@ public sealed class MaintenanceGitTests : IDisposable
         var before = RunGit(work, "fetch", "origin");
         before.Exit.ShouldBe(0, before.Error);
         var diagnosis = $"in17={Directory.GetFiles(Path.Combine(work, ".git", "objects", "17")).Length} hashed={hashed.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length} count={Git(work, "count-objects", "-v").Replace('\n', ' ')} config={Git(work, "config", "--list").Replace('\n', ' ')}";
-        (before.Output + before.Error).ShouldContain("unreachable loose objects", () => diagnosis); // the precondition: without the step's gc.auto=0 the fetch warns
+        (before.Output + before.Error).Contains("unreachable loose objects", StringComparison.OrdinalIgnoreCase).ShouldBeTrue(diagnosis); // the precondition: without the step's gc.auto=0 the fetch warns
 
         var result = await new MaintenanceGit(MaintenanceGit.Kind.Git, _state, () => [work]) { PruneDays = () => 1 }.RunAsync(Ct);
 
