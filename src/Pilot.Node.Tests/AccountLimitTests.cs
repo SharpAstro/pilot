@@ -383,4 +383,79 @@ public sealed class AccountLimitTests
         Open().ShouldBeEmpty();
         _outage.LastWindow.ShouldBe((Start, _time.GetUtcNow()));
     }
+
+    // #1123 point 4: evidence that turns are back ends a limit before its reset.
+    private static SessionRow Session(string id, string model, DateTimeOffset startedAt) => new()
+    {
+        Id = id, SessionId = $"{id}-0000-4000-8000-000000000000", Name = $"du1-{id}", Kind = SessionKind.Background, Cwd = "/work/zz",
+        Role = SessionRole.Planner, Flight = "ZZ9", ContextTokens = 1_000, ContextWindow = 200_000, State = SessionState.Idle,
+        SpendWeighted = 0, StartedAt = startedAt, Model = model,
+    };
+
+    private async Task<DateTimeOffset> OpenOpusLimitAsync()
+    {
+        var until = Start.AddHours(3);
+        _state.PutSession(Session("rep00000", "claude-opus-5-5", Start.AddHours(-1)) with { Gone = true, ApiError = "usage_limit_reached", ApiErrorResetsAt = until });
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBe(until);
+        _time.Advance(TimeSpan.FromMinutes(10));
+        return until;
+    }
+
+    [Fact]
+    public async Task ASessionStartedAfterTheLimitThatAnswersOnTheSameFamilyEndsItAndTheRowsDoNotReopenIt()
+    {
+        await OpenOpusLimitAsync();
+        var ended = 0;
+        _outage.LimitEnded += () => ended++;
+        _gate.Hold("w", 95, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeFalse();
+        _state.PutSession(Session("new00000", "claude-opus-5-5", Start.AddMinutes(5)) with { LastResponseAt = Start.AddMinutes(6) });
+
+        await _watch.LookAsync(Ct);
+
+        _outage.LimitUntil.ShouldBeNull();
+        _outage.IsOpen.ShouldBeFalse();
+        ended.ShouldBe(1);
+        _gate.Hold("w", 95, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeTrue();
+        _state.Usage().ShouldNotBeNull().LoginChangedAt.ShouldBe(_time.GetUtcNow());
+
+        _time.Advance(TimeSpan.FromMinutes(1));
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBeNull();
+        Open().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task OnlyARowOfTheSameFamilyStartedAfterTheLimitWithATurnAndNoLimitErrorEndsIt()
+    {
+        var until = await OpenOpusLimitAsync();
+        SessionRow[] rows =
+        [
+            Session("son00000", "claude-sonnet-5-5", Start.AddMinutes(5)) with { LastResponseAt = Start.AddMinutes(6) },
+            Session("old00000", "claude-opus-5-5", Start.AddMinutes(-5)) with { LastResponseAt = Start.AddMinutes(6) },
+            Session("err00000", "claude-opus-5-5", Start.AddMinutes(5)) with { LastResponseAt = Start.AddMinutes(6), ApiError = "usage_limit_reached", ApiErrorResetsAt = until },
+            Session("quiet000", "claude-opus-5-5", Start.AddMinutes(5)),
+            Session("unk00000", "mystery", Start.AddMinutes(5)) with { LastResponseAt = Start.AddMinutes(6) },
+        ];
+        foreach (var row in rows)
+        {
+            _state.PutSession(row);
+        }
+
+        await _watch.LookAsync(Ct);
+
+        _outage.LimitUntil.ShouldBe(until);
+        _gate.Hold("w", 95, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TheModelFamilyIsNamedOnceAndAnUnknownModelHasNone()
+    {
+        Verbs.ModelFamily("claude-opus-5-5").ShouldBe("Opus");
+        Verbs.ModelFamily("claude-sonnet-5-5").ShouldBe("Sonnet");
+        Verbs.ModelFamily("claude-haiku-5-5").ShouldBe("Haiku");
+        Verbs.ModelFamily("claude-fable-5-2").ShouldBe("Fable");
+        Verbs.ModelFamily("mystery").ShouldBeNull();
+        Verbs.ModelFamily(null).ShouldBeNull();
+    }
 }

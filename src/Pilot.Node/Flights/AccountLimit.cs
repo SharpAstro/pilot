@@ -11,12 +11,17 @@ namespace Pilot.Node.Flights;
 public static partial class AccountLimit
 {
     /// <summary>The latest reset after <paramref name="now"/> among the rows whose API error is a limit; null when there is none.</summary>
-    public static (DateTimeOffset Until, string Why)? FromRows(IEnumerable<SessionRow> sessions, DateTimeOffset now, DateTimeOffset? loginChangedAt = null, string? currentAccount = null)
+    public static (DateTimeOffset Until, string Why, string? Family)? FromRows(IEnumerable<SessionRow> sessions, DateTimeOffset now, DateTimeOffset? loginChangedAt = null, string? currentAccount = null, DateTimeOffset? evidenceEndedAt = null)
     {
-        (DateTimeOffset Until, string Why)? best = null;
+        (DateTimeOffset Until, string Why, string? Family)? best = null;
         foreach (var row in sessions)
         {
             // A per-minute rate limit is the LimitWait path's own, one worker's; the account limit is a usage or spend limit.
+            if (evidenceEndedAt is { } ended && row.StartedAt < ended)
+            {
+                // A later session answered a turn on the family that reported the limit: what began before that is stale, whoever's it was.
+                continue;
+            }
             if (row.Account is { } rowAccount && currentAccount is { } current)
             {
                 // The row says whose login it ran under: it counts only for that login, whenever the login changed.
@@ -34,7 +39,7 @@ public static partial class AccountLimit
                 && !error.Contains("rate_limit", StringComparison.OrdinalIgnoreCase) && !error.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
                 && row.ApiErrorResetsAt is { } resets && resets > now && (best is null || resets > best.Value.Until))
             {
-                best = (resets, $"{row.Name} stopped on {error}");
+                best = (resets, $"{row.Name} stopped on {error}", Verbs.ModelFamily(row.Model));
             }
         }
         return best;

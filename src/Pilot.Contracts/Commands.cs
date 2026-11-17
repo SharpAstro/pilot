@@ -1060,11 +1060,16 @@ public static class Verbs
 
     private static string OnModel(string model, string? effort) => $"on {ModelName(model)}{(effort is null ? "" : $" at {effort}")}";
 
-    private static string ModelName(string model) =>
-        model.Contains("opus", StringComparison.OrdinalIgnoreCase) ? "Opus"
+    private static string ModelName(string model) => ModelFamily(model) ?? model;
+
+    /// <summary>The family of a model id or name: Opus, Sonnet, Haiku or Fable; null for an unknown model. The one place the families are named.</summary>
+    public static string? ModelFamily(string? model) =>
+        model is null ? null
+        : model.Contains("opus", StringComparison.OrdinalIgnoreCase) ? "Opus"
         : model.Contains("sonnet", StringComparison.OrdinalIgnoreCase) ? "Sonnet"
         : model.Contains("haiku", StringComparison.OrdinalIgnoreCase) ? "Haiku"
-        : model;
+        : model.Contains("fable", StringComparison.OrdinalIgnoreCase) ? "Fable"
+        : null;
 
     /// <summary>What a PR target starts with: <c>pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>.</summary>
     public const string PrTargetPrefix = "pr/";
