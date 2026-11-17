@@ -105,6 +105,12 @@ public sealed record PrReviewRow
     public int? FixRound { get; init; }
 
     /// <summary>
+    /// The most fix rounds the PR may have, raised past the cap by 'Allow one more fix round' (pilot #1107): exactly one more than the
+    /// rounds it had when allowed, so the next cap rings again. Null while the cap stands; optional on the wire.
+    /// </summary>
+    public int? FixRoundsAllowed { get; init; }
+
+    /// <summary>
     /// The answer to the review's design questions (findings starting <c>design:</c>) the fixer was started on: the words given on
     /// <c>review fix</c> or the author's or controller's comment after the review. Null when there was none; optional on the wire.
     /// </summary>

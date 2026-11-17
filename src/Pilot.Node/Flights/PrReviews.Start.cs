@@ -77,6 +77,7 @@ public sealed partial class PrReviews
             FixerJob = fixOn?.FixerJob,
             FixWorktree = fixOn?.FixWorktree,
             FixRound = fixOn?.FixRound,
+            FixRoundsAllowed = fixOn?.FixRoundsAllowed,
             FixWorktreeBorrowed = fixOn?.FixWorktreeBorrowed,
             FixDetached = fixOn?.FixDetached,
             // The earlier rounds and the follow-up issue go on past a fresh review (pilot #1107): the re-review answers their points.

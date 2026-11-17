@@ -815,12 +815,14 @@ public sealed partial class LegCommander
         }
         var target = Verbs.FlightTarget(flight.Code);
         state.CloseCardsAbout(target, "its review loop was held again", ReviewLoopKind);
-        state.RaiseCard(CardBin.ForYou, ReviewLoopKind, target, $"{flight.Code}'s review is in a loop: {rounds.Length} rounds with changes",
+        // The rounds the PR has had in all, and every point in three groups (pilot #1107), read from the stored answers.
+        detail.AppendLine().AppendLine($"Points after {ReviewRing.Rounds(rounds)}:").Append(ReviewRing.Points(rounds));
+        state.RaiseCard(CardBin.ForYou, ReviewLoopKind, target, $"{flight.Code}'s review is in a loop: {ReviewRing.Rounds(rounds)} in all, {rounds.Count(r => r.Verdict == ReviewState.Changes)} with changes",
             detail.ToString().TrimEnd(),
             [
                 new CardChoice { Label = "Pass with notes", Verb = Verbs.Review, Target = target, Args = ["pass", "passed with the findings noted: repeated or not blocking"] },
                 new CardChoice { Label = "Allow one more round", Verb = Verbs.AllowRound, Target = target, Args = ["the watchtower allowed it"] },
             ], link: flight.PullRequestUrl,
-            summary: $"The review of {flight.Code} (PR {flight.PullRequestUrl}) has asked for changes {rounds.Length} times. The node sends no leg round and starts no reviewer: the watchtower passes it with the findings noted, settles the disagreement in the plane ({flight.Worktree}), rings the person for what it cannot settle, or allows one more round.");
+            summary: $"The review of {flight.Code} (PR {flight.PullRequestUrl}) has had {ReviewRing.Rounds(rounds)} in all, {rounds.Count(r => r.Verdict == ReviewState.Changes)} of them asking for changes; its points: {ReviewRing.Counts(rounds)} (the detail lists each). The node sends no leg round and starts no reviewer: the watchtower passes it with the findings noted, settles the disagreement in the plane ({flight.Worktree}), rings the person for what it cannot settle, or allows one more round.");
     }
 }
