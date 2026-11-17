@@ -823,6 +823,6 @@ public sealed partial class LegCommander
                 new CardChoice { Label = "Pass with notes", Verb = Verbs.Review, Target = target, Args = ["pass", "passed with the findings noted: repeated or not blocking"] },
                 new CardChoice { Label = "Allow one more round", Verb = Verbs.AllowRound, Target = target, Args = ["the watchtower allowed it"] },
             ], link: flight.PullRequestUrl,
-            summary: $"The review of {flight.Code} (PR {flight.PullRequestUrl}) has had {ReviewRing.Rounds(rounds)} in all. Points: {ReviewRing.Counts(rounds)}. No round starts until it is passed with notes or one more is allowed.");
+            summary: $"The review of {flight.Code} (PR #{flight.PullRequest}) has had {ReviewRing.Rounds(rounds)} in all. Points: {ReviewRing.Counts(rounds)}. No round starts until it is passed with notes or one more is allowed.");
     }
 }
