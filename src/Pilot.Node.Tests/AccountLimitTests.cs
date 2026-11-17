@@ -408,7 +408,7 @@ public sealed class AccountLimitTests
         await OpenOpusLimitAsync();
         var ended = 0;
         _outage.LimitEnded += () => ended++;
-        _gate.Hold("w", 95, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeFalse();
+        _gate.Hold("w", 95, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeTrue();
         _state.PutSession(Session("new00000", "claude-opus-5-5", Start.AddMinutes(5)) with { LastResponseAt = Start.AddMinutes(6) });
 
         await _watch.LookAsync(Ct);
@@ -416,7 +416,7 @@ public sealed class AccountLimitTests
         _outage.LimitUntil.ShouldBeNull();
         _outage.IsOpen.ShouldBeFalse();
         ended.ShouldBe(1);
-        _gate.Hold("w", 95, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeTrue();
+        _gate.Hold("w", 95, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeFalse();
         _state.Usage().ShouldNotBeNull().LoginChangedAt.ShouldBe(_time.GetUtcNow());
 
         _time.Advance(TimeSpan.FromMinutes(1));
@@ -445,7 +445,7 @@ public sealed class AccountLimitTests
         await _watch.LookAsync(Ct);
 
         _outage.LimitUntil.ShouldBe(until);
-        _gate.Hold("w", 95, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeFalse();
+        _gate.Hold("w", 95, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeTrue();
     }
 
     [Fact]
