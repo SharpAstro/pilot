@@ -187,7 +187,7 @@ public sealed partial class FlightCommander
             }
             catch (FlightException ex)
             {
-                labelNote = $"{PilotMarks.NodeLabel(Machine)} is still on {flight.Item.Noun} {flight.Item.Display}: {ex.Message}";
+                labelNote = $"{PilotMarks.NodeLabel(Machine)} is still on {flight.Item.Noun}: {ex.Message}";
             }
         }
         // A hold the withdrawn flight put on the issue goes with it when no other flight of the issue is left to be held by it.
@@ -199,12 +199,12 @@ public sealed partial class FlightCommander
             }
             catch (FlightException ex)
             {
-                labelNote = $"{labelNote}{(labelNote is null ? "" : "; ")}{PilotMarks.Hold} is still on {flight.Item.Noun} {flight.Item.Display}: {ex.Message}";
+                labelNote = $"{labelNote}{(labelNote is null ? "" : "; ")}{PilotMarks.Hold} is still on {flight.Item.Noun}: {ex.Message}";
             }
         }
         // The card's subject is the issue, not flight/<code>: the code is free again and a later flight may take it.
-        state.RaiseCard(CardBin.Handled, WithdrawnKind, $"{flight.Item.Noun} {flight.Item.Display}", $"{flight.Code} withdrawn by {who}: {LegCommander.OneLine(why)}",
-            $"{flight.Title ?? flight.Item.Noun} ({flight.Item.Display}): {who} withdrew {flight.Code} as a mistake that did no work. Why: {why}{originNote}{(labelNote is null ? "" : $"; {labelNote}")}");
+        state.RaiseCard(CardBin.Handled, WithdrawnKind, $"{flight.Item.Noun}", $"{flight.Code} withdrawn by {who}: {LegCommander.OneLine(why)}",
+            $"{(flight.Title is { } title ? $"{title} ({flight.Item.Display})" : flight.Item.Noun)}: {who} withdrew {flight.Code} as a mistake that did no work. Why: {why}{originNote}{(labelNote is null ? "" : $"; {labelNote}")}");
         return flight.Code;
     }
 

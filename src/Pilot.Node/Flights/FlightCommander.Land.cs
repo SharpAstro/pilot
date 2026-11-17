@@ -346,7 +346,7 @@ public sealed partial class FlightCommander
             }
             catch (FlightException ex)
             {
-                labelNote = $"{PilotMarks.NodeLabel(Machine)} is still on {flight.Item.Noun} {flight.Item.Display}: {ex.Message}";
+                labelNote = $"{PilotMarks.NodeLabel(Machine)} is still on {flight.Item.Noun}: {ex.Message}";
             }
         }
 

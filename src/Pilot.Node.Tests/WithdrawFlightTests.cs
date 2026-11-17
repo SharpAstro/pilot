@@ -145,6 +145,50 @@ public sealed class WithdrawFlightTests : LegCommanderTestsBase
         _state.Flights().Length.ShouldBe(1);
     }
 
+    private static FlightOnHold LabelledHold() => new() { Reason = "waiting", Since = DateTimeOffset.UnixEpoch, By = "owner", Labelled = true };
+
+    [Fact]
+    public async Task AHoldLabelTheWithdrawnFlightPutOnItsIssueIsTakenOffWithIt()
+    {
+        _flights.Trackers = new Trackers([new GitHubTracker(_github)]);
+        var flight = await Fresh();
+        _state.PutFlight(flight with { OnHold = LabelledHold() });
+
+        var result = await Withdraw("TIA1", "mistake");
+
+        result.Ok.ShouldBeTrue(result.Error);
+        _github.RemoveCalls.ShouldContain((1, PilotMarks.Hold));
+    }
+
+    [Fact]
+    public async Task AHoldLabelStaysWhenASiblingFlightOfTheIssueStillFlies()
+    {
+        _flights.Trackers = new Trackers([new GitHubTracker(_github)]);
+        await Fresh();
+        (await Create(1, anyway: true, why: "second take")).Ok.ShouldBeTrue();
+        var newer = _state.Flights().Single(f => f.Code == "TIA1a");
+        _state.PutFlight(newer with { OnHold = LabelledHold() });
+
+        var result = await Withdraw("TIA1a", "mistake");
+
+        result.Ok.ShouldBeTrue(result.Error);
+        _state.Flights().Select(f => f.Code).ShouldBe(["TIA1"]);
+        _github.RemoveCalls.ShouldNotContain((1, PilotMarks.Hold));
+    }
+
+    [Fact]
+    public async Task TheWithdrawnCardNamesTheIssueOnceInItsSubjectAndFirstLine()
+    {
+        await Fresh();
+
+        (await Withdraw("TIA1", "mistake")).Ok.ShouldBeTrue();
+
+        var card = _state.Cards().Single(c => c.Kind == FlightCommander.WithdrawnKind);
+        card.Subject.ShouldBe("issue #1");
+        card.Detail.ShouldNotBeNull().ShouldStartWith("Work (#1): owner withdrew TIA1");
+        card.Detail.ShouldNotContain("#1 #1");
+    }
+
     [Fact]
     public async Task ADuplicateMadeAnywayRaisesOneCardOfferingToWithdrawTheNewer()
     {

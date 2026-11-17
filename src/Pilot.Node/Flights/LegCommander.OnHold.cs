@@ -101,7 +101,7 @@ public sealed partial class LegCommander
         string? labelNote = null;
         if (sibling is not null)
         {
-            labelNote = $"the hold is this flight's only: {sibling.Code} flies the same {flight.Item.Noun} {flight.Item.Display}, so {PilotMarks.Hold} is not put on it (it would hold {sibling.Code} too)";
+            labelNote = $"the hold is this flight's only: {sibling.Code} flies the same {flight.Item.Noun}, so {PilotMarks.Hold} is not put on it (it would hold {sibling.Code} too)";
         }
         else if (flights.Trackers?.Of(flight.Tracker) is { } tracker)
         {
@@ -126,7 +126,7 @@ public sealed partial class LegCommander
             {
                 var github = flight.Tracker == TrackerKind.GitHub;
                 flight = Record(flight.Code, f => f.OnHold is { } h ? f with { OnHold = h with { Labelled = github ? false : null } } : f) ?? flight;
-                labelNote = $"{PilotMarks.Hold} could not be put on {flight.Item.Noun} {flight.Item.Display} ({ex.Message}): the hold stands on this node"
+                labelNote = $"{PilotMarks.Hold} could not be put on {flight.Item.Noun} ({ex.Message}): the hold stands on this node"
                     + (github ? ", and the repo sweep tries the label again" : ", and it is this node's only");
             }
         }
@@ -255,14 +255,14 @@ public sealed partial class LegCommander
             var own = flight.OnHold;
             if (own.Labelled == true && own.Own != true)
             {
-                throw new FlightException($"{flight.Code} stays on hold: {PilotMarks.Hold} on {flight.Item.Noun} {flight.Item.Display} holds it, and {sibling.Code} flies the same issue; take the label off on GitHub and the repo sweep releases every flight it holds");
+                throw new FlightException($"{flight.Code} stays on hold: {PilotMarks.Hold} on {flight.Item.Noun} holds it, and {sibling.Code} flies the same issue; take the label off on GitHub and the repo sweep releases every flight it holds");
             }
             if (own.FromLabel == true)
             {
                 Record(flight.Code, f => f.OnHold is { } h ? f with { OnHold = h with { Own = null } } : f);
                 state.CloseCardsAbout(target, $"{flight.Code}'s own hold was released", OnHoldKind);
                 state.RaiseCard(CardBin.Handled, OnHoldKind, target, $"{flight.Code}'s own hold is released",
-                    $"released by {by}{(why.Length > 0 ? $": {why}" : "")}. {PilotMarks.Hold} on {flight.Item.Noun} {flight.Item.Display} still holds {flight.Code}; take the label off on GitHub to release it.");
+                    $"released by {by}{(why.Length > 0 ? $": {why}" : "")}. {PilotMarks.Hold} on {flight.Item.Noun} still holds {flight.Code}; take the label off on GitHub to release it.");
                 return $"{flight.Code}'s own hold is released; it stays on hold by {PilotMarks.Hold}, which also holds {sibling.Code}";
             }
         }
@@ -288,7 +288,7 @@ public sealed partial class LegCommander
             }
             catch (FlightException ex)
             {
-                throw new FlightException($"{flight.Code} stays on hold: {PilotMarks.Hold} could not be taken off {flight.Item.Noun} {flight.Item.Display} ({ex.Message}); take it off there and the repo sweep releases the flight");
+                throw new FlightException($"{flight.Code} stays on hold: {PilotMarks.Hold} could not be taken off {flight.Item.Noun} ({ex.Message}); take it off there and the repo sweep releases the flight");
             }
         }
         Record(flight.Code, f => f with { OnHold = null });

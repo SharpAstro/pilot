@@ -231,7 +231,7 @@ public sealed partial class FlightCommander
             // Two live flights on one issue: one card offers to withdraw the newer, beside steering the other (a duplicate is withdrawn
             // only by this button or a person's word, never by the node or the watchtower on its own).
             state.RaiseCard(CardBin.ForYou, DuplicateFlightsKind, $"flight/{code}", $"{code} and {live.Code} both fly {item.Display}",
-                $"{live.Code} ({live.State}) and {code} are live on {item.Noun} {item.Display}. {code} was made anyway: {duplicateWhy}. If it was a mistake and has done no work, withdraw it; otherwise steer {live.Code} and keep both.",
+                $"{live.Code} ({live.State}) and {code} are live on {item.Noun}. {code} was made anyway: {duplicateWhy}. If it was a mistake and has done no work, withdraw it; otherwise steer {live.Code} and keep both.",
                 [
                     new CardChoice { Label = $"Withdraw {code}", Verb = Verbs.WithdrawFlight, Target = $"flight/{code}", Args = [$"a duplicate of {live.Code}, made by mistake"] },
                     new CardChoice { Label = "Keep both", Verb = Verbs.Dismiss, Target = "" },

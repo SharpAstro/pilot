@@ -340,7 +340,7 @@ public sealed partial class RepoWatch(NodeState state, RepoCatalog repos, Planes
                 if (state.UpdateFlight(current.Code, f => f.OnHold is { Labelled: true, Own: true } h ? f with { OnHold = h with { Labelled = null, FromLabel = null } } : null) is not null)
                 {
                     state.RaiseCard(CardBin.Handled, LegCommander.OnHoldKind, target, $"{current.Code} is held by its own ground only",
-                        $"{PilotMarks.Hold} was taken off {current.Item.Noun} {current.Item.Display} on GitHub, but {ownToo.By} grounded {current.Code} itself ({ownToo.Reason}), so it stays on hold until `pilot flight unground {current.Code}`.");
+                        $"{PilotMarks.Hold} was taken off {current.Item.Noun} on GitHub, but {ownToo.By} grounded {current.Code} itself ({ownToo.Reason}), so it stays on hold until `pilot flight unground {current.Code}`.");
                 }
             }
             else if (!labelled && current.OnHold is { Labelled: true } held)
@@ -350,7 +350,7 @@ public sealed partial class RepoWatch(NodeState state, RepoCatalog repos, Planes
                     state.CloseCardsAbout(target, $"{PilotMarks.Hold} was taken off {current.Item.Display}", LegCommander.OnHoldKind);
                     state.LiftHoldFromCards(current.Code);
                     state.RaiseCard(CardBin.Handled, LegCommander.OnHoldKind, target, $"{current.Code} is off hold",
-                        $"{PilotMarks.Hold} was taken off {current.Item.Noun} {current.Item.Display} on GitHub, so the hold by {held.By} ({held.Reason}) ends. The node takes its next due step.");
+                        $"{PilotMarks.Hold} was taken off {current.Item.Noun} on GitHub, so the hold by {held.By} ({held.Reason}) ends. The node takes its next due step.");
                 }
             }
             else if (!labelled && current.OnHold is { Labelled: false } retry)

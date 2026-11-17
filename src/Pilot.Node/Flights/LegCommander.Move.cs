@@ -496,7 +496,7 @@ public sealed partial class LegCommander
             }
             catch (FlightException ex)
             {
-                state.RaiseCard(CardBin.Handled, "node-label-refused", Verbs.FlightTarget(flight.Code), $"{PilotMarks.NodeLabel(options.Machine)} is still on {flight.Item.Noun} {flight.Item.Display}", ex.Message);
+                state.RaiseCard(CardBin.Handled, "node-label-refused", Verbs.FlightTarget(flight.Code), $"{PilotMarks.NodeLabel(options.Machine)} is still on {flight.Item.Noun}", ex.Message);
             }
         }
         // OpenPr put the node label on the PR as well: it goes from there too, so the PR says which node flies it as its item does.
