@@ -242,7 +242,7 @@ public sealed class DesignerTests : IDisposable
     {
         var settings = HookCommands.DesignerSettings("/opt/pilot-node", "/tmp/n.sock");
         var designers = new Designers(_state, _store, _workers, new StartGate(_state, _time), new RoleModels(null), "DE1", _time) { Run = "pilot", GuardSettings = settings };
-        _commands.Run(new CommandRequest { Verb = Verbs.DesignNew, Target = Verbs.NodeTarget, Args = ["", "", "words"], Who = "gui" });
+        _store.New(null, null, "words", []);
         designers.Ask("DSN-1", null);
         await designers.Settled;
 
@@ -286,7 +286,7 @@ public sealed class DesignerTests : IDisposable
     {
         var calls = 0;
         var faulty = new Designers(_state, _store, new ThrowingOnceLauncher(() => calls++), new StartGate(_state, _time), new RoleModels(null), "DE1", _time) { Run = "pilot" };
-        _commands.Run(new CommandRequest { Verb = Verbs.DesignNew, Target = Verbs.NodeTarget, Args = ["", "", "words"], Who = "gui" });
+        _store.New(null, null, "words", []);
         faulty.Ask("DSN-1", null);
         faulty.Ask("DSN-1", "more");
         await faulty.Settled;
