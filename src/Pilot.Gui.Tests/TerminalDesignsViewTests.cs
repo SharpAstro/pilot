@@ -69,10 +69,8 @@ public sealed class TerminalDesignsViewTests
         button.Bounds.Y.ShouldBe(input.Bounds.Y, "one middle");
 
         chrome.Designs.BriefInput.Text = "a terminal brief";
+        // A click in the terminal runs the button's handler (HitTest invokes OnClick), so it is the press.
         CellLayout.HitTest(arranged, button.Bounds.X + 1, button.Bounds.Y).ShouldNotBeNull();
-        chrome.Designs.OnStart.ShouldNotBeNull("the host's callback is still set after the frame");
-        chrome.Designs.BriefInput.Text.ShouldBe("a terminal brief");
-        chrome.Designs.Start().ShouldBeTrue(chrome.Designs.StartNote ?? "no note");
         asked.ShouldNotBeNull().Brief.ShouldBe("a terminal brief");
         chrome.Designs.Started("DSN-7");
         chrome.Designs.OpenId.ShouldBe("DSN-7");
