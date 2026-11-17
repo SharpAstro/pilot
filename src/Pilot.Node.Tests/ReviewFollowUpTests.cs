@@ -58,6 +58,33 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task ThePassingRoundsNotesNobodyMadeAreFiledAtMergeBesideTheLeftPointAndOnlyOnce()
+    {
+        var code = await SecondRound(FirstReport);
+
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass",
+            Answers + "\n## Not blocking\n- E could be tidier in Lexer.cs:8\n- F deserves a comment in Parser.cs:40\n")).Error.ShouldBeNull();
+        // A pass with notes holds the flight; a person clears the hold untaken, so the notes were never made.
+        (await Run(Verbs.Clear, Verbs.FlightTarget(code), "me")).Error.ShouldBeNull();
+        (await Merge(code)).Error.ShouldBeNull();
+
+        var issue = _github.IssuesCreated.ShouldHaveSingleItem();
+        // The PR-ready card filed the left point first; the merge adds the unmade notes to that same issue as a comment.
+        issue.Body.ShouldNotBeNull().ShouldContain("R1.4");
+        var body = string.Join("\n", _github.IssueComments.Where(c => c.Number == F(code).FollowUpIssue).Select(c => c.Body));
+        body.ShouldContain("E could be tidier");
+        body.ShouldContain("F deserves a comment");
+        body.ShouldContain("merged without being made");
+        F(code).FollowUpPoints.ShouldNotBeNull().Length.ShouldBe(3);
+
+        // A second ask (the flight has landed) files nothing more.
+        var commentsBefore = _github.IssueComments.Count;
+        (await Merge(code)).Error.ShouldNotBeNull().ShouldContain("landed");
+        _github.IssuesCreated.ShouldHaveSingleItem();
+        _github.IssueComments.Count.ShouldBe(commentsBefore);
+    }
+
+    [Fact]
     public async Task NoPointsLeftFilesNoIssue()
     {
         var code = await SecondRound("## Blocking\n- A is wrong in Parser.cs:10\n");
@@ -234,5 +261,43 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         ReviewPoints.Number(rounds).Where(p => p.Round == 2).Select(p => p.Text).ShouldContain("C could be tidier");
         // The reviewer passed, so nothing is filed as a controller's pass anyway.
         ReviewFollowUp.Read(rounds).Items.ShouldAllBe(i => !i.Why.Contains("pass anyway"));
+    }
+
+    private static ReviewFollowUp.Standing TwoLeft(string found1, string why1, string found2, string why2) => ReviewFollowUp.Read(
+    [
+        new ReviewRound { Round = 1, Verdict = ReviewState.Changes, Findings = $"## Blocking\n- {found1}\n- {found2}\n" },
+        new ReviewRound { Round = 2, Verdict = ReviewState.Passed, Findings = "", Answers = [new("R1.1", "left", why1), new("R1.2", "left", why2)] },
+    ]);
+
+    [Fact]
+    public void APointWhoseFindingNamesNoFileIsHeadedWithTheFileItsReasonNames()
+    {
+        var standing = TwoLeft("The loop never ends", "src/X.cs:12 needs a wider change", "Other thing", "out of scope");
+
+        var points = ReviewFollowUp.Points(standing.Items);
+
+        points.ShouldContain("### R1.1: src/X.cs:12");
+        points.ShouldContain("### R1.2: no file named");
+    }
+
+    [Fact]
+    public void TwoLeftPointsGetTheirOwnWhatWouldSettleItLines()
+    {
+        var standing = TwoLeft("Parser.cs:20 renames a type", "wider", "The guard in Lexer.cs:3 is missing", "later");
+
+        var settle = standing.Items.Select(i => i.Settle).ToList();
+
+        settle[0].ShouldNotBe(settle[1]);
+        settle[0].ShouldContain("Parser.cs:20");
+        settle[1].ShouldContain("Lexer.cs:3");
+        settle.ShouldAllBe(l => !l.Contains('\n') && !l.Contains('\u2014'));
+    }
+
+    [Fact]
+    public void AFindingThatOpensWithAFileKeepsItsWordsInTheSettleLine()
+    {
+        var standing = TwoLeft("Parser.cs: the guard is missing", "wider", "Other thing", "later");
+
+        standing.Items[0].Settle.ShouldContain("the guard is missing");
     }
 }

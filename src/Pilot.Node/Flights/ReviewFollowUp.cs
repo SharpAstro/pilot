@@ -14,7 +14,46 @@ public static partial class ReviewFollowUp
     public sealed record Item(string Key, string Found, string Why, string Settle)
     {
         /// <summary>The file and line the finding names (<c>Parser.cs:20</c>), or null when it names none.</summary>
-        public string? Where => Location().Match(Found) is { Success: true } m ? m.Value : null;
+        public string? Where => FirstLocation(Found, Why);
+    }
+
+    /// <summary>The first file (and line) named in the texts, in order: what was found, then why it was left.</summary>
+    private static string? FirstLocation(params string[] texts)
+    {
+        foreach (var t in texts)
+        {
+            if (Location().Match(t ?? "") is { Success: true } m)
+            {
+                return m.Value;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>One line that says what would settle this point: the kind's action, then the point's own file and a short form of what was found, or of the reason when nothing was found.</summary>
+    private static string SettleFor(string action, string found, string why)
+    {
+        var loc = FirstLocation(found, why);
+        var basis = string.IsNullOrWhiteSpace(found) ? why : found;
+        var gist = FirstClause(basis.ReplaceLineEndings(" ").Trim());
+        if (gist.Length > 80)
+        {
+            gist = gist[..77].TrimEnd() + "...";
+        }
+        return loc is null || gist.Contains(loc, StringComparison.Ordinal) ? $"{action}: {gist}" : $"{action} for {loc}: {gist}";
+    }
+
+    /// <summary>The text up to the first <c>. ; :</c> followed by whitespace, but never a cut shorter than 20 characters, so <c>Parser.cs: the guard is missing</c> keeps its words.</summary>
+    private static string FirstClause(string text)
+    {
+        foreach (var m in Regex.Matches(text, @"(?<=[.;:])\s").Cast<Match>())
+        {
+            if (m.Index >= 20)
+            {
+                return text[..m.Index].TrimEnd('.', ';', ':');
+            }
+        }
+        return text.TrimEnd('.', ';', ':');
     }
 
     /// <summary>What a flight stands at before its merge: the points to capture, and the earlier points still answered not addressed.</summary>
@@ -54,10 +93,10 @@ public static partial class ReviewFollowUp
                 switch (answer.Answer)
                 {
                     case "left":
-                        items.Add(new Item(point.Id, point.Text, answer.Detail, "the decision or change the reason names"));
+                        items.Add(new Item(point.Id, point.Text, answer.Detail, SettleFor("the decision or change the reason names", point.Text, answer.Detail)));
                         break;
                     case "not addressed" when passedAnyway:
-                        items.Add(new Item(point.Id, point.Text, $"pass anyway{by}: not addressed", "a fix of the point, or a decision to leave it"));
+                        items.Add(PassedOver(point.Id, point.Text, $"pass anyway{by}: not addressed"));
                         break;
                     case "not addressed":
                         notAddressed.Add(point.Id);
@@ -66,11 +105,11 @@ public static partial class ReviewFollowUp
             }
             else if (passedAnyway && point.Round < last.Round)
             {
-                items.Add(new Item(point.Id, point.Text, $"pass anyway{by}: the review asked for it and the flight merged without it", "a fix of the point, or a decision to leave it"));
+                items.Add(PassedOver(point.Id, point.Text, $"pass anyway{by}: the review asked for it and the flight merged without it"));
             }
             else if (passedAnyway && point.Round == last.Round && point.Blocking)
             {
-                items.Add(new Item(point.Id, point.Text, $"pass anyway{by}: blocking in the last review, passed over", "a fix of the point, or a decision to leave it"));
+                items.Add(PassedOver(point.Id, point.Text, $"pass anyway{by}: blocking in the last review, passed over"));
             }
         }
         foreach (var round in ordered)
@@ -78,19 +117,47 @@ public static partial class ReviewFollowUp
             var n = 0;
             foreach (var text in round.LeftPoints ?? [])
             {
-                items.Add(new Item($"L{round.Round}.{++n}", text.Trim(), "a new finding in text the fix round did not touch, not marked must-block", "a decision on whether the finding stands, then its fix"));
+                items.Add(new Item($"L{round.Round}.{++n}", text.Trim(), "a new finding in text the fix round did not touch, not marked must-block", SettleFor("a decision on whether the finding stands, then its fix", text.Trim(), "")));
             }
         }
         // A point of a later round supersedes the one an earlier round left (the same key is never twice).
         return new Standing([.. items.GroupBy(i => i.Key, StringComparer.OrdinalIgnoreCase).Select(g => g.Last())], notAddressed);
     }
 
+    private static Item PassedOver(string key, string found, string why) => new(key, found, why, SettleFor("a fix of the point, or a decision to leave it", found, why));
+
     /// <summary>Notes of the last passed round, as items: the notes a review-notes round left unmade (the #918 path).</summary>
-    public static IReadOnlyList<Item> NotesItems(int round, IEnumerable<string> notes)
+    public static IReadOnlyList<Item> NotesItems(int round, IEnumerable<string> notes) => NotesItems(round, notes,
+        "a not-blocking note that came after a review-notes round had made the first ones; one round of notes holds a merge");
+
+    private static IReadOnlyList<Item> NotesItems(int round, IEnumerable<string> notes, string why)
     {
         var n = 0;
         return [.. notes.Select(t => t.Trim().TrimStart('-', '*', ' ').ReplaceLineEndings(" ")).Where(t => t.Length > 0)
-            .Select(t => new Item($"N{round}.{++n}", t, "a not-blocking note that came after a review-notes round had made the first ones; one round of notes holds a merge", "making the note, or a decision to leave it"))];
+            .Select(t => new Item($"N{round}.{++n}", t, why, SettleFor("making the note, or a decision to leave it", t, why)))];
+    }
+
+    /// <summary>
+    /// At merge (pilot #1148): the not-blocking notes of the last round when it passed. A review-notes leg that made notes pushes and is
+    /// reviewed again, so the last passed round's notes at merge are unmade. Keyed like the #918 path, so the two dedup. A controller's
+    /// pass anyway takes only the reviewer's part of the report, before its tail.
+    /// </summary>
+    public static IReadOnlyList<Item> LastRoundNotes(IReadOnlyList<ReviewRound>? rounds)
+    {
+        if (rounds is not { Count: > 0 } || rounds.OrderBy(r => r.Round).Last() is not { Verdict: ReviewState.Passed } last)
+        {
+            return [];
+        }
+        var report = last.Findings ?? "";
+        var tail = ReviewPoints.PassedTailStart(last);
+        if (tail > 0)
+        {
+            report = report[..tail];
+        }
+        var read = ReviewFindings.Read(report);
+        return read.Structured
+            ? NotesItems(last.Round, read.NotBlocking, "a not-blocking note of the passing review, merged without being made")
+            : [];
     }
 
     /// <summary>The title of the flight's one follow-up issue.</summary>

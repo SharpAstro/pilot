@@ -6,7 +6,7 @@ public sealed partial class PrReviews
 {
     /// <summary>
     /// The one follow-up issue of a PR no flight owns (pilot #1107), filed before the node queues or merges it: every point its reviews left with a
-    /// reason, a new finding left for the follow-up, or answered left in a re-review. One issue a PR: a point left later is a comment on it. The PR
+    /// reason, a new finding left for the follow-up, or answered left in a re-review, and the last passed round's not-blocking notes nobody made (pilot #1148; so an approved PR with notes gets an issue). One issue a PR: a point left later is a comment on it. The PR
     /// links it, the row carries its number. No points left files none. Returns the row as it stands, or null when the PR must not go on yet: an
     /// earlier point is still not addressed, or the issue could not be filed (said in the log; a later sweep tries again).
     /// </summary>
@@ -19,7 +19,7 @@ public sealed partial class PrReviews
             return null;
         }
         var captured = review.FollowUpPoints ?? [];
-        var fresh = standing.Items.Where(i => !captured.Contains(i.Key, StringComparer.OrdinalIgnoreCase)).ToList();
+        var fresh = standing.Items.Concat(ReviewFollowUp.LastRoundNotes(review.Rounds)).GroupBy(i => i.Key, StringComparer.OrdinalIgnoreCase).Select(g => g.Last()).Where(i => !captured.Contains(i.Key, StringComparer.OrdinalIgnoreCase)).ToList();
         if (fresh.Count == 0)
         {
             return review;

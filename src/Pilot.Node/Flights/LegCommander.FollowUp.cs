@@ -8,10 +8,11 @@ public sealed partial class LegCommander
     /// The one follow-up issue of a flight (pilot #1107), filed before its PR merges: every point its reviews left with a reason, a new
     /// finding left for the follow-up, a controller's pass-anyway open points and, from the #918 path, the notes a review-notes round did not
     /// make. One issue a flight: a point left later is added to it as a comment. The PR links it, the row carries its number, and the
-    /// landing's Handled line names it. No points left means no issue (null).
+    /// landing's Handled line names it. No points left means no issue (null). <paramref name="lastRoundNotes"/> (the merge path, pilot #1148) also
+    /// files the last passed round's not-blocking notes that no review-notes round made.
     /// </summary>
     /// <exception cref="MergeBlockedException">An earlier point stands not addressed, or the issue could not be filed: the points are never dropped, the merge holds with this said.</exception>
-    private async Task<int?> EnsureFollowUpAsync(FlightRow flight, IReadOnlyList<ReviewFollowUp.Item>? extra, CancellationToken cancellationToken)
+    private async Task<int?> EnsureFollowUpAsync(FlightRow flight, IReadOnlyList<ReviewFollowUp.Item>? extra, CancellationToken cancellationToken, bool lastRoundNotes = false)
     {
         var standing = ReviewFollowUp.Read(flight.ReviewRounds);
         if (standing.NotAddressed.Count > 0)
@@ -20,7 +21,7 @@ public sealed partial class LegCommander
                 $"{flight.Code} has earlier review points still not addressed ({string.Join(", ", standing.NotAddressed)}): they are fixed or left with a reason before it merges");
         }
         var captured = flight.FollowUpPoints ?? [];
-        var wanted = standing.Items.Concat(extra ?? []).GroupBy(i => i.Key, StringComparer.OrdinalIgnoreCase).Select(g => g.Last()).ToList();
+        var wanted = standing.Items.Concat(extra ?? []).Concat(lastRoundNotes ? ReviewFollowUp.LastRoundNotes(flight.ReviewRounds) : []).GroupBy(i => i.Key, StringComparer.OrdinalIgnoreCase).Select(g => g.Last()).ToList();
         var fresh = wanted.Where(i => !captured.Contains(i.Key, StringComparer.OrdinalIgnoreCase)).ToList();
         if (fresh.Count == 0)
         {
