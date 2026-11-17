@@ -344,11 +344,16 @@ public sealed partial class LegCommander
         if (answer == "go")
         {
             // Held by a spent 5-hour window, the leg stays planned and validated: the sweep starts its worker once it resets.
+            StartHeld? heldBy = null;
             if (flight.State == FlightState.Flying
-                && !Gate.Hold($"{Verbs.StartLeg} {target}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start {leg.Name}", Models.WeekPaceFor(flight.Repo))
+                && (heldBy = Gate.HoldBecause($"{Verbs.StartLeg} {target}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start {leg.Name}", Models.WeekPaceFor(flight.Repo))) is null
                 && state.Legs(flight.Code).All(l => l.State != LegState.Flying))
             {
                 StartWorker(flight, done, state.Legs(flight.Code));
+            }
+            else if (heldBy is not null)
+            {
+                SayHeld(heldBy);
             }
         }
         else
