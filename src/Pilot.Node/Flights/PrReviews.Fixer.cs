@@ -123,7 +123,7 @@ public sealed partial class PrReviews
             + $"Points after {all}:\n{ReviewRing.Points(review.Rounds)}\n\nThe last review:\n{(review.Report ?? "").Trim()}\n{string.Join('\n', review.Findings.Select(f => f.ToString()))}";
         RaiseOnce(pr, review, CardBin.Ring, FixCappedKind, subject, $"{pr}: changes still asked after {all}",
             detail.TrimEnd(), [new CardChoice { Label = "Allow one more fix round", Verb = Verbs.AllowRound, Target = subject, Args = ["the person allowed one more fix round"] }],
-            $"{pr} has had {all} of review and {rounds} of fixes, and still asks for changes. Points: {ReviewRing.Counts(review.Rounds)}.");
+            $"{pr} has had {all} of review and {rounds} fix rounds, and still asks for changes. Points: {ReviewRing.Counts(review.Rounds)}.");
     }
 
     /// <summary>

@@ -73,7 +73,7 @@ public sealed class RingCountTests : PrFixTestsBase
         Fixers.Length.ShouldBe(4);
         var again = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixCappedKind).ShouldHaveSingleItem();
         again.Title.ShouldContain("5 rounds");
-        again.Summary.ShouldNotBeNull().ShouldContain("4 rounds of fixes");
+        again.Summary.ShouldNotBeNull().ShouldContain("4 fix rounds");
     }
 
     [Fact]
