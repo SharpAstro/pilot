@@ -265,7 +265,8 @@ public sealed class PageTextOverlapTests
         chrome.Show(PageOf(page));
         if (page is "design page" or "design cells" or DesignPagePhone or DesignPageDesktop)
         {
-            chrome.Designs.Open(DesignsOf(data, page).Open!.Detail.Row.Id);
+            // The chat beside the prototype has something said: three turns and two versions, the designer checking.
+            await PageData.OpenDesignChat(chrome.Designs, DesignsOf(data, page).Open!.Detail.Row.Id, PageData.DesignChatPage(lengthen: state is "long" or "many"));
             if (page is DesignPagePhone or DesignPageDesktop)
             {
                 chrome.Designs.PickTarget(page == DesignPagePhone ? "Phone" : "Desktop");

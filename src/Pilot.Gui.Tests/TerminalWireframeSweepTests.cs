@@ -80,7 +80,8 @@ public static class TerminalWireframeSweepTests
             chrome.Designs.Terminal = (columns, rows);
             if (name == "design page")
             {
-                chrome.Designs.Open(data.Designs.Open!.Detail.Row.Id);
+                // The chat under the cell view has something said: three turns and two versions, the designer checking.
+                await PageData.OpenDesignChat(chrome.Designs, data.Designs.Open!.Detail.Row.Id, PageData.DesignChatPage(lengthen: state is "long" or "many"));
             }
         }
         var cards = name == "open card" ? data.CardsWithDetail : data.Cards;

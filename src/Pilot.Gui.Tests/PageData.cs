@@ -1,4 +1,5 @@
 using Pilot.Contracts;
+using Shouldly;
 
 namespace Pilot.Gui.Tests;
 
@@ -47,6 +48,39 @@ internal sealed class PageData
 
     /// <summary>The sample prototype the node's design tests use, linked into this project's output.</summary>
     internal static string SamplePrototypePath => Path.Combine(AppContext.BaseDirectory, "Fixtures", "Designs", "sample.prototype.json");
+
+    /// <summary>
+    /// A design's chat as the node's design-chat feed gives it (PIL1151): three turns (the owner, the designer, the owner) and a line for each of
+    /// <paramref name="versions"/> published versions, with the designer's state in words. <paramref name="lengthen"/> stretches the words.
+    /// </summary>
+    internal static ChatPage DesignChatPage(string status = "checking: 2 findings from the last design-check", int versions = 2, bool lengthen = false)
+    {
+        var at = Now.AddMinutes(-30);
+        var entries = new List<TranscriptEntry>
+        {
+            new() { Index = 0, Id = "say:1", At = at, Kind = TranscriptKind.User, Text = lengthen ? "A home screen with two tabs. " + LongReport : "A home screen with two tabs and a settings screen." },
+            new() { Index = 1, Id = "s1:a1", At = at.AddMinutes(2), Kind = TranscriptKind.Assistant, Text = lengthen ? "Drafted both screens. " + LongReport : "Drafted both screens; checking them now." },
+            new() { Index = 2, Id = "version:1", At = at.AddMinutes(5), Kind = TranscriptKind.Divider, Text = "published v1: brief" },
+            new() { Index = 3, Id = "say:2", At = at.AddMinutes(10), Kind = TranscriptKind.User, Text = lengthen ? "Make `$.screens[0].root.children[1]` bigger. " + LongTitle : "Make the tabs bigger." },
+            new() { Index = 4, Id = "version:2", At = at.AddMinutes(15), Kind = TranscriptKind.Divider, Text = "published v2: message" },
+        };
+        entries.RemoveAll(e => e.Id is "version:2" && versions < 2);
+        return new ChatPage { Entries = [.. entries], Total = entries.Count, Working = true, Status = status };
+    }
+
+    /// <summary>Opens the design page's chat on <paramref name="page"/> and waits until it holds it, then stops following: the sweeps draw the page with a chat that has something said.</summary>
+    internal static async Task OpenDesignChat(Pilot.Ui.DesignsView<DIR.Lib.RgbaImage> designs, string id, ChatPage page)
+    {
+        designs.Chat.Load = (after, _) => Task.FromResult(after < 0 ? page : new ChatPage { Entries = [], Total = page.Total, Status = page.Status });
+        designs.Chat.OnSend = _ => Task.FromResult<string?>(null);
+        designs.Open(id);
+        for (var i = 0; i < 500 && designs.Chat.Entries.Count < page.Entries.Length; i++)
+        {
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+        designs.Chat.Close();
+        designs.Chat.Entries.Count.ShouldBe(page.Entries.Length);
+    }
 
     /// <summary>The designs a state lists: none when empty, forty when many, three otherwise, the long state with long titles, repos and notes; the first has two versions and plays the sample prototype.</summary>
     internal static DesignsScreen DesignsFor(string state, DateTimeOffset now)
