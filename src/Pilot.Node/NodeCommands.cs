@@ -541,7 +541,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             var dry = (command.Args ?? []).Any(a => a is "--dry-run" or "dry-run");
             var (run, refused) = await Get<IdleMaintenance>().RunNowAsync(dry, cancellationToken);
-            return state.Complete(command, refused, way: run?.Line());
+            return state.Complete(command, refused, way: run?.Line(), maintenance: run?.Report());
         }
         if (command.Verb == Verbs.LiftLimit)
         {

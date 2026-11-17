@@ -123,6 +123,10 @@ public sealed record CommandResult
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ReadinessResult? Readiness { get; init; }
 
+    /// <summary>A <c>maintenance</c> run's items and kept counts; null for any other command.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MaintenanceReport? Maintenance { get; init; }
+
     /// <summary>A <c>break-up-issue</c>'s proposal; null for any other command.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public BreakUpProposal? BreakUp { get; init; }

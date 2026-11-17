@@ -121,6 +121,7 @@ public static partial class NodeApp
         {
             IdleFor = () => services.GetRequiredService<RoleModels>().MaintenanceIdle,
             Every = () => services.GetRequiredService<RoleModels>().MaintenanceEvery,
+            EverySet = () => services.GetRequiredService<RoleModels>().MaintenanceEverySet,
             DrivePath = () => services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path).FirstOrDefault(),
         });
         builder.Services.AddSingleton<IMaintenanceStep>(services => new PackageCachePrune(services.GetRequiredService<NodeState>(),

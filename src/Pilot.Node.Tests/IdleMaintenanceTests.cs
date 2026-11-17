@@ -186,7 +186,83 @@ public sealed class IdleMaintenanceTests
         run.ShouldNotBeNull();
         run.Cancelled.ShouldBeTrue();
         run.Steps.Single().Cancelled.ShouldBeTrue();
-        run.Line().ShouldStartWith("maintenance (stopped, work arrived)");
+        run.Line().ShouldStartWith("maintenance (stopped: job j1 started): freed");
+        run.Steps.Single().Untouched.ShouldBe("stopped: job j1 started");
+        _state.Cards().Single().Title.ShouldStartWith("maintenance (stopped: job j1 started)");
+    }
+
+    [Fact]
+    public async Task ARealRunCancelledByALegTakingOffNamesTheLeg()
+    {
+        var hanging = new FakeStep("packages", Gib, hang: true);
+        var sweep = Sweep(Every, hanging);
+        var running = sweep.RunNowAsync(dryRun: false, Ct);
+        await hanging.Started.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+        Fly();
+        _time.Advance(TimeSpan.FromSeconds(1));
+        var (run, _) = await running.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+
+        run.ShouldNotBeNull().Line().ShouldStartWith("maintenance (stopped: a leg took off (PIL1/l1)): freed");
+    }
+
+    [Fact]
+    public async Task ADryRunStartedWhileALegFliesRunsEveryStepEvenWhenAJobStartsMidRun()
+    {
+        Fly();
+        var gate = new GatedStep(new FakeStep("packages", 2 * Gib));
+        var two = new FakeStep("git", Gib);
+        var sweep = Sweep(Every, gate, two);
+
+        var running = sweep.RunNowAsync(dryRun: true, Ct);
+        await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+        Job(JobState.Running);
+        for (var i = 0; i < 5; i++)
+        {
+            _time.Advance(TimeSpan.FromSeconds(5));
+        }
+        running.IsCompleted.ShouldBeFalse();
+        gate.Release.SetResult();
+        var (run, refused) = await running.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+
+        refused.ShouldBeNull();
+        run.ShouldNotBeNull().Cancelled.ShouldBeFalse();
+        run.Steps.Select(s => s.Name).ShouldBe(["packages", "git"]);
+        run.Steps.ShouldAllBe(s => !s.Cancelled);
+        two.Measured.ShouldBe(1);
+        run.Line().ShouldStartWith("maintenance (dry run): would free 3.0 GB");
+    }
+
+    [Fact]
+    public async Task ARealRunInTheSameStateIsRefused()
+    {
+        Fly();
+        Job(JobState.Running);
+        var step = new FakeStep("packages", Gib);
+
+        var (run, refused) = await Sweep(Every, step).RunNowAsync(dryRun: false, Ct);
+
+        run.ShouldBeNull();
+        refused.ShouldNotBeNull().ShouldStartWith("not now:");
+        step.Ran.ShouldBe(0);
+    }
+
+    /// <summary>Measures like its inner step, but only once the test releases it, and says when it was entered: a step that is still running while time moves on.</summary>
+    private sealed class GatedStep(IMaintenanceStep inner) : IMaintenanceStep
+    {
+        public string Name => inner.Name;
+
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<MaintenanceMeasure> MeasureAsync(CancellationToken cancellationToken)
+        {
+            Entered.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
+            return await inner.MeasureAsync(cancellationToken);
+        }
+
+        public Task<MaintenanceResult> RunAsync(CancellationToken cancellationToken) => inner.RunAsync(cancellationToken);
     }
 
     [Fact]

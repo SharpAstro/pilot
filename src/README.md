@@ -740,7 +740,18 @@ When the node is running but idle it gets disk space back on a schedule. The swe
 the job priority inside a kill-on-close job object, and work arriving cancels the running step within a second (its process tree
 ends, the rest do not start). One Handled line says what each step freed, the free space before and after, and what it could not
 touch. `pilot node maintenance [--dry-run]` runs it now through the node and prints the same report; `--dry-run` measures and
-removes nothing. This is not the `maintenance` switch of a reboot (see Settings).
+removes nothing. A dry run started by hand is the exception to the cancelling: legs flying and jobs running or starting neither
+refuse nor cancel it, and it runs every step to the end at the job priority (a run that stops early says why on its line, for
+example `stopped: job j6410 started`). The report lists, per step, every item with its size and reason, largest first: the first
+50, then how many more; `--all` prints every one and `--out <file>` writes the whole list as tab-separated lines (step, item,
+bytes, reason). The CLI waits up to 30 minutes for the answer (`MaintenanceListing.Wait`), since a dry run can take minutes on a
+large cache. This is not the `maintenance` switch of a reboot (see Settings).
+
+A node's first sweep waits for a look (#1114). While `maintenance-every` has never been set by a person, the idle sweep removes
+nothing: once idle, the node runs a dry run and raises one For-you card (`maintenance-first-run`) with its totals and the five
+largest items per step. **Run on schedule** saves `maintenance-every` as `1d`, so the schedule applies from then on; **Keep off**
+saves it as `off`. The card is looked up by kind among the open cards, so a later tick or a restart raises no second, and the
+the node's own sweep never presses either choice, and an assistant's press is asked on a card for the person unless the autopilot is on. A node where a person has set `maintenance-every` (either value) never gets the card.
 
 The steps:
 

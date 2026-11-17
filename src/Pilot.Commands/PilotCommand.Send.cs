@@ -179,6 +179,19 @@ public static partial class PilotCommand
             {
                 await WriteReadinessAsync(output, result.Made ?? target, checkedReady);
             }
+            if (verb == Verbs.Maintenance && result.Maintenance is { } maintained)
+            {
+                // --all and --out ride in the args; the node reads only --dry-run, and the list is printed and written here.
+                foreach (var line in MaintenanceListing.Lines(maintained, args.Contains("--all")))
+                {
+                    await output.WriteLineAsync(line);
+                }
+                if (Array.IndexOf(args, "--out") is var at and >= 0 && at + 1 < args.Length)
+                {
+                    await File.WriteAllTextAsync(args[at + 1], MaintenanceListing.Tsv(maintained), cancellationToken);
+                    await output.WriteLineAsync($"wrote {args[at + 1]}");
+                }
+            }
             if (verb == Verbs.SuggestMilestones && result.Suggestions is { } suggested)
             {
                 await WriteSuggestionsAsync(output, suggested);

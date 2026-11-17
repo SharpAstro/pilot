@@ -4,8 +4,31 @@ using Pilot.Contracts;
 
 namespace Pilot.Node.Flights;
 
-/// <summary>What a maintenance step would remove: how many bytes, in how many items.</summary>
-public sealed record MaintenanceMeasure(long Bytes, int Items);
+/// <summary>
+/// What a maintenance step would remove: each item with its size and reason, and how many items each keep rule kept. <see cref="Bytes"/>
+/// and <see cref="Items"/> are the totals of the list.
+/// </summary>
+public sealed record MaintenanceMeasure(IReadOnlyList<MaintenanceItem> List, IReadOnlyList<MaintenanceKept> Kept)
+{
+    /// <summary>A measure of the given items, with no keep rules counted.</summary>
+    public MaintenanceMeasure(IReadOnlyList<MaintenanceItem> list) : this(list, [])
+    {
+    }
+
+    /// <summary>A measure of <paramref name="items"/> anonymous items holding <paramref name="bytes"/> between them; for a step that lists nothing by name.</summary>
+    public MaintenanceMeasure(long bytes, int items) : this([.. Enumerable.Range(0, items).Select(i => new MaintenanceItem($"item {i + 1}", i == 0 ? bytes : 0, ""))], [])
+    {
+    }
+
+    /// <summary>The bytes the items hold.</summary>
+    public long Bytes => List.Sum(i => i.Bytes);
+
+    /// <summary>How many items.</summary>
+    public int Items => List.Count;
+
+    /// <summary>Counts of keep rules by name, in the order first seen, as the report carries them.</summary>
+    public static MaintenanceKept[] Count(IEnumerable<string> rules) => [.. rules.GroupBy(r => r).Select(g => new MaintenanceKept(g.Key, g.Count()))];
+}
 
 /// <summary>What a maintenance step removed, and what it could not touch (a note for the disk alert), or null when it touched everything it meant to.</summary>
 public sealed record MaintenanceResult(long Bytes, string? Untouched = null);
@@ -33,10 +56,11 @@ public interface IMaintenanceStep
 /// <param name="Untouched">What it could not touch, or null.</param>
 /// <param name="Cancelled">Whether work arriving ended it before it was done.</param>
 /// <param name="Items">For a dry run, how many items it would remove.</param>
-public sealed record MaintenanceStepReport(string Name, long Bytes, string? Untouched, bool Cancelled = false, int Items = 0);
+/// <param name="Measured">For a dry run, the items and kept counts behind <paramref name="Bytes"/>.</param>
+public sealed record MaintenanceStepReport(string Name, long Bytes, string? Untouched, bool Cancelled = false, int Items = 0, MaintenanceMeasure? Measured = null);
 
 /// <summary>One run of the sweep: when, what each step did, and the free space before and after on the repos' drive.</summary>
-public sealed record MaintenanceRun(DateTimeOffset At, bool DryRun, IReadOnlyList<MaintenanceStepReport> Steps, string? Drive, long? FreeBefore, long? FreeAfter, bool Cancelled)
+public sealed record MaintenanceRun(DateTimeOffset At, bool DryRun, IReadOnlyList<MaintenanceStepReport> Steps, string? Drive, long? FreeBefore, long? FreeAfter, bool Cancelled, string? Stopped = null)
 {
     /// <summary>The bytes freed (or, for a dry run, that would be) across the steps.</summary>
     public long Bytes => Steps.Sum(s => s.Bytes);
@@ -51,10 +75,18 @@ public sealed record MaintenanceRun(DateTimeOffset At, bool DryRun, IReadOnlyLis
         }
     }
 
+    /// <summary>The items and kept counts of each step, largest item first, for the client to print; the one-line way stays <see cref="Line"/>.</summary>
+    public MaintenanceReport Report() => new(DryRun,
+        [.. Steps.Select(s => new MaintenanceStepList(
+            s.Name, s.Bytes,
+            [.. (s.Measured?.List ?? []).OrderByDescending(i => i.Bytes).ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase)],
+            [.. s.Measured?.Kept ?? []],
+            s.Untouched))]);
+
     /// <summary>The report line: <c>maintenance: freed 9.2 GB (packages 8.1 GB, git 0.3 GB, lfs 0.2 GB, jobs 0.6 GB); C: 7.0 -> 16.2 GB free</c>.</summary>
     public string Line()
     {
-        var verb = DryRun ? "maintenance (dry run): would free" : Cancelled ? "maintenance (stopped, work arrived): freed" : "maintenance: freed";
+        var verb = DryRun ? "maintenance (dry run): would free" : Cancelled ? $"maintenance (stopped: {Stopped ?? "work arrived"}): freed" : "maintenance: freed";
         var steps = string.Join(", ", Steps.Select(s => $"{s.Name} {IdleMaintenance.Gb(s.Bytes)}{(s.Cancelled ? " (stopped)" : "")}"));
         var text = $"{verb} {IdleMaintenance.Gb(Bytes)}{(steps.Length > 0 ? $" ({steps})" : "")}";
         if (!DryRun && FreeBefore is { } before && FreeAfter is { } after)
@@ -81,6 +113,18 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
     /// <summary>What the Handled card is.</summary>
     public const string Kind = "maintenance-run";
 
+    /// <summary>What the first-run For-you card is (PIL1114): the first sweep on a node waits for a person's look at a dry run.</summary>
+    public const string FirstRunKind = "maintenance-first-run";
+
+    /// <summary>The label of the first-run choice that saves maintenance-every as the default.</summary>
+    public const string RunLabel = "Run on schedule";
+
+    /// <summary>The label of the first-run choice that saves maintenance-every as off.</summary>
+    public const string KeepOffLabel = "Keep off";
+
+    /// <summary>How many of the largest items per step the first-run card lists.</summary>
+    public const int FirstRunTop = 5;
+
     private readonly IMaintenanceStep[] _steps = [.. steps];
     private readonly SemaphoreSlim _running = new(1, 1);
     private readonly object _gate = new();
@@ -99,6 +143,9 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
 
     /// <summary>How long between runs, or null for off; read at each look.</summary>
     public Func<TimeSpan?> Every { get; init; } = () => NodeSettings.DefaultMaintenanceEvery;
+
+    /// <summary>Whether a person has set maintenance-every (the saved value is not null); until then the first sweep waits for the first-run card (PIL1114).</summary>
+    public Func<bool> EverySet { get; init; } = () => true;
 
     /// <summary>A path on the drive the report counts free space of (a repo's); null reads none and the report leaves the drive out.</summary>
     public Func<string?> DrivePath { get; init; } = () => null;
@@ -160,7 +207,17 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
             since = _idleSince.Value;
         }
         var every = Every();
-        if (every is null || _steps.Length == 0 || now - since < IdleFor())
+        if (_steps.Length == 0 || now - since < IdleFor())
+        {
+            return null;
+        }
+        if (!EverySet())
+        {
+            // Nothing real runs until a person has answered the first-run card (or set maintenance-every by hand).
+            await RaiseFirstRunAsync(cancellationToken);
+            return null;
+        }
+        if (every is null)
         {
             return null;
         }
@@ -174,10 +231,52 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
         return await RunAsync(dryRun: false, cancellationToken);
     }
 
-    /// <summary>The sweep now, ignoring the idle wait and the period but not a leg flying or a job running; the run, or why it did not start.</summary>
+    /// <summary>
+    /// The first sweep on a node waits for a look (PIL1114): one dry run, and one For-you card with its totals and the largest items per step.
+    /// The open card is looked up by kind, so a later tick or a restarted service raises no second.
+    /// </summary>
+    private async Task RaiseFirstRunAsync(CancellationToken cancellationToken)
+    {
+        if (state.Cards(openOnly: true).Any(c => c.Kind == FirstRunKind))
+        {
+            return;
+        }
+        var run = await RunAsync(dryRun: true, cancellationToken);
+        if (run is null || state.Cards(openOnly: true).Any(c => c.Kind == FirstRunKind))
+        {
+            return;
+        }
+        var report = run.Report();
+        var detail = new System.Text.StringBuilder();
+        foreach (var step in report.Steps)
+        {
+            detail.Append(CultureInfo.InvariantCulture, $"{step.Name}: {Gb(step.Bytes)} in {step.Items.Length} item(s)").Append('\n');
+            foreach (var item in step.Items.Take(FirstRunTop))
+            {
+                detail.Append(CultureInfo.InvariantCulture, $"  {item.Name}: {Scaled(item.Bytes)}{(item.Reason.Length > 0 ? $" ({item.Reason})" : "")}").Append('\n');
+            }
+            if (step.Items.Length > FirstRunTop)
+            {
+                detail.Append(CultureInfo.InvariantCulture, $"  and {step.Items.Length - FirstRunTop} more").Append('\n');
+            }
+        }
+        var every = NodeSettings.ArchiveDurationText(NodeSettings.DefaultMaintenanceEvery);
+        detail.Append(CultureInfo.InvariantCulture, $"Nothing was removed. Run on schedule saves maintenance-every as {every}; Keep off saves it as off.");
+        var items = report.Steps.Sum(s => s.Items.Length);
+        state.RaiseCard(CardBin.ForYou, FirstRunKind, Verbs.NodeTarget,
+            $"Run the first idle disk sweep? It would free {Gb(report.Bytes)} in {items} item(s)",
+            detail.ToString(),
+            [
+                new CardChoice { Label = RunLabel, Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.MaintenanceEveryKey, every] },
+                new CardChoice { Label = KeepOffLabel, Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.MaintenanceEveryKey, "off"] },
+            ]);
+    }
+
+    /// <summary>The sweep now, ignoring the idle wait and the period; a real run is refused while a leg flies or a job runs, a dry run is not; the run, or why it did not start.</summary>
     public async Task<(MaintenanceRun? Run, string? Refused)> RunNowAsync(bool dryRun, CancellationToken cancellationToken)
     {
-        if (WhyBusy() is { } busy)
+        // A dry run removes nothing, so work does not refuse it (PIL1114); a real run keeps the rule.
+        if (!dryRun && WhyBusy() is { } busy)
         {
             return (null, $"not now: {busy}");
         }
@@ -207,6 +306,24 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
         return null;
     }
 
+    /// <summary>What arrived, worded for a run that stopped for it ('job j6410 started'), or null when the node is idle.</summary>
+    private string? WhyStopped()
+    {
+        if (state.Legs().FirstOrDefault(l => l.State == LegState.Flying) is { } leg)
+        {
+            return $"a leg took off ({leg.Flight}/{leg.Name})";
+        }
+        if (state.Jobs().FirstOrDefault(j => j.State is JobState.Queued or JobState.Running) is { } job)
+        {
+            return $"job {job.Id} started";
+        }
+        if (state.PrReviews().FirstOrDefault(r => r.State == PrReviewState.Reviewing || r is { FixRound: not null, FixerJob: not null, State: not PrReviewState.Closed }) is { } review)
+        {
+            return $"a review round started on {review.Repo}#{review.Number}";
+        }
+        return null;
+    }
+
     /// <summary>
     /// Runs the steps one by one. While it runs a timer looks for work arriving every <see cref="WatchTick"/> and cancels the step
     /// that is running (its process tree ends); the rest do not start. Raises the Handled card, remembers the run. Null when a run is
@@ -224,13 +341,16 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
             var drive = DrivePath() is { Length: > 0 } path ? FreeSpace(path) : null;
             var at = time.GetUtcNow();
             var reports = new List<MaintenanceStepReport>();
+            string? stopped = null;
             ITimer? watch = null;
-            watch = time.CreateTimer(_ =>
+            // A dry run removes nothing and runs to the end whatever arrives (PIL1114): no watch.
+            watch = dryRun ? null : time.CreateTimer(_ =>
             {
                 try
                 {
-                    if (WhyBusy() is not null)
+                    if (WhyStopped() is { } why)
                     {
+                        stopped = why;
                         work.Cancel();
                         return;
                     }
@@ -256,7 +376,7 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
                         if (dryRun)
                         {
                             var measure = await step.MeasureAsync(work.Token);
-                            reports.Add(new MaintenanceStepReport(step.Name, measure.Bytes, null, Items: measure.Items));
+                            reports.Add(new MaintenanceStepReport(step.Name, measure.Bytes, null, Items: measure.Items, Measured: measure));
                         }
                         else
                         {
@@ -266,7 +386,7 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
                     }
                     catch (OperationCanceledException) when (work.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                     {
-                        reports.Add(new MaintenanceStepReport(step.Name, 0, "stopped: work arrived", Cancelled: true));
+                        reports.Add(new MaintenanceStepReport(step.Name, 0, $"stopped: {stopped ?? "work arrived"}", Cancelled: true));
                         cancelled = true;
                         break;
                     }
@@ -278,10 +398,10 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
             }
             finally
             {
-                watch.Dispose();
+                watch?.Dispose();
             }
             var after = !dryRun && DrivePath() is { Length: > 0 } again ? FreeSpace(again) : null;
-            var run = new MaintenanceRun(at, dryRun, reports, drive?.Name, drive?.Free, after?.Free ?? drive?.Free, cancelled);
+            var run = new MaintenanceRun(at, dryRun, reports, drive?.Name, drive?.Free, after?.Free ?? drive?.Free, cancelled, stopped);
             if (!dryRun)
             {
                 lock (_gate)
@@ -302,6 +422,9 @@ public sealed class IdleMaintenance(NodeState state, TimeProvider time, IEnumera
             _running.Release();
         }
     }
+
+    /// <summary>Bytes as B, KB, MB or GB, so a small item does not read as 0.0 GB.</summary>
+    public static string Scaled(long bytes) => MaintenanceItem.Size(bytes);
 
     /// <summary>Bytes as gigabytes with one decimal (<c>9.2 GB</c>), or just the number (<c>7.0</c>) when <paramref name="unit"/> is false.</summary>
     public static string Gb(long bytes, bool unit = true) => (bytes / (double)(1L << 30)).ToString("0.0", CultureInfo.InvariantCulture) + (unit ? " GB" : "");

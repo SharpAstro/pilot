@@ -118,6 +118,8 @@ public sealed class MaintenanceJobsTests : IDisposable
         var real = await Step().RunAsync(Ct);
         real.Bytes.ShouldBe(measure.Bytes);
         measure.Bytes.ShouldBe(5500);
+        measure.List.Select(i => i.Name).ShouldBe([Path.GetFileName(one), Path.GetFileName(two)], ignoreOrder: true);
+        measure.List.ShouldAllBe(i => i.Reason.Contains("archived flight", StringComparison.Ordinal));
     }
 
     [Fact]
