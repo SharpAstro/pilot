@@ -206,7 +206,7 @@ public sealed class JobRetellTests : IDisposable
         });
 
     private void SetFlightReview(ReviewState reviewState) =>
-        _state.PutFlight(_state.Flights().Single() with { Review = new ReviewRow { State = reviewState, Reviewer = "de1-rtl1-review" } });
+        _state.PutFlight(_state.Flights().Single() with { Review = new ReviewRow { State = reviewState, Reviewer = "de1-rtl1-review", StartedAt = _clock.GetUtcNow() } });
 
     private async Task ShouldStayToldOnceAsync()
     {
