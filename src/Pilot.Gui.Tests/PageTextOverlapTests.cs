@@ -139,7 +139,7 @@ public sealed class PageTextOverlapTests
         $"{key} [{failing.Count} faults]" + string.Concat(failing.Select(f => $"{Environment.NewLine}  {key}: {f.Line}" + (capture is null ? "" : $" (capture: {capture})")));
 
     /// <summary>Writes the page of a failing case as a PNG, as the chrome paints it, to <c>text-overlap/&lt;case&gt;.png</c> beside the test's output; the path.</summary>
-    private static async Task<string> CaptureOf(string page, string state, int width, float dpi, int height, string key, string folder)
+    internal static async Task<string> CaptureOf(string page, string state, int width, float dpi, int height, string key, string folder)
     {
         Directory.CreateDirectory(folder);
         var path = Path.Combine(folder, string.Concat(key.Select(c => char.IsLetterOrDigit(c) || c is '.' or '-' ? c : '_')) + ".png");

@@ -102,7 +102,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     public Action<string, string>? OnStart { get; set; }
 
     /// <summary>The box the brief of a new design is typed in, on the empty page and above the list.</summary>
-    public TextInputState BriefInput { get; } = new() { Placeholder = "Describe the design to make" };
+    public TextInputState BriefInput { get; } = new() { Placeholder = "Describe the design" };
 
     private string? _startNote;
 
