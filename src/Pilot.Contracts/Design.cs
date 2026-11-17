@@ -66,6 +66,15 @@ public sealed record DesignRow
     /// <summary>What the designer last did to the draft, for the chat's status: <see cref="DesignerPhases"/>; null while there is none.</summary>
     public string? DesignerPhase { get; init; }
 
+    /// <summary>When the designer's current or last turn began (a start, or a say delivered to it); null before any and in a record an older release wrote.</summary>
+    public DateTimeOffset? DesignerTurnStartedAt { get; init; }
+
+    /// <summary>When the designer's last turn ended and it sat idle (PIL1159); null while it works, once the node has ended it, before any and in a record an older release wrote.</summary>
+    public DateTimeOffset? DesignerIdleSince { get; init; }
+
+    /// <summary>Whether the last finished turn published a version; null while a turn runs, before any, and in a record an older release wrote.</summary>
+    public bool? DesignerTurnPublished { get; init; }
+
     /// <summary>How many findings the last <c>design-check</c> had; null before any.</summary>
     public int? CheckFindings { get; init; }
 }
@@ -147,14 +156,30 @@ public static class DesignTerminals
     }
 }
 
-/// <summary>Why a version was made, as <c>pilot design publish --why</c> takes it: the owner's <c>brief</c>, a <c>message</c> of theirs, or a <c>fix</c> of a finding.</summary>
+/// <summary>
+/// Why a version was made, as <c>pilot design publish --why</c> takes it (PIL1159): a short free-text reason, one line, saying what changed ("added the bind rows to the settings screen").
+/// Versions an older release made carry <c>brief</c>, <c>message</c> or <c>fix</c>; they are read as they were written.
+/// </summary>
 public static class DesignWhys
 {
-    public const string Brief = "brief";
-    public const string Message = "message";
-    public const string Fix = "fix";
+    /// <summary>The longest a why may be, in characters.</summary>
+    public const int MaxLength = 120;
 
-    public static readonly string[] All = [Brief, Message, Fix];
+    /// <summary>Null when <paramref name="why"/> is a usable why, else what is wrong with it.</summary>
+    public static string? Problem(string? why)
+    {
+        if (string.IsNullOrWhiteSpace(why))
+        {
+            return "publish takes --why <what changed>, a short reason that is not empty";
+        }
+        if (why.Contains('\n') || why.Contains('\r'))
+        {
+            return "publish --why is one line: it has a line break";
+        }
+        return why.Trim().Length > MaxLength
+            ? $"publish --why is at most {MaxLength} characters, not {why.Trim().Length}: say what changed in a short line"
+            : null;
+    }
 }
 
 /// <summary>What <c>pilot design render</c> leaves in <c>draft/renders/render.json</c>: the hash of the <c>prototype.json</c> it drew, which publish compares with the draft as it stands.</summary>

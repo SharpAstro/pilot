@@ -116,6 +116,7 @@ public static partial class NodeApp
             services.GetRequiredService<IWorkerLauncher>(), services.GetRequiredService<StartGate>(), services.GetRequiredService<RoleModels>(), options.Machine, services.GetRequiredService<TimeProvider>())
         {
             Run = Briefs.Run(Briefs.PilotCli(), null),
+            Keep = () => TimeSpan.FromMinutes(services.GetRequiredService<RoleModels>().DesignerKeep),
             GuardSettings = HookCommands.DesignerSettings(Environment.ProcessPath ?? "pilot-node", options.SocketPath),
             Say = (command, ct) => services.GetRequiredService<SessionMessenger>().SayAsync(command, ct),
         });

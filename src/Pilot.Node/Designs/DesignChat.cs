@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using Pilot.Contracts;
 using Pilot.Node.Sessions;
 
@@ -11,7 +12,7 @@ namespace Pilot.Node.Designs;
 /// Everything the feed needs is in the design's folder and record, so a restarted node, or another node's client, reads the same chat. The answer is a
 /// <see cref="ChatPage"/>, the watchtower chat's contract, with <see cref="ChatPage.Status"/> in plain words.
 /// </summary>
-public sealed class DesignChat(DesignStore store, TranscriptBook transcripts)
+public sealed partial class DesignChat(DesignStore store, TranscriptBook transcripts)
 {
     /// <summary>The entries after <paramref name="after"/> (all of them for a negative one), the feed's length and the designer's state in words.</summary>
     public ChatPage Page(string id, int after)
@@ -32,6 +33,11 @@ public sealed class DesignChat(DesignStore store, TranscriptBook transcripts)
     {
         var items = new List<(DateTimeOffset At, int Order, TranscriptEntry Entry)>();
         var order = 0;
+        if (FirstBrief(row) is { Length: > 0 } first && row.At is { } made)
+        {
+            // The first brief is the owner's opening words, entry 0 (it is in BRIEF.md, not chat.jsonl, which holds the says after it).
+            items.Add((made, order++, new TranscriptEntry { Index = 0, Id = "brief:0", At = made, Kind = TranscriptKind.User, Text = first }));
+        }
         foreach (var line in store.Says(row.Id))
         {
             var text = line.Picture is { Length: > 0 } picture ? $"{line.Text}\n[picture: {picture}]" : line.Text;
@@ -47,7 +53,7 @@ public sealed class DesignChat(DesignStore store, TranscriptBook transcripts)
             {
                 var entry = window.Entries[i];
                 // The node's own prompts to the designer repeat what the owner said; its tool calls are its work, not the conversation.
-                if (entry.Kind is TranscriptKind.Assistant or TranscriptKind.Error && entry.At is { } at)
+                if (IsConversation(entry) && entry.At is { } at)
                 {
                     items.Add((at, order++, entry with { Id = $"{session}:{entry.Id ?? $"i{i}"}" }));
                 }
@@ -70,6 +76,34 @@ public sealed class DesignChat(DesignStore store, TranscriptBook transcripts)
         return [.. items.OrderBy(x => x.At).ThenBy(x => x.Order).Select(x => x.Entry)];
     }
 
+    // The designer's words and a real session error (a crash, an API error) are the conversation; a tool result and a tool call's error (tool_use_error,
+    // a hook's refusal, a refused design-check) are its work and show nowhere but, for a check, in the status.
+    private static bool IsConversation(TranscriptEntry entry) =>
+        entry.Kind is TranscriptKind.Assistant
+        || entry.Kind is TranscriptKind.Error && entry.ToolUseId is null
+            && entry.Text is not null && !entry.Text.Contains("tool_use_error", StringComparison.Ordinal) && !entry.Text.Contains("hook error", StringComparison.OrdinalIgnoreCase);
+
+    [GeneratedRegex(@"^## \d{4}-\d\d-\d\dT[\d:]+Z\r?$", RegexOptions.Multiline)]
+    private static partial Regex PieceHeading();
+
+    /// <summary>The owner's first brief: the first piece of BRIEF.md without its time heading; null when the design has no brief file.</summary>
+    private string? FirstBrief(DesignRow row)
+    {
+        var text = store.Detail(row.Id).Brief;
+        if (string.IsNullOrEmpty(text))
+        {
+            return null;
+        }
+        var heads = PieceHeading().Matches(text);
+        if (heads.Count == 0)
+        {
+            return text.Trim();
+        }
+        var start = heads[0].Index + heads[0].Length;
+        var end = heads.Count > 1 ? heads[1].Index : text.Length;
+        return text[start..end].Trim();
+    }
+
     /// <summary>What the designer is doing, in plain words.</summary>
     public static string StatusOf(DesignRow row)
     {
@@ -82,13 +116,19 @@ public sealed class DesignChat(DesignStore store, TranscriptBook transcripts)
             case DesignerStates.Working:
                 return row.DesignerPhase switch
                 {
-                    DesignerPhases.Checking => $"checking: {row.CheckFindings ?? 0} finding{(row.CheckFindings == 1 ? "" : "s")} from the last design-check",
+                    DesignerPhases.Checking => $"checking: {row.CheckFindings ?? 0} finding{(row.CheckFindings == 1 ? "" : "s")}",
                     DesignerPhases.Rendering => "rendering",
                     DesignerPhases.Published when row.Current is { } v => $"published v{v.ToString(CultureInfo.InvariantCulture)}",
                     _ => "drafting",
                 };
             default:
-                return row.Current is { } current ? $"published v{current.ToString(CultureInfo.InvariantCulture)}" : "idle";
+                return (row.Current, row.DesignerTurnPublished) switch
+                {
+                    ({ } current, false) => $"idle: the last turn published nothing, v{current.ToString(CultureInfo.InvariantCulture)} is current",
+                    (_, false) => "idle: the last turn published nothing",
+                    ({ } current, _) => $"published v{current.ToString(CultureInfo.InvariantCulture)}",
+                    _ => "idle",
+                };
         }
     }
 }

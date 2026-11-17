@@ -716,6 +716,14 @@ them and `pilot design terminals DSN-1` with no size clears them (`design_termin
 80x24, 100x30, 160x44 and 250x60, the sizes of `TerminalWireframeSweepTests`, and a test holds the list to the sweep. A design with
 no terminal target checks and renders exactly as before.
 
+**The designer's life (PIL1159).** A designer's turn ends with the session idle, not stopped: it stays up so the owner's next words
+are a warm turn. The node setting `designer-keep` (minutes, 0 to 1440, 30 by default, 0 ends it at once; `NodeSettings.DesignerKeepKey`,
+read at each sweep so a saved value counts) is how long it stays up after its last turn (`DesignRow.DesignerIdleSince`, set when the
+sweep sees the turn done). Past it, `Designers.SweepAsync` ends the session through the node's own stop path
+(`IWorkerLauncher.StopAsync` with `SessionEndReasons.DesignerIdle`, recorded in the session ledger); the design's state stays `idle`.
+The next brief piece resumes the ended session with its context through the node's say path, which resumes an ended session. A
+designer that is working is never ended, and a designer never stops itself (the brief says so).
+
 - **Check.** After the pixel check at `DesignSizes`, each screen (and each of its state variants, as the pixel check draws them) is
   arranged and painted in cells at each terminal size and judged by Console.Lib's `CellWireframe.CheckCells`. A finding is a line
   naming the size, `<screen> | 80x24 cells | <rule>: <message>`, where a pixel finding reads `<screen> | <width>x<height> | ...`.

@@ -172,6 +172,106 @@ public sealed class DesignerTests : IDisposable
         _store.Find(id)!.DesignerState.ShouldBe(DesignerStates.Working);
     }
 
+    private string IdleDesigner(string brief = "first words")
+    {
+        var id = New(brief);
+        _designers.Settled.GetAwaiter().GetResult();
+        ListedAs("job00001", "de1-dsn1-designer", SessionState.Idle);
+        _designers.Sweep();
+        _designers.Settled.GetAwaiter().GetResult();
+        _store.Find(id)!.DesignerState.ShouldBe(DesignerStates.Idle);
+        return id;
+    }
+
+    [Fact]
+    public async Task AnIdleDesignerIsLeftAloneBeforeTheKeepTimeAndEndedByTheNodeAfterIt()
+    {
+        var id = IdleDesigner();
+        _time.Advance(TimeSpan.FromMinutes(29));
+        _designers.Sweep();
+        await _designers.Settled;
+        _workers.StopReasons.ShouldBeEmpty();
+
+        _time.Advance(TimeSpan.FromMinutes(1));
+        _designers.Sweep();
+        await _designers.Settled;
+
+        var stop = _workers.StopReasons.ShouldHaveSingleItem();
+        stop.ShouldBe(("job00001", SessionEndReasons.DesignerIdle, "node"));
+        _store.Find(id)!.DesignerState.ShouldBe(DesignerStates.Idle);
+    }
+
+    [Fact]
+    public async Task AnIdleDesignerWhoseSessionRowIsGoneIsNotEndedAgain()
+    {
+        // A row marked Gone is already closed by the ledger: the idle sweep must not stop it a second time.
+        IdleDesigner();
+        _state.PutSession(_state.Sessions().Single(s => s.Id == "job00001") with { Gone = true });
+        _time.Advance(TimeSpan.FromMinutes(31));
+        _designers.Sweep();
+        await _designers.Settled;
+
+        _workers.StopReasons.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TheKeepSettingSetsHowLongAndZeroEndsItAtOnce()
+    {
+        var short_ = new Designers(_state, _store, _workers, new StartGate(_state, _time), new RoleModels(null), "DE1", _time) { Run = "pilot", Keep = () => TimeSpan.Zero };
+        _store.New(null, null, "words", []);
+        ListedAs("job00002", "de1-dsn1-designer", SessionState.Idle);
+        _store.Update("DSN-1", r => r with { DesignerName = "de1-dsn1-designer", DesignerState = DesignerStates.Idle, DesignerIdleSince = _time.GetUtcNow(), DesignerSessions = ["job00002-0000-4000-8000-000000000000"] });
+        short_.Sweep();
+        await short_.Settled;
+        _workers.StopReasons.ShouldHaveSingleItem().Reason.ShouldBe(SessionEndReasons.DesignerIdle);
+    }
+
+    [Fact]
+    public async Task ADesignerStillWorkingIsNeverEndedHoweverLongItTakes()
+    {
+        var id = New("first words");
+        await _designers.Settled;
+        ListedAs("job00001", "de1-dsn1-designer", SessionState.Working);
+        _time.Advance(TimeSpan.FromHours(5));
+        _designers.Sweep();
+        await _designers.Settled;
+
+        _workers.StopReasons.ShouldBeEmpty();
+        _store.Find(id)!.DesignerState.ShouldBe(DesignerStates.Working);
+
+        // A turn that began after an idle spell clears the mark: it is not ended on the old time either.
+        ListedAs("job00001", "de1-dsn1-designer", SessionState.Idle);
+        _designers.Sweep();
+        await _designers.Settled;
+        Brief(id, "more");
+        await _designers.Settled;
+        _store.Find(id)!.DesignerIdleSince.ShouldBeNull();
+        ListedAs("job00001", "de1-dsn1-designer", SessionState.Working);
+        _time.Advance(TimeSpan.FromHours(5));
+        _designers.Sweep();
+        await _designers.Settled;
+        _workers.StopReasons.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task APieceAfterTheEndResumesTheEndedDesignerThroughSayAndStartsNoSecond()
+    {
+        var id = IdleDesigner();
+        _time.Advance(TimeSpan.FromMinutes(31));
+        _designers.Sweep();
+        await _designers.Settled;
+        _workers.StopReasons.Count.ShouldBe(1);
+        ListedAs("job00001", "de1-dsn1-designer", SessionState.Ended);
+
+        Brief(id, "after the end");
+        await _designers.Settled;
+
+        _workers.Started.Count.ShouldBe(1);
+        _said.ShouldHaveSingleItem().Args[0].ShouldContain("after the end");
+        _store.Find(id)!.DesignerState.ShouldBe(DesignerStates.Working);
+        _store.Find(id)!.DesignerIdleSince.ShouldBeNull();
+    }
+
     private string Hook(string session, string tool, string cwd, string path) =>
         JsonSerializer.Serialize(new Dictionary<string, object>
         {
@@ -285,6 +385,52 @@ public sealed class DesignerTests : IDisposable
         var id = New("words");
         ListedAs("job00001", "de1-dsn1-designer");
         Decide(ShellHook("job00001-0000-4000-8000-000000000000", tool, _store.FolderOf(id), command), cli: "C:\\Users\\JohnSmith\\pilot2\\pilot.exe").ShouldBeNull();
+    }
+
+    [Fact]
+    public void TheBriefNamesEveryNodeKindTheLoaderAcceptsWithItsPropertiesAndChildCounts()
+    {
+        var detail = new DesignDetail { Row = new DesignRow { Id = "DSN-1" }, Folder = "f", DraftFolder = "f/draft" };
+        var brief = Briefs.Designer(detail, "{}", null, "pilot");
+        foreach (var (name, kind) in DIR.Lib.Prototyping.PrototypeVocabulary.Kinds)
+        {
+            var line = brief.Split('\n').FirstOrDefault(l => l.StartsWith($"- `{name}`:", StringComparison.Ordinal)).ShouldNotBeNull(name);
+            foreach (var property in kind.Properties)
+            {
+                line.ShouldContain($"`{property.Name}`", customMessage: name);
+                if (property.Required)
+                {
+                    line.ShouldContain($"`{property.Name}` (", customMessage: name);
+                }
+                foreach (var value in property.Values)
+                {
+                    line.ShouldContain($"\"{value}\"", customMessage: name);
+                }
+            }
+            line.ShouldContain(kind.MaxChildren == 0 ? "no children" : kind.MaxChildren < 0 ? "children" : kind.MaxChildren + " children", customMessage: name);
+            (kind.SupportsBind == line.Contains("takes `bind`")).ShouldBeTrue(name);
+        }
+        foreach (var property in DIR.Lib.Prototyping.PrototypeVocabulary.Common)
+        {
+            brief.ShouldContain($"`{property.Name}`");
+        }
+        foreach (var role in DIR.Lib.Prototyping.PrototypeVocabulary.ColorRoles)
+        {
+            brief.ShouldContain($"`{role}`");
+        }
+    }
+
+    [Fact]
+    public void TheBriefAsksForAShortWhyAndSaysPublishTakesOnlyThePrototypeNotesAndRenders()
+    {
+        var detail = new DesignDetail { Row = new DesignRow { Id = "DSN-1" }, Folder = "f", DraftFolder = "f/draft" };
+        var brief = Briefs.Designer(detail, "{}", null, "pilot");
+        brief.ShouldContain("--why \"<what changed>\"");
+        brief.ShouldContain($"at most {DesignWhys.MaxLength} characters");
+        brief.ShouldContain("only `prototype.json`, `NOTES.md` and `renders/`");
+        brief.ShouldContain("nothing needs deleting");
+        brief.ShouldNotContain("brief|message|fix");
+        Briefs.DesignerPiece("DSN-1", "words").ShouldContain("--why");
     }
 
     [Theory]

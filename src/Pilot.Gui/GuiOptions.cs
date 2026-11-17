@@ -34,6 +34,9 @@ internal sealed record GuiOptions
     /// <summary>With <c>--page flights</c>: the flight whose page the capture opens, by code, as Enter on its row does in the window.</summary>
     public string? Flight { get; init; }
 
+    /// <summary>With <c>--page designs</c>: the design whose page, with its chat, the capture opens, by id (DSN-1), as a click on its row does in the window.</summary>
+    public string? Design { get; init; }
+
     /// <summary>
     /// With <c>--capture</c>: the region whose hover text the frame shows as due, as the window does after the pointer rests on
     /// it: a button's id (<c>home:flight:PIL258</c>) or a list row (<c>flights:3</c>, the list's id and the row's index).
@@ -85,9 +88,10 @@ internal sealed record GuiOptions
         var node = new Option<string?>("--node") { Description = "A node on the LAN: host:port, or its name (SE1) or host as pilot nodes lists them (pilot connect gets its grant); else PILOT_NODE" };
         var capture = new Option<string?>("--capture") { Description = "Render one frame on the CPU to this PNG (and a .rows.txt beside it), then exit" };
         var size = new Option<string?>("--size") { Description = "The capture's size, <W>x<H>; 1280x800 by default" };
-        var page = new Option<string?>("--page") { Description = "The page a capture shows: home, sessions, flights, repos, prs, jobs or chat" };
+        var page = new Option<string?>("--page") { Description = "The page a capture shows: home, sessions, flights, repos, prs, jobs, chat, spend or designs" };
         page.AcceptOnlyFromAmong("home", "sessions", "flights", "repos", "prs", "jobs", "chat", "spend", "designs");
         var flight = new Option<string?>("--flight") { Description = "With --page flights: open this flight's page (its legs, checklists and artifacts) in the capture, by code" };
+        var design = new Option<string?>("--design") { Description = "With --page designs: open this design's page, with its chat, in the capture, by id (DSN-1)" };
         var hover = new Option<string?>("--hover") { Description = "With --capture: show this region's hover text as due; a button's id (home:flight:PIL258) or a list row (flights:3)" };
         var view = new Option<string?>("--view") { Description = "With --page flights: the view the capture draws" };
         view.AcceptOnlyFromAmong("canvas", "grid", "list");
@@ -108,7 +112,7 @@ internal sealed record GuiOptions
 
         var root = new RootCommand("pilot v2's GUI: every Claude session on the machine, live from the node")
         {
-            Options = { snapshot, socket, node, capture, size, page, flight, hover, view, select, peer, hereName, layers, night, accent, fold, exitAfter, say },
+            Options = { snapshot, socket, node, capture, size, page, flight, design, hover, view, select, peer, hereName, layers, night, accent, fold, exitAfter, say },
         };
         var parsed = root.Parse([.. args]);
 
@@ -133,6 +137,7 @@ internal sealed record GuiOptions
             Node = parsed.GetValue(node),
             Capture = parsed.GetValue(capture),
             Flight = parsed.GetValue(flight),
+            Design = parsed.GetValue(design),
             Hover = parsed.GetValue(hover),
             View = parsed.GetValue(view) switch { "canvas" => FlightsViewMode.Canvas, "grid" => FlightsViewMode.Grid, "list" => FlightsViewMode.List, _ => null },
             Select = parsed.GetValue(select),

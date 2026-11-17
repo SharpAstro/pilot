@@ -35,6 +35,12 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
     /// <summary>Says a command to a session through the node's messenger, which resumes an ended session with its context; null where none is wired (a design store without sessions).</summary>
     public Func<CommandRequest, CancellationToken, Task<CommandResult>>? Say { get; set; }
 
+    /// <summary>
+    /// How long a designer stays up, idle and warm, after its last turn before the node ends it (<see cref="NodeSettings.DesignerKeepKey"/>, minutes); the next brief
+    /// piece resumes it with its context through <see cref="Say"/>. <see cref="TimeSpan.Zero"/> ends it at once. Asked at each sweep, so a saved setting counts.
+    /// </summary>
+    public Func<TimeSpan> Keep { get; init; } = () => TimeSpan.FromMinutes(NodeSettings.DefaultDesignerKeep);
+
     /// <summary>The end of the asks made so far, for a test to await.</summary>
     public Task Settled
     {
@@ -90,13 +96,43 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
             {
                 // The session id is kept as soon as the tracker lists it, so the design's chat finds the transcript after a restart.
                 var done = row.DesignerState is DesignerStates.Working && listed.State is SessionState.Idle or SessionState.Ended;
+                if (row.DesignerState is DesignerStates.Idle && listed.State is SessionState.Idle && !listed.Gone && row.DesignerIdleSince is { } since && time.GetUtcNow() - since >= Keep())
+                {
+                    await EndIdleAsync(row.Id, listed).ConfigureAwait(false);
+                    continue;
+                }
+                if (row.DesignerState is DesignerStates.Idle && row.DesignerIdleSince is null && listed.State is SessionState.Idle && !listed.Gone)
+                {
+                    // Idle with no mark (a record an older release wrote, or a restart): the keep time counts from now.
+                    store.Update(row.Id, r => r with { DesignerIdleSince = time.GetUtcNow() });
+                }
                 if (done || listed.SessionId is { Length: > 0 } known && !row.DesignerSessions.Contains(known))
                 {
                     // Its turn is done: the design says idle, and the next brief piece resumes it.
-                    store.Update(row.Id, r => r with { DesignerState = done ? DesignerStates.Idle : r.DesignerState, DesignerSessions = WithSession(r.DesignerSessions, listed.SessionId) });
+                    store.Update(row.Id, r => r with
+                    {
+                        DesignerState = done ? DesignerStates.Idle : r.DesignerState,
+                        DesignerIdleSince = done && listed.State is SessionState.Idle ? time.GetUtcNow() : r.DesignerIdleSince,
+                        DesignerTurnPublished = done ? r.DesignerTurnStartedAt is { } began && r.History.Any(v => v.At >= began) : r.DesignerTurnPublished,
+                        DesignerSessions = WithSession(r.DesignerSessions, listed.SessionId),
+                    });
                 }
             }
         }
+    }
+
+    /// <summary>Ends an idle designer through the node's own path (recorded in the session ledger as <see cref="SessionEndReasons.DesignerIdle"/>); the design stays idle, and its next piece resumes the session.</summary>
+    private async Task EndIdleAsync(string id, SessionRow listed)
+    {
+        try
+        {
+            await workers.StopAsync(listed.Id, SessionEndReasons.DesignerIdle, "node", CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            // Gone already: the ledger closes it, and the next piece resumes it either way.
+        }
+        store.Update(id, r => r with { DesignerIdleSince = null });
     }
 
     private async Task AskAsync(string id, string? piece)
@@ -131,7 +167,7 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
             if (live is null)
             {
                 // Started, and not listed yet: the pieces wait for it, and a sweep delivers them.
-                store.Update(row.Id, r => r with { DesignerState = DesignerStates.Working, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = pending });
+                store.Update(row.Id, r => r with { DesignerState = DesignerStates.Working, DesignerIdleSince = null, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = pending });
                 return;
             }
             if (pending.Length > 0)
@@ -149,7 +185,8 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
                     return;
                 }
             }
-            store.Update(row.Id, r => r with { DesignerJob = live.Id, DesignerState = DesignerStates.Working, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerSessions = WithSession(r.DesignerSessions, live.SessionId), DesignerPhase = pending.Length > 0 ? DesignerPhases.Drafting : r.DesignerPhase });
+            store.Update(row.Id, r => r with { DesignerJob = live.Id, DesignerState = DesignerStates.Working, DesignerIdleSince = null, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerSessions = WithSession(r.DesignerSessions, live.SessionId), DesignerPhase = pending.Length > 0 ? DesignerPhases.Drafting : r.DesignerPhase,
+                DesignerTurnStartedAt = pending.Length > 0 ? time.GetUtcNow() : r.DesignerTurnStartedAt, DesignerTurnPublished = pending.Length > 0 ? null : r.DesignerTurnPublished });
             return;
         }
 
@@ -163,7 +200,7 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
             : null;
         var brief = Briefs.Designer(detail, prototype, notes, Run);
         var job = await workers.StartAsync(new WorkerStart(name, store.FolderOf(row.Id), null, brief, models.Model(RoleModels.Designer), models.Effort(RoleModels.Designer), Reason: SessionStartReasons.Designer, Settings: GuardSettings), CancellationToken.None).ConfigureAwait(false);
-        store.Update(row.Id, r => r with { DesignerName = name, DesignerJob = job, DesignerState = DesignerStates.Working, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerStartedAt = time.GetUtcNow(), DesignerPhase = DesignerPhases.Drafting });
+        store.Update(row.Id, r => r with { DesignerName = name, DesignerJob = job, DesignerState = DesignerStates.Working, DesignerIdleSince = null, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerStartedAt = time.GetUtcNow(), DesignerTurnStartedAt = time.GetUtcNow(), DesignerTurnPublished = null, DesignerPhase = DesignerPhases.Drafting });
     }
 
     private static string[] WithSession(string[] have, string? session) =>

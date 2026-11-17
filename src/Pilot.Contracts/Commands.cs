@@ -974,7 +974,7 @@ public static class Verbs
 
     /// <summary>
     /// <c>design-publish design/DSN-&lt;n&gt; why</c>: makes the next read-only version from the draft, when the check is clean and the renders are of the draft as it
-    /// stands. The one arg is the why, one of <see cref="DesignWhys"/>.
+    /// stands. The one arg is the why: a short one-line reason (<see cref="DesignWhys"/>).
     /// </summary>
     public const string DesignPublish = "design-publish";
 

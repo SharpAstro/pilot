@@ -27,6 +27,20 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
     public DesignsScreen? Screen(string source, DateTimeOffset at, string? open) =>
         Volatile.Read(ref _rows) is { } rows ? new DesignsScreen(rows, source, at, open is not null && Page is { } p && p.Detail.Row.Id == open ? p : null) : null;
 
+    /// <summary>The designs the node lists, read once; null when it did not answer with a list. A capture reads this as the window's pool read does.</summary>
+    public async Task<DesignRow[]?> ListAsync(CancellationToken cancellationToken)
+    {
+        var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.Designs, Target = Verbs.NodeTarget, Who = who }, cancellationToken).ConfigureAwait(false);
+        return answer is { Success: true, Response: { Ok: true, Designs: { } list } } ? list.Rows : null;
+    }
+
+    /// <summary>Design <paramref name="id"/>'s page at <paramref name="version"/> (null: the current one), read once; null when the node did not answer with the design.</summary>
+    public async Task<DesignPage?> PageAsync(string id, int? version, CancellationToken cancellationToken)
+    {
+        var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.DesignShow, Target = Verbs.DesignTarget(id), Who = who }, cancellationToken).ConfigureAwait(false);
+        return answer is { Success: true, Response: { Ok: true, Design: { } design } } ? DesignPages.Load(design, version) : null;
+    }
+
     /// <summary>Reads the list, unless that was done less than <see cref="Every"/> ago.</summary>
     public void AskList(bool force = false)
     {
@@ -38,10 +52,9 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
         {
             try
             {
-                var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.Designs, Target = Verbs.NodeTarget, Who = who }, CancellationToken.None).ConfigureAwait(false);
-                if (answer is { Success: true, Response: { Ok: true, Designs: { } list } })
+                if (await ListAsync(CancellationToken.None).ConfigureAwait(false) is { } rows)
                 {
-                    Volatile.Write(ref _rows, list.Rows);
+                    Volatile.Write(ref _rows, rows);
                     redraw();
                 }
             }
@@ -143,10 +156,9 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
         {
             try
             {
-                var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.DesignShow, Target = Verbs.DesignTarget(id), Who = who }, CancellationToken.None).ConfigureAwait(false);
-                if (answer is { Success: true, Response: { Ok: true, Design: { } design } })
+                if (await PageAsync(id, version, CancellationToken.None).ConfigureAwait(false) is { } page)
                 {
-                    Volatile.Write(ref _page, DesignPages.Load(design, version));
+                    Volatile.Write(ref _page, page);
                     _pageId = id;
                     _pageVersion = version;
                     redraw();

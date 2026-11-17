@@ -54,7 +54,7 @@ internal sealed class PageData
     /// A design's chat as the node's design-chat feed gives it (PIL1151): three turns (the owner, the designer, the owner) and a line for each of
     /// <paramref name="versions"/> published versions, with the designer's state in words. <paramref name="lengthen"/> stretches the words.
     /// </summary>
-    internal static ChatPage DesignChatPage(string status = "checking: 2 findings from the last design-check", int versions = 2, bool lengthen = false)
+    internal static ChatPage DesignChatPage(string status = "checking: 2 findings", int versions = 2, bool lengthen = false)
     {
         var at = Now.AddMinutes(-30);
         var entries = new List<TranscriptEntry>

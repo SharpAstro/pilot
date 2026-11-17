@@ -601,6 +601,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>Minutes a designer stays up after its last turn (<see cref="NodeSettings.DesignerKeepKey"/>); 30 by default, 0 ends it at once.</summary>
+    public int DesignerKeep
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.DesignerKeep ?? NodeSettings.DefaultDesignerKeep;
+            }
+        }
+    }
+
     /// <summary>The staleness bounds (#736), each its default unless the settings say.</summary>
     public Pilot.Node.Flights.StaleBounds Stale
     {

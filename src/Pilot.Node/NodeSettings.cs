@@ -64,6 +64,9 @@ public sealed record NodeSettings
     /// <summary>How many days a job's scratch folder may sit before the disk sweep deletes it, whatever its session did.</summary>
     public const string ScratchDaysKey = "scratch-days";
     public const int DefaultScratchDays = 2;
+    /// <summary>Minutes a designer (PIL1159) stays up, idle and warm, after its last turn before the node ends it; its next brief piece resumes it with its context. 0 ends it at once.</summary>
+    public const string DesignerKeepKey = "designer-keep";
+    public const int DefaultDesignerKeep = 30;
     public const string DiskAlertGbKey = "disk-alert-gb";
     public const int DefaultDiskAlertGb = 20;
     /// <summary>
@@ -214,7 +217,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, MaintenancePruneHoursKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, MaintenancePruneHoursKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DesignerKeepKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. BenchKeys, .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -338,6 +341,9 @@ public sealed record NodeSettings
 
     /// <summary>Days before a job's scratch is swept (<see cref="ScratchDaysKey"/>); <see cref="DefaultScratchDays"/> unless set.</summary>
     public int? ScratchDays { get; init; }
+
+    /// <summary>Minutes a designer stays up after its last turn (<see cref="DesignerKeepKey"/>); <see cref="DefaultDesignerKeep"/> unless set.</summary>
+    public int? DesignerKeep { get; init; }
 
     /// <summary>Free gigabytes on the repos' drive below which the node rings (<see cref="DiskAlertGbKey"/>); <see cref="DefaultDiskAlertGb"/> unless set.</summary>
     public int? DiskAlertGb { get; init; }
@@ -555,6 +561,7 @@ public sealed record NodeSettings
                     MaxJobsKey => JsonValue.Create(MaxJobs),
                     MaxGoAroundsKey => JsonValue.Create(MaxGoArounds),
                     ScratchDaysKey => JsonValue.Create(ScratchDays),
+                    DesignerKeepKey => JsonValue.Create(DesignerKeep),
                     PackageAgeDaysKey => JsonValue.Create(PackageAgeDays),
                     GitPruneDaysKey => JsonValue.Create(GitPruneDays),
                     MaintenancePruneHoursKey => JsonValue.Create(MaintenancePruneHours),
@@ -628,6 +635,7 @@ public sealed record NodeSettings
         MaxJobsKey => MaxJobs is { } jobs ? [jobs.ToString(CultureInfo.InvariantCulture)] : null,
         MaxGoAroundsKey => MaxGoArounds is { } rounds ? [rounds.ToString(CultureInfo.InvariantCulture)] : null,
         ScratchDaysKey => ScratchDays is { } days ? [days.ToString(CultureInfo.InvariantCulture)] : null,
+        DesignerKeepKey => DesignerKeep is { } keep ? [keep.ToString(CultureInfo.InvariantCulture)] : null,
         PackageAgeDaysKey => PackageAgeDays is { } ageDays ? [ageDays.ToString(CultureInfo.InvariantCulture)] : null,
         GitPruneDaysKey => GitPruneDays is { } pruneDays ? [pruneDays.ToString(CultureInfo.InvariantCulture)] : null,
         MaintenancePruneHoursKey => MaintenancePruneHours is { } pruneHours ? [pruneHours] : null,
@@ -979,6 +987,14 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var scratchDays) && scratchDays is >= 1 and <= 365
                     ? (settings with { ScratchDays = scratchDays }, null)
                     : (null, "scratch-days takes a number, 1 to 365");
+            case DesignerKeepKey:
+                if (clear)
+                {
+                    return (settings with { DesignerKeep = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var designerKeep) && designerKeep is >= 0 and <= 1440
+                    ? (settings with { DesignerKeep = designerKeep }, null)
+                    : (null, "designer-keep takes the minutes a designer stays up after its last turn before the node ends it, 0 to 1440 (0 ends it at once)");
             case StaleFlightHoursKey:
             case StalePrHoursKey:
             case StaleRecheckHoursKey:

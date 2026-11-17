@@ -71,7 +71,7 @@ internal static class SessionsCapture
     /// <param name="openFlight">The code of the flight whose page the Flights page shows in place of its table.</param>
     public static SessionsView<RgbaImage> Render(RgbaImageRenderer renderer, SessionsScreen screen, float dpiScale = 1f, bool canSay = false,
         FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null, bool inPlay = false, IReadOnlyList<MachineLine>? machines = null,
-        string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null, SpendSnapshot? spend = null, string spendWindow = "today", IReadOnlyList<SummaryRow>? summaries = null, RGBAColor32? accent = null)
+        string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null, SpendSnapshot? spend = null, string spendWindow = "today", IReadOnlyList<SummaryRow>? summaries = null, RGBAColor32? accent = null, DesignsScreen? designs = null, string? openDesign = null, ChatPage? designChat = null)
     {
         // The Standard palette built for this desktop accent while the frame is drawn; Night ignores it.
         using var accentScope = Pilot.Ui.Palette.StandardForCapture(accent);
@@ -117,6 +117,10 @@ internal static class SessionsCapture
             chrome.Flights.Mode = mode;
         }
         chrome.PullRequests.OnRefresh = _ => Task.CompletedTask;
+        if (openDesign is not null && page == PilotPage.Designs)
+        {
+            OpenDesign(chrome.Designs, openDesign, designChat);
+        }
         chrome.Night.On = night;
         if (layers is not null)
         {
@@ -135,7 +139,7 @@ internal static class SessionsCapture
             }
         }
         var window = new RectF32(0, 0, renderer.Width, renderer.Height);
-        chrome.Render(screen, flights, cards, jobs, null, repos, pullRequests, window, machines, null, spendScreen);
+        chrome.Render(screen, flights, cards, jobs, null, repos, pullRequests, window, machines, null, spendScreen, designs);
         if (hover is not null)
         {
             // The hover text the window shows once the pointer has rested on the region, painted last, over everything.
@@ -164,6 +168,24 @@ internal static class SessionsCapture
     }
 
     /// <summary>
+    /// Opens design <paramref name="id"/> as a click on its row does, holding <paramref name="chat"/> (what the node's design-chat gave, or the sample's) as
+    /// its conversation, so the frame shows what the window would. The chat does not follow the feed: a capture is one moment.
+    /// </summary>
+    private static void OpenDesign(DesignsView<RgbaImage> designs, string id, ChatPage? chat)
+    {
+        if (chat is not null)
+        {
+            designs.Chat.Load = (_, _) => Task.FromResult(chat);
+        }
+        designs.Open(id);
+        designs.Chat.Close();
+        if (chat is not null)
+        {
+            designs.Chat.Hold(chat);
+        }
+    }
+
+    /// <summary>
     /// The tooltip the page's region <paramref name="hover"/> declares: a button's id, or a list row as <c>list:index</c>. Throws
     /// when no region has that id or the region states no hover text, so a capture never silently shows no tooltip.
     /// </summary>
@@ -187,10 +209,10 @@ internal static class SessionsCapture
     /// <summary>Renders one frame to <paramref name="pngPath"/> and its rows to <c>&lt;pngPath&gt;.rows.txt</c>; returns the dump's path.</summary>
     public static string Write(SessionsScreen screen, string pngPath, int width, int height, bool canSay = false,
         FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null,
-        IReadOnlyList<MachineLine>? machines = null, string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null, SpendSnapshot? spend = null, string spendWindow = "today", IReadOnlyList<SummaryRow>? summaries = null, RGBAColor32? accent = null)
+        IReadOnlyList<MachineLine>? machines = null, string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null, SpendSnapshot? spend = null, string spendWindow = "today", IReadOnlyList<SummaryRow>? summaries = null, RGBAColor32? accent = null, DesignsScreen? designs = null, string? openDesign = null, ChatPage? designChat = null)
     {
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
-        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight, repos: repos, machines: machines, hover: hover, flightsView: flightsView, select: select, pullRequests: pullRequests, layers: layers, night: night, fold: fold, spend: spend, spendWindow: spendWindow, summaries: summaries, accent: accent);
+        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight, repos: repos, machines: machines, hover: hover, flightsView: flightsView, select: select, pullRequests: pullRequests, layers: layers, night: night, fold: fold, spend: spend, spendWindow: spendWindow, summaries: summaries, accent: accent, designs: designs, openDesign: openDesign, designChat: designChat);
         if (Path.GetDirectoryName(Path.GetFullPath(pngPath)) is { } folder)
         {
             Directory.CreateDirectory(folder);
@@ -207,6 +229,8 @@ internal static class SessionsCapture
                 ? string.Concat(repos.Lines.Where(l => l.Status.Tracked).SelectMany(l => l.Worktrees.Select(w => w.ToDumpLine()).Prepend(l.ToDumpLine())).Select(t => t + "\n"))
             : page == PilotPage.Spend
                 ? (spend is null ? "no spend in the file" : SpendScreen.From(spend, spendWindow, screen.Source, screen.AsOf).ToDump()) + "\n"
+            : page == PilotPage.Designs
+                ? (designs is null ? "no designs read" : DesignsDump(designs, openDesign)) + "\n"
             : page == PilotPage.PullRequests
                 ? PullRequestsDump(pullRequests) + "\n"
             : page == PilotPage.Jobs && jobs is not null
@@ -251,6 +275,12 @@ internal static class SessionsCapture
         }
         return text.ToString().TrimEnd('\n');
     }
+
+    /// <summary>The Designs page's rows: a line a design, or the open design's page as it dumps.</summary>
+    internal static string DesignsDump(DesignsScreen designs, string? open) =>
+        open is not null && designs.Open is { } page && page.Detail.Row.Id == open
+            ? page.ToDump()
+            : string.Join('\n', designs.Rows.Select(r => $"{r.Id} | {r.Title} | {(r.Current is { } v ? "v" + v : "no version")} | {r.Repo}"));
 
     /// <summary>One line per row, in drawing order, the fields as shown.</summary>
     public static string RowsText(SessionsScreen screen)
