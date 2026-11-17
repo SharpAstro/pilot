@@ -63,6 +63,15 @@ internal sealed class FakeWorkers : IWorkerLauncher
         return Task.CompletedTask;
     }
 
+    /// <summary>The reason (a <c>SessionEndReasons</c> constant) and who, of each stop made with one, by job id.</summary>
+    public List<(string Job, string Reason, string By)> StopReasons { get; } = [];
+
+    public Task StopAsync(string job, string reason, string by, CancellationToken cancellationToken)
+    {
+        StopReasons.Add((job, reason, by));
+        return StopAsync(job, cancellationToken);
+    }
+
     /// <summary>
     /// A command runner for a watchtower under test whose <c>end-session</c> (the node's end path) lands the session's row id in
     /// <see cref="Stopped"/>, as the stop that path performs; every command completes ok.

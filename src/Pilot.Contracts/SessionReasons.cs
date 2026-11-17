@@ -35,5 +35,7 @@ public static class SessionEndReasons
     /// <summary>The node itself stopped, and ended the stream session (the watchtower) it owns.</summary>
     public const string NodeStopped = "stopped with the node";
     /// <summary>A flight's planner the node ended once its first leg's worker started: its plan is done, and it holds no Opus slot (#568).</summary>
+    /// <summary>A design's designer (PIL1159) the node ended once it had sat idle for the designer-keep time; the next brief piece resumes it with its context.</summary>
+    public const string DesignerIdle = "stopped when the designer sat idle";
     public const string Planned = "stopped once planned";
 }

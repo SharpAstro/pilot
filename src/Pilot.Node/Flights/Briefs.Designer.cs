@@ -39,7 +39,7 @@ public static partial class Briefs
         text.AppendLine("## Your replies");
         text.AppendLine();
         text.AppendLine("The owner reads your last message in the design's chat. Start each reply with what you changed, or with what you ask the owner. If you published, say `published v<n>: <why>`. Keep it short; no preamble.");
-        text.AppendLine("When your turn is done, end it: the node starts you again, with this context, on the owner's next words.");
+        text.AppendLine("When your turn is done, just end your turn. The node keeps you up, idle, for a while (the designer-keep setting, 30 minutes by default) so the owner's next words are a warm turn, then ends the session itself; on their next words after that it resumes you with this context. Never stop yourself.");
         text.AppendLine();
         text.AppendLine("## The prototype format");
         text.AppendLine();

@@ -172,6 +172,93 @@ public sealed class DesignerTests : IDisposable
         _store.Find(id)!.DesignerState.ShouldBe(DesignerStates.Working);
     }
 
+    private string IdleDesigner(string brief = "first words")
+    {
+        var id = New(brief);
+        _designers.Settled.GetAwaiter().GetResult();
+        ListedAs("job00001", "de1-dsn1-designer", SessionState.Idle);
+        _designers.Sweep();
+        _designers.Settled.GetAwaiter().GetResult();
+        _store.Find(id)!.DesignerState.ShouldBe(DesignerStates.Idle);
+        return id;
+    }
+
+    [Fact]
+    public async Task AnIdleDesignerIsLeftAloneBeforeTheKeepTimeAndEndedByTheNodeAfterIt()
+    {
+        var id = IdleDesigner();
+        _time.Advance(TimeSpan.FromMinutes(29));
+        _designers.Sweep();
+        await _designers.Settled;
+        _workers.StopReasons.ShouldBeEmpty();
+
+        _time.Advance(TimeSpan.FromMinutes(1));
+        _designers.Sweep();
+        await _designers.Settled;
+
+        var stop = _workers.StopReasons.ShouldHaveSingleItem();
+        stop.ShouldBe(("job00001", SessionEndReasons.DesignerIdle, "node"));
+        _store.Find(id)!.DesignerState.ShouldBe(DesignerStates.Idle);
+    }
+
+    [Fact]
+    public async Task TheKeepSettingSetsHowLongAndZeroEndsItAtOnce()
+    {
+        var short_ = new Designers(_state, _store, _workers, new StartGate(_state, _time), new RoleModels(null), "DE1", _time) { Run = "pilot", Keep = () => TimeSpan.Zero };
+        _store.New(null, null, "words", []);
+        ListedAs("job00002", "de1-dsn1-designer", SessionState.Idle);
+        _store.Update("DSN-1", r => r with { DesignerName = "de1-dsn1-designer", DesignerState = DesignerStates.Idle, DesignerIdleSince = _time.GetUtcNow(), DesignerSessions = ["job00002-0000-4000-8000-000000000000"] });
+        short_.Sweep();
+        await short_.Settled;
+        _workers.StopReasons.ShouldHaveSingleItem().Reason.ShouldBe(SessionEndReasons.DesignerIdle);
+    }
+
+    [Fact]
+    public async Task ADesignerStillWorkingIsNeverEndedHoweverLongItTakes()
+    {
+        var id = New("first words");
+        await _designers.Settled;
+        ListedAs("job00001", "de1-dsn1-designer", SessionState.Working);
+        _time.Advance(TimeSpan.FromHours(5));
+        _designers.Sweep();
+        await _designers.Settled;
+
+        _workers.StopReasons.ShouldBeEmpty();
+        _store.Find(id)!.DesignerState.ShouldBe(DesignerStates.Working);
+
+        // A turn that began after an idle spell clears the mark: it is not ended on the old time either.
+        ListedAs("job00001", "de1-dsn1-designer", SessionState.Idle);
+        _designers.Sweep();
+        await _designers.Settled;
+        Brief(id, "more");
+        await _designers.Settled;
+        _store.Find(id)!.DesignerIdleSince.ShouldBeNull();
+        ListedAs("job00001", "de1-dsn1-designer", SessionState.Working);
+        _time.Advance(TimeSpan.FromHours(5));
+        _designers.Sweep();
+        await _designers.Settled;
+        _workers.StopReasons.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task APieceAfterTheEndResumesTheEndedDesignerThroughSayAndStartsNoSecond()
+    {
+        var id = IdleDesigner();
+        _time.Advance(TimeSpan.FromMinutes(31));
+        _designers.Sweep();
+        await _designers.Settled;
+        _workers.StopReasons.Count.ShouldBe(1);
+        ListedAs("job00001", "de1-dsn1-designer", SessionState.Ended);
+
+        Brief(id, "after the end");
+        await _designers.Settled;
+
+        _workers.Started.Count.ShouldBe(1);
+        _said.ShouldHaveSingleItem().Args[0].ShouldContain("after the end");
+        _store.Find(id)!.DesignerState.ShouldBe(DesignerStates.Working);
+        _store.Find(id)!.DesignerIdleSince.ShouldBeNull();
+    }
+
     private string Hook(string session, string tool, string cwd, string path) =>
         JsonSerializer.Serialize(new Dictionary<string, object>
         {
