@@ -58,6 +58,28 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task ThePassingRoundsNotesNobodyMadeAreFiledAtMergeBesideTheLeftPointAndOnlyOnce()
+    {
+        var code = await SecondRound(FirstReport);
+
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass",
+            Answers + "\n## Not blocking\n- E could be tidier in Lexer.cs:8\n- F deserves a comment in Parser.cs:40\n")).Error.ShouldBeNull();
+        (await Merge(code)).Error.ShouldBeNull();
+
+        var issue = _github.IssuesCreated.ShouldHaveSingleItem();
+        var body = issue.Body.ShouldNotBeNull();
+        body.ShouldContain("R1.4");
+        body.ShouldContain("E could be tidier");
+        body.ShouldContain("F deserves a comment");
+        body.ShouldContain("merged without being made");
+        F(code).FollowUpPoints.ShouldNotBeNull().Length.ShouldBe(3);
+
+        // A second ask files nothing more.
+        (await Merge(code)).Error.ShouldBeNull();
+        _github.IssuesCreated.ShouldHaveSingleItem();
+    }
+
+    [Fact]
     public async Task NoPointsLeftFilesNoIssue()
     {
         var code = await SecondRound("## Blocking\n- A is wrong in Parser.cs:10\n");

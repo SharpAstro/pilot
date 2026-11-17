@@ -86,11 +86,37 @@ public static partial class ReviewFollowUp
     }
 
     /// <summary>Notes of the last passed round, as items: the notes a review-notes round left unmade (the #918 path).</summary>
-    public static IReadOnlyList<Item> NotesItems(int round, IEnumerable<string> notes)
+    public static IReadOnlyList<Item> NotesItems(int round, IEnumerable<string> notes) => NotesItems(round, notes,
+        "a not-blocking note that came after a review-notes round had made the first ones; one round of notes holds a merge");
+
+    private static IReadOnlyList<Item> NotesItems(int round, IEnumerable<string> notes, string why)
     {
         var n = 0;
         return [.. notes.Select(t => t.Trim().TrimStart('-', '*', ' ').ReplaceLineEndings(" ")).Where(t => t.Length > 0)
-            .Select(t => new Item($"N{round}.{++n}", t, "a not-blocking note that came after a review-notes round had made the first ones; one round of notes holds a merge", "making the note, or a decision to leave it"))];
+            .Select(t => new Item($"N{round}.{++n}", t, why, "making the note, or a decision to leave it"))];
+    }
+
+    /// <summary>
+    /// At merge (pilot #1148): the not-blocking notes of the last round when it passed. A review-notes leg that made notes pushes and is
+    /// reviewed again, so the last passed round's notes at merge are unmade. Keyed like the #918 path, so the two dedup. A controller's
+    /// pass anyway takes only the reviewer's part of the report, before its tail.
+    /// </summary>
+    public static IReadOnlyList<Item> LastRoundNotes(IReadOnlyList<ReviewRound>? rounds)
+    {
+        if (rounds is not { Count: > 0 } || rounds.OrderBy(r => r.Round).Last() is not { Verdict: ReviewState.Passed } last)
+        {
+            return [];
+        }
+        var report = last.Findings ?? "";
+        var tail = ReviewPoints.PassedTailStart(last);
+        if (tail > 0)
+        {
+            report = report[..tail];
+        }
+        var read = ReviewFindings.Read(report);
+        return read.Structured
+            ? NotesItems(last.Round, read.NotBlocking, "a not-blocking note of the passing review, merged without being made")
+            : [];
     }
 
     /// <summary>The title of the flight's one follow-up issue.</summary>

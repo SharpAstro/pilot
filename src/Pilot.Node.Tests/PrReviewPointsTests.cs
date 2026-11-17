@@ -108,6 +108,24 @@ public sealed class PrReviewPointsTests : PrReviewTestsBase
     }
 
     [Fact]
+    public async Task ThePassingRoundsNotesAreFiledWithTheLeftPointBeforeTheQueue()
+    {
+        var reviewer = await ReReview();
+        _github.Queue = GhAnswers.MergeQueue("idle", _widgetHead);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
+        var table = Table + "| R1.1 | addressed | README.md:1 |\n| R1.2 | left | out of this PR's scope |\n\n## Not blocking\n- the title could be shorter in README.md:2\n";
+
+        (await Run(Verbs.PrVerdict, Pr7, reviewer, "approve", table)).Error.ShouldBeNull();
+        await _reviews.SweepAsync(Ct);
+
+        var body = _github.IssuesCreated.ShouldHaveSingleItem().Body.ShouldNotBeNull();
+        body.ShouldContain("R1.2");
+        body.ShouldContain("the title could be shorter");
+        await _reviews.SweepAsync(Ct);
+        _github.IssuesCreated.Count.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task AllPointsAddressedFilesNoIssue()
     {
         var reviewer = await ReReview();

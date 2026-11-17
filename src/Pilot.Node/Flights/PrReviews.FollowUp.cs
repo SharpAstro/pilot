@@ -19,7 +19,7 @@ public sealed partial class PrReviews
             return null;
         }
         var captured = review.FollowUpPoints ?? [];
-        var fresh = standing.Items.Where(i => !captured.Contains(i.Key, StringComparer.OrdinalIgnoreCase)).ToList();
+        var fresh = standing.Items.Concat(ReviewFollowUp.LastRoundNotes(review.Rounds)).GroupBy(i => i.Key, StringComparer.OrdinalIgnoreCase).Select(g => g.Last()).Where(i => !captured.Contains(i.Key, StringComparer.OrdinalIgnoreCase)).ToList();
         if (fresh.Count == 0)
         {
             return review;
