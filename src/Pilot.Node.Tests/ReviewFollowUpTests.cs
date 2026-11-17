@@ -96,7 +96,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         ReviewRound[] rounds =
         [
             new() { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking\n- A is wrong in Parser.cs:10\n" },
-            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready (passed by controller over: A is wrong)" },
+            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready (passed by controller over: A is wrong)", PassedBy = "controller" },
         ];
 
         var standing = ReviewFollowUp.Read(rounds);
@@ -127,7 +127,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         ReviewRound[] rounds =
         [
             new() { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking\n- A is wrong\n" },
-            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready anyway (passed by controller over: Round 3 read x\n\n## Blocking\n- A is wrong\n)" },
+            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready anyway (passed by controller over: Round 3 read x\n\n## Blocking\n- A is wrong\n)", PassedBy = "controller" },
         ];
 
         ReviewPoints.Number(rounds).Select(p => p.Id).ShouldBe(["R1.1"]);
@@ -139,7 +139,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         ReviewRound[] rounds =
         [
             new() { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking\n- A is wrong in Parser.cs:10\n" },
-            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "A note (passed by hand) in prose. ready anyway (passed by controller over: A is wrong)" },
+            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "A note (passed by hand) in prose. ready anyway (passed by controller over: A is wrong)", PassedBy = "controller" },
         ];
 
         var item = ReviewFollowUp.Read(rounds).Items.ShouldHaveSingleItem();
@@ -153,7 +153,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         ReviewRound[] rounds =
         [
             new() { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking\n- A is wrong in Parser.cs:10\n" },
-            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready anyway (passed by controller over: the note said (passed by hand) here)" },
+            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready anyway (passed by controller over: the note said (passed by hand) here)", PassedBy = "controller" },
         ];
 
         var item = ReviewFollowUp.Read(rounds).Items.ShouldHaveSingleItem();
@@ -211,7 +211,28 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
     [Fact]
     public void ProseSayingPassedByIsNotThePassAnywayTail()
     {
-        ReviewPoints.PassedTailStart("## Blocking\n- a note (passed by hand) here\n- B\n").ShouldBe(-1);
-        ReviewPoints.PassedTailStart("x (passed by controller over: y)").ShouldBe(1);
+        ReviewPoints.PassedTailStart(new ReviewRound { Round = 1, Verdict = ReviewState.Passed, Findings = "## Blocking\n- a note (passed by hand) here\n- B\n", PassedBy = "controller" }).ShouldBe(-1);
+        ReviewPoints.PassedTailStart(new ReviewRound { Round = 1, Verdict = ReviewState.Passed, Findings = "x (passed by controller over: y)", PassedBy = "controller" }).ShouldBe(1);
+        // A passer whose name holds a space is still found: the node matches the name it stored, not one word of prose.
+        ReviewPoints.PassedTailStart(new ReviewRound { Round = 1, Verdict = ReviewState.Passed, Findings = "x (passed by the owner over: y)", PassedBy = "the owner" }).ShouldBe(1);
+        // A round with no stored passer has no tail, whatever its prose quotes.
+        ReviewPoints.PassedTailStart(new ReviewRound { Round = 1, Verdict = ReviewState.Passed, Findings = "x (passed by controller over: y)" }).ShouldBe(-1);
+    }
+
+    [Fact]
+    public void AReviewersReportThatQuotesATailMidReportKeepsEveryPointAfterIt()
+    {
+        // A re-review quoting an earlier pass anyway, in a changes round and in a reviewer's own pass: neither is the node's tail.
+        const string Quoting = "## Blocking\n- `ready anyway (passed by controller over: A)` is quoted here\n- B is wrong\n\n## Not blocking\n- C could be tidier\n";
+        ReviewRound[] rounds =
+        [
+            new() { Round = 1, Verdict = ReviewState.Changes, Findings = Quoting },
+            new() { Round = 2, Verdict = ReviewState.Passed, Findings = Quoting },
+        ];
+
+        ReviewPoints.Number(rounds).Select(p => p.Id).ShouldBe(["R1.1", "R1.2", "R1.3", "R2.1", "R2.2", "R2.3"]);
+        ReviewPoints.Number(rounds).Where(p => p.Round == 2).Select(p => p.Text).ShouldContain("C could be tidier");
+        // The reviewer passed, so nothing is filed as a controller's pass anyway.
+        ReviewFollowUp.Read(rounds).Items.ShouldAllBe(i => !i.Why.Contains("pass anyway"));
     }
 }

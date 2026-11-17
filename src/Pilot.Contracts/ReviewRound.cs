@@ -33,6 +33,13 @@ public sealed record ReviewRound
     /// and not marked must-block. Null when none.
     /// </summary>
     public string[]? LeftPoints { get; init; }
+
+    /// <summary>
+    /// Who passed this round over the reviewer's report (a controller's pass anyway, pilot #1140): the node then kept
+    /// <see cref="Findings"/> as the passer's words and a tail repeating the reviewer's report. Null for a reviewer's own verdict and for
+    /// a round kept before the passer was stored; only a round that names one is read as a pass anyway, never one whose prose quotes a tail.
+    /// </summary>
+    public string? PassedBy { get; init; }
 }
 
 /// <summary>One row of a re-review's table: the point's id, its answer (addressed, left, not addressed) and the where or the reason.</summary>

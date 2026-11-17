@@ -359,7 +359,7 @@ public sealed partial class LegCommander
         }
 
         var now = time.GetUtcNow();
-        var kept = fromReviewer ? report : $"{report} (passed by {command.Who} over: {review.Report})";
+        var kept = fromReviewer ? report : $"{report}{ReviewPoints.Tail(command.Who)}{review.Report})";
         Record(flight.Code, f => f with
         {
             Review = f.Review is { } held ? held with { State = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes, Report = kept, FinishedAt = now } : null,
@@ -371,7 +371,7 @@ public sealed partial class LegCommander
                 ? [.. f.ReviewRounds ?? [], new ReviewRound
                 {
                     Round = (f.ReviewRounds?.Length ?? 0) + 1, Head = judged.ReviewedHead, Verdict = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes,
-                    Findings = kept, Answers = answers, LeftPoints = left, Depth = judged.Depth, Model = judged.Model ?? Models.ReviewerModel(judged.Depth ?? ReviewDepth.Standard),
+                    Findings = kept, PassedBy = fromReviewer ? null : command.Who, Answers = answers, LeftPoints = left, Depth = judged.Depth, Model = judged.Model ?? Models.ReviewerModel(judged.Depth ?? ReviewDepth.Standard),
                 }]
                 : f.ReviewRounds,
         });
