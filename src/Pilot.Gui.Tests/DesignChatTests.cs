@@ -280,4 +280,18 @@ public sealed class DesignChatTests
 
         rig.Versions.ShouldBe([("DSN-1", 1)]);
     }
+
+    /// <summary>
+    /// The design page with a long chat at a short narrow window (the chat under the two others, its own scroll the only one) and at a wide one (the chat
+    /// a column beside the prototype): no wireframe finding, and each written as a PNG under <c>design-chat/</c> beside the test's output, to look at.
+    /// </summary>
+    [Theory]
+    [InlineData(1280, 1.5f)]
+    [InlineData(1920, 1f)]
+    public async Task TheDesignPageWithALongChatIsCleanAndCapturedAtANarrowShortAndAWideWindow(int width, float dpi)
+    {
+        var key = WireframeSweepTests.Key("design page", "long", width, dpi, 900);
+        (await WireframeSweepTests.FindingsOf("design page", "long", width, dpi, 900)).ShouldBeEmpty();
+        File.Exists(await PageTextOverlapTests.CaptureOf("design page", "long", width, dpi, 900, key, Path.Combine(AppContext.BaseDirectory, "design-chat"))).ShouldBeTrue();
+    }
 }
