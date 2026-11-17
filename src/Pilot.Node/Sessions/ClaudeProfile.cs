@@ -91,7 +91,9 @@ public sealed class ClaudeProfile(string root)
     /// Whether the respawn flags Claude Code keeps for the session carry the name (<c>-n</c>) and model (<c>--model</c>) that
     /// <paramref name="arguments"/>, the options the node started it with, gave. Flags on file are not always the start's: a
     /// bare resume continued SE1's watchtower as a copy whose flags were only <c>--model opus[1m]</c>, so every later resume,
-    /// taken as on file, woke it unnamed on Opus (2026-10-31, 44f74bec to d4ccbfc7). False when the flags are not a list.
+    /// taken as on file, woke it unnamed on Opus (2026-10-31, 44f74bec to d4ccbfc7). The MCP config (<c>--mcp-config</c>) and a designer's
+    /// guard hook (<c>--settings</c>, PIL1151) are compared too, so flags that lost either resume with the full options rather than without
+    /// them. False when the flags are not a list.
     /// </summary>
     public bool RespawnFlagsCover(string sessionId, IReadOnlyList<string> arguments)
     {
@@ -120,7 +122,7 @@ public sealed class ClaudeProfile(string root)
         {
             return false;
         }
-        foreach (var option in (string[])["-n", "--model", "--mcp-config"])
+        foreach (var option in (string[])["-n", "--model", "--mcp-config", "--settings"])
         {
             var at = arguments.ToList().IndexOf(option);
             if (at < 0 || at + 1 >= arguments.Count)

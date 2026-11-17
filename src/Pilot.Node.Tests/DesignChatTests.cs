@@ -1,0 +1,237 @@
+using Pilot.Contracts;
+using Pilot.Node.Designs;
+using Pilot.Node.Flights;
+using Pilot.Node.Sessions;
+using Pilot.Node.Tests.Sessions;
+using Shouldly;
+using Xunit;
+
+namespace Pilot.Node.Tests;
+
+/// <summary>
+/// The chat of a design (PIL1151) on an in-memory node's parts with a fake designer and fake time: the owner's say is kept in BRIEF.md verbatim and reaches the one
+/// designer, its reply and a published version read after the client's last index, the status says what it is doing, a picture is kept and named, and a node rebuilt
+/// on the same data folder reads the same chat. No real Claude session starts.
+/// </summary>
+public sealed class DesignChatTests : IDisposable
+{
+    private static readonly DateTimeOffset Start = new(2026, 11, 17, 9, 0, 0, TimeSpan.Zero);
+    private const string Job = "job00001";
+    private const string Session = Job + "-0000-4000-8000-000000000000";
+
+    private readonly string _data = Path.Combine(Path.GetTempPath(), "p2dsc-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly TempProfile _profile = new();
+    private readonly ManualTime _time = new(Start);
+    private readonly NodeState _state;
+    private readonly DesignStore _store;
+    private readonly FakeWorkers _workers = new();
+    private readonly List<CommandRequest> _said = [];
+    private readonly Designers _designers;
+    private readonly DesignChat _chat;
+    private readonly DesignCommands _commands;
+
+    public DesignChatTests()
+    {
+        _state = new NodeState(new InMemoryJournal(), _time);
+        _store = new DesignStore(_data, _time);
+        _designers = new Designers(_state, _store, _workers, new StartGate(_state, _time), new RoleModels(null), "DE1", _time)
+        {
+            Run = "pilot",
+            Say = (command, _) =>
+            {
+                _said.Add(command);
+                return Task.FromResult(_state.Complete(command, null));
+            },
+        };
+        _chat = new DesignChat(_store, new TranscriptBook(_profile.Profile));
+        _commands = new DesignCommands(_state, _store, _designers, _chat);
+    }
+
+    public void Dispose()
+    {
+        _profile.Dispose();
+        if (Directory.Exists(_data))
+        {
+            TestDirs.DeleteTree(_data);
+        }
+    }
+
+    private CommandResult Run(string verb, string id, params string[] args) =>
+        _commands.Run(new CommandRequest { Verb = verb, Target = Verbs.DesignTarget(id), Args = args, Who = "gui" });
+
+    private async Task<string> DesignWithDesignerAsync()
+    {
+        var id = _commands.Run(new CommandRequest { Verb = Verbs.DesignNew, Target = Verbs.NodeTarget, Args = ["", "", "a night list"], Who = "gui" }).Made.ShouldNotBeNull();
+        await _designers.Settled;
+        Listed(SessionState.Working);
+        _designers.Sweep();
+        await _designers.Settled;
+        return id;
+    }
+
+    private void Listed(SessionState state) =>
+        _state.PutSession(new SessionRow
+        {
+            Id = Job, SessionId = Session, Name = "de1-dsn1-designer", Kind = SessionKind.Background, Cwd = "/x", Role = SessionRole.Designer,
+            ContextTokens = 1, ContextWindow = 200_000, State = state, SpendWeighted = 0, StartedAt = Start,
+        });
+
+    private void DesignerReplies(string when, string text) =>
+        _profile.Append(_profile.TranscriptPath(Session),
+            $$$"""{"type":"assistant","timestamp":"{{{when}}}","message":{"role":"assistant","content":[{"type":"text","text":"{{{text}}}"}]}}""");
+
+    [Fact]
+    public async Task ASayIsAppendedToTheBriefVerbatimAndReachesTheOneDesignerResumed()
+    {
+        var id = await DesignWithDesignerAsync();
+
+        Run(Verbs.DesignSay, id, "make the night list wider,\n  and *darker*").Ok.ShouldBeTrue();
+        await _designers.Settled;
+
+        _workers.Started.Count.ShouldBe(1);
+        var said = _said.ShouldHaveSingleItem();
+        said.Target.ShouldBe(Verbs.SessionTarget(Job));
+        said.Args[0].ShouldContain("make the night list wider,\n  and *darker*");
+        _store.Detail(id).Brief.ShouldNotBeNull().ShouldContain("## 2026-11-17T09:00:00Z\n\nmake the night list wider,\n  and *darker*\n");
+
+        var page = Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull();
+        var entry = page.Entries.ShouldHaveSingleItem();
+        entry.Kind.ShouldBe(TranscriptKind.User);
+        entry.Text.ShouldBe("make the night list wider,\n  and *darker*");
+        entry.Index.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task TheDesignersReplyAndAPublishedVersionReadAfterTheLastIndexTheClientHad()
+    {
+        var id = await DesignWithDesignerAsync();
+        _store.Update(id, r => r with { Current = 1, Versions = 1, History = [new DesignVersionRow { Number = 1, At = Start.AddMinutes(-1), Why = "brief" }] });
+        Run(Verbs.DesignSay, id, "first change").Ok.ShouldBeTrue();
+        await _designers.Settled;
+        var first = Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull();
+        first.Total.ShouldBe(2);
+
+        _time.Advance(TimeSpan.FromMinutes(5));
+        DesignerReplies("2026-11-17T09:05:00Z", "Widened the list.");
+        _time.Advance(TimeSpan.FromMinutes(1));
+        _store.Update(id, r => r with
+        {
+            Current = 2, Versions = 2,
+            History = [new DesignVersionRow { Number = 1, At = Start.AddMinutes(-1), Why = "brief" }, new DesignVersionRow { Number = 2, At = Start.AddMinutes(6), Why = "message" }],
+        });
+
+        var later = Run(Verbs.DesignChat, id, (first.Total - 1).ToString()).DesignChat.ShouldNotBeNull();
+        later.Entries.Select(e => e.Text).ShouldBe(["Widened the list.", "published v2: message"]);
+        later.Entries.Select(e => e.Index).ShouldBe([2, 3]);
+        later.Total.ShouldBe(4);
+
+        var whole = Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull();
+        whole.Entries.Select(e => e.Text).ShouldBe(["published v1: brief", "first change", "Widened the list.", "published v2: message"]);
+        whole.Entries[3].Kind.ShouldBe(TranscriptKind.Divider);
+    }
+
+    [Fact]
+    public async Task TheStatusReadsDraftingCheckingRenderingPublishedAndHeldUntil()
+    {
+        var id = await DesignWithDesignerAsync();
+        Status(id).ShouldBe("drafting");
+
+        // A real design-check on the starter draft is a clean check, and says so with its count.
+        Run(Verbs.DesignDraft, id).Ok.ShouldBeTrue();
+        Run(Verbs.DesignCheck, id);
+        Status(id).ShouldBe("checking: 0 findings from the last design-check");
+        _store.Update(id, r => r with { CheckFindings = 3 });
+        Status(id).ShouldBe("checking: 3 findings from the last design-check");
+
+        _store.Update(id, r => r with { DesignerPhase = DesignerPhases.Rendering });
+        Status(id).ShouldBe("rendering");
+
+        _store.Update(id, r => r with { DesignerPhase = DesignerPhases.Published, Current = 1, Versions = 1 });
+        Status(id).ShouldBe("published v1");
+
+        _store.Update(id, r => r with { DesignerState = DesignerStates.Idle });
+        Status(id).ShouldBe("published v1");
+        Run(Verbs.DesignChat, id).DesignChat!.Working.ShouldBeFalse();
+
+        _store.Update(id, r => r with { DesignerState = DesignerStates.Held, DesignerHeldUntil = Start.AddHours(2).AddMinutes(30) });
+        Status(id).ShouldBe("held until 11:30 UTC");
+    }
+
+    private string? Status(string id) => Run(Verbs.DesignChat, id).DesignChat!.Status;
+
+    [Fact]
+    public async Task ASayWhileTheUsageLimitHoldsIsKeptAndDeliveredOnceItEnds()
+    {
+        var id = await DesignWithDesignerAsync();
+        _state.PutUsage(new UsageRow { ReadAt = Start, FiveHour = new UsageWindow { UsedPercent = 95, ResetsAt = Start.AddHours(2) } });
+
+        Run(Verbs.DesignSay, id, "while held").Ok.ShouldBeTrue();
+        await _designers.Settled;
+
+        _said.ShouldBeEmpty();
+        Status(id).ShouldStartWith("held until 11:00");
+        _store.Find(id)!.DesignerPending.ShouldBe(["while held"]);
+        Run(Verbs.DesignChat, id).DesignChat!.Entries.ShouldHaveSingleItem().Text.ShouldBe("while held");
+
+        _time.Advance(TimeSpan.FromHours(3));
+        _state.PutUsage(new UsageRow { ReadAt = _time.GetUtcNow(), FiveHour = new UsageWindow { UsedPercent = 5, ResetsAt = _time.GetUtcNow().AddHours(5) } });
+        _designers.Sweep();
+        await _designers.Settled;
+
+        _said.ShouldHaveSingleItem().Args[0].ShouldContain("while held");
+        _workers.Started.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task APictureWithASayIsKeptWithTheDesignAndNamedToTheDesigner()
+    {
+        var id = await DesignWithDesignerAsync();
+        byte[] png = [0x89, 0x50, 0x4E, 0x47, 1, 2, 3];
+
+        Run(Verbs.DesignSay, id, "like this", "../sketch one.png", Convert.ToBase64String(png)).Ok.ShouldBeTrue();
+        await _designers.Settled;
+
+        var kept = Directory.GetFiles(Path.Combine(_store.FolderOf(id), "pictures")).ShouldHaveSingleItem();
+        Path.GetFileName(kept).ShouldBe("1-sketch_one.png");
+        File.ReadAllBytes(kept).ShouldBe(png);
+        _said.ShouldHaveSingleItem().Args[0].ShouldContain(kept);
+        Run(Verbs.DesignChat, id).DesignChat!.Entries.ShouldHaveSingleItem().Text.ShouldBe("like this\n[picture: pictures/1-sketch_one.png]");
+    }
+
+    [Fact]
+    public async Task TheChatReadsTheSameAfterTheNodeIsRebuiltOnTheSameDataFolder()
+    {
+        var id = await DesignWithDesignerAsync();
+        Run(Verbs.DesignSay, id, "kept words").Ok.ShouldBeTrue();
+        await _designers.Settled;
+        DesignerReplies("2026-11-17T09:02:00Z", "Done.");
+        _store.Update(id, r => r with { History = [new DesignVersionRow { Number = 1, At = Start.AddMinutes(3), Why = "brief" }], Current = 1, Versions = 1 });
+        var before = Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull();
+
+        // A new store, chat and transcript book on the same folders: nothing of the chat lived in memory.
+        var again = new DesignChat(new DesignStore(_data, _time), new TranscriptBook(_profile.Profile)).Page(id, -1);
+
+        again.Entries.Select(e => (e.Index, e.Kind, e.Text, e.At)).ShouldBe(before.Entries.Select(e => (e.Index, e.Kind, e.Text, e.At)));
+        again.Entries.Select(e => e.Text).ShouldBe(["kept words", "Done.", "published v1: brief"]);
+        again.Status.ShouldBe(before.Status);
+    }
+
+    [Fact]
+    public async Task TheNodesOwnPromptsAndTheDesignersToolCallsAreNotInTheChat()
+    {
+        var id = await DesignWithDesignerAsync();
+        _profile.Append(_profile.TranscriptPath(Session),
+            """{"type":"user","timestamp":"2026-11-17T09:00:30Z","message":{"role":"user","content":"[node] the owner added to the brief"}}""",
+            """{"type":"assistant","timestamp":"2026-11-17T09:00:40Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"pilot design check DSN-1"}}]}}""");
+        DesignerReplies("2026-11-17T09:00:50Z", "Looking.");
+
+        Run(Verbs.DesignChat, id).DesignChat!.Entries.Select(e => e.Text).ShouldBe(["Looking."]);
+    }
+
+    [Fact]
+    public void ASayOnADesignThatIsNotThereIsRefused()
+    {
+        Run(Verbs.DesignSay, "DSN-9", "words").Ok.ShouldBeFalse();
+        Run(Verbs.DesignChat, "DSN-9").Ok.ShouldBeFalse();
+    }
+}

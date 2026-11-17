@@ -48,7 +48,7 @@ public static class TerminalWireframeSweepTests
     private static PageData Data(string state) => Datas.GetOrAdd(state, s => new Lazy<PageData>(() => PageData.For(s))).Value;
 
     /// <summary>The frame Program.cs would paint for the case, arranged, cropped and recorded.</summary>
-    internal static async Task<CellWireframeFrame> RecordCase(string name, string state, int columns, int rows)
+    internal static async Task<CellWireframeFrame> RecordCase(string name, string state, int columns, int rows, CellBuffer? into = null)
     {
         using var vessel = new RgbaImageRenderer(1, 1);
         var data = Data(state);
@@ -74,19 +74,20 @@ public static class TerminalWireframeSweepTests
             chrome.Settings.LoadRepos ??= _ => Task.FromResult<RepoInfo[]>(data.WizardRepos.Length > 0 ? data.WizardRepos : [new RepoInfo { Name = "pilot", Path = @"C:\work\pilot" }]);
         }
         chrome.Show(page);
-        if (page == PilotPage.Designs)
-        {
-            // pilot-tui plays the prototype in its own cells: the page embeds its tree, arranged in this terminal.
-            chrome.Designs.Terminal = (columns, rows);
-            if (name == "design page")
-            {
-                chrome.Designs.Open(data.Designs.Open!.Detail.Row.Id);
-            }
-        }
         var cards = name == "open card" ? data.CardsWithDetail : data.Cards;
         chrome.Cards.OnChatPage = page == PilotPage.Chat;
         var cardsBeside = columns >= TerminalFrame.CardsPanelColumns && (cards.HasAny || chrome.Cards.CanTell && !chrome.Cards.OnChatPage);
         chrome.Chat.CellColumns = TerminalFrame.PageColumns(columns, cardsBeside);
+        if (page == PilotPage.Designs)
+        {
+            // pilot-tui plays the prototype in its own cells: the page embeds its tree, arranged in the room the page has (the cards panel beside it takes its columns), as Program.cs sets it.
+            chrome.Designs.Terminal = (TerminalFrame.PageColumns(columns, cardsBeside), rows);
+            if (name == "design page")
+            {
+                // The chat under the cell view has something said: three turns and two versions, the designer checking.
+                await PageData.OpenDesignChat(chrome.Designs, data.Designs.Open!.Detail.Row.Id, PageData.DesignChatPage(lengthen: state is "long" or "many"));
+            }
+        }
         var width = columns * 8f;
         if (name == "help card")
         {
@@ -146,14 +147,35 @@ public static class TerminalWireframeSweepTests
             arranged = TerminalFrame.Build(rail, tree, cardsTree, columns, rows, CellMeasureContext.PixelAuthored,
                 new TooltipRequest(hovered.Node.Tooltip!, new RectF32(b.X, b.Y, b.Width, b.Height)));
         }
-        return Record(arranged, columns, rows);
+        return Record(arranged, columns, rows, into);
     }
 
-    internal static CellWireframeFrame Record(ImmutableArray<Layout.ArrangedNode<int>> arranged, int columns, int rows)
+    /// <summary>The frame painted into <paramref name="into"/> (a new buffer when null) and recorded.</summary>
+    internal static CellWireframeFrame Record(ImmutableArray<Layout.ArrangedNode<int>> arranged, int columns, int rows, CellBuffer? into = null)
     {
-        var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
+        var buffer = into ?? new CellBuffer { ColorMode = ColorMode.TrueColor };
         buffer.Resize(columns, rows);
         return CellWireframe.RecordCells(new BufferedViewport(buffer, columns, rows), arranged, null, false);
+    }
+
+    /// <summary>
+    /// A case's cells as text, one line a row, written beside the test's output (<c>terminal-wireframe/</c>) for every case, so a page can be looked
+    /// at in cells as the GUI sweep's PNG shows it in pixels; a <paramref name="failed"/> case's also goes to <c>PILOT_JOB_ARTIFACTS</c> when a
+    /// pilot job runs it, to start the fix from.
+    /// </summary>
+    internal static string CaptureOf(CellBuffer buffer, int columns, int rows, string key, bool failed)
+    {
+        var text = string.Join(Environment.NewLine, Enumerable.Range(0, rows).Select(y => string.Concat(Enumerable.Range(0, columns).Select(x => buffer.BackAt(x, y).Glyph)).TrimEnd()));
+        var name = string.Concat(key.Select(c => char.IsLetterOrDigit(c) || c is '.' or '-' ? c : '_')) + ".txt";
+        var folder = Path.Combine(AppContext.BaseDirectory, "terminal-wireframe");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, name);
+        File.WriteAllText(path, text);
+        if (failed && Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } artifacts && Directory.Exists(artifacts))
+        {
+            File.WriteAllText(Path.Combine(artifacts, "terminal-wireframe-" + name), text);
+        }
+        return path;
     }
 
     internal static CellWireframeResult Check(CellWireframeFrame frame) => CellWireframe.CheckCells(frame, new CellWireframeOptions());
@@ -165,7 +187,8 @@ public static class TerminalWireframeSweepTests
     internal static async Task Run(string page, string state, int columns, int rows)
     {
         var key = Key(page, state, columns, rows);
-        var frame = await RecordCase(page, state, columns, rows);
+        var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
+        var frame = await RecordCase(page, state, columns, rows, buffer);
         frame.Frame.Texts.IsEmpty.ShouldBeFalse($"{key}: the frame recorded no text (a frame painted outside CellLayout.Paint records empty and would pass unjudged)");
         var result = Check(frame);
         var expected = Baseline.Where(b => b.Case == key).ToList();
@@ -183,11 +206,13 @@ public static class TerminalWireframeSweepTests
             }
         }
         var message = new System.Text.StringBuilder();
+        var capture = CaptureOf(buffer, columns, rows, key, failed: unknown.Count > 0);
         if (unknown.Count > 0)
         {
             message.AppendLine($"{key}: {unknown.Count} finding(s) not in the baseline:");
             foreach (var u in unknown) { message.AppendLine($"  [{u.Rule}] {u.What}"); }
             message.AppendLine(CellWireframe.Describe(result));
+            message.AppendLine($"  capture: {capture}");
         }
         if (expected.Count > 0)
         {

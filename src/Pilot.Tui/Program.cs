@@ -274,6 +274,24 @@ chrome.Spend.OnWindow = window => spendReads.Ask(window, feed.Screen(DateTimeOff
 var designReads = new DesignReads(client, Who, Redraw);
 chrome.Designs.OnOpen = id => designReads.AskDesign(id, null, force: true);
 chrome.Designs.OnVersion = (id, number) => designReads.AskDesign(id, number, force: true);
+// The chat with the designer under the cell view: the open design's chat feed followed while the page is open, what is typed sent as design-say. A terminal has no picture to paste.
+designReads.Follow(chrome.Designs, (run, what) => tracker.Run(run, what), Redraw);
+chrome.Designs.Chat.Cells = true;
+chrome.Designs.Chat.OpenLink = url => DashboardCommands.Open(url);
+chrome.Designs.OnStart = (brief, node) => _ = Task.Run(async () =>
+{
+    // What pilot design new does on the node the page reads; the made design's page opens.
+    var (id, error) = await designReads!.StartAsync(brief, CancellationToken.None);
+    if (id is not null)
+    {
+        chrome.Designs.Started(id);
+    }
+    else
+    {
+        chrome.Designs.StartFailed(error ?? "the node refused");
+    }
+    Redraw();
+});
 chrome.Flights.OnSpend = code => spendReads.AskFlight(code, force: true);
 chat.OnAnswerNow = async sendId =>
 {
@@ -496,7 +514,6 @@ while (!stop.IsCancellationRequested)
             {
                 designReads.AskDesign(openDesign, designReads.Page?.Detail.Row.Id == openDesign ? designReads.Page.Version : null);
             }
-            chrome.Designs.Terminal = (columns, rows);
         }
         if (page == PilotPage.Flights && chrome.Flights.OpenCode is { } openCode)
         {
@@ -521,6 +538,11 @@ while (!stop.IsCancellationRequested)
         cards.OnChatPage = page == PilotPage.Chat;
         var cardsBeside = columns >= TerminalFrame.CardsPanelColumns && (pages.Cards.HasAny || cards.CanTell && !cards.OnChatPage);
         chat.CellColumns = TerminalFrame.PageColumns(columns, cardsBeside);
+        if (page == PilotPage.Designs)
+        {
+            // The page's own room, as the Chat page's: the cards panel beside it takes its columns, and the design's chat and cell view are sized to what is left.
+            chrome.Designs.Terminal = (TerminalFrame.PageColumns(columns, cardsBeside), rows);
+        }
         var pageTree = page switch
         {
             PilotPage.Chat => chat.Tree(),
@@ -552,7 +574,7 @@ while (!stop.IsCancellationRequested)
         arranged = TerminalFrame.Build(railTree, pageTree, cardsBeside ? cards.Tree(cardsScreen) : null, columns, rows, CellMeasureContext.PixelAuthored, input.Router.Tooltip);
         TerminalFrame.Paint(terminal.HideCaret, () => CellLayout.Paint(terminal, arranged, surface));
         input.Painted();
-        if (chat.ParkedCaret(page, focus, arranged) is var (caretColumn, caretRow))
+        if ((chat.ParkedCaret(page, focus, arranged) ?? (page == PilotPage.Designs ? chrome.Designs.Chat.ParkedCaretEmbedded(focus, arranged) : null)) is var (caretColumn, caretRow))
         {
             // The composer is drawn from the editor's lines (CellLayout paints no text editor), so its caret is placed here.
             terminal.SetCaret(caretColumn, caretRow, CaretStyle.BlinkingBar);

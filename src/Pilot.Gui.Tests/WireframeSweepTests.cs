@@ -87,7 +87,9 @@ public static class WireframeSweepTests
             }
         }
         var unknown = Unknown(key, findings);
-        Assert.True(unknown.IsEmpty, Message(key, unknown));
+        // A picture to start the fix from, as the overlap check gives: the page as the chrome paints it, beside the test's output.
+        var capture = unknown.IsEmpty ? null : await PageTextOverlapTests.CaptureOf(page, state, width, dpi, height, key, Path.Combine(AppContext.BaseDirectory, "wireframe"));
+        Assert.True(unknown.IsEmpty, Message(key, unknown) + (capture is null ? "" : $"{Environment.NewLine}  capture: {capture}"));
     }
 
     private static readonly Lock DumpLock = new();

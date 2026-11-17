@@ -1,0 +1,194 @@
+using Microsoft.Extensions.Hosting;
+using Pilot.Contracts;
+using Pilot.Node.Flights;
+
+namespace Pilot.Node.Designs;
+
+/// <summary>
+/// The designer sessions (PIL1151): one per design at a time, named <c>&lt;machine&gt;-dsn&lt;n&gt;-designer</c>, started in the design's own folder
+/// when the design gets its first brief and resumed with its context (by <see cref="Say"/>, the node's own path, never a bare
+/// <c>claude --resume</c>) when the owner adds to the brief. Every start and every resume goes through the <see cref="StartGate"/>: with the usage
+/// limit open the ask is held, the design says <c>held until &lt;time&gt;</c> and why, and <see cref="SweepAsync"/> takes it up once the limit has ended.
+/// </summary>
+/// <remarks>
+/// Asks run one after the other (<see cref="Settled"/> is the end of the last), so two asks for one design never both find "no designer yet" and
+/// start two. The designer's id, name, state and the pieces not yet delivered are on the design's record (<see cref="DesignRow"/>), so a restart finds
+/// the session again. The designer's writes outside <c>draft/</c> are refused by <see cref="DesignerGuard"/>.
+/// </remarks>
+public sealed class Designers(NodeState state, DesignStore store, IWorkerLauncher workers, StartGate gate, RoleModels models, string machine, TimeProvider time)
+{
+    /// <summary>How long a start may go unlisted by the session tracker before it is taken for lost: pieces wait for it until then.</summary>
+    public static readonly TimeSpan ListedWithin = TimeSpan.FromMinutes(2);
+
+    /// <summary>The card kind of a held ask.</summary>
+    public const string HeldKind = "designer-held";
+
+    private readonly Lock _chain = new();
+    private Task _settled = Task.CompletedTask;
+
+    /// <summary>How the CLI is run in the designer's brief (<see cref="Briefs.Run"/>).</summary>
+    public string Run { get; init; } = Briefs.Run(null, null);
+
+    /// <summary>The <c>--settings</c> JSON a designer is started with (<see cref="HookCommands.DesignerSettings"/>), which makes the node's PreToolUse deny reach it; null where none is wired.</summary>
+    public string? GuardSettings { get; init; }
+
+    /// <summary>Says a command to a session through the node's messenger, which resumes an ended session with its context; null where none is wired (a design store without sessions).</summary>
+    public Func<CommandRequest, CancellationToken, Task<CommandResult>>? Say { get; set; }
+
+    /// <summary>The end of the asks made so far, for a test to await.</summary>
+    public Task Settled
+    {
+        get { lock (_chain) { return _settled; } }
+    }
+
+    /// <summary>The name of the designer of <paramref name="id"/>.</summary>
+    public string NameOf(string id) => $"{machine.ToLowerInvariant()}-dsn{DesignStore.Normalise(id)[4..]}-designer";
+
+    /// <summary>
+    /// Asks for the designer of <paramref name="id"/> to work on the brief: <paramref name="piece"/> is the owner's new words, or null for a design's first
+    /// brief (which the designer's own brief carries whole). Done in the background, after the asks before it; returns at once.
+    /// </summary>
+    public void Ask(string id, string? piece)
+    {
+        lock (_chain)
+        {
+            _settled = Chain(_settled, () => AskAsync(id, piece));
+        }
+    }
+
+    private static async Task Chain(Task before, Func<Task> next)
+    {
+        try
+        {
+            await before.ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // An earlier ask's unexpected fault is its own: it must not stop every ask after it until a restart.
+        }
+        await next().ConfigureAwait(false);
+    }
+
+    /// <summary>Takes up what waits: a held ask whose hold has ended, and pieces for a designer that is up now. Called on a timer by the node, and by a test.</summary>
+    public void Sweep()
+    {
+        lock (_chain)
+        {
+            _settled = Chain(_settled, SweepAsync);
+        }
+    }
+
+    private async Task SweepAsync()
+    {
+        foreach (var row in store.List())
+        {
+            if (row.DesignerState is DesignerStates.Held || row.DesignerPending.Length > 0)
+            {
+                await AskAsync(row.Id, null).ConfigureAwait(false);
+            }
+            else if (row.DesignerName is { Length: > 0 } name && state.Sessions().FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase)) is { } listed)
+            {
+                // The session id is kept as soon as the tracker lists it, so the design's chat finds the transcript after a restart.
+                var done = row.DesignerState is DesignerStates.Working && listed.State is SessionState.Idle or SessionState.Ended;
+                if (done || listed.SessionId is { Length: > 0 } known && !row.DesignerSessions.Contains(known))
+                {
+                    // Its turn is done: the design says idle, and the next brief piece resumes it.
+                    store.Update(row.Id, r => r with { DesignerState = done ? DesignerStates.Idle : r.DesignerState, DesignerSessions = WithSession(r.DesignerSessions, listed.SessionId) });
+                }
+            }
+        }
+    }
+
+    private async Task AskAsync(string id, string? piece)
+    {
+        try
+        {
+            await DoAsync(id, piece).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // The piece is not lost: BRIEF.md has it, and the designer that does start reads the brief whole.
+            store.Update(id, r => r with { DesignerState = DesignerStates.Failed, DesignerWhy = ex.Message });
+        }
+    }
+
+    private async Task DoAsync(string id, string? piece)
+    {
+        var row = store.Find(id) ?? throw new DesignException($"There is no design {id}");
+        var name = NameOf(row.Id);
+        string[] pending = piece is { Length: > 0 } ? [.. row.DesignerPending, piece] : row.DesignerPending;
+
+        if (gate.HoldBecause($"design-ask {row.Id}", models.StartLimitFor(row.Repo ?? ""), models.WeekLimit, HeldKind, Verbs.DesignTarget(row.Id),
+                $"{row.Id} waits to start its designer", models.WeekPaceFor(row.Repo ?? "")) is { } held)
+        {
+            store.Update(row.Id, r => r with { DesignerName = name, DesignerState = DesignerStates.Held, DesignerHeldUntil = held.Resets, DesignerWhy = gate.HeldAnswer(held), DesignerPending = pending });
+            return;
+        }
+
+        var live = state.Sessions().FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase) && s.State is not SessionState.Failed && !s.Gone);
+        if (live is not null || row.DesignerJob is { Length: > 0 } && live is null && StartedRecently(row))
+        {
+            if (live is null)
+            {
+                // Started, and not listed yet: the pieces wait for it, and a sweep delivers them.
+                store.Update(row.Id, r => r with { DesignerState = DesignerStates.Working, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = pending });
+                return;
+            }
+            if (pending.Length > 0)
+            {
+                if (Say is null)
+                {
+                    store.Update(row.Id, r => r with { DesignerPending = pending });
+                    return;
+                }
+                var said = await Say(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(live.Id), Args = [Briefs.DesignerPiece(row.Id, string.Join("\n\n", pending))], Who = "node" }, CancellationToken.None).ConfigureAwait(false);
+                if (!said.Ok)
+                {
+                    // Kept for the next sweep, with the reason on the design.
+                    store.Update(row.Id, r => r with { DesignerState = DesignerStates.Failed, DesignerWhy = said.Error ?? "the say was refused", DesignerPending = pending });
+                    return;
+                }
+            }
+            store.Update(row.Id, r => r with { DesignerJob = live.Id, DesignerState = DesignerStates.Working, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerSessions = WithSession(r.DesignerSessions, live.SessionId), DesignerPhase = pending.Length > 0 ? DesignerPhases.Drafting : r.DesignerPhase });
+            return;
+        }
+
+        // None up: start the one designer, in the design's folder, with the contract and the brief so far.
+        var detail = store.Detail(row.Id);
+        var prototype = detail.CurrentFolder is { } current && File.Exists(Path.Combine(current, DesignStore.PrototypeFile))
+            ? File.ReadAllText(Path.Combine(current, DesignStore.PrototypeFile))
+            : DesignStore.StarterPrototype;
+        var notes = detail.CurrentFolder is { } folder && File.Exists(Path.Combine(folder, DesignStore.NotesFile))
+            ? File.ReadAllText(Path.Combine(folder, DesignStore.NotesFile))
+            : null;
+        var brief = Briefs.Designer(detail, prototype, notes, Run);
+        var job = await workers.StartAsync(new WorkerStart(name, store.FolderOf(row.Id), null, brief, models.Model(RoleModels.Designer), models.Effort(RoleModels.Designer), Reason: SessionStartReasons.Designer, Settings: GuardSettings), CancellationToken.None).ConfigureAwait(false);
+        store.Update(row.Id, r => r with { DesignerName = name, DesignerJob = job, DesignerState = DesignerStates.Working, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerStartedAt = time.GetUtcNow(), DesignerPhase = DesignerPhases.Drafting });
+    }
+
+    private static string[] WithSession(string[] have, string? session) =>
+        session is { Length: > 0 } && !have.Contains(session, StringComparer.Ordinal) ? [.. have, session] : have;
+
+    private bool StartedRecently(DesignRow row) => row.DesignerStartedAt is { } at && time.GetUtcNow() - at < ListedWithin;
+}
+
+/// <summary>Takes up what waits for a designer (<see cref="Designers.Sweep"/>) every half minute: a hold whose usage limit has ended, pieces for a designer that has come up.</summary>
+public sealed class DesignerSweep(Designers designers) : BackgroundService
+{
+    public static readonly TimeSpan Every = TimeSpan.FromSeconds(30);
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(Every);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                designers.Sweep();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+}

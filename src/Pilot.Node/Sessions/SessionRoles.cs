@@ -70,6 +70,13 @@ public static partial class SessionRoles
     [GeneratedRegex(@"^[a-z]{2}[0-9]+-review-[a-z0-9-]+-[0-9]+$", RegexOptions.CultureInvariant)]
     private static partial Regex PrReviewerName();
 
+    /// <summary>A design's designer as the node names it, <c>&lt;machine&gt;-dsn&lt;n&gt;-designer</c> (<c>de1-dsn3-designer</c>).</summary>
+    [GeneratedRegex(@"^[a-z]{2}[0-9]+-dsn[0-9]+-designer$", RegexOptions.CultureInvariant)]
+    private static partial Regex DesignerName();
+
+    /// <summary>Whether a session name is a design's designer's.</summary>
+    public static bool IsDesignerName(string? name) => name is { Length: > 0 } && DesignerName().IsMatch(name);
+
     [GeneratedRegex(@"^([a-z]{2}[0-9]+)-", RegexOptions.CultureInvariant)]
     private static partial Regex MachinePrefix();
 
@@ -119,6 +126,12 @@ public static partial class SessionRoles
         if (IsFixerName(name))
         {
             return new SessionRoleInfo(SessionRole.Fixer, null, null, null);
+        }
+
+        // <machine>-dsn<n>-designer makes a design, and flies no flight (it would read as a worker of flight DSN<n> otherwise).
+        if (IsDesignerName(name))
+        {
+            return new SessionRoleInfo(SessionRole.Designer, null, null, null);
         }
 
         if (name is { Length: > 0 } && MachineWorkerName().Match(name) is { Success: true } named)

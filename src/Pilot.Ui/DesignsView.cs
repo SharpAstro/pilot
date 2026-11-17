@@ -12,8 +12,59 @@ namespace Pilot.Ui;
 /// and NOTES.md and the brief beside it. The player is a widget of its own (<see cref="Player"/>, which the chrome lists after the page, so the router
 /// reaches its <see cref="ClickableRegion"/>s as it reaches any widget's); the page's own buttons all sit outside the rectangle it plays in.
 /// </summary>
-internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
+internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 {
+    public DesignsView(Renderer<TSurface> renderer) : base(renderer)
+    {
+        // The chat with the designer (PIL1151): the Chat page's widget over the design-chat feed, a part of this page. It shares this page's window context, so the
+        // router that moves the keyboard between this page's fields moves it into the chat's box.
+        Chat = new ChatView<TSurface>(renderer) { Embedded = true, Who = "designer", EmptyText = "Nothing said yet. Tell the designer what to change; Enter sends." };
+        ShareUiContext(Chat);
+        Chat.Fed = OnChatFed;
+        Chat.OpenDivider = entry => VersionOf(entry) is > 0 and var number ? () => PickVersion(number) : null;
+    }
+
+    /// <summary>The chat with the designer of the open design, read from the node's design-chat feed while the page is open (the host sets its <c>Load</c> and sends).</summary>
+    public ChatView<TSurface> Chat { get; }
+
+    private int? _chatVersion;
+
+    // The page's width in design units as the last Render had it, and the width from which the pixel page has three columns: the player, the chat and the versions
+    // at their least widths (a chat 260, the versions 220, a player the rest) and the gaps and margins. Narrower, the chat sits under the two others.
+    private float _width = 10_000f;
+    private const float WideColumns = 1000f;
+
+    // Under the two others, the chat takes a share of the height (NarrowChatShare to their 1), never under what its status, a line of the feed and the box need,
+    // never over NarrowChatHeight. A share, not a scroll around both: the chat's own scroll inside another was painted unclipped over the prototype.
+    private const float NarrowChatShare = 0.6f;
+    private const float NarrowChatFloor = 160f;
+    private const float NarrowChatHeight = 300f;
+
+    // The design's version a chat line says was published: its number, or 0 for any other entry.
+    private static int VersionOf(TranscriptEntry entry) =>
+        entry.Kind == TranscriptKind.Divider && entry.Id is { } id && id.StartsWith("version:", StringComparison.Ordinal)
+        && int.TryParse(id.AsSpan("version:".Length), NumberStyles.None, CultureInfo.InvariantCulture, out var number) ? number : 0;
+
+    // A page of the feed came in (on the pool): a version newer than any the chat had is the designer publishing, shown at once with no reload. The first
+    // read only learns what is there, so opening a design shows its current version as before.
+    private void OnChatFed(ChatPage page, bool _)
+    {
+        var latest = page.Entries.Select(VersionOf).DefaultIfEmpty(0).Max();
+        var seen = _chatVersion;
+        if (latest > 0)
+        {
+            _chatVersion = Math.Max(seen ?? 0, latest);
+        }
+        else if (seen is null)
+        {
+            _chatVersion = 0;
+        }
+        if (seen is not null && latest > seen && OpenId is { } id)
+        {
+            OnVersion?.Invoke(id, latest);
+        }
+    }
+
     private const float Gutter = 16f;
     private const float RowH = 48f;
     private const float StripH = 128f;
@@ -34,14 +85,96 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
 
     private readonly ListScrollController _listScroll = new() { Mode = ScrollBarMode.Interactive };
     private readonly ListScrollController _sideScroll = new() { Mode = ScrollBarMode.Interactive };
+    private readonly ListScrollController _cellScroll = new() { Mode = ScrollBarMode.Interactive };
 
-    protected override IEnumerable<ListScrollController> PageScrolls => [_listScroll, _sideScroll];
+    protected override IEnumerable<ListScrollController> PageScrolls => [_listScroll, _sideScroll, _cellScroll, .. Chat.Scrolls];
 
     /// <summary>The design whose page is open; null shows the list.</summary>
     public string? OpenId { get; private set; }
 
     /// <summary>Asked for a design's page (its id): the host reads <c>design show</c> and hands the page in the next screen.</summary>
     public Action<string>? OnOpen { get; set; }
+
+    /// <summary>
+    /// Asked to start a design (PIL1151): the brief typed and the name of the node the design is made on. The host sends <c>design-new</c> to that node and
+    /// answers with <see cref="Started"/> (the made design's id) or <see cref="StartFailed"/>.
+    /// </summary>
+    public Action<string, string>? OnStart { get; set; }
+
+    /// <summary>The box the brief of a new design is typed in, on the empty page and above the list.</summary>
+    public TextInputState BriefInput { get; } = new() { Placeholder = "Describe the design" };
+
+    private string? _startNote;
+
+    // The hit id and the key of the start's press: one design is started at a time, so the button is its own key.
+    private const string StartKey = "designs:start";
+
+    /// <summary>The start's press (PIL1151): working from the press until the host answers, through the shared feedback of a node-bound button.</summary>
+    internal Presses StartPresses { get; } = new();
+
+    private bool Starting => StartPresses.PendingOf(StartKey) is not null;
+
+    /// <summary>What the node answered to the last start when it refused, or null.</summary>
+    internal string? StartNote => _startNote;
+
+    /// <summary>Presses Start a design: hands the typed brief and the node to <see cref="OnStart"/>; an empty brief says what is missing.</summary>
+    public bool Start()
+    {
+        var brief = BriefInput.Text.Trim();
+        if (Starting || OnStart is null)
+        {
+            return false;
+        }
+        if (brief.Length == 0)
+        {
+            _startNote = "Type a brief first.";
+            return false;
+        }
+        _startNote = null;
+        StartPresses.NotePending(StartKey, StartKey);
+        OnStart(brief, StartNode);
+        return true;
+    }
+
+    /// <summary>The node a design started here is made on: this window's node, which is the one the page reads, also under All nodes.</summary>
+    internal string StartNode => Nodes?.Choices.FirstOrDefault(c => c.Here) is { } here ? here.Name : "this node";
+
+    // The host answers a start from the thread pool; the render thread owns the chat and the box, so the answer waits here and is applied at the next frame.
+    // It is one immutable record swapped whole, so neither side waits (LayoutDrivenTests.NothingInTheUiWaits).
+    private sealed record StartAnswer(string? Made, string? Why);
+    private StartAnswer? _startAnswer;
+
+    /// <summary>The host made design <paramref name="id"/>: the box is emptied and the new design's page opens at the next frame. Safe from any thread.</summary>
+    public void Started(string id)
+    {
+        Volatile.Write(ref _startAnswer, new StartAnswer(id, null));
+    }
+
+    /// <summary>The node refused the start, in <paramref name="why"/>'s words, shown at the next frame; the brief stays typed. Safe from any thread.</summary>
+    public void StartFailed(string why)
+    {
+        Volatile.Write(ref _startAnswer, new StartAnswer(null, why));
+    }
+
+    /// <summary>Applies the host's answer to a start on the render thread: the first thing a frame builds.</summary>
+    private void ApplyStartAnswer()
+    {
+        if (Interlocked.Exchange(ref _startAnswer, null) is not { } answer)
+        {
+            return;
+        }
+        StartPresses.NotePending(StartKey, null);
+        if (answer.Made is { } made)
+        {
+            _startNote = null;
+            BriefInput.Clear();
+            Open(made);
+        }
+        else
+        {
+            _startNote = answer.Why;
+        }
+    }
 
     /// <summary>Asked for another version of the open design (its id and the version's number): the host hands that version's page.</summary>
     public Action<string, int>? OnVersion { get; set; }
@@ -59,7 +192,16 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
     public AutopilotSwitch? Autopilot { get; set; }
 
     /// <summary>The header's Night switch.</summary>
-    public NightSwitch? Night { get; set; }
+    public NightSwitch? Night
+    {
+        get;
+        set
+        {
+            field = value;
+            // The chat is a part of this page and draws in its palette.
+            Chat.Night = value;
+        }
+    }
 
     /// <summary>The window's node selection.</summary>
     public NodeFilter? Nodes { get; set; }
@@ -71,7 +213,8 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
     public PrototypeCellGrid<TSurface>? CellGrid { get; private set; }
 
     /// <summary>
-    /// The terminal's size in cells when the page is drawn by pilot-tui (PIL1098), else null. There the prototype is not a player or a grid painted into a
+    /// The room the page has in cells when it is drawn by pilot-tui (PIL1098), else null: the terminal's rows, and its columns less the cards panel's
+    /// when that stands beside the page (<c>TerminalFrame.PageColumns</c>), so the chat and the cell view fit the page. There the prototype is not a player or a grid painted into a
     /// rectangle: its tree is a node of the page's own tree, arranged, painted and hit-tested with the page by CellLayout, so its goto, set, toggle and
     /// text inputs go through the terminal's ordinary click and key routing. The Pixels or Cells bar and the strip of renders have no place there.
     /// </summary>
@@ -215,6 +358,11 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
     public void Open(string id)
     {
         OpenId = id;
+        Pointing = false;
+        _chatVersion = null;
+        // The chat reads this design's feed from its start and follows it while the page is shown.
+        Chat.Restart();
+        Chat.Open();
         OnOpen?.Invoke(id);
     }
 
@@ -225,6 +373,85 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         Player = null;
         CellGrid = null;
         _playerFor = null;
+        _real = null;
+        _realGrid = null;
+        Pointing = false;
+        Chat.Close();
+    }
+
+    /// <summary>The window left the Designs page: the chat stops following its feed (the open design stays open).</summary>
+    public void Pause() => Chat.Close();
+
+    /// <summary>The window came back to the Designs page: an open design's chat follows its feed again, reading on from what it holds.</summary>
+    public void Resume()
+    {
+        if (OpenId is not null)
+        {
+            Chat.Open();
+        }
+    }
+
+    // What a click in the prototype writes while Pointing: the clicked node's key lands in this state value, which the page reads and clears.
+    private const string PointedState = "__pointed";
+
+    // The player of the document as the version made it, kept while Pointing swaps in a copy whose clicks only name the node.
+    private PrototypePlayer<TSurface>? _real;
+    private PrototypeCellGrid<TSurface>? _realGrid;
+
+    /// <summary>
+    /// True while a click on the prototype puts the clicked node's key in the chat's box instead of playing the click (the Point at this switch). The prototype shown
+    /// is then a copy of the version with every node's click rewritten to name itself, on the same screen.
+    /// </summary>
+    public bool Pointing { get; private set; }
+
+    /// <summary>Turns Point at this on or off. Off puts the prototype back on the screen the copy was left on.</summary>
+    public void Point(bool on)
+    {
+        if (on == Pointing || _real is null)
+        {
+            return;
+        }
+        Pointing = on;
+        if (on)
+        {
+            Player = PointingOf(_real);
+            CellGrid = new PrototypeCellGrid<TSurface>(Renderer, Player) { Columns = CellGrid?.Columns ?? 0, Rows = CellGrid?.Rows ?? 0 };
+        }
+        else
+        {
+            _real.Goto(Player!.CurrentScreen.Id);
+            Player = _real;
+            CellGrid = _realGrid;
+        }
+        _shownTarget = null;
+        PickSize(TerminalSize);
+        CellGrid?.Invalidate();
+    }
+
+    // A copy of the player's document in which every node that can be clicked names itself: the node's own key (its key property) else its path in the document.
+    private PrototypePlayer<TSurface> PointingOf(PrototypePlayer<TSurface> real)
+    {
+        var copy = real.Document with { Screens = [.. real.Document.Screens.Select(s => s with { Root = Naming(s.Root) })] };
+        var player = new PrototypePlayer<TSurface>(Renderer, copy, Prototype.DefaultTheme, FontPath ?? "") { Target = real.Target };
+        player.Goto(real.CurrentScreen.Id);
+        player.State.Changed += () =>
+        {
+            if (player.State.Get(PointedState) is { Length: > 0 } key)
+            {
+                // Cleared at once, so the same node pointed at twice names itself twice.
+                player.State.Set(PointedState, "");
+                Chat.InsertAtCaret($"`{key}`");
+            }
+        };
+        return player;
+    }
+
+    private static PrototypeNode Naming(PrototypeNode node)
+    {
+        // An input keeps its own press (typing), and a modal's action is its scrim's dismissal.
+        var key = node.Properties.TryGetValue("key", out var named) && named.Text.Length > 0 ? named.Text : node.Path;
+        var action = node.Bind is null && node.Kind != "modal" ? $"set:{PointedState}={key}" : node.Action;
+        return node with { Action = action, Children = [.. node.Children.Select(Naming)] };
     }
 
     /// <summary>Plays version <paramref name="number"/> of the open design.</summary>
@@ -244,6 +471,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         Palette.Use(Night);
         BeginFrame();
         NoteHeight(bounds);
+        _width = Scale.ToDesignX(bounds.Width);
         var tree = Tree(screen);
         RenderLayout(tree, bounds, null, null, DrawFill);
     }
@@ -306,6 +534,7 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
 
     internal Layout.Node Tree(DesignsScreen screen)
     {
+        ApplyStartAnswer();
         Palette.Use(Night);
         var open = OpenId is { } id && screen.Open is { } shown && shown.Detail.Row.Id == id ? shown : null;
         if (OpenId is null)
@@ -338,6 +567,8 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         {
             Player = null;
             CellGrid = null;
+            _real = null;
+            _realGrid = null;
             _playerFor = null;
             return;
         }
@@ -349,8 +580,11 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         }
         _playerFor = key;
         _shownTarget = null;
-        Player = new PrototypePlayer<TSurface>(Renderer, document, Prototype.DefaultTheme, FontPath ?? "");
-        CellGrid = new PrototypeCellGrid<TSurface>(Renderer, Player);
+        _real = new PrototypePlayer<TSurface>(Renderer, document, Prototype.DefaultTheme, FontPath ?? "");
+        _realGrid = new PrototypeCellGrid<TSurface>(Renderer, _real);
+        // Pointing carries over to another version: its copy is made for that version's prototype.
+        Player = Pointing ? PointingOf(_real) : _real;
+        CellGrid = Pointing ? new PrototypeCellGrid<TSurface>(Renderer, Player) : _realGrid;
         // A design that names terminal targets is first arranged for its first one.
         if (page.Detail.Row.Terminals is [{ } first, ..] && DesignTerminals.TryParse(first, out _, out _))
         {
@@ -388,10 +622,34 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
     {
         if (screen.Rows.Length == 0)
         {
-            return Layout.Builder.Text("No designs yet. pilot design new -- <brief> makes one.", 14f, Dim, TextAlign.Center).Selectable().Stretch();
+            return Layout.Builder.VStack(
+                StartBox(),
+                Layout.Builder.Text("No designs yet. Type what the design is for and press Start a design.", 14f, Dim, TextAlign.Center).Selectable().Stretch()).WithGap(8f).Pad(Gutter, 8f).Stretch();
         }
         var rows = screen.Rows.Select((row, i) => ListRow(row, i)).ToArray();
-        return Layout.Builder.VStack(rows).WithGap(2f).WithScroll(_listScroll).Pad(Gutter, 8f).Stretch();
+        return Layout.Builder.VStack(StartBox(), Layout.Builder.VStack(rows).WithGap(2f).WithScroll(_listScroll).Stretch()).WithGap(8f).Pad(Gutter, 8f).Stretch();
+    }
+
+    // One declaration for the pixel page and the terminal's: the brief box and the button on one row (one height, one middle), what it does under them.
+    private Layout.Node StartBox()
+    {
+        BriefInput.OnCommit = _ =>
+        {
+            Start();
+            return Task.CompletedTask;
+        };
+        Layout.Node Label(string text, RGBAColor32 color) => Layout.Builder.Text(text, 12f, color, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(Button);
+        // Through the shared feedback of a node-bound button: Starting… dimmed with no hit while the node makes the design, so no second press is taken.
+        var button = StartPresses.Button(StartKey, StartKey,
+            () => Label("Start a design", Bright)
+                .BgHover(ButtonHover)
+                .WithTooltip($"Make a design from the brief on {StartNode}; its designer session starts")
+                .Follows(new HitResult.ButtonHit(StartKey), _ => Start()),
+            _ => Label("Starting…", Dim).WithTooltip($"Making the design on {StartNode}"));
+        var caption = _startNote ?? $"Starts on {StartNode}";
+        return Layout.Builder.VStack(
+            Layout.Builder.HStack(Layout.Builder.TextInput(BriefInput, 12f, Palette.Input).WStar().RowH(26f), button.RowH(26f)).WithGap(6f).RowH(26f),
+            WrappedProse.OneLine(caption, 12f, _startNote is null ? Dim : Bright).RowH(22f).Whole(caption)).WithGap(2f).RowH(50f);
     }
 
     private Layout.Node ListRow(DesignRow row, int index)
@@ -426,12 +684,23 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         else if (Terminal is { } terminal)
         {
             left.Add(ScreenButtons(page));
-            left.Add(Layout.Builder.VStack(EmbeddedTree(terminal)).Bg(Well).Stretch());
+            // In a scroll of its own: the rows left to it are what the terminal has less the header (which wraps at a narrow width) and the chat,
+            // and a screen taller than them is cut at its foot and scrolled, never painted on over the chat under it.
+            left.Add(Layout.Builder.VStack(EmbeddedTree(terminal)).WithScroll(_cellScroll).Bg(Well).WStar().HStar());
         }
         else
         {
             left.Add(Layout.Builder.Fill(key: CellsShown ? CellsKey : PlayerKey).Bg(Well).Stretch());
             left.Add(Strip(page));
+        }
+        if (Terminal is { } cells)
+        {
+            // The chat under the cell view, in the same column: its rows are the terminal's, and its box is drawn in cells.
+            Chat.Cells = true;
+            // CellColumns counts a page's columns, the Chat page's gutters included; this chat has none of its own, so they are added to its column's.
+            // (The 12 added before made the box's rule as wide as the column inside a box narrower than it, and it ended in an ellipsis.)
+            Chat.CellColumns = LeftColumns(cells) + ChatView<TSurface>.PagePadColumns;
+            left.Add(ChatPane(page).HFixed(CellChatHeight));
         }
         // The target switcher sits above the versions, in the column that has the width for it: in the player's column it was squeezed at a narrow window and drew over the version line beside it.
         List<Layout.Node> right = page.Version is not null && Player is not null ? [TargetBar(page), Heading("Versions")] : [Heading("Versions")];
@@ -443,24 +712,66 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         }
         right.Add(Heading("Brief"));
         right.Add(Markdown(string.IsNullOrWhiteSpace(page.Detail.Brief) ? "(no brief)" : page.Detail.Brief!));
-        var columns = Layout.Builder.HStack(
+        // In pixels the chat is a column of its own between the player and the versions: beside the prototype, where what the designer changes is in view.
+        // Where the window has no width for three columns (their least widths and the gaps), the chat goes under the other two instead of past the page.
+        var wide = _width >= WideColumns;
+        var two = Layout.Builder.HStack(
             Layout.Builder.VStack([.. left]).WithGap(8f).WStar(2.2f).HStar(),
             Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).WStar().HStar();
+        var columns = Terminal is not null
+            ? two
+            : wide
+                ? Layout.Builder.HStack(
+                    Layout.Builder.VStack([.. left]).WithGap(8f).WStar(1.6f).HStar(),
+                    ChatPane(page).WStar(1.3f, 260f, 640f).HStar(),
+                    Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 220f, 420f).HStar()).WithGap(Gutter).WStar().HStar()
+                : Layout.Builder.VStack(two.HStar(), ChatPane(page).HStar(NarrowChatShare, NarrowChatFloor, NarrowChatHeight)).WithGap(8f).WStar().HStar();
         // The Pixels or Cells bar spans the page above both columns, so a narrow window cannot squeeze it into the player's column.
         return page.Version is not null && Player is not null && Terminal is null
             ? Layout.Builder.VStack(PlayerBar(page), columns).WithGap(8f).Pad(Gutter, 8f)
             : Layout.Builder.VStack(columns).Pad(Gutter, 8f);
     }
 
+    // The chat column: its heading with the Point at this switch, and the chat's own feed, status and box under it.
+    private Layout.Node ChatPane(DesignPage page)
+    {
+        var heading = Heading("Chat with the designer");
+        var head = Player is null
+            ? heading
+            : Layout.Builder.HStack(heading.WStar(), PointButton()).WithGap(6f).RowH(26f);
+        return Layout.Builder.VStack(head, Chat.Tree().HStar()).WithGap(4f);
+    }
+
+    private Layout.Node PointButton() =>
+        Layout.Builder.Text("Point at this", 12f, Bright, TextAlign.Center)
+            .Pad(10f, 4f)
+            .WAuto()
+            .Bg(Pointing ? Active : Button)
+            .BgHover(ButtonHover)
+            .WithTooltip(Pointing ? "Pointing: a click on the prototype puts that node's key in your message. Click again to play it." : "Click a part of the prototype to put its key in your message instead of playing the click")
+            .Follows(new HitResult.ButtonHit("designs:point"), _ => Point(!Pointing))
+            .RowH(26f);
+
+    // The cells the page's left column has in a terminal, as the tree shares them: its 2.2 share beside the versions' 1, with the versions kept
+    // between 260 and 520 where the room allows. The chat's box and the prototype's width are told this one number.
+    private static int LeftColumns((int Columns, int Rows) terminal)
+    {
+        var width = terminal.Columns * 8f - 2f * Gutter - Gutter;
+        return (int)(Math.Clamp(width * 2.2f / 3.2f, Math.Max(160f, width - 520f), Math.Max(160f, width - 260f)) / 8f);
+    }
+
+    // The rows the chat takes under the cell view, whatever the terminal's height: what the box, its hint, the status and a few lines of the feed need.
+    // A taller terminal gives the rows to the prototype, which is what the chat talks about.
+    private const int CellChatRows = 10;
+    private const float CellChatHeight = CellChatRows * 16f;
+
     // The prototype's current screen as a node of the page's tree, built by the player's own builder (so its fields and its goto are the player's) for
-    // the cells the page leaves it: its left column's share of the width, less the header and the buttons above it.
+    // the cells the page leaves it: its left column's share of the width, less the header, the buttons above it and the chat under it.
     private Layout.Node EmbeddedTree((int Columns, int Rows) terminal)
     {
         var builder = Player!.TreeBuilder;
         var size = builder.DesignSize;
-        var width = terminal.Columns * 8f - 2f * Gutter;
-        var left = Math.Clamp((width - Gutter) * 2.2f / 3.2f, 160f, Math.Max(160f, width - Gutter - 260f));
-        builder.DesignSize = ((int)left, Math.Max(4, terminal.Rows - 8) * 16);
+        builder.DesignSize = (LeftColumns(terminal) * 8, Math.Max(4, terminal.Rows - 8 - CellChatRows) * 16);
         try
         {
             return Player.BuildTree().Stretch();
@@ -619,7 +930,8 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
         return Layout.Builder.HStack([.. tiles]).WithGap(8f).HFixed(StripH).WStar();
     }
 
-    private static Layout.Node Heading(string text) => WrappedProse.OneLine(text, 14f, Bright).RowH(26f);
+    // Whole on hover: a heading beside a button (the chat's, at 80 columns) is cut with an ellipsis.
+    private static Layout.Node Heading(string text) => WrappedProse.OneLine(text, 14f, Bright).RowH(26f).Whole(text);
 
     // The Markdown of a text, parsed once: the page's tree is built every frame and a node is immutable.
     private readonly Dictionary<(string Text, bool Night), Layout.Node> _markdown = [];

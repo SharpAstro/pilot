@@ -37,7 +37,8 @@ public static class HookCommands
     /// <c>pilot-node hook [--node-socket &lt;path&gt;]</c>: posts stdin to the node and returns 0, whatever happened. A hook
     /// runs inside every session on the machine, so it is fail-open by rule: no node, a slow node or a bad payload costs
     /// the session nothing, and it prints nothing, since a SessionStart hook's output would land in the model's context.
-    /// The one exception is the node's own answer (a 200 with a body, which it gives only to a Stop it holds or a permission it allows), written to
+    /// The one exception is the node's own answer (a 200 with a body, which it gives only to a Stop it holds, a permission it allows or a designer's
+    /// write it denies, PIL1151), written to
     /// <paramref name="stdout"/> for Claude Code to read.
     /// </summary>
     /// <param name="budget">How long it waits for the node: <see cref="HookBudget"/> unless a test, which must not depend on how
@@ -204,6 +205,24 @@ public static class HookCommands
         }
         entry["hooks"] = new JsonArray(handler);
         return entry;
+    }
+
+    /// <summary>
+    /// The settings a designer is started with (<c>claude --settings</c>, PIL1151): one PreToolUse hook that is <b>not</b> async, on the file tools and the shell,
+    /// so the node's deny (<see cref="Pilot.Node.Designs.DesignerGuard"/>) is read by Claude Code. Only the designer waits on it; every other session keeps
+    /// the async entry <see cref="Install"/> writes.
+    /// </summary>
+    public static string DesignerSettings(string nodePath, string? socket)
+    {
+        var args = new JsonArray(HookArgument);
+        if (socket is not null)
+        {
+            args.Add((JsonNode)JsonValue.Create("--node-socket"));
+            args.Add((JsonNode)JsonValue.Create(socket));
+        }
+        var handler = new JsonObject { ["type"] = "command", ["command"] = nodePath, ["args"] = args, ["timeout"] = 10 };
+        var entry = new JsonObject { ["matcher"] = Pilot.Node.Designs.DesignerGuard.Matcher, ["hooks"] = new JsonArray(handler) };
+        return new JsonObject { ["hooks"] = new JsonObject { ["PreToolUse"] = new JsonArray(entry) } }.ToJsonString();
     }
 
     /// <summary>Takes the handlers <paramref name="ours"/> picks out of an event's entries, and any entry left with none; true when it took any.</summary>

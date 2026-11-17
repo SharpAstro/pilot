@@ -68,6 +68,94 @@ public sealed class DesignsViewTests
     private static List<string> TextsOf(Rig rig) =>
         SentenceRuns.Texts(rig.View.Tree(rig.Screen) is { } tree ? Layout.Engine.Arrange(tree, new Rect<float>(0, 0, 1400, 900), new PixelMeasureContext<RgbaImage>(rig.Renderer, SessionsCapture.FontPath, 1f)).Select(a => a.Node) : []);
 
+    private static (Layout.ArrangedNode<float> Input, Layout.ArrangedNode<float> Button) StartRow(IEnumerable<Layout.ArrangedNode<float>> arranged)
+    {
+        var all = arranged.ToList();
+        var input = all.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput });
+        var button = all.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:start" });
+        return (input, button);
+    }
+
+    private static List<Layout.ArrangedNode<float>> ArrangeAt(Rig rig, float width, float height) =>
+        [.. Layout.Engine.Arrange(rig.View.Tree(rig.Screen), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(rig.Renderer, SessionsCapture.FontPath, 1f))];
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TheBriefBoxAndStartButtonShowOnTheEmptyPageAndAboveTheListOnOneRow(bool empty)
+    {
+        using var rig = new Rig(empty ? DesignsScreen.Empty("sample", Now) : Sample());
+        rig.Paint();
+
+        var texts = TextsOf(rig);
+        texts.ShouldContain("Start a design");
+        texts.ShouldNotContain(t => t.Contains("pilot design new", StringComparison.Ordinal));
+        var (input, button) = StartRow(ArrangeAt(rig, 1400, 900));
+        button.Bounds.Height.ShouldBe(input.Bounds.Height, "one height");
+        (button.Bounds.Y + button.Bounds.Height / 2f).ShouldBe(input.Bounds.Y + input.Bounds.Height / 2f, 0.5f, "one middle");
+        if (!empty)
+        {
+            texts.ShouldContain("DSN-1  Design 0");
+        }
+    }
+
+    [Fact]
+    public void TheStartBoxHoldsAtANarrowWidthWithoutCuttingTheButton()
+    {
+        using var rig = new Rig(DesignsScreen.Empty("sample", Now));
+        var (input, button) = StartRow(ArrangeAt(rig, 360, 700));
+        button.Bounds.X.ShouldBeGreaterThan(input.Bounds.X);
+        (button.Bounds.X + button.Bounds.Width).ShouldBeLessThanOrEqualTo(360f);
+        input.Bounds.Width.ShouldBeGreaterThan(40f);
+    }
+
+    [Fact]
+    public void TypingABriefAndPressingStartAsksTheHostForDesignNewOnTheNodeThenOpensTheMadeDesign()
+    {
+        using var rig = new Rig(Sample());
+        rig.View.Nodes = rig.Chrome.Nodes;
+        rig.Chrome.Nodes.Choices = [new NodeMark("a", "a", "DE1", true), new NodeMark("b", "b", "SE1", false)];
+        rig.Chrome.Nodes.All.ShouldBeTrue();
+        (string Brief, string Node)? asked = null;
+        rig.View.OnStart = (brief, node) => asked = (brief, node);
+        rig.Paint();
+        TextsOf(rig).ShouldContain("Starts on DE1", "All nodes names the node it will use");
+
+        rig.View.BriefInput.Text = "A settings page for the dome";
+        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:start" }));
+
+        asked.ShouldBe(("A settings page for the dome", "DE1"));
+        // Pressed, the button reads Starting… with no hit until the host answers: a second press is not taken.
+        rig.Paint();
+        TextsOf(rig).ShouldContain("Starting…");
+        Painted(rig.View).Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).ShouldNotContain("designs:start");
+        rig.View.Started("DSN-9");
+        // The answer is applied by the render thread at the next frame, not by the thread that gave it.
+        rig.View.OpenId.ShouldBeNull();
+        rig.Paint();
+        rig.View.OpenId.ShouldBe("DSN-9");
+        rig.View.BriefInput.Text.ShouldBe("");
+    }
+
+    [Fact]
+    public void AnEmptyBriefAsksNothingAndARefusalKeepsTheBriefAndSaysWhy()
+    {
+        using var rig = new Rig(Sample());
+        var asked = 0;
+        rig.View.OnStart = (_, _) => asked++;
+        rig.View.Start().ShouldBeFalse();
+        asked.ShouldBe(0);
+        rig.View.StartNote.ShouldBe("Type a brief first.");
+
+        rig.View.BriefInput.Text = "brief";
+        rig.View.Start().ShouldBeTrue();
+        rig.View.StartFailed("no repo");
+        rig.Paint();
+        rig.View.BriefInput.Text.ShouldBe("brief");
+        rig.Paint();
+        TextsOf(rig).ShouldContain("no repo");
+    }
+
     [Fact]
     public void ShowTakesTheWindowToTheDesignsPageAndRenderKeepsIt()
     {

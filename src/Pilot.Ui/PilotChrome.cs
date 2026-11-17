@@ -211,7 +211,8 @@ internal sealed class PilotChrome<TSurface>
         Repos.OnPullRequests = OpenRepoPullRequests;
         Home = new HomeView<TSurface>(renderer);
         Home.Arranged = nodes => TextCheck.Observe("home", nodes, DpiScale);
-        sessions.ShareWith(Flights, Repos, PullRequests, Jobs, Fleet, Settings, Cards, Chat, More);
+        // The Designs page's fields (the brief box, the chat with the designer) take text through the same router, as the chat's box does.
+        sessions.ShareWith(Flights, Repos, PullRequests, Jobs, Fleet, Settings, Cards, Chat, Designs, Designs.Chat, More);
         // The panel's watchtower foot is the way into the chat.
         Cards.OnChat = () => Show(PilotPage.Chat);
         // A card's Chat about this, on the panel or the flight page: the Chat page with the card quoted above the box, in the
@@ -574,6 +575,15 @@ internal sealed class PilotChrome<TSurface>
         else
         {
             Chat.Close();
+        }
+        // So does a design's chat with its designer, while its page is the one shown.
+        if (page == PilotPage.Designs)
+        {
+            Designs.Resume();
+        }
+        else
+        {
+            Designs.Pause();
         }
     }
 

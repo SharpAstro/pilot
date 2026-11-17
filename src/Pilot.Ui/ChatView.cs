@@ -64,7 +64,13 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
 
         /// <summary>Whether a page of the feed has been read into it: until then the chat says it is loading, not that nothing was said.</summary>
         public bool Read { get; init; }
+
+        /// <summary>The feed's own account of what is going on, in plain words (a design's "drafting", "held until 22:00 UTC"); null where the feed has none.</summary>
+        public string? Status { get; init; }
     }
+
+    /// <summary>A picture pasted into the box, sent with the next message (PIL1151): its file name and bytes.</summary>
+    internal sealed record ChatPicture(string Name, byte[] Bytes);
 
     private Held _held = Held.Empty;
     private CancellationTokenSource? _following;
@@ -166,7 +172,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
 
     private enum OutState { Queued, Sending, Sent, Failed }
 
-    private sealed record Out(Guid Id, string Text, Func<string, Task<string?>> Send, string Key, string Hit, OutState State, TaskCompletionSource Done, Quoted? About = null, string? Reason = null, string? Where = null)
+    private sealed record Out(Guid Id, string Text, Func<string, Task<string?>> Send, string Key, string Hit, OutState State, TaskCompletionSource Done, Quoted? About = null, string? Reason = null, string? Where = null, ChatPicture? Picture = null)
     {
         // The id this send goes to the node with (its request id), which the feed's entry and queued line for it carry back.
         public string SendId => Id.ToString("N");
@@ -432,6 +438,96 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         Ui.Focus.Focus(Input);
     }
 
+    /// <summary>
+    /// Called on the pool after each page of the feed is merged in, with the page and whether it was a first read of the feed (from its start): the design page
+    /// looks in it for a version that was published (PIL1151). Null for none.
+    /// </summary>
+    public Action<ChatPage, bool>? Fed { get; set; }
+
+    /// <summary>
+    /// What the chat is with, as a word: the label of the other side's words, the box's placeholder and the empty chat's line. "watchtower" on the Chat page,
+    /// "designer" on a design's page (PIL1151).
+    /// </summary>
+    public string Who
+    {
+        get => _entries.AssistantLabel;
+        set => _entries.AssistantLabel = value;
+    }
+
+    /// <summary>
+    /// True where the chat is a part of another page (PIL1151: beside a design's prototype): <see cref="Tree"/> is then the feed, a status line and the box
+    /// with no header, no page ground and no ? card, for the host's page to place. The host also lists <see cref="Scrolls"/> among its own.
+    /// </summary>
+    public bool Embedded { get; set; }
+
+    /// <summary>The scroll the feed uses, for the page the chat is embedded in to take its wheel.</summary>
+    internal IEnumerable<ListScrollController> Scrolls => PageScrolls;
+
+    protected override IEnumerable<ListScrollController> PageScrolls => [_scroll];
+
+    /// <summary>The line an embedded chat shows while nothing has been said; null shows the watchtower's.</summary>
+    public string? EmptyText { get; set; }
+
+    /// <summary>The picture on the system clipboard, as the Ideas page's box takes it; null where the host has none (a terminal), and Ctrl+V is the text's.</summary>
+    public Func<(byte[] Bytes, string Ext)?>? GetClipboardImage { get; set; }
+
+    /// <summary>
+    /// Says a message with the picture that was pasted before it (null with none): null when the node took it, else what it said in refusing it. Set where a message
+    /// can carry a picture (a design's chat); the picture is taken at Enter, so a later paste goes with the next message.
+    /// </summary>
+    public Func<string, (string Name, byte[] Bytes)?, Task<string?>>? OnSendWithPicture { get; set; }
+
+    private ChatPicture? _picture;
+
+    /// <summary>The picture waiting to go with the next message, or null.</summary>
+    internal ChatPicture? PendingPicture => Volatile.Read(ref _picture);
+
+    // Ctrl+V in the box: a picture on the clipboard waits for the next message and the box keeps its text. False when there is none.
+    private bool PastePicture()
+    {
+        if (OnSendWithPicture is null || GetClipboardImage?.Invoke() is not { } image)
+        {
+            return false;
+        }
+        Volatile.Write(ref _picture, new ChatPicture($"pasted.{image.Ext}", image.Bytes));
+        Changed?.Invoke();
+        return true;
+    }
+
+    /// <summary>Drops the pasted picture before it was sent.</summary>
+    internal void DropPicture()
+    {
+        Volatile.Write(ref _picture, null);
+        Changed?.Invoke();
+    }
+
+    /// <summary>Puts <paramref name="text"/> in the box at the caret, with a space between it and what is there, and gives the box the keyboard.</summary>
+    public void InsertAtCaret(string text)
+    {
+        var typed = Input.Text;
+        Input.InsertText(typed.Length == 0 || char.IsWhiteSpace(typed[^1]) ? text : " " + text);
+        Ui.Focus.Focus(Input);
+        Changed?.Invoke();
+    }
+
+    /// <summary>Reads the feed from its start again, for another feed (another design): what is held, sent and noted is dropped, and an open chat follows the new one.</summary>
+    public void Restart()
+    {
+        var open = _following is not null;
+        Close();
+        Volatile.Write(ref _held, Held.Fresh());
+        Volatile.Write(ref _notices, []);
+        RemoveFromOutbox(m => true);
+        Volatile.Write(ref _picture, null);
+        _composer.Clear();
+        _entries.Reset();
+        if (open)
+        {
+            Open();
+        }
+        Changed?.Invoke();
+    }
+
     /// <summary>Starts following the feed (after what it already holds) until <see cref="Close"/>; does nothing while it already is.</summary>
     public void Open()
     {
@@ -505,7 +601,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         }
         // A reread may have moved every index: a new epoch tells the render to forget its index-keyed caches.
         return new Held(entries.ToImmutable(), ids.ToImmutable(), page.Total, null, page.Working, page.PendingQuestion, page.Choices ?? [], page.Queued ?? [], page.QueuedIds ?? [],
-            page.Partial, page.Doing, page.QueuedBehind ?? [], page.Timings ?? [], page.Asks ?? [], whole ? new object() : held.Epoch) { Read = true };
+            page.Partial, page.Doing, page.QueuedBehind ?? [], page.Timings ?? [], page.Asks ?? [], whole ? new object() : held.Epoch) { Read = true, Status = page.Status };
     }
 
     private async Task FollowAsync(Func<int, CancellationToken, Task<ChatPage>> load, CancellationToken cancellationToken)
@@ -539,6 +635,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
                 // one: the merged list carries a new epoch (see Held), so the render thread (which owns them) forgets them before it
                 // builds rows from it, and no row is drawn with its neighbour's text.
                 ImmutableInterlocked.Update(ref _held, held => Merge(held, page, reread));
+                Fed?.Invoke(page, after < 0 || reread);
                 Changed?.Invoke();
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -596,7 +693,18 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         {
             quoted = null;
         }
-        var queued = Enqueue(message, send ?? CurrentSend()!, SendKey, SendKey, about: quoted);
+        // A picture pasted before the Enter goes with this message, taken now so a later paste is the next one's.
+        var picture = Interlocked.Exchange(ref _picture, null);
+        if (send is null && OnSendWithPicture is { } withPicture)
+        {
+            // The send holds the picture, so a Retry of a refused message carries it again; the failed line keeps it too, for an Edit to put back in the box.
+            send = words => withPicture(words, picture is null ? null : (picture.Name, picture.Bytes));
+        }
+        else
+        {
+            picture = null;
+        }
+        var queued = Enqueue(message, send ?? CurrentSend()!, SendKey, SendKey, about: quoted, picture: picture);
         _composer.Clear();
         if (quoted is not null)
         {
@@ -617,13 +725,13 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     public Task SendAsync(string message) => CurrentSend() is { } send ? Enqueue(message, send, SendKey, SendKey) : Task.CompletedTask;
 
     // Puts a message at the back of the outbox and starts the drain when it is not running; ends when this message is done with.
-    private Task Enqueue(string message, Func<string, Task<string?>> send, string key, string hit, string label = "chat send", Quoted? about = null)
+    private Task Enqueue(string message, Func<string, Task<string?>> send, string key, string hit, string label = "chat send", Quoted? about = null, ChatPicture? picture = null)
     {
         if (string.IsNullOrWhiteSpace(message))
         {
             return Task.CompletedTask;
         }
-        var entry = new Out(Guid.NewGuid(), message, send, key, hit, OutState.Queued, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously), about, null, Node?.Where);
+        var entry = new Out(Guid.NewGuid(), message, send, key, hit, OutState.Queued, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously), about, null, Node?.Where, picture);
         ImmutableInterlocked.Update(ref _outbox, o => o.Add(entry));
         _scroll.ScrollToEnd();
         StartDrain(label);
@@ -780,6 +888,11 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         {
             Volatile.Write(ref _about, failed.About);
         }
+        // Its picture goes back on the box too, unless another was pasted since: the next send carries it, once.
+        if (failed.Picture is not null)
+        {
+            Interlocked.CompareExchange(ref _picture, failed.Picture, null);
+        }
         Ui.Focus.Focus(Input);
         Changed?.Invoke();
     }
@@ -843,7 +956,10 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         Palette.Use(Night);
         var held = Volatile.Read(ref _held);
         _composer.Input.OnCommit = _ => SendAsync();
-        _composer.Input.Placeholder = Node is { } to ? $"Message {to.Name}'s watchtower" : "Message the fleet chat";
+        _composer.Input.Placeholder = Embedded ? $"Message the {Who}" : Node is { } to ? $"Message {to.Name}'s watchtower" : "Message the fleet chat";
+        // Ctrl+V with a picture on the clipboard keeps it for the next message; with none the paste is the text's.
+        _composer.Input.OnKeyOverride = OnSendWithPicture is null ? null : key => key == TextInputKey.Paste && PastePicture();
+        _entries.OpenDivider = OpenDivider;
         var canSend = CurrentSend() is not null;
         var buttons = new List<Layout.Node>();
         if (!_scroll.IsFollowingEnd)
@@ -884,7 +1000,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
                 }));
             }
         }
-        var top = TopBar.Build(new PageHeader(Title)
+        var top = Embedded ? null : TopBar.Build(new PageHeader(Title)
         {
             Buttons = buttons,
             Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : $"held by {WatchtowerOwner}'s watchtower"),
@@ -895,8 +1011,9 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             _entries.Reset();
         }
         var derived = ShownOf(held);
-        // The rows come kept, one node an entry, already stretched to the page's width.
+        // The rows come kept, one node an entry, already stretched to the page's width. The time keeps clear of the feed's bar only where one is drawn.
         _entries.Runs = derived.Runs;
+        _entries.StampGutter = _scroll.Mode == ScrollBarMode.None ? 0f : TranscriptEntryView.ScrollGutter;
         var rows = _entries.Rows(derived.Quoted, held.Working);
         // What was said and the watchtower has not taken yet: last among the messages, dim, and saying so.
         // One send is one row, matched by its id and never by its words, so two sends of the same words are two rows: a queued
@@ -1028,7 +1145,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             rows.Add((sending ? Layout.Builder.Text("● sending…", 13f, Running).Selectable() : WrappedProse.Of($"● {doing}", 13f, Running)).Pad(0f, 4f).WStar());
         }
         var list = rows.Count == 0
-            ? Layout.Builder.Text(held.Problem ?? (CurrentLoad() is null ? "The chat is read from a live node." : !held.Read ? "Loading the conversation…" : "Nothing said yet. Tell the watchtower what you want: “let's launch a flight for issue 12”."), 13f, Dim).Selectable().Stretch()
+            ? Layout.Builder.Text(held.Problem ?? (CurrentLoad() is null ? "The chat is read from a live node." : !held.Read ? "Loading the conversation…" : EmptyText ?? "Nothing said yet. Tell the watchtower what you want: “let's launch a flight for issue 12”."), 13f, Dim).Selectable().Stretch()
             : Layout.Builder.VStack([.. rows]).WithGap(ToolGap).WithScroll(_scroll).Stretch();
 
         var page = !canSend
@@ -1038,10 +1155,31 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
                 // The feed and the card take their content up to their shares; a short feed leaves the room to a spacer, so the
                 // card and the box stay at the page's foot.
                 : Layout.Builder.VStack(list.HStarUpToContent(FeedWeight), Layout.Builder.Spacer().HStar(), asked, Foot());
+        if (Embedded)
+        {
+            // A part of another page: the status in words over the feed and the box, no header, no ground and no ? card of its own.
+            return Layout.Builder.VStack(StatusRow(held, buttons), page.WithGap(6f).HStar()).WithGap(4f).Stretch();
+        }
         var body = page.WithGap(8f).Pad(Gutter, 8f).Stretch();
-        var whole = Layout.Builder.VStack(ScrollingHead(top), body.HStar(1f, BodyFloor)).Bg(PageBg).Stretch();
+        var whole = Layout.Builder.VStack(ScrollingHead(top!), body.HStar(1f, BodyFloor)).Bg(PageBg).Stretch();
         whole = WithPageSelection(whole);
         return About?.Over(whole) ?? whole;
+    }
+
+    /// <summary>What a click on a divider of the feed does (<see cref="TranscriptEntryView.OpenDivider"/>); null leaves dividers as rules.</summary>
+    public Func<TranscriptEntry, Action?>? OpenDivider { get; set; }
+
+    private const float StatusRowHeight = 22f;
+
+    // The embedded chat's line above the feed: what the feed says is going on in its words, cut with an ellipsis where it is narrow and whole on hover,
+    // and Jump to end beside it while the feed is scrolled up. One height and one middle for what is on the row.
+    private Layout.Node StatusRow(Held held, List<Layout.Node> buttons)
+    {
+        var text = held.Problem ?? (CurrentLoad() is null ? "not live" : held.Status is { Length: > 0 } status ? $"{Who}: {status}" : Who);
+        var color = held.Problem is not null ? Failed : Palette.Current.Bright;
+        var parts = new List<Layout.Node> { WrappedProse.OneLine(text, 12f, color).WStar().RowH(StatusRowHeight).Whole(text) };
+        parts.AddRange(buttons.Select(b => b.RowH(StatusRowHeight)));
+        return Layout.Builder.HStack([.. parts]).WithGap(6f).RowH(StatusRowHeight);
     }
 
     /// <summary>
@@ -1290,6 +1428,12 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     /// <summary>The columns the cell page has, so a long line is windowed to the caret rather than wrapped past its row.</summary>
     public int CellColumns { get; set; } = 80;
 
+    /// <summary>
+    /// The cells the Chat page's own body takes in padding (its gutter each side), which <see cref="CellColumns"/> counts with the page. An
+    /// <see cref="Embedded"/> chat has no such padding, so its host adds these to the columns the chat itself has.
+    /// </summary>
+    internal const int PagePadColumns = (int)(2 * Gutter / 8f);
+
     private const string ComposerPrompt = "❯ ";
     private Layout.Node? _composerNode;
     private int _composerFirst, _composerStart;
@@ -1365,6 +1509,10 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     public (int Column, int Row)? ParkedCaret(PilotPage page, TextInputFocus focus, System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> arranged)
         => page == PilotPage.Chat && ReferenceEquals(focus.Current, Input) ? CaretCell(arranged) : null;
 
+    /// <summary>Where the terminal's caret is parked while the box of an embedded chat has the keyboard (PIL1151); null otherwise.</summary>
+    public (int Column, int Row)? ParkedCaretEmbedded(TextInputFocus focus, System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> arranged)
+        => Embedded && ReferenceEquals(focus.Current, Input) ? CaretCell(arranged) : null;
+
     private void FocusComposer() => Ui.Focus.Focus(_composer.Input);
 
     /// <summary>
@@ -1419,7 +1567,17 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
                 .ToArray();
             rows.Add(Layout.Builder.WrapH(words).WithMaxLines(1, ellipsis: true).WStar().RowH(StatusHeight).WithTooltip(status, Layout.DockSide.Top));
         }
-        rows.Add(Layout.Builder.Text(lines > 1 ? $"{lines} lines · Enter sends · Shift+Enter a new line" : "Enter sends · Shift+Enter a new line", 10f, Dim).RowH(16f));
+        if (PendingPicture is { } picture)
+        {
+            // The picture waits for the next message; one row, the name cut with an ellipsis (whole on hover), Drop beside it.
+            var named = $"picture: {picture.Name} ({picture.Bytes.Length / 1024 + 1} KB), sent with the next message";
+            rows.Add(Layout.Builder.HStack(
+                WrappedProse.OneLine(named, 12f, Body).WStar().RowH(24f).Whole(named),
+                CardsView<TSurface>.Pill("Drop", "chat:drop-picture", DropPicture).RowH(24f)).WithGap(6f).RowH(24f));
+        }
+        var can = OnSendWithPicture is not null && GetClipboardImage is not null ? " · Ctrl+V pastes a picture" : "";
+        var hint = (lines > 1 ? $"{lines} lines · Enter sends · Shift+Enter a new line" : "Enter sends · Shift+Enter a new line") + can;
+        rows.Add(WrappedProse.OneLine(hint, 10f, Dim).RowH(16f).Whole(hint));
         return Layout.Builder.VStack([.. rows]).Pad(12f, 6f).Bg(FootBg).WStar().HAuto();
     }
 

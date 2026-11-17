@@ -105,8 +105,34 @@ internal sealed class TranscriptEntryView
     /// <summary>What the assistant's words are labelled.</summary>
     public string AssistantLabel { get; set; } = "claude";
 
+    /// <summary>
+    /// What a click on a divider does, given its entry: the action to run, or null for a divider that is only a rule (PIL1151: the design chat's
+    /// "published v2" line opens that version). Set before the first <see cref="Rows"/>; a kept row is not rebuilt when it changes.
+    /// </summary>
+    public Func<TranscriptEntry, Action?>? OpenDivider { get; set; }
+
     /// <summary>How many source lines of the assistant's reply show before a "+N lines" fold; the chat shows a reply whole.</summary>
     public int AssistantLines { get; set; } = 40;
+
+    /// <summary>
+    /// The room kept clear right of each row's time for the feed's scroll bar: <see cref="ScrollGutter"/> where one is drawn, 0 where the owner's
+    /// feed draws none (a terminal's). In cells the gutter left the time's eight characters a box of exactly eight cells, so a row whose right edge
+    /// fell between two cells lost the seconds' last digit (PIL1151, the design page at 160 columns). A change rebuilds the kept rows.
+    /// </summary>
+    public float StampGutter
+    {
+        get => _stampGutter;
+        set
+        {
+            if (!_stampGutter.Equals(value))
+            {
+                _stampGutter = value;
+                _rows.Clear();
+            }
+        }
+    }
+
+    private float _stampGutter = ScrollGutter;
 
     /// <summary>Forgets what was opened and parsed: another transcript is about to show.</summary>
     public void Reset()
@@ -322,7 +348,7 @@ internal sealed class TranscriptEntryView
                 continue;
             }
             // Stretched here, inside the kept node: the owners add no wrapper of their own, whose reference would change every frame.
-            var node = (entry.Kind == TranscriptKind.ToolUse ? Call(entry, result, live) : entry.Kind == TranscriptKind.Divider ? Divider(entry) : Row(entry)).WStar();
+            var node = (entry.Kind == TranscriptKind.ToolUse ? Call(entry, result, live) : entry.Kind == TranscriptKind.Divider ? Divider(entry, OpenDivider?.Invoke(entry)) : Row(entry)).WStar();
             _rows[entry.Index] = new KeptRow { Entry = entry, Answer = result, Run = RunOf(entry), Open = open, Live = isLive, Link = link, LinkLabel = linkLabel, Node = node, Pass = pass };
             nodes.Add(node);
             seen++;
@@ -358,16 +384,20 @@ internal sealed class TranscriptEntryView
     }
 
     // Where a fresh watchtower began in the chat: a rule with what the node said of it (and when) in the middle.
-    private static Layout.Node Divider(TranscriptEntry entry)
+    private static Layout.Node Divider(TranscriptEntry entry, Action? open)
     {
         var rule = Layout.Builder.Spacer().WStar().HFixed(1f).Bg(Faint);
         var said = entry.At is { } at ? $"{entry.Text} · {at.ToLocalTime().ToString("d MMM HH:mm", CultureInfo.InvariantCulture)}" : entry.Text;
-        return Layout.Builder.HStack(
+        // A line that opens something is a control, whose label is not selected by a drag; a plain one is content and is.
+        var label = Layout.Builder.Text(said, 12f, open is null ? Dim : Bright, TextAlign.Center);
+        var line = Layout.Builder.HStack(
                 Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), rule, Layout.Builder.Spacer().HStar()).WStar(),
-                Layout.Builder.Text(said, 12f, Dim, TextAlign.Center).Selectable().WStarUpToContent(BodyWeight).WithTooltip(said),
+                (open is null ? label.Selectable() : label).WStarUpToContent(BodyWeight).WithTooltip(open is null ? said : said + " (click to show it)"),
                 Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), rule, Layout.Builder.Spacer().HStar()).WStar())
             .WithGap(10f)
             .Pad(0f, ProseSpace);
+        // A divider that opens something is a button: lit under the pointer, one hit of its own.
+        return open is null ? line : line.BgHover(Palette.Current.RowHoverBg).Follows(new HitResult.ButtonHit($"chat:divider:{entry.Id}"), _ => open());
     }
 
     // A tool call as one line: a caret, its state (a check, a cross, or a dot while running or cut off where the session
@@ -446,12 +476,12 @@ internal sealed class TranscriptEntryView
 
     // When an entry was written, in this machine's time, the day and zone on hover; blank for one the transcript gave no
     // time. Every entry is stamped by Claude Code, and a reader asks "when was that" of a long run (SE1, 2026-10-25).
-    internal static Layout.Node Stamp(DateTimeOffset? at) =>
+    internal Layout.Node Stamp(DateTimeOffset? at) =>
         at is { } when
             ? Layout.Builder.HStack(
                     Layout.Builder.Text(when.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture), 11f, Faint, TextAlign.Far).Selectable().WStar()
                         .WithTooltip(when.ToLocalTime().ToString("ddd d MMM yyyy HH:mm:ss zzz", CultureInfo.InvariantCulture), Layout.DockSide.Left),
-                    Layout.Builder.Spacer().WFixed(ScrollGutter))
+                    Layout.Builder.Spacer().WFixed(StampGutter))
                 .WStar(1f, 0f, TimeWidth)
             : Layout.Builder.Spacer().WStar(1f, 0f, TimeWidth);
 

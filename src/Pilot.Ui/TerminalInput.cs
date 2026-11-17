@@ -52,7 +52,9 @@ internal sealed class TerminalInput<TSurface>(
     /// <summary>Console.Lib's hit test on the arranged tree (Pilot.Ui does not reference Console.Lib; the host and the tests pass <c>CellLayout.HitTest</c>).</summary>
     public required Func<ImmutableArray<Layout.ArrangedNode<int>>, int, int, HitResult?> HitTest { get; init; }
 
-    private IReadOnlyList<TextInputState> ChatBoxIfShown() => chrome.Page == PilotPage.Chat ? [chrome.Chat.Input] : [];
+    // The chat's box on the Chat page, and the box of the chat with the designer while a design's page is open (PIL1151).
+    private IReadOnlyList<TextInputState> ChatBoxIfShown() =>
+        chrome.Page == PilotPage.Chat ? [chrome.Chat.Input] : chrome.Page == PilotPage.Designs && chrome.Designs.OpenId is not null ? [chrome.Designs.Chat.Input] : [];
 
     /// <summary>Shows the Chat page and puts the keyboard in its box: the key, the rail entry's click and Ctrl+T all come here.</summary>
     public void OntoChat()
@@ -118,7 +120,7 @@ internal sealed class TerminalInput<TSurface>(
         redraw();
 
         // Shift+Enter (Alt+Enter, where a terminal cannot tell Shift) in the chat's box is a new line, not a send.
-        if (evt is not null && chrome.Chat.HandleNewLine(evt))
+        if (evt is not null && (chrome.Chat.HandleNewLine(evt) || chrome.Designs.Chat.HandleNewLine(evt)))
         {
             return;
         }
@@ -132,6 +134,10 @@ internal sealed class TerminalInput<TSurface>(
         if (chrome.Page != PilotPage.Sessions)
         {
             focus.BlurIfFocused(sessions.SayInput);
+        }
+        if (chrome.Page != PilotPage.Designs)
+        {
+            focus.BlurIfFocused(chrome.Designs.Chat.Input);
         }
 
         // A printable key is text while a field has the keyboard; with none it is a key like any other, so a plain digit, q and '$' reach
@@ -153,10 +159,10 @@ internal sealed class TerminalInput<TSurface>(
         Router.Handle(evt);
 
         // The composer is drawn from the editor's lines, so a click on it also places the caret where it landed.
-        if (evt is InputEvent.MouseUp(var x, var y, MouseButton.Left) && chrome.Page == PilotPage.Chat
+        if (evt is InputEvent.MouseUp(var x, var y, MouseButton.Left) && chrome.Page is PilotPage.Chat or PilotPage.Designs
             && HitTest(Arranged, (int)x, (int)y) is HitResult.ButtonHit { Action: "chat:composer" })
         {
-            chrome.Chat.PlaceComposerCaret(Arranged, (int)x, (int)y);
+            (chrome.Page == PilotPage.Chat ? chrome.Chat : chrome.Designs.Chat).PlaceComposerCaret(Arranged, (int)x, (int)y);
         }
     }
 

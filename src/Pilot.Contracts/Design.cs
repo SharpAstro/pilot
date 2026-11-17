@@ -38,6 +38,54 @@ public sealed record DesignRow
     /// and <c>pilot design render</c> writes each screen at each as text and as a grid. Empty for a design with no terminal target, and in a record an older release wrote.
     /// </summary>
     public string[] Terminals { get; init => field = value ?? []; } = [];
+
+    /// <summary>The design's designer session (PIL1151), as <see cref="DesignerState"/> and the members after it say; null for a design that never had one, and in a record an older release wrote.</summary>
+    public string? DesignerName { get; init; }
+
+    /// <summary>The designer's job id (the first eight of its session id), kept so a restart finds the session and resumes it, never starts a second.</summary>
+    public string? DesignerJob { get; init; }
+
+    /// <summary>What the designer is doing: <see cref="DesignerStates.Idle"/>, <see cref="DesignerStates.Working"/>, <see cref="DesignerStates.Held"/> or <see cref="DesignerStates.Failed"/>; null while there is none.</summary>
+    public string? DesignerState { get; init; }
+
+    /// <summary>While <see cref="DesignerState"/> is held: when the hold ends (the usage limit's reset).</summary>
+    public DateTimeOffset? DesignerHeldUntil { get; init; }
+
+    /// <summary>Why the designer is held or failed, in words the design's page shows ("held until 22:00: the 5-hour window is 93 % spent ...").</summary>
+    public string? DesignerWhy { get; init; }
+
+    /// <summary>When the designer was started; a start the session tracker has not listed yet is not started again within a few minutes of it.</summary>
+    public DateTimeOffset? DesignerStartedAt { get; init; }
+
+    /// <summary>Pieces of the brief the designer has not been sent yet (it is held, or being started), oldest first; BRIEF.md has them all as well.</summary>
+    public string[] DesignerPending { get; init => field = value ?? []; } = [];
+
+    /// <summary>The session ids of every designer this design has had (PIL1151), oldest first: the design chat reads their transcripts, as the watchtower's reads its generations. Empty while there is none, and in a record an older release wrote.</summary>
+    public string[] DesignerSessions { get; init => field = value ?? []; } = [];
+
+    /// <summary>What the designer last did to the draft, for the chat's status: <see cref="DesignerPhases"/>; null while there is none.</summary>
+    public string? DesignerPhase { get; init; }
+
+    /// <summary>How many findings the last <c>design-check</c> had; null before any.</summary>
+    public int? CheckFindings { get; init; }
+}
+
+/// <summary>The values of <see cref="DesignRow.DesignerPhase"/>: the last step taken on the draft.</summary>
+public static class DesignerPhases
+{
+    public const string Drafting = "drafting";
+    public const string Checking = "checking";
+    public const string Rendering = "rendering";
+    public const string Published = "published";
+}
+
+/// <summary>The values of <see cref="DesignRow.DesignerState"/>.</summary>
+public static class DesignerStates
+{
+    public const string Idle = "idle";
+    public const string Working = "working";
+    public const string Held = "held";
+    public const string Failed = "failed";
 }
 
 /// <summary>
@@ -113,6 +161,17 @@ public static class DesignWhys
 public sealed record DesignRenderStamp
 {
     public string? PrototypeSha256 { get; init; }
+}
+
+/// <summary>One line of a design's chat file, <c>chat.jsonl</c> (PIL1151): something the owner said. Nullable or defaulted past the first two members, as a stored record's must be.</summary>
+public sealed record DesignChatLine
+{
+    public required DateTimeOffset At { get; init; }
+
+    public required string Text { get; init; }
+
+    /// <summary>The picture sent with it, as a path relative to the design's folder (<c>pictures/...</c>); null with none.</summary>
+    public string? Picture { get; init; }
 }
 
 /// <summary>One version of a design, <c>versions/v&lt;k&gt;/</c>: its number, when it was made, and the hash of its prototype.</summary>
