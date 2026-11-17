@@ -477,8 +477,13 @@ public sealed class MaintenanceGitTests : IDisposable
         Git(work, "config", "--local", "gc.autoDetach", "false");
         var before = RunGitWithRepoConfig(work, "fetch", "origin");
         before.Exit.ShouldBe(0, before.Error);
-        var diagnosis = $"in17={Directory.GetFiles(Path.Combine(work, ".git", "objects", "17")).Length} hashed={hashed.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length} count={Git(work, "count-objects", "-v").Replace('\n', ' ')}";
-        (before.Output + before.Error).Contains("unreachable loose objects", StringComparison.OrdinalIgnoreCase).ShouldBeTrue(diagnosis); // the precondition: without the step's gc.auto=0 the fetch warns
+        // The precondition: without the step's gc.auto=0 the fetch warns. When it does not, the message says what git printed and did instead.
+        if (!(before.Output + before.Error).Contains("unreachable loose objects", StringComparison.OrdinalIgnoreCase))
+        {
+            var direct = RunGitWithRepoConfig(work, "gc", "--auto");
+            var diagnosis = $"{Git(work, "--version").Trim()}; fetch out=[{before.Output.Trim()}] err=[{before.Error.Trim()}]; gc --auto exit={direct.Exit} out=[{direct.Output.Trim()}] err=[{direct.Error.Trim()}]; in17={Directory.GetFiles(Path.Combine(work, ".git", "objects", "17")).Length} hashed={hashed.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length} config=[{Git(work, "config", "--list", "--show-origin").Replace('\n', ' ')}] count={Git(work, "count-objects", "-v").Replace('\n', ' ')}";
+            Assert.Fail(diagnosis);
+        }
 
         var result = await new MaintenanceGit(MaintenanceGit.Kind.Git, _state, () => [work]) { PruneDays = () => 1 }.RunAsync(Ct);
 
