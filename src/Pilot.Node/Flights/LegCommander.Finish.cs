@@ -156,12 +156,12 @@ public sealed partial class LegCommander
                             break;
                         }
                         var sibling = SiblingRestoreFailure.In(run.Tail, flight.Worktree);
-                        var head = sibling is null ? "" : sibling.Text + "\n\n";
+                        var head = sibling is not null ? sibling.Text + "\n\n" : UnknownSwitch.In(run.Tail) is { } wrong ? wrong.Text + "\n\n" : "";
                         var pushNote = await PushEarlyAsync(flight, cancellationToken);
                         state.PutLeg(leg with
                         {
                             Report = $"{head}check `{check}` failed ({run.ExitCode}):\n{run.Tail}{pushNote}",
-                            Recheck = late ? leg.Recheck! with { Outcome = LegRecheck.FailedOutcome(check, run.ExitCode, run.Tail) } : null,
+                            Recheck = late ? leg.Recheck! with { Outcome = head + LegRecheck.FailedOutcome(check, run.ExitCode, run.Tail) } : null,
                         });
                         throw new FlightException($"{head}{flight.Code}/{leg.Name}'s check `{check}` failed ({run.ExitCode}); it stays flying. Last of its output:\n{run.Tail}");
                     }
@@ -502,7 +502,7 @@ public sealed partial class LegCommander
                 }
                 if (leg.Check is { Length: > 0 } check && await checks.RunAsync(check, flight.Worktree, cancellationToken) is { Passed: false } run)
                 {
-                    return $"{flight.Code}/{leg.Name}'s check `{check}` failed ({run.ExitCode}); nothing was pushed. Last of its output:\n{run.Tail}";
+                    return $"{(UnknownSwitch.In(run.Tail) is { } wrongHere ? wrongHere.Text + "\n\n" : "")}{flight.Code}/{leg.Name}'s check `{check}` failed ({run.ExitCode}); nothing was pushed. Last of its output:\n{run.Tail}";
                 }
                 await EnsureNotArmedAsync(flight, cancellationToken);
                 var push = await git.RunAsync(leased is null ? ["push", "-u", "origin", flight.Branch] : ["push", "-u", $"--force-with-lease={flight.Branch}:{leased}", "origin", flight.Branch], flight.Worktree, cancellationToken);
@@ -774,7 +774,7 @@ public sealed partial class LegCommander
         if (run is { Passed: false })
         {
             await OffLockAsync(null, () => InvestigateCheckAsync(flight, run.Tail, cancellationToken));
-            return (false, $"The node did not finish it itself, though its plane matched origin/{flight.Branch} at {CommitRefs.Short(head)}: its check `{leg.Check}` failed ({run.ExitCode}). Last of its output:\n{run.Tail}", true);
+            return (false, $"{(UnknownSwitch.In(run.Tail) is { } wrongThere ? wrongThere.Text + "\n\n" : "")}The node did not finish it itself, though its plane matched origin/{flight.Branch} at {CommitRefs.Short(head)}: its check `{leg.Check}` failed ({run.ExitCode}). Last of its output:\n{run.Tail}", true);
         }
         // On the owner's hold (#771) a finish the node makes itself changes nothing on GitHub either, as a worker's finish (above).
         var pushes = await ReviewBehindPlaneAsync(flight, cancellationToken)

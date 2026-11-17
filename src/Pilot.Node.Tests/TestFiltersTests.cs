@@ -60,6 +60,29 @@ public sealed class TestFiltersTests
         TestFilters.ValueCount(["-c", "A"], 0).ShouldBe(0);
     }
 
+    [Theory]
+    [InlineData("--filter-class", true)]
+    [InlineData("--filter-not-trait", true)]
+    [InlineData("--filter-query", true)]
+    [InlineData("--project", true)]
+    [InlineData("--solution", true)]
+    [InlineData("--PROJECT", true)]
+    [InlineData("--filter", false)]
+    [InlineData("--configuration", false)]
+    public void EachSpellingBelongsToOneRunner(string option, bool platformOnly) => TestFilters.IsPlatformOnly(option).ShouldBe(platformOnly);
+
+    [Fact]
+    public void TheWrongRunnersFirstSwitchIsFoundUpToABareDoubleDash()
+    {
+        TestFilters.WrongRunnerSwitch(["X.csproj", "--filter-class", "A", "--project", "P"], platform: false).ShouldBe("--filter-class");
+        TestFilters.WrongRunnerSwitch(["--solution=S.slnx"], platform: false).ShouldBe("--solution");
+        TestFilters.WrongRunnerSwitch(["--filter", "A"], platform: true).ShouldBe("--filter");
+        TestFilters.WrongRunnerSwitch(["--filter=A"], platform: true).ShouldBe("--filter");
+        TestFilters.WrongRunnerSwitch(["--filter", "A"], platform: false).ShouldBeNull();
+        TestFilters.WrongRunnerSwitch(["--project", "P", "--filter-class", "A"], platform: true).ShouldBeNull();
+        TestFilters.WrongRunnerSwitch(["X", "--", "--project", "P"], platform: false).ShouldBeNull();
+    }
+
     [Fact]
     public void AMultiValuedFilterIsNoTargetOfADotnetBuild() =>
         DotnetCommand.Targets(["test", "X.csproj", "--filter-class", "A.B", "C.D", "--filter-trait=Category=GUI"]).ShouldBe(["X.csproj"]);

@@ -256,6 +256,16 @@ public static class CheckPaths
         }
     }
 
+    /// <summary>Whether the segment's tokens are a change of folder (cd, chdir, pushd, Set-Location, sl).</summary>
+    internal static bool IsCd(IReadOnlyList<Token> tokens) => tokens.Count > 0 && CdVerbs.Contains(tokens[0].Value, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The folder a cd segment names (its options skipped); null when it names none.</summary>
+    internal static string? CdTarget(IReadOnlyList<Token> tokens) => tokens.Skip(1).FirstOrDefault(t => !IsCdOption(t.Value)).Value;
+
+    /// <summary>The folder after cd <paramref name="target"/> from <paramref name="here"/>; null when it cannot be told (a variable, a glob, <c>-</c>).</summary>
+    internal static string? Follow(string? here, string target) =>
+        here is null || Dynamic(target) || target == "-" || Resolve(here, target) is not { } next ? null : Path.TrimEndingDirectorySeparator(next);
+
     private static bool Dynamic(string value) => value.IndexOfAny(['$', '*', '?', '%', '`', '{', '~', '<', '>', '@']) >= 0;
 
     private static bool IsCdOption(string value) =>

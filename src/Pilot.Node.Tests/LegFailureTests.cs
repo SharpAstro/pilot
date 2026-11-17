@@ -259,6 +259,17 @@ public sealed class LegFailureTests : IDisposable
     }
 
     [Fact]
+    public void AnUnknownSwitchInTheCheckTailIsNamedInTheCause()
+    {
+        var recorded = "check `dotnet test X --project Y` failed (1):\nMSBUILD : error MSB1001: Unknown switch.   Switch: --project";
+
+        var reading = LegFailure.Read(recorded, Report);
+
+        reading.Cause.ShouldBe("its check runs a wrong command: unknown switch --project");
+        reading.CheckFailed.ShouldBeTrue();
+    }
+
+    [Fact]
     public void AReportOfTheLegItselfIsNotTakenForAFailedCheck()
     {
         // A fresh round's report starts "go-around: ..."; a check failure of an earlier round is not read.
