@@ -152,12 +152,13 @@ public sealed class WithdrawFlightTests : LegCommanderTestsBase
     {
         _flights.Trackers = new Trackers([new GitHubTracker(_github)]);
         var flight = await Fresh();
+        _github.SetIssueLabels(1, PilotMarks.Hold);
         _state.PutFlight(flight with { OnHold = LabelledHold() });
 
         var result = await Withdraw("TIA1", "mistake");
 
         result.Ok.ShouldBeTrue(result.Error);
-        _github.RemoveCalls.ShouldContain((1, PilotMarks.Hold));
+        _github.IssueLabels[1].Keys.ShouldNotContain(PilotMarks.Hold);
     }
 
     [Fact]
@@ -167,13 +168,14 @@ public sealed class WithdrawFlightTests : LegCommanderTestsBase
         await Fresh();
         (await Create(1, anyway: true, why: "second take")).Ok.ShouldBeTrue();
         var newer = _state.Flights().Single(f => f.Code == "TIA1a");
+        _github.SetIssueLabels(1, PilotMarks.Hold);
         _state.PutFlight(newer with { OnHold = LabelledHold() });
 
         var result = await Withdraw("TIA1a", "mistake");
 
         result.Ok.ShouldBeTrue(result.Error);
         _state.Flights().Select(f => f.Code).ShouldBe(["TIA1"]);
-        _github.RemoveCalls.ShouldNotContain((1, PilotMarks.Hold));
+        _github.IssueLabels[1].Keys.ShouldContain(PilotMarks.Hold);
     }
 
     [Fact]
