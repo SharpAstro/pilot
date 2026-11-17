@@ -66,6 +66,37 @@ public sealed class DesignCliTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SayAppendsToTheBriefKeepsAPictureAndChatReadsItBackWithTheDesignersStatus()
+    {
+        await Pilot("design", "new", "--", "first words");
+        var picture = Path.Combine(_node.Folder, "sketch.png");
+        await File.WriteAllBytesAsync(picture, [1, 2, 3], Ct);
+
+        var (exit, said) = await Pilot("design", "say", "DSN-1", "--picture", picture, "--", "wider", "please");
+        exit.ShouldBe(0);
+        said.ShouldContain("DSN-1");
+
+        File.ReadAllText(Path.Combine(DesignFolder("DSN-1"), "BRIEF.md")).ShouldContain("wider please");
+        File.Exists(Path.Combine(DesignFolder("DSN-1"), "pictures", "1-sketch.png")).ShouldBeTrue();
+
+        var (chatExit, chat) = await Pilot("design", "chat", "DSN-1");
+        chatExit.ShouldBe(0);
+        chat.ShouldContain("you: wider please");
+        chat.ShouldContain("[picture: pictures/1-sketch.png]");
+        chat.ShouldContain("designer: ");
+        (await Pilot("design", "chat", "DSN-1", "--after", "0")).Output.ShouldNotContain("you: wider please");
+    }
+
+    [Fact]
+    public async Task SayAndChatRefuseADesignThatIsNotThere()
+    {
+        (await Pilot("design", "say", "DSN-5", "--", "words")).Exit.ShouldBe(1);
+        var (exit, said) = await Pilot("design", "chat", "DSN-5");
+        exit.ShouldBe(1);
+        said.ShouldContain("There is no design DSN-5");
+    }
+
+    [Fact]
     public async Task DraftMakesTheStarterRefusesOverItAndReplaceMakesItAgain()
     {
         await Pilot("design", "new", "--", "brief");
