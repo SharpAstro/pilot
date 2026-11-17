@@ -164,7 +164,7 @@ public sealed class DesignStoreTests : IDisposable
         back.History.ShouldBeEmpty();
         back.Terminals.ShouldBeEmpty();
         back.DesignerPending.ShouldBeEmpty();
-        (back with { History = row.History, Terminals = row.Terminals, DesignerPending = row.DesignerPending }).ShouldBe(row);
+        (back with { History = row.History, Terminals = row.Terminals, DesignerPending = row.DesignerPending, DesignerSessions = row.DesignerSessions }).ShouldBe(row);
 
         var made = store.New("pilot", "T", "brief");
         (store.Find("DSN-1").ShouldNotBeNull() with { History = made.History, Terminals = made.Terminals, DesignerPending = made.DesignerPending }).ShouldBe(made);
@@ -186,7 +186,7 @@ public sealed class DesignStoreTests : IDisposable
         var detail = store.Detail(row.Id);
 
         detail.Row.History.ShouldBeEmpty();
-        (detail.Row with { History = row.History, Terminals = row.Terminals, DesignerPending = row.DesignerPending }).ShouldBe(row);
+        (detail.Row with { History = row.History, Terminals = row.Terminals, DesignerPending = row.DesignerPending, DesignerSessions = row.DesignerSessions }).ShouldBe(row);
         detail.Brief.ShouldNotBeNull().ShouldContain("the brief");
         detail.Folder.ShouldBe(Path.Combine(_data, "designs", "DSN-1"));
         detail.DraftFolder.ShouldBe(Path.Combine(_data, "designs", "DSN-1", "draft"));
