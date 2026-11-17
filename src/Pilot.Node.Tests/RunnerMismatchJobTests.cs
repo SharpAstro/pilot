@@ -25,7 +25,7 @@ public sealed class RunnerMismatchJobTests : IDisposable
     public void Dispose() => Directory.Delete(_root, recursive: true);
 
     private CommandResult Run(string command) =>
-        _jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = Verbs.NodeTarget, Args = [_root, "0", command] });
+        _jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = Verbs.NodeTarget, Who = "test", Args = [_root, "0", command] });
 
     [Fact]
     public void APlatformSwitchInAVsTestFolderIsRefusedAndNoJobIsMade()
