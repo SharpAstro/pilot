@@ -756,8 +756,11 @@ the node's own sweep never presses either choice, and an assistant's press is as
 
 The steps:
 
-- **git** and **lfs**: for each tracked repo, `git worktree prune`, `git fetch --prune`, `git gc --prune=<age>` (never `--aggressive`,
-  nothing that rewrites refs) and, where the repo uses LFS, `git lfs prune`. A repo is skipped while a flight of it has a plane with a
+- **git** and **lfs**: for each tracked repo, `git config --local gc.auto 0`, `git worktree prune`, `git fetch --prune`,
+  `git gc --prune=<N>.days.ago` (never `--aggressive`, nothing that rewrites refs; N is the `git-prune-days` setting, 1 by default, at
+  least 1). A squash-merged landed branch leaves every one of its commits unreachable, so git's own two-week keep piled up thousands of
+  loose objects and every fetch warned "too many unreachable loose objects"; gc.auto is set to 0 so a fetch starts no auto gc, because
+  the node collects the repo itself on this schedule and, where the repo uses LFS, `git lfs prune`. A repo is skipped while a flight of it has a plane with a
   live session or a running or queued job. Freed bytes are the `.git` folder's size before and after.
 - **packages**: NuGet package versions in the global packages folder (`NUGET_PACKAGES`, else `~/.nuget/packages`) that nothing in use
   restores and that have not been read for `package-age-days` (default 14). In use is read from files: every package and version in each

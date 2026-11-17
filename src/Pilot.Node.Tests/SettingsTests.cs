@@ -176,6 +176,21 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
+    public void GitPruneDaysReadsAsOneUnsetTakesDaysAndRefusesOutOfBoundsAndWords()
+    {
+        new RoleModels(new NodeSettings()).GitPruneDays.ShouldBe(1);
+        var set = NodeSettings.With(new NodeSettings(), "git-prune-days", ["3"]).Settings!;
+        set.Get("git-prune-days").ShouldBe(["3"]);
+        new RoleModels(set).GitPruneDays.ShouldBe(3);
+        NodeSettings.With(new NodeSettings(), "git-prune-days", ["365"]).Settings!.GitPruneDays.ShouldBe(365);
+        NodeSettings.With(set, "git-prune-days", ["default"]).Settings!.GitPruneDays.ShouldBeNull();
+        NodeSettings.With(new NodeSettings(), "git-prune-days", ["0"]).Error.ShouldNotBeNull();
+        NodeSettings.With(new NodeSettings(), "git-prune-days", ["366"]).Error.ShouldNotBeNull();
+        NodeSettings.With(new NodeSettings(), "git-prune-days", ["soon"]).Error.ShouldNotBeNull();
+        NodeSettings.Keys.ShouldContain("git-prune-days");
+    }
+
+    [Fact]
     public void ArchiveLandedAfterReadsAsSevenDaysUnsetTakesDaysAndHoursAndOffAndRefusesOutOfBounds()
     {
         var none = new RoleModels(null);

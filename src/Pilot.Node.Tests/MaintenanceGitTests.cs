@@ -127,12 +127,13 @@ public sealed class MaintenanceGitTests : IDisposable
 
         recorder.Commands.ShouldContain("git worktree prune @r");
         recorder.Commands.ShouldContain("git fetch --prune @r");
-        recorder.Commands.ShouldContain("git gc --prune=" + MaintenanceGit.PruneAge + " @r");
+        recorder.Commands.ShouldContain("git gc --prune=1.days.ago @r");
+        recorder.Commands.ShouldContain("git config --local gc.auto 0 @r");
         recorder.Commands.ShouldContain("git lfs prune @r");
         recorder.Commands.ShouldContain("git lfs prune --dry-run @r");
         recorder.Commands.ShouldAllBe(c => !c.Contains("--aggressive", StringComparison.Ordinal));
         recorder.Commands.ShouldAllBe(c => !c.Contains("reflog", StringComparison.Ordinal) && !c.Contains("update-ref", StringComparison.Ordinal));
-        MaintenanceGit.GitCommands.SelectMany(a => a).ShouldNotContain("--aggressive");
+        git.GitCommands.SelectMany(a => a).ShouldNotContain("--aggressive");
     }
 
     [Fact]
@@ -254,5 +255,75 @@ public sealed class MaintenanceGitTests : IDisposable
         Snapshot().ShouldBe(before);
         Git(work, "for-each-ref", "refs/remotes/origin").ShouldContain("origin/feature");
         Has(work, junk).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task TheGitCommandsTakeTheirPruneAgeFromTheSettingAndSetGcAutoZeroBeforeAnyFetchOrGc()
+    {
+        var repo = Repo("r");
+        var recorder = new Recorder();
+        var days = 1;
+        var git = new MaintenanceGit(MaintenanceGit.Kind.Git, _state, () => [repo]) { Run = recorder.Run, GitSize = _ => 0, PruneDays = () => days };
+
+        git.GitCommands.Select(a => string.Join(' ', a)).ShouldBe(["config --local gc.auto 0", "worktree prune", "fetch --prune", "gc --prune=1.days.ago"]);
+        days = 3;
+        git.GitCommands[^1].ShouldBe(["gc", "--prune=3.days.ago"]);
+        days = 0;
+        git.GitCommands[^1].ShouldBe(["gc", "--prune=1.days.ago"]);
+
+        await git.RunAsync(Ct);
+        recorder.Commands.ShouldBe(["git config --local gc.auto 0 @r", "git worktree prune @r", "git fetch --prune @r", "git gc --prune=1.days.ago @r"]);
+    }
+
+    [Fact]
+    public async Task AFailedGcAutoConfigIsReportedAndTheRestStillRuns()
+    {
+        var repo = Repo("r");
+        var recorder = new Recorder();
+        var step = Step(MaintenanceGit.Kind.Git, [repo], recorder, answer: args => args[0] == "config" ? new MaintenanceProcess.Outcome(1, "", "could not lock config file") : null);
+
+        var result = await step.RunAsync(Ct);
+
+        result.Untouched.ShouldNotBeNull();
+        result.Untouched.ShouldContain("git config --local gc.auto 0 exited 1");
+        recorder.Commands.ShouldContain("git gc --prune=1.days.ago @r");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")] // Real git: a clone with commits on a deleted branch, the git processes the step starts, and a following fetch (100 to 400 ms each on Windows).
+    public async Task TheGitStepPrunesUnreachableObjectsOlderThanThePruneDaysKeepsYoungOnesSetsGcAutoZeroAndAFetchWarnsOfNothing()
+    {
+        var work = Clone();
+        Git(work, "checkout", "-b", "side");
+        for (var i = 0; i < 4; i++)
+        {
+            File.WriteAllText(Path.Combine(work, $"s{i}.txt"), "side " + i);
+            Git(work, "add", ".");
+            Git(work, "commit", "-m", "side " + i);
+        }
+        Git(work, "checkout", "main");
+        Git(work, "branch", "-D", "side");
+        Git(work, "reflog", "expire", "--expire=now", "--all");
+        var unreachable = Git(work, "fsck", "--unreachable", "--no-reflogs").Split('
+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(l => l.StartsWith("unreachable ", StringComparison.Ordinal)).Select(l => l[(l.LastIndexOf(' ') + 1)..]).Order(StringComparer.Ordinal).ToList();
+        unreachable.Count.ShouldBeGreaterThanOrEqualTo(8);
+        var old = unreachable.Where((_, i) => i % 2 == 0).ToList();
+        var young = unreachable.Where((_, i) => i % 2 == 1).ToList();
+        foreach (var sha in old)
+        {
+            File.SetLastWriteTimeUtc(Path.Combine(work, ".git", "objects", sha[..2], sha[2..]), DateTime.UtcNow.AddDays(-3));
+        }
+        old.ForEach(sha => Has(work, sha).ShouldBeTrue());
+
+        var result = await new MaintenanceGit(MaintenanceGit.Kind.Git, _state, () => [work]) { PruneDays = () => 1 }.RunAsync(Ct);
+
+        result.Untouched.ShouldBeNull();
+        old.ShouldAllBe(sha => !Has(work, sha));
+        young.ShouldAllBe(sha => Has(work, sha));
+        Git(work, "config", "--local", "gc.auto").Trim().ShouldBe("0");
+        var (exit, _, error) = RunGit(work, "fetch", "origin");
+        exit.ShouldBe(0, error);
+        error.ShouldNotContain("unreachable loose objects");
     }
 }

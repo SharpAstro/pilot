@@ -8,7 +8,7 @@ namespace Pilot.Node.Flights;
 /// <summary>
 /// The <c>git</c> and <c>lfs</c> steps of the idle-time maintenance sweep (PIL1102). For each tracked repo (the list
 /// <see cref="DiskSweep.Repos"/> uses) the git step runs <c>git worktree prune</c>, <c>git fetch --prune</c> and
-/// <c>git gc --prune=&lt;age&gt;</c>; the lfs step runs <c>git lfs prune</c> where the repo uses LFS. Never <c>--aggressive</c>, and nothing
+/// <c>git gc --prune=&lt;N&gt;.days.ago</c> (N is <c>git-prune-days</c>, one day by default; a squash-merged landed branch leaves every commit unreachable) after <c>git config --local gc.auto 0</c>; the lfs step runs <c>git lfs prune</c> where the repo uses LFS. Never <c>--aggressive</c>, and nothing
 /// that rewrites refs. A repo is skipped, and the report says so, while a flight of it has a plane with a live session or a running or
 /// queued job. Every run goes through <see cref="MaintenanceProcess"/> (job priority, kill-on-close job object, cancellable). The bytes freed
 /// are the <c>.git</c> folder's size (<see cref="DiskUsage.UniqueBytes"/>) before and after.
@@ -25,8 +25,8 @@ public sealed partial class MaintenanceGit : IMaintenanceStep
         Lfs,
     }
 
-    /// <summary>How old an unreachable object must be before <c>git gc</c> removes it: git's own default, two weeks.</summary>
-    public const string PruneAge = "2.weeks.ago";
+    /// <summary>How many days old an unreachable object must be before <c>git gc</c> removes it, unless <see cref="PruneDays"/> says otherwise (PIL1149).</summary>
+    public const int DefaultPruneDays = NodeSettings.DefaultGitPruneDays;
 
     private readonly Kind _kind;
     private readonly NodeState _state;
@@ -64,12 +64,20 @@ public sealed partial class MaintenanceGit : IMaintenanceStep
     private Task<MaintenanceProcess.Outcome> Exec(string file, IReadOnlyList<string> args, string folder, CancellationToken cancellationToken) =>
         Run is { } run ? run(file, args, folder, cancellationToken) : MaintenanceProcess.RunAsync(file, args, folder, Priority, cancellationToken);
 
-    /// <summary>The git arguments of each action of the git step, in order. Exposed so a test can check that none is aggressive.</summary>
-    public static IReadOnlyList<IReadOnlyList<string>> GitCommands { get; } =
+    /// <summary>Days an unreachable object may sit before the gc prunes it (the <c>git-prune-days</c> setting); read each run.</summary>
+    public Func<int> PruneDays { get; init; } = () => DefaultPruneDays;
+
+    /// <summary>
+    /// The git arguments of each action of the git step, in order, for the current <see cref="PruneDays"/>. <c>gc.auto 0</c> comes first so that
+    /// no fetch of the sweep (or after it) starts an auto gc and prints "too many unreachable loose objects": the node collects the repo itself here.
+    /// Exposed so a test can check that none is aggressive.
+    /// </summary>
+    public IReadOnlyList<IReadOnlyList<string>> GitCommands =>
     [
+        ["config", "--local", "gc.auto", "0"],
         ["worktree", "prune"],
         ["fetch", "--prune"],
-        ["gc", "--prune=" + PruneAge],
+        ["gc", "--prune=" + Math.Max(1, PruneDays()).ToString(CultureInfo.InvariantCulture) + ".days.ago"],
     ];
 
     /// <summary>The git arguments of the lfs step's run.</summary>
