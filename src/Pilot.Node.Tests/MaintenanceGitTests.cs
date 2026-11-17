@@ -453,10 +453,15 @@ public sealed class MaintenanceGitTests : IDisposable
         var blobs = Path.Combine(_root, "blobs");
         Directory.CreateDirectory(blobs);
         var paths = new List<string>();
-        for (var i = 0; i < 1200; i++)
+        // Git looks only at .git/objects/17, so keep generating until at least 3 blobs hash into it (the blob id is SHA-1 of "blob <len>\0<content>").
+        var in17 = 0;
+        for (var i = 0; i < 1200 || in17 < 3; i++)
         {
+            var content = "young unreachable " + i;
+            var id = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes($"blob {content.Length}\0{content}")));
+            in17 += id.StartsWith("17", StringComparison.Ordinal) ? 1 : 0;
             var path = Path.Combine(blobs, $"b{i}.txt");
-            File.WriteAllText(path, "young unreachable " + i);
+            File.WriteAllText(path, content);
             paths.Add(path);
         }
         var hashed = RunGitWithInput(work, string.Join('\n', paths) + "\n", "hash-object", "-w", "--stdin-paths");
