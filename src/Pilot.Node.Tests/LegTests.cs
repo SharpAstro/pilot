@@ -262,10 +262,14 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, CreateIssueAsync waits for it before it does anything: a command handler held, as a node busy with a session start holds one.</summary>
     public Task? CreateIssueHold { get; set; }
 
+    /// <summary>Completed when CreateIssueAsync first reaches CreateIssueHold.</summary>
+    public TaskCompletionSource CreateIssueHoldReached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public async Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken)
     {
         if (CreateIssueHold is { } hold)
         {
+            CreateIssueHoldReached.TrySetResult();
             await hold;
         }
         if (CreateIssueFails is { } why)
@@ -582,9 +586,20 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task<AllowedMergeMethods?> AllowedMergeMethodsAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(AllowedMethods);
 
+    /// <summary>When set, MergeAsync waits for it first, so a test can hold a merge at the forge.</summary>
+    public Task? MergeHold { get; set; }
+
+    /// <summary>Completed when MergeAsync first reaches MergeHold.</summary>
+    public TaskCompletionSource MergeHoldReached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public async Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
         await Called(nameof(MergeAsync));
+        if (MergeHold is { } held)
+        {
+            MergeHoldReached.TrySetResult();
+            await held;
+        }
         if (MergeAnswers is not null)
         {
             var answer = Pilot.Node.Flights.MergeAnswers.Classify(1, "", MergeAnswers);

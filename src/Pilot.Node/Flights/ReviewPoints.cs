@@ -13,7 +13,8 @@ public static partial class ReviewPoints
     /// <summary>The heading a re-review report opens its answer table under.</summary>
     public const string AnswerHeading = "Earlier points";
 
-    private const string PassedTail = " (passed by ";
+    /// <summary>The words that open a controller's pass-anyway tail; the passer's name follows.</summary>
+    public const string PassedTail = " (passed by ";
 
     /// <summary>
     /// The prefix a reviewer puts on a new finding in text the fix round did not touch when it must still block; the kind follows,
@@ -38,23 +39,16 @@ public static partial class ReviewPoints
     /// <summary>One row of the reviewer's table: the answer, and the where or the reason after it (empty when none was given).</summary>
     public sealed record Reply(string Id, Answer Answer, string Detail, string RawAnswer);
 
+    /// <summary>The tail the node appends to a controller's pass anyway: <c> (passed by &lt;who&gt; over: </c>, then the reviewer's report and <c>)</c>.</summary>
+    public static string Tail(string who) => $"{PassedTail}{who} over: ";
+
     /// <summary>
-    /// Where a controller's pass-anyway tail, <c>(passed by &lt;who&gt; over: </c>, starts in a kept report, or -1. A reviewer's prose that
-    /// only says "(passed by " is not the tail: the same line must go on to " over: ".
+    /// Where the controller's pass-anyway tail starts in the round's kept report, or -1. Only a round the node stored as passed over
+    /// changes (<see cref="ReviewRound.PassedBy"/> set) has one; a reviewer's report that quotes a tail, in any round, is never cut.
+    /// The first match is the node's own: the passer's words come before it and the repeated reviewer report, which may quote an older tail, after.
     /// </summary>
-    public static int PassedTailStart(string report)
-    {
-        for (var at = report.IndexOf(PassedTail, StringComparison.Ordinal); at >= 0; at = report.IndexOf(PassedTail, at + 1, StringComparison.Ordinal))
-        {
-            var lineEnd = report.IndexOf((char)10, at);
-            var line = lineEnd < 0 ? report[at..] : report[at..lineEnd];
-            if (line.Contains(" over: ", StringComparison.Ordinal))
-            {
-                return at;
-            }
-        }
-        return -1;
-    }
+    public static int PassedTailStart(ReviewRound round) =>
+        round.PassedBy is { Length: > 0 } who ? round.Findings.IndexOf(Tail(who), StringComparison.Ordinal) : -1;
 
     /// <summary>Every point of the rounds, in round order, blocking before not blocking within a round.</summary>
     public static IReadOnlyList<Point> Number(IEnumerable<ReviewRound> rounds)
@@ -65,7 +59,7 @@ public static partial class ReviewPoints
             // A controller's pass anyway keeps the reviewer's report whole and appends "(passed by X over: ...)", which repeats the
             // reviewer's own list: only the structured report before that tail is numbered, so no finding is a point twice.
             var report = round.Findings;
-            var tail = PassedTailStart(report);
+            var tail = PassedTailStart(round);
             if (tail > 0)
             {
                 report = report[..tail];

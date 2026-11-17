@@ -96,7 +96,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         ReviewRound[] rounds =
         [
             new() { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking\n- A is wrong in Parser.cs:10\n" },
-            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready (passed by controller over: A is wrong)" },
+            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready (passed by controller over: A is wrong)", PassedBy = "controller" },
         ];
 
         var standing = ReviewFollowUp.Read(rounds);
@@ -127,16 +127,112 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         ReviewRound[] rounds =
         [
             new() { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking\n- A is wrong\n" },
-            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready anyway (passed by controller over: ## Blocking\n- A is wrong\n)" },
+            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready anyway (passed by controller over: Round 3 read x\n\n## Blocking\n- A is wrong\n)", PassedBy = "controller" },
         ];
 
         ReviewPoints.Number(rounds).Select(p => p.Id).ShouldBe(["R1.1"]);
     }
 
     [Fact]
+    public void AProseWordPassedByHandBeforeTheControllerTailDoesNotNameThePasser()
+    {
+        ReviewRound[] rounds =
+        [
+            new() { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking\n- A is wrong in Parser.cs:10\n" },
+            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "A note (passed by hand) in prose. ready anyway (passed by controller over: A is wrong)", PassedBy = "controller" },
+        ];
+
+        var item = ReviewFollowUp.Read(rounds).Items.ShouldHaveSingleItem();
+        item.Why.ShouldContain("pass anyway by controller");
+        item.Why.ShouldNotContain("by hand)");
+    }
+
+    [Fact]
+    public void ProseSayingPassedByAfterTheControllerTailStillNamesTheController()
+    {
+        ReviewRound[] rounds =
+        [
+            new() { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking\n- A is wrong in Parser.cs:10\n" },
+            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready anyway (passed by controller over: the note said (passed by hand) here)", PassedBy = "controller" },
+        ];
+
+        var item = ReviewFollowUp.Read(rounds).Items.ShouldHaveSingleItem();
+        item.Why.ShouldContain("pass anyway by controller");
+        item.Why.ShouldNotContain("by hand");
+    }
+
+    [Fact]
+    public async Task TwoMergeAsksTogetherFileOneIssueAndMergeOnce()
+    {
+        var code = await SecondRound(FirstReport);
+        // The pass-time filing fails, so the issue is filed by the merge path, where the two asks can race.
+        _github.CreateIssueFails = "gh could not reach GitHub";
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass", Answers)).Error.ShouldBeNull();
+        _github.CreateIssueFails = null;
+        _github.IssuesCreated.ShouldBeEmpty();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _github.CreateIssueHold = release.Task;
+
+        var first = Merge(code);
+        await _github.CreateIssueHoldReached.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        // The first ask is parked filing the issue; the second, asked now, is answered while it is held, so the two really overlap.
+        var second = await Merge(code).WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        first.IsCompleted.ShouldBeFalse();
+        release.SetResult();
+        var firstResult = await first.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+
+        firstResult.Error.ShouldBeNull();
+        second.Error.ShouldBeNull();
+        _github.IssuesCreated.ShouldHaveSingleItem();
+        _github.Merged.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task TwoOverlappingMergeAsksMergeOnce()
+    {
+        var code = await SecondRound(FirstReport);
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass", Answers)).Error.ShouldBeNull();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _github.MergeHold = release.Task;
+
+        var first = Merge(code);
+        await _github.MergeHoldReached.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        var second = Merge(code);
+        // One of the two is answered while the other is held at the forge's merge: the overlap, shown from the second ask's side.
+        (await Task.WhenAny(first, second).WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken)).ShouldBe(second);
+        release.SetResult();
+        var results = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+
+        results.ShouldContain(r => r.Error == null);
+        results.Where(r => r.Error != null).ShouldAllBe(r => r.Error!.Contains("landed"));
+        _github.Merged.ShouldHaveSingleItem();
+    }
+
+    [Fact]
     public void ProseSayingPassedByIsNotThePassAnywayTail()
     {
-        ReviewPoints.PassedTailStart("## Blocking\n- a note (passed by hand) here\n- B\n").ShouldBe(-1);
-        ReviewPoints.PassedTailStart("x (passed by controller over: y)").ShouldBe(1);
+        ReviewPoints.PassedTailStart(new ReviewRound { Round = 1, Verdict = ReviewState.Passed, Findings = "## Blocking\n- a note (passed by hand) here\n- B\n", PassedBy = "controller" }).ShouldBe(-1);
+        ReviewPoints.PassedTailStart(new ReviewRound { Round = 1, Verdict = ReviewState.Passed, Findings = "x (passed by controller over: y)", PassedBy = "controller" }).ShouldBe(1);
+        // A passer whose name holds a space is still found: the node matches the name it stored, not one word of prose.
+        ReviewPoints.PassedTailStart(new ReviewRound { Round = 1, Verdict = ReviewState.Passed, Findings = "x (passed by the owner over: y)", PassedBy = "the owner" }).ShouldBe(1);
+        // A round with no stored passer has no tail, whatever its prose quotes.
+        ReviewPoints.PassedTailStart(new ReviewRound { Round = 1, Verdict = ReviewState.Passed, Findings = "x (passed by controller over: y)" }).ShouldBe(-1);
+    }
+
+    [Fact]
+    public void AReviewersReportThatQuotesATailMidReportKeepsEveryPointAfterIt()
+    {
+        // A re-review quoting an earlier pass anyway, in a changes round and in a reviewer's own pass: neither is the node's tail.
+        const string Quoting = "## Blocking\n- `ready anyway (passed by controller over: A)` is quoted here\n- B is wrong\n\n## Not blocking\n- C could be tidier\n";
+        ReviewRound[] rounds =
+        [
+            new() { Round = 1, Verdict = ReviewState.Changes, Findings = Quoting },
+            new() { Round = 2, Verdict = ReviewState.Passed, Findings = Quoting },
+        ];
+
+        ReviewPoints.Number(rounds).Select(p => p.Id).ShouldBe(["R1.1", "R1.2", "R1.3", "R2.1", "R2.2", "R2.3"]);
+        ReviewPoints.Number(rounds).Where(p => p.Round == 2).Select(p => p.Text).ShouldContain("C could be tidier");
+        // The reviewer passed, so nothing is filed as a controller's pass anyway.
+        ReviewFollowUp.Read(rounds).Items.ShouldAllBe(i => !i.Why.Contains("pass anyway"));
     }
 }
