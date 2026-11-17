@@ -80,10 +80,9 @@ public sealed partial class PrReviews
             return;
         }
         var rounds = review.FixRound ?? 0;
-        if (rounds >= MaxFixRounds)
+        if (rounds >= FixCap(review))
         {
-            RaiseOnce(pr, review, CardBin.Ring, FixCappedKind, subject, $"{pr}: still asking for changes after {rounds} rounds of fixes",
-                $"{rounds} fixers have pushed and the review still asks for changes, so no fourth starts: this is yours.\n{(review.Report ?? "").Trim()}\n{string.Join('\n', review.Findings.Select(f => f.ToString()))}");
+            RaiseCapped(pr, review, subject, null);
             return;
         }
         // A PR the controller already chose Fix it on goes on by itself, whoever owns it.
@@ -107,6 +106,46 @@ public sealed partial class PrReviews
         }
     }
 
+    /// <summary>The most fix rounds a PR gets: the cap, or what 'Allow one more fix round' raised it to.</summary>
+    private static int FixCap(PrReviewRow review) => Math.Max(MaxFixRounds, review.FixRoundsAllowed ?? 0);
+
+    /// <summary>
+    /// The ring after the cap on fix rounds (pilot #1107): the title says how many review rounds the PR has had in all, the detail lists
+    /// every point in three groups (addressed with where, left with a reason, not addressed), then the last review. 'Allow one more fix round'
+    /// starts exactly one more fixer; the cap rings again after it.
+    /// </summary>
+    private void RaiseCapped(PrRef pr, PrReviewRow review, string subject, string? said)
+    {
+        var rounds = review.FixRound ?? 0;
+        var all = ReviewRing.Rounds(review.Rounds);
+        var detail = $"{rounds} fixers have pushed and the review still asks for changes, so no more start: this is yours.\n"
+            + (said is null ? "" : $"{said}\n")
+            + $"Points after {all}:\n{ReviewRing.Points(review.Rounds)}\n\nThe last review:\n{(review.Report ?? "").Trim()}\n{string.Join('\n', review.Findings.Select(f => f.ToString()))}";
+        RaiseOnce(pr, review, CardBin.Ring, FixCappedKind, subject, $"{pr}: changes still asked after {all}",
+            detail.TrimEnd(), [new CardChoice { Label = "Allow one more fix round", Verb = Verbs.AllowRound, Target = subject, Args = ["the person allowed one more fix round"] }],
+            $"{pr} has had {all} of review and {rounds} fix rounds, and still asks for changes. Points: {ReviewRing.Counts(review.Rounds)}.");
+    }
+
+    /// <summary>
+    /// 'Allow one more fix round' on a PR held at the cap: raises the cap by exactly one over the rounds it has had, closes the ring and
+    /// starts the one fixer. The cap rings again once that round is pushed and the review still asks for changes.
+    /// </summary>
+    private async Task<string> AllowFixRoundAsync(PrRef pr, CancellationToken cancellationToken)
+    {
+        if (Of(pr) is not { } review)
+        {
+            throw new FlightException($"no review of {pr} here: nothing to allow");
+        }
+        var rounds = review.FixRound ?? 0;
+        if (review.Fixer is not null || review.Verdict != "changes" || rounds < FixCap(review))
+        {
+            throw new FlightException($"{pr} is not held at its cap of {FixCap(review)} fix rounds: nothing to allow");
+        }
+        review = review with { FixRoundsAllowed = rounds + 1, Raised = [.. review.Raised.Where(k => k != FixCappedKind)] };
+        state.PutPrReview(review);
+        return await StartFixerAsync(pr, review, cancellationToken);
+    }
+
     /// <summary>The name the node answers under when it takes the option that reaches the criteria.</summary>
     public const string NodeDecides = "the pilot node";
 
@@ -124,11 +163,10 @@ public sealed partial class PrReviews
         if (flight is null)
         {
             var rounds = review.FixRound ?? 0;
-            if (rounds >= MaxFixRounds)
+            if (rounds >= FixCap(review))
             {
                 SettleDecided(pr, review, decided, "no fixer starts, as the rounds of fixes are used up; the ring for that says the decided answer");
-                RaiseOnce(pr, review, CardBin.Ring, FixCappedKind, subject, $"{pr}: still asking for changes after {rounds} rounds of fixes",
-                    $"{rounds} fixers have pushed and the review still asks for changes, so no fourth starts: this is yours.\n{said}\n{(review.Report ?? "").Trim()}\n{string.Join('\n', review.Findings.Select(f => f.ToString()))}");
+                RaiseCapped(pr, review, subject, said);
                 return;
             }
             if (rounds == 0 && !Own(review, await github.LoginAsync(cancellationToken)))
@@ -214,7 +252,7 @@ public sealed partial class PrReviews
             return "its review asks a question of design, which is the author's to decide";
         }
         var rounds = review.FixRound ?? 0;
-        if (rounds >= MaxFixRounds)
+        if (rounds >= FixCap(review))
         {
             return $"{rounds} rounds of fixes have pushed and it still asks for changes, so no more start";
         }

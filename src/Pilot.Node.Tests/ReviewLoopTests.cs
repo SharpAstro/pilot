@@ -18,7 +18,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     }
 
     /// <summary>A flight whose review has given <paramref name="rounds"/> rounds of changes, each after a commit and a reviewer start by the person.</summary>
-    private async Task<string> Looping(string issue, int rounds)
+    private async Task<string> Looping(string issue, int rounds, string? lastTable = null)
     {
         var flight = await NewFlight(issue, "parser");
         await Fly(flight, "parser");
@@ -31,7 +31,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
                 (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
                 await Started(_legs, flight.Code);
             }
-            (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", $"## Blocking\n- finding of round {round}")).Error.ShouldBeNull();
+            (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", (round == rounds && lastTable is not null ? lastTable : Answered(flight.Code)) + $"## Blocking\n- finding of round {round}")).Error.ShouldBeNull();
         }
         return flight.Code;
     }
@@ -50,6 +50,30 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         card.Detail.ShouldContain("finding of round 3");
         card.Choices.Select(c => c.Verb).ShouldBe([Verbs.Review, Verbs.AllowRound]);
         Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewChanges);
+    }
+
+    /// <summary>Pilot #1107: the card says how many rounds the review has had in all and lists the points in three groups.</summary>
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheLoopCardTitlesTheRoundsInAllAndListsThePointsInThreeGroups()
+    {
+        var table = "## Earlier points\n| Point | Answer | Where or reason |\n|---|---|---|\n"
+            + "| R1.1 | addressed | Parser.cs:20 |\n| R2.1 | left | the decision belongs to the owner |\n\n";
+        var code = await Looping("1", 3, table);
+
+        var card = Open().Single(c => c.Kind == LegCommander.ReviewLoopKind);
+        card.Title.ShouldContain("3 rounds in all");
+        var detail = card.Detail.ShouldNotBeNull();
+        detail.ShouldContain("Points after 3 rounds:");
+        detail.ShouldContain("Addressed (1):");
+        detail.ShouldContain("R1.1: finding of round 1 (where: Parser.cs:20)");
+        detail.ShouldContain("Left with a reason (1):");
+        detail.ShouldContain("R2.1: finding of round 2 (reason: the decision belongs to the owner)");
+        detail.ShouldContain("Not addressed (1):");
+        detail.ShouldContain("R3.1: finding of round 3");
+        card.Summary.ShouldNotBeNull().ShouldContain("3 rounds in all");
+        card.Summary.ShouldContain("1 addressed, 1 left with a reason, 1 not addressed");
+        code.ShouldNotBeNull();
     }
 
     [Fact]
@@ -147,7 +171,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         Commit(F(code).Worktree, "fix4.txt");
         (await Run(Verbs.StartReview, Verbs.FlightTarget(code), Tower)).Error.ShouldBeNull();
         await Started(_legs, code);
-        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", "## Blocking\n- finding of round 4")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", Answered(code) + "## Blocking\n- finding of round 4")).Error.ShouldBeNull();
 
         // The fourth round with changes holds the loop again: a fifth needs another word.
         Open().ShouldContain(c => c.Kind == LegCommander.ReviewLoopKind);
@@ -182,7 +206,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         Commit(F(code).Worktree, "fix3.txt");
         (await Run(Verbs.StartReview, Verbs.FlightTarget(code), "controller")).Error.ShouldBeNull();
         await Started(_legs, code);
-        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass", "read the fixes")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass", Answered(code) + "read the fixes")).Error.ShouldBeNull();
         return code;
     }
 
@@ -220,7 +244,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         (await Run(Verbs.StartReview, Verbs.FlightTarget(code), "controller")).Error.ShouldBeNull();
         await Started(_legs, code);
 
-        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", "## Blocking\n- finding of round 4")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", Answered(code) + "## Blocking\n- finding of round 4")).Error.ShouldBeNull();
 
         // Changes, changes, pass, changes: three rounds asked for changes, so the loop is held at the fourth round.
         Open().ShouldContain(c => c.Kind == LegCommander.ReviewLoopKind);

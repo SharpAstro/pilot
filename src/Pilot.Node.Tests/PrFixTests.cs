@@ -109,12 +109,19 @@ public abstract class PrFixTestsBase : IDisposable
     private protected Task<CommandResult> Run(string verb, string pr, string who, params string[] args) =>
         _reviews.RunAsync(new CommandRequest { Verb = verb, Target = $"pr/{pr}", Args = args, Who = who }, Ct);
 
+    /// <summary>The table a re-review opens with, each earlier point of the row answered addressed; empty on a first review.</summary>
+    private protected static string AnswersOf(PrReviewRow row) =>
+        ReviewPoints.Number(row.Rounds ?? []) is { Count: > 0 } earlier
+            ? "## Earlier points\n| Point | Answer | Where or reason |\n|---|---|---|\n" + string.Join("\n", earlier.Select(p => $"| {p.Id} | addressed | README.md:1 |")) + "\n\n"
+            : "";
+
     /// <summary>Reviews <paramref name="pr"/> and gives <paramref name="verdict"/> with these findings; the reviewer's own words.</summary>
     private protected async Task<PrReviewRow> Review(string pr, string verdict, params string[] findings)
     {
         (await Run(Verbs.ReviewPr, pr, "controller")).Error.ShouldBeNull();
         var row = _reviews.Of(PrRef.Parse(pr)!).ShouldNotBeNull();
-        (await Run(Verbs.PrVerdict, pr, row.Reviewer, [verdict, "Two things are wrong.", .. findings])).Error.ShouldBeNull();
+        // A re-review answers every earlier point first (pilot #1107): these tests are not about the table, so each is answered addressed.
+        (await Run(Verbs.PrVerdict, pr, row.Reviewer, [verdict, AnswersOf(row) + "Two things are wrong.", .. findings])).Error.ShouldBeNull();
         // A review the node posted ends after the reviewer's grace, not with the verdict's answer: wait it out.
         for (var i = 0; i < 500 && _reviews.Of(PrRef.Parse(pr)!) is { PostedId: not null, State: not PrReviewState.Closed }; i++)
         {
@@ -145,7 +152,7 @@ public abstract class PrFixTestsBase : IDisposable
         await _reviews.SweepAsync(Ct);
         Row.Head.ShouldBe(head);
         Row.State.ShouldBe(PrReviewState.Reviewing);
-        (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, [verdict, "Round report.", .. findings])).Error.ShouldBeNull();
+        (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, [verdict, AnswersOf(Row) + "Round report.", .. findings])).Error.ShouldBeNull();
     }
 
     private protected static SessionRow Session(string name, SessionState state) => new()
@@ -373,7 +380,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
         var ring = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixCappedKind).ShouldHaveSingleItem();
         ring.Bin.ShouldBe(CardBin.Ring);
         ring.Title.ShouldContain("acme/widget#7");
-        ring.Title.ShouldContain("3 rounds");
+        ring.Title.ShouldContain("4 rounds");
         ring.Detail.ShouldNotBeNull().ShouldContain("never right");
         ring.Link.ShouldNotBeNull().ShouldContain("/pull/7");
         // Nor does the watchtower on autopilot start a fourth (the review of #470): that is the person's.

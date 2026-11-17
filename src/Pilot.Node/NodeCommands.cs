@@ -608,11 +608,11 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return AddSessionArtifact(command);
         }
-        if (LegCommander.Handles(command.Verb))
+        if (LegCommander.Handles(command.Verb) && !PrReviews.Handles(command.Verb, command.Target))
         {
             return await Get<LegCommander>().RunAsync(command, cancellationToken);
         }
-        if (PrReviews.Handles(command.Verb))
+        if (PrReviews.Handles(command.Verb, command.Target))
         {
             return await Get<PrReviews>().RunAsync(command, cancellationToken);
         }

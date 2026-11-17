@@ -208,7 +208,7 @@ internal static class CardKindCatalog
         new("pr-fix-started", "Handled", [PrReviewsFixer], "PrFixTests.AChangesVerdictOnAnOwnPrInATrackedRepoStartsOneFixerOnThePrsBranch"),
         new("pr-fix-offer", "ForYou", [PrReviewsFixer], "PrFixTests.APrByAnotherLoginRaisesAForYouCardWhoseFixItStartsTheSameFixer"),
         new("pr-fix-failed", "ForYou", [PrReviewsFixer, PrReviewsFixerRounds], SourcePinned),
-        new("pr-fix-capped", "Ring", [PrReviewsFixer], "PrFixTests.ChangesOnRoundThreeRingsTheRoundsAndStartsNoFourthFixer", "the PR's fix rounds have reached the cap with changes still asked", [nameof(Verbs.FixPr)]),
+        new("pr-fix-capped", "Ring", [PrReviewsFixer], "RingCountTests.ThePrRingTitlesTheRoundsInAllAndListsThePointsInThreeGroups", "the PR's fix rounds have reached the cap with changes still asked", [nameof(Verbs.AllowRound)]),
         new("pr-fix-ended", "ForYou", [PrReviewsFixerRounds], "PrFixTests.AFixerThatEndsWithoutPushingLeavesACardWithFixItAndNoReview"),
         new("pr-fix-left", "Handled", [PrReviewsFixerRounds], SourcePinned),
         new("pr-fix-follow-up", "Handled", [PrReviewsFixerRounds], "FixFollowUpTests.AMergedPrsFixerCommitGoesToANewBranchAndAFollowUpPrThatIsReviewed"),

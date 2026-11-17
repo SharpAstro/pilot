@@ -77,14 +77,19 @@ public sealed partial class PrReviews
             FixerJob = fixOn?.FixerJob,
             FixWorktree = fixOn?.FixWorktree,
             FixRound = fixOn?.FixRound,
+            FixRoundsAllowed = fixOn?.FixRoundsAllowed,
             FixWorktreeBorrowed = fixOn?.FixWorktreeBorrowed,
             FixDetached = fixOn?.FixDetached,
+            // The earlier rounds and the follow-up issue go on past a fresh review (pilot #1107): the re-review answers their points.
+            Rounds = fixOn?.Rounds,
+            FollowUpIssue = fixOn?.FollowUpIssue,
+            FollowUpPoints = fixOn?.FollowUpPoints,
             StartedAt = time.GetUtcNow(),
         };
         var commits = await git.RunAsync(["log", "--oneline", $"origin/{read.Base}..HEAD"], worktree, cancellationToken);
         var stat = await git.RunAsync(["diff", "--stat", $"origin/{read.Base}...HEAD"], worktree, cancellationToken);
         var brief = Briefs.ReviewPr(row, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""),
-            await github.LoginAsync(cancellationToken), Briefs.Run(Cli, Socket), options.Machine);
+            await github.LoginAsync(cancellationToken), Briefs.Run(Cli, Socket), options.Machine, row.Rounds);
         string job;
         var counting = new object();
         Slots.Begin("review-pr:" + reviewer, counting, reviewer, null, AdmissionRole.Reviewer, Models.Model(RoleModels.Reviewer));

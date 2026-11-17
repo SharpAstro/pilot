@@ -35,6 +35,21 @@ public sealed partial class PrReviews
         {
             throw new FlightException("a verdict needs its report: a summary, then any finding on no line");
         }
+        // A re-review answers the list first (pilot #1107): refused before anything is recorded or posted, so the reviewer is asked again.
+        var earlier = ReviewPoints.Number(review.Rounds ?? []);
+        ReviewPointAnswer[]? answers = null;
+        if (earlier.Count > 0)
+        {
+            if (ReviewPoints.Refusal(earlier, report) is { } unsettled)
+            {
+                throw new FlightException(unsettled);
+            }
+            if (verdict != "changes" && ReviewPoints.AnyNotAddressed(earlier, report))
+            {
+                throw new FlightException("an earlier point is answered not addressed, which keeps the review at changes: give `changes`, or answer it addressed (with where) or left (with a reason)");
+            }
+            answers = [.. ReviewPoints.ParseAnswers(report).Select(r => new ReviewPointAnswer(r.Id, r.Answer switch { ReviewPoints.Answer.Addressed => "addressed", ReviewPoints.Answer.Left => "left", _ => "not addressed" }, r.Detail))];
+        }
         // The verdict is kept as given, on one's own PR too: only the GitHub event is forced to COMMENT there (see Event).
         var login = await github.LoginAsync(cancellationToken);
 
@@ -50,7 +65,11 @@ public sealed partial class PrReviews
         var anchored = findings.Select(f => f with { Inline = lines.TryGetValue(f.Path, out var ranges) && ranges.Any(r => f.Line >= r.From && f.Line <= r.To) }).ToArray();
 
         var now = time.GetUtcNow();
-        var reviewed = review with { State = PrReviewState.Reviewed, Verdict = verdict, Report = report, Findings = anchored, Draft = DraftOf(pr), FinishedAt = now };
+        var reviewed = review with
+        {
+            State = PrReviewState.Reviewed, Verdict = verdict, Report = report, Findings = anchored, Draft = DraftOf(pr), FinishedAt = now,
+            Rounds = [.. review.Rounds ?? [], RoundOf(review, verdict, report, anchored, answers)],
+        };
         await WriteDraftAsync(reviewed, login, cancellationToken);
 
         var subject = Verbs.PrTarget(pr.Repo, pr.Number);
@@ -126,6 +145,31 @@ public sealed partial class PrReviews
             }, CancellationToken.None);
         }
         return posted;
+    }
+
+    /// <summary>
+    /// The round a verdict makes of the review (pilot #1107): its report, then the findings on a line under a heading its verdict names
+    /// (Blocking for changes, Not blocking otherwise), so every one is a numbered point of the next round.
+    /// </summary>
+    private static ReviewRound RoundOf(PrReviewRow review, string verdict, string report, PrFinding[] findings, ReviewPointAnswer[]? answers)
+    {
+        var text = new System.Text.StringBuilder(report);
+        if (findings.Length > 0)
+        {
+            text.Append(verdict == "changes" ? "\n\n## Blocking\n" : "\n\n## Not blocking\n");
+            foreach (var finding in findings)
+            {
+                text.Append($"- {finding}\n");
+            }
+        }
+        return new ReviewRound
+        {
+            Round = (review.Rounds?.Length ?? 0) + 1,
+            Head = review.Head,
+            Verdict = verdict == "changes" ? ReviewState.Changes : ReviewState.Passed,
+            Findings = text.ToString().TrimEnd(),
+            Answers = answers,
+        };
     }
 
     /// <summary>

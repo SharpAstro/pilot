@@ -105,10 +105,28 @@ public sealed record PrReviewRow
     public int? FixRound { get; init; }
 
     /// <summary>
+    /// The most fix rounds the PR may have, raised past the cap by 'Allow one more fix round' (pilot #1107): exactly one more than the
+    /// rounds it had when allowed, so the next cap rings again. Null while the cap stands; optional on the wire.
+    /// </summary>
+    public int? FixRoundsAllowed { get; init; }
+
+    /// <summary>
     /// The answer to the review's design questions (findings starting <c>design:</c>) the fixer was started on: the words given on
     /// <c>review fix</c> or the author's or controller's comment after the review. Null when there was none; optional on the wire.
     /// </summary>
     public string? DesignAnswer { get; init; }
+
+    /// <summary>
+    /// Every earlier round of this PR's review (pilot #1107), oldest first, kept across the fresh review a fixer's push starts: what each
+    /// reviewer said, at which head, and its answers to the points before it. Null on a PR's first review and on a row stored before this member.
+    /// </summary>
+    public ReviewRound[]? Rounds { get; init; }
+
+    /// <summary>The one follow-up issue the PR's reviews filed for the points left with a reason (pilot #1107); null while none was filed.</summary>
+    public int? FollowUpIssue { get; init; }
+
+    /// <summary>The keys of the points <see cref="FollowUpIssue"/> already holds, so a later round adds only the new ones; null while none was filed.</summary>
+    public string[]? FollowUpPoints { get; init; }
 
     public required DateTimeOffset StartedAt { get; init; }
 

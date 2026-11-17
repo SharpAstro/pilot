@@ -54,6 +54,45 @@ public sealed class ReReviewTests : ReviewTestsBase
         F(code).ReviewRounds.ShouldNotBeNull().Length.ShouldBe(1);
     }
 
+    private static readonly ReviewRound Round1 = new() { Round = 1, Head = "aaaa111", Verdict = ReviewState.Changes, Findings = "## Blocking\n- A is wrong\n\n## Not blocking\n- C is a nit\n" };
+    private static readonly ReviewRound Round2 = new() { Round = 2, Head = "bbbb222", Verdict = ReviewState.Changes, Findings = "## Blocking\n- E is new\n" };
+
+    private static FlightRow BriefFlight => new()
+    {
+        Code = "PIL283", Repo = "pilot", RepoPath = "/r/pilot", Issue = 283, Branch = "flight/pil283", Worktree = "/w/PIL283",
+        Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
+    };
+
+    [Fact]
+    public void AReReviewBriefListsEveryEarlierRoundsPointsAndAsksForTheTableFirst()
+    {
+        var again = new Briefs.ReReview(Round2, new Briefs.PlaneState("c1 fix", "x.cs | 2")) { Rounds = [Round1, Round2] };
+        var brief = Briefs.Review(BriefFlight, [], new Briefs.PlaneState("", ""), "pilot", again: again);
+
+        brief.ShouldContain("- R1.1 (blocking): A is wrong");
+        brief.ShouldContain("- R1.2 (not blocking): C is a nit");
+        brief.ShouldContain("- R2.1 (blocking): E is new");
+        brief.ShouldContain("## Earlier points");
+        brief.ShouldContain("`addressed`");
+        brief.ShouldContain("`left`");
+        brief.ShouldContain("`not addressed`");
+        brief.ShouldContain("follow-up issue");
+        brief.ShouldContain("\"Still open\", \"unchanged\", \"for later\" and \"to do\" with no reason are refused");
+        brief.ShouldContain("must-block:");
+        brief.ShouldContain("build or test break");
+        brief.ShouldContain("not the whole PR");
+        brief.IndexOf("## Earlier points", StringComparison.Ordinal).ShouldBeLessThan(brief.IndexOf("new findings", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TheFirstReviewsBriefSaysItIsTheThoroughOne()
+    {
+        var brief = Briefs.Review(BriefFlight, [], new Briefs.PlaneState("", ""), "pilot");
+
+        brief.ShouldContain("first review, and the thorough one");
+        brief.ShouldNotContain("## Earlier points");
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task AFirstReviewReadsTheWholeDiff()

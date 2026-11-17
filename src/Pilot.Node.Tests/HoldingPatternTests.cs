@@ -13,7 +13,10 @@ namespace Pilot.Node.Tests;
 public sealed class HoldingPatternTests : ReviewTestsBase
 {
     private const string Tower = "du1-watchtower";
-    private const string Notes = "Checked.\n\n## Not blocking\n- rename `x` to `count`";
+    // A later round answers the earlier point first (pilot #1107).
+    private const string EarlierAnswered = "## Earlier points\n| Point | Answer | Where or why |\n|---|---|---|\n| R1.1 | addressed | fix.txt:1 |\n\n";
+
+    private const string Notes ="Checked.\n\n## Not blocking\n- rename `x` to `count`";
 
     private void AutopilotOn() =>
         _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
@@ -107,7 +110,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), Tower)).Error.ShouldBeNull();
 
         F(flight.Code).Holding.ShouldBeNull();
-        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "fine")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", EarlierAnswered + "fine")).Error.ShouldBeNull();
         F(flight.Code).Holding.ShouldBeNull();
         await Checks().LookAsync(Ct);
         _github.Merged.ShouldHaveSingleItem();
@@ -247,7 +250,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         _state.PutLeg(first with { State = LegState.Done, FinishedAt = DateTimeOffset.UtcNow });
         _state.UpdateFlight(flight.Code, f => f with { Review = f.Review! with { State = ReviewState.Reviewing }, Holding = null });
 
-        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "Round 2.\n\n## Not blocking\n- a log line could name the job")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", EarlierAnswered + "Round 2.\n\n## Not blocking\n- a log line could name the job")).Error.ShouldBeNull();
 
         _state.Legs(flight.Code).ShouldNotContain(l => l.Name == $"{LegCommander.ReviewNotesLeg}-2");
         var issue = _github.IssuesCreated.ShouldHaveSingleItem();
@@ -309,7 +312,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
         // Another pass with notes (the controller's ready anyway turns Changes to Passed; here the reviewer is given a new verdict).
         _state.PutFlight(F(flight.Code) with { Review = F(flight.Code).Review! with { State = ReviewState.Reviewing } });
-        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", Notes)).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", EarlierAnswered + Notes)).Error.ShouldBeNull();
 
         _state.Legs(flight.Code).Count(l => l.Name.StartsWith("review-notes")).ShouldBe(1);
     }

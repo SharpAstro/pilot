@@ -99,6 +99,16 @@ public sealed partial class PrReviews
                 summary: $"Merge it when you are ready: {why}, so the node leaves it to you.");
             return;
         }
+        // Nothing lands open (pilot #1107): the points its reviews left are filed as the PR's one follow-up issue before the queue or an autopilot merge.
+        // A flight's PR has its own (the flight's); a failure holds the PR with no note, so a later sweep files it again.
+        if (!FlightOwns(review))
+        {
+            if (await EnsureFollowUpAsync(review, cancellationToken) is not { } filed)
+            {
+                return;
+            }
+            review = filed;
+        }
         if (await github.MergeQueueAsync(review.ClonePath, review.Number, cancellationToken) is null)
         {
             // On autopilot a base with no queue is merged by the repo's method, as a flight's PR is; off, the person's Merge card.
@@ -152,6 +162,12 @@ public sealed partial class PrReviews
         if (!read.Head.StartsWith(head, StringComparison.OrdinalIgnoreCase))
         {
             throw new FlightException($"{pr}'s head is newer than the review ({CommitRefs.Short(read.Head)} · reviewed {CommitRefs.Short(head)}): review it again");
+        }
+        // The card's Merge is a merge too: the points left are filed first (pilot #1107).
+        if (!FlightOwns(review))
+        {
+            review = await EnsureFollowUpAsync(review, cancellationToken)
+                ?? throw new FlightException($"{pr}'s follow-up issue for the points its review left could not be filed, or an earlier point is not addressed, so it is not merged: see the node log");
         }
         var outcome = await LegCommander.LandPrAsync(github, review.ClonePath, pr.Number, read.Head, Models.MergeMethod, cancellationToken);
         if (outcome.Kind == LandKind.RetryLater)

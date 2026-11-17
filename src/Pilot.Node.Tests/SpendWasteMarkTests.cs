@@ -239,7 +239,7 @@ public sealed class SpendWasteReviewMarkTests : ReviewTestsBase
         SpendWaste.Classify(_ledger.Entries(), _ledger.Marks()).ShouldHaveSingleItem().Kind.ShouldBe(WasteKinds.BaseMergeReview);
 
         // A commit of the leg's own, then a base merge: the review reads something new, so it is not marked.
-        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "- still no null check")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Earlier points\n| R1.1 | not addressed | |\n\n## Blocking\n- still no null check")).Error.ShouldBeNull();
         Commit(flight.Worktree, "fix.txt", "restore the null check");
         BaseMerged(flight, "base-2.txt");
         await ReviewAgain(flight.Code);

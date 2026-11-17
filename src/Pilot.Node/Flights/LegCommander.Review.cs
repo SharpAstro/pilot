@@ -195,7 +195,7 @@ public sealed partial class LegCommander
         }
         var commits = await git.RunAsync(["log", "--oneline", $"{head}..HEAD"], flight.Worktree, cancellationToken);
         var stat = await git.RunAsync(["diff", "--stat", $"{head}..HEAD"], flight.Worktree, cancellationToken);
-        return commits.Ok && stat.Ok ? new Briefs.ReReview(last, new Briefs.PlaneState(commits.Output, stat.Output)) : null;
+        return commits.Ok && stat.Ok ? new Briefs.ReReview(last, new Briefs.PlaneState(commits.Output, stat.Output)) { Rounds = flight.ReviewRounds ?? [last] } : null;
     }
 
     /// <summary>
@@ -256,6 +256,27 @@ public sealed partial class LegCommander
         RaiseReviewChanges(FlightOf(Verbs.FlightTarget(code)), why, SendBackReason.ReviewNotStarted);
     }
 
+    /// <summary>
+    /// The new Blocking findings (unmarked by must-block) whose named files and lines all lie outside the diff since the last round's head:
+    /// what the fix round did not touch. Empty when the diff cannot be read, so nothing is moved and the finding blocks.
+    /// </summary>
+    private async Task<IReadOnlyCollection<string>> UntouchedNewFindingsAsync(FlightRow flight, ReviewRow review, IReadOnlyList<string> candidates, CancellationToken cancellationToken)
+    {
+        var open = candidates.Where(c => !ReviewPoints.IsMustBlock(c)).ToList();
+        if (open.Count == 0 || flight.ReviewRounds?.LastOrDefault() is not { Head: { Length: > 0 } since })
+        {
+            return [];
+        }
+        var to = review.ReviewedHead is { Length: > 0 } reviewed ? reviewed : "HEAD";
+        var diff = await git.RunAsync(["diff", "--no-color", "--no-ext-diff", $"{since}..{to}"], flight.Worktree, cancellationToken);
+        if (!diff.Ok)
+        {
+            return [];
+        }
+        var lines = ReviewDiffLines.Parse(diff.Output);
+        return [.. open.Where(lines.IsOutside)];
+    }
+
     private async Task ReviewAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var flight = FlightOf(command.Target);
@@ -290,8 +311,38 @@ public sealed partial class LegCommander
         {
             throw new FlightException("a verdict needs its report: what was checked, or the changes asked for");
         }
+        var blocksOnAnswers = false;
         var findings = ReviewFindings.Read(report);
-        if (verdict == "changes" && !findings.HasBlocking)
+        // A re-review answers the list first (pilot #1107): refused before anything is recorded or sent to GitHub, so the reviewer is asked again.
+        var earlier = fromReviewer ? ReviewPoints.Number(flight.ReviewRounds ?? []) : [];
+        ReviewPointAnswer[]? answers = null;
+        string[]? left = null;
+        if (earlier.Count > 0)
+        {
+            if (ReviewPoints.Refusal(earlier, report) is { } unsettled)
+            {
+                throw new FlightException(unsettled);
+            }
+            var blockedBy = ReviewPoints.AnyNotAddressed(earlier, report);
+            if (verdict == "pass" && blockedBy)
+            {
+                throw new FlightException("a pass cannot leave an earlier point not addressed: give changes, with it under `## Blocking`, or answer it addressed (with where) or left (with a reason)");
+            }
+            answers = [.. ReviewPoints.ParseAnswers(report).Select(r => new ReviewPointAnswer(r.Id, r.Answer switch { ReviewPoints.Answer.Addressed => "addressed", ReviewPoints.Answer.Left => "left", _ => "not addressed" }, r.Detail))];
+            // A new blocking finding in text the fix did not touch, and not marked must-block, is left for the follow-up and blocks nothing.
+            if (verdict == "changes" && await UntouchedNewFindingsAsync(flight, review, ReviewPoints.NewBlocking(findings), cancellationToken) is { Count: > 0 } outside)
+            {
+                left = [.. outside];
+                report = ReviewPoints.MoveLeft(report, outside);
+                findings = ReviewFindings.Read(report);
+                if (!findings.HasBlocking && !blockedBy)
+                {
+                    verdict = "pass";
+                }
+            }
+            blocksOnAnswers = blockedBy;
+        }
+        if (verdict == "changes" && !findings.HasBlocking && !blocksOnAnswers)
         {
             throw new FlightException("changes needs at least one finding under `## Blocking`; with only not blocking findings (nits, suggestions) give `review pass` with them under `## Not blocking`: a pass with notes");
         }
@@ -320,7 +371,7 @@ public sealed partial class LegCommander
                 ? [.. f.ReviewRounds ?? [], new ReviewRound
                 {
                     Round = (f.ReviewRounds?.Length ?? 0) + 1, Head = judged.ReviewedHead, Verdict = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes,
-                    Findings = kept, Depth = judged.Depth, Model = judged.Model ?? Models.ReviewerModel(judged.Depth ?? ReviewDepth.Standard),
+                    Findings = kept, Answers = answers, LeftPoints = left, Depth = judged.Depth, Model = judged.Model ?? Models.ReviewerModel(judged.Depth ?? ReviewDepth.Standard),
                 }]
                 : f.ReviewRounds,
         });
@@ -490,6 +541,16 @@ public sealed partial class LegCommander
     /// <summary>Every leg done, reviewed, the PR open: the merge is the controller's, a gate before an irreversible step.</summary>
     private async Task RaisePrReadyAsync(FlightRow flight, string review, string reviewed, CancellationToken cancellationToken)
     {
+        // The points the reviews left are filed before the merge is offered (PIL1107). A failure is said, not thrown: the merge itself is held until it is filed.
+        try
+        {
+            await EnsureFollowUpAsync(flight, null, cancellationToken);
+            flight = FlightOf(Verbs.FlightTarget(flight.Code));
+        }
+        catch (MergeBlockedException ex)
+        {
+            await Error.WriteLineAsync($"review: {flight.Code}'s follow-up issue was not filed before its PR-ready card: {ex.Message}");
+        }
         var holding = flight.Holding is not null; var holdReason = flight.Holding?.Reason ?? HoldingReason;
         var pr = await OffLockAsync(null, () => github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken)) ?? throw new FlightException($"{flight.Branch} has no PR");
         var legs = state.Legs(flight.Code);
@@ -632,31 +693,27 @@ public sealed partial class LegCommander
     /// </summary>
     private async Task<bool> FileNotesFollowUpAsync(FlightRow flight, IReadOnlyList<string> notes, CancellationToken cancellationToken)
     {
-        var clean = notes.Select(n => n.Trim().TrimStart('-', '*', ' ').ReplaceLineEndings(" ")).Where(n => n.Length > 0).ToList();
-        if (clean.Count == 0)
+        var items = ReviewFollowUp.NotesItems(flight.ReviewRounds?.Length ?? 1, notes);
+        if (items.Count == 0)
         {
             return false;
         }
-        var title = $"Follow-up of {flight.Code}: the review's notes on #{flight.PullRequest} that did not block it";
-        var body = $"{flight.Code} ({flight.PullRequestUrl ?? $"#{flight.PullRequest}"}) passed its review with notes that do not block the merge, after a review-notes round "
-            + "had already made the first ones. One round of notes holds a merge; these are filed here instead (#918).\n\n"
-            + string.Join("\n", clean.Select(n => $"- {n}"));
-        IssueInfo made;
+        int? number;
         try
         {
-            // Off the lock, as the human checks are filed: gh is slow and the flight is not held for it.
-            made = await OffLockAsync(null, () => github.CreateIssueAsync(flight.RepoPath, title, body, cancellationToken));
+            // The flight's one follow-up issue (PIL1107), never a second beside it: the notes join the points its reviews left.
+            number = await EnsureFollowUpAsync(flight, items, cancellationToken);
         }
-        catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException)
+        catch (MergeBlockedException ex)
         {
             await Error.WriteLineAsync($"review: {flight.Code}'s later notes were not filed as a follow-up, they go round instead: {ex.Message}");
             return false;
         }
-        if (flight.Holding is not null)
+        if (number is { } made && FlightOf(Verbs.FlightTarget(flight.Code)) is { Holding: not null } held)
         {
-            ReleaseHolding(flight, "node", $"a later round's notes that do not block are filed as #{made.Number}, so it merges with them");
+            ReleaseHolding(held, "node", $"a later round's notes that do not block are filed as #{made}, so it merges with them");
         }
-        return true;
+        return number is not null;
     }
 
     // The sentence RaisePrReadyAsync adds to a holding flight's PR-ready card, which a released hold takes off again.
@@ -758,12 +815,14 @@ public sealed partial class LegCommander
         }
         var target = Verbs.FlightTarget(flight.Code);
         state.CloseCardsAbout(target, "its review loop was held again", ReviewLoopKind);
-        state.RaiseCard(CardBin.ForYou, ReviewLoopKind, target, $"{flight.Code}'s review is in a loop: {rounds.Length} rounds with changes",
+        // The rounds the PR has had in all, and every point in three groups (pilot #1107), read from the stored answers.
+        detail.AppendLine().AppendLine($"Points after {ReviewRing.Rounds(rounds)}:").Append(ReviewRing.Points(rounds));
+        state.RaiseCard(CardBin.ForYou, ReviewLoopKind, target, $"{flight.Code}'s review is in a loop: {ReviewRing.Rounds(rounds)} in all, {rounds.Count(r => r.Verdict == ReviewState.Changes)} with changes",
             detail.ToString().TrimEnd(),
             [
                 new CardChoice { Label = "Pass with notes", Verb = Verbs.Review, Target = target, Args = ["pass", "passed with the findings noted: repeated or not blocking"] },
                 new CardChoice { Label = "Allow one more round", Verb = Verbs.AllowRound, Target = target, Args = ["the watchtower allowed it"] },
             ], link: flight.PullRequestUrl,
-            summary: $"The review of {flight.Code} (PR {flight.PullRequestUrl}) has asked for changes {rounds.Length} times. The node sends no leg round and starts no reviewer: the watchtower passes it with the findings noted, settles the disagreement in the plane ({flight.Worktree}), rings the person for what it cannot settle, or allows one more round.");
+            summary: $"The review of {flight.Code} (PR #{flight.PullRequest}) has had {ReviewRing.Rounds(rounds)} in all. Points: {ReviewRing.Counts(rounds)}. No round starts until it is passed with notes or one more is allowed.");
     }
 }

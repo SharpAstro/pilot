@@ -30,7 +30,7 @@ public sealed class HumanVerificationFilingTests : ReviewTestsBase
     }
 
     private Task<CommandResult> Verdict(FlightRow flight, string verdict, string report) =>
-        Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), verdict, report);
+        Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), verdict, Answered(flight.Code) + report);
 
     [Fact]
     [Trait("Category", "Slow")]

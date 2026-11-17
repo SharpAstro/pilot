@@ -140,6 +140,10 @@ public sealed partial class PrReviews(
 
     public static bool Handles(string verb) => verb is Verbs.ReviewPr or Verbs.PrVerdict or Verbs.PostReview or Verbs.FixPr;
 
+    /// <summary>A PR's own handling of <paramref name="verb"/>: the verbs above, and allow-round on a PR target (a flight's allow-round is the LegCommander's).</summary>
+    public static bool Handles(string verb, string target) =>
+        Handles(verb) || verb == Verbs.AllowRound && target.StartsWith(Verbs.PrTargetPrefix, StringComparison.Ordinal);
+
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         await _one.WaitAsync(cancellationToken);
@@ -169,6 +173,9 @@ public sealed partial class PrReviews(
                 case Verbs.FixPr:
                     made = await FixAsync(pr, command, cancellationToken);
                     break;
+                case Verbs.AllowRound:
+                    made = await AllowFixRoundAsync(pr, cancellationToken);
+                    break;
                 case Verbs.Merge:
                     await MergeAsync(pr, command, cancellationToken);
                     break;
@@ -194,7 +201,7 @@ public sealed partial class PrReviews(
         {
             // One line per review-pr and fix-pr, written whatever came of it, so a start that left no trace is not a mystery
             // (SE1's review of tianwen#1930, 2026-10-30, left nothing in node.log to say it had been asked for).
-            if (command.Verb is Verbs.ReviewPr or Verbs.FixPr)
+            if (command.Verb is Verbs.ReviewPr or Verbs.FixPr or Verbs.AllowRound)
             {
                 try
                 {

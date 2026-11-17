@@ -119,7 +119,7 @@ public sealed class DesignRingClearsTests : PrFixTestsBase
         _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.DesignSettledKind);
 
         var row = Row;
-        (await Run(Verbs.PrVerdict, "acme/widget#7", row.Reviewer, ["comment", "Round two.", DecidableDesign.NoneReaches])).Error.ShouldBeNull();
+        (await Run(Verbs.PrVerdict, "acme/widget#7", row.Reviewer, ["comment", AnswersOf(row) + "Round two.", DecidableDesign.NoneReaches])).Error.ShouldBeNull();
         for (var i = 0; i < 500 && _reviews.Of(Seven) is { PostedId: not null, State: not PrReviewState.Closed }; i++)
         {
             await Task.Delay(10, Ct);

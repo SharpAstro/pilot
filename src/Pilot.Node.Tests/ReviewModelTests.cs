@@ -50,7 +50,7 @@ public sealed class ReviewModelTests : ReviewTestsBase
 
         _workers.Started.Last().Model.ShouldBe("sonnet");
         F(flight.Code).Review.ShouldNotBeNull().Model.ShouldBe("sonnet");
-        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "fixed")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", Answered(flight.Code) + "fixed")).Error.ShouldBeNull();
         F(flight.Code).ReviewRounds!.Last().Model.ShouldBe("sonnet");
     }
 
