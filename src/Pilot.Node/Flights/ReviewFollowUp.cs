@@ -95,12 +95,12 @@ public static partial class ReviewFollowUp
 
     private static string PassedBy(string findings)
     {
-        var start = findings.LastIndexOf("(passed by ", StringComparison.Ordinal);
+        var start = ReviewPoints.PassedTailStart(findings);
         if (start < 0)
         {
             return "";
         }
-        var rest = findings[(start + "(passed by ".Length)..];
+        var rest = findings[(start + ReviewPoints.PassedTail.Length)..];
         var end = rest.IndexOf(' ', StringComparison.Ordinal);
         return end > 0 ? $" by {rest[..end]}" : "";
     }

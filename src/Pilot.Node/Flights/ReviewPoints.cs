@@ -13,7 +13,8 @@ public static partial class ReviewPoints
     /// <summary>The heading a re-review report opens its answer table under.</summary>
     public const string AnswerHeading = "Earlier points";
 
-    private const string PassedTail = " (passed by ";
+    /// <summary>The words that open a controller's pass-anyway tail; the passer's name follows.</summary>
+    public const string PassedTail =" (passed by ";
 
     /// <summary>
     /// The prefix a reviewer puts on a new finding in text the fix round did not touch when it must still block; the kind follows,

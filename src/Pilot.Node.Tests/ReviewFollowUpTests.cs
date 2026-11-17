@@ -127,10 +127,42 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         ReviewRound[] rounds =
         [
             new() { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking\n- A is wrong\n" },
-            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready anyway (passed by controller over: ## Blocking\n- A is wrong\n)" },
+            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready anyway (passed by controller over: Round 3 read x\n\n## Blocking\n- A is wrong\n)" },
         ];
 
         ReviewPoints.Number(rounds).Select(p => p.Id).ShouldBe(["R1.1"]);
+    }
+
+    [Fact]
+    public void AProseWordPassedByHandBeforeTheControllerTailDoesNotNameThePasser()
+    {
+        ReviewRound[] rounds =
+        [
+            new() { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking\n- A is wrong in Parser.cs:10\n" },
+            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "A note (passed by hand) in prose. ready anyway (passed by controller over: A is wrong)" },
+        ];
+
+        var item = ReviewFollowUp.Read(rounds).Items.ShouldHaveSingleItem();
+        item.Why.ShouldContain("pass anyway by controller");
+        item.Why.ShouldNotContain("by hand)");
+    }
+
+    [Fact]
+    public async Task TwoMergeAsksTogetherFileOneIssueAndMergeOnce()
+    {
+        var code = await SecondRound(FirstReport);
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass", Answers)).Error.ShouldBeNull();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _github.CreateIssueHold = release.Task;
+
+        var first = Merge(code);
+        var second = Merge(code);
+        release.SetResult();
+        var results = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(30));
+
+        results.ShouldAllBe(r => r.Error == null);
+        _github.IssuesCreated.ShouldHaveSingleItem();
+        _github.Merged.ShouldHaveSingleItem();
     }
 
     [Fact]

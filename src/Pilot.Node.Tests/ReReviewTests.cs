@@ -81,6 +81,7 @@ public sealed class ReReviewTests : ReviewTestsBase
         brief.ShouldContain("must-block:");
         brief.ShouldContain("build or test break");
         brief.ShouldContain("not the whole PR");
+        brief.ShouldContain("give `changes`: the node takes the round as a pass and files it");
         brief.IndexOf("## Earlier points", StringComparison.Ordinal).ShouldBeLessThan(brief.IndexOf("new findings", StringComparison.Ordinal));
     }
 
