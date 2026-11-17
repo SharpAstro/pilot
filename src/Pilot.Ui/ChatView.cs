@@ -1150,7 +1150,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             return Layout.Builder.VStack(StatusRow(held, buttons), page.WithGap(6f).HStar()).WithGap(4f).Stretch();
         }
         var body = page.WithGap(8f).Pad(Gutter, 8f).Stretch();
-        var whole = Layout.Builder.VStack(ScrollingHead(top), body.HStar(1f, BodyFloor)).Bg(PageBg).Stretch();
+        var whole = Layout.Builder.VStack(ScrollingHead(top!), body.HStar(1f, BodyFloor)).Bg(PageBg).Stretch();
         whole = WithPageSelection(whole);
         return About?.Over(whole) ?? whole;
     }
