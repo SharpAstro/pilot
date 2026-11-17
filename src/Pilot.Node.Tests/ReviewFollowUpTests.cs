@@ -294,6 +294,6 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         settle[0].ShouldContain("Parser.cs:20");
         settle[1].ShouldContain("Lexer.cs:3");
         settle.ShouldAllBe(l => !l.Contains('
-') && !l.Contains('—'));
+') && !l.Contains('\u2014'));
     }
 }
