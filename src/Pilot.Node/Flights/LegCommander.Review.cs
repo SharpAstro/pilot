@@ -74,7 +74,12 @@ public sealed partial class LegCommander
         }
         // A spent 5-hour window holds the reviewer. The review is let go meanwhile, as a fresh one replaces it either way and an
         // old pass must not let the merge by a head nobody read: with its PR open and no review kept, the sweep starts it afresh.
-        var held = Gate.Hold($"{Verbs.StartReview} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its reviewer", Models.WeekPaceFor(flight.Repo));
+        var heldBy = Gate.HoldBecause($"{Verbs.StartReview} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its reviewer", Models.WeekPaceFor(flight.Repo));
+        var held = heldBy is not null;
+        if (heldBy is not null)
+        {
+            SayHeld(heldBy);
+        }
         // The marks and kept jobs of the reviewer replaced, let go once the replacement's row is in (or the start is held).
         ReviewerReplacement? replacement = null;
         if (flight.Review?.ReviewerJob is { } last)

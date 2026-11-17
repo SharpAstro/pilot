@@ -196,6 +196,19 @@ public sealed class UsageTests : IDisposable
         mirror.Usage.ShouldBe(Row(42, Reset, Now));
     }
 
+    [Fact]
+    public void ALoginChangeOnANodeThatNeverReadAnAccountKeepsTheTimeAndShowsNoUsage()
+    {
+        _state.PutLoginChanged(Now);
+
+        var usage = _state.Usage().ShouldNotBeNull();
+        usage.LoginChangedAt.ShouldBe(Now);
+        usage.IsEmpty.ShouldBeTrue();
+        usage.Line(Now, TimeZoneInfo.Utc).ShouldBe("");
+        (usage with { Account = new AccountRow { Email = "a@example.org" } }).IsEmpty.ShouldBeFalse();
+        Row(42, Reset, Now).IsEmpty.ShouldBeFalse();
+    }
+
     private sealed class MirrorSink(NodeMirror mirror) : INodeEventSink
     {
         public int Capacity => 64;

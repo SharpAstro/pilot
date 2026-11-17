@@ -78,8 +78,9 @@ public sealed partial class LegCommander
             throw new FlightException($"{planner} is planning {flight.Code} already; wait for its planned card, or stop it first");
         }
         // Asked for while the 5-hour window is spent: it waits, and the sweep starts it once the window has reset.
-        if (Gate.Hold($"{Verbs.PlanFlight} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its planner", Models.WeekPaceFor(flight.Repo)))
+        if (Gate.HoldBecause($"{Verbs.PlanFlight} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its planner", Models.WeekPaceFor(flight.Repo)) is { } heldBy)
         {
+            SayHeld(heldBy);
             _plannersWaiting[flight.Code] = true;
             return;
         }

@@ -308,7 +308,11 @@ public static partial class NodeApp
     {
         builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));
         builder.Services.AddSingleton(_ => new StartOptionsBook(StartOptionsBook.FileIn(options.DataFolder)) { Error = logWriter });
-        builder.Services.AddSingleton(services => new SessionLedger(SessionLedger.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
+        builder.Services.AddSingleton(services => new SessionLedger(SessionLedger.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>())
+        {
+            Error = logWriter,
+            Account = () => services.GetRequiredService<NodeState>().Usage()?.Account?.Email,
+        });
         builder.Services.AddSingleton(_ => new SpendLedger(SpendLedger.FileIn(options.DataFolder)) { Error = logWriter });
         builder.Services.AddSingleton(services => new ClaudeWorkerLauncher(services.GetRequiredService<ClaudeTrust>(), services.GetRequiredService<StartOptionsBook>(),
             services.GetRequiredService<SessionLedger>(), options, services.GetRequiredService<SendTimings>(), ClaudeWorkerLauncher.BriefFolderIn(options.DataFolder),

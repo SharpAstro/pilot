@@ -92,21 +92,39 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     /// <paramref name="what"/> (<c>TIA1 waits to start its reviewer</c>) and why, with until when, once per window however
     /// often it is asked; the start is the caller's to take again once the window has reset. The week's ring is rung either way.
     /// </summary>
-    public bool Hold(string key, double limit, double weekLimit, string kind, string subject, string what, double? paceMargin = null)
+    public bool Hold(string key, double limit, double weekLimit, string kind, string subject, string what, double? paceMargin = null) =>
+        HoldBecause(key, limit, weekLimit, kind, subject, what, paceMargin) is not null;
+
+    /// <summary>
+    /// <see cref="Hold"/> that says why: the <see cref="StartHeld"/> that holds the start, or null when it goes ahead. The Handled card is
+    /// raised once per window as for <see cref="Hold"/>.
+    /// </summary>
+    public StartHeld? HoldBecause(string key, double limit, double weekLimit, string kind, string subject, string what, double? paceMargin = null)
     {
         RingWeek(weekLimit);
         // The windows first: they say a time they end; the outage is asked last so its probe is only used up by a start nothing else holds.
         if ((CheckLimit() ?? Check(limit) ?? CheckPace(paceMargin) ?? CheckOutage(key)) is not { } held)
         {
             _said.TryRemove(key, out _);
-            return false;
+            return null;
         }
         if (!_said.TryGetValue(key, out var said) || said != held.Resets)
         {
             _said[key] = held.Resets;
             state.RaiseCard(CardBin.Handled, kind, subject, $"{what}: {held.Say}");
         }
-        return true;
+        return held;
+    }
+
+    /// <summary>
+    /// What a verb answers when the gate held its start: <c>held until 14:05: the why</c>, the reset as local HH:mm, or ddd HH:mm when it
+    /// is not today. One text for every verb.
+    /// </summary>
+    public string HeldAnswer(StartHeld held)
+    {
+        var at = held.Resets.ToLocalTime();
+        var when = at.Date == time.GetLocalNow().Date ? at.ToString("HH:mm", CultureInfo.InvariantCulture) : at.ToString("ddd HH:mm", CultureInfo.InvariantCulture);
+        return $"held until {when}: {held.Say}";
     }
 
     /// <summary>Rings once per 7-day window past <paramref name="weekLimit"/>; the start that asked goes ahead.</summary>

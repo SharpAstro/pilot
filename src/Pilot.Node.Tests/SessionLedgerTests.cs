@@ -47,6 +47,28 @@ public sealed class SessionLedgerTests : IDisposable
     private SessionRow Row(string id) => _state.Sessions().Single(r => r.Id == id);
 
     [Fact]
+    public void StartedRecordsTheAccountTheNodeHeldAndStampPutsItOnTheRow()
+    {
+        _ledger.Account = () => "a@example.org";
+        Launch(AgentRows.SessionA, "PIL5 node", SessionStartReasons.LegLaunch);
+        _ledger.Account = () => "b@example.org";
+
+        _ledger.Find([AgentRows.SessionA[..8]])!.Account.ShouldBe("a@example.org");
+        var row = new SessionRow
+        {
+            Id = AgentRows.SessionA[..8], SessionId = AgentRows.SessionA, Name = "PIL5 node", Kind = SessionKind.Background, Cwd = "/r", Role = SessionRole.Worker,
+            ContextTokens = 0, ContextWindow = 1, State = SessionState.Idle, SpendWeighted = 0, StartedAt = Start,
+        };
+        _ledger.Stamp(row, null).Account.ShouldBe("a@example.org");
+        // An adopted row's start is not known to be under any login.
+        var adopted = row with { Id = "ad000000", SessionId = "ad000000-0000-4000-8000-000000000000" };
+        _ledger.Adopt(adopted);
+        _ledger.Stamp(adopted, null).Account.ShouldBeNull();
+        // It survives a restart.
+        new SessionLedger(SessionLedger.FileIn(_folder), _time).Find([AgentRows.SessionA[..8]])!.Account.ShouldBe("a@example.org");
+    }
+
+    [Fact]
     public async Task ALegLaunchAReviewAndTheWatchtowerEachCarryTheirStartReason()
     {
         Launch(AgentRows.SessionA, "PIL5 node", SessionStartReasons.LegLaunch);

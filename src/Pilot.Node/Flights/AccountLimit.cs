@@ -11,22 +11,36 @@ namespace Pilot.Node.Flights;
 public static partial class AccountLimit
 {
     /// <summary>The latest reset after <paramref name="now"/> among the rows whose API error is a limit; null when there is none.</summary>
-    public static (DateTimeOffset Until, string Why)? FromRows(IEnumerable<SessionRow> sessions, DateTimeOffset now, DateTimeOffset? loginChangedAt = null)
+    public static (DateTimeOffset Until, string Why, string? Family)? FromRows(IEnumerable<SessionRow> sessions, DateTimeOffset now, DateTimeOffset? loginChangedAt = null, string? currentAccount = null, DateTimeOffset? evidenceEndedAt = null)
     {
-        (DateTimeOffset Until, string Why)? best = null;
+        (DateTimeOffset Until, string Why, string? Family)? best = null;
         foreach (var row in sessions)
         {
             // A per-minute rate limit is the LimitWait path's own, one worker's; the account limit is a usage or spend limit.
+            if (evidenceEndedAt is { } ended && row.StartedAt < ended)
+            {
+                // A later session answered a turn on the family that reported the limit: what began before that is stale, whoever's it was.
+                continue;
+            }
+            if (row.Account is { } rowAccount && currentAccount is { } current
+                && !string.Equals(rowAccount, current, StringComparison.OrdinalIgnoreCase))
+            {
+                // The row says whose login it ran under: another login's limit is not this one's.
+                continue;
+            }
             if (loginChangedAt is { } changed && row.StartedAt < changed)
             {
-                // The row belongs to the login that was switched away from.
+                // The cut applies to every row: a login change, a lift and an evidence end all move it, and a row under the
+                // current account that began before it is stale too (so a lift or an end survives a restart). Known edge: a row has no
+                // error time, so a long-lived session that began before the cut and reports a real new limit afterwards is ignored until a
+                // newer session reports it too; telling it apart needs a stored ApiErrorAt, which costs a contract bump for a rare case.
                 continue;
             }
             if (row.ApiError is { } error && error.Contains("limit", StringComparison.OrdinalIgnoreCase)
                 && !error.Contains("rate_limit", StringComparison.OrdinalIgnoreCase) && !error.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
                 && row.ApiErrorResetsAt is { } resets && resets > now && (best is null || resets > best.Value.Until))
             {
-                best = (resets, $"{row.Name} stopped on {error}");
+                best = (resets, $"{row.Name} stopped on {error}", Verbs.ModelFamily(row.Model));
             }
         }
         return best;

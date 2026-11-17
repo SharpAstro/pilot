@@ -62,6 +62,18 @@ public sealed partial class LegCommander(
     /// <summary>What holds a start while the 5-hour window is spent; one gate for every session the node starts by itself, shared with the watchtower and the compactor.</summary>
     public StartGate Gate { get; set; } = new(state, time);
 
+    // The words of a start the gate held for the command in flight, read when its answer is made; per command, as commands overlap outside the lock.
+    private readonly AsyncLocal<System.Runtime.CompilerServices.StrongBox<string?>?> _heldAnswer = new();
+
+    /// <summary>Notes a start the gate held in the answer of the command that asked; the held words are the one text every verb says.</summary>
+    private void SayHeld(StartHeld held)
+    {
+        if (_heldAnswer.Value is { } box)
+        {
+            box.Value = Gate.HeldAnswer(held);
+        }
+    }
+
     /// <summary>Whether a session may start: the Opus cap, the one-flight-per-repo mode and priority flights, asked beside <see cref="Gate"/>.</summary>
     public AdmissionGate Slots { get => field ??= new(state, () => Models, options.Machine); set; }
 
@@ -158,6 +170,9 @@ public sealed partial class LegCommander(
         MergeRefusal? refusal = null;
         string? made = null;
         string? way = null;
+        // A start the gate held says so in the answer (PIL1123): the sites that ask the gate write here, for the verbs that start a session.
+        var heldBox = new System.Runtime.CompilerServices.StrongBox<string?>();
+        _heldAnswer.Value = heldBox;
         var merged = false;
         FlightRow? moving = null;
         SubTask? removedSubTask = null;
@@ -333,6 +348,10 @@ public sealed partial class LegCommander(
         // The sessions this command began start outside the lock: it answers when they are up, or "started" once they are not yet.
         var (started, notStarted) = await AwaitLaunchesAsync(launches);
         made ??= started;
+        if (made is null && command.Verb is Verbs.StartReview or Verbs.PlanFlight or Verbs.ValidateLeg)
+        {
+            made = heldBox.Value;
+        }
         error ??= notStarted;
 
         // The legs' sub-tasks in the work item follow the verb, outside the lock: the tracker takes as long as it takes, and a refusal is logged, never the verb's.

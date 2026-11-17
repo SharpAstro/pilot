@@ -28,7 +28,7 @@ internal static class CardSource
     [
         (new Regex(@"\bRaiseCard\("), "RaiseCard", 1, 3, null, null, 0),
         (new Regex(@"(?<![\w.])Ring\("), "Ring", 1, 2, "Ring", "LegWatch.cs", 0),
-        (new Regex(@"\bGate\.Hold\("), "Hold", 3, 5, "Handled", null, 0),
+        (new Regex(@"\bGate\.Hold(?:Because)?\("), "Hold", 3, 5, "Handled", null, 0),
         (new Regex(@"\bRaiseOnce\("), "RaiseOnce", 3, 5, null, null, 2),
     ];
 

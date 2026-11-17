@@ -223,6 +223,19 @@ public sealed class TurnOutage(NodeState state)
                     Close(since, now, $"the usage limit ended at {until.ToLocalTime():HH:mm}");
                     return true;
                 }
+                // Evidence ends it (#1123): a session that began after the limit was seen, on the family of the one that reported it, and
+                // answered a turn with no limit error. A row of unknown family, or one that began before, proves nothing.
+                if (_limitFamily is { } family && _limitSeenAt is { } seen
+                    && sessions.FirstOrDefault(s => s.StartedAt > seen && s.ApiError is null && s.LastResponseAt is { } r && r > s.StartedAt
+                        && string.Equals(Verbs.ModelFamily(s.Model), family, StringComparison.Ordinal)) is { } proof)
+                {
+                    // The end moves the cut as a lift does (PutLoginChanged), so the rows that opened the limit do not reopen it.
+                    _loginChangedAt = now;
+                    _evidenceEndedAt = now;
+                    Close(since, now, $"{proof.Name} began after the limit was seen and answered a turn on {family}, so the usage limit no longer holds");
+                    state.PutLoginChanged(now);
+                    return true;
+                }
                 return false;
             }
             var first = _baseline is null;
@@ -244,6 +257,8 @@ public sealed class TurnOutage(NodeState state)
         _since = null;
         _baseline = null;
         _limitUntil = null;
+        _limitFamily = null;
+        _limitSeenAt = null;
         _stalled.Clear();
         _waiting.Clear();
         _probeKey = null;
@@ -258,6 +273,16 @@ public sealed class TurnOutage(NodeState state)
     public const string LimitCardKind = "account-limit";
 
     private DateTimeOffset? _limitUntil;
+    private DateTimeOffset? _evidenceEndedAt;
+
+    /// <summary>When a limit last ended by evidence (a later session answered a turn on the reporting family), this run only; rows that began before it open no limit.</summary>
+    public DateTimeOffset? LimitEvidenceEndedAt
+    {
+        get { lock (_gate) { return _evidenceEndedAt; } }
+    }
+
+    private string? _limitFamily;
+    private DateTimeOffset? _limitSeenAt;
 
     /// <summary>When the open account limit resets, or null when none is open.</summary>
     public DateTimeOffset? LimitUntil
@@ -281,7 +306,7 @@ public sealed class TurnOutage(NodeState state)
     /// the judgement is stale (it counted rows that no longer count) and nothing opens. Without this a look already under way reopened a
     /// limit a moment after it was lifted, and it then held until its reset (#1123).
     /// </summary>
-    public void OpenJudgedLimit(DateTimeOffset until, string why, DateTimeOffset at, DateTimeOffset? loginChangedWhenJudged)
+    public void OpenJudgedLimit(DateTimeOffset until, string why, DateTimeOffset at, DateTimeOffset? loginChangedWhenJudged, string? family = null)
     {
         lock (_gate)
         {
@@ -289,11 +314,11 @@ public sealed class TurnOutage(NodeState state)
             {
                 return;
             }
-            OpenLimit(until, why, at);
+            OpenLimit(until, why, at, family);
         }
     }
 
-    public void OpenLimit(DateTimeOffset until, string why, DateTimeOffset at)
+    public void OpenLimit(DateTimeOffset until, string why, DateTimeOffset at, string? family = null)
     {
         lock (_gate)
         {
@@ -306,6 +331,7 @@ public sealed class TurnOutage(NodeState state)
                 if (until > current)
                 {
                     _limitUntil = until;
+                    _limitFamily ??= family;
                     RaiseLimitCard(at, until, why);
                 }
                 return;
@@ -318,6 +344,8 @@ public sealed class TurnOutage(NodeState state)
             }
             _since = since;
             _limitUntil = until;
+            _limitFamily = family;
+            _limitSeenAt = at;
             _baseline = null;
             _stalled.Clear();
             _waiting.Clear();
