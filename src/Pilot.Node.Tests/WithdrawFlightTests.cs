@@ -113,6 +113,9 @@ public sealed class WithdrawFlightTests : LegCommanderTestsBase
     {
         RealGit();
         var flight = await Fresh();
+        // A commit that changes a file: an empty one holds no work and is read as in the base by content.
+        File.WriteAllText(Path.Combine(flight.Worktree, "work.txt"), "work\n");
+        Git(flight.Worktree, "add", "work.txt");
         Commit(flight.Worktree, "did some work");
 
         var result = await Withdraw("TIA1", "mistake");
