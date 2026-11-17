@@ -179,10 +179,10 @@ public sealed class DesignerTests : IDisposable
             ["tool_input"] = new Dictionary<string, string> { [tool == "NotebookEdit" ? "notebook_path" : "file_path"] = path },
         });
 
-    private string? Decide(string hook)
+    private string? Decide(string hook, string cli = "/opt/pilot dir/pilot")
     {
         using var doc = JsonDocument.Parse(hook);
-        return new DesignerGuard(_state, _store).Decide(doc.RootElement);
+        return new DesignerGuard(_state, _store) { Cli = cli }.Decide(doc.RootElement);
     }
 
     [Theory]
@@ -235,13 +235,43 @@ public sealed class DesignerTests : IDisposable
     [InlineData("Bash", "cat draft/x \"unclosed > ../y")]
     // PowerShell closes a string at a curly quote as at a straight one.
     [InlineData("PowerShell", "Get-Content \"a” > ../BRIEF.md “b\"")]
+    // A program named by a path could be a script the designer wrote in draft/ (Git Bash runs one with no exec bit), whatever its last name.
+    [InlineData("Bash", "draft/cat draft/NOTES.md")]
+    [InlineData("Bash", "./pilot design draft DSN-1")]
+    [InlineData("PowerShell", "draft\\pilot design check DSN-1")]
+    [InlineData("Bash", "../DSN-1/draft/ls")]
+    [InlineData("Bash", "~/AppData/Local/pilot2/designs/DSN-1/draft/cat x")]
+    [InlineData("Bash", "/c/Users/x/AppData/Local/pilot2/designs/DSN-1/draft/pilot design draft DSN-1")]
+    [InlineData("Bash", "'draft\\cat' x")]
+    [InlineData("PowerShell", "C:cat x")]
+    // The CLI's own path with a step back through another folder is not the CLI as written.
+    [InlineData("Bash", "\"/opt/pilot dir/../pilot dir/pilot\" design check DSN-1")]
+    // In double quotes bash reads a backslash before a quote, a backslash or $ as an escape.
+    [InlineData("Bash", "cat \"a\\\\\" draft/x")]
     public void ADesignersShellWriteIsDenied(string tool, string command)
     {
         var id = New("words");
         ListedAs("job00001", "de1-dsn1-designer");
         var denied = Decide(ShellHook("job00001-0000-4000-8000-000000000000", tool, _store.FolderOf(id), command)).ShouldNotBeNull();
         using var answer = JsonDocument.Parse(denied);
-        answer.RootElement.GetProperty("hookSpecificOutput").GetProperty("permissionDecision").GetString().ShouldBe("deny");
+        var output = answer.RootElement.GetProperty("hookSpecificOutput");
+        output.GetProperty("permissionDecision").GetString().ShouldBe("deny");
+        output.GetProperty("permissionDecisionReason").GetString().ShouldNotBeNull().ShouldSatisfyAllConditions(
+            reason => reason.ShouldContain("no backslash outside quotes"),
+            reason => reason.ShouldContain("/opt/pilot dir/pilot"));
+    }
+
+    [Theory]
+    // The node's CLI where the user name has a space: Briefs.Run quotes it, and bash reads the backslashes in double quotes as they are.
+    [InlineData("Bash", "\"C:\\Users\\John Smith\\pilot2\\pilot.exe\" design draft DSN-1")]
+    [InlineData("Bash", "\"C:/Users/John Smith/pilot2/pilot\" design check DSN-1")]
+    [InlineData("Bash", "pilot.exe design show DSN-1")]
+    [InlineData("PowerShell", "pilot design render DSN-1")]
+    public void TheNodesOwnCliByItsPathIsLetThrough(string tool, string command)
+    {
+        var id = New("words");
+        ListedAs("job00001", "de1-dsn1-designer");
+        Decide(ShellHook("job00001-0000-4000-8000-000000000000", tool, _store.FolderOf(id), command), cli: "C:\\Users\\John Smith\\pilot2\\pilot.exe").ShouldBeNull();
     }
 
     [Theory]
