@@ -68,7 +68,7 @@ public sealed class DesignsViewTests
     private static List<string> TextsOf(Rig rig) =>
         SentenceRuns.Texts(rig.View.Tree(rig.Screen) is { } tree ? Layout.Engine.Arrange(tree, new Rect<float>(0, 0, 1400, 900), new PixelMeasureContext<RgbaImage>(rig.Renderer, SessionsCapture.FontPath, 1f)).Select(a => a.Node) : []);
 
-    private static (Layout.ArrangedNode<int> Input, Layout.ArrangedNode<int> Button) StartRow(IEnumerable<Layout.ArrangedNode<int>> arranged)
+    private static (Layout.ArrangedNode<float> Input, Layout.ArrangedNode<float> Button) StartRow(IEnumerable<Layout.ArrangedNode<float>> arranged)
     {
         var all = arranged.ToList();
         var input = all.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput });
@@ -76,7 +76,7 @@ public sealed class DesignsViewTests
         return (input, button);
     }
 
-    private static List<Layout.ArrangedNode<int>> ArrangeAt(Rig rig, float width, float height) =>
+    private static List<Layout.ArrangedNode<float>> ArrangeAt(Rig rig, float width, float height) =>
         [.. Layout.Engine.Arrange(rig.View.Tree(rig.Screen), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(rig.Renderer, SessionsCapture.FontPath, 1f))];
 
     [Theory]
@@ -122,7 +122,7 @@ public sealed class DesignsViewTests
         TextsOf(rig).ShouldContain("Starts on DE1", "All nodes names the node it will use");
 
         rig.View.BriefInput.InsertText("A settings page for the dome");
-        rig.Click(rig.Region(Painted(rig.View), r => r.Result is HitResult.ButtonHit { Action: "designs:start" }));
+        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:start" }));
 
         asked.ShouldBe(("A settings page for the dome", "DE1"));
         rig.View.Started("DSN-9");

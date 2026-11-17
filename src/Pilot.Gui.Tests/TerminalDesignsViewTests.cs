@@ -62,7 +62,7 @@ public sealed class TerminalDesignsViewTests
 
         var arranged = Frame(chrome, screen);
         arranged.ShouldContain(a => IsText(a, "Start a design"));
-        arranged.ShouldNotContain(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.Contains("pilot design new", StringComparison.Ordinal));
+        arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.Contains("pilot design new", StringComparison.Ordinal)).ShouldBeFalse();
         var input = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput });
         var button = arranged.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:start" });
         button.Bounds.Height.ShouldBe(input.Bounds.Height, "one height");
