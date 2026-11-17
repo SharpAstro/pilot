@@ -110,6 +110,18 @@ public sealed record PrReviewRow
     /// </summary>
     public string? DesignAnswer { get; init; }
 
+    /// <summary>
+    /// Every earlier round of this PR's review (pilot #1107), oldest first, kept across the fresh review a fixer's push starts: what each
+    /// reviewer said, at which head, and its answers to the points before it. Null on a PR's first review and on a row stored before this member.
+    /// </summary>
+    public ReviewRound[]? Rounds { get; init; }
+
+    /// <summary>The one follow-up issue the PR's reviews filed for the points left with a reason (pilot #1107); null while none was filed.</summary>
+    public int? FollowUpIssue { get; init; }
+
+    /// <summary>The keys of the points <see cref="FollowUpIssue"/> already holds, so a later round adds only the new ones; null while none was filed.</summary>
+    public string[]? FollowUpPoints { get; init; }
+
     public required DateTimeOffset StartedAt { get; init; }
 
     public DateTimeOffset? FinishedAt { get; init; }

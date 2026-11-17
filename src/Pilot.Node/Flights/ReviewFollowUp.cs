@@ -120,6 +120,19 @@ public static partial class ReviewFollowUp
         return text.ToString();
     }
 
+    /// <summary>The title of the one follow-up issue of a PR no flight owns.</summary>
+    public static string Title(PrReviewRow review) => $"Follow-up of {review.Repo}#{review.Number}: points its review left for later";
+
+    /// <summary>The body for a PR no flight owns: each point with its file and line, what was found, why it was left and what would settle it.</summary>
+    public static string Body(PrReviewRow review, IReadOnlyList<Item> items)
+    {
+        var text = new StringBuilder();
+        text.AppendLine($"{review.Repo}#{review.Number} ({review.Url}) merges with these points left, each with a reason. Nothing lands open (pilot #1107): they are filed here, one issue for the PR.");
+        text.AppendLine();
+        text.Append(Points(items));
+        return text.ToString();
+    }
+
     /// <summary>The points alone, as a body and a later comment on the same issue share them.</summary>
     public static string Points(IReadOnlyList<Item> items)
     {

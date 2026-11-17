@@ -10,8 +10,9 @@ public static partial class Briefs
     /// own description and the tree say what it claims. It reads and runs, changes nothing and posts nothing; its verdict
     /// goes to the node, whose card carries it to the controller.
     /// </summary>
+    /// <param name="earlier">The rounds the PR's earlier reviews gave (pilot #1107); a re-review lists their points and answers them first.</param>
     /// <param name="login">The gh login a review goes out under, when gh said it: on that login's own PR, only a comment.</param>
-    public static string ReviewPr(PrReviewRow review, PlaneState plane, string? login, string run, string? machine = null)
+    public static string ReviewPr(PrReviewRow review, PlaneState plane, string? login, string run, string? machine = null, IReadOnlyList<ReviewRound>? earlier = null)
     {
         var text = new StringBuilder();
         var pr = $"{review.Repo}#{review.Number}";
@@ -45,6 +46,15 @@ public static partial class Briefs
             text.AppendLine();
             text.AppendLine("Files:");
             text.AppendLine(plane.DiffStat.Trim());
+        }
+        if (earlier is { Count: > 0 } && ReviewPoints.Number(earlier).Count > 0)
+        {
+            // A re-review after a fixer's push answers the list first (pilot #1107), as a flight's does.
+            text.AppendLine();
+            AppendEarlierPoints(text, earlier);
+            AppendAnswerTable(text, new ReReview(earlier.OrderBy(r => r.Round).Last(), new PlaneState("", "")) { Rounds = earlier }, "PR");
+            text.AppendLine($"Here the report is the summary argument of `{run} review`: put the `## {ReviewPoints.AnswerHeading}` table at its start, and the new findings");
+            text.AppendLine("as `--finding` arguments as usual, with a `path:line` in each. The node refuses the verdict, and asks you again, while a point has no row.");
         }
         text.AppendLine();
         text.AppendLine("Look for: bugs and regressions, a claim the code does not bear out, tests that do not test what they say, and");

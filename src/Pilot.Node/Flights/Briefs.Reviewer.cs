@@ -70,21 +70,7 @@ public static partial class Briefs
         if (again is not null)
         {
             text.AppendLine();
-            var points = ReviewPoints.Number(again.Rounds);
-            text.AppendLine($"Earlier points, every one of every round ({again.Rounds.Count}), blocking and not blocking:");
-            foreach (var round in again.Rounds.OrderBy(r => r.Round))
-            {
-                var mine = points.Where(p => p.Round == round.Round).ToList();
-                text.AppendLine($"Round {round.Round} ({round.Verdict.ToString().ToLowerInvariant()}){(mine.Count == 0 ? ", no points:" : ":")}");
-                if (mine.Count == 0)
-                {
-                    text.AppendLine(round.Findings.Trim());
-                }
-                foreach (var p in mine)
-                {
-                    text.AppendLine($"- {p.Id} ({(p.Blocking ? "blocking" : "not blocking")}): {p.Text}");
-                }
-            }
+            AppendEarlierPoints(text, again.Rounds);
             if (again.Range.Commits.Trim().Length > 0)
             {
                 text.AppendLine();
@@ -174,15 +160,35 @@ public static partial class Briefs
         return text.ToString();
     }
 
-    private static void AppendAnswerTable(StringBuilder text, ReReview again)
+    /// <summary>Every point of every earlier round, numbered, as a flight's and a PR's re-review brief both list them.</summary>
+    internal static void AppendEarlierPoints(StringBuilder text, IReadOnlyList<ReviewRound> rounds)
+    {
+        var points = ReviewPoints.Number(rounds);
+        text.AppendLine($"Earlier points, every one of every round ({rounds.Count}), blocking and not blocking:");
+        foreach (var round in rounds.OrderBy(r => r.Round))
+        {
+            var mine = points.Where(p => p.Round == round.Round).ToList();
+            text.AppendLine($"Round {round.Round} ({round.Verdict.ToString().ToLowerInvariant()}){(mine.Count == 0 ? ", no points:" : ":")}");
+            if (mine.Count == 0)
+            {
+                text.AppendLine(round.Findings.Trim());
+            }
+            foreach (var p in mine)
+            {
+                text.AppendLine($"- {p.Id} ({(p.Blocking ? "blocking" : "not blocking")}): {p.Text}");
+            }
+        }
+    }
+
+    internal static void AppendAnswerTable(StringBuilder text, ReReview again, string what = "flight")
     {
         var first = ReviewPoints.Number(again.Rounds).FirstOrDefault()?.Id ?? "R1.1";
         text.AppendLine();
         text.AppendLine($"This is a re-review, and its one job is the list above. The report opens with `## {ReviewPoints.AnswerHeading}`: a table with one row for every");
         text.AppendLine("point, none left out, columns `Point | Answer | Where or reason`, e.g. `| " + first + " | addressed | src/Foo.cs:42 |`. Each answer is one of:");
         text.AppendLine("- `addressed`: fixed, with where (`file:line`, or the commit). Check it by reading the code or running it; the fixer's word is not a check.");
-        text.AppendLine("- `left`: left on purpose, with the reason (out of this flight's scope, needs a decision the flight cannot make, safe as it is and why).");
-        text.AppendLine("  Every left point goes into one follow-up issue for the flight, which the node files from your table.");
+        text.AppendLine($"- `left`: left on purpose, with the reason (out of this {what}'s scope, needs a decision the {what} cannot make, safe as it is and why).");
+        text.AppendLine($"  Every left point goes into one follow-up issue for the {what}, which the node files from your table.");
         text.AppendLine("- `not addressed`: no fix and no reason. This blocks the merge.");
         text.AppendLine("\"Still open\", \"unchanged\", \"for later\" and \"to do\" with no reason are refused: a point is settled or it blocks. A point you do not");
         text.AppendLine("mention is refused too, by name.");
