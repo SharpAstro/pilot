@@ -163,8 +163,7 @@ public static class DesignWhys
         {
             return "publish takes --why <what changed>, a short reason that is not empty";
         }
-        if (why.Contains('
-') || why.Contains(''))
+        if (why.Contains('\n') || why.Contains('\r'))
         {
             return "publish --why is one line: it has a line break";
         }
