@@ -174,8 +174,7 @@ public sealed partial class FlightCommander
         // and still able to push. A session's job is its row id.
         // Found by the ledger's flight too, not only by name: a session the node launched for the flight whose row is renamed or gone.
         var live = state.Sessions().Where(s => s.State is not (SessionState.Ended or SessionState.Failed) && string.Equals(s.Flight, flight.Code, StringComparison.Ordinal)).Select(s => s.Id).ToList();
-        var sessions = live.Concat(Ledger?.All().Where(e => e.EndReason is null && string.Equals(e.Flight, flight.Code, StringComparison.Ordinal)).Select(e => e.JobId) ?? []).Distinct().ToList();
-        var jobs = state.Legs(flight.Code).Select(l => l.WorkerJob).Append(flight.Review?.ReviewerJob).OfType<string>().Concat(sessions).Distinct().ToList();
+        var (_, jobs) = SessionsAndJobsOf(flight);
         var endReason = mergedHead is not null ? SessionEndReasons.Merged : SessionEndReasons.Landed;
         var endBy = mergedHead is not null ? "merge" : "land";
         var (released, consumed, leftover, landedHead) = await OffLockAsync(async () =>

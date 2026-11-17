@@ -129,6 +129,8 @@ public static partial class CardSummaries
             "repo-setup" => "What repo setup made and found in a repo: the Priority field and the labels the node reads. Nothing to do; a refusal has its own card.",
             "node-label-refused" => "GitHub refused the node's label on a flight's PR or issue. Add it by hand if the flight should show which node flies it.",
             "second-flight-made" => $"{what} was made as a second flight on a work item that already had a live one, over it, with a why given; the card keeps the why. Nothing to do.",
+            FlightCommander.DuplicateFlightsKind => $"{what} was made on a work item that already had a live flight. Withdraw it if it was a mistake that did no work (it is refused when it has a PR or commits), or keep both and steer the other.",
+            FlightCommander.WithdrawnKind => $"{what} was withdrawn as a mistake that did no work: its sessions ended, its plane and branch went, and its code is free again. Nothing to do.",
             IdleMaintenance.Kind =>"The node's idle-time maintenance sweep ran: the line says the bytes each step (packages, git, lfs, jobs) freed and the free space on the repos' drive before and after. Nothing to do.",
             IdleMaintenance.FirstRunKind => "The node has never had maintenance-every set, so its idle sweep runs nothing until you answer. The card holds a dry run's totals and the five largest items per step; Run on schedule saves 1d, Keep off saves off.",
             DiskSweep.Kind => "The node's disk sweep deleted job scratch (of landed flights' ended sessions, or older than the scratch-days setting) and old probe outputs, and says how much by unique bytes. Nothing to do.",

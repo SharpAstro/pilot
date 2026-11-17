@@ -75,8 +75,9 @@ public sealed class FileJournal : INodeJournal, IDisposable
     /// the role, and would drop the two fields when it compacts the snapshot.
     /// 4: the <c>flightArchived</c> event in the journal and the archive store, <c>archive/flights/&lt;code&gt;.json</c> (PIL1083). An older node
     /// would fail on that kind in <c>journal.jsonl</c>, and would show a flight archived by a newer one as gone for good.
+    /// 5: the <c>flightWithdrawn</c> event in the journal (PIL1111). An older node would fail on that kind in <c>journal.jsonl</c>.
     /// </remarks>
-    public const int StoreContract = 4;
+    public const int StoreContract = 5;
 
     private static readonly byte[] NewLine = "\n"u8.ToArray();
 

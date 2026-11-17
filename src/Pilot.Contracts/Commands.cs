@@ -323,6 +323,14 @@ public static class Verbs
     public const string Land = "land";
 
     /// <summary>
+    /// <c>withdraw-flight flight/&lt;code&gt; &lt;why…&gt;</c> (PIL1111): ends a mistaken flight that never did any work. Its sessions end, its plane and
+    /// branch (local, and on origin when pushed and holding nothing) go, and its row is closed as withdrawn, not landed, which frees its code.
+    /// A landed flight, one with a PR or a merged PR, one with commits past its base (here or on origin) and one whose plane holds uncommitted
+    /// changes are refused, each naming what was found. The why is required and goes on the Handled card.
+    /// </summary>
+    public const string WithdrawFlight = "withdraw-flight";
+
+    /// <summary>
     /// <c>plan-leg flight/&lt;code&gt; name=… goal=… done-when=… [check=…] [ci-differs=…] [budget=…] [model=…] [effort=…] [item=…]…</c>:
     /// a leg at the end of the flight's order, or a planned leg of that name replaced.
     /// </summary>

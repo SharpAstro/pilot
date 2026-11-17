@@ -169,6 +169,9 @@ public sealed partial class NodeState
             case FlightArchivedEvent archived:
                 RemoveArchived(archived.Code);
                 break;
+            case FlightWithdrawnEvent withdrawn:
+                RemoveWithdrawn(withdrawn.Code);
+                break;
             case LegAddedEvent added:
                 _legs[(added.Leg.Flight, added.Leg.Name)] = added.Leg;
                 break;

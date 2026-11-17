@@ -22,6 +22,7 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(FlightAddedEvent), "flightAdded")]
 [JsonDerivedType(typeof(FlightChangedEvent), "flightChanged")]
 [JsonDerivedType(typeof(FlightArchivedEvent), "flightArchived")]
+[JsonDerivedType(typeof(FlightWithdrawnEvent), "flightWithdrawn")]
 [JsonDerivedType(typeof(LegAddedEvent), "legAdded")]
 [JsonDerivedType(typeof(LegChangedEvent), "legChanged")]
 [JsonDerivedType(typeof(LegRemovedEvent), "legRemoved")]

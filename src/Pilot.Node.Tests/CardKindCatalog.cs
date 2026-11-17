@@ -157,6 +157,8 @@ internal static class CardKindCatalog
         new("pr-marks-refused", "Handled", [LegPlanners, "Flights/PrMarks.cs", PrReviewsStatus, PrReviewsSweep], "PrMarksTests.AWriteGitHubRefusesIsACardAndNeverFailsTheReviewOrLosesTheVerdict"),
         new("node-label-refused", "Handled", [Move, LegOpenPr, "Flights/RepoSetup.cs", FlightCommanderCreate, FlightCommanderAdopt], "PrMarksTests.ANodeLabelGitHubRefusesOnTheNewPrIsACardNotAFailedPr"),
         new("second-flight-made", "Handled", [FlightCommanderCreate], "DuplicateFlightTests.AnywayWithAWhyMakesTheSecondAndKeepsTheWhyOnAHandledCard"),
+        new("duplicate-flights", "ForYou", [FlightCommanderCreate], "WithdrawFlightTests.ADuplicateMadeAnywayRaisesOneCardOfferingToWithdrawTheNewer", "a second flight was made on an issue that already had a live one, with a why", [nameof(Verbs.WithdrawFlight), nameof(Verbs.Dismiss)]),
+        new("withdrawn", "Handled", ["Flights/FlightCommander.Withdraw.cs"], "WithdrawFlightTests.AFreshFlightIsWithdrawnItsRowIsGoneItsCodeIsFreeAndAHandledCardSaysWhoAndWhy"),
         new("design-mirror-failed", "Handled", ["Flights/DesignDecisionMirror.cs"], "DesignDecisionMirrorTests.DesignDecisionMirrorNotesAFailedCommentOnARingCardNamingThePrAndKeepsTheDecision"),
         new("repo-setup", "Handled", ["Flights/RepoSetup.cs"], "RepoSetupTests.SetupAgainstAnOrgWithNoFieldAndNoLabelsMakesTheFieldAndTheReadLabelsOnceAndASecondRunMakesNothing"),
         new("landed", "Handled", [FlightCommanderLand], "CliTests.ADirectFlightIsFlownFromTheCliAloneUpToItsLanding"),
