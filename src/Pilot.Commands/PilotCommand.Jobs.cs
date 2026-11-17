@@ -7,6 +7,32 @@ namespace Pilot.Commands;
 
 public static partial class PilotCommand
 {
+    /// <summary>The full path with every existing junction or symlink along it followed, so two names for one folder compare equal.</summary>
+    internal static string RealPath(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var root = Path.GetPathRoot(full) ?? "";
+        var current = root;
+        foreach (var part in full[root.Length..].Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, part);
+            try
+            {
+                if (new DirectoryInfo(current).ResolveLinkTarget(returnFinalTarget: true) is { } target)
+                {
+                    current = target.FullName;
+                }
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+        return current;
+    }
+
     /// <summary>A job in a line: <c>j3  running  dotnet test  (se1-tia1-parser, 4m)  [pwsh]</c>, the shell that ran it, then its step or how it ended.</summary>
     internal static string JobLine(JobRow job)
     {
@@ -99,13 +125,18 @@ public static partial class PilotCommand
                     {
                         runIn = Path.GetFullPath(givenCwd, cwd);
                         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-                        static string Slashed(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)) + Path.DirectorySeparatorChar;
+                        // Real paths, so a junction or symlink into or out of a plane is judged by where it lands, not by its name.
+                        static string Slashed(string path) => Path.TrimEndingDirectorySeparator(RealPath(path)) + Path.DirectorySeparatorChar;
                         var here = Slashed(cwd);
-                        var plane = (await SnapshotAsync(client, ct)).Flights.FirstOrDefault(f => f.State != FlightState.Landed
-                            && here.StartsWith(Slashed(f.Worktree), comparison));
-                        if (plane is not null && !Slashed(runIn).StartsWith(Slashed(plane.Worktree), comparison))
+                        // The rule keys on the caller's folder, as #1088 says: a caller standing in a plane stays in it,
+                        // whatever session owns the job. Each worktree is resolved once, and only those that exist.
+                        var plane = (await SnapshotAsync(client, ct)).Flights
+                            .Where(f => f.State != FlightState.Landed && Directory.Exists(f.Worktree))
+                            .Select(f => (Flight: f, Root: Slashed(f.Worktree)))
+                            .FirstOrDefault(x => here.StartsWith(x.Root, comparison));
+                        if (plane.Flight is not null && !Slashed(runIn).StartsWith(plane.Root, comparison))
                         {
-                            throw new UsageException($"the job runs in the plane of {plane.Code} ({plane.Worktree}): {runIn} is outside it");
+                            throw new UsageException($"the job runs in the plane of {plane.Flight.Code} ({plane.Flight.Worktree}): {runIn} is outside it");
                         }
                     }
                     var sent = await SendCommandAsync(client, new CommandRequest
