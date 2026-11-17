@@ -114,6 +114,26 @@ internal sealed class TranscriptEntryView
     /// <summary>How many source lines of the assistant's reply show before a "+N lines" fold; the chat shows a reply whole.</summary>
     public int AssistantLines { get; set; } = 40;
 
+    /// <summary>
+    /// The room kept clear right of each row's time for the feed's scroll bar: <see cref="ScrollGutter"/> where one is drawn, 0 where the owner's
+    /// feed draws none (a terminal's). In cells the gutter left the time's eight characters a box of exactly eight cells, so a row whose right edge
+    /// fell between two cells lost the seconds' last digit (PIL1151, the design page at 160 columns). A change rebuilds the kept rows.
+    /// </summary>
+    public float StampGutter
+    {
+        get => _stampGutter;
+        set
+        {
+            if (!_stampGutter.Equals(value))
+            {
+                _stampGutter = value;
+                _rows.Clear();
+            }
+        }
+    }
+
+    private float _stampGutter = ScrollGutter;
+
     /// <summary>Forgets what was opened and parsed: another transcript is about to show.</summary>
     public void Reset()
     {
@@ -456,12 +476,12 @@ internal sealed class TranscriptEntryView
 
     // When an entry was written, in this machine's time, the day and zone on hover; blank for one the transcript gave no
     // time. Every entry is stamped by Claude Code, and a reader asks "when was that" of a long run (SE1, 2026-10-25).
-    internal static Layout.Node Stamp(DateTimeOffset? at) =>
+    internal Layout.Node Stamp(DateTimeOffset? at) =>
         at is { } when
             ? Layout.Builder.HStack(
                     Layout.Builder.Text(when.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture), 11f, Faint, TextAlign.Far).Selectable().WStar()
                         .WithTooltip(when.ToLocalTime().ToString("ddd d MMM yyyy HH:mm:ss zzz", CultureInfo.InvariantCulture), Layout.DockSide.Left),
-                    Layout.Builder.Spacer().WFixed(ScrollGutter))
+                    Layout.Builder.Spacer().WFixed(StampGutter))
                 .WStar(1f, 0f, TimeWidth)
             : Layout.Builder.Spacer().WStar(1f, 0f, TimeWidth);
 

@@ -1011,8 +1011,9 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             _entries.Reset();
         }
         var derived = ShownOf(held);
-        // The rows come kept, one node an entry, already stretched to the page's width.
+        // The rows come kept, one node an entry, already stretched to the page's width. The time keeps clear of the feed's bar only where one is drawn.
         _entries.Runs = derived.Runs;
+        _entries.StampGutter = _scroll.Mode == ScrollBarMode.None ? 0f : TranscriptEntryView.ScrollGutter;
         var rows = _entries.Rows(derived.Quoted, held.Working);
         // What was said and the watchtower has not taken yet: last among the messages, dim, and saying so.
         // One send is one row, matched by its id and never by its words, so two sends of the same words are two rows: a queued
