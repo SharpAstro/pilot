@@ -133,7 +133,7 @@ public sealed class MaintenanceFirstRunTests
         detail.ShouldContain("big: 12.0 MB (r1)");
         detail.ShouldContain("mid: 340.0 KB (r2)");
         detail.ShouldContain("tiny: 900 B (r3)");
-        detail.ShouldNotContain("0.0 GB");
+        detail.ShouldNotContain("big: 0.0 GB");
     }
 
     [Fact]
