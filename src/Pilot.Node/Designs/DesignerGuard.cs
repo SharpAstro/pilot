@@ -12,9 +12,8 @@ namespace Pilot.Node.Designs;
 /// other session and tool, gets no answer (the call goes on as it would).
 /// </summary>
 /// <remarks>
-/// Only the file tools are held. A designer's <c>Bash</c> or <c>PowerShell</c> writes are left to its brief, which says not to write with
-/// the shell: reading a shell line for every way it can write a file is a guess the node does not make, and a version can only be made by
-/// <c>design publish</c> in any case, which the node itself runs.
+/// A designer's <c>Bash</c> or <c>PowerShell</c> line is held too, by an allow-list rather than a guess at every way a shell can write: it runs
+/// only a <c>pilot design</c> verb or one read-only program, alone, with no operator outside quotes (<see cref="ShellAllowed"/>).
 /// A designer is the session whose row says so, or, before the tracker has listed it, one whose name is a designer's (the hook carries only
 /// the folder it works in, which is the design's folder, so the design is read from that).
 /// </remarks>
@@ -85,8 +84,7 @@ public sealed partial class DesignerGuard(NodeState state, DesignStore store)
         {
             return false;
         }
-        var bare = System.Text.RegularExpressions.Regex.Replace(command, "\"[^\"]*\"|'[^']*'", "");
-        if (bare.IndexOfAny([';', '&', '|', '<', '>', '(', ')', '{', '}', (char)10, (char)13]) >= 0)
+        if (HasOperator(command, powershell))
         {
             return false;
         }
@@ -106,6 +104,50 @@ public sealed partial class DesignerGuard(NodeState state, DesignStore store)
             return i + 1 < words.Count && words[i] == "design" && DesignVerbs.Contains(words[i + 1], StringComparer.Ordinal);
         }
         return ReadOnly.Contains(program, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static readonly char[] Operators = [';', '&', '|', '<', '>', '(', ')', '{', '}', (char)10, (char)13];
+
+    /// <summary>
+    /// Whether <paramref name="command"/> has a shell operator outside quotes, read with the shell's own quote rules rather than a pattern
+    /// that pairs quote characters: a pattern pairs two escaped quotes (<c>ls \" &gt; ../x \"</c>, bash) as one string and hides the redirect between
+    /// them. In bash a backslash outside single quotes is refused outright, since it escapes a quote or an operator and no designer command needs
+    /// one. PowerShell's escape (the backtick) is refused by the caller; its curly quotes close a string as the straight ones do, so they are
+    /// read as quotes too. An unclosed quote is refused.
+    /// </summary>
+    internal static bool HasOperator(string command, bool powershell)
+    {
+        char? quote = null;
+        foreach (var raw in command)
+        {
+            var c = powershell ? raw switch
+            {
+                '‘' or '’' or '‚' or '‛' => '\'',
+                '“' or '”' or '„' => '"',
+                _ => raw,
+            } : raw;
+            if (quote is { } open)
+            {
+                if (c == open)
+                {
+                    quote = null;
+                }
+                else if (!powershell && c == '\\' && open == '"')
+                {
+                    return true;
+                }
+                continue;
+            }
+            if (c is '"' or '\'')
+            {
+                quote = c;
+            }
+            else if ((!powershell && c == '\\') || Operators.Contains(c))
+            {
+                return true;
+            }
+        }
+        return quote is not null;
     }
 
     /// <summary>The design a designer session works for, or null when the session is not a designer's.</summary>

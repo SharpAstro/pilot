@@ -105,7 +105,14 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     public TextInputState BriefInput { get; } = new() { Placeholder = "Describe the design to make" };
 
     private string? _startNote;
-    private bool _starting;
+
+    // The hit id and the key of the start's press: one design is started at a time, so the button is its own key.
+    private const string StartKey = "designs:start";
+
+    /// <summary>The start's press (PIL1151): working from the press until the host answers, through the shared feedback of a node-bound button.</summary>
+    internal Presses StartPresses { get; } = new();
+
+    private bool Starting => StartPresses.PendingOf(StartKey) is not null;
 
     /// <summary>What the node answered to the last start when it refused, or null.</summary>
     internal string? StartNote => _startNote;
@@ -114,7 +121,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     public bool Start()
     {
         var brief = BriefInput.Text.Trim();
-        if (_starting || OnStart is null)
+        if (Starting || OnStart is null)
         {
             return false;
         }
@@ -124,7 +131,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             return false;
         }
         _startNote = null;
-        _starting = true;
+        StartPresses.NotePending(StartKey, StartKey);
         OnStart(brief, StartNode);
         return true;
     }
@@ -133,50 +140,39 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     internal string StartNode => Nodes?.Choices.FirstOrDefault(c => c.Here) is { } here ? here.Name : "this node";
 
     // The host answers a start from the thread pool; the render thread owns the chat and the box, so the answer waits here and is applied at the next frame.
-    private readonly Lock _answer = new();
-    private string? _madeId;
-    private string? _refusedWhy;
+    // It is one immutable record swapped whole, so neither side waits (LayoutDrivenTests.NothingInTheUiWaits).
+    private sealed record StartAnswer(string? Made, string? Why);
+    private StartAnswer? _startAnswer;
 
     /// <summary>The host made design <paramref name="id"/>: the box is emptied and the new design's page opens at the next frame. Safe from any thread.</summary>
     public void Started(string id)
     {
-        lock (_answer)
-        {
-            _madeId = id;
-            _refusedWhy = null;
-        }
+        Volatile.Write(ref _startAnswer, new StartAnswer(id, null));
     }
 
     /// <summary>The node refused the start, in <paramref name="why"/>'s words, shown at the next frame; the brief stays typed. Safe from any thread.</summary>
     public void StartFailed(string why)
     {
-        lock (_answer)
-        {
-            _refusedWhy = why;
-            _madeId = null;
-        }
+        Volatile.Write(ref _startAnswer, new StartAnswer(null, why));
     }
 
     /// <summary>Applies the host's answer to a start on the render thread: the first thing a frame builds.</summary>
     private void ApplyStartAnswer()
     {
-        string? made, why;
-        lock (_answer)
+        if (Interlocked.Exchange(ref _startAnswer, null) is not { } answer)
         {
-            (made, why) = (_madeId, _refusedWhy);
-            _madeId = _refusedWhy = null;
+            return;
         }
-        if (made is not null)
+        StartPresses.NotePending(StartKey, null);
+        if (answer.Made is { } made)
         {
-            _starting = false;
             _startNote = null;
             BriefInput.Clear();
             Open(made);
         }
-        else if (why is not null)
+        else
         {
-            _starting = false;
-            _startNote = why;
+            _startNote = answer.Why;
         }
     }
 
@@ -641,13 +637,14 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             Start();
             return Task.CompletedTask;
         };
-        var button = Layout.Builder.Text(_starting ? "Starting…" : "Start a design", 12f, Bright, TextAlign.Center)
-            .Pad(10f, 4f)
-            .WAuto()
-            .Bg(Button)
-            .BgHover(ButtonHover)
-            .WithTooltip($"Make a design from the brief on {StartNode}; its designer session starts")
-            .Follows(new HitResult.ButtonHit("designs:start"), _ => Start());
+        Layout.Node Label(string text, RGBAColor32 color) => Layout.Builder.Text(text, 12f, color, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(Button);
+        // Through the shared feedback of a node-bound button: Starting… dimmed with no hit while the node makes the design, so no second press is taken.
+        var button = StartPresses.Button(StartKey, StartKey,
+            () => Label("Start a design", Bright)
+                .BgHover(ButtonHover)
+                .WithTooltip($"Make a design from the brief on {StartNode}; its designer session starts")
+                .Follows(new HitResult.ButtonHit(StartKey), _ => Start()),
+            _ => Label("Starting…", Dim).WithTooltip($"Making the design on {StartNode}"));
         var caption = _startNote ?? $"Starts on {StartNode}";
         return Layout.Builder.VStack(
             Layout.Builder.HStack(Layout.Builder.TextInput(BriefInput, 12f, Palette.Input).WStar().RowH(26f), button.RowH(26f)).WithGap(6f).RowH(26f),
@@ -698,7 +695,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             // The chat under the cell view, in the same column: its rows are the terminal's, and its box is drawn in cells.
             Chat.Cells = true;
             Chat.CellColumns = LeftColumns(cells) + 12;
-            left.Add(ChatPane(page).HFixed(ChatRows(cells) * 16f));
+            left.Add(ChatPane(page).HFixed(CellChatHeight));
         }
         // The target switcher sits above the versions, in the column that has the width for it: in the player's column it was squeezed at a narrow window and drew over the version line beside it.
         List<Layout.Node> right = page.Version is not null && Player is not null ? [TargetBar(page), Heading("Versions")] : [Heading("Versions")];
@@ -753,14 +750,17 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             .Follows(new HitResult.ButtonHit("designs:point"), _ => Point(!Pointing))
             .RowH(26f);
 
-    // The columns the page's left column has in a terminal, and the rows the chat takes under the cell view: a third of a tall terminal, never under what the box, its hint and a line of the feed need.
+    // The columns the page's left column has in a terminal.
     private static int LeftColumns((int Columns, int Rows) terminal)
     {
         var width = terminal.Columns * 8f - 2f * Gutter;
         return (int)(Math.Clamp((width - Gutter) * 2.2f / 3.2f, 160f, Math.Max(160f, width - Gutter - 260f)) / 8f);
     }
 
-    private static int ChatRows((int Columns, int Rows) terminal) => Math.Max(10, terminal.Rows / 3);
+    // The rows the chat takes under the cell view, whatever the terminal's height: what the box, its hint, the status and a few lines of the feed need.
+    // A taller terminal gives the rows to the prototype, which is what the chat talks about.
+    private const int CellChatRows = 10;
+    private const float CellChatHeight = CellChatRows * 16f;
 
     // The prototype's current screen as a node of the page's tree, built by the player's own builder (so its fields and its goto are the player's) for
     // the cells the page leaves it: its left column's share of the width, less the header, the buttons above it and the chat under it.
@@ -770,7 +770,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         var size = builder.DesignSize;
         var width = terminal.Columns * 8f - 2f * Gutter;
         var left = Math.Clamp((width - Gutter) * 2.2f / 3.2f, 160f, Math.Max(160f, width - Gutter - 260f));
-        builder.DesignSize = ((int)left, Math.Max(4, terminal.Rows - 8 - ChatRows(terminal)) * 16);
+        builder.DesignSize = ((int)left, Math.Max(4, terminal.Rows - 8 - CellChatRows) * 16);
         try
         {
             return Player.BuildTree().Stretch();

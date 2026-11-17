@@ -70,6 +70,17 @@ public sealed class DesignerTests : IDisposable
             FiveHour = new UsageWindow { UsedPercent = fiveHour, ResetsAt = _time.GetUtcNow() + resetsIn },
         });
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task ANewDesignWithABlankBriefStartsNoDesigner(string brief)
+    {
+        // The store refuses a blank brief, and the refused command must not have asked for a designer on the way.
+        _commands.Run(new CommandRequest { Verb = Verbs.DesignNew, Target = Verbs.NodeTarget, Args = ["", "", brief], Who = "gui" }).Ok.ShouldBeFalse();
+        await _designers.Settled;
+        _workers.Started.ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task ANewDesignAsksForExactlyOneDesignerWithTheContractAndTheRightName()
     {
@@ -216,6 +227,14 @@ public sealed class DesignerTests : IDisposable
     [InlineData("PowerShell", "Set-Content -Path ..\\BRIEF.md -Value x")]
     [InlineData("PowerShell", "Get-Content a.txt > b.txt")]
     [InlineData("Bash", "cat $(echo x)")]
+    // Escaped quotes that a quote-pairing pattern read as one string, hiding the redirect between them (bash runs it).
+    [InlineData("Bash", "ls \\\" > ../design.json \\\"")]
+    [InlineData("Bash", "ls \\' > ../design.json \\'")]
+    [InlineData("Bash", "cat \\\" < ../x \\\"")]
+    [InlineData("Bash", "cat \"a\\\" > ../BRIEF.md \\\"b\"")]
+    [InlineData("Bash", "cat draft/x \"unclosed > ../y")]
+    // PowerShell closes a string at a curly quote as at a straight one.
+    [InlineData("PowerShell", "Get-Content \"a” > ../BRIEF.md “b\"")]
     public void ADesignersShellWriteIsDenied(string tool, string command)
     {
         var id = New("words");
@@ -230,6 +249,11 @@ public sealed class DesignerTests : IDisposable
     [InlineData("Bash", "\"/opt/pilot dir/pilot\" --node-socket \"/tmp/n.sock\" design publish DSN-1 --why message")]
     [InlineData("Bash", "ls draft")]
     [InlineData("PowerShell", "Get-Content draft/NOTES.md")]
+    // A quoted operator, a backslash inside single quotes in bash, and a Windows path in PowerShell stay allowed.
+    [InlineData("Bash", "grep 'a > b' draft/NOTES.md")]
+    [InlineData("Bash", "ls 'draft\\sub'")]
+    [InlineData("PowerShell", "Get-Content draft\\NOTES.md")]
+    [InlineData("PowerShell", "Select-String -Pattern \"a|b\" draft/NOTES.md")]
     public void ADesignersDesignVerbAndReadOnlyCommandAreLetThrough(string tool, string command)
     {
         var id = New("words");
@@ -285,7 +309,7 @@ public sealed class DesignerTests : IDisposable
     public async Task AnUnexpectedFaultInOneAskDoesNotStopTheAsksAfterIt()
     {
         var calls = 0;
-        var faulty = new Designers(_state, _store, new ThrowingOnceLauncher(() => calls++), new StartGate(_state, _time), new RoleModels(null), "DE1", _time) { Run = "pilot" };
+        var faulty = new Designers(_state, _store, new ThrowingLauncher(() => calls++), new StartGate(_state, _time), new RoleModels(null), "DE1", _time) { Run = "pilot" };
         _store.New(null, null, "words", []);
         faulty.Ask("DSN-1", null);
         faulty.Ask("DSN-1", "more");
@@ -293,7 +317,7 @@ public sealed class DesignerTests : IDisposable
         calls.ShouldBe(2);
     }
 
-    private sealed class ThrowingOnceLauncher(Action called) : IWorkerLauncher
+    private sealed class ThrowingLauncher(Action called) : IWorkerLauncher
     {
         public Task<string> StartAsync(WorkerStart start, CancellationToken cancellationToken)
         {

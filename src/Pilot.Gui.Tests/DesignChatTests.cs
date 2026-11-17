@@ -156,6 +156,65 @@ public sealed class DesignChatTests
         said[1].Picture.ShouldBeNull();
     }
 
+    // The failed line's Retry or Edit, pressed as the person presses it.
+    private static void PressFailed(Rig rig, string verb)
+    {
+        rig.Paint();
+        rig.Regions().First(r => r.Result is HitResult.ButtonHit b && b.Action.StartsWith($"chat:{verb}:", StringComparison.Ordinal)).OnClick!.Invoke(InputModifier.None);
+    }
+
+    private static async Task SettledAsync(Func<bool> done)
+    {
+        for (var i = 0; i < 500 && !done(); i++)
+        {
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+        done().ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ARefusedSendWithAPictureRetriesWithItOnceAndEditPutsItBackInTheBox()
+    {
+        using var rig = new Rig(PageData.DesignChatPage());
+        var said = new List<(string Text, (string Name, byte[] Bytes)? Picture)>();
+        var refuse = true;
+        rig.View.Chat.OnSendWithPicture = (text, picture) =>
+        {
+            said.Add((text, picture));
+            return Task.FromResult(refuse ? "the node is in maintenance" : null);
+        };
+        rig.View.Chat.GetClipboardImage = () => ([1, 2, 3], "png");
+        await rig.OpenAsync(5);
+        rig.View.Chat.Input.OnKeyOverride!(TextInputKey.Paste).ShouldBeTrue();
+        rig.View.Chat.Input.InsertText("like this");
+        await rig.View.Chat.SendAsync();
+
+        // Refused: the failed line holds the picture, and the box does not, so the next typed message is not given it.
+        rig.View.Chat.Failures.ShouldBe(["the node is in maintenance"]);
+        rig.View.Chat.PendingPicture.ShouldBeNull();
+
+        // Retry sends the same words with the same picture, once.
+        refuse = false;
+        PressFailed(rig, "retry");
+        await SettledAsync(() => said.Count == 2 && rig.View.Chat.Failures.Count == 0);
+        said[1].Text.ShouldBe("like this");
+        said[1].Picture.ShouldNotBeNull().Name.ShouldBe("pasted.png");
+        rig.View.Chat.Input.InsertText("next one");
+        await rig.View.Chat.SendAsync();
+        said[2].Picture.ShouldBeNull();
+
+        // Refused again, then Edit: the words go back in the box and the picture on it, for the next send.
+        refuse = true;
+        rig.View.Chat.Input.OnKeyOverride!(TextInputKey.Paste).ShouldBeTrue();
+        rig.View.Chat.Input.InsertText("again");
+        await rig.View.Chat.SendAsync();
+        rig.View.Chat.Failures.Count.ShouldBe(1);
+        PressFailed(rig, "edit");
+        rig.View.Chat.Failures.ShouldBeEmpty();
+        rig.View.Chat.Input.Text.ShouldBe("again");
+        rig.View.Chat.PendingPicture.ShouldNotBeNull().Name.ShouldBe("pasted.png");
+    }
+
     [Fact]
     public async Task PointAtThisPutsTheClickedNodesKeyInTheBoxInsteadOfPlayingTheClick()
     {

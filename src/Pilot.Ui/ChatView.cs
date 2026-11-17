@@ -172,7 +172,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
 
     private enum OutState { Queued, Sending, Sent, Failed }
 
-    private sealed record Out(Guid Id, string Text, Func<string, Task<string?>> Send, string Key, string Hit, OutState State, TaskCompletionSource Done, Quoted? About = null, string? Reason = null, string? Where = null)
+    private sealed record Out(Guid Id, string Text, Func<string, Task<string?>> Send, string Key, string Hit, OutState State, TaskCompletionSource Done, Quoted? About = null, string? Reason = null, string? Where = null, ChatPicture? Picture = null)
     {
         // The id this send goes to the node with (its request id), which the feed's entry and queued line for it carry back.
         public string SendId => Id.ToString("N");
@@ -697,18 +697,14 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         var picture = Interlocked.Exchange(ref _picture, null);
         if (send is null && OnSendWithPicture is { } withPicture)
         {
-            send = async words =>
-            {
-                var refused = await withPicture(words, picture is null ? null : (picture.Name, picture.Bytes));
-                if (refused is not null && picture is not null)
-                {
-                    // A refused send keeps its picture: put back (unless another was pasted since) so a retry still carries it.
-                    Interlocked.CompareExchange(ref _picture, picture, null);
-                }
-                return refused;
-            };
+            // The send holds the picture, so a Retry of a refused message carries it again; the failed line keeps it too, for an Edit to put back in the box.
+            send = words => withPicture(words, picture is null ? null : (picture.Name, picture.Bytes));
         }
-        var queued = Enqueue(message, send ?? CurrentSend()!, SendKey, SendKey, about: quoted);
+        else
+        {
+            picture = null;
+        }
+        var queued = Enqueue(message, send ?? CurrentSend()!, SendKey, SendKey, about: quoted, picture: picture);
         _composer.Clear();
         if (quoted is not null)
         {
@@ -729,13 +725,13 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     public Task SendAsync(string message) => CurrentSend() is { } send ? Enqueue(message, send, SendKey, SendKey) : Task.CompletedTask;
 
     // Puts a message at the back of the outbox and starts the drain when it is not running; ends when this message is done with.
-    private Task Enqueue(string message, Func<string, Task<string?>> send, string key, string hit, string label = "chat send", Quoted? about = null)
+    private Task Enqueue(string message, Func<string, Task<string?>> send, string key, string hit, string label = "chat send", Quoted? about = null, ChatPicture? picture = null)
     {
         if (string.IsNullOrWhiteSpace(message))
         {
             return Task.CompletedTask;
         }
-        var entry = new Out(Guid.NewGuid(), message, send, key, hit, OutState.Queued, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously), about, null, Node?.Where);
+        var entry = new Out(Guid.NewGuid(), message, send, key, hit, OutState.Queued, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously), about, null, Node?.Where, picture);
         ImmutableInterlocked.Update(ref _outbox, o => o.Add(entry));
         _scroll.ScrollToEnd();
         StartDrain(label);
@@ -891,6 +887,11 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         if (failed.About is not null && Volatile.Read(ref _about) is null)
         {
             Volatile.Write(ref _about, failed.About);
+        }
+        // Its picture goes back on the box too, unless another was pasted since: the next send carries it, once.
+        if (failed.Picture is not null)
+        {
+            Interlocked.CompareExchange(ref _picture, failed.Picture, null);
         }
         Ui.Focus.Focus(Input);
         Changed?.Invoke();

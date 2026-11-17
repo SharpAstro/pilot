@@ -37,7 +37,8 @@ public static class HookCommands
     /// <c>pilot-node hook [--node-socket &lt;path&gt;]</c>: posts stdin to the node and returns 0, whatever happened. A hook
     /// runs inside every session on the machine, so it is fail-open by rule: no node, a slow node or a bad payload costs
     /// the session nothing, and it prints nothing, since a SessionStart hook's output would land in the model's context.
-    /// The one exception is the node's own answer (a 200 with a body, which it gives only to a Stop it holds or a permission it allows), written to
+    /// The one exception is the node's own answer (a 200 with a body, which it gives only to a Stop it holds, a permission it allows or a designer's
+    /// write it denies, PIL1151), written to
     /// <paramref name="stdout"/> for Claude Code to read.
     /// </summary>
     /// <param name="budget">How long it waits for the node: <see cref="HookBudget"/> unless a test, which must not depend on how

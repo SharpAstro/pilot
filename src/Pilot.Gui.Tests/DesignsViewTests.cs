@@ -125,7 +125,13 @@ public sealed class DesignsViewTests
         rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:start" }));
 
         asked.ShouldBe(("A settings page for the dome", "DE1"));
+        // Pressed, the button reads Starting… with no hit until the host answers: a second press is not taken.
+        rig.Paint();
+        TextsOf(rig).ShouldContain("Starting…");
+        Painted(rig.View).ShouldNotContain(r => r.Result is HitResult.ButtonHit { Action: "designs:start" });
         rig.View.Started("DSN-9");
+        // The answer is applied by the render thread at the next frame, not by the thread that gave it.
+        rig.View.OpenId.ShouldBeNull();
         rig.Paint();
         rig.View.OpenId.ShouldBe("DSN-9");
         rig.View.BriefInput.Text.ShouldBe("");

@@ -197,6 +197,8 @@ public sealed class ButtonFeedbackTests
         (@"^job:[^:]+:(cancel|force|cancel-no|force-no)$", "a job's Cancel… and Force cancel… only ask the question, and Keep running drops it; the answer that cancels goes through its Presses"),
         (@"^designs:(list|open:.+|screen:.+|version:\d+)$", "the Designs page's way to and from a design, and its pick of the screen or version the player shows: navigation, no command on the node"),
         (@"^designs:(swap|target:.+)$", "the Designs page's target switcher and Rotate: the window's own pick of the size the prototype is laid out at, kept in the GUI's settings, no command on the node"),
+        (@"^designs:point$", "a design's Point at this switch: whether the next click on the prototype puts its node's key in the message box, local state, no command on the node (the message's send goes through the chat's own queue)"),
+        (@"^chat:divider:version:\d+$", "a published version's line in a design's chat shows that version in the player, the same pick as designs:version: navigation, no command on the node"),
         (@"^chat:(end|back|restart|restart-no|drop-card)$", "the chat's jump to end, way back, the Restart ask and its Keep it, and Drop of a quote: no command on the node; its choices and Stop it and start fresh go through its Presses"),
     ];
 
@@ -254,6 +256,7 @@ public sealed class ButtonFeedbackTests
         seen.ShouldContain(h => h.StartsWith("card:", StringComparison.Ordinal) && h.EndsWith(":dismiss", StringComparison.Ordinal));
         seen.ShouldContain(h => h.StartsWith("fleet:", StringComparison.Ordinal) && h.EndsWith(":connect", StringComparison.Ordinal));
         seen.ShouldContain(h => h.StartsWith("fleet:", StringComparison.Ordinal) && h.EndsWith(":maintenance", StringComparison.Ordinal));
+        seen.ShouldContain("designs:start");
         unlisted.ShouldBeEmpty("a button that asks the node is made through Presses (working at once, no second press, the outcome or the refusal where it was pressed); one that does not is listed in LocalOnly (why it needs none)");
     }
 }

@@ -368,9 +368,11 @@ internal sealed class TranscriptEntryView
     {
         var rule = Layout.Builder.Spacer().WStar().HFixed(1f).Bg(Faint);
         var said = entry.At is { } at ? $"{entry.Text} · {at.ToLocalTime().ToString("d MMM HH:mm", CultureInfo.InvariantCulture)}" : entry.Text;
+        // A line that opens something is a control, whose label is not selected by a drag; a plain one is content and is.
+        var label = Layout.Builder.Text(said, 12f, open is null ? Dim : Bright, TextAlign.Center);
         var line = Layout.Builder.HStack(
                 Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), rule, Layout.Builder.Spacer().HStar()).WStar(),
-                Layout.Builder.Text(said, 12f, open is null ? Dim : Bright, TextAlign.Center).Selectable().WStarUpToContent(BodyWeight).WithTooltip(open is null ? said : said + " (click to show it)"),
+                (open is null ? label.Selectable() : label).WStarUpToContent(BodyWeight).WithTooltip(open is null ? said : said + " (click to show it)"),
                 Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), rule, Layout.Builder.Spacer().HStar()).WStar())
             .WithGap(10f)
             .Pad(0f, ProseSpace);

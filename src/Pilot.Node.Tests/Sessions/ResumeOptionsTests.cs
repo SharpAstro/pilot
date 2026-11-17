@@ -141,6 +141,23 @@ public sealed class ResumeOptionsTests : IDisposable
         args.SkipWhile(a => a != "--autocompact").Skip(1).First().ShouldBe("auto");
     }
 
+    /// <summary>
+    /// A designer's guard hook comes in <c>--settings</c> (PIL1151): flags on file without it would resume the designer unguarded, so it is
+    /// resumed with the options it was started with; flags that keep it resume plainly.
+    /// </summary>
+    [Fact]
+    public async Task ADesignerWhoseFlagsOnFileLostItsGuardSettingsIsResumedWithThem()
+    {
+        const string settings = """{"hooks":{}}""";
+        var start = new WorkerStart("de1-dsn1-designer", "/d/designs/DSN-1", null, "b", "sonnet", "medium", McpConfig: McpFile) { Settings = settings };
+        Started(start, AgentRows.SessionB);
+        RespawnFlags(AgentRows.SessionB, """{"respawnFlags":["-n","de1-dsn1-designer","--model","sonnet","--strict-mcp-config","--mcp-config","/d/mcp.json"]}""");
+
+        var args = ClaudeCliDelivery.ResumeArguments(await ResumeAsync(AgentRows.SessionB, start.Name));
+
+        args.SkipWhile(a => a != "--settings").Skip(1).First().ShouldBe(settings);
+    }
+
     [Fact]
     public async Task ACompactionsContinuationFindsTheOptionsOfTheSessionItContinues()
     {
