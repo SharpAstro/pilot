@@ -130,7 +130,7 @@ public sealed class TrackerTests : IDisposable
         var first = await Create(commander, "sc-101645", "Add a thing");
         first.Ok.ShouldBeTrue(first.Error);
         first.Made.ShouldBe("BUL101645");
-        var second = await Create(commander, "https://app.shortcut.com/bullclip/story/101645/slug", "Again");
+        var second = await commander.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["https://app.shortcut.com/bullclip/story/101645/slug", "Again", Verbs.AnywayFlag], Why = "a second flight on the story, to test the suffix coding", Who = "tests" }, Ct);
         second.Made.ShouldBe("BUL101645a");
 
         var flight = _state.Flights().Single(f => f.Code == "BUL101645");
