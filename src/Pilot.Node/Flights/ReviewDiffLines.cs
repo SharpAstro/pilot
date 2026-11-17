@@ -79,7 +79,7 @@ public sealed partial class ReviewDiffLines
 
     private string? Changed(string named)
     {
-        var path = named.Replace('\', '/');
+        var path = named.Replace('\\', '/');
         while (path.StartsWith("./", StringComparison.Ordinal))
         {
             path = path[2..];
