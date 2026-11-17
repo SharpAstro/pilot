@@ -357,7 +357,7 @@ public sealed partial class FlightCommander
         {
             // Landed needs no one: a Handled line.
             state.RaiseCard(CardBin.Handled, "landed", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed",
-                $"{flight.Title ?? flight.Item.Noun}{(flight.PullRequest is { } number ? $", PR #{number}" : "")}{(labelNote is null ? "" : $"; {labelNote}")}", link: flight.PullRequestUrl);
+                $"{flight.Title ?? flight.Item.Noun}{(flight.PullRequest is { } number ? $", PR #{number}" : "")}{(flight.FollowUpIssue is { } followUp ? $"; follow-up issue #{followUp} holds the points its reviews left" : "")}{(labelNote is null ? "" : $"; {labelNote}")}", link: flight.PullRequestUrl);
         }
         else
         {

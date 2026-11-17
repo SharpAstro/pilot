@@ -79,6 +79,17 @@ public sealed record FlightRow
     /// <summary>Its PR's page.</summary>
     public string? PullRequestUrl { get; init; }
 
+    /// <summary>
+    /// The one follow-up issue of the flight (pilot #1107): every point its reviews left with a reason, filed before the merge. Null until
+    /// there is a point to file; no points left means no issue.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? FollowUpIssue { get; init; }
+
+    /// <summary>The keys of the points <see cref="FollowUpIssue"/> holds, so a point left later is added to the same issue and none is filed twice.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string[]? FollowUpPoints { get; init; }
+
     /// <summary>When it landed; null until then.</summary>
     public DateTimeOffset? LandedAt { get; init; }
 

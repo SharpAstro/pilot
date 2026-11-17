@@ -541,6 +541,16 @@ public sealed partial class LegCommander
     /// <summary>Every leg done, reviewed, the PR open: the merge is the controller's, a gate before an irreversible step.</summary>
     private async Task RaisePrReadyAsync(FlightRow flight, string review, string reviewed, CancellationToken cancellationToken)
     {
+        // The points the reviews left are filed before the merge is offered (PIL1107). A failure is said, not thrown: the merge itself is held until it is filed.
+        try
+        {
+            await EnsureFollowUpAsync(flight, null, cancellationToken);
+            flight = FlightOf(Verbs.FlightTarget(flight.Code));
+        }
+        catch (MergeBlockedException ex)
+        {
+            await Error.WriteLineAsync($"review: {flight.Code}'s follow-up issue was not filed before its PR-ready card: {ex.Message}");
+        }
         var holding = flight.Holding is not null; var holdReason = flight.Holding?.Reason ?? HoldingReason;
         var pr = await OffLockAsync(null, () => github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken)) ?? throw new FlightException($"{flight.Branch} has no PR");
         var legs = state.Legs(flight.Code);
@@ -683,31 +693,27 @@ public sealed partial class LegCommander
     /// </summary>
     private async Task<bool> FileNotesFollowUpAsync(FlightRow flight, IReadOnlyList<string> notes, CancellationToken cancellationToken)
     {
-        var clean = notes.Select(n => n.Trim().TrimStart('-', '*', ' ').ReplaceLineEndings(" ")).Where(n => n.Length > 0).ToList();
-        if (clean.Count == 0)
+        var items = ReviewFollowUp.NotesItems(flight.ReviewRounds?.Length ?? 1, notes);
+        if (items.Count == 0)
         {
             return false;
         }
-        var title = $"Follow-up of {flight.Code}: the review's notes on #{flight.PullRequest} that did not block it";
-        var body = $"{flight.Code} ({flight.PullRequestUrl ?? $"#{flight.PullRequest}"}) passed its review with notes that do not block the merge, after a review-notes round "
-            + "had already made the first ones. One round of notes holds a merge; these are filed here instead (#918).\n\n"
-            + string.Join("\n", clean.Select(n => $"- {n}"));
-        IssueInfo made;
+        int? number;
         try
         {
-            // Off the lock, as the human checks are filed: gh is slow and the flight is not held for it.
-            made = await OffLockAsync(null, () => github.CreateIssueAsync(flight.RepoPath, title, body, cancellationToken));
+            // The flight's one follow-up issue (PIL1107), never a second beside it: the notes join the points its reviews left.
+            number = await EnsureFollowUpAsync(flight, items, cancellationToken);
         }
-        catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException)
+        catch (MergeBlockedException ex)
         {
             await Error.WriteLineAsync($"review: {flight.Code}'s later notes were not filed as a follow-up, they go round instead: {ex.Message}");
             return false;
         }
-        if (flight.Holding is not null)
+        if (number is { } made && FlightOf(Verbs.FlightTarget(flight.Code)) is { Holding: not null } held)
         {
-            ReleaseHolding(flight, "node", $"a later round's notes that do not block are filed as #{made.Number}, so it merges with them");
+            ReleaseHolding(held, "node", $"a later round's notes that do not block are filed as #{made}, so it merges with them");
         }
-        return true;
+        return number is not null;
     }
 
     // The sentence RaisePrReadyAsync adds to a holding flight's PR-ready card, which a released hold takes off again.
