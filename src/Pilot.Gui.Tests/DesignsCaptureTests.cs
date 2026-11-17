@@ -25,7 +25,7 @@ public sealed class DesignsCaptureTests
         if (Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } artifacts)
         {
             Directory.CreateDirectory(artifacts);
-            File.Copy(png, Path.Combine(artifacts, $"{Environment.GetEnvironmentVariable("PILOT_CAPTURE_TAG") ?? "before"}-{name}.png"), overwrite: true);
+            File.Copy(png, Path.Combine(artifacts, $"{Environment.GetEnvironmentVariable("PILOT_CAPTURE_TAG") ?? "after"}-{name}.png"), overwrite: true);
         }
         return folder;
     }

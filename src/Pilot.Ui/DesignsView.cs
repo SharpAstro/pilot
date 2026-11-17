@@ -648,7 +648,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             _ => Label("Starting…", Dim).WithTooltip($"Making the design on {StartNode}"));
         var caption = _startNote ?? $"Starts on {StartNode}";
         return Layout.Builder.VStack(
-            Layout.Builder.HStack(Layout.Builder.TextInput(BriefInput, 12f, Palette.Input).WStar().RowH(26f), button.RowH(26f)).WithGap(6f).RowH(26f),
+            Layout.Builder.HStack(Layout.Builder.TextInput(BriefInput, 12f, Palette.Input).WStar().RowH(26f), button.WAuto().HFixed(26f)).WithGap(6f).RowH(26f),
             WrappedProse.OneLine(caption, 12f, _startNote is null ? Dim : Bright).RowH(22f).Whole(caption)).WithGap(2f).RowH(50f);
     }
 
