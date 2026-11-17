@@ -105,7 +105,7 @@ public sealed class DesignsViewTests
         using var rig = new Rig(DesignsScreen.Empty("sample", Now));
         var all = ArrangeAt(rig, 1600, 900);
         var (input, button) = StartRow(all);
-        var label = all.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Text == "Start a design");
+        var label = all.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value =="Start a design");
         button.Bounds.Width.ShouldBeLessThan(label.Bounds.Width + 40f, "the button is its label plus padding, not half the row");
         button.Bounds.Width.ShouldBeLessThan(250f);
         button.Bounds.Height.ShouldBe(input.Bounds.Height, "one height");
