@@ -644,6 +644,7 @@ public static partial class NodeApp
                 // The real shell launcher unless a test registered another (an in-memory one, #933).
                 Launcher = services.GetService<IJobLauncher>() ?? RealJobLauncher.Instance,
                 Say = commands.RunAsync,
+                LastCommandAt = commands.LastCommandAt,
                 Log = services.GetRequiredService<LogWriter>(),
                 Ledger = services.GetRequiredService<SessionLedger>(),
                 MaxRunning = Math.Max(1, nodeOptions.MaxJobs),

@@ -160,8 +160,24 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         }
     }
 
-    private void MarkTold(JobRow job, string way, bool whileWorking = false) =>
+    // The target session's context size at each job's last tell or retell, in memory like _busyTurnEnd: a node restart forgets it, and
+    // the sweep then takes the size it sees as the baseline, which errs towards a retell, never away from one (#1137).
+    private readonly ConcurrentDictionary<string, long> _contextAtTell = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// When a session (by name) last sent the node a command of any verb, as the node sees it; null in a bare runner. A session that sent
+    /// one after a job's tell has plainly carried on, whether or not it named the job (#1137). Set by the node.
+    /// </summary>
+    public Func<string, DateTimeOffset?>? LastCommandAt { get; set; }
+
+    private void MarkTold(JobRow job, string way, bool whileWorking = false, long? contextTokens = null)
+    {
+        if (contextTokens is { } tokens)
+        {
+            _contextAtTell[job.Id] = tokens;
+        }
         state.PutJob(job with { Told = true, ToldAt = time.GetUtcNow(), ToldWay = way, ToldWhileWorking = whileWorking ? true : null });
+    }
 
     /// <summary>How often a running job's step (its last line) is put on the stream, so a long run shows it is alive without a delta per line.</summary>
     public TimeSpan StepEvery { get; init; } = TimeSpan.FromSeconds(10);
@@ -379,7 +395,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     /// <summary>
     /// A told, non-check row whose owner (or its replacement) sits idle and has not acted on the tell for <see cref="RetellAfter"/> is
     /// told once more, with a lead saying it is a repeat; a further <see cref="RetellAfter"/> of silence rings once. "Acted" is a turn
-    /// after the tell: <see cref="SessionRow.LastResponseAt"/> later than <see cref="JobRow.ToldAt"/>. A tell relayed into a session that
+    /// after the tell: <see cref="SessionRow.LastResponseAt"/> later than <see cref="JobRow.ToldAt"/>, a context that grew since the tell, or a
+    /// command the session sent since (#1137). Only a job something still waits on (<see cref="WhatWaits"/>) is retold, or a failed one of a
+    /// worker, reviewer or fixer. A tell relayed into a session that
     /// was mid-turn is only acted on by a turn after that busy turn, whose end is the first response seen after the tell (the node holds
     /// no per-line transcript here). Owners that ended for good are not retold. Returns whether any row was retold (#756).
     /// </summary>
@@ -420,6 +438,14 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             {
                 continue;
             }
+            var waits = WhatWaits(row, ownerRow);
+            if (waits is null && row.RetoldAt is null && !FailedOfLeggedOwner(row, ownerRow))
+            {
+                // Nothing the node knows waits on this job (an ad hoc session's, or a leg that ended) and it did not fail: the first tell
+                // stands, no repeat. A cancelled job is told once like a succeeded one; only a failure of a worker, reviewer or fixer is
+                // retold after what waited on it ended.
+                continue;
+            }
             var lastTold = row.RetoldAt ?? row.ToldAt!.Value;
             var silentSince = lastTold;
             if (row.RetoldAt is null && row.ToldWhileWorking == true)
@@ -428,9 +454,21 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 {
                     continue;
                 }
-                silentSince = _busyTurnEnd.GetOrAdd(row.Id, responded);
+                if (_busyTurnEnd.TryAdd(row.Id, responded))
+                {
+                    // The busy turn's own growth is not an act on the tell: the baseline is the context as that turn ended.
+                    _contextAtTell[row.Id] = target.ContextTokens;
+                }
+                silentSince = _busyTurnEnd[row.Id];
             }
             if (target.LastResponseAt is { } last && last > silentSince)
+            {
+                continue;
+            }
+            // A session that took turns without a response the node saw (an interactive or ad hoc one) shows it by a context that grew
+            // since the tell, or by any command it sent since (#1137).
+            if (target.ContextTokens > _contextAtTell.GetOrAdd(row.Id, target.ContextTokens)
+                || LastCommandAt?.Invoke(target.Name) is { } commanded && commanded > silentSince)
             {
                 continue;
             }
@@ -441,6 +479,11 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             if (row.RetoldAt is not null)
             {
                 state.PutJob(row with { RetellRung = true });
+                if (row.State != JobState.Failed && WhatWaits(row, ownerRow) is null)
+                {
+                    // A succeeded or cancelled job whose leg has finished waits on nothing: no card, and the row is not looked at again.
+                    continue;
+                }
                 state.RaiseCard(CardBin.Ring, UnansweredKind, Verbs.JobTarget(row.Id),
                     $"{row.Id} ended and {row.OwnerName ?? row.Owner} was told twice but has not acted",
                     $"told {row.ToldAt:HH:mm:ss} ({row.ToldWay}) and again {row.RetoldAt:HH:mm:ss} ({row.RetoldWay}); its session ({target.Id}) is idle and has not answered either");
@@ -448,7 +491,8 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             }
             var took = row.EndedAt!.Value - row.StartedAt;
             var how = row.State switch { JobState.Succeeded => "succeeded", JobState.Cancelled => row.Error ?? "was cancelled", _ => $"failed: {row.Error}" };
-            var text = $"Repeat: you were told this {Took(now - row.ToldAt!.Value)} ago and have not acted on it. Your job {row.Id} (`{row.Command}`, in {row.Cwd}) {how}, after {Took(took)}. The whole output is in {row.LogPath}. Carry on from here.";
+            var lead = waits is null ? "" : $" and {waits}";
+            var text = $"Repeat: you were told this {Took(now - row.ToldAt!.Value)} ago and have not acted on it{lead}. Your job {row.Id} (`{row.Command}`, in {row.Cwd}) {how}, after {Took(took)}. The whole output is in {row.LogPath}. Carry on from here.";
             string way;
             try
             {
@@ -465,10 +509,48 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             }
             LogTell(row, target.Id, target, $"retell {way}");
             // Marked either way, once per row: a refused retell does not go round again, and its silence still rings above.
+            _contextAtTell[row.Id] = target.ContextTokens;
             state.PutJob(row with { RetoldAt = now, RetoldWay = way });
             retold = true;
         }
         return retold;
+    }
+
+    /// <summary>
+    /// What still waits on a job's ending, as a short phrase for the retell, or null when nothing the node knows does: a worker's job
+    /// whose leg is still flying, a reviewer's job while its PR review is open, a fixer's while its fix round is open. An ad hoc,
+    /// planner, leg validator or watchtower session (told once, as the issue lists only the three above), and a leg that is done, failed or gone, wait on nothing (#1137).
+    /// </summary>
+    private static bool FailedOfLeggedOwner(JobRow row, SessionRow owner) =>
+        row.State == JobState.Failed && owner.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Fixer;
+
+    private string? WhatWaits(JobRow row, SessionRow owner)
+    {
+        switch (owner.Role)
+        {
+            case SessionRole.Worker:
+                var flight = row.Flight ?? owner.Flight;
+                var leg = row.Leg ?? owner.Leg;
+                if (flight is null || leg is null || state.Flights().All(f => f.Code != flight))
+                {
+                    return null;
+                }
+                return state.Legs(flight).Any(l => l.Name == leg && l.State == LegState.Flying)
+                    ? $"leg {flight}/{leg} is still flying and this job was started by its worker"
+                    : null;
+            case SessionRole.Reviewer:
+                if (state.PrReviews().FirstOrDefault(r => r.State == PrReviewState.Reviewing && string.Equals(r.Reviewer, owner.Name, StringComparison.Ordinal)) is { } open)
+                {
+                    return $"the review of {open.Repo}#{open.Number} is still open and this job was started by its reviewer";
+                }
+                return state.Flights().FirstOrDefault(f => f.Review is { State: ReviewState.Reviewing } r && string.Equals(r.Reviewer, owner.Name, StringComparison.Ordinal)) is { } reviewed
+                    ? $"the review of flight {reviewed.Code} is still open and this job was started by its reviewer"
+                    : null;
+            default:
+                return state.PrReviews().FirstOrDefault(r => r.State != PrReviewState.Closed && r.Fixer is not null && string.Equals(r.Fixer, owner.Name, StringComparison.Ordinal)) is { } fixing
+                    ? $"the fix round of {fixing.Repo}#{fixing.Number} is still open and this job was started by its fixer"
+                    : null;
+        }
     }
 
     /// <summary>
@@ -544,6 +626,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             LogTell(row, target.Id, target, $"redo {way}");
             // Marked either way, once per outage: a refused redo does not go round again, and the retell ladder takes the row from here.
             _busyTurnEnd.TryRemove(row.Id, out _);
+            _contextAtTell[row.Id] = target.ContextTokens;
             state.PutJob(row with
             {
                 ToldAt = time.GetUtcNow(), ToldWay = way, ToldWhileWorking = target.State == SessionState.Working ? true : null,
@@ -3001,7 +3084,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         }
         if (ok)
         {
-            MarkTold(job, replacedTo is not null ? $"replaced-to {replacedTo}" : way ?? SayWays.Relayed, targetRow?.State == SessionState.Working);
+            MarkTold(job, replacedTo is not null ? $"replaced-to {replacedTo}" : way ?? SayWays.Relayed, targetRow?.State == SessionState.Working, targetRow?.ContextTokens);
             // A card an earlier try rang ("could not be told") is out of date now it has been told.
             state.CloseCardsAbout(Verbs.JobTarget(job.Id), "told on a later try", UntoldKind);
         }

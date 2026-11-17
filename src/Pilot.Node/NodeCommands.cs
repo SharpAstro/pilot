@@ -137,6 +137,12 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         }
     }
 
+    // When each sender (a session's name, or a client) last sent a command; in memory, so a node restart forgets it (#1137).
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _lastCommand = new(StringComparer.Ordinal);
+
+    /// <summary>When the named session last sent the node a command of any verb, or null if the node has not seen one.</summary>
+    public DateTimeOffset? LastCommandAt(string who) => _lastCommand.TryGetValue(who, out var at) ? at : null;
+
     private sealed class Mark
     {
         public DateTimeOffset? HandlerStarted;
@@ -148,6 +154,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
     {
         var time = Clock;
         var began = time.GetUtcNow();
+        if (command.Who != LegWatch.Who)
+        {
+            _lastCommand[command.Who] = began;
+        }
         var mark = new Mark();
         // The command's own flow is the foreground of the node's process starts (ProcessGate): a git, gh or claude start made
         // anywhere in what it awaits goes straight to Process.Start, never behind the background readers' starts. An explicit

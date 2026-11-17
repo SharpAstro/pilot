@@ -38,9 +38,18 @@ public sealed class JobRetellTests : IDisposable
                 return Task.FromResult(_state.Complete(command, null, way: SayWays.Relayed));
             },
             EndedForGood = _ => _endedForGood,
+            LastCommandAt = name => name == _name ? _commandAt : null,
         };
+        _state.PutFlight(new FlightRow
+        {
+            Code = "RTL1", Repo = "r", RepoPath = "/r", Issue = 1, Branch = "flight/rtl1", Worktree = "/r/w", Base = "main", State = FlightState.Flying, CreatedAt = _clock.GetUtcNow(),
+        });
+        SetLeg(LegState.Flying);
         Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
     }
+
+    private void SetLeg(LegState legState) =>
+        _state.PutLeg(new LegRow { Flight = "RTL1", Name = "one", Order = 1, Goal = "g", DoneWhen = "d", State = legState });
 
     public void Dispose()
     {
@@ -54,11 +63,17 @@ public sealed class JobRetellTests : IDisposable
         }
     }
 
+    private bool _adHoc;
+    private SessionRole? _role;
+    private string _name = "de1-retell-w1";
+    private int _context;
+    private DateTimeOffset? _commandAt;
+
     private void Session(SessionState sessionState, DateTimeOffset? lastResponse) =>
         _state.PutSession(new SessionRow
         {
-            Id = "w0000001", SessionId = "w0000001-0000-4000-8000-000000000000", Name = "de1-retell-w1", Kind = SessionKind.Background, Cwd = _root,
-            Role = SessionRole.Worker, Flight = "RTL1", Leg = "one", ContextTokens = 0, ContextWindow = 200_000, SpendWeighted = 0, State = sessionState,
+            Id = "w0000001", SessionId = "w0000001-0000-4000-8000-000000000000", Name = _name, Kind = SessionKind.Background, Cwd = _root,
+            Role = _role ?? (_adHoc ? SessionRole.AdHoc : SessionRole.Worker), Flight = _adHoc || _role is not null ? null : "RTL1", Leg = _adHoc || _role is not null ? null : "one", ContextTokens = _context, ContextWindow = 200_000, SpendWeighted = 0, State = sessionState,
             LastResponseAt = lastResponse, StartedAt = _clock.GetUtcNow().AddHours(-2),
         });
 
@@ -107,6 +122,190 @@ public sealed class JobRetellTests : IDisposable
     }
 
     [Fact]
+    public async Task AnAdHocSessionsJobIsToldOnceAndNeverRetoldOrRungFor()
+    {
+        _adHoc = true;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+        await TellNowAsync();
+
+        _clock.Advance(After * 2);
+        (await Sweep()).ShouldBeFalse();
+        _clock.Advance(After * 2);
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _state.Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AWorkersJobWhoseLegStillFliesIsRetoldNamingWhatWaitsThenRings()
+    {
+        await TellNowAsync();
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldContain("and leg RTL1/one is still flying and this job was started by its worker.");
+
+        _clock.Advance(After);
+        await Sweep();
+        _state.Cards().ShouldHaveSingleItem().Kind.ShouldBe(JobRunner.UnansweredKind);
+    }
+
+    [Theory]
+    [InlineData(LegState.Done)]
+    [InlineData(LegState.Failed)]
+    public async Task ASucceededJobWhoseLegHasEndedIsNeitherRetoldNorRungFor(LegState ended)
+    {
+        await TellNowAsync();
+        SetLeg(ended);
+        _clock.Advance(After * 3);
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _state.Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ASucceededJobRetoldWhileTheLegFlewRaisesNoCardOnceTheLegEnded()
+    {
+        await TellNowAsync();
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        SetLeg(LegState.Done);
+        _clock.Advance(After);
+        await Sweep();
+        _state.Cards().ShouldBeEmpty();
+        _state.Jobs().Single().RetellRung.ShouldBe(true);
+    }
+
+    [Fact]
+    public async Task AFailedJobStillRingsAfterItsLegEnded()
+    {
+        await TellNowAsync();
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _state.PutJob(_state.Jobs().Single() with { State = JobState.Failed, Error = "boom" });
+        SetLeg(LegState.Failed);
+        _clock.Advance(After);
+        await Sweep();
+        _state.Cards().ShouldHaveSingleItem().Kind.ShouldBe(JobRunner.UnansweredKind);
+    }
+
+    // #1137 review: every WhatWaits branch, and what happens to a failed or cancelled job once what waited on it has ended.
+
+    private async Task TellAsAsync(SessionRole role, string name)
+    {
+        _role = role;
+        _name = name;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+        await TellNowAsync();
+    }
+
+    private void PutPrReview(PrReviewState reviewState, string? fixer = null) =>
+        _state.PutPrReview(new PrReviewRow
+        {
+            Repo = "x/r", Number = 7, Url = "u", Base = "main", Head = "h", ClonePath = _root, Worktree = _root, Reviewer = "de1-review-r-7",
+            Author = "ada", State = reviewState, StartedAt = _clock.GetUtcNow(), Fixer = fixer,
+        });
+
+    private void SetFlightReview(ReviewState reviewState) =>
+        _state.PutFlight(_state.Flights().Single() with { Review = new ReviewRow { State = reviewState, Reviewer = "de1-rtl1-review", StartedAt = _clock.GetUtcNow() } });
+
+    private async Task ShouldStayToldOnceAsync()
+    {
+        _clock.Advance(After * 3);
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _state.Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AWithdrawnFlightsSucceededJobIsNeitherRetoldNorRungFor()
+    {
+        await TellNowAsync();
+        _state.WithdrawFlight("RTL1");
+        await ShouldStayToldOnceAsync();
+    }
+
+    [Fact]
+    public async Task AFailedJobOfAWorkerWhoseLegHasEndedIsStillRetoldAndRings()
+    {
+        await TellNowAsync();
+        _state.PutJob(_state.Jobs().Single() with { State = JobState.Failed, Error = "boom" });
+        SetLeg(LegState.Done);
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+        _clock.Advance(After);
+        await Sweep();
+        _state.Cards().ShouldHaveSingleItem().Kind.ShouldBe(JobRunner.UnansweredKind);
+    }
+
+    [Fact]
+    public async Task ACancelledJobOfAWorkerWhoseLegHasEndedIsToldOnceLikeASucceededOne()
+    {
+        await TellNowAsync();
+        _state.PutJob(_state.Jobs().Single() with { State = JobState.Cancelled });
+        SetLeg(LegState.Done);
+        await ShouldStayToldOnceAsync();
+    }
+
+    [Fact]
+    public async Task APrReviewersJobIsRetoldWhileItsReviewIsOpen()
+    {
+        PutPrReview(PrReviewState.Reviewing);
+        await TellAsAsync(SessionRole.Reviewer, "de1-review-r-7");
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldContain("and the review of x/r#7 is still open and this job was started by its reviewer.");
+    }
+
+    [Fact]
+    public async Task APrReviewersJobIsNotRetoldOnceItsReviewIsNoLongerOpen()
+    {
+        PutPrReview(PrReviewState.Reviewed);
+        await TellAsAsync(SessionRole.Reviewer, "de1-review-r-7");
+        await ShouldStayToldOnceAsync();
+    }
+
+    [Fact]
+    public async Task AFlightReviewersJobIsRetoldWhileItsFlightReviewIsOpenThenRings()
+    {
+        SetFlightReview(ReviewState.Reviewing);
+        await TellAsAsync(SessionRole.Reviewer, "de1-rtl1-review");
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldContain("and the review of flight RTL1 is still open and this job was started by its reviewer.");
+
+        _clock.Advance(After);
+        await Sweep();
+        _state.Cards().ShouldHaveSingleItem().Kind.ShouldBe(JobRunner.UnansweredKind);
+    }
+
+    [Fact]
+    public async Task AFlightReviewersJobIsNotRetoldOnceItsFlightReviewPassed()
+    {
+        SetFlightReview(ReviewState.Passed);
+        await TellAsAsync(SessionRole.Reviewer, "de1-rtl1-review");
+        await ShouldStayToldOnceAsync();
+    }
+
+    [Fact]
+    public async Task AFixersJobIsRetoldWhileItsFixRoundIsOpen()
+    {
+        PutPrReview(PrReviewState.Reviewed, fixer: "de1-fix-r-7");
+        await TellAsAsync(SessionRole.Fixer, "de1-fix-r-7");
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldContain("and the fix round of x/r#7 is still open and this job was started by its fixer.");
+    }
+
+    [Fact]
+    public async Task AFixersJobIsNotRetoldOnceItsFixRoundIsClosed()
+    {
+        PutPrReview(PrReviewState.Closed, fixer: "de1-fix-r-7");
+        await TellAsAsync(SessionRole.Fixer, "de1-fix-r-7");
+        await ShouldStayToldOnceAsync();
+    }
+
+    [Fact]
     public async Task ActedAfterTheTellIsNotRetold()
     {
         await TellNowAsync();
@@ -117,6 +316,67 @@ public sealed class JobRetellTests : IDisposable
         (await Sweep()).ShouldBeFalse();
         _said.ShouldBeEmpty();
         _state.Cards().ShouldBeEmpty();
+    }
+
+    // #1137: a session that took turns shows it by a context that grew or a command it sent, not only by LastResponseAt.
+
+    [Fact]
+    public async Task AWorkerWhoseContextGrewAfterTheTellIsNotRetoldNorRungFor()
+    {
+        _context = 50_000;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+        await TellNowAsync();
+
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        _context = 80_000;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+        _clock.Advance(After * 3);
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _state.Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AWorkerThatSentAnyCommandAfterTheTellIsNotRetoldNorRungFor()
+    {
+        await TellNowAsync();
+
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        _commandAt = _clock.GetUtcNow();
+        _clock.Advance(After * 3);
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _state.Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ACommandBeforeTheTellDoesNotCountAndAnIdleWorkerIsRetoldThenRings()
+    {
+        _commandAt = _clock.GetUtcNow().AddMinutes(-5);
+        await TellNowAsync();
+
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+        _clock.Advance(After);
+        await Sweep();
+        _state.Cards().ShouldHaveSingleItem().Kind.ShouldBe(JobRunner.UnansweredKind);
+    }
+
+    [Fact]
+    public async Task AContextThatGrewDuringTheBusyTurnTheTellFellInDoesNotCount()
+    {
+        _context = 10_000;
+        await TellNowAsync(whileWorking: true);
+
+        // The busy turn grows the context and ends; the session then idles without acting.
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        _context = 40_000;
+        Session(SessionState.Idle, _clock.GetUtcNow());
+        (await Sweep()).ShouldBeFalse();
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
     }
 
     [Fact]
