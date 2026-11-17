@@ -1852,8 +1852,9 @@ public sealed class ReviewTests5 : ReviewTestsBase
         // Asked for changes again, the controller may pass it anyway, from the command line only (#797: no card offers it).
         await Run(Verbs.Review, "flight/TIA2", Reviewer("TIA2"), "changes", Answered("TIA2") + "naming");
         (await Run(Verbs.Review, "flight/TIA2", "controller", "pass", "ready anyway")).Ok.ShouldBeTrue();
-        F("TIA2").Review!.Report.ShouldStartWith("ready anyway (passed by controller over: ");
-        F("TIA2").Review!.Report.ShouldContain("naming");
+        var kept = F("TIA2").Review!.Report.ShouldNotBeNull();
+        kept.ShouldStartWith("ready anyway (passed by controller over: ");
+        kept.ShouldContain("naming");
         Open().ShouldHaveSingleItem().Kind.ShouldBe(LegCommander.PrReady);
     }
 
