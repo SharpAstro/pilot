@@ -284,10 +284,16 @@ public sealed class MaintenanceGitTests : IDisposable
     }
 
     private static (int Exit, string Output, string Error) RunGit(string folder, params string[] args) => RunGitWithInput(folder, null, args);
+    /// <summary>A git run with the harness's injected config (TestEnvironment: gc.auto=0, maintenance.auto=false, which outrank the repo's own config) switched off, so the repo's gc.auto decides whether a fetch collects.</summary>
+    private static (int Exit, string Output, string Error) RunGitWithRepoConfig(string folder, params string[] args) => RunGitWithInput(folder, null, args, repoConfigOnly: true);
 
-    private static (int Exit, string Output, string Error) RunGitWithInput(string folder, string? input, params string[] args)
+    private static (int Exit, string Output, string Error) RunGitWithInput(string folder, string? input, string[] args, bool repoConfigOnly = false)
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = folder, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = input is not null, UseShellExecute = false, CreateNoWindow = true };
+        if (repoConfigOnly)
+        {
+            start.Environment["GIT_CONFIG_COUNT"] = "0";
+        }
         foreach (var a in new[] { "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false" }.Concat(args))
         {
             start.ArgumentList.Add(a);
@@ -449,7 +455,8 @@ public sealed class MaintenanceGitTests : IDisposable
 
         // Git's auto gc samples only .git/objects/17 and counts its loose files, so ~1200 young unreachable blobs (3 files there) are written in one
         // process, and gc.auto is lowered to 1 (autoDetach off, so the warning reaches stderr): at git's default of 6700 no fetch could ever warn,
-        // with or without the step's gc.auto=0. Real blobs, since junk files in the object directory make gc fail.
+        // with or without the step's gc.auto=0. The two fetches run without the harness's injected gc.auto=0 (TestEnvironment sets it through
+        // GIT_CONFIG_COUNT, which outranks the repo's own config), so the repo's gc.auto decides. Real blobs, since junk files in the object directory make gc fail.
         var blobs = Path.Combine(_root, "blobs");
         Directory.CreateDirectory(blobs);
         var paths = new List<string>();
@@ -464,13 +471,13 @@ public sealed class MaintenanceGitTests : IDisposable
             File.WriteAllText(path, content);
             paths.Add(path);
         }
-        var hashed = RunGitWithInput(work, string.Join('\n', paths) + "\n", "hash-object", "-w", "--stdin-paths");
+        var hashed = RunGitWithInput(work, string.Join('\n', paths) + "\n", ["hash-object", "-w", "--stdin-paths"]);
         hashed.Exit.ShouldBe(0, hashed.Error);
         Git(work, "config", "--local", "gc.auto", "1");
         Git(work, "config", "--local", "gc.autoDetach", "false");
-        var before = RunGit(work, "fetch", "origin");
+        var before = RunGitWithRepoConfig(work, "fetch", "origin");
         before.Exit.ShouldBe(0, before.Error);
-        var diagnosis = $"in17={Directory.GetFiles(Path.Combine(work, ".git", "objects", "17")).Length} hashed={hashed.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length} count={Git(work, "count-objects", "-v").Replace('\n', ' ')} config={Git(work, "config", "--list").Replace('\n', ' ')}";
+        var diagnosis = $"in17={Directory.GetFiles(Path.Combine(work, ".git", "objects", "17")).Length} hashed={hashed.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length} count={Git(work, "count-objects", "-v").Replace('\n', ' ')}";
         (before.Output + before.Error).Contains("unreachable loose objects", StringComparison.OrdinalIgnoreCase).ShouldBeTrue(diagnosis); // the precondition: without the step's gc.auto=0 the fetch warns
 
         var result = await new MaintenanceGit(MaintenanceGit.Kind.Git, _state, () => [work]) { PruneDays = () => 1 }.RunAsync(Ct);
@@ -479,7 +486,7 @@ public sealed class MaintenanceGitTests : IDisposable
         old.ShouldAllBe(sha => !Has(work, sha));
         young.ShouldAllBe(sha => Has(work, sha));
         Git(work, "config", "--local", "gc.auto").Trim().ShouldBe("0");
-        var (exit, fetched, error) = RunGit(work, "fetch", "origin");
+        var (exit, fetched, error) = RunGitWithRepoConfig(work, "fetch", "origin");
         exit.ShouldBe(0, error);
         (fetched + error).ShouldNotContain("unreachable loose objects");
     }
