@@ -274,6 +274,20 @@ chrome.Spend.OnWindow = window => spendReads.Ask(window, feed.Screen(DateTimeOff
 var designReads = new DesignReads(client, Who, Redraw);
 chrome.Designs.OnOpen = id => designReads.AskDesign(id, null, force: true);
 chrome.Designs.OnVersion = (id, number) => designReads.AskDesign(id, number, force: true);
+chrome.Designs.OnStart = (brief, node) => _ = Task.Run(async () =>
+{
+    // What pilot design new does on the node the page reads; the made design's page opens.
+    var (id, error) = await designReads!.StartAsync(brief, CancellationToken.None);
+    if (id is not null)
+    {
+        chrome.Designs.Started(id);
+    }
+    else
+    {
+        chrome.Designs.StartFailed(error ?? "the node refused");
+    }
+    Redraw();
+});
 chrome.Flights.OnSpend = code => spendReads.AskFlight(code, force: true);
 chat.OnAnswerNow = async sendId =>
 {

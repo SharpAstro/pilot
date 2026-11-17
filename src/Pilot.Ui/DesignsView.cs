@@ -43,6 +43,59 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
     /// <summary>Asked for a design's page (its id): the host reads <c>design show</c> and hands the page in the next screen.</summary>
     public Action<string>? OnOpen { get; set; }
 
+    /// <summary>
+    /// Asked to start a design (PIL1151): the brief typed and the name of the node the design is made on. The host sends <c>design-new</c> to that node and
+    /// answers with <see cref="Started"/> (the made design's id) or <see cref="StartFailed"/>.
+    /// </summary>
+    public Action<string, string>? OnStart { get; set; }
+
+    /// <summary>The box the brief of a new design is typed in, on the empty page and above the list.</summary>
+    public TextInputState BriefInput { get; } = new() { Placeholder = "Describe the design to make" };
+
+    private string? _startNote;
+    private bool _starting;
+
+    /// <summary>What the node answered to the last start when it refused, or null.</summary>
+    internal string? StartNote => _startNote;
+
+    /// <summary>Presses Start a design: hands the typed brief and the node to <see cref="OnStart"/>; an empty brief says what is missing.</summary>
+    public bool Start()
+    {
+        var brief = BriefInput.Text.Trim();
+        if (_starting || OnStart is null)
+        {
+            return false;
+        }
+        if (brief.Length == 0)
+        {
+            _startNote = "Type a brief first.";
+            return false;
+        }
+        _startNote = null;
+        _starting = true;
+        OnStart(brief, StartNode);
+        return true;
+    }
+
+    /// <summary>The node a design started here is made on: this window's node, which is the one the page reads, also under All nodes.</summary>
+    internal string StartNode => Nodes?.Choices.FirstOrDefault(c => c.Here) is { } here ? here.Name : "this node";
+
+    /// <summary>The host made design <paramref name="id"/>: the box is emptied and the new design's page opens.</summary>
+    public void Started(string id)
+    {
+        _starting = false;
+        _startNote = null;
+        BriefInput.Clear();
+        Open(id);
+    }
+
+    /// <summary>The node refused the start, in <paramref name="why"/>'s words; the brief stays typed.</summary>
+    public void StartFailed(string why)
+    {
+        _starting = false;
+        _startNote = why;
+    }
+
     /// <summary>Asked for another version of the open design (its id and the version's number): the host hands that version's page.</summary>
     public Action<string, int>? OnVersion { get; set; }
 
@@ -388,10 +441,33 @@ internal sealed class DesignsView<TSurface>(Renderer<TSurface> renderer) : Pilot
     {
         if (screen.Rows.Length == 0)
         {
-            return Layout.Builder.Text("No designs yet. pilot design new -- <brief> makes one.", 14f, Dim, TextAlign.Center).Selectable().Stretch();
+            return Layout.Builder.VStack(
+                StartBox(),
+                Layout.Builder.Text("No designs yet. Type what the design is for and press Start a design.", 14f, Dim, TextAlign.Center).Selectable().Stretch()).WithGap(8f).Pad(Gutter, 8f).Stretch();
         }
         var rows = screen.Rows.Select((row, i) => ListRow(row, i)).ToArray();
-        return Layout.Builder.VStack(rows).WithGap(2f).WithScroll(_listScroll).Pad(Gutter, 8f).Stretch();
+        return Layout.Builder.VStack(StartBox(), Layout.Builder.VStack(rows).WithGap(2f).WithScroll(_listScroll).Stretch()).WithGap(8f).Pad(Gutter, 8f).Stretch();
+    }
+
+    // One declaration for the pixel page and the terminal's: the brief box and the button on one row (one height, one middle), what it does under them.
+    private Layout.Node StartBox()
+    {
+        BriefInput.OnCommit = _ =>
+        {
+            Start();
+            return Task.CompletedTask;
+        };
+        var button = Layout.Builder.Text(_starting ? "Starting…" : "Start a design", 12f, Bright, TextAlign.Center)
+            .Pad(10f, 4f)
+            .WAuto()
+            .Bg(Button)
+            .BgHover(ButtonHover)
+            .WithTooltip($"Make a design from the brief on {StartNode}; its designer session starts")
+            .Follows(new HitResult.ButtonHit("designs:start"), _ => Start());
+        var caption = _startNote ?? $"Starts on {StartNode}";
+        return Layout.Builder.VStack(
+            Layout.Builder.HStack(Layout.Builder.TextInput(BriefInput, 12f, Palette.Input).WStar(), button).WithGap(6f).RowH(26f),
+            WrappedProse.OneLine(caption, 12f, _startNote is null ? Dim : Bright).RowH(22f).Whole(caption)).WithGap(2f).RowH(50f);
     }
 
     private Layout.Node ListRow(DesignRow row, int index)

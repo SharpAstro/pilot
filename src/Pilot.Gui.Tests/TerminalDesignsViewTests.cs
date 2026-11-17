@@ -45,4 +45,34 @@ public sealed class TerminalDesignsViewTests
         next.ShouldContain(a => IsText(a, "Delete this node"));
         next.ShouldContain(a => a.Node.Hit is HitResult.ButtonHit && ((HitResult.ButtonHit)a.Node.Hit).Action == "designs:screen:confirm");
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TheTerminalPageShowsTheBriefBoxAndStartButtonOnOneRow(bool empty)
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath };
+        chrome.WithoutScrollBars();
+        var screen = empty ? DesignsScreen.Empty("sample", PageData.Now) : PageData.DesignsFor("sample", PageData.Now);
+        chrome.Show(PilotPage.Designs);
+        chrome.Designs.Terminal = (Columns, Rows);
+        (string Brief, string Node)? asked = null;
+        chrome.Designs.OnStart = (brief, node) => asked = (brief, node);
+
+        var arranged = Frame(chrome, screen);
+        arranged.ShouldContain(a => IsText(a, "Start a design"));
+        arranged.ShouldNotContain(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.Contains("pilot design new", StringComparison.Ordinal));
+        var input = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput });
+        var button = arranged.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:start" });
+        button.Bounds.Height.ShouldBe(input.Bounds.Height, "one height");
+        button.Bounds.Y.ShouldBe(input.Bounds.Y, "one middle");
+
+        chrome.Designs.BriefInput.InsertText("a terminal brief");
+        CellLayout.HitTest(arranged, button.Bounds.X + 1, button.Bounds.Y).ShouldNotBeNull();
+        chrome.Designs.Start().ShouldBeTrue();
+        asked.ShouldNotBeNull().Brief.ShouldBe("a terminal brief");
+        chrome.Designs.Started("DSN-7");
+        chrome.Designs.OpenId.ShouldBe("DSN-7");
+    }
 }

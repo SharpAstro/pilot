@@ -57,6 +57,28 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
         });
     }
 
+    /// <summary>
+    /// Sends <c>design-new</c> with <paramref name="brief"/> to the node the page reads (what <c>pilot design new</c> does) and says the made design's id, or
+    /// the node's refusal. The list is read again at once so the new design is on it.
+    /// </summary>
+    public async Task<(string? Id, string? Error)> StartAsync(string brief, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.DesignNew, Target = Verbs.NodeTarget, Args = ["", "", brief], Who = who }, cancellationToken).ConfigureAwait(false);
+            if (answer.Response is { Ok: true, Made: { Length: > 0 } id })
+            {
+                AskList(force: true);
+                return (id, null);
+            }
+            return (null, answer.Response?.Error ?? answer.Error ?? "the node did not answer");
+        }
+        catch (Exception e) when (e is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            return (null, e.Message);
+        }
+    }
+
     /// <summary>Reads design <paramref name="id"/> and its version <paramref name="version"/> (null: the current one), unless that was done less than <see cref="Every"/> ago.</summary>
     public void AskDesign(string id, int? version, bool force = false)
     {
