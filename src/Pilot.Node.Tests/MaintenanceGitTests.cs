@@ -112,6 +112,131 @@ public sealed class MaintenanceGitTests : IDisposable
         result.Untouched.ShouldContain("running or queued job");
     }
 
+    private sealed class FixedClock(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+
+        public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
+    }
+
+    private static MaintenanceGit WithHours(MaintenanceGit step, string? hours, int hour) =>
+        new(MaintenanceGit.Kind.Git, step.State, step.Repos)
+        {
+            Run = step.Run, GitSize = _ => 0, UsesLfs = _ => false, PruneHours = () => hours,
+            Time = new FixedClock(new DateTimeOffset(2026, 11, 16, hour, 30, 0, TimeSpan.Zero)),
+        };
+
+    [Fact]
+    public async Task AFlightWithALegFlyingKeepsTheTwoWeekAgeAndTheNoteNamesTheFlight()
+    {
+        var repo = Repo("r");
+        _state.PutFlight(new FlightRow
+        {
+            Code = "PIL9", Repo = "pilot", Issue = 1, Title = "t", RepoPath = repo, Branch = "flight/pil9", Worktree = Path.Combine(repo, ".claude", "worktrees", "PIL9"),
+            Base = "origin/main", State = FlightState.Flying, CreatedAt = Start,
+        });
+        _state.PutLeg(new LegRow { Flight = "PIL9", Name = "a", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying });
+        var recorder = new Recorder();
+
+        var result = await Step(MaintenanceGit.Kind.Git, [repo], recorder).RunAsync(Ct);
+
+        recorder.Commands.ShouldContain("git gc --prune=2.weeks.ago @r");
+        recorder.Commands.ShouldNotContain("git gc --prune=1.days.ago @r");
+        result.Untouched.ShouldNotBeNull();
+        result.Untouched.ShouldContain("r short prune skipped: PIL9 has a leg flying");
+    }
+
+    [Fact]
+    public async Task AJobRunningInTheRepoOfAFlightKeepsTheTwoWeekAge()
+    {
+        var repo = Repo("r");
+        _state.PutFlight(new FlightRow
+        {
+            Code = "PIL9", Repo = "pilot", Issue = 1, Title = "t", RepoPath = repo, Branch = "flight/pil9", Worktree = Path.Combine(repo, ".claude", "worktrees", "PIL9"),
+            Base = "origin/main", State = FlightState.Flying, CreatedAt = Start,
+        });
+        _state.PutJob(new JobRow { Id = "j1", Command = "dotnet test", Cwd = repo, State = JobState.Queued, LogPath = "x.log", Timeout = TimeSpan.FromMinutes(5), StartedAt = Start });
+        var recorder = new Recorder();
+
+        var result = await Step(MaintenanceGit.Kind.Git, [repo], recorder).RunAsync(Ct);
+
+        recorder.Commands.ShouldContain("git gc --prune=2.weeks.ago @r");
+        result.Untouched.ShouldNotBeNull();
+        result.Untouched.ShouldContain("PIL9 has a running or queued job");
+    }
+
+    [Theory]
+    [InlineData(SessionRole.Worker)]
+    [InlineData(SessionRole.Watchtower)]
+    [InlineData(SessionRole.Reviewer)]
+    public async Task ALiveSessionOfAnyRoleInsideTheRepoKeepsTheTwoWeekAgeAndTheNoteNamesTheSession(SessionRole role)
+    {
+        var repo = Repo("r");
+        _state.PutSession(new SessionRow
+        {
+            Id = "s1", SessionId = "s1-0000-4000-8000-000000000000", Name = "by-hand", Kind = SessionKind.Background, Cwd = Path.Combine(repo, "src"),
+            Role = role, ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Working, SpendWeighted = 0, StartedAt = Start,
+        });
+        var recorder = new Recorder();
+
+        var result = await Step(MaintenanceGit.Kind.Git, [repo], recorder).RunAsync(Ct);
+
+        recorder.Commands.ShouldContain("git gc --prune=2.weeks.ago @r");
+        result.Untouched.ShouldNotBeNull();
+        result.Untouched.ShouldContain("short prune skipped: session by-hand is live in the repo");
+    }
+
+    [Fact]
+    public async Task AnEndedSessionInTheRepoDoesNotStopTheShortPrune()
+    {
+        var repo = Repo("r");
+        _state.PutSession(new SessionRow
+        {
+            Id = "s1", SessionId = "s1-0000-4000-8000-000000000000", Name = "old", Kind = SessionKind.Background, Cwd = repo,
+            Role = SessionRole.Worker, ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Ended, SpendWeighted = 0, StartedAt = Start,
+        });
+        var recorder = new Recorder();
+
+        var result = await Step(MaintenanceGit.Kind.Git, [repo], recorder).RunAsync(Ct);
+
+        recorder.Commands.ShouldContain("git gc --prune=1.days.ago @r");
+        result.Untouched.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task OutsideThePruneHoursKeepsTheTwoWeekAgeAndInsideTheWindowPastMidnightTheShortAgeRuns()
+    {
+        var repo = Repo("r");
+        var recorder = new Recorder();
+        var outside = WithHours(Step(MaintenanceGit.Kind.Git, [repo], recorder), "22-06", 12);
+
+        var result = await outside.RunAsync(Ct);
+
+        recorder.Commands.ShouldContain("git gc --prune=2.weeks.ago @r");
+        result.Untouched.ShouldNotBeNull();
+        result.Untouched.ShouldContain("short prune skipped: outside maintenance-prune-hours 22:00-06:00");
+
+        recorder.Commands.Clear();
+        var inside = await WithHours(Step(MaintenanceGit.Kind.Git, [repo], recorder), "22-06", 23).RunAsync(Ct);
+        recorder.Commands.ShouldContain("git gc --prune=1.days.ago @r");
+        inside.Untouched.ShouldBeNull();
+
+        recorder.Commands.Clear();
+        await WithHours(Step(MaintenanceGit.Kind.Git, [repo], recorder), "22-06", 5).RunAsync(Ct);
+        recorder.Commands.ShouldContain("git gc --prune=1.days.ago @r");
+    }
+
+    [Fact]
+    public async Task TheDryRunNamesTheConditionThatStopsTheShortPrune()
+    {
+        var repo = Repo("r");
+        var recorder = new Recorder();
+
+        var measure = await WithHours(Step(MaintenanceGit.Kind.Git, [repo], recorder), "22-06", 12).MeasureAsync(Ct);
+
+        measure.Kept.ShouldContain(k => k.Rule.StartsWith("short prune skipped: outside maintenance-prune-hours", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task TheStepsRunWorktreePruneFetchPruneGcWithAnAgeAndLfsPruneAndNoCommandIsAggressiveOrRewritesRefs()
     {

@@ -189,6 +189,8 @@ public sealed record NodeSettings
     /// <summary>How many days an unreachable git object may sit before the sweep's git gc prunes it.</summary>
     public const string GitPruneDaysKey = "git-prune-days";
     public const int DefaultGitPruneDays = 1;
+    /// <summary>The local-time window (HH-HH, may wrap midnight) in which the sweep may prune at the short age; null is always.</summary>
+    public const string MaintenancePruneHoursKey = "maintenance-prune-hours";
     public static readonly TimeSpan DefaultMaintenanceIdle = TimeSpan.FromMinutes(15);
     public const string OpusCapKey = "opus-cap";
 
@@ -212,7 +214,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, MaintenancePruneHoursKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. BenchKeys, .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -378,6 +380,8 @@ public sealed record NodeSettings
     public int? PackageAgeDays { get; init; }
     /// <summary>Days an unreachable git object may sit before the sweep's git gc prunes it (<see cref="GitPruneDaysKey"/>); null reads as <see cref="DefaultGitPruneDays"/>.</summary>
     public int? GitPruneDays { get; init; }
+    /// <summary>The prune window text (<see cref="MaintenancePruneHoursKey"/>); null is no window.</summary>
+    public string? MaintenancePruneHours { get; init; }
     /// <summary>The margin, in points, a start tolerates between the 7-day window's used share and its elapsed share; null is off.</summary>
     public double? WeekPace { get; init; }
 
@@ -553,6 +557,7 @@ public sealed record NodeSettings
                     ScratchDaysKey => JsonValue.Create(ScratchDays),
                     PackageAgeDaysKey => JsonValue.Create(PackageAgeDays),
                     GitPruneDaysKey => JsonValue.Create(GitPruneDays),
+                    MaintenancePruneHoursKey => JsonValue.Create(MaintenancePruneHours),
                     DiskAlertGbKey => JsonValue.Create(DiskAlertGb),
                     FlightCiBudgetKey => JsonValue.Create(FlightCiBudget),
                     StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => JsonValue.Create(StaleValue(key)),
@@ -625,6 +630,7 @@ public sealed record NodeSettings
         ScratchDaysKey => ScratchDays is { } days ? [days.ToString(CultureInfo.InvariantCulture)] : null,
         PackageAgeDaysKey => PackageAgeDays is { } ageDays ? [ageDays.ToString(CultureInfo.InvariantCulture)] : null,
         GitPruneDaysKey => GitPruneDays is { } pruneDays ? [pruneDays.ToString(CultureInfo.InvariantCulture)] : null,
+        MaintenancePruneHoursKey => MaintenancePruneHours is { } pruneHours ? [pruneHours] : null,
         DiskAlertGbKey => DiskAlertGb is { } alertGb ? [alertGb.ToString(CultureInfo.InvariantCulture)] : null,
         FlightCiBudgetKey => FlightCiBudget is { } ciBudget ? [ciBudget.ToString(CultureInfo.InvariantCulture)] : null,
         StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => StaleValue(key) is { } stale ? [stale.ToString(CultureInfo.InvariantCulture)] : null,
@@ -957,6 +963,14 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var gitPrune) && gitPrune is >= 1 and <= 365
                     ? (settings with { GitPruneDays = gitPrune }, null)
                     : (null, "git-prune-days takes a number, 1 to 365");
+            case MaintenancePruneHoursKey:
+                if (clear || One() is "off" or "none" or "always")
+                {
+                    return (settings with { MaintenancePruneHours = null }, null);
+                }
+                return One() is { } hoursText && PruneWindow.TryParse(hoursText, out var window)
+                    ? (settings with { MaintenancePruneHours = window.ToString() }, null)
+                    : (null, "maintenance-prune-hours takes a window like 22-06 or 22:30-06:00 (local time, may wrap midnight), or off");
             case ScratchDaysKey:
                 if (clear)
                 {

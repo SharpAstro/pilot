@@ -575,6 +575,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>The window the short-age prune is limited to (<see cref="NodeSettings.MaintenancePruneHoursKey"/>); null is always.</summary>
+    public string? MaintenancePruneHours
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.MaintenancePruneHours;
+            }
+        }
+    }
+
     /// <summary>Days a job's scratch may sit before the disk sweep deletes it (<see cref="NodeSettings.ScratchDaysKey"/>); 2 by default.</summary>
     public int ScratchDays
     {

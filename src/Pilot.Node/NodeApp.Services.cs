@@ -136,6 +136,8 @@ public static partial class NodeApp
         {
             Priority = services.GetRequiredService<NodeOptions>().JobPriority,
             PruneDays = () => services.GetRequiredService<RoleModels>().GitPruneDays,
+            PruneHours = () => services.GetRequiredService<RoleModels>().MaintenancePruneHours,
+            Time = services.GetRequiredService<TimeProvider>(),
         });
         builder.Services.AddSingleton<IMaintenanceStep>(services => new MaintenanceGit(MaintenanceGit.Kind.Lfs, services.GetRequiredService<NodeState>(),
             () => [.. services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path)])

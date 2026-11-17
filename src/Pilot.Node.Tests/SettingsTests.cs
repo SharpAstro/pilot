@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Pilot.Contracts;
+using Pilot.Node.Flights;
 using Pilot.Node.Updates;
 using Shouldly;
 using Xunit;
@@ -111,7 +112,7 @@ public sealed class SettingsTests : IDisposable
     [InlineData("machine", "DESKTOP", "machine takes two letters and a number, as in DE1")]
     [InlineData("update-channel", "nightly", "update-channel takes stable or beta")]
     [InlineData("max-jobs", "0", "max-jobs takes a number, 1 to 64")]
-    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, jobs-per-repo, gui-slots, job-memory, job-priority, job-plane-output, job-build-cache, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, watchtower-compact-idle, watchtower-compact-above, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, user-skills, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, review-limit, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, adopt-after, archive-landed-after, maintenance-every, maintenance-idle, package-age-days, git-prune-days, delete-landed-branches, max-go-arounds, scratch-days, disk-alert-gb, flight-ci-budget, stale-flight-hours, stale-pr-hours, stale-recheck-hours, stale-card-hours, stale-holds, stale-unreachable-hours, bench-subscription, bench-resource-group, bench-region, bench-vm-size, bench-image, bench-spot-price, bench-monthly-cap, bench-auth, bench-sp-app-id, bench-sp-tenant, bench-sp-secret, watchtower-range, worker-range, planner-range, reviewer-range, summary-model, worker-ladder")]
+    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, jobs-per-repo, gui-slots, job-memory, job-priority, job-plane-output, job-build-cache, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, watchtower-compact-idle, watchtower-compact-above, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, user-skills, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, review-limit, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, adopt-after, archive-landed-after, maintenance-every, maintenance-idle, package-age-days, git-prune-days, maintenance-prune-hours, delete-landed-branches, max-go-arounds, scratch-days, disk-alert-gb, flight-ci-budget, stale-flight-hours, stale-pr-hours, stale-recheck-hours, stale-card-hours, stale-holds, stale-unreachable-hours, bench-subscription, bench-resource-group, bench-region, bench-vm-size, bench-image, bench-spot-price, bench-monthly-cap, bench-auth, bench-sp-app-id, bench-sp-tenant, bench-sp-secret, watchtower-range, worker-range, planner-range, reviewer-range, summary-model, worker-ladder")]
     // Invariant: the "colour" case spells out every key, so a filtered check that adds a setting runs it too.
     [Trait("Category", InvariantTraitTests.Invariant)]
     public void ASettingRefusesWhatItDoesNotTake(string key, string value, string error)
@@ -173,6 +174,29 @@ public sealed class SettingsTests : IDisposable
         NodeSettings.With(new NodeSettings(), "package-age-days", ["0"]).Error.ShouldNotBeNull();
         NodeSettings.With(new NodeSettings(), "package-age-days", ["366"]).Error.ShouldNotBeNull();
         NodeSettings.With(new NodeSettings(), "package-age-days", ["soon"]).Error.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void MaintenancePruneHoursIsUnsetByDefaultParsesBothFormsWrapsPastMidnightAndOffClearsIt()
+    {
+        new RoleModels(new NodeSettings()).MaintenancePruneHours.ShouldBeNull();
+        var set = NodeSettings.With(new NodeSettings(), "maintenance-prune-hours", ["22-06"]).Settings!;
+        set.Get("maintenance-prune-hours").ShouldBe(["22:00-06:00"]);
+        new RoleModels(set).MaintenancePruneHours.ShouldBe("22:00-06:00");
+        PruneWindow.TryParse("22-06", out var wrap).ShouldBeTrue();
+        wrap.Contains(TimeSpan.FromHours(23)).ShouldBeTrue();
+        wrap.Contains(TimeSpan.FromHours(5.5)).ShouldBeTrue();
+        wrap.Contains(TimeSpan.FromHours(6)).ShouldBeFalse();
+        wrap.Contains(TimeSpan.FromHours(12)).ShouldBeFalse();
+        NodeSettings.With(new NodeSettings(), "maintenance-prune-hours", ["01:30-04:15"]).Settings!.MaintenancePruneHours.ShouldBe("01:30-04:15");
+        PruneWindow.TryParse("01:30-04:15", out var day).ShouldBeTrue();
+        day.Contains(TimeSpan.FromHours(2)).ShouldBeTrue();
+        day.Contains(TimeSpan.FromHours(5)).ShouldBeFalse();
+        NodeSettings.With(set, "maintenance-prune-hours", ["off"]).Settings!.MaintenancePruneHours.ShouldBeNull();
+        NodeSettings.With(set, "maintenance-prune-hours", ["default"]).Settings!.MaintenancePruneHours.ShouldBeNull();
+        NodeSettings.With(new NodeSettings(), "maintenance-prune-hours", ["25-06"]).Error.ShouldNotBeNull();
+        NodeSettings.With(new NodeSettings(), "maintenance-prune-hours", ["6-6"]).Error.ShouldNotBeNull();
+        NodeSettings.With(new NodeSettings(), "maintenance-prune-hours", ["night"]).Error.ShouldNotBeNull();
     }
 
     [Fact]

@@ -28,9 +28,16 @@ public sealed partial class MaintenanceGit : IMaintenanceStep
     /// <summary>How many days old an unreachable object must be before <c>git gc</c> removes it, unless <see cref="PruneDays"/> says otherwise (PIL1149).</summary>
     public const int DefaultPruneDays = NodeSettings.DefaultGitPruneDays;
 
+    /// <summary>The age the gc keeps unreachable objects at while a short prune is not safe (PIL1149); git's own default.</summary>
+    public const string PruneAge = "2.weeks.ago";
+
     private readonly Kind _kind;
     private readonly NodeState _state;
     private readonly Func<IReadOnlyList<string>> _repos;
+
+    internal NodeState State => _state;
+
+    internal Func<IReadOnlyList<string>> Repos => _repos;
 
     /// <summary>The git step.</summary>
     public static MaintenanceGit ForGit(NodeState state, Func<IReadOnlyList<string>> repos) => new(Kind.Git, state, repos);
@@ -67,17 +74,26 @@ public sealed partial class MaintenanceGit : IMaintenanceStep
     /// <summary>Days an unreachable object may sit before the gc prunes it (the <c>git-prune-days</c> setting); read each run.</summary>
     public Func<int> PruneDays { get; init; } = () => DefaultPruneDays;
 
+    /// <summary>The <c>maintenance-prune-hours</c> window text, or null for always; read each run.</summary>
+    public Func<string?> PruneHours { get; init; } = () => null;
+
+    /// <summary>The clock the window is read on (local time).</summary>
+    public TimeProvider Time { get; init; } = TimeProvider.System;
+
     /// <summary>
     /// The git arguments of each action of the git step, in order, for the current <see cref="PruneDays"/>. <c>gc.auto 0</c> comes first so that
     /// no fetch of the sweep (or after it) starts an auto gc and prints "too many unreachable loose objects": the node collects the repo itself here.
     /// Exposed so a test can check that none is aggressive.
     /// </summary>
-    public IReadOnlyList<IReadOnlyList<string>> GitCommands =>
+    public IReadOnlyList<IReadOnlyList<string>> GitCommands => CommandsFor(shortPrune: true);
+
+    /// <summary>The git step's commands with the short age, or with <see cref="PruneAge"/> when <paramref name="shortPrune"/> is false.</summary>
+    public IReadOnlyList<IReadOnlyList<string>> CommandsFor(bool shortPrune) =>
     [
         ["config", "--local", "gc.auto", "0"],
         ["worktree", "prune"],
         ["fetch", "--prune"],
-        ["gc", "--prune=" + Math.Max(1, PruneDays()).ToString(CultureInfo.InvariantCulture) + ".days.ago"],
+        ["gc", "--prune=" + (shortPrune ? Math.Max(1, PruneDays()).ToString(CultureInfo.InvariantCulture) + ".days.ago" : PruneAge)],
     ];
 
     /// <summary>The git arguments of the lfs step's run.</summary>
@@ -131,6 +147,44 @@ public sealed partial class MaintenanceGit : IMaintenanceStep
         return null;
     }
 
+    /// <summary>
+    /// Why the short-age prune must not run in the repo now, or null when it may (PIL1149): a non-landed flight of the repo has a leg flying or a
+    /// running or queued job in the repo or its planes; a live session of any role has its cwd inside the repo (planes sit under it); the local
+    /// time is outside <c>maintenance-prune-hours</c>. The first that holds is named.
+    /// </summary>
+    public string? WhyNoPrune(string repo)
+    {
+        var jobs = _state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && !string.IsNullOrEmpty(j.Cwd)).ToList();
+        foreach (var flight in _state.Flights().Where(f => f.State != FlightState.Landed && !string.IsNullOrEmpty(f.RepoPath)))
+        {
+            if (!Inside(repo, flight.RepoPath) && !Inside(flight.RepoPath, repo))
+            {
+                continue;
+            }
+            if (_state.Legs(flight.Code).Any(l => l.State == LegState.Flying))
+            {
+                return $"{flight.Code} has a leg flying";
+            }
+            if (jobs.Any(j => Inside(repo, j.Cwd) || (!string.IsNullOrEmpty(flight.Worktree) && Inside(flight.Worktree, j.Cwd))))
+            {
+                return $"{flight.Code} has a running or queued job in the repo or its planes";
+            }
+        }
+        if (_state.Sessions().FirstOrDefault(s => s.State is not (SessionState.Ended or SessionState.Failed) && !string.IsNullOrEmpty(s.Cwd) && Inside(repo, s.Cwd)) is { } session)
+        {
+            return $"session {session.Name} is live in the repo";
+        }
+        if (PruneHours() is { } hours && PruneWindow.TryParse(hours, out var window))
+        {
+            var now = TimeZoneInfo.ConvertTime(Time.GetUtcNow(), Time.LocalTimeZone);
+            if (!window.Contains(now.TimeOfDay))
+            {
+                return $"outside maintenance-prune-hours {window}";
+            }
+        }
+        return null;
+    }
+
     private IEnumerable<string> Known() => _repos().Where(r => !string.IsNullOrEmpty(r) && Directory.Exists(r));
 
     /// <inheritdoc />
@@ -151,6 +205,10 @@ public sealed partial class MaintenanceGit : IMaintenanceStep
             {
                 // Read only: the .git size is not what a gc would free, so the figure is the garbage git itself reports, in bytes, and the
                 // prune-packable and garbage object counts.
+                if (WhyNoPrune(repo) is { } noPrune)
+                {
+                    kept.Add($"short prune skipped: {noPrune}");
+                }
                 var counted = await TryAsync("git", ["count-objects", "-v"], repo, cancellationToken);
                 if (counted is { ExitCode: 0 })
                 {
@@ -230,7 +288,13 @@ public sealed partial class MaintenanceGit : IMaintenanceStep
                 }
             }
             var before = GitSize(repo);
-            var commands = _kind == Kind.Git ? GitCommands : [LfsCommand];
+            var shortPrune = true;
+            if (_kind == Kind.Git && WhyNoPrune(repo) is { } skipped)
+            {
+                shortPrune = false;
+                notes.Add($"{name} short prune skipped: {skipped}");
+            }
+            var commands = _kind == Kind.Git ? CommandsFor(shortPrune) : [LfsCommand];
             foreach (var args in commands)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -240,7 +304,13 @@ public sealed partial class MaintenanceGit : IMaintenanceStep
                     notes.Add($"{name} stopped before git {args[0]}: {nowBusy}");
                     break;
                 }
-                var outcome = await TryAsync("git", args, repo, cancellationToken);
+                var run = args;
+                if (shortPrune && args[0] == "gc" && WhyNoPrune(repo) is { } soon)
+                {
+                    run = CommandsFor(shortPrune: false)[^1];
+                    notes.Add($"{name} short prune skipped: {soon}");
+                }
+                var outcome = await TryAsync("git", run, repo, cancellationToken);
                 if (outcome is null)
                 {
                     notes.Add($"{name}: git is not installed");
