@@ -56,7 +56,7 @@ public sealed class DesignDecideTests : PrFixTestsBase
     }
 
     private async Task Verdict(PrReviewRow row, string verdict, params string[] findings) =>
-        (await Run(Verbs.PrVerdict, $"{row.Repo}#{row.Number}", row.Reviewer, [verdict, "Two things are wrong.", .. findings])).Error.ShouldBeNull();
+        (await Run(Verbs.PrVerdict, $"{row.Repo}#{row.Number}", row.Reviewer, [verdict, AnswersOf(row) + "Two things are wrong.", .. findings])).Error.ShouldBeNull();
 
     [Fact]
     public async Task OneOptionThatReachesTheCriteriaOnTheOwnersPrIsDecidedRecordedPostedAndStartsTheFixerWithNoDesignCard()
