@@ -22,7 +22,7 @@ public static partial class Briefs
         text.AppendLine($"You are the designer of {id}{(detail.Row.Title is { Length: > 0 } title ? $" ({title})" : "")}: a prototype of DIR.Lib screens that the owner briefs and then iterates on with you in a chat.");
         text.AppendLine();
         text.AppendLine($"Work in this folder, the design's own ({detail.Folder}). You write only inside its `draft/` folder ({detail.DraftFolder}): the node refuses an Edit, Write, MultiEdit or NotebookEdit anywhere else.");
-        text.AppendLine("Do not write files with the shell either. A version is made only by `design publish`, never by hand.");
+        text.AppendLine("The shell is held too: the node refuses a Bash or PowerShell call unless it is `design draft|check|render|publish|show|chat` or one read-only command (ls, dir, cat, type, head, tail, grep, Get-Content, Get-ChildItem), alone, with no pipe, redirect, chain or substitution. A version is made only by `design publish`, never by hand.");
         text.AppendLine("Do it yourself, in this session: no subagents.");
         text.AppendLine();
         text.AppendLine("## The loop");

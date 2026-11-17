@@ -73,6 +73,7 @@ public sealed class TerminalDesignsViewTests
         CellLayout.HitTest(arranged, button.Bounds.X + 1, button.Bounds.Y).ShouldNotBeNull();
         asked.ShouldNotBeNull().Brief.ShouldBe("a terminal brief");
         chrome.Designs.Started("DSN-7");
+        Frame(chrome, screen);
         chrome.Designs.OpenId.ShouldBe("DSN-7");
     }
 }

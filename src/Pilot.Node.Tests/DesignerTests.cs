@@ -201,6 +201,109 @@ public sealed class DesignerTests : IDisposable
         }
     }
 
+    private string ShellHook(string session, string tool, string cwd, string command) =>
+        JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["hook_event_name"] = "PreToolUse", ["session_id"] = session, ["tool_name"] = tool, ["cwd"] = cwd,
+            ["tool_input"] = new Dictionary<string, string> { ["command"] = command },
+        });
+
+    [Theory]
+    [InlineData("Bash", "echo hi > BRIEF.md")]
+    [InlineData("Bash", "cat a.txt | tee ../design.json")]
+    [InlineData("Bash", "pilot design check DSN-1; rm -rf .")]
+    [InlineData("Bash", "git commit -am x")]
+    [InlineData("PowerShell", "Set-Content -Path ..\BRIEF.md -Value x")]
+    [InlineData("PowerShell", "Get-Content a.txt > b.txt")]
+    [InlineData("Bash", "cat $(echo x)")]
+    public void ADesignersShellWriteIsDenied(string tool, string command)
+    {
+        var id = New("words");
+        ListedAs("job00001", "de1-dsn1-designer");
+        var denied = Decide(ShellHook("job00001-0000-4000-8000-000000000000", tool, _store.FolderOf(id), command)).ShouldNotBeNull();
+        using var answer = JsonDocument.Parse(denied);
+        answer.RootElement.GetProperty("hookSpecificOutput").GetProperty("permissionDecision").GetString().ShouldBe("deny");
+    }
+
+    [Theory]
+    [InlineData("Bash", "pilot design check DSN-1")]
+    [InlineData("Bash", "\"/opt/pilot dir/pilot\" --node-socket \"/tmp/n.sock\" design publish DSN-1 --why message")]
+    [InlineData("Bash", "ls draft")]
+    [InlineData("PowerShell", "Get-Content draft/NOTES.md")]
+    public void ADesignersDesignVerbAndReadOnlyCommandAreLetThrough(string tool, string command)
+    {
+        var id = New("words");
+        ListedAs("job00001", "de1-dsn1-designer");
+        Decide(ShellHook("job00001-0000-4000-8000-000000000000", tool, _store.FolderOf(id), command)).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task TheDesignerIsStartedWithASynchronousGuardHookThatSurvivesAResume()
+    {
+        var settings = HookCommands.DesignerSettings("/opt/pilot-node", "/tmp/n.sock");
+        var designers = new Designers(_state, _store, _workers, new StartGate(_state, _time), new RoleModels(null), "DE1", _time) { Run = "pilot", GuardSettings = settings };
+        _commands.Run(new CommandRequest { Verb = Verbs.DesignNew, Target = Verbs.NodeTarget, Args = ["", "", "words"], Who = "gui" });
+        designers.Ask("DSN-1", null);
+        await designers.Settled;
+
+        var start = _workers.Started.Last();
+        start.Settings.ShouldBe(settings);
+        var args = ClaudeWorkerLauncher.SessionArguments(start);
+        args.ShouldContain("--settings");
+        args[args.ToList().IndexOf("--settings") + 1].ShouldBe(settings);
+
+        using var doc = JsonDocument.Parse(settings);
+        var entry = doc.RootElement.GetProperty("hooks").GetProperty("PreToolUse")[0];
+        entry.GetProperty("matcher").GetString().ShouldBe(DesignerGuard.Matcher);
+        var handler = entry.GetProperty("hooks")[0];
+        handler.TryGetProperty("async", out _).ShouldBeFalse();
+        handler.GetProperty("args")[0].GetString().ShouldBe("hook");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheHookCommandPrintsTheDenyForADesignersShellWriteAndStaysQuietForADesignVerb()
+    {
+        await using var node = await NodeHarness.StartAsync(TestContext.Current.CancellationToken);
+        node.State.PutSession(new SessionRow
+        {
+            Id = "job00001", SessionId = "job00001-0000-4000-8000-000000000000", Name = "de1-dsn1-designer", Kind = SessionKind.Background, Cwd = "/x", Role = SessionRole.Designer,
+            ContextTokens = 1, ContextWindow = 200_000, State = SessionState.Working, SpendWeighted = 0, StartedAt = Start,
+        });
+        var denied = new StringWriter();
+        var write = ShellHook("job00001-0000-4000-8000-000000000000", "Bash", "/x", "echo x > /etc/y");
+        (await HookCommands.HookAsync(node.SocketPath, new MemoryStream(System.Text.Encoding.UTF8.GetBytes(write)), denied, TimeSpan.FromSeconds(30))).ShouldBe(0);
+        JsonDocument.Parse(denied.ToString()).RootElement.GetProperty("hookSpecificOutput").GetProperty("permissionDecision").GetString().ShouldBe("deny");
+
+        var allowed = new StringWriter();
+        var check = ShellHook("job00001-0000-4000-8000-000000000000", "Bash", "/x", "pilot design check DSN-1");
+        (await HookCommands.HookAsync(node.SocketPath, new MemoryStream(System.Text.Encoding.UTF8.GetBytes(check)), allowed, TimeSpan.FromSeconds(30))).ShouldBe(0);
+        allowed.ToString().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AnUnexpectedFaultInOneAskDoesNotStopTheAsksAfterIt()
+    {
+        var calls = 0;
+        var faulty = new Designers(_state, _store, new ThrowingOnceLauncher(() => calls++), new StartGate(_state, _time), new RoleModels(null), "DE1", _time) { Run = "pilot" };
+        _commands.Run(new CommandRequest { Verb = Verbs.DesignNew, Target = Verbs.NodeTarget, Args = ["", "", "words"], Who = "gui" });
+        faulty.Ask("DSN-1", null);
+        faulty.Ask("DSN-1", "more");
+        await faulty.Settled;
+        calls.ShouldBe(2);
+    }
+
+    private sealed class ThrowingOnceLauncher(Action called) : IWorkerLauncher
+    {
+        public Task<string> StartAsync(WorkerStart start, CancellationToken cancellationToken)
+        {
+            called();
+            throw new InvalidOperationException("boom");
+        }
+
+        public Task StopAsync(string job, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
     [Fact]
     public void ASessionThatIsNotADesignerIsNeverHeldByTheGuard()
     {

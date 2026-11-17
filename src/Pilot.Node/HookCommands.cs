@@ -206,6 +206,24 @@ public static class HookCommands
         return entry;
     }
 
+    /// <summary>
+    /// The settings a designer is started with (<c>claude --settings</c>, PIL1151): one PreToolUse hook that is <b>not</b> async, on the file tools and the shell,
+    /// so the node's deny (<see cref="Pilot.Node.Designs.DesignerGuard"/>) is read by Claude Code. Only the designer waits on it; every other session keeps
+    /// the async entry <see cref="Install"/> writes.
+    /// </summary>
+    public static string DesignerSettings(string nodePath, string? socket)
+    {
+        var args = new JsonArray(HookArgument);
+        if (socket is not null)
+        {
+            args.Add((JsonNode)JsonValue.Create("--node-socket"));
+            args.Add((JsonNode)JsonValue.Create(socket));
+        }
+        var handler = new JsonObject { ["type"] = "command", ["command"] = nodePath, ["args"] = args, ["timeout"] = 10 };
+        var entry = new JsonObject { ["matcher"] = Pilot.Node.Designs.DesignerGuard.Matcher, ["hooks"] = new JsonArray(handler) };
+        return new JsonObject { ["hooks"] = new JsonObject { ["PreToolUse"] = new JsonArray(entry) } }.ToJsonString();
+    }
+
     /// <summary>Takes the handlers <paramref name="ours"/> picks out of an event's entries, and any entry left with none; true when it took any.</summary>
     internal static bool RemoveOurs(JsonArray entries, Func<JsonNode?, bool> ours)
     {

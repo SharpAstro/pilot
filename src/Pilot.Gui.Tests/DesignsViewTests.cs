@@ -126,6 +126,7 @@ public sealed class DesignsViewTests
 
         asked.ShouldBe(("A settings page for the dome", "DE1"));
         rig.View.Started("DSN-9");
+        rig.Paint();
         rig.View.OpenId.ShouldBe("DSN-9");
         rig.View.BriefInput.Text.ShouldBe("");
     }
@@ -143,6 +144,7 @@ public sealed class DesignsViewTests
         rig.View.BriefInput.Text = "brief";
         rig.View.Start().ShouldBeTrue();
         rig.View.StartFailed("no repo");
+        rig.Paint();
         rig.View.BriefInput.Text.ShouldBe("brief");
         rig.Paint();
         TextsOf(rig).ShouldContain("no repo");

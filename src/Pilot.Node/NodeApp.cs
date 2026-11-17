@@ -142,17 +142,19 @@ public static partial class NodeApp
                 // A permission prompt for a call that only acts inside the session's own plane is allowed here, so no one is asked for it.
                 // Decided before the hook is taken in, so a session the node lets go on is told working, never waiting on a prompt it does not show.
                 var allow = await permissions.DecideAsync(hook.RootElement, context.RequestAborted);
-                // A designer's file write outside its design's draft/ is denied (PIL1151).
-                if (designerGuard.Decide(hook.RootElement) is { } deny)
-                {
-                    logger.LogInformation("write refused for designer {Session}: {Tool} outside draft/", ClaudeAgentsJson.Text(hook.RootElement, "session_id"), ClaudeAgentsJson.Text(hook.RootElement, "tool_name"));
-                    return Results.Text(deny, "application/json");
-                }
+                var designerDeny = designerGuard.Decide(hook.RootElement);
                 if (hooks.Apply(hook.RootElement, time.GetUtcNow(), allowed: allow is not null) is { } session)
                 {
                     // Debug only: PreToolUse fires on every tool call. Logging__LogLevel__Pilot.Node=Debug shows them.
                     logger.LogDebug("hook {Event} for {Session}", ClaudeAgentsJson.Text(hook.RootElement, "hook_event_name"), session[..Math.Min(8, session.Length)]);
                     tracker.Kick();
+                }
+                // A designer's file write outside its design's draft/, or a shell line that is not a design verb or a read, is denied (PIL1151).
+                // Answered after the hook is taken in, so the refused call is recorded for the session.
+                if (designerDeny is { } deny)
+                {
+                    logger.LogInformation("call refused for designer {Session}: {Tool}", ClaudeAgentsJson.Text(hook.RootElement, "session_id"), ClaudeAgentsJson.Text(hook.RootElement, "tool_name"));
+                    return Results.Text(deny, "application/json");
                 }
                 if (await gate.DecideAsync(hook.RootElement, context.RequestAborted) is { } decision)
                 {

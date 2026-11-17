@@ -825,20 +825,20 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Designs.Chat.GetClipboardImage = ClipboardImage.Read;
     chrome.Designs.Chat.CopyText = text => SetClipboardText(text);
     chrome.Designs.Chat.OpenLink = url => OpenAway(url);
-chrome.Designs.OnStart = (brief, node) => _ = Task.Run(async () =>
-{
-    // What pilot design new does on the node the page reads; the made design's page opens.
-    var (id, error) = await designReads!.StartAsync(brief, CancellationToken.None);
-    if (id is not null)
+    chrome.Designs.OnStart = (brief, node) => _ = Task.Run(async () =>
     {
-        chrome.Designs.Started(id);
-    }
-    else
-    {
-        chrome.Designs.StartFailed(error ?? "the node refused");
-    }
-    loop.RequestRedraw();
-});
+        // What pilot design new does on the node the page reads; the made design's page opens.
+        var (id, error) = await designReads!.StartAsync(brief, CancellationToken.None);
+        if (id is not null)
+        {
+            chrome.Designs.Started(id);
+        }
+        else
+        {
+            chrome.Designs.StartFailed(error ?? "the node refused");
+        }
+        loop.RequestRedraw();
+    });
     decisionReads = new DecisionReads(client, loop.RequestRedraw);
     // The Background tasks page: a job's log followed while it is selected, Cancel a verb on the node.
     chrome.Jobs.CanCommand = true;

@@ -25,7 +25,10 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
                     // args: repo, title (either may be empty), brief, then any terminal sizes.
                     var row = store.New(args.Length > 0 ? args[0] : null, args.Length > 1 ? args[1] : null, args.Length > 2 ? args[2] : "", args.Length > 3 ? args[3..] : []);
                     // The design's first brief wakes its designer (PIL1151); the asks run in the background, after each other.
-                    designers?.Ask(row.Id, null);
+                    if (args.Length > 2 && args[2].Trim().Length > 0)
+                    {
+                        designers?.Ask(row.Id, null);
+                    }
                     return state.Complete(command, null, made: row.Id);
                 case Verbs.DesignTerminals:
                     var sized = store.SetTerminals(IdOf(command), args);

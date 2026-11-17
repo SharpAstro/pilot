@@ -697,7 +697,16 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         var picture = Interlocked.Exchange(ref _picture, null);
         if (send is null && OnSendWithPicture is { } withPicture)
         {
-            send = words => withPicture(words, picture is null ? null : (picture.Name, picture.Bytes));
+            send = async words =>
+            {
+                var refused = await withPicture(words, picture is null ? null : (picture.Name, picture.Bytes));
+                if (refused is not null && picture is not null)
+                {
+                    // A refused send keeps its picture: put back (unless another was pasted since) so a retry still carries it.
+                    Interlocked.CompareExchange(ref _picture, picture, null);
+                }
+                return refused;
+            };
         }
         var queued = Enqueue(message, send ?? CurrentSend()!, SendKey, SendKey, about: quoted);
         _composer.Clear();

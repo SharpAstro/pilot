@@ -18,16 +18,29 @@ namespace Pilot.Node.Designs;
 /// A designer is the session whose row says so, or, before the tracker has listed it, one whose name is a designer's (the hook carries only
 /// the folder it works in, which is the design's folder, so the design is read from that).
 /// </remarks>
-public sealed class DesignerGuard(NodeState state, DesignStore store)
+public sealed partial class DesignerGuard(NodeState state, DesignStore store)
 {
     private static readonly string[] WriteTools = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
+    private static readonly string[] ShellTools = ["Bash", "PowerShell"];
+
+    /// <summary>The <c>pilot design</c> verbs a designer may run from the shell.</summary>
+    internal static readonly string[] DesignVerbs = ["draft", "check", "render", "publish", "show", "chat"];
+
+    /// <summary>The read-only programs a designer may run from the shell, alone (no pipe, redirect or chain).</summary>
+    internal static readonly string[] ReadOnly = ["ls", "dir", "cat", "type", "pwd", "head", "tail", "wc", "grep", "findstr", "get-content", "get-childitem", "get-location", "select-string"];
+
+    /// <summary>The matcher of the synchronous PreToolUse hook a designer is started with: the file tools and the shell.</summary>
+    public const string Matcher = "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell";
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"-dsn(\d+)-designer$", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant)]
+    private static partial System.Text.RegularExpressions.Regex DesignerNamePattern();
 
     /// <summary>The deny for <paramref name="hook"/> as Claude Code reads it on stdout, or null to let the call through.</summary>
     public string? Decide(JsonElement hook)
     {
         if (hook.ValueKind != JsonValueKind.Object
             || ClaudeAgentsJson.Text(hook, "hook_event_name") != "PreToolUse"
-            || ClaudeAgentsJson.Text(hook, "tool_name") is not { Length: > 0 } tool || !WriteTools.Contains(tool)
+            || ClaudeAgentsJson.Text(hook, "tool_name") is not { Length: > 0 } tool || !(WriteTools.Contains(tool) || ShellTools.Contains(tool))
             || ClaudeAgentsJson.Text(hook, "session_id") is not { Length: > 0 } session
             || ClaudeAgentsJson.Text(hook, "cwd") is not { Length: > 0 } cwd
             || !hook.TryGetProperty("tool_input", out var input) || input.ValueKind != JsonValueKind.Object)
@@ -39,6 +52,13 @@ public sealed class DesignerGuard(NodeState state, DesignStore store)
             if (DesignOf(session, cwd) is not { } id)
             {
                 return null;
+            }
+            if (ShellTools.Contains(tool))
+            {
+                var command = ClaudeAgentsJson.Text(input, "command");
+                return command is { Length: > 0 } && ShellAllowed(command, tool == "PowerShell")
+                    ? null
+                    : Answer($"{id}'s designer runs only `pilot design draft|check|render|publish|show|chat` and read-only commands (ls, cat, type, grep, Get-Content, Get-ChildItem), each alone: no pipe, redirect, chain or substitution. Write files with Edit or Write inside {Path.Combine(store.FolderOf(id), DesignStore.DraftFolderName)}.");
             }
             var path = ClaudeAgentsJson.Text(input, "file_path") ?? ClaudeAgentsJson.Text(input, "notebook_path") ?? ClaudeAgentsJson.Text(input, "path");
             var draft = StopGate.Normal(Path.Combine(store.FolderOf(id), DesignStore.DraftFolderName));
@@ -55,6 +75,39 @@ public sealed class DesignerGuard(NodeState state, DesignStore store)
         }
     }
 
+    /// <summary>
+    /// Whether a designer's shell line may run: one simple command, with no <c>$</c>, backtick, redirect, pipe, chain or grouping outside quotes,
+    /// that is <c>pilot design &lt;verb&gt;</c> or a read-only program.
+    /// </summary>
+    public static bool ShellAllowed(string command, bool powershell)
+    {
+        if (command.Contains('$') || command.Contains('`'))
+        {
+            return false;
+        }
+        var bare = System.Text.RegularExpressions.Regex.Replace(command, "\"[^\"]*\"|'[^']*'", "");
+        if (bare.IndexOfAny([';', '&', '|', '<', '>', '(', ')', '{', '}', (char)10, (char)13]) >= 0)
+        {
+            return false;
+        }
+        var parts = MergeGuard.Split(command, powershell);
+        if (parts is not [{ Count: > 0 } words])
+        {
+            return false;
+        }
+        var program = MergeGuard.Name(words[0]);
+        if (program.Equals("pilot", StringComparison.OrdinalIgnoreCase))
+        {
+            var i = 1;
+            if (i + 1 < words.Count && words[i] == "--node-socket")
+            {
+                i += 2;
+            }
+            return i + 1 < words.Count && words[i] == "design" && DesignVerbs.Contains(words[i + 1], StringComparer.Ordinal);
+        }
+        return ReadOnly.Contains(program, StringComparer.OrdinalIgnoreCase);
+    }
+
     /// <summary>The design a designer session works for, or null when the session is not a designer's.</summary>
     private string? DesignOf(string session, string cwd)
     {
@@ -62,6 +115,11 @@ public sealed class DesignerGuard(NodeState state, DesignStore store)
         if (row is not null && row.Role != SessionRole.Designer)
         {
             return null;
+        }
+        // A listed designer's design is the one its name says, wherever it has gone.
+        if (row is not null && DesignerNamePattern().Match(row.Name ?? "") is { Success: true } named)
+        {
+            return DesignStore.Normalise("DSN-" + named.Groups[1].Value);
         }
         // The design is the one whose folder the session works in (it was started there).
         var folder = StopGate.Normal(cwd);

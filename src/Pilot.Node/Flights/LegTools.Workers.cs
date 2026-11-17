@@ -10,7 +10,7 @@ namespace Pilot.Node.Flights;
 /// (worktree folder name) it enters, if any, its brief, and how it runs; with Remote Control on, for the watchtower.
 /// </summary>
 public sealed record WorkerStart(string Name, string RepoPath, string? Plane, string Brief, string? Model, string? Effort, bool RemoteControl = false, string[]? DisallowedTools = null,
-    string? Reason = null, int? Pr = null, string? McpConfig = null);
+    string? Reason = null, int? Pr = null, string? McpConfig = null, string? Settings = null);
 
 /// <summary>Starting and stopping a leg's background worker, so a test decides what Claude Code does.</summary>
 public interface IWorkerLauncher
@@ -98,6 +98,11 @@ public sealed partial class ClaudeWorkerLauncher(
         if (start.Effort is { Length: > 0 } effort)
         {
             args.AddRange(["--effort", effort]);
+        }
+        if (start.Settings is { Length: > 0 } settings)
+        {
+            // Session-scoped settings (a designer's synchronous write guard): kept on resume with the rest.
+            args.AddRange(["--settings", settings]);
         }
         if (start.DisallowedTools is { Length: > 0 } denied)
         {

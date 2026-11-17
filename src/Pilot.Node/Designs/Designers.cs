@@ -29,6 +29,9 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
     /// <summary>How the CLI is run in the designer's brief (<see cref="Briefs.Run"/>).</summary>
     public string Run { get; init; } = Briefs.Run(null, null);
 
+    /// <summary>The <c>--settings</c> JSON a designer is started with (<see cref="HookCommands.DesignerSettings"/>), which makes the node's PreToolUse deny reach it; null where none is wired.</summary>
+    public string? GuardSettings { get; init; }
+
     /// <summary>Says a command to a session through the node's messenger, which resumes an ended session with its context; null where none is wired (a design store without sessions).</summary>
     public Func<CommandRequest, CancellationToken, Task<CommandResult>>? Say { get; set; }
 
@@ -55,7 +58,14 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
 
     private static async Task Chain(Task before, Func<Task> next)
     {
-        await before.ConfigureAwait(false);
+        try
+        {
+            await before.ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // An earlier ask's unexpected fault is its own: it must not stop every ask after it until a restart.
+        }
         await next().ConfigureAwait(false);
     }
 
@@ -95,7 +105,7 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
         {
             await DoAsync(id, piece).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is DesignException or FlightException or IOException or UnauthorizedAccessException or OperationCanceledException)
+        catch (Exception ex)
         {
             // The piece is not lost: BRIEF.md has it, and the designer that does start reads the brief whole.
             store.Update(id, r => r with { DesignerState = DesignerStates.Failed, DesignerWhy = ex.Message });
@@ -152,7 +162,7 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
             ? File.ReadAllText(Path.Combine(folder, DesignStore.NotesFile))
             : null;
         var brief = Briefs.Designer(detail, prototype, notes, Run);
-        var job = await workers.StartAsync(new WorkerStart(name, store.FolderOf(row.Id), null, brief, models.Model(RoleModels.Designer), models.Effort(RoleModels.Designer), Reason: SessionStartReasons.Designer), CancellationToken.None).ConfigureAwait(false);
+        var job = await workers.StartAsync(new WorkerStart(name, store.FolderOf(row.Id), null, brief, models.Model(RoleModels.Designer), models.Effort(RoleModels.Designer), Reason: SessionStartReasons.Designer, Settings: GuardSettings), CancellationToken.None).ConfigureAwait(false);
         store.Update(row.Id, r => r with { DesignerName = name, DesignerJob = job, DesignerState = DesignerStates.Working, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerStartedAt = time.GetUtcNow(), DesignerPhase = DesignerPhases.Drafting });
     }
 

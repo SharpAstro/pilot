@@ -48,7 +48,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     // A page of the feed came in (on the pool): a version newer than any the chat had is the designer publishing, shown at once with no reload. The first
     // read only learns what is there, so opening a design shows its current version as before.
-    private void OnChatFed(ChatPage page, bool first)
+    private void OnChatFed(ChatPage page, bool _)
     {
         var latest = page.Entries.Select(VersionOf).DefaultIfEmpty(0).Max();
         var seen = _chatVersion;
@@ -132,20 +132,52 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     /// <summary>The node a design started here is made on: this window's node, which is the one the page reads, also under All nodes.</summary>
     internal string StartNode => Nodes?.Choices.FirstOrDefault(c => c.Here) is { } here ? here.Name : "this node";
 
-    /// <summary>The host made design <paramref name="id"/>: the box is emptied and the new design's page opens.</summary>
+    // The host answers a start from the thread pool; the render thread owns the chat and the box, so the answer waits here and is applied at the next frame.
+    private readonly Lock _answer = new();
+    private string? _madeId;
+    private string? _refusedWhy;
+
+    /// <summary>The host made design <paramref name="id"/>: the box is emptied and the new design's page opens at the next frame. Safe from any thread.</summary>
     public void Started(string id)
     {
-        _starting = false;
-        _startNote = null;
-        BriefInput.Clear();
-        Open(id);
+        lock (_answer)
+        {
+            _madeId = id;
+            _refusedWhy = null;
+        }
     }
 
-    /// <summary>The node refused the start, in <paramref name="why"/>'s words; the brief stays typed.</summary>
+    /// <summary>The node refused the start, in <paramref name="why"/>'s words, shown at the next frame; the brief stays typed. Safe from any thread.</summary>
     public void StartFailed(string why)
     {
-        _starting = false;
-        _startNote = why;
+        lock (_answer)
+        {
+            _refusedWhy = why;
+            _madeId = null;
+        }
+    }
+
+    /// <summary>Applies the host's answer to a start on the render thread: the first thing a frame builds.</summary>
+    private void ApplyStartAnswer()
+    {
+        string? made, why;
+        lock (_answer)
+        {
+            (made, why) = (_madeId, _refusedWhy);
+            _madeId = _refusedWhy = null;
+        }
+        if (made is not null)
+        {
+            _starting = false;
+            _startNote = null;
+            BriefInput.Clear();
+            Open(made);
+        }
+        else if (why is not null)
+        {
+            _starting = false;
+            _startNote = why;
+        }
     }
 
     /// <summary>Asked for another version of the open design (its id and the version's number): the host hands that version's page.</summary>
@@ -505,6 +537,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     internal Layout.Node Tree(DesignsScreen screen)
     {
+        ApplyStartAnswer();
         Palette.Use(Night);
         var open = OpenId is { } id && screen.Open is { } shown && shown.Detail.Row.Id == id ? shown : null;
         if (OpenId is null)
